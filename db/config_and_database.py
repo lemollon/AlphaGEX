@@ -3129,6 +3129,51 @@ def init_database():
         )
     ''')
 
+    # Volatility Surface Snapshots - Store periodic surface analysis
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS volatility_surface_snapshots (
+            id SERIAL PRIMARY KEY,
+            symbol VARCHAR(10) NOT NULL DEFAULT 'SPY',
+            snapshot_time TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            spot_price REAL NOT NULL,
+            atm_iv REAL,
+            iv_rank REAL,
+            iv_percentile REAL,
+            skew_25d REAL,
+            skew_10d REAL,
+            risk_reversal REAL,
+            butterfly REAL,
+            put_skew_slope REAL,
+            call_skew_slope REAL,
+            skew_ratio REAL,
+            skew_regime VARCHAR(30),
+            term_slope REAL,
+            term_regime VARCHAR(30),
+            front_month_iv REAL,
+            back_month_iv REAL,
+            is_inverted BOOLEAN DEFAULT FALSE,
+            iv_7dte REAL,
+            iv_14dte REAL,
+            iv_30dte REAL,
+            iv_45dte REAL,
+            iv_60dte REAL,
+            recommended_dte INTEGER,
+            directional_bias VARCHAR(10),
+            should_sell_premium BOOLEAN,
+            optimal_strategy VARCHAR(50),
+            strategy_reasoning TEXT,
+            svi_params JSONB,
+            fit_quality_mae REAL,
+            fit_quality_n_points INTEGER,
+            fit_quality_n_expirations INTEGER,
+            data_source VARCHAR(50) DEFAULT 'TRADIER',
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    safe_index("CREATE INDEX IF NOT EXISTS idx_vol_surface_symbol_time ON volatility_surface_snapshots(symbol, snapshot_time)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_vol_surface_skew_regime ON volatility_surface_snapshots(skew_regime)")
+
     safe_index("CREATE INDEX IF NOT EXISTS idx_apollo_scans_timestamp ON apollo_scans(timestamp)")
     safe_index("CREATE INDEX IF NOT EXISTS idx_apollo_predictions_symbol ON apollo_predictions(symbol)")
     safe_index("CREATE INDEX IF NOT EXISTS idx_apollo_predictions_scan ON apollo_predictions(scan_id)")

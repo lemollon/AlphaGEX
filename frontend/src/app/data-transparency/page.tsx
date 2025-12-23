@@ -23,7 +23,7 @@ interface TransparencySummary {
   [key: string]: DataCategory
 }
 
-type ActiveTab = 'summary' | 'regime' | 'vix' | 'ai' | 'sizing' | 'decisions' | 'options' | 'strike' | 'greeks' | 'dte' | 'psychology' | 'volatility' | 'ml' | 'argus'
+type ActiveTab = 'summary' | 'regime' | 'vix' | 'ai' | 'sizing' | 'decisions' | 'options' | 'strike' | 'greeks' | 'dte' | 'psychology' | 'volatility' | 'ml' | 'argus' | 'backtest' | 'walkforward' | 'spreadwidth' | 'patterns' | 'volsnapshots'
 
 export default function DataTransparencyPage() {
   const [summary, setSummary] = useState<TransparencySummary | null>(null)
@@ -46,8 +46,14 @@ export default function DataTransparencyPage() {
   const [volatilityData, setVolatilityData] = useState<any>(null)
   const [mlData, setMlData] = useState<any>(null)
   const [argusData, setArgusData] = useState<any>(null)
+  const [backtestData, setBacktestData] = useState<any>(null)
+  const [walkforwardData, setWalkforwardData] = useState<any>(null)
+  const [spreadwidthData, setSpreadwidthData] = useState<any>(null)
+  const [patternsData, setPatternsData] = useState<any>(null)
+  const [volsnapshotsData, setVolsnapshotsData] = useState<any>(null)
 
   const [expandedRecords, setExpandedRecords] = useState<Set<number>>(new Set())
+  const [exporting, setExporting] = useState(false)
 
   useEffect(() => {
     loadSummary()
@@ -131,6 +137,26 @@ export default function DataTransparencyPage() {
           endpoint = '/api/data-transparency/argus-gamma-details'
           setter = setArgusData
           break
+        case 'backtest':
+          endpoint = '/api/data-transparency/backtest-trades-full'
+          setter = setBacktestData
+          break
+        case 'walkforward':
+          endpoint = '/api/data-transparency/walk-forward-results'
+          setter = setWalkforwardData
+          break
+        case 'spreadwidth':
+          endpoint = '/api/data-transparency/spread-width-performance'
+          setter = setSpreadwidthData
+          break
+        case 'patterns':
+          endpoint = '/api/data-transparency/pattern-learning'
+          setter = setPatternsData
+          break
+        case 'volsnapshots':
+          endpoint = '/api/data-transparency/volatility-surface-snapshots'
+          setter = setVolsnapshotsData
+          break
       }
 
       if (endpoint) {
@@ -168,9 +194,78 @@ export default function DataTransparencyPage() {
     { id: 'dte', name: 'DTE Performance', icon: Clock, color: 'bg-indigo-600', count: summary?.dte_performance?.total_records },
     { id: 'psychology', name: 'Psychology Patterns', icon: AlertTriangle, color: 'bg-amber-600', count: summary?.sucker_statistics?.total_records },
     { id: 'volatility', name: 'Volatility Surface', icon: Activity, color: 'bg-teal-600' },
+    { id: 'volsnapshots', name: 'Vol Surface History', icon: TrendingUp, color: 'bg-emerald-600' },
     { id: 'ml', name: 'ML Models', icon: Brain, color: 'bg-violet-600' },
     { id: 'argus', name: 'ARGUS Gamma', icon: Eye, color: 'bg-rose-600' },
+    { id: 'backtest', name: 'Backtest Trades', icon: FileText, color: 'bg-sky-600' },
+    { id: 'walkforward', name: 'Walk-Forward', icon: BarChart3, color: 'bg-lime-600' },
+    { id: 'spreadwidth', name: 'Spread Width', icon: Layers, color: 'bg-fuchsia-600' },
+    { id: 'patterns', name: 'Pattern Learning', icon: Target, color: 'bg-stone-600' },
   ]
+
+  // Export handlers
+  const handleExport = async (category: string, format: 'csv' | 'json') => {
+    setExporting(true)
+    try {
+      const response = await api.get(`/api/data-transparency/export/${category}?format=${format}&limit=5000`, {
+        responseType: 'blob'
+      })
+      const blob = new Blob([response.data], {
+        type: format === 'csv' ? 'text/csv' : 'application/json'
+      })
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `alphagex-${category}-${new Date().toISOString().split('T')[0]}.${format}`
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+    } catch (err) {
+      console.error('Export failed:', err)
+    }
+    setExporting(false)
+  }
+
+  const handleExportAll = async () => {
+    setExporting(true)
+    try {
+      const response = await api.get('/api/data-transparency/export-all?limit_per_table=500', {
+        responseType: 'blob'
+      })
+      const blob = new Blob([response.data], { type: 'application/json' })
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `alphagex-full-transparency-${new Date().toISOString().split('T')[0]}.json`
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+    } catch (err) {
+      console.error('Export all failed:', err)
+    }
+    setExporting(false)
+  }
+
+  // Map tab IDs to export categories
+  const tabToExportCategory: Record<string, string> = {
+    'regime': 'regime',
+    'vix': 'vix',
+    'ai': 'ai',
+    'sizing': 'sizing',
+    'decisions': 'decisions',
+    'options': 'options',
+    'strike': 'strike',
+    'greeks': 'greeks',
+    'dte': 'dte',
+    'psychology': 'psychology',
+    'backtest': 'backtest',
+    'walkforward': 'walk-forward',
+    'spreadwidth': 'spread-width',
+    'patterns': 'patterns',
+    'volsnapshots': 'vol-surface'
+  }
 
   const renderDataTable = (data: any, title: string) => {
     if (!data?.records || data.records.length === 0) {
@@ -715,6 +810,39 @@ export default function DataTransparencyPage() {
               <RefreshCw className={`w-4 h-4 ${(loading || dataLoading) ? 'animate-spin' : ''}`} />
               Refresh
             </button>
+
+            {/* Export buttons */}
+            {activeTab !== 'summary' && tabToExportCategory[activeTab] && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleExport(tabToExportCategory[activeTab], 'csv')}
+                  disabled={exporting}
+                  className="flex items-center gap-2 px-3 py-2 bg-green-600 hover:bg-green-500 rounded-lg text-white text-sm disabled:opacity-50"
+                >
+                  <Download className="w-4 h-4" />
+                  CSV
+                </button>
+                <button
+                  onClick={() => handleExport(tabToExportCategory[activeTab], 'json')}
+                  disabled={exporting}
+                  className="flex items-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-white text-sm disabled:opacity-50"
+                >
+                  <Download className="w-4 h-4" />
+                  JSON
+                </button>
+              </div>
+            )}
+
+            {activeTab === 'summary' && (
+              <button
+                onClick={handleExportAll}
+                disabled={exporting}
+                className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 rounded-lg text-white disabled:opacity-50"
+              >
+                <Download className="w-4 h-4" />
+                {exporting ? 'Exporting...' : 'Export All'}
+              </button>
+            )}
           </div>
 
           {/* Tab Navigation */}
@@ -899,6 +1027,16 @@ export default function DataTransparencyPage() {
                   </div>
                 )}
               </div>
+            ) : activeTab === 'backtest' ? (
+              renderDataTable(backtestData, 'Backtest Trades (Full Entry Context)')
+            ) : activeTab === 'walkforward' ? (
+              renderDataTable(walkforwardData, 'Walk-Forward Validation Results')
+            ) : activeTab === 'spreadwidth' ? (
+              renderDataTable(spreadwidthData, 'Spread Width Performance')
+            ) : activeTab === 'patterns' ? (
+              renderDataTable(patternsData, 'Pattern Learning (Success Rates)')
+            ) : activeTab === 'volsnapshots' ? (
+              renderDataTable(volsnapshotsData, 'Volatility Surface Snapshots (Historical)')
             ) : null}
           </div>
 

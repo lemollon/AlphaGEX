@@ -1200,3 +1200,402 @@ async def get_argus_gamma_details(
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         conn.close()
+
+
+@router.get("/walk-forward-results")
+async def get_walk_forward_results(
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0)
+):
+    """Get walk-forward validation results"""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+
+    try:
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT * FROM walk_forward_results
+            ORDER BY created_at DESC
+            LIMIT %s OFFSET %s
+        """, (limit, offset))
+
+        columns = [desc[0] for desc in cur.description]
+        rows = cur.fetchall()
+
+        records = []
+        for row in rows:
+            record = {}
+            for i, col in enumerate(columns):
+                val = row[i]
+                if isinstance(val, datetime):
+                    val = val.isoformat()
+                record[col] = val
+            records.append(record)
+
+        cur.execute("SELECT COUNT(*) FROM walk_forward_results")
+        total = cur.fetchone()[0]
+
+        return {
+            "success": True,
+            "data": {
+                "records": records,
+                "columns": columns,
+                "total_records": total
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting walk-forward results: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
+@router.get("/spread-width-performance")
+async def get_spread_width_performance(
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0)
+):
+    """Get spread width performance analytics - which widths work best"""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+
+    try:
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT * FROM spread_width_performance
+            ORDER BY created_at DESC
+            LIMIT %s OFFSET %s
+        """, (limit, offset))
+
+        columns = [desc[0] for desc in cur.description]
+        rows = cur.fetchall()
+
+        records = []
+        for row in rows:
+            record = {}
+            for i, col in enumerate(columns):
+                val = row[i]
+                if isinstance(val, datetime):
+                    val = val.isoformat()
+                record[col] = val
+            records.append(record)
+
+        cur.execute("SELECT COUNT(*) FROM spread_width_performance")
+        total = cur.fetchone()[0]
+
+        return {
+            "success": True,
+            "data": {
+                "records": records,
+                "columns": columns,
+                "total_records": total
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting spread width performance: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
+@router.get("/pattern-learning")
+async def get_pattern_learning(
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0)
+):
+    """Get pattern learning data - success rates, frequencies"""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+
+    try:
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT * FROM pattern_learning
+            ORDER BY created_at DESC
+            LIMIT %s OFFSET %s
+        """, (limit, offset))
+
+        columns = [desc[0] for desc in cur.description]
+        rows = cur.fetchall()
+
+        records = []
+        for row in rows:
+            record = {}
+            for i, col in enumerate(columns):
+                val = row[i]
+                if isinstance(val, datetime):
+                    val = val.isoformat()
+                record[col] = val
+            records.append(record)
+
+        cur.execute("SELECT COUNT(*) FROM pattern_learning")
+        total = cur.fetchone()[0]
+
+        return {
+            "success": True,
+            "data": {
+                "records": records,
+                "columns": columns,
+                "total_records": total
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting pattern learning: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
+@router.get("/volatility-surface-snapshots")
+async def get_volatility_surface_snapshots(
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0)
+):
+    """Get stored volatility surface snapshots"""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+
+    try:
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT * FROM volatility_surface_snapshots
+            ORDER BY snapshot_time DESC
+            LIMIT %s OFFSET %s
+        """, (limit, offset))
+
+        columns = [desc[0] for desc in cur.description]
+        rows = cur.fetchall()
+
+        records = []
+        for row in rows:
+            record = {}
+            for i, col in enumerate(columns):
+                val = row[i]
+                if isinstance(val, datetime):
+                    val = val.isoformat()
+                record[col] = val
+            records.append(record)
+
+        cur.execute("SELECT COUNT(*) FROM volatility_surface_snapshots")
+        total = cur.fetchone()[0]
+
+        return {
+            "success": True,
+            "data": {
+                "records": records,
+                "columns": columns,
+                "total_records": total
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting volatility surface snapshots: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
+# ============================================================================
+# EXPORT ENDPOINTS
+# ============================================================================
+
+from fastapi.responses import StreamingResponse
+import csv
+import io
+import json
+
+
+def generate_csv(records: List[Dict], columns: List[str]) -> str:
+    """Generate CSV string from records"""
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=columns)
+    writer.writeheader()
+    for record in records:
+        writer.writerow(record)
+    return output.getvalue()
+
+
+@router.get("/export/{category}")
+async def export_data(
+    category: str,
+    format: str = Query("csv", regex="^(csv|json)$"),
+    limit: int = Query(1000, ge=1, le=10000)
+):
+    """Export data from any transparency category"""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+
+    table_map = {
+        "regime": "regime_signals",
+        "vix": "vix_term_structure",
+        "ai": "ai_analysis_history",
+        "sizing": "position_sizing_history",
+        "decisions": "autonomous_trader_logs",
+        "options": "options_flow",
+        "strike": "strike_performance",
+        "greeks": "greeks_performance",
+        "dte": "dte_performance",
+        "psychology": "psychology_analysis",
+        "backtest": "backtest_trades",
+        "walk-forward": "walk_forward_results",
+        "spread-width": "spread_width_performance",
+        "patterns": "pattern_learning",
+        "vol-surface": "volatility_surface_snapshots",
+        "ml-predictions": "ml_predictions",
+        "argus-flips": "argus_gamma_flips"
+    }
+
+    if category not in table_map:
+        raise HTTPException(status_code=400, detail=f"Invalid category: {category}")
+
+    table = table_map[category]
+
+    try:
+        cur = conn.cursor()
+
+        cur.execute(f"""
+            SELECT * FROM {table}
+            ORDER BY created_at DESC
+            LIMIT %s
+        """, (limit,))
+
+        columns = [desc[0] for desc in cur.description]
+        rows = cur.fetchall()
+
+        records = []
+        for row in rows:
+            record = {}
+            for i, col in enumerate(columns):
+                val = row[i]
+                if isinstance(val, datetime):
+                    val = val.isoformat()
+                elif hasattr(val, '__dict__'):
+                    val = str(val)
+                record[col] = val
+            records.append(record)
+
+        if format == "csv":
+            csv_data = generate_csv(records, columns)
+            return StreamingResponse(
+                io.StringIO(csv_data),
+                media_type="text/csv",
+                headers={
+                    "Content-Disposition": f"attachment; filename=alphagex-{category}-{datetime.now().strftime('%Y%m%d')}.csv"
+                }
+            )
+        else:
+            return StreamingResponse(
+                io.StringIO(json.dumps(records, indent=2, default=str)),
+                media_type="application/json",
+                headers={
+                    "Content-Disposition": f"attachment; filename=alphagex-{category}-{datetime.now().strftime('%Y%m%d')}.json"
+                }
+            )
+
+    except Exception as e:
+        logger.error(f"Error exporting {category}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
+
+
+@router.get("/export-all")
+async def export_all_data(
+    format: str = Query("json", regex="^(json)$"),
+    limit_per_table: int = Query(100, ge=1, le=500)
+):
+    """Export ALL transparency data as a single JSON file"""
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database connection failed")
+
+    tables = [
+        "regime_signals",
+        "vix_term_structure",
+        "ai_analysis_history",
+        "position_sizing_history",
+        "autonomous_trader_logs",
+        "options_flow",
+        "strike_performance",
+        "greeks_performance",
+        "dte_performance",
+        "psychology_analysis",
+        "sucker_statistics",
+        "liberation_outcomes",
+        "backtest_trades",
+        "walk_forward_results",
+        "spread_width_performance",
+        "pattern_learning",
+        "volatility_surface_snapshots",
+        "ml_predictions",
+        "calibration_history",
+        "argus_gamma_flips"
+    ]
+
+    all_data = {
+        "export_timestamp": datetime.now().isoformat(),
+        "tables": {}
+    }
+
+    try:
+        cur = conn.cursor()
+
+        for table in tables:
+            try:
+                cur.execute(f"""
+                    SELECT * FROM {table}
+                    ORDER BY created_at DESC
+                    LIMIT %s
+                """, (limit_per_table,))
+
+                columns = [desc[0] for desc in cur.description]
+                rows = cur.fetchall()
+
+                records = []
+                for row in rows:
+                    record = {}
+                    for i, col in enumerate(columns):
+                        val = row[i]
+                        if isinstance(val, datetime):
+                            val = val.isoformat()
+                        elif hasattr(val, '__dict__'):
+                            val = str(val)
+                        record[col] = val
+                    records.append(record)
+
+                all_data["tables"][table] = {
+                    "columns": columns,
+                    "record_count": len(records),
+                    "records": records
+                }
+            except Exception as e:
+                all_data["tables"][table] = {
+                    "error": str(e),
+                    "records": []
+                }
+
+        return StreamingResponse(
+            io.StringIO(json.dumps(all_data, indent=2, default=str)),
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f"attachment; filename=alphagex-full-transparency-export-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"Error exporting all data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
