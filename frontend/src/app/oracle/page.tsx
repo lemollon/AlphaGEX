@@ -70,9 +70,15 @@ class OracleErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySta
   }
 }
 
-// Safe array access helper
-function safeArray<T>(arr: T[] | null | undefined): T[] {
+// Safe array access helper - returns typed array or empty array
+function safeArray<T = unknown>(arr: T[] | null | undefined): T[] {
   return Array.isArray(arr) ? arr : []
+}
+
+// Safe string array helper for common use case
+function safeStringArray(arr: string[] | null | undefined | unknown): string[] {
+  if (!Array.isArray(arr)) return []
+  return arr.map(item => String(item ?? ''))
 }
 
 // Safe number formatting helper
@@ -255,11 +261,11 @@ function ClaudeAnalysisPanel({ analysis }: { analysis: any }) {
               </span>
             </div>
           )}
-          {safeArray(analysis.risk_factors).length > 0 && (
+          {safeStringArray(analysis.risk_factors).length > 0 && (
             <div>
               <span className="text-text-muted">Risk Factors:</span>
               <ul className="mt-1 space-y-1">
-                {safeArray(analysis.risk_factors).map((risk: string, idx: number) => (
+                {safeStringArray(analysis.risk_factors).map((risk, idx) => (
                   <li key={idx} className="text-red-300 flex items-start gap-2">
                     <AlertCircle className="w-3 h-3 mt-1 flex-shrink-0" />
                     {risk || 'Unknown risk'}
@@ -268,11 +274,11 @@ function ClaudeAnalysisPanel({ analysis }: { analysis: any }) {
               </ul>
             </div>
           )}
-          {safeArray(analysis.opportunities).length > 0 && (
+          {safeStringArray(analysis.opportunities).length > 0 && (
             <div>
               <span className="text-text-muted">Opportunities:</span>
               <ul className="mt-1 space-y-1">
-                {safeArray(analysis.opportunities).map((opp: string, idx: number) => (
+                {safeStringArray(analysis.opportunities).map((opp, idx) => (
                   <li key={idx} className="text-green-300 flex items-start gap-2">
                     <CheckCircle className="w-3 h-3 mt-1 flex-shrink-0" />
                     {opp || 'Unknown opportunity'}
@@ -1449,7 +1455,7 @@ export default function OraclePage() {
                         </div>
 
                         {/* Hallucination Warnings (if any) */}
-                        {exchange.hallucination_risk !== 'LOW' && safeArray(exchange.hallucination_warnings).length > 0 && (
+                        {exchange.hallucination_risk !== 'LOW' && safeStringArray(exchange.hallucination_warnings).length > 0 && (
                           <div className={`px-4 py-3 border-b border-gray-700 ${
                             exchange.hallucination_risk === 'HIGH' ? 'bg-red-900/10' : 'bg-yellow-900/10'
                           }`}>
@@ -1462,7 +1468,7 @@ export default function OraclePage() {
                             <ul className={`text-xs list-disc list-inside space-y-1 ${
                               exchange.hallucination_risk === 'HIGH' ? 'text-red-300/80' : 'text-yellow-300/80'
                             }`}>
-                              {safeArray(exchange.hallucination_warnings).map((warning: string, wIdx: number) => (
+                              {safeStringArray(exchange.hallucination_warnings).map((warning, wIdx) => (
                                 <li key={wIdx}>{warning || 'Unknown warning'}</li>
                               ))}
                             </ul>
@@ -1470,14 +1476,14 @@ export default function OraclePage() {
                         )}
 
                         {/* Data Citations (if verified) */}
-                        {exchange.hallucination_risk === 'LOW' && safeArray(exchange.data_citations).length > 0 && (
+                        {exchange.hallucination_risk === 'LOW' && safeStringArray(exchange.data_citations).length > 0 && (
                           <div className="px-4 py-3 border-b border-gray-700 bg-green-900/10">
                             <p className="text-xs text-green-400 font-semibold mb-2 flex items-center gap-2">
                               <CheckCircle className="w-3 h-3" />
                               DATA CITATIONS (VERIFIED):
                             </p>
                             <div className="flex flex-wrap gap-1">
-                              {safeArray(exchange.data_citations).map((citation: string, cIdx: number) => (
+                              {safeStringArray(exchange.data_citations).map((citation, cIdx) => (
                                 <span key={cIdx} className="text-xs bg-green-500/20 text-green-300 px-2 py-0.5 rounded">
                                   {citation || 'Unknown citation'}
                                 </span>
