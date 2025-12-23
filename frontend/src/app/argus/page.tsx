@@ -422,34 +422,44 @@ export default function ArgusPage() {
   const mediumPollRef = useRef<NodeJS.Timeout | null>(null)
   const slowPollRef = useRef<NodeJS.Timeout | null>(null)
 
+  // ALWAYS poll when autoRefresh is enabled - don't depend on gammaData state
+  // This ensures live updates regardless of API responses
   useEffect(() => {
-    // Auto-refresh when:
-    // 1. Auto-refresh is enabled, AND
-    // 2. Either market is open OR we're showing simulated data (to demonstrate it works)
-    if (autoRefresh && (!isMarketClosed || isMockData)) {
+    // Clear any existing intervals first
+    if (fastPollRef.current) clearInterval(fastPollRef.current)
+    if (mediumPollRef.current) clearInterval(mediumPollRef.current)
+    if (slowPollRef.current) clearInterval(slowPollRef.current)
+
+    if (autoRefresh) {
+      console.log('[ARGUS] Starting auto-refresh polling...')
+
       // Fast polling: Gamma data and danger zones every 15 seconds
       fastPollRef.current = setInterval(() => {
+        console.log('[ARGUS] Fast poll: fetching gamma data and danger zone logs')
         fetchGammaData(activeDay)
         fetchDangerZoneLogs()
-      }, FAST_POLL_INTERVAL)
+      }, 15000)
 
       // Medium polling: Alerts and context every 30 seconds
       mediumPollRef.current = setInterval(() => {
+        console.log('[ARGUS] Medium poll: fetching alerts and context')
         fetchAlerts()
         fetchContext()
-      }, MEDIUM_POLL_INTERVAL)
+      }, 30000)
 
       // Slow polling: Commentary every 60 seconds
       slowPollRef.current = setInterval(() => {
         fetchCommentary()
-      }, SLOW_POLL_INTERVAL)
+      }, 60000)
     }
+
     return () => {
       if (fastPollRef.current) clearInterval(fastPollRef.current)
       if (mediumPollRef.current) clearInterval(mediumPollRef.current)
       if (slowPollRef.current) clearInterval(slowPollRef.current)
     }
-  }, [autoRefresh, activeDay, isMarketClosed, isMockData, fetchGammaData, fetchAlerts, fetchContext, fetchCommentary, fetchDangerZoneLogs, FAST_POLL_INTERVAL, MEDIUM_POLL_INTERVAL, SLOW_POLL_INTERVAL])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRefresh, activeDay]) // Intentionally minimal deps - fetch functions are stable, avoid re-creating intervals
 
   const handleDayChange = (day: string) => {
     setActiveDay(day)
@@ -649,8 +659,28 @@ export default function ArgusPage() {
     : 1
 
   const highPriorityAlerts = alerts.filter(a => a.priority === 'HIGH' || a.priority === 'MEDIUM')
-  const buildingZones = gammaData?.danger_zones?.filter(d => d.danger_type === 'BUILDING') || []
-  const collapsingZones = gammaData?.danger_zones?.filter(d => d.danger_type === 'COLLAPSING') || []
+
+  // Merge danger zones from current snapshot AND active database logs
+  // This prevents zones from disappearing when ROC fluctuates between refreshes
+  const snapshotBuilding = gammaData?.danger_zones?.filter(d => d.danger_type === 'BUILDING') || []
+  const snapshotCollapsing = gammaData?.danger_zones?.filter(d => d.danger_type === 'COLLAPSING') || []
+  const activeLogBuilding = dangerZoneLogs.filter(log => log.is_active && log.danger_type === 'BUILDING')
+  const activeLogCollapsing = dangerZoneLogs.filter(log => log.is_active && log.danger_type === 'COLLAPSING')
+
+  // Combine and dedupe by strike
+  const buildingStrikes = new Set([...snapshotBuilding.map(d => d.strike), ...activeLogBuilding.map(d => d.strike)])
+  const collapsingStrikes = new Set([...snapshotCollapsing.map(d => d.strike), ...activeLogCollapsing.map(d => d.strike)])
+
+  const buildingZones = Array.from(buildingStrikes).map(strike => {
+    const fromSnapshot = snapshotBuilding.find(d => d.strike === strike)
+    const fromLog = activeLogBuilding.find(d => d.strike === strike)
+    return fromSnapshot || { strike, danger_type: 'BUILDING', roc_1min: fromLog?.roc_1min || 0, roc_5min: fromLog?.roc_5min || 0 }
+  })
+  const collapsingZones = Array.from(collapsingStrikes).map(strike => {
+    const fromSnapshot = snapshotCollapsing.find(d => d.strike === strike)
+    const fromLog = activeLogCollapsing.find(d => d.strike === strike)
+    return fromSnapshot || { strike, danger_type: 'COLLAPSING', roc_1min: fromLog?.roc_1min || 0, roc_5min: fromLog?.roc_5min || 0 }
+  })
 
   return (
     <div className="min-h-screen bg-background">

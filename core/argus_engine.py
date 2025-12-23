@@ -184,7 +184,7 @@ class ArgusEngine:
     - Generate alerts for significant events
     """
 
-    # Thresholds
+    # Thresholds - keep high to only show REAL spikes
     ROC_1MIN_SPIKE_THRESHOLD = 15.0  # % for SPIKE danger type
     ROC_5MIN_BUILDING_THRESHOLD = 25.0  # % for BUILDING danger type
     ROC_5MIN_COLLAPSING_THRESHOLD = -25.0  # % for COLLAPSING danger type
