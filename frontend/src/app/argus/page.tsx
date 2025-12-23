@@ -366,7 +366,7 @@ export default function ArgusPage() {
 
   const fetchStrikeTrends = useCallback(async () => {
     try {
-      const response = await apiClient.get('/api/argus/strike-trends')
+      const response = await apiClient.getArgusStrikeTrends()
       if (response.data?.success && response.data?.data?.trends) {
         setStrikeTrends(response.data.data.trends)
       }
@@ -377,7 +377,7 @@ export default function ArgusPage() {
 
   const fetchGammaFlips30m = useCallback(async () => {
     try {
-      const response = await apiClient.get('/api/argus/gamma-flips')
+      const response = await apiClient.getArgusGammaFlips()
       if (response.data?.success && response.data?.data?.flips) {
         setGammaFlips30m(response.data.data.flips)
       }
