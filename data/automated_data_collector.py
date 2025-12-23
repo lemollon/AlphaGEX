@@ -487,6 +487,118 @@ def run_vix_term_structure():
 
 
 # =============================================================================
+# VOLATILITY SURFACE COLLECTOR
+# =============================================================================
+
+def run_volatility_surface_snapshot():
+    """Collect and store volatility surface analysis -> volatility_surface_snapshots table"""
+    if not is_market_hours():
+        return
+
+    print(f"📈 Volatility Surface - {datetime.now(CENTRAL_TZ).strftime('%H:%M:%S')}")
+
+    try:
+        from data.unified_data_provider import get_data_provider
+        from core.volatility_surface_integration import VolatilitySurfaceAnalyzer
+        from database_adapter import get_connection
+
+        provider = get_data_provider()
+        quote = provider.get_quote("SPY")
+        if not quote:
+            print(f"  ⚠️ volatility_surface - no quote")
+            log_collection('volatility_surface', 'volatility_surface_snapshots', False, 'No quote')
+            return
+
+        spot_price = quote.get('last', quote.get('mid', 450))
+        analyzer = VolatilitySurfaceAnalyzer(spot_price=spot_price)
+
+        # Get options chain
+        chain = provider.get_options_chain("SPY", greeks=True)
+        if not chain or not chain.chains:
+            print(f"  ⚠️ volatility_surface - no chain data")
+            log_collection('volatility_surface', 'volatility_surface_snapshots', False, 'No chain data')
+            return
+
+        # Add chain data to analyzer
+        for exp_date, contracts in sorted(chain.chains.items())[:5]:
+            from datetime import datetime as dt
+            try:
+                exp_dt = dt.strptime(exp_date, '%Y-%m-%d')
+                dte_days = (exp_dt - dt.now()).days
+            except:
+                continue
+
+            if dte_days < 1 or dte_days > 90:
+                continue
+
+            chain_data = [{
+                'strike': c.strike,
+                'iv': c.implied_volatility,
+                'delta': c.delta,
+                'volume': c.volume or 0,
+                'open_interest': c.open_interest or 0
+            } for c in contracts if c.implied_volatility and c.implied_volatility > 0]
+
+            if chain_data:
+                analyzer.add_chain_data(chain_data, dte_days)
+
+        # Get analysis
+        analysis = analyzer.get_enhanced_analysis()
+        if not analysis:
+            print(f"  ⚠️ volatility_surface - analysis failed")
+            log_collection('volatility_surface', 'volatility_surface_snapshots', False, 'Analysis failed')
+            return
+
+        # Store in database
+        conn = get_connection()
+        cur = conn.cursor()
+
+        cur.execute("""
+            INSERT INTO volatility_surface_snapshots (
+                symbol, spot_price, atm_iv, iv_rank, iv_percentile,
+                skew_25d, risk_reversal, butterfly,
+                skew_regime, term_slope, term_regime,
+                front_month_iv, back_month_iv,
+                recommended_dte, directional_bias, should_sell_premium,
+                optimal_strategy, data_source
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            )
+        """, (
+            'SPY',
+            spot_price,
+            analysis.atm_iv,
+            analysis.iv_rank,
+            analysis.iv_percentile,
+            analysis.skew_25d,
+            analysis.risk_reversal,
+            analysis.butterfly,
+            str(analysis.skew_regime) if hasattr(analysis, 'skew_regime') else None,
+            analysis.term_slope,
+            str(analysis.term_regime) if hasattr(analysis, 'term_regime') else (str(analysis.term_structure_regime) if hasattr(analysis, 'term_structure_regime') else None),
+            analysis.front_month_iv,
+            analysis.back_month_iv,
+            analysis.recommended_dte,
+            analysis.get_directional_bias(),
+            analysis.should_sell_premium()[0] if hasattr(analysis.should_sell_premium(), '__iter__') else analysis.should_sell_premium(),
+            str(analysis.get_optimal_strategy().get('strategy_type', 'NONE')),
+            'TRADIER'
+        ))
+
+        conn.commit()
+        conn.close()
+
+        print(f"  ✅ volatility_surface_snapshots updated (IV Rank: {analysis.iv_rank:.1f}%)")
+        log_collection('volatility_surface', 'volatility_surface_snapshots', True)
+
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        print(f"  ❌ volatility_surface failed: {e}\n{tb}")
+        log_collection('volatility_surface', 'volatility_surface_snapshots', False, str(e), tb)
+
+
+# =============================================================================
 # NEW COLLECTORS - GREEKS, OPTIONS FLOW, MARKET SNAPSHOTS
 # =============================================================================
 
@@ -1139,6 +1251,7 @@ def setup_schedule():
     schedule.every(15).minutes.do(run_option_chain_collection)  # options_chain_snapshots
     schedule.every(15).minutes.do(run_vix_term_structure)       # vix_term_structure
     schedule.every(15).minutes.do(run_ai_analysis)              # ai_analysis_history (NEW)
+    schedule.every(15).minutes.do(run_volatility_surface_snapshot)  # volatility_surface_snapshots (NEW)
 
     # === EVERY 30 MINUTES (Heavy Analysis) ===
     schedule.every(30).minutes.do(run_gamma_expiration)    # gamma_expiration_timeline
