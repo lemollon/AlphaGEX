@@ -661,7 +661,8 @@ def log_ares_scan(
     If generate_ai_explanation is True, uses Claude to create a detailed
     human-readable explanation of WHY this decision was made.
     """
-    full_reasoning = kwargs.get('full_reasoning', '')
+    # Pop full_reasoning from kwargs to avoid "multiple values" error when passing **kwargs
+    full_reasoning = kwargs.pop('full_reasoning', '')
 
     # Generate AI explanation if requested and we have enough context
     if generate_ai_explanation and market_data:
@@ -778,7 +779,8 @@ def log_athena_scan(
     If generate_ai_explanation is True, uses Claude to create a detailed
     human-readable explanation of WHY this decision was made.
     """
-    full_reasoning = kwargs.get('full_reasoning', '')
+    # Pop full_reasoning from kwargs to avoid "multiple values" error when passing **kwargs
+    full_reasoning = kwargs.pop('full_reasoning', '')
 
     # Generate AI explanation if requested and we have enough context
     if generate_ai_explanation and market_data:

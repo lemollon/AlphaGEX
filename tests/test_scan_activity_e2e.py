@@ -231,6 +231,31 @@ class TestScanActivityLogger:
         assert mock_cursor.execute.called
         print(f"\n[PASS] log_scan_activity called database correctly")
 
+    @patch('database_adapter.get_connection')
+    def test_log_ares_scan_with_full_reasoning_kwarg(self, mock_get_conn):
+        """Test that passing full_reasoning as kwarg doesn't cause 'multiple values' error"""
+        from trading.scan_activity_logger import log_ares_scan, ScanOutcome, CheckResult
+
+        # Mock database connection
+        mock_cursor = Mock()
+        mock_conn = Mock()
+        mock_conn.cursor.return_value = mock_cursor
+        mock_get_conn.return_value = mock_conn
+
+        # This used to crash with: "got multiple values for keyword argument 'full_reasoning'"
+        try:
+            result = log_ares_scan(
+                outcome=ScanOutcome.NO_TRADE,
+                decision_summary="Test summary",
+                full_reasoning="This is the full reasoning passed as kwarg",
+                generate_ai_explanation=False
+            )
+            print(f"\n[PASS] log_ares_scan accepts full_reasoning kwarg without error")
+        except TypeError as e:
+            if "multiple values" in str(e):
+                raise AssertionError(f"kwargs bug not fixed: {e}")
+            raise
+
 
 class TestAPIRoutes:
     """Test the API routes return correct format"""
