@@ -256,6 +256,61 @@ class TestScanActivityLogger:
                 raise AssertionError(f"kwargs bug not fixed: {e}")
             raise
 
+    @patch('database_adapter.get_connection')
+    def test_log_ares_scan_with_all_kwargs(self, mock_get_conn):
+        """Test that passing action_taken, error_type as kwargs doesn't cause errors"""
+        from trading.scan_activity_logger import log_ares_scan, ScanOutcome, CheckResult
+
+        # Mock database connection
+        mock_cursor = Mock()
+        mock_conn = Mock()
+        mock_conn.cursor.return_value = mock_cursor
+        mock_get_conn.return_value = mock_conn
+
+        # Test all kwargs that could cause "multiple values" errors
+        try:
+            result = log_ares_scan(
+                outcome=ScanOutcome.ERROR,
+                decision_summary="Test crash scenario",
+                full_reasoning="Full reasoning for the crash",
+                action_taken="Bot crashed - will retry",
+                error_type="UNHANDLED_EXCEPTION",
+                error_message="Test error message",
+                generate_ai_explanation=False
+            )
+            print(f"\n[PASS] log_ares_scan accepts all kwargs without error")
+        except (TypeError, NameError) as e:
+            raise AssertionError(f"kwargs bug not fixed: {e}")
+
+    @patch('database_adapter.get_connection')
+    def test_log_athena_scan_with_all_kwargs(self, mock_get_conn):
+        """Test that log_athena_scan handles action_taken and error_type kwargs correctly"""
+        from trading.scan_activity_logger import log_athena_scan, ScanOutcome, CheckResult
+
+        # Mock database connection
+        mock_cursor = Mock()
+        mock_conn = Mock()
+        mock_conn.cursor.return_value = mock_cursor
+        mock_get_conn.return_value = mock_conn
+
+        # This used to crash with: NameError: name 'action_taken' is not defined
+        try:
+            result = log_athena_scan(
+                outcome=ScanOutcome.NO_TRADE,
+                decision_summary="Test ATHENA summary",
+                full_reasoning="ATHENA full reasoning",
+                action_taken="ATHENA action taken",
+                error_type="ATHENA_ERROR",
+                generate_ai_explanation=False
+            )
+            print(f"\n[PASS] log_athena_scan accepts action_taken/error_type kwargs without error")
+        except NameError as e:
+            raise AssertionError(f"Undefined variable bug not fixed: {e}")
+        except TypeError as e:
+            if "multiple values" in str(e):
+                raise AssertionError(f"kwargs bug not fixed: {e}")
+            raise
+
 
 class TestAPIRoutes:
     """Test the API routes return correct format"""

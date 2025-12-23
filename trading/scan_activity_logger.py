@@ -783,8 +783,11 @@ def log_athena_scan(
     If generate_ai_explanation is True, uses Claude to create a detailed
     human-readable explanation of WHY this decision was made.
     """
-    # Pop full_reasoning from kwargs to avoid "multiple values" error when passing **kwargs
+    # Pop parameters from kwargs to avoid "multiple values" error when passing **kwargs
+    # CRITICAL: Must pop ALL params that are explicitly passed to log_scan_activity
     full_reasoning = kwargs.pop('full_reasoning', '')
+    action_taken = kwargs.pop('action_taken', '')
+    error_type = kwargs.pop('error_type', '')
 
     # Generate AI explanation if requested and we have enough context
     if generate_ai_explanation and market_data:
