@@ -194,6 +194,34 @@ Market Conditions:
     if context.market.distance_to_put_wall_pct:
         market_str += f"\n- Distance to Put Wall: {context.market.distance_to_put_wall_pct:.1f}%"
 
+    # PRE-CALCULATE trigger prices for R:R ratio (Claude is bad at math!)
+    rr_trigger_info = ""
+    if context.market.call_wall and context.market.put_wall and context.market.underlying_price:
+        call_wall = context.market.call_wall
+        put_wall = context.market.put_wall
+        spot = context.market.underlying_price
+
+        # For BULLISH 1.5:1: 1.5 = (call_wall - x) / (x - put_wall) => x = (call_wall + 1.5*put_wall) / 2.5
+        bullish_target = (call_wall + 1.5 * put_wall) / 2.5
+        # For BEARISH 1.5:1: 1.5 = (x - put_wall) / (call_wall - x) => x = (1.5*call_wall + put_wall) / 2.5
+        bearish_target = (1.5 * call_wall + put_wall) / 2.5
+
+        # Current R:R calculations
+        reward_bullish = call_wall - spot
+        risk_bullish = spot - put_wall
+        current_rr_bullish = reward_bullish / risk_bullish if risk_bullish > 0 else 0
+
+        reward_bearish = spot - put_wall
+        risk_bearish = call_wall - spot
+        current_rr_bearish = reward_bearish / risk_bearish if risk_bearish > 0 else 0
+
+        rr_trigger_info = f"""
+PRE-CALCULATED R:R TRIGGER PRICES (use these exact numbers):
+- Current BULLISH R:R: {current_rr_bullish:.2f}:1 (need 1.5:1)
+- Current BEARISH R:R: {current_rr_bearish:.2f}:1 (need 1.5:1)
+- For BULLISH 1.5:1 R:R: Price needs to be at ${bullish_target:.2f} (current: ${spot:.2f})
+- For BEARISH 1.5:1 R:R: Price needs to be at ${bearish_target:.2f} (current: ${spot:.2f})"""
+
     # Build signal context string
     signal_str = ""
     if context.signal:
@@ -243,6 +271,7 @@ Decision: {context.decision_type.value}
 {checks_str}
 {trade_str}
 {error_str}
+{rr_trigger_info}
 
 Provide a clear, detailed explanation in this EXACT format:
 
@@ -250,14 +279,14 @@ SUMMARY: [One sentence explaining what happened and the main reason why - be spe
 
 EXPLANATION: [3-4 sentences with specific numbers explaining the decision. For NO_TRADE, explain which check failed and the exact values. For TRADED, explain why conditions were favorable.]
 
-WHAT_WOULD_TRIGGER_TRADE: [If NO_TRADE: Specific conditions that would need to change - e.g., "SPY would need to drop to $588 (closer to put wall) for a 1.5:1 R:R ratio" or "VIX would need to rise above 20 for higher premium". If TRADED: "N/A - trade executed"]
+WHAT_WOULD_TRIGGER_TRADE: [If NO_TRADE and R:R failed: Use the EXACT pre-calculated trigger prices from above - do NOT calculate your own! If TRADED: "N/A - trade executed"]
 
 MARKET_INSIGHT: [One sentence of actionable insight - what to watch for next scan, or pattern you notice in the data]
 
 Rules:
 - Use ACTUAL numbers from the data (prices, percentages, ratios)
 - Be direct and specific - traders want facts, not fluff
-- For R:R failures: calculate exactly where price would need to be
+- CRITICAL: For R:R failures, use the PRE-CALCULATED trigger prices provided above - do NOT make up prices!
 - For signal failures: state exact confidence/probability that's missing
 - Always explain the WHY behind the decision"""
 
