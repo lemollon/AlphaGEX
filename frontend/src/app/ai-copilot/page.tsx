@@ -1,11 +1,9 @@
 'use client'
 
-import { logger } from '@/lib/logger'
-
 import { useState, useRef, useEffect } from 'react'
 import { MessageSquare, Send, Sparkles, TrendingUp, BarChart3, Zap, Clock, User, Bot } from 'lucide-react'
-import Navigation from '@/components/Navigation'
-import { apiClient } from '@/lib/api'
+import Navigation from '../../components/Navigation'
+import { apiClient } from '../../lib/api'
 
 // GEXIS Configuration
 const GEXIS_NAME = 'GEXIS'
@@ -109,7 +107,7 @@ export default function AICopilot() {
         throw new Error('Analysis service returned no data')
       }
     } catch (error: any) {
-      logger.error('Error getting AI response:', error)
+      console.error('Error getting AI response:', error)
 
       // Show GEXIS-style error with retry option
       const errorType = error?.type || 'unknown'
