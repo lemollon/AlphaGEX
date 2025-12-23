@@ -130,6 +130,18 @@ except ImportError:
     BotLogMarketContext = None
     ClaudeContext = None
 
+# Import scan activity logger for comprehensive scan-by-scan visibility
+try:
+    from trading.scan_activity_logger import (
+        log_athena_scan, ScanOutcome, CheckResult
+    )
+    SCAN_LOGGER_AVAILABLE = True
+except ImportError:
+    SCAN_LOGGER_AVAILABLE = False
+    log_athena_scan = None
+    ScanOutcome = None
+    CheckResult = None
+
 # Import unified data provider
 try:
     from data.unified_data_provider import (
@@ -2348,6 +2360,26 @@ class ATHENATrader:
             self._log_skip_decision(reason)
             result['errors'].append(reason)
             result['decision_reason'] = f"SKIP: {reason}"
+            # Log scan activity - SKIP REASON
+            if SCAN_LOGGER_AVAILABLE and log_athena_scan:
+                # Determine outcome based on reason
+                if "market" in reason.lower() or "closed" in reason.lower():
+                    outcome = ScanOutcome.MARKET_CLOSED
+                elif "window" in reason.lower() or "before" in reason.lower():
+                    outcome = ScanOutcome.BEFORE_WINDOW
+                elif "max" in reason.lower() or "limit" in reason.lower():
+                    outcome = ScanOutcome.SKIP
+                else:
+                    outcome = ScanOutcome.SKIP
+                log_athena_scan(
+                    outcome=outcome,
+                    decision_summary=f"Skipping: {reason}",
+                    action_taken="No trade - conditions not met",
+                    full_reasoning=f"ATHENA pre-trade check failed: {reason}",
+                    checks=[
+                        CheckResult("should_trade", False, "No", "Yes", reason)
+                    ]
+                )
             return result
 
         # Get GEX data first (needed for both ML and Oracle)
@@ -2356,6 +2388,20 @@ class ATHENATrader:
             self._log_skip_decision("No GEX data available")
             result['errors'].append("No GEX data")
             result['decision_reason'] = "SKIP: No GEX data available"
+            # Log scan activity - NO GEX DATA
+            if SCAN_LOGGER_AVAILABLE and log_athena_scan:
+                log_athena_scan(
+                    outcome=ScanOutcome.ERROR,
+                    decision_summary="No GEX data available from Kronos",
+                    action_taken="Will retry on next scan",
+                    full_reasoning="ATHENA requires GEX wall data to identify directional opportunities. Kronos/Tradier GEX calculator did not return data.",
+                    error_message="GEX data unavailable",
+                    error_type="GEX_DATA_ERROR",
+                    checks=[
+                        CheckResult("should_trade", True, "Yes", "Yes", "Trade conditions met"),
+                        CheckResult("gex_data", False, "None", "Required", "No GEX data returned")
+                    ]
+                )
             return result
 
         # Store GEX context for logging
@@ -2494,6 +2540,28 @@ class ATHENATrader:
             self._log_skip_decision(skip_reason, gex_data, ml_signal)
             result['errors'].append("No actionable signal")
             result['decision_reason'] = f"NO TRADE: {skip_reason}"
+            # Log scan activity - NO ACTIONABLE SIGNAL
+            if SCAN_LOGGER_AVAILABLE and log_athena_scan:
+                log_athena_scan(
+                    outcome=ScanOutcome.NO_TRADE,
+                    decision_summary=skip_reason,
+                    action_taken="No trade - signals not actionable",
+                    full_reasoning=f"Both ML and Oracle signals were evaluated but neither provided an actionable trade signal. {', '.join(skip_details)}",
+                    gex_data=gex_data,
+                    signal_source="ML+Oracle",
+                    signal_direction=ml_signal.get('model_predictions', {}).get('direction', 'UNKNOWN') if ml_signal else "UNKNOWN",
+                    signal_confidence=ml_signal['confidence'] if ml_signal else 0,
+                    signal_win_probability=ml_signal['win_probability'] if ml_signal else 0,
+                    oracle_advice=oracle_advice.advice.value if oracle_advice and hasattr(oracle_advice.advice, 'value') else "N/A",
+                    oracle_reasoning=oracle_advice.reasoning if oracle_advice else "Oracle not consulted",
+                    checks=[
+                        CheckResult("should_trade", True, "Yes", "Yes", "Trade conditions met"),
+                        CheckResult("gex_data", True, f"Spot ${gex_data.get('spot_price', 0):.2f}", "Required", "GEX data available"),
+                        CheckResult("ml_signal", ml_signal is not None, ml_signal['advice'] if ml_signal else "None", "Actionable", "ML signal evaluated"),
+                        CheckResult("oracle_signal", oracle_advice is not None, advice_str if oracle_advice else "None", "Actionable", "Oracle evaluated"),
+                        CheckResult("actionable_signal", False, "None", "Required", "No actionable signal from either source")
+                    ]
+                )
             # Still check exits
             closed = self.check_exits()
             result['positions_closed'] = len(closed)
@@ -2593,8 +2661,63 @@ class ATHENATrader:
                 f"R:R: {rr_ratio:.2f}:1"
             )
             self._log_to_db("INFO", f"Trade executed: {position.position_id} ({signal_source})")
+            # Log scan activity - TRADE EXECUTED
+            if SCAN_LOGGER_AVAILABLE and log_athena_scan:
+                log_athena_scan(
+                    outcome=ScanOutcome.TRADED,
+                    decision_summary=f"Executed {spread_type.value}: {position.long_strike}/{position.short_strike} x{position.contracts}",
+                    action_taken=f"Opened {spread_type.value} spread",
+                    full_reasoning=f"All conditions met. Signal: {signal_source}. R:R ratio: {rr_ratio:.2f}:1. Confidence: {advice_obj.confidence:.0%}. Win probability: {advice_obj.win_probability:.0%}.",
+                    gex_data=gex_data,
+                    signal_source=signal_source,
+                    signal_direction="BULLISH" if spread_type == SpreadType.BULL_CALL_SPREAD else "BEARISH",
+                    signal_confidence=advice_obj.confidence,
+                    signal_win_probability=advice_obj.win_probability,
+                    oracle_advice=oracle_advice.advice.value if oracle_advice and hasattr(oracle_advice.advice, 'value') else "N/A",
+                    oracle_reasoning=advice_obj.reasoning,
+                    trade_executed=True,
+                    position_id=position.position_id,
+                    strike_selection={
+                        'long_strike': position.long_strike,
+                        'short_strike': position.short_strike,
+                        'spread_type': spread_type.value,
+                        'rr_ratio': rr_ratio
+                    },
+                    contracts=position.contracts,
+                    premium_collected=abs(position.entry_debit) * 100 * position.contracts if position.entry_debit < 0 else 0,
+                    max_risk=position.max_loss,
+                    checks=[
+                        CheckResult("should_trade", True, "Yes", "Yes", "Trade conditions met"),
+                        CheckResult("gex_data", True, f"Spot ${gex_data.get('spot_price', 0):.2f}", "Required", "Available"),
+                        CheckResult("signal", True, signal_source, "Actionable", f"{signal_source} signal received"),
+                        CheckResult("rr_ratio", True, f"{rr_ratio:.2f}:1", f">={self.config.min_rr_ratio}:1", "R:R filter passed"),
+                        CheckResult("execution", True, position.position_id, "Required", "Order filled successfully")
+                    ]
+                )
         else:
             result['decision_reason'] = "NO TRADE: Execution failed"
+            # Log scan activity - EXECUTION FAILED
+            if SCAN_LOGGER_AVAILABLE and log_athena_scan:
+                log_athena_scan(
+                    outcome=ScanOutcome.ERROR,
+                    decision_summary="Spread execution failed",
+                    action_taken="Order rejected or failed - will retry",
+                    full_reasoning=f"All conditions met but order execution failed. Spread type: {spread_type.value if spread_type else 'Unknown'}. R:R: {rr_ratio:.2f}:1.",
+                    gex_data=gex_data,
+                    signal_source=signal_source,
+                    signal_direction="BULLISH" if spread_type == SpreadType.BULL_CALL_SPREAD else "BEARISH" if spread_type else "UNKNOWN",
+                    signal_confidence=advice_obj.confidence if advice_obj else 0,
+                    signal_win_probability=advice_obj.win_probability if advice_obj else 0,
+                    error_message="Order execution failed via Tradier API",
+                    error_type="EXECUTION_ERROR",
+                    checks=[
+                        CheckResult("should_trade", True, "Yes", "Yes", "Trade conditions met"),
+                        CheckResult("gex_data", True, f"Spot ${gex_data.get('spot_price', 0):.2f}", "Required", "Available"),
+                        CheckResult("signal", True, signal_source, "Actionable", "Signal received"),
+                        CheckResult("rr_ratio", True, f"{rr_ratio:.2f}:1", f">={self.config.min_rr_ratio}:1", "Passed"),
+                        CheckResult("execution", False, "Failed", "Required", "Order execution failed")
+                    ]
+                )
 
         # Check exits for existing positions
         closed = self.check_exits()
