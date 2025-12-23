@@ -62,6 +62,7 @@ from backend.api.routes import (
     prometheus_routes,  # PROMETHEUS - Enhanced ML system for SPX Wheel
     argus_routes,  # ARGUS - 0DTE Gamma Live real-time visualization
     data_transparency_routes,  # Data Transparency - expose ALL hidden collected data
+    docs_routes,  # Documentation - codebase search and source code retrieval
 )
 
 # ============================================================================
@@ -290,7 +291,8 @@ app.include_router(daily_manna_routes.router)
 app.include_router(prometheus_routes.router)
 app.include_router(argus_routes.router)
 app.include_router(data_transparency_routes.router)
-print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, ares, daily-manna, prometheus, argus")
+app.include_router(docs_routes.router)
+print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, ares, daily-manna, prometheus, argus, docs")
 
 # Initialize existing AlphaGEX components (singleton pattern)
 api_client = TradingVolatilityAPI()
