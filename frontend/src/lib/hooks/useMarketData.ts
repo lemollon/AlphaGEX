@@ -240,6 +240,19 @@ const fetchers = {
     const response = await apiClient.getOraclePredictions(params)
     return response.data
   },
+  // NEW: Full transparency data
+  oracleDataFlows: async (params?: { limit?: number; bot_name?: string }) => {
+    const response = await apiClient.getOracleDataFlows(params)
+    return response.data
+  },
+  oracleClaudeExchanges: async (params?: { limit?: number; bot_name?: string }) => {
+    const response = await apiClient.getOracleClaudeExchanges(params)
+    return response.data
+  },
+  oracleFullTransparency: async (bot_name?: string) => {
+    const response = await apiClient.getOracleFullTransparency(bot_name)
+    return response.data
+  },
 
   // ML System
   mlStatus: async () => {
@@ -815,7 +828,7 @@ export function useScannerHistory(limit: number = 10, options?: SWRConfiguration
 export function useOracleStatus(options?: SWRConfiguration) {
   return useSWR('oracle-status', fetchers.oracleStatus, {
     ...swrConfig,
-    refreshInterval: 60 * 1000,
+    refreshInterval: 30 * 1000,  // Refresh every 30 seconds for fresher heartbeats
     ...options,
   })
 }
@@ -823,7 +836,7 @@ export function useOracleStatus(options?: SWRConfiguration) {
 export function useOracleLogs(options?: SWRConfiguration) {
   return useSWR('oracle-logs', fetchers.oracleLogs, {
     ...swrConfig,
-    refreshInterval: 60 * 1000,
+    refreshInterval: 15 * 1000,  // Refresh every 15 seconds for live logs
     ...options,
   })
 }
@@ -832,7 +845,32 @@ export function useOraclePredictions(days: number = 30, limit: number = 100, opt
   return useSWR(
     `oracle-predictions-${days}-${limit}`,
     () => fetchers.oraclePredictions({ days, limit }),
-    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...options }
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+// NEW: Full transparency hooks with auto-refresh
+export function useOracleDataFlows(limit: number = 50, bot_name?: string, options?: SWRConfiguration) {
+  return useSWR(
+    `oracle-data-flows-${limit}-${bot_name || 'all'}`,
+    () => fetchers.oracleDataFlows({ limit, bot_name }),
+    { ...swrConfig, refreshInterval: 30 * 1000, ...options }
+  )
+}
+
+export function useOracleClaudeExchanges(limit: number = 20, bot_name?: string, options?: SWRConfiguration) {
+  return useSWR(
+    `oracle-claude-exchanges-${limit}-${bot_name || 'all'}`,
+    () => fetchers.oracleClaudeExchanges({ limit, bot_name }),
+    { ...swrConfig, refreshInterval: 30 * 1000, ...options }
+  )
+}
+
+export function useOracleFullTransparency(bot_name?: string, options?: SWRConfiguration) {
+  return useSWR(
+    `oracle-full-transparency-${bot_name || 'all'}`,
+    () => fetchers.oracleFullTransparency(bot_name),
+    { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
 }
 

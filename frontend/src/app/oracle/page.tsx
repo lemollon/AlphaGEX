@@ -5,7 +5,7 @@ import { Eye, Brain, Activity, RefreshCw, Trash2, CheckCircle, XCircle, AlertCir
 import Navigation from '@/components/Navigation'
 import DecisionLogViewer from '@/components/trader/DecisionLogViewer'
 import { apiClient } from '@/lib/api'
-import { useOracleStatus, useOracleLogs } from '@/lib/hooks/useMarketData'
+import { useOracleStatus, useOracleLogs, useOracleFullTransparency } from '@/lib/hooks/useMarketData'
 
 interface BotHeartbeat {
   last_scan: string | null
@@ -126,9 +126,11 @@ function formatTexasCentralDateTime(isoTimestamp: string): string {
   }
 }
 
-// Expandable Claude Analysis Component
+// Expandable Claude Analysis Component with FULL TRANSPARENCY
 function ClaudeAnalysisPanel({ analysis }: { analysis: any }) {
   const [expanded, setExpanded] = useState(false)
+  const [showRawPrompt, setShowRawPrompt] = useState(false)
+  const [showRawResponse, setShowRawResponse] = useState(false)
 
   if (!analysis) return null
 
@@ -149,7 +151,7 @@ function ClaudeAnalysisPanel({ analysis }: { analysis: any }) {
           {analysis.recommendation && (
             <div>
               <span className="text-text-muted">Recommendation:</span>
-              <p className="text-text-primary">{analysis.recommendation}</p>
+              <p className="text-text-primary font-bold">{analysis.recommendation}</p>
             </div>
           )}
           {analysis.confidence_adjustment != null && (
@@ -192,6 +194,44 @@ function ClaudeAnalysisPanel({ analysis }: { analysis: any }) {
               <p className="text-text-secondary mt-1 whitespace-pre-wrap">{analysis.analysis}</p>
             </div>
           )}
+
+          {/* RAW PROMPT/RESPONSE TRANSPARENCY */}
+          {analysis.raw_prompt && (
+            <div className="border-t border-border pt-3 mt-3">
+              <button
+                onClick={() => setShowRawPrompt(!showRawPrompt)}
+                className="flex items-center gap-2 text-blue-400 hover:text-blue-300 text-xs font-medium"
+              >
+                <MessageSquare className="w-3 h-3" />
+                {showRawPrompt ? 'Hide' : 'Show'} Raw Prompt Sent to Claude
+                {showRawPrompt ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+              </button>
+              {showRawPrompt && (
+                <div className="mt-2 bg-gray-900 rounded-lg p-3 max-h-60 overflow-y-auto">
+                  <pre className="text-xs text-gray-300 whitespace-pre-wrap font-mono">{analysis.raw_prompt}</pre>
+                </div>
+              )}
+            </div>
+          )}
+
+          {analysis.raw_response && (
+            <div className="pt-2">
+              <button
+                onClick={() => setShowRawResponse(!showRawResponse)}
+                className="flex items-center gap-2 text-purple-400 hover:text-purple-300 text-xs font-medium"
+              >
+                <Bot className="w-3 h-3" />
+                {showRawResponse ? 'Hide' : 'Show'} Raw Response from Claude
+                {showRawResponse ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+              </button>
+              {showRawResponse && (
+                <div className="mt-2 bg-purple-900/20 rounded-lg p-3 max-h-60 overflow-y-auto">
+                  <pre className="text-xs text-gray-300 whitespace-pre-wrap font-mono">{analysis.raw_response}</pre>
+                </div>
+              )}
+            </div>
+          )}
+
           {analysis.tokens_used && (
             <div className="text-text-muted text-xs border-t border-border pt-2 mt-2">
               Tokens: {analysis.input_tokens} in / {analysis.output_tokens} out |
@@ -209,17 +249,20 @@ export default function OraclePage() {
   // SWR hooks for data fetching with caching
   const { data: statusRes, error: statusError, isLoading: statusLoading, isValidating: statusValidating, mutate: mutateStatus } = useOracleStatus()
   const { data: logsRes, isValidating: logsValidating, mutate: mutateLogs } = useOracleLogs()
+  const { data: transparencyRes, isValidating: transparencyValidating, mutate: mutateTransparency } = useOracleFullTransparency()
 
   // Extract data from responses
   const status = statusRes?.oracle as OracleStatus | undefined
   const botHeartbeats = (statusRes?.bot_heartbeats || {}) as Record<string, BotHeartbeat>
   const logs = (logsRes?.logs || []) as LogEntry[]
+  const dataFlows = (transparencyRes?.data_flows || []) as any[]
+  const claudeExchanges = (transparencyRes?.claude_exchanges || []) as any[]
 
   const loading = statusLoading && !status
-  const isRefreshing = statusValidating || logsValidating
+  const isRefreshing = statusValidating || logsValidating || transparencyValidating
 
   // Local state
-  const [activeTab, setActiveTab] = useState<'interactions' | 'performance' | 'training' | 'logs' | 'decisions'>('interactions')
+  const [activeTab, setActiveTab] = useState<'interactions' | 'performance' | 'training' | 'logs' | 'decisions' | 'dataflow'>('interactions')
   const [botInteractions, setBotInteractions] = useState<BotInteraction[]>([])
   const [trainingStatus, setTrainingStatus] = useState<TrainingStatus | null>(null)
   const [performance, setPerformance] = useState<PerformanceData | null>(null)
@@ -578,6 +621,20 @@ export default function OraclePage() {
             >
               <FileText className="w-4 h-4" />
               Decision Log
+            </button>
+            <button
+              onClick={() => setActiveTab('dataflow')}
+              className={`px-4 py-2 rounded-lg font-medium flex items-center gap-2 ${
+                activeTab === 'dataflow' ? 'bg-purple-600 text-white' : 'bg-background-card text-text-secondary hover:bg-background-hover'
+              }`}
+            >
+              <Eye className="w-4 h-4" />
+              Data Flow
+              {(dataFlows.length > 0 || claudeExchanges.length > 0) && (
+                <span className="text-xs bg-green-500/30 text-green-300 px-1.5 py-0.5 rounded">
+                  {dataFlows.length + claudeExchanges.length}
+                </span>
+              )}
             </button>
           </div>
 
@@ -1099,6 +1156,205 @@ export default function OraclePage() {
                 ORACLE Decision Log
               </h3>
               <DecisionLogViewer defaultBot="ORACLE" />
+            </div>
+          )}
+
+          {/* Data Flow Tab - FULL TRANSPARENCY */}
+          {activeTab === 'dataflow' && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-semibold text-text-primary flex items-center gap-2">
+                    <Eye className="w-5 h-5 text-cyan-400" />
+                    Oracle Data Flow - Full Transparency
+                  </h3>
+                  <p className="text-text-muted text-sm mt-1">
+                    Complete visibility into all data passing through Oracle - inputs, ML outputs, Claude exchanges, and final decisions
+                  </p>
+                </div>
+                <button
+                  onClick={() => mutateTransparency()}
+                  disabled={transparencyValidating}
+                  className="btn-secondary flex items-center gap-2"
+                >
+                  <RefreshCw className={`w-4 h-4 ${transparencyValidating ? 'animate-spin' : ''}`} />
+                  Refresh
+                </button>
+              </div>
+
+              {/* Claude AI Exchanges - Full Prompt/Response */}
+              <div className="card">
+                <h4 className="text-md font-semibold text-purple-300 mb-4 flex items-center gap-2">
+                  <Sparkles className="w-5 h-5" />
+                  Claude AI Exchanges ({claudeExchanges.length})
+                  <span className="text-xs text-text-muted font-normal ml-2">Full prompt/response pairs</span>
+                </h4>
+                {claudeExchanges.length === 0 ? (
+                  <div className="text-center py-8 text-text-muted">
+                    <MessageSquare className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                    <p>No Claude AI exchanges recorded yet.</p>
+                    <p className="text-xs mt-1">Exchanges will appear when bots consult Claude for validation.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-4 max-h-[600px] overflow-y-auto">
+                    {claudeExchanges.slice().reverse().map((exchange: any, idx: number) => (
+                      <div key={idx} className="bg-gray-900/50 rounded-lg border border-purple-500/20 overflow-hidden">
+                        {/* Header */}
+                        <div className="px-4 py-2 bg-purple-500/10 flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <span className={`px-2 py-1 rounded text-xs font-bold ${getBotColor(exchange.bot_name)}`}>
+                              {exchange.bot_name}
+                            </span>
+                            <span className="text-text-muted text-xs">
+                              {formatTexasCentralDateTime(exchange.timestamp)}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-4 text-xs text-text-muted">
+                            <span>{exchange.tokens_used} tokens</span>
+                            <span>{exchange.response_time_ms}ms</span>
+                            <span className="text-purple-400">{exchange.model}</span>
+                          </div>
+                        </div>
+
+                        {/* Market Context */}
+                        <div className="px-4 py-3 border-b border-gray-700">
+                          <p className="text-xs text-cyan-400 font-semibold mb-2">MARKET CONTEXT:</p>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                            <div>
+                              <span className="text-text-muted">Spot:</span>
+                              <span className="ml-1 text-text-primary">${exchange.market_context?.spot_price?.toFixed(2)}</span>
+                            </div>
+                            <div>
+                              <span className="text-text-muted">VIX:</span>
+                              <span className="ml-1 text-text-primary">{exchange.market_context?.vix?.toFixed(2)}</span>
+                            </div>
+                            <div>
+                              <span className="text-text-muted">GEX Regime:</span>
+                              <span className={`ml-1 font-medium ${
+                                exchange.market_context?.gex_regime === 'POSITIVE' ? 'text-green-400' :
+                                exchange.market_context?.gex_regime === 'NEGATIVE' ? 'text-red-400' : 'text-yellow-400'
+                              }`}>{exchange.market_context?.gex_regime}</span>
+                            </div>
+                            <div>
+                              <span className="text-text-muted">Between Walls:</span>
+                              <span className={`ml-1 ${exchange.market_context?.gex_between_walls ? 'text-green-400' : 'text-red-400'}`}>
+                                {exchange.market_context?.gex_between_walls ? 'Yes' : 'No'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* ML Prediction */}
+                        <div className="px-4 py-3 border-b border-gray-700">
+                          <p className="text-xs text-yellow-400 font-semibold mb-2">ML PREDICTION:</p>
+                          <div className="grid grid-cols-2 gap-2 text-xs">
+                            <div>
+                              <span className="text-text-muted">Win Probability:</span>
+                              <span className="ml-1 text-text-primary font-bold">
+                                {((exchange.ml_prediction?.win_probability || 0) * 100).toFixed(1)}%
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-text-muted">Top Factors:</span>
+                              <span className="ml-1 text-text-primary">
+                                {Array.isArray(exchange.ml_prediction?.top_factors)
+                                  ? exchange.ml_prediction.top_factors.slice(0, 3).map((f: any) =>
+                                      typeof f === 'object' ? f[0] : f
+                                    ).join(', ')
+                                  : 'N/A'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Full Prompt */}
+                        <div className="px-4 py-3 border-b border-gray-700">
+                          <p className="text-xs text-blue-400 font-semibold mb-2">PROMPT SENT TO CLAUDE:</p>
+                          <div className="bg-gray-900 rounded p-3 max-h-40 overflow-y-auto">
+                            <pre className="text-xs text-gray-300 whitespace-pre-wrap font-mono">
+                              {exchange.prompt_sent}
+                            </pre>
+                          </div>
+                        </div>
+
+                        {/* Full Response */}
+                        <div className="px-4 py-3">
+                          <p className="text-xs text-purple-400 font-semibold mb-2">RESPONSE FROM CLAUDE:</p>
+                          <div className="bg-purple-900/20 rounded p-3 max-h-40 overflow-y-auto">
+                            <pre className="text-xs text-gray-300 whitespace-pre-wrap font-mono">
+                              {exchange.response_received}
+                            </pre>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Data Flow Records */}
+              <div className="card">
+                <h4 className="text-md font-semibold text-cyan-300 mb-4 flex items-center gap-2">
+                  <Activity className="w-5 h-5" />
+                  Data Flow Pipeline ({dataFlows.length})
+                  <span className="text-xs text-text-muted font-normal ml-2">INPUT → ML_OUTPUT → DECISION stages</span>
+                </h4>
+                {dataFlows.length === 0 ? (
+                  <div className="text-center py-8 text-text-muted">
+                    <TrendingUp className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                    <p>No data flows recorded yet.</p>
+                    <p className="text-xs mt-1">Data will appear when Oracle processes predictions.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-[400px] overflow-y-auto">
+                    {dataFlows.slice().reverse().map((flow: any, idx: number) => (
+                      <div key={idx} className="flex items-start gap-4 p-3 bg-gray-900/30 rounded-lg hover:bg-gray-900/50 transition-colors">
+                        <div className="flex-shrink-0">
+                          <span className={`px-2 py-1 rounded text-xs font-bold ${getBotColor(flow.bot_name)}`}>
+                            {flow.bot_name}
+                          </span>
+                        </div>
+                        <div className="flex-shrink-0">
+                          <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                            flow.stage === 'INPUT' ? 'bg-cyan-500/20 text-cyan-400' :
+                            flow.stage === 'ML_OUTPUT' ? 'bg-yellow-500/20 text-yellow-400' :
+                            flow.stage === 'DECISION' ? 'bg-green-500/20 text-green-400' :
+                            'bg-gray-500/20 text-gray-400'
+                          }`}>
+                            {flow.stage}
+                          </span>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs text-text-muted mb-1">
+                            {formatTexasCentralDateTime(flow.timestamp)}
+                          </div>
+                          <pre className="text-xs text-text-secondary whitespace-pre-wrap overflow-x-auto">
+                            {JSON.stringify(flow.data, null, 2)}
+                          </pre>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Summary Stats */}
+              {transparencyRes?.summary && (
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="card text-center">
+                    <p className="text-text-muted text-sm">Total Logs</p>
+                    <p className="text-2xl font-bold text-text-primary">{transparencyRes.summary.total_logs}</p>
+                  </div>
+                  <div className="card text-center">
+                    <p className="text-text-muted text-sm">Data Flows</p>
+                    <p className="text-2xl font-bold text-cyan-400">{transparencyRes.summary.total_data_flows}</p>
+                  </div>
+                  <div className="card text-center">
+                    <p className="text-text-muted text-sm">Claude Exchanges</p>
+                    <p className="text-2xl font-bold text-purple-400">{transparencyRes.summary.total_claude_exchanges}</p>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
