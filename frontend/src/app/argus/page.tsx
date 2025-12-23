@@ -422,34 +422,44 @@ export default function ArgusPage() {
   const mediumPollRef = useRef<NodeJS.Timeout | null>(null)
   const slowPollRef = useRef<NodeJS.Timeout | null>(null)
 
+  // ALWAYS poll when autoRefresh is enabled - don't depend on gammaData state
+  // This ensures live updates regardless of API responses
   useEffect(() => {
-    // Auto-refresh when:
-    // 1. Auto-refresh is enabled, AND
-    // 2. Either market is open OR we're showing simulated data (to demonstrate it works)
-    if (autoRefresh && (!isMarketClosed || isMockData)) {
+    // Clear any existing intervals first
+    if (fastPollRef.current) clearInterval(fastPollRef.current)
+    if (mediumPollRef.current) clearInterval(mediumPollRef.current)
+    if (slowPollRef.current) clearInterval(slowPollRef.current)
+
+    if (autoRefresh) {
+      console.log('[ARGUS] Starting auto-refresh polling...')
+
       // Fast polling: Gamma data and danger zones every 15 seconds
       fastPollRef.current = setInterval(() => {
+        console.log('[ARGUS] Fast poll: fetching gamma data and danger zone logs')
         fetchGammaData(activeDay)
         fetchDangerZoneLogs()
-      }, FAST_POLL_INTERVAL)
+      }, 15000)
 
       // Medium polling: Alerts and context every 30 seconds
       mediumPollRef.current = setInterval(() => {
+        console.log('[ARGUS] Medium poll: fetching alerts and context')
         fetchAlerts()
         fetchContext()
-      }, MEDIUM_POLL_INTERVAL)
+      }, 30000)
 
       // Slow polling: Commentary every 60 seconds
       slowPollRef.current = setInterval(() => {
         fetchCommentary()
-      }, SLOW_POLL_INTERVAL)
+      }, 60000)
     }
+
     return () => {
       if (fastPollRef.current) clearInterval(fastPollRef.current)
       if (mediumPollRef.current) clearInterval(mediumPollRef.current)
       if (slowPollRef.current) clearInterval(slowPollRef.current)
     }
-  }, [autoRefresh, activeDay, isMarketClosed, isMockData, fetchGammaData, fetchAlerts, fetchContext, fetchCommentary, fetchDangerZoneLogs, FAST_POLL_INTERVAL, MEDIUM_POLL_INTERVAL, SLOW_POLL_INTERVAL])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRefresh, activeDay]) // Intentionally minimal deps - fetch functions are stable, avoid re-creating intervals
 
   const handleDayChange = (day: string) => {
     setActiveDay(day)
