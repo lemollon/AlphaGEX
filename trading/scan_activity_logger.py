@@ -562,11 +562,12 @@ def get_recent_scans(
                 record['timestamp'] = record['timestamp'].isoformat()
             if record.get('date'):
                 record['date'] = str(record['date'])
-            # Convert Decimal to float for JSON
+            # Convert Decimal to float for JSON serialization
             for key in ['underlying_price', 'vix', 'expected_move', 'net_gex',
                         'call_wall', 'put_wall', 'distance_to_call_wall_pct',
                         'distance_to_put_wall_pct', 'signal_confidence',
-                        'signal_win_probability', 'premium_collected', 'max_risk']:
+                        'signal_win_probability', 'premium_collected', 'max_risk',
+                        'risk_reward_ratio']:
                 if record.get(key) is not None:
                     record[key] = float(record[key])
             results.append(record)

@@ -1757,6 +1757,37 @@ class ARESTrader:
         now = datetime.now(self.tz)
         today = now.strftime('%Y-%m-%d')
 
+        # Wrap entire cycle in try/except to ALWAYS log errors to scan_activity
+        try:
+            return self._run_daily_cycle_inner(now, today)
+        except Exception as e:
+            import traceback
+            error_tb = traceback.format_exc()
+            logger.error(f"[ARES] CRITICAL ERROR in run_daily_cycle: {e}")
+            logger.error(error_tb)
+
+            # Log the crash to scan_activity so it shows on frontend
+            if SCAN_LOGGER_AVAILABLE and log_ares_scan:
+                try:
+                    log_ares_scan(
+                        outcome=ScanOutcome.ERROR,
+                        decision_summary=f"CRASH: {str(e)[:200]}",
+                        action_taken="Bot crashed - will retry next scan",
+                        error_message=str(e),
+                        error_type="UNHANDLED_EXCEPTION",
+                        checks=[
+                            CheckResult("exception", False, str(e)[:100], "No errors", error_tb[:500])
+                        ],
+                        generate_ai_explanation=False  # Don't call Claude on crash
+                    )
+                except Exception as log_err:
+                    logger.error(f"[ARES] Failed to log crash to scan_activity: {log_err}")
+
+            # Re-raise so scheduler knows there was an error
+            raise
+
+    def _run_daily_cycle_inner(self, now: datetime, today: str) -> Dict:
+        """Inner implementation of run_daily_cycle - separated for error handling."""
         # Start a new scan cycle for session tracking
         scan_number = 1
         if self.session_tracker:
