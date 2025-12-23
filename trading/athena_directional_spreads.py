@@ -3162,6 +3162,7 @@ class ATHENATrader:
                     pass
 
             # Fallback: try to get from database
+            conn = None
             try:
                 conn = get_connection()
                 c = conn.cursor()
@@ -3171,11 +3172,13 @@ class ATHENATrader:
                     LIMIT 1
                 """, (ticker, for_date))
                 row = c.fetchone()
-                conn.close()
                 if row:
                     return float(row[0])
             except Exception:
                 pass
+            finally:
+                if conn:
+                    conn.close()
 
             return None
         except Exception as e:
@@ -3190,6 +3193,7 @@ class ATHENATrader:
         service downtime or errors.
         """
         positions = []
+        conn = None
         try:
             conn = get_connection()
             cursor = conn.cursor()
@@ -3231,11 +3235,13 @@ class ATHENATrader:
                 positions.append(pos)
                 logger.info(f"ATHENA EOD: Found expired position {pos.position_id} from {pos.expiration}")
 
-            conn.close()
             logger.info(f"ATHENA EOD: Found {len(positions)} expired positions in database")
 
         except Exception as e:
             logger.error(f"ATHENA EOD: Error loading expired positions from DB: {e}")
+        finally:
+            if conn:
+                conn.close()
 
         return positions
 
