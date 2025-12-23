@@ -492,6 +492,53 @@ class ARESTrader:
             logger.error(f"ARES: Error getting market data: {e}")
             return None
 
+    def _get_gex_data(self) -> Dict:
+        """
+        Get current GEX data from database for logging and AI explanations.
+
+        Returns:
+            Dict with net_gex, call_wall, put_wall, gex_flip_point, regime
+        """
+        gex_data = {
+            'net_gex': 0,
+            'call_wall': 0,
+            'put_wall': 0,
+            'gex_flip_point': 0,
+            'regime': 'NEUTRAL'
+        }
+
+        try:
+            from database_adapter import get_connection
+            conn = get_connection()
+            c = conn.cursor()
+
+            # Get latest GEX data
+            c.execute("""
+                SELECT net_gex, call_wall, put_wall, gex_flip_point
+                FROM gex_data
+                WHERE symbol = 'SPY'
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """)
+            row = c.fetchone()
+            if row:
+                gex_data['net_gex'] = row[0] or 0
+                gex_data['call_wall'] = row[1] or 0
+                gex_data['put_wall'] = row[2] or 0
+                gex_data['gex_flip_point'] = row[3] or 0
+
+                # Determine regime
+                if gex_data['net_gex'] > 0:
+                    gex_data['regime'] = 'POSITIVE'
+                elif gex_data['net_gex'] < 0:
+                    gex_data['regime'] = 'NEGATIVE'
+
+            conn.close()
+        except Exception as e:
+            logger.debug(f"ARES: Could not fetch GEX data: {e}")
+
+        return gex_data
+
     def _build_oracle_context(self, market_data: Dict) -> Optional['OracleMarketContext']:
         """
         Build Oracle MarketContext from ARES market data.
@@ -1817,9 +1864,15 @@ class ARESTrader:
 
         result['market_data'] = market_data
 
+        # Get GEX data for logging and AI explanations
+        gex_data = self._get_gex_data()
+        result['gex_data'] = gex_data
+
         logger.info(f"  Underlying: ${market_data['underlying_price']:,.2f}")
         logger.info(f"  VIX: {market_data['vix']:.1f}")
         logger.info(f"  Expected Move (1 SD): ${market_data['expected_move']:.2f}")
+        if gex_data.get('net_gex'):
+            logger.info(f"  GEX: {gex_data['regime']} (Net: ${gex_data['net_gex']:,.0f})")
 
         # =========================================================================
         # CONSULT ORACLE AI FOR TRADING ADVICE
@@ -1867,17 +1920,18 @@ class ARESTrader:
                         outcome=ScanOutcome.NO_TRADE,
                         decision_summary=f"Oracle recommends SKIP: {oracle_advice.reasoning[:100]}",
                         action_taken="No trade - following Oracle AI advice",
-                        full_reasoning=f"Oracle AI analyzed market conditions and recommends skipping today. Win probability: {oracle_advice.win_probability:.1%}. Reasoning: {oracle_advice.reasoning}",
                         market_data=market_data,
+                        gex_data=gex_data,
                         signal_source="Oracle",
                         signal_confidence=oracle_advice.confidence if hasattr(oracle_advice, 'confidence') else 0,
                         signal_win_probability=oracle_advice.win_probability,
                         oracle_advice="SKIP_TODAY",
                         oracle_reasoning=oracle_advice.reasoning,
                         checks=[
-                            CheckResult("trading_window", True, now.strftime('%H:%M'), "09:35-15:30 ET", "Within window"),
+                            CheckResult("trading_window", True, now.strftime('%H:%M'), "09:35-15:30 CT", "Within window"),
                             CheckResult("daily_trade_limit", True, "0", "1 max", "No trade yet today"),
                             CheckResult("market_data", True, f"${market_data['underlying_price']:.2f}", "Required", "Market data available"),
+                            CheckResult("vix_level", True, f"{market_data['vix']:.1f}", "Informational", "Current volatility"),
                             CheckResult("oracle_approval", False, "SKIP", "TRADE", f"Oracle says skip: {oracle_advice.reasoning[:50]}")
                         ]
                     )
@@ -1974,18 +2028,20 @@ class ARESTrader:
                     outcome=ScanOutcome.NO_TRADE,
                     decision_summary=f"No suitable Iron Condor strikes found for {expiration}",
                     action_taken="Will retry on next scan",
-                    full_reasoning=f"Could not find suitable strikes at {effective_sd_mult:.2f} SD ({adjusted_expected_move:.0f} pts). This may be due to low liquidity or wide bid-ask spreads in the options chain.",
                     market_data=market_data,
+                    gex_data=gex_data,
                     signal_source="Oracle" if oracle_advice else "Config",
                     signal_confidence=oracle_advice.confidence if oracle_advice and hasattr(oracle_advice, 'confidence') else 0,
                     signal_win_probability=oracle_advice.win_probability if oracle_advice else 0,
                     oracle_advice=oracle_advice.advice.value if oracle_advice else "N/A",
                     oracle_reasoning=oracle_advice.reasoning if oracle_advice else "Oracle not available",
                     checks=[
-                        CheckResult("trading_window", True, now.strftime('%H:%M'), "09:35-15:30 ET", "Within window"),
+                        CheckResult("trading_window", True, now.strftime('%H:%M'), "09:35-15:30 CT", "Within window"),
                         CheckResult("market_data", True, f"${market_data['underlying_price']:.2f}", "Required", "Available"),
+                        CheckResult("vix_level", True, f"{market_data['vix']:.1f}", "Informational", "Current volatility"),
+                        CheckResult("expected_move", True, f"${market_data['expected_move']:.2f}", f"{effective_sd_mult:.2f} SD", f"Looking for strikes {adjusted_expected_move:.0f} pts OTM"),
                         CheckResult("oracle_approval", True if oracle_advice and oracle_advice.advice != TradingAdvice.SKIP_TODAY else False, "TRADE", "TRADE", "Oracle approved"),
-                        CheckResult("strikes_available", False, "None", "Required", "No suitable strikes found in chain")
+                        CheckResult("strikes_available", False, "None", "Required", "No suitable strikes found in chain - may need wider search or better liquidity")
                     ]
                 )
             return result
@@ -2034,8 +2090,8 @@ class ARESTrader:
                     outcome=ScanOutcome.TRADED,
                     decision_summary=f"Opened Iron Condor: {position.put_short_strike}P/{position.call_short_strike}C x{contracts}",
                     action_taken=f"Executed Iron Condor - collected ${position.total_credit * 100 * contracts:,.2f} premium",
-                    full_reasoning=f"All conditions met for Iron Condor entry. {gex_mode}. Oracle win probability: {oracle_advice.win_probability:.1%}." if oracle_advice else f"All conditions met for Iron Condor entry. {gex_mode}.",
                     market_data=market_data,
+                    gex_data=gex_data,
                     signal_source="Oracle" if oracle_advice else "Config",
                     signal_direction="NEUTRAL",
                     signal_confidence=oracle_advice.confidence if oracle_advice and hasattr(oracle_advice, 'confidence') else 0.68,
@@ -2056,11 +2112,12 @@ class ARESTrader:
                     premium_collected=position.total_credit * 100 * contracts,
                     max_risk=position.max_loss * 100 * contracts,
                     checks=[
-                        CheckResult("trading_window", True, now.strftime('%H:%M'), "09:35-15:30 ET", "Within window"),
+                        CheckResult("trading_window", True, now.strftime('%H:%M'), "09:35-15:30 CT", "Within window"),
                         CheckResult("daily_trade_limit", True, "0", "1 max", "First trade today"),
                         CheckResult("market_data", True, f"${market_data['underlying_price']:.2f}", "Required", "Available"),
-                        CheckResult("oracle_approval", True, "TRADE", "TRADE", "Oracle approved trade"),
-                        CheckResult("strikes_available", True, f"{position.put_short_strike}P/{position.call_short_strike}C", "Required", "Suitable strikes found"),
+                        CheckResult("vix_level", True, f"{market_data['vix']:.1f}", "Informational", f"VIX at {market_data['vix']:.1f} - good for premium selling"),
+                        CheckResult("oracle_approval", True, "TRADE", "TRADE", f"Oracle win probability: {oracle_advice.win_probability:.1%}" if oracle_advice else "Using defaults"),
+                        CheckResult("strikes_available", True, f"{position.put_short_strike}P/{position.call_short_strike}C", "Required", f"Using {gex_mode}"),
                         CheckResult("execution", True, position.position_id, "Required", "Order filled successfully")
                     ]
                 )
@@ -2084,13 +2141,13 @@ class ARESTrader:
                     outcome=ScanOutcome.ERROR,
                     decision_summary="Iron Condor execution failed",
                     action_taken="Order rejected or failed - will retry",
-                    full_reasoning=f"All conditions were met but order execution failed. Strikes: {ic_strikes['put_short_strike']}P/{ic_strikes['call_short_strike']}C. This may be due to insufficient buying power or API issues.",
                     market_data=market_data,
+                    gex_data=gex_data,
                     signal_source="Oracle" if oracle_advice else "Config",
                     signal_confidence=oracle_advice.confidence if oracle_advice and hasattr(oracle_advice, 'confidence') else 0,
                     signal_win_probability=oracle_advice.win_probability if oracle_advice else 0,
                     oracle_advice=oracle_advice.advice.value if oracle_advice else "N/A",
-                    error_message="Order execution failed via Tradier API",
+                    error_message="Order execution failed via Tradier API - check buying power and order status",
                     error_type="EXECUTION_ERROR",
                     strike_selection={
                         'put_long': ic_strikes['put_long_strike'],
@@ -2101,11 +2158,11 @@ class ARESTrader:
                     },
                     contracts=contracts,
                     checks=[
-                        CheckResult("trading_window", True, now.strftime('%H:%M'), "09:35-15:30 ET", "Within window"),
+                        CheckResult("trading_window", True, now.strftime('%H:%M'), "09:35-15:30 CT", "Within window"),
                         CheckResult("market_data", True, f"${market_data['underlying_price']:.2f}", "Required", "Available"),
                         CheckResult("oracle_approval", True, "TRADE", "TRADE", "Oracle approved"),
-                        CheckResult("strikes_available", True, "Found", "Required", "Suitable strikes found"),
-                        CheckResult("execution", False, "Failed", "Required", "Order execution failed")
+                        CheckResult("strikes_available", True, f"{ic_strikes['put_short_strike']}P/{ic_strikes['call_short_strike']}C", "Required", "Suitable strikes found"),
+                        CheckResult("execution", False, "Failed", "Required", "Order execution failed - check Tradier order status")
                     ]
                 )
 

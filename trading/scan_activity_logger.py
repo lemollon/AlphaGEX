@@ -548,20 +548,234 @@ def get_scan_summary(bot_name: Optional[str] = None, days: int = 7) -> Dict:
         return {}
 
 
-# Convenience functions for specific bots
+# Convenience functions for specific bots with AI explanations
 def log_ares_scan(
     outcome: ScanOutcome,
     decision_summary: str,
+    market_data: Optional[Dict] = None,
+    gex_data: Optional[Dict] = None,
+    checks: Optional[List[CheckResult]] = None,
+    signal_source: str = "",
+    signal_direction: str = "",
+    signal_confidence: float = 0,
+    signal_win_probability: float = 0,
+    oracle_advice: str = "",
+    oracle_reasoning: str = "",
+    trade_executed: bool = False,
+    error_message: str = "",
+    generate_ai_explanation: bool = True,
     **kwargs
 ) -> Optional[str]:
-    """Log ARES scan activity"""
-    return log_scan_activity(bot_name="ARES", outcome=outcome, decision_summary=decision_summary, **kwargs)
+    """
+    Log ARES scan activity with optional Claude AI explanation.
+
+    If generate_ai_explanation is True, uses Claude to create a detailed
+    human-readable explanation of WHY this decision was made.
+    """
+    full_reasoning = kwargs.get('full_reasoning', '')
+
+    # Generate AI explanation if requested and we have enough context
+    if generate_ai_explanation and market_data:
+        try:
+            from trading.scan_explainer import explain_ares_decision
+
+            # Convert checks to dict format
+            checks_list = []
+            if checks:
+                for check in checks:
+                    if isinstance(check, CheckResult):
+                        checks_list.append({
+                            'check_name': check.check_name,
+                            'passed': check.passed,
+                            'value': check.value,
+                            'threshold': check.threshold,
+                            'reason': check.reason
+                        })
+                    elif isinstance(check, dict):
+                        checks_list.append(check)
+
+            # Get scan number
+            scan_number = _get_scan_number_today("ARES")
+
+            # Get values from market/gex data
+            underlying_price = market_data.get('underlying_price', 0) or market_data.get('spot_price', 0)
+            vix = market_data.get('vix', 0)
+            expected_move = market_data.get('expected_move', 0)
+
+            net_gex = gex_data.get('net_gex', 0) if gex_data else 0
+            call_wall = gex_data.get('call_wall', 0) if gex_data else 0
+            put_wall = gex_data.get('put_wall', 0) if gex_data else 0
+
+            # Build trade details if traded
+            trade_details = None
+            if trade_executed:
+                trade_details = {
+                    'strategy': 'Iron Condor',
+                    'contracts': kwargs.get('contracts', 0),
+                    'premium_collected': kwargs.get('premium_collected', 0),
+                    'max_risk': kwargs.get('max_risk', 0)
+                }
+
+            # Generate explanation
+            explanation = explain_ares_decision(
+                scan_number=scan_number,
+                outcome=outcome.value,
+                underlying_price=underlying_price,
+                vix=vix,
+                checks=checks_list,
+                signal_source=signal_source or None,
+                signal_direction=signal_direction or None,
+                signal_confidence=signal_confidence or None,
+                signal_win_prob=signal_win_probability or None,
+                oracle_advice=oracle_advice or None,
+                oracle_reasoning=oracle_reasoning or None,
+                expected_move=expected_move or None,
+                net_gex=net_gex or None,
+                call_wall=call_wall or None,
+                put_wall=put_wall or None,
+                trade_details=trade_details,
+                error_message=error_message or None
+            )
+
+            # Use AI-generated summary and reasoning
+            decision_summary = explanation.get('summary', decision_summary)
+            full_reasoning = explanation.get('full_explanation', full_reasoning)
+
+            logger.info(f"[ARES] AI explanation generated: {decision_summary}")
+
+        except Exception as e:
+            logger.warning(f"Failed to generate AI explanation for ARES: {e}")
+            # Fall back to provided summary
+
+    return log_scan_activity(
+        bot_name="ARES",
+        outcome=outcome,
+        decision_summary=decision_summary,
+        full_reasoning=full_reasoning,
+        market_data=market_data,
+        gex_data=gex_data,
+        checks=checks,
+        signal_source=signal_source,
+        signal_direction=signal_direction,
+        signal_confidence=signal_confidence,
+        signal_win_probability=signal_win_probability,
+        oracle_advice=oracle_advice,
+        oracle_reasoning=oracle_reasoning,
+        trade_executed=trade_executed,
+        error_message=error_message,
+        **kwargs
+    )
 
 
 def log_athena_scan(
     outcome: ScanOutcome,
     decision_summary: str,
+    market_data: Optional[Dict] = None,
+    gex_data: Optional[Dict] = None,
+    checks: Optional[List[CheckResult]] = None,
+    signal_source: str = "",
+    signal_direction: str = "",
+    signal_confidence: float = 0,
+    signal_win_probability: float = 0,
+    trade_executed: bool = False,
+    error_message: str = "",
+    risk_reward_ratio: float = 0,
+    generate_ai_explanation: bool = True,
     **kwargs
 ) -> Optional[str]:
-    """Log ATHENA scan activity"""
-    return log_scan_activity(bot_name="ATHENA", outcome=outcome, decision_summary=decision_summary, **kwargs)
+    """
+    Log ATHENA scan activity with optional Claude AI explanation.
+
+    If generate_ai_explanation is True, uses Claude to create a detailed
+    human-readable explanation of WHY this decision was made.
+    """
+    full_reasoning = kwargs.get('full_reasoning', '')
+
+    # Generate AI explanation if requested and we have enough context
+    if generate_ai_explanation and market_data:
+        try:
+            from trading.scan_explainer import explain_athena_decision
+
+            # Convert checks to dict format
+            checks_list = []
+            if checks:
+                for check in checks:
+                    if isinstance(check, CheckResult):
+                        checks_list.append({
+                            'check_name': check.check_name,
+                            'passed': check.passed,
+                            'value': check.value,
+                            'threshold': check.threshold,
+                            'reason': check.reason
+                        })
+                    elif isinstance(check, dict):
+                        checks_list.append(check)
+
+            # Get scan number
+            scan_number = _get_scan_number_today("ATHENA")
+
+            # Get values from market/gex data
+            underlying_price = market_data.get('underlying_price', 0) or market_data.get('spot_price', 0)
+            vix = market_data.get('vix', 0)
+
+            net_gex = gex_data.get('net_gex', 0) if gex_data else 0
+            gex_regime = gex_data.get('regime', '') if gex_data else ''
+            call_wall = gex_data.get('call_wall', 0) if gex_data else 0
+            put_wall = gex_data.get('put_wall', 0) if gex_data else 0
+
+            # Build trade details if traded
+            trade_details = None
+            if trade_executed:
+                trade_details = {
+                    'strategy': kwargs.get('strategy', 'Directional Spread'),
+                    'contracts': kwargs.get('contracts', 0),
+                    'premium_collected': kwargs.get('premium_collected', 0),
+                    'max_risk': kwargs.get('max_risk', 0)
+                }
+
+            # Generate explanation
+            explanation = explain_athena_decision(
+                scan_number=scan_number,
+                outcome=outcome.value,
+                underlying_price=underlying_price,
+                vix=vix,
+                checks=checks_list,
+                signal_source=signal_source or None,
+                signal_direction=signal_direction or None,
+                signal_confidence=signal_confidence or None,
+                signal_win_prob=signal_win_probability or None,
+                net_gex=net_gex or None,
+                gex_regime=gex_regime or None,
+                call_wall=call_wall or None,
+                put_wall=put_wall or None,
+                risk_reward_ratio=risk_reward_ratio or None,
+                trade_details=trade_details,
+                error_message=error_message or None
+            )
+
+            # Use AI-generated summary and reasoning
+            decision_summary = explanation.get('summary', decision_summary)
+            full_reasoning = explanation.get('full_explanation', full_reasoning)
+
+            logger.info(f"[ATHENA] AI explanation generated: {decision_summary}")
+
+        except Exception as e:
+            logger.warning(f"Failed to generate AI explanation for ATHENA: {e}")
+            # Fall back to provided summary
+
+    return log_scan_activity(
+        bot_name="ATHENA",
+        outcome=outcome,
+        decision_summary=decision_summary,
+        full_reasoning=full_reasoning,
+        market_data=market_data,
+        gex_data=gex_data,
+        checks=checks,
+        signal_source=signal_source,
+        signal_direction=signal_direction,
+        signal_confidence=signal_confidence,
+        signal_win_probability=signal_win_probability,
+        trade_executed=trade_executed,
+        error_message=error_message,
+        **kwargs
+    )
