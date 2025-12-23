@@ -66,6 +66,7 @@ except ImportError as e:
 
 # Try to import Tradier data fetcher
 TRADIER_AVAILABLE = False
+TradierDataFetcher = None  # Define as None first
 try:
     from data.tradier_data_fetcher import TradierDataFetcher
     TRADIER_AVAILABLE = True
@@ -89,9 +90,9 @@ def get_engine() -> Optional[ArgusEngine]:
         return None
 
 
-def get_tradier() -> Optional[TradierDataFetcher]:
+def get_tradier():
     """Get the Tradier data fetcher instance"""
-    if not TRADIER_AVAILABLE:
+    if not TRADIER_AVAILABLE or TradierDataFetcher is None:
         return None
     try:
         return TradierDataFetcher()

@@ -36,7 +36,9 @@ services:
           property: connectionString
 
   # SERVICE 2: Autonomous Trader (Background Worker)
-  # Runs BOTH bots:
+  # Runs ALL trading bots:
+  #   - ARES: Aggressive Iron Condor (9:35 AM - 3:55 PM ET, once daily)
+  #   - ATHENA: GEX Directional Spreads (8:35 AM - 2:30 PM CT, every 5 min, up to 5/day)
   #   - PHOENIX: 0DTE SPY/SPX options (hourly during market hours)
   #   - ATLAS: SPX Wheel strategy (daily at 10:05 AM ET)
   - type: worker
@@ -53,6 +55,18 @@ services:
       - key: TV_USERNAME
         sync: false
       - key: TRADING_VOLATILITY_API_KEY
+        sync: false
+      # Tradier API for trade execution (REQUIRED for ARES/ATHENA)
+      - key: TRADIER_API_KEY
+        sync: false
+      - key: TRADIER_ACCOUNT_ID
+        sync: false
+      - key: TRADIER_SANDBOX_API_KEY
+        sync: false
+      - key: TRADIER_SANDBOX_ACCOUNT_ID
+        sync: false
+      # Anthropic API for Claude AI explanations
+      - key: ANTHROPIC_API_KEY
         sync: false
       - key: DATABASE_URL
         fromDatabase:
