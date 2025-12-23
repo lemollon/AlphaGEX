@@ -152,7 +152,7 @@ function ClaudeAnalysisPanel({ analysis }: { analysis: any }) {
               <p className="text-text-primary">{analysis.recommendation}</p>
             </div>
           )}
-          {analysis.confidence_adjustment !== undefined && (
+          {analysis.confidence_adjustment != null && (
             <div>
               <span className="text-text-muted">Confidence Adjustment:</span>
               <span className={`ml-2 font-medium ${analysis.confidence_adjustment >= 0 ? 'text-green-400' : 'text-red-400'}`}>
@@ -686,19 +686,19 @@ export default function OraclePage() {
 
                       {/* Metrics Row */}
                       <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-3">
-                        {interaction.win_probability !== undefined && (
+                        {interaction.win_probability != null && (
                           <div>
                             <p className="text-text-muted text-xs">Win Probability</p>
                             <p className="text-text-primary font-semibold">{(interaction.win_probability * 100).toFixed(1)}%</p>
                           </div>
                         )}
-                        {interaction.confidence !== undefined && (
+                        {interaction.confidence != null && (
                           <div>
                             <p className="text-text-muted text-xs">Confidence</p>
                             <p className="text-text-primary font-semibold">{interaction.confidence.toFixed(1)}%</p>
                           </div>
                         )}
-                        {interaction.vix !== undefined && (
+                        {interaction.vix != null && (
                           <div>
                             <p className="text-text-muted text-xs">VIX</p>
                             <p className="text-text-primary font-semibold">{interaction.vix.toFixed(2)}</p>
@@ -713,7 +713,7 @@ export default function OraclePage() {
                             }`}>{interaction.gex_regime}</p>
                           </div>
                         )}
-                        {interaction.actual_pnl !== undefined && (
+                        {interaction.actual_pnl != null && (
                           <div>
                             <p className="text-text-muted text-xs">P&L</p>
                             <p className={`font-semibold ${interaction.actual_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
