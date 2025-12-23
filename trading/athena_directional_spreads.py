@@ -2338,6 +2338,38 @@ class ATHENATrader:
         """Run the daily trading cycle using ML signals"""
         now = datetime.now(CENTRAL_TZ)
         scan_number = self.daily_trades + 1
+
+        # Wrap entire cycle in try/except to ALWAYS log errors to scan_activity
+        try:
+            return self._run_daily_cycle_inner(now, scan_number)
+        except Exception as e:
+            import traceback
+            error_tb = traceback.format_exc()
+            logger.error(f"[ATHENA] CRITICAL ERROR in run_daily_cycle: {e}")
+            logger.error(error_tb)
+
+            # Log the crash to scan_activity so it shows on frontend
+            if SCAN_LOGGER_AVAILABLE and log_athena_scan:
+                try:
+                    log_athena_scan(
+                        outcome=ScanOutcome.ERROR,
+                        decision_summary=f"CRASH: {str(e)[:200]}",
+                        action_taken="Bot crashed - will retry next scan",
+                        error_message=str(e),
+                        error_type="UNHANDLED_EXCEPTION",
+                        checks=[
+                            CheckResult("exception", False, str(e)[:100], "No errors", error_tb[:500])
+                        ],
+                        generate_ai_explanation=False  # Don't call Claude on crash
+                    )
+                except Exception as log_err:
+                    logger.error(f"[ATHENA] Failed to log crash to scan_activity: {log_err}")
+
+            # Re-raise so scheduler knows there was an error
+            raise
+
+    def _run_daily_cycle_inner(self, now: datetime, scan_number: int) -> Dict[str, Any]:
+        """Inner implementation of run_daily_cycle - separated for error handling."""
         self._log_to_db("INFO", f"=== ATHENA Scan #{scan_number} at {now.strftime('%I:%M %p CT')} ===")
         self._log_to_db("INFO", f"ATHENA is ACTIVE - checking for directional spread opportunities...")
 
