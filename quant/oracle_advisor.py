@@ -448,7 +448,7 @@ class OracleClaudeEnhancer:
     3. Identify patterns in training data
     """
 
-    CLAUDE_MODEL = "claude-sonnet-4-5-20250929"  # Sonnet 4.5 - correct model ID
+    CLAUDE_MODEL = "claude-sonnet-4-5-20250929"  # Sonnet 4.5 - latest model
 
     def __init__(self, api_key: Optional[str] = None):
         """Initialize Claude AI enhancer"""

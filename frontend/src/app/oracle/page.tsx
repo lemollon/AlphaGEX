@@ -66,9 +66,22 @@ interface BotInteraction {
   spot_price?: number
   vix?: number
   gex_regime?: string
+  gex_net?: number
+  gex_call_wall?: number
+  gex_put_wall?: number
+  gex_flip_point?: number
+  day_of_week?: number
+  suggested_risk_pct?: number
+  suggested_sd_multiplier?: number
+  use_gex_walls?: boolean
+  suggested_put_strike?: number
+  suggested_call_strike?: number
+  model_version?: string
+  top_factors?: Record<string, number>
   claude_analysis?: any
   actual_outcome?: string
   actual_pnl?: number
+  outcome_date?: string
 }
 
 interface PerformanceData {
@@ -409,6 +422,17 @@ export default function OraclePage() {
     if (activeTab === 'performance') fetchPerformance()
   }, [activeTab, fetchBotInteractions, fetchTrainingStatus, fetchPerformance])
 
+  // Auto-refresh interactions every 30 seconds when tab is active
+  useEffect(() => {
+    if (activeTab !== 'interactions') return
+
+    const interval = setInterval(() => {
+      fetchBotInteractions()
+    }, 30000) // 30 seconds
+
+    return () => clearInterval(interval)
+  }, [activeTab, fetchBotInteractions])
+
   const getAdviceColor = (advice: string) => {
     switch (advice) {
       case 'TRADE_FULL': return 'text-green-400 bg-green-500/20'
@@ -715,8 +739,9 @@ export default function OraclePage() {
                 ) : (
                   botInteractions.map((interaction) => (
                     <div key={`${interaction.source}-${interaction.id}`} className="card">
+                      {/* Header Row */}
                       <div className="flex flex-wrap items-start justify-between gap-4 mb-3">
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-3 flex-wrap">
                           <span className={`px-3 py-1 rounded-lg text-sm font-semibold border ${getBotColor(interaction.bot_name)}`}>
                             {interaction.bot_name}
                           </span>
@@ -732,37 +757,55 @@ export default function OraclePage() {
                               {interaction.actual_outcome}
                             </span>
                           )}
+                          {interaction.model_version && (
+                            <span className="px-2 py-1 rounded text-xs font-medium bg-indigo-500/20 text-indigo-300">
+                              v{interaction.model_version}
+                            </span>
+                          )}
+                          {interaction.use_gex_walls && (
+                            <span className="px-2 py-1 rounded text-xs font-medium bg-cyan-500/20 text-cyan-300">
+                              GEX Walls
+                            </span>
+                          )}
                         </div>
                         <div className="text-right">
                           <p className="text-text-primary font-medium">
                             {formatTexasCentralDateTime(interaction.timestamp || interaction.trade_date)}
                           </p>
-                          <p className="text-text-muted text-xs">CT</p>
+                          <p className="text-text-muted text-xs">
+                            CT {interaction.day_of_week != null && `• ${['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][interaction.day_of_week]}`}
+                          </p>
                         </div>
                       </div>
 
-                      {/* Metrics Row */}
-                      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-3">
+                      {/* Primary Metrics Row */}
+                      <div className="grid grid-cols-2 md:grid-cols-6 gap-3 mb-3">
                         {interaction.win_probability != null && (
-                          <div>
-                            <p className="text-text-muted text-xs">Win Probability</p>
+                          <div className="bg-background-deep rounded p-2">
+                            <p className="text-text-muted text-xs">Win Prob</p>
                             <p className="text-text-primary font-semibold">{(interaction.win_probability * 100).toFixed(1)}%</p>
                           </div>
                         )}
                         {interaction.confidence != null && (
-                          <div>
+                          <div className="bg-background-deep rounded p-2">
                             <p className="text-text-muted text-xs">Confidence</p>
                             <p className="text-text-primary font-semibold">{interaction.confidence.toFixed(1)}%</p>
                           </div>
                         )}
+                        {interaction.spot_price != null && (
+                          <div className="bg-background-deep rounded p-2">
+                            <p className="text-text-muted text-xs">Spot Price</p>
+                            <p className="text-text-primary font-semibold">${interaction.spot_price.toFixed(2)}</p>
+                          </div>
+                        )}
                         {interaction.vix != null && (
-                          <div>
+                          <div className="bg-background-deep rounded p-2">
                             <p className="text-text-muted text-xs">VIX</p>
                             <p className="text-text-primary font-semibold">{interaction.vix.toFixed(2)}</p>
                           </div>
                         )}
                         {interaction.gex_regime && (
-                          <div>
+                          <div className="bg-background-deep rounded p-2">
                             <p className="text-text-muted text-xs">GEX Regime</p>
                             <p className={`font-semibold ${
                               interaction.gex_regime === 'POSITIVE' ? 'text-green-400' :
@@ -771,7 +814,7 @@ export default function OraclePage() {
                           </div>
                         )}
                         {interaction.actual_pnl != null && (
-                          <div>
+                          <div className="bg-background-deep rounded p-2">
                             <p className="text-text-muted text-xs">P&L</p>
                             <p className={`font-semibold ${interaction.actual_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                               ${interaction.actual_pnl.toFixed(2)}
@@ -779,6 +822,88 @@ export default function OraclePage() {
                           </div>
                         )}
                       </div>
+
+                      {/* GEX Details Row */}
+                      {(interaction.gex_net != null || interaction.gex_call_wall != null || interaction.gex_put_wall != null || interaction.gex_flip_point != null) && (
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3 p-3 bg-cyan-500/5 border border-cyan-500/20 rounded-lg">
+                          <div className="text-xs">
+                            <span className="text-cyan-400 font-medium">GEX Details</span>
+                          </div>
+                          {interaction.gex_net != null && (
+                            <div className="text-xs">
+                              <span className="text-text-muted">Net GEX:</span>
+                              <span className={`ml-1 font-medium ${interaction.gex_net >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                {(interaction.gex_net / 1e9).toFixed(2)}B
+                              </span>
+                            </div>
+                          )}
+                          {interaction.gex_call_wall != null && (
+                            <div className="text-xs">
+                              <span className="text-text-muted">Call Wall:</span>
+                              <span className="text-text-primary ml-1 font-medium">${interaction.gex_call_wall.toFixed(0)}</span>
+                            </div>
+                          )}
+                          {interaction.gex_put_wall != null && (
+                            <div className="text-xs">
+                              <span className="text-text-muted">Put Wall:</span>
+                              <span className="text-text-primary ml-1 font-medium">${interaction.gex_put_wall.toFixed(0)}</span>
+                            </div>
+                          )}
+                          {interaction.gex_flip_point != null && (
+                            <div className="text-xs">
+                              <span className="text-text-muted">Flip Point:</span>
+                              <span className="text-text-primary ml-1 font-medium">${interaction.gex_flip_point.toFixed(0)}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Suggested Strikes Row */}
+                      {(interaction.suggested_put_strike != null || interaction.suggested_call_strike != null || interaction.suggested_risk_pct != null || interaction.suggested_sd_multiplier != null) && (
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3 p-3 bg-purple-500/5 border border-purple-500/20 rounded-lg">
+                          <div className="text-xs">
+                            <span className="text-purple-400 font-medium">Suggested Setup</span>
+                          </div>
+                          {interaction.suggested_put_strike != null && (
+                            <div className="text-xs">
+                              <span className="text-text-muted">Put Strike:</span>
+                              <span className="text-red-400 ml-1 font-medium">${interaction.suggested_put_strike.toFixed(0)}</span>
+                            </div>
+                          )}
+                          {interaction.suggested_call_strike != null && (
+                            <div className="text-xs">
+                              <span className="text-text-muted">Call Strike:</span>
+                              <span className="text-green-400 ml-1 font-medium">${interaction.suggested_call_strike.toFixed(0)}</span>
+                            </div>
+                          )}
+                          {interaction.suggested_risk_pct != null && (
+                            <div className="text-xs">
+                              <span className="text-text-muted">Risk %:</span>
+                              <span className="text-text-primary ml-1 font-medium">{interaction.suggested_risk_pct.toFixed(1)}%</span>
+                            </div>
+                          )}
+                          {interaction.suggested_sd_multiplier != null && (
+                            <div className="text-xs">
+                              <span className="text-text-muted">SD Mult:</span>
+                              <span className="text-text-primary ml-1 font-medium">{interaction.suggested_sd_multiplier.toFixed(2)}x</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Top Factors */}
+                      {interaction.top_factors && Object.keys(interaction.top_factors).length > 0 && (
+                        <div className="mb-3 p-3 bg-yellow-500/5 border border-yellow-500/20 rounded-lg">
+                          <p className="text-yellow-400 text-xs font-medium mb-2">Top Decision Factors</p>
+                          <div className="flex flex-wrap gap-2">
+                            {Object.entries(interaction.top_factors).slice(0, 5).map(([factor, weight]) => (
+                              <span key={factor} className="px-2 py-1 bg-yellow-500/10 rounded text-xs text-text-secondary">
+                                {factor}: <span className="text-yellow-400 font-medium">{typeof weight === 'number' ? weight.toFixed(2) : weight}</span>
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
 
                       {/* Reasoning */}
                       {interaction.reasoning && (

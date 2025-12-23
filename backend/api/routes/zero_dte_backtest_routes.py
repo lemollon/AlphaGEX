@@ -2819,9 +2819,22 @@ async def get_oracle_bot_interactions(
                 op.spot_price,
                 op.vix,
                 op.gex_regime,
+                op.gex_net,
+                op.gex_call_wall,
+                op.gex_put_wall,
+                op.gex_flip_point,
+                op.day_of_week,
+                op.suggested_risk_pct,
+                op.suggested_sd_multiplier,
+                op.use_gex_walls,
+                op.suggested_put_strike,
+                op.suggested_call_strike,
+                op.model_version,
+                op.top_factors,
                 op.claude_analysis,
                 op.actual_outcome,
-                op.actual_pnl
+                op.actual_pnl,
+                op.outcome_date
             FROM oracle_predictions op
             WHERE op.trade_date >= CURRENT_DATE - INTERVAL '%s days'
         """
