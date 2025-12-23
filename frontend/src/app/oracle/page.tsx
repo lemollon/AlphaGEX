@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Eye, Brain, Activity, RefreshCw, Trash2, CheckCircle, XCircle, AlertCircle, Sparkles, FileText, History, TrendingUp, BarChart3, Download, Zap, Bot, MessageSquare, Settings, Play, Clock, Target, ChevronDown, ChevronUp } from 'lucide-react'
+import { Eye, Brain, Activity, RefreshCw, Trash2, CheckCircle, XCircle, AlertCircle, AlertTriangle, ShieldAlert, Sparkles, FileText, History, TrendingUp, BarChart3, Download, Zap, Bot, MessageSquare, Settings, Play, Clock, Target, ChevronDown, ChevronUp } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import DecisionLogViewer from '@/components/trader/DecisionLogViewer'
 import { apiClient } from '@/lib/api'
@@ -1208,6 +1208,22 @@ export default function OraclePage() {
                             <span className="text-text-muted text-xs">
                               {formatTexasCentralDateTime(exchange.timestamp)}
                             </span>
+                            {/* Hallucination Risk Badge */}
+                            <span className={`px-2 py-1 rounded text-xs font-medium flex items-center gap-1 ${
+                              exchange.hallucination_risk === 'LOW'
+                                ? 'bg-green-500/20 text-green-400'
+                                : exchange.hallucination_risk === 'MEDIUM'
+                                  ? 'bg-yellow-500/20 text-yellow-400'
+                                  : 'bg-red-500/20 text-red-400'
+                            }`}>
+                              {exchange.hallucination_risk === 'LOW' ? (
+                                <CheckCircle className="w-3 h-3" />
+                              ) : (
+                                <AlertTriangle className="w-3 h-3" />
+                              )}
+                              {exchange.hallucination_risk === 'LOW' ? 'Verified' :
+                               exchange.hallucination_risk === 'MEDIUM' ? 'Caution' : 'Risk'}
+                            </span>
                           </div>
                           <div className="flex items-center gap-4 text-xs text-text-muted">
                             <span>{exchange.tokens_used} tokens</span>
@@ -1215,6 +1231,44 @@ export default function OraclePage() {
                             <span className="text-purple-400">{exchange.model}</span>
                           </div>
                         </div>
+
+                        {/* Hallucination Warnings (if any) */}
+                        {exchange.hallucination_risk !== 'LOW' && exchange.hallucination_warnings?.length > 0 && (
+                          <div className={`px-4 py-3 border-b border-gray-700 ${
+                            exchange.hallucination_risk === 'HIGH' ? 'bg-red-900/10' : 'bg-yellow-900/10'
+                          }`}>
+                            <p className={`text-xs font-semibold mb-2 flex items-center gap-2 ${
+                              exchange.hallucination_risk === 'HIGH' ? 'text-red-400' : 'text-yellow-400'
+                            }`}>
+                              <AlertTriangle className="w-3 h-3" />
+                              HALLUCINATION WARNINGS:
+                            </p>
+                            <ul className={`text-xs list-disc list-inside space-y-1 ${
+                              exchange.hallucination_risk === 'HIGH' ? 'text-red-300/80' : 'text-yellow-300/80'
+                            }`}>
+                              {exchange.hallucination_warnings.map((warning: string, wIdx: number) => (
+                                <li key={wIdx}>{warning}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {/* Data Citations (if verified) */}
+                        {exchange.hallucination_risk === 'LOW' && exchange.data_citations?.length > 0 && (
+                          <div className="px-4 py-3 border-b border-gray-700 bg-green-900/10">
+                            <p className="text-xs text-green-400 font-semibold mb-2 flex items-center gap-2">
+                              <CheckCircle className="w-3 h-3" />
+                              DATA CITATIONS (VERIFIED):
+                            </p>
+                            <div className="flex flex-wrap gap-1">
+                              {exchange.data_citations.map((citation: string, cIdx: number) => (
+                                <span key={cIdx} className="text-xs bg-green-500/20 text-green-300 px-2 py-0.5 rounded">
+                                  {citation}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
 
                         {/* Market Context */}
                         <div className="px-4 py-3 border-b border-gray-700">
