@@ -688,8 +688,8 @@ async def persist_danger_zones_to_db(danger_zones: list, spot_price: float, expi
         active_strikes = [dz['strike'] for dz in danger_zones] if danger_zones else []
 
         # Mark old danger zones as resolved if they're no longer in the active list
-        # BUT: Keep danger zones active for at least 2 minutes to prevent flapping
-        # This prevents zones from disappearing immediately on next refresh
+        # BUT: Keep danger zones active for at least 5 minutes to prevent flapping
+        # This ensures users see spikes even after they calm down
         if active_strikes:
             placeholders = ','.join(['%s'] * len(active_strikes))
             cursor.execute(f"""
@@ -698,16 +698,16 @@ async def persist_danger_zones_to_db(danger_zones: list, spot_price: float, expi
                 WHERE is_active = TRUE
                 AND strike NOT IN ({placeholders})
                 AND detected_at > NOW() - INTERVAL '1 day'
-                AND detected_at < NOW() - INTERVAL '2 minutes'
+                AND detected_at < NOW() - INTERVAL '5 minutes'
             """, active_strikes)
         else:
-            # No active danger zones - mark as resolved (only if older than 2 minutes)
+            # No active danger zones - mark as resolved (only if older than 5 minutes)
             cursor.execute("""
                 UPDATE argus_danger_zone_logs
                 SET is_active = FALSE, resolved_at = NOW()
                 WHERE is_active = TRUE
                 AND detected_at > NOW() - INTERVAL '1 day'
-                AND detected_at < NOW() - INTERVAL '2 minutes'
+                AND detected_at < NOW() - INTERVAL '5 minutes'
             """)
 
         # Insert new danger zones

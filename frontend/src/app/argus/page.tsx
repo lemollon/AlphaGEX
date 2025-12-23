@@ -664,12 +664,15 @@ export default function ArgusPage() {
   // This prevents zones from disappearing when ROC fluctuates between refreshes
   const snapshotBuilding = gammaData?.danger_zones?.filter(d => d.danger_type === 'BUILDING') || []
   const snapshotCollapsing = gammaData?.danger_zones?.filter(d => d.danger_type === 'COLLAPSING') || []
+  const snapshotSpike = gammaData?.danger_zones?.filter(d => d.danger_type === 'SPIKE') || []
   const activeLogBuilding = dangerZoneLogs.filter(log => log.is_active && log.danger_type === 'BUILDING')
   const activeLogCollapsing = dangerZoneLogs.filter(log => log.is_active && log.danger_type === 'COLLAPSING')
+  const activeLogSpike = dangerZoneLogs.filter(log => log.is_active && log.danger_type === 'SPIKE')
 
   // Combine and dedupe by strike
   const buildingStrikes = new Set([...snapshotBuilding.map(d => d.strike), ...activeLogBuilding.map(d => d.strike)])
   const collapsingStrikes = new Set([...snapshotCollapsing.map(d => d.strike), ...activeLogCollapsing.map(d => d.strike)])
+  const spikeStrikes = new Set([...snapshotSpike.map(d => d.strike), ...activeLogSpike.map(d => d.strike)])
 
   const buildingZones = Array.from(buildingStrikes).map(strike => {
     const fromSnapshot = snapshotBuilding.find(d => d.strike === strike)
@@ -680,6 +683,11 @@ export default function ArgusPage() {
     const fromSnapshot = snapshotCollapsing.find(d => d.strike === strike)
     const fromLog = activeLogCollapsing.find(d => d.strike === strike)
     return fromSnapshot || { strike, danger_type: 'COLLAPSING', roc_1min: fromLog?.roc_1min || 0, roc_5min: fromLog?.roc_5min || 0 }
+  })
+  const spikeZones = Array.from(spikeStrikes).map(strike => {
+    const fromSnapshot = snapshotSpike.find(d => d.strike === strike)
+    const fromLog = activeLogSpike.find(d => d.strike === strike)
+    return fromSnapshot || { strike, danger_type: 'SPIKE', roc_1min: fromLog?.roc_1min || 0, roc_5min: fromLog?.roc_5min || 0 }
   })
 
   return (
@@ -1616,13 +1624,28 @@ export default function ArgusPage() {
                 </div>
 
                 {/* Current Active Danger Zones */}
-                {(buildingZones.length > 0 || collapsingZones.length > 0) ? (
-                  <div className="space-y-4 mb-4">
+                {(buildingZones.length > 0 || collapsingZones.length > 0 || spikeZones.length > 0) ? (
+                  <div className="space-y-3 mb-4">
+                    {spikeZones.length > 0 && (
+                      <div>
+                        <div className="flex items-center gap-2 mb-2">
+                          <Zap className="w-4 h-4 text-yellow-400" />
+                          <span className="text-sm text-yellow-400 font-medium">Spike (1min ROC ≥15%)</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {spikeZones.slice(0, 4).map(dz => (
+                            <span key={dz.strike} className="px-2 py-1 bg-yellow-500/20 text-yellow-400 rounded text-xs">
+                              ${dz.strike} (+{dz.roc_1min.toFixed(0)}%)
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     {buildingZones.length > 0 && (
                       <div>
                         <div className="flex items-center gap-2 mb-2">
                           <Flame className="w-4 h-4 text-orange-400" />
-                          <span className="text-sm text-orange-400 font-medium">Building (+ROC)</span>
+                          <span className="text-sm text-orange-400 font-medium">Building (5min ROC ≥25%)</span>
                         </div>
                         <div className="flex flex-wrap gap-1.5">
                           {buildingZones.slice(0, 4).map(dz => (
@@ -1637,7 +1660,7 @@ export default function ArgusPage() {
                       <div>
                         <div className="flex items-center gap-2 mb-2">
                           <TrendingDown className="w-4 h-4 text-rose-400" />
-                          <span className="text-sm text-rose-400 font-medium">Collapsing (-ROC)</span>
+                          <span className="text-sm text-rose-400 font-medium">Collapsing (5min ROC ≤-25%)</span>
                         </div>
                         <div className="flex flex-wrap gap-1.5">
                           {collapsingZones.slice(0, 4).map(dz => (
