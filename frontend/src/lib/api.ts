@@ -344,6 +344,12 @@ export const apiClient = {
   runATHENACycle: () => api.post('/api/athena/run'),
   getATHENAOracleAdvice: () => api.get('/api/athena/oracle-advice'),
   getATHENAMLSignal: () => api.get('/api/athena/ml-signal'),
+  getATHENALivePnL: () => api.get('/api/athena/live-pnl'),
+  processATHENAExpired: () => api.post('/api/athena/process-expired'),
+
+  // ARES - Live P&L
+  getARESLivePnL: () => api.get('/api/ares/live-pnl'),
+  processARESExpired: () => api.post('/api/ares/process-expired'),
 
   // AI Intelligence Enhancements - 7 Advanced Features
   generatePreTradeChecklist: (data: {

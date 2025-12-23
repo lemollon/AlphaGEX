@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { Target, TrendingUp, TrendingDown, Activity, DollarSign, CheckCircle, Clock, RefreshCw, BarChart3, ChevronDown, ChevronUp, Play, Settings, FileText, Zap, Brain, Crosshair, ScrollText } from 'lucide-react'
+import { useState, useMemo } from 'react'
+import { Target, TrendingUp, TrendingDown, Activity, DollarSign, CheckCircle, Clock, RefreshCw, BarChart3, ChevronDown, ChevronUp, Play, Settings, FileText, Zap, Brain, Crosshair, ScrollText, Wallet } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
@@ -14,9 +14,12 @@ import {
   useATHENAMLSignal,
   useATHENALogs,
   useATHENADecisions,
-  useScanActivityAthena
+  useScanActivityAthena,
+  useATHENALivePnL
 } from '@/lib/hooks/useMarketData'
 import ScanActivityFeed from '@/components/ScanActivityFeed'
+import LivePortfolio, { EquityDataPoint, LivePnLData } from '@/components/trader/LivePortfolio'
+import OpenPositionsLive from '@/components/trader/OpenPositionsLive'
 
 interface Heartbeat {
   last_scan: string | null
@@ -298,6 +301,7 @@ export default function ATHENAPage() {
   const { data: logsRes, isValidating: logsValidating, mutate: mutateLogs } = useATHENALogs(undefined, 50)
   const { data: decisionsRes, isValidating: decisionsValidating, mutate: mutateDecisions } = useATHENADecisions(100)
   const { data: scanActivityRes, isLoading: scanActivityLoading, mutate: mutateScanActivity } = useScanActivityAthena(50)
+  const { data: livePnLRes, isLoading: livePnLLoading, mutate: mutateLivePnL } = useATHENALivePnL()
 
   // Extract data from responses
   const status = statusRes?.data as ATHENAStatus | undefined
@@ -309,13 +313,14 @@ export default function ATHENAPage() {
   const mlSignal = mlSignalRes?.data as MLSignal | undefined
   const logs = (logsRes?.data || []) as LogEntry[]
   const decisions = (decisionsRes?.data || []) as DecisionLog[]
+  const livePnL = livePnLRes?.data as LivePnLData | null
 
   const loading = statusLoading && !status
   const error = statusError?.message || null
   const isRefreshing = statusValidating || posValidating || signalsValidating || perfValidating || adviceValidating || mlValidating || logsValidating || decisionsValidating
 
-  // UI State - default to expanded for better visibility
-  const [activeTab, setActiveTab] = useState<'overview' | 'positions' | 'signals' | 'logs'>('overview')
+  // UI State - default to portfolio for better visibility
+  const [activeTab, setActiveTab] = useState<'portfolio' | 'overview' | 'positions' | 'signals' | 'logs'>('portfolio')
   const [showClosedPositions, setShowClosedPositions] = useState(true)
   const [runningCycle, setRunningCycle] = useState(false)
   const [expandedDecision, setExpandedDecision] = useState<string | null>(null)
@@ -330,7 +335,32 @@ export default function ATHENAPage() {
     mutateML()
     mutateLogs()
     mutateDecisions()
+    mutateLivePnL()
   }
+
+  // Build equity curve data for the chart (Robinhood-style)
+  const equityChartData: EquityDataPoint[] = useMemo(() => {
+    const closedPositions = positions.filter(p => p.status === 'closed' && p.exit_time)
+    if (closedPositions.length === 0) return []
+
+    // Sort by close date
+    const sorted = [...closedPositions].sort((a, b) =>
+      new Date(a.exit_time!).getTime() - new Date(b.exit_time!).getTime()
+    )
+
+    // Build cumulative equity
+    const startingCapital = status?.capital || 100000
+    let cumPnl = 0
+    return sorted.map(pos => {
+      cumPnl += pos.realized_pnl || 0
+      return {
+        date: new Date(pos.exit_time!).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        timestamp: new Date(pos.exit_time!).getTime(),
+        equity: startingCapital + cumPnl,
+        pnl: cumPnl
+      }
+    })
+  }, [positions, status?.capital])
 
   // Helper functions for decision display
   const getDecisionTypeBadge = (type: string) => {
@@ -452,16 +482,17 @@ export default function ATHENAPage() {
 
           {/* Tabs */}
           <div className="flex gap-2 mb-6">
-            {(['overview', 'positions', 'signals', 'logs'] as const).map((tab) => (
+            {(['portfolio', 'overview', 'positions', 'signals', 'logs'] as const).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`px-4 py-2 rounded-lg capitalize transition ${
+                className={`px-4 py-2 rounded-lg capitalize transition flex items-center gap-2 ${
                   activeTab === tab
                     ? 'bg-orange-600 text-white'
                     : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
                 }`}
               >
+                {tab === 'portfolio' && <Wallet className="w-4 h-4" />}
                 {tab}
               </button>
             ))}
@@ -561,6 +592,61 @@ export default function ATHENAPage() {
           {error && (
             <div className="bg-red-900/50 border border-red-700 rounded-lg p-4 mb-6">
               <p className="text-red-400">{error}</p>
+            </div>
+          )}
+
+          {/* Portfolio Tab - Robinhood-style live P&L */}
+          {activeTab === 'portfolio' && (
+            <div className="space-y-6">
+              {/* Live Portfolio Component */}
+              <LivePortfolio
+                botName="ATHENA"
+                totalValue={(status?.capital || 100000) + (livePnL?.net_pnl || 0)}
+                startingCapital={status?.capital || 100000}
+                livePnL={livePnL}
+                equityData={equityChartData}
+                isLoading={livePnLLoading}
+                onRefresh={() => mutateLivePnL()}
+                lastUpdated={livePnL?.last_updated}
+              />
+
+              {/* Open Positions with Live P&L */}
+              <OpenPositionsLive
+                botName="ATHENA"
+                positions={livePnL?.positions || []}
+                underlyingPrice={livePnL?.underlying_price}
+                isLoading={livePnLLoading}
+              />
+
+              {/* Today's Closed Trades */}
+              {positions.filter(p => p.status === 'closed' && p.exit_time?.startsWith(new Date().toISOString().split('T')[0])).length > 0 && (
+                <div className="bg-[#0a0a0a] rounded-lg p-6">
+                  <h3 className="text-lg font-semibold text-white mb-4">Today&apos;s Closed Trades</h3>
+                  <div className="space-y-2">
+                    {positions
+                      .filter(p => p.status === 'closed' && p.exit_time?.startsWith(new Date().toISOString().split('T')[0]))
+                      .map(pos => (
+                        <div key={pos.position_id} className="flex justify-between items-center p-3 bg-[#111] rounded-lg border border-gray-800">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-2 h-2 rounded-full ${pos.realized_pnl >= 0 ? 'bg-[#00C805]' : 'bg-[#FF5000]'}`} />
+                            <span className="text-white">
+                              {pos.spread_type?.includes('BULL') ? 'Bull Call' : 'Bear Call'} {pos.long_strike}/{pos.short_strike}
+                            </span>
+                            <span className="text-gray-500 text-sm">{pos.contracts} contracts</span>
+                          </div>
+                          <div className="text-right">
+                            <div className={`font-bold ${pos.realized_pnl >= 0 ? 'text-[#00C805]' : 'text-[#FF5000]'}`}>
+                              {pos.realized_pnl >= 0 ? '+' : ''}${pos.realized_pnl.toFixed(2)}
+                            </div>
+                            <div className="text-gray-500 text-xs">
+                              {pos.exit_time ? new Date(pos.exit_time).toLocaleTimeString() : ''}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

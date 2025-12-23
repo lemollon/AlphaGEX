@@ -173,6 +173,22 @@ const fetchers = {
       return { success: false, data: [] }
     }
   },
+  athenaLivePnL: async () => {
+    try {
+      const response = await api.get('/api/athena/live-pnl')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  aresLivePnL: async () => {
+    try {
+      const response = await api.get('/api/ares/live-pnl')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
 
   // Scan Activity - comprehensive logging for EVERY scan
   scanActivityAres: async (limit?: number, date?: string) => {
@@ -750,6 +766,22 @@ export function useATHENADecisions(limit: number = 100, options?: SWRConfigurati
     `athena-decisions-${limit}`,
     () => fetchers.athenaDecisions(limit),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
+  )
+}
+
+export function useATHENALivePnL(options?: SWRConfiguration) {
+  return useSWR(
+    'athena-live-pnl',
+    fetchers.athenaLivePnL,
+    { ...swrConfig, refreshInterval: 10 * 1000, ...options }  // 10 second refresh for live data
+  )
+}
+
+export function useARESLivePnL(options?: SWRConfiguration) {
+  return useSWR(
+    'ares-live-pnl',
+    fetchers.aresLivePnL,
+    { ...swrConfig, refreshInterval: 10 * 1000, ...options }  // 10 second refresh for live data
   )
 }
 
