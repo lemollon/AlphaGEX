@@ -668,9 +668,6 @@ async def persist_alerts_to_db(alerts: list):
 
 async def persist_danger_zones_to_db(danger_zones: list, spot_price: float, expiration: str):
     """Persist danger zones to database for history tracking"""
-    if not danger_zones:
-        return
-
     try:
         conn = get_connection()
         if not conn:
@@ -678,8 +675,10 @@ async def persist_danger_zones_to_db(danger_zones: list, spot_price: float, expi
 
         cursor = conn.cursor()
 
-        # First, mark old danger zones as resolved if they're no longer active
-        active_strikes = [dz['strike'] for dz in danger_zones]
+        # Get list of currently active strikes (empty list if no danger zones)
+        active_strikes = [dz['strike'] for dz in danger_zones] if danger_zones else []
+
+        # Mark ALL old danger zones as resolved if they're no longer in the active list
         if active_strikes:
             placeholders = ','.join(['%s'] * len(active_strikes))
             cursor.execute(f"""
@@ -689,8 +688,17 @@ async def persist_danger_zones_to_db(danger_zones: list, spot_price: float, expi
                 AND strike NOT IN ({placeholders})
                 AND detected_at > NOW() - INTERVAL '1 day'
             """, active_strikes)
+        else:
+            # No active danger zones - mark ALL as resolved
+            cursor.execute("""
+                UPDATE argus_danger_zone_logs
+                SET is_active = FALSE, resolved_at = NOW()
+                WHERE is_active = TRUE
+                AND detected_at > NOW() - INTERVAL '1 day'
+            """)
 
-        for dz in danger_zones:
+        # Insert new danger zones
+        for dz in (danger_zones or []):
             # Check if this danger zone is already logged and active
             cursor.execute("""
                 SELECT id FROM argus_danger_zone_logs
@@ -723,7 +731,8 @@ async def persist_danger_zones_to_db(danger_zones: list, spot_price: float, expi
         conn.commit()
         cursor.close()
         conn.close()
-        logger.debug(f"Persisted {len(danger_zones)} danger zones to database")
+        count = len(danger_zones) if danger_zones else 0
+        logger.debug(f"Danger zone sync: {count} active, resolved inactive ones")
     except Exception as e:
         logger.warning(f"Failed to persist danger zones: {e}")
 

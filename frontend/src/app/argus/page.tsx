@@ -1478,11 +1478,12 @@ export default function ArgusPage() {
                     <AlertTriangle className="w-5 h-5 text-orange-400" />
                     Danger Zones
                   </h3>
-                  {dangerZoneLogs.length > 0 && (
+                  <div className="flex items-center gap-2">
                     <span className="text-xs text-gray-500">
-                      {dangerZoneLogs.length} events today
+                      {dangerZoneLogs.length > 0 ? `${dangerZoneLogs.length} events` : 'Monitoring'}
                     </span>
-                  )}
+                    <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
+                  </div>
                 </div>
 
                 {/* Current Active Danger Zones */}
@@ -1520,18 +1521,24 @@ export default function ArgusPage() {
                     )}
                   </div>
                 ) : (
-                  <div className="text-center py-4 text-gray-500 mb-4">
-                    <Shield className="w-6 h-6 mx-auto mb-1 opacity-30" />
-                    <p className="text-xs">No danger zones detected</p>
+                  <div className="text-center py-3 text-gray-500 mb-3 bg-gray-800/30 rounded-lg">
+                    <Shield className="w-5 h-5 mx-auto mb-1 opacity-40" />
+                    <p className="text-xs font-medium">No active danger zones</p>
+                    <p className="text-[10px] text-gray-600 mt-1">
+                      All strikes have stable gamma (ROC within ±25%)
+                    </p>
                   </div>
                 )}
 
-                {/* Danger Zone Log History */}
-                {dangerZoneLogs.length > 0 && (
-                  <div className="border-t border-gray-700/50 pt-3">
-                    <div className="text-xs text-gray-500 mb-2">Recent Activity</div>
-                    <div className="space-y-1.5 max-h-32 overflow-y-auto">
-                      {dangerZoneLogs.slice(0, 10).map((log) => (
+                {/* Danger Zone Log History - ALWAYS VISIBLE */}
+                <div className="border-t border-gray-700/50 pt-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs text-gray-500">Event Log</span>
+                    <span className="text-[10px] text-emerald-400">Live • 15s refresh</span>
+                  </div>
+                  {dangerZoneLogs.length > 0 ? (
+                    <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                      {dangerZoneLogs.slice(0, 15).map((log) => (
                         <div
                           key={log.id}
                           className={`flex items-center justify-between text-xs px-2 py-1.5 rounded ${
@@ -1554,7 +1561,7 @@ export default function ArgusPage() {
                               {log.danger_type}
                             </span>
                             {!log.is_active && (
-                              <span className="text-gray-600">(resolved)</span>
+                              <span className="text-gray-600 text-[10px]">resolved</span>
                             )}
                           </div>
                           <span className="text-gray-500">
@@ -1568,8 +1575,14 @@ export default function ArgusPage() {
                         </div>
                       ))}
                     </div>
-                  </div>
-                )}
+                  ) : (
+                    <div className="text-center py-4 text-gray-600 text-xs bg-gray-800/30 rounded">
+                      <Clock className="w-4 h-4 mx-auto mb-1 opacity-40" />
+                      <p>No events yet today</p>
+                      <p className="text-[10px] text-gray-700 mt-1">Logs when ROC exceeds ±25%</p>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </div>
