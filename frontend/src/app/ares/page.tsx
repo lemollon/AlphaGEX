@@ -13,8 +13,10 @@ import {
   useARESMarketData,
   useARESTradierStatus,
   useARESConfig,
-  useARESDecisions
+  useARESDecisions,
+  useScanActivityAres
 } from '@/lib/hooks/useMarketData'
+import ScanActivityFeed from '@/components/ScanActivityFeed'
 
 // ==================== INTERFACES ====================
 
@@ -195,11 +197,13 @@ export default function ARESPage() {
   const { data: tradierRes, isValidating: tradierValidating, mutate: mutateTradier } = useARESTradierStatus()
   const { data: configRes, isValidating: configValidating, mutate: mutateConfig } = useARESConfig()
   const { data: decisionsRes, isValidating: decisionsValidating, mutate: mutateDecisions } = useARESDecisions(100)
+  const { data: scanActivityRes, isLoading: scanActivityLoading, mutate: mutateScanActivity } = useScanActivityAres(50)
 
   // Extract data
   const status = statusRes?.data as ARESStatus | undefined
   const performance = performanceRes?.data as Performance | undefined
   const equityData = (equityRes?.data?.equity_curve || []) as EquityPoint[]
+  const scanActivity = scanActivityRes?.data?.scans || []
   const positions = (positionsRes?.data?.open_positions || []) as IronCondorPosition[]
   const closedPositions = (positionsRes?.data?.closed_positions || []) as IronCondorPosition[]
   const marketData = marketRes?.data as MarketData | undefined
@@ -462,6 +466,15 @@ export default function ARESPage() {
                   <p className="text-2xl font-bold text-white">{positions.length} open</p>
                   <p className="text-sm text-gray-500">{totalTrades} total trades</p>
                 </div>
+              </div>
+
+              {/* Scan Activity Feed - Shows EVERY scan with reasoning */}
+              <div className="mb-6">
+                <ScanActivityFeed
+                  scans={scanActivity}
+                  botName="ARES"
+                  isLoading={scanActivityLoading}
+                />
               </div>
 
               {/* GEX Context Panel */}

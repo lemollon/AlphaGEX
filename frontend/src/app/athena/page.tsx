@@ -13,8 +13,10 @@ import {
   useATHENAOracleAdvice,
   useATHENAMLSignal,
   useATHENALogs,
-  useATHENADecisions
+  useATHENADecisions,
+  useScanActivityAthena
 } from '@/lib/hooks/useMarketData'
+import ScanActivityFeed from '@/components/ScanActivityFeed'
 
 interface Heartbeat {
   last_scan: string | null
@@ -295,11 +297,13 @@ export default function ATHENAPage() {
   const { data: mlSignalRes, isValidating: mlValidating, mutate: mutateML } = useATHENAMLSignal()
   const { data: logsRes, isValidating: logsValidating, mutate: mutateLogs } = useATHENALogs(undefined, 50)
   const { data: decisionsRes, isValidating: decisionsValidating, mutate: mutateDecisions } = useATHENADecisions(100)
+  const { data: scanActivityRes, isLoading: scanActivityLoading, mutate: mutateScanActivity } = useScanActivityAthena(50)
 
   // Extract data from responses
   const status = statusRes?.data as ATHENAStatus | undefined
   const positions = (positionsRes?.data || []) as SpreadPosition[]
   const signals = (signalsRes?.data || []) as Signal[]
+  const scanActivity = scanActivityRes?.data?.scans || []
   const performance = performanceRes?.data as PerformanceData | undefined
   const oracleAdvice = adviceRes?.data as OracleAdvice | undefined
   const mlSignal = mlSignalRes?.data as MLSignal | undefined
@@ -629,6 +633,15 @@ export default function ATHENAPage() {
                     </div>
                   </div>
                 </div>
+              </div>
+
+              {/* Scan Activity Feed - Shows EVERY scan with reasoning */}
+              <div className="mb-6">
+                <ScanActivityFeed
+                  scans={scanActivity}
+                  botName="ATHENA"
+                  isLoading={scanActivityLoading}
+                />
               </div>
 
               {/* Live GEX Context Panel */}

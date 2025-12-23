@@ -174,6 +174,39 @@ const fetchers = {
     }
   },
 
+  // Scan Activity - comprehensive logging for EVERY scan
+  scanActivityAres: async (limit?: number, date?: string) => {
+    try {
+      const params = new URLSearchParams()
+      params.append('limit', String(limit || 50))
+      if (date) params.append('date', date)
+      const response = await api.get(`/api/scans/activity/ARES?${params}`)
+      return response.data
+    } catch {
+      return { success: false, data: { scans: [] } }
+    }
+  },
+  scanActivityAthena: async (limit?: number, date?: string) => {
+    try {
+      const params = new URLSearchParams()
+      params.append('limit', String(limit || 50))
+      if (date) params.append('date', date)
+      const response = await api.get(`/api/scans/activity/ATHENA?${params}`)
+      return response.data
+    } catch {
+      return { success: false, data: { scans: [] } }
+    }
+  },
+  scanActivityToday: async (bot?: string) => {
+    try {
+      const endpoint = bot ? `/api/scans/${bot.toLowerCase()}/today` : '/api/scans/today'
+      const response = await api.get(endpoint)
+      return response.data
+    } catch {
+      return { success: false, data: { scans: [] } }
+    }
+  },
+
   // PHOENIX Trader
   traderStatus: async () => {
     const response = await apiClient.getTraderStatus()
@@ -703,6 +736,34 @@ export function useATHENADecisions(limit: number = 100, options?: SWRConfigurati
   return useSWR(
     `athena-decisions-${limit}`,
     () => fetchers.athenaDecisions(limit),
+    { ...swrConfig, refreshInterval: 30 * 1000, ...options }
+  )
+}
+
+// =============================================================================
+// SCAN ACTIVITY HOOKS - Every scan with full reasoning
+// =============================================================================
+
+export function useScanActivityAres(limit: number = 50, date?: string, options?: SWRConfiguration) {
+  return useSWR(
+    `scan-activity-ares-${limit}-${date || 'all'}`,
+    () => fetchers.scanActivityAres(limit, date),
+    { ...swrConfig, refreshInterval: 30 * 1000, ...options }
+  )
+}
+
+export function useScanActivityAthena(limit: number = 50, date?: string, options?: SWRConfiguration) {
+  return useSWR(
+    `scan-activity-athena-${limit}-${date || 'all'}`,
+    () => fetchers.scanActivityAthena(limit, date),
+    { ...swrConfig, refreshInterval: 30 * 1000, ...options }
+  )
+}
+
+export function useScanActivityToday(bot?: string, options?: SWRConfiguration) {
+  return useSWR(
+    `scan-activity-today-${bot || 'all'}`,
+    () => fetchers.scanActivityToday(bot),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
 }
