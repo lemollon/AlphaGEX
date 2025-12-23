@@ -1360,7 +1360,35 @@ class OracleAdvisor:
             "spot_price": context.spot_price
         })
 
+        # === FULL DATA FLOW LOGGING: INPUT ===
+        input_data = {
+            "spot_price": context.spot_price,
+            "price_change_1d": context.price_change_1d,
+            "vix": context.vix,
+            "vix_percentile_30d": context.vix_percentile_30d,
+            "vix_change_1d": context.vix_change_1d,
+            "gex_net": context.gex_net,
+            "gex_normalized": context.gex_normalized,
+            "gex_regime": context.gex_regime.value,
+            "gex_flip_point": context.gex_flip_point,
+            "gex_call_wall": context.gex_call_wall,
+            "gex_put_wall": context.gex_put_wall,
+            "gex_between_walls": context.gex_between_walls,
+            "day_of_week": context.day_of_week,
+            "days_to_opex": context.days_to_opex
+        }
+        self.live_log.log_data_flow("ATLAS", "INPUT", input_data)
+
         base_pred = self._get_base_prediction(context)
+
+        # === FULL DATA FLOW LOGGING: ML_OUTPUT ===
+        self.live_log.log_data_flow("ATLAS", "ML_OUTPUT", {
+            "win_probability": base_pred.get('win_probability'),
+            "top_factors": base_pred.get('top_factors', []),
+            "probabilities": base_pred.get('probabilities', {}),
+            "model_version": self.model_version
+        })
+
         reasoning_parts = []
 
         # Wheel benefits from high IV (more premium)
@@ -1396,6 +1424,17 @@ class OracleAdvisor:
             "win_probability": base_pred['win_probability'],
             "risk_pct": risk_pct
         })
+
+        # === FULL DATA FLOW LOGGING: DECISION ===
+        decision_data = {
+            "advice": advice.value,
+            "win_probability": base_pred['win_probability'],
+            "confidence": prediction.confidence,
+            "risk_pct": risk_pct,
+            "reasoning": prediction.reasoning,
+            "model_version": self.model_version
+        }
+        self.live_log.log_data_flow("ATLAS", "DECISION", decision_data)
 
         return prediction
 
