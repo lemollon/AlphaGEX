@@ -39,8 +39,8 @@ def format_central_timestamp() -> str:
 # Simple in-memory cache with TTL
 _cache: Dict[str, Any] = {}
 _cache_times: Dict[str, float] = {}
-CACHE_TTL_SECONDS = 60  # 60 second cache for gamma data (increased from 30s for performance)
-PRICE_CACHE_TTL = 15    # 15 second cache for prices
+CACHE_TTL_SECONDS = 30  # 30 second cache for gamma data (reduced for more responsive updates)
+PRICE_CACHE_TTL = 10    # 10 second cache for prices
 
 
 def get_cached(key: str, ttl: int = CACHE_TTL_SECONDS) -> Any:
@@ -189,13 +189,18 @@ async def fetch_gamma_data(expiration: str = None) -> dict:
                 'volume': (call_contract.volume if call_contract else 0) + (put_contract.volume if put_contract else 0)
             }
 
+        # Record the actual data fetch time
+        data_fetch_time = format_central_timestamp()
+
         result = {
             'spot_price': spot_price,
             'vix': vix,
             'expiration': expiration,
             'strikes': list(unique_strikes.values()),
             'is_mock': False,  # Real market data from Tradier
-            'fetched_at': format_central_timestamp()  # Actual fetch timestamp (Central timezone)
+            'fetched_at': data_fetch_time,  # Actual fetch timestamp (Central timezone)
+            'data_timestamp': data_fetch_time,  # When Tradier data was actually fetched
+            'cache_time': time.time()  # Unix timestamp for cache age calculation
         }
 
         # Cache the result
@@ -333,6 +338,16 @@ async def get_gamma_data(
         # Get expected move change data (pass spot_price to normalize for overnight gaps)
         em_change = await get_expected_move_change(snapshot.expected_move, raw_data['vix'], snapshot.spot_price)
 
+        # Persist danger zones and alerts to database for history
+        await persist_danger_zones_to_db(snapshot.danger_zones, snapshot.spot_price, expiration)
+        if engine:
+            await persist_alerts_to_db(engine.get_active_alerts())
+
+        # Calculate cache age for freshness indicator
+        cache_time = raw_data.get('cache_time')
+        cache_age_seconds = int(time.time() - cache_time) if cache_time else 0
+        is_cached = cache_age_seconds > 5  # Data is considered cached if > 5 seconds old
+
         # Build response
         return {
             "success": True,
@@ -349,7 +364,10 @@ async def get_gamma_data(
                 "regime_flipped": snapshot.regime_flipped,
                 "market_status": snapshot.market_status,
                 "is_mock": raw_data.get('is_mock', False),  # True = simulated, False = real market data
+                "is_cached": is_cached,  # True if showing cached data
+                "cache_age_seconds": cache_age_seconds,  # How old the cached data is
                 "fetched_at": raw_data.get('fetched_at', format_central_timestamp()),  # When data was fetched from Tradier (Central TZ)
+                "data_timestamp": raw_data.get('data_timestamp', raw_data.get('fetched_at', format_central_timestamp())),  # Original data fetch time
                 "strikes": [s.to_dict() for s in filtered_strikes],
                 "magnets": snapshot.magnets,
                 "likely_pin": snapshot.likely_pin,
@@ -600,24 +618,173 @@ async def get_probability_data():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+async def persist_alerts_to_db(alerts: list):
+    """Persist alerts to database for history tracking"""
+    if not alerts:
+        return
+
+    try:
+        conn = get_connection()
+        if not conn:
+            return
+
+        cursor = conn.cursor()
+        for alert in alerts:
+            # Check if this exact alert already exists (avoid duplicates)
+            cursor.execute("""
+                SELECT id FROM argus_alerts
+                WHERE alert_type = %s
+                AND COALESCE(strike, 0) = COALESCE(%s, 0)
+                AND triggered_at > NOW() - INTERVAL '2 minutes'
+                LIMIT 1
+            """, (alert.get('alert_type'), alert.get('strike')))
+
+            if cursor.fetchone():
+                continue  # Skip duplicate
+
+            cursor.execute("""
+                INSERT INTO argus_alerts
+                (alert_type, strike, message, priority, spot_price, old_value, new_value, triggered_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                alert.get('alert_type'),
+                alert.get('strike'),
+                alert.get('message'),
+                alert.get('priority'),
+                alert.get('spot_price'),
+                alert.get('old_value'),
+                alert.get('new_value'),
+                alert.get('triggered_at')
+            ))
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+        logger.debug(f"Persisted {len(alerts)} alerts to database")
+    except Exception as e:
+        logger.warning(f"Failed to persist alerts: {e}")
+
+
+async def persist_danger_zones_to_db(danger_zones: list, spot_price: float, expiration: str):
+    """Persist danger zones to database for history tracking"""
+    if not danger_zones:
+        return
+
+    try:
+        conn = get_connection()
+        if not conn:
+            return
+
+        cursor = conn.cursor()
+
+        # First, mark old danger zones as resolved if they're no longer active
+        active_strikes = [dz['strike'] for dz in danger_zones]
+        if active_strikes:
+            placeholders = ','.join(['%s'] * len(active_strikes))
+            cursor.execute(f"""
+                UPDATE argus_danger_zone_logs
+                SET is_active = FALSE, resolved_at = NOW()
+                WHERE is_active = TRUE
+                AND strike NOT IN ({placeholders})
+                AND detected_at > NOW() - INTERVAL '1 day'
+            """, active_strikes)
+
+        for dz in danger_zones:
+            # Check if this danger zone is already logged and active
+            cursor.execute("""
+                SELECT id FROM argus_danger_zone_logs
+                WHERE strike = %s
+                AND danger_type = %s
+                AND is_active = TRUE
+                AND detected_at > NOW() - INTERVAL '5 minutes'
+                LIMIT 1
+            """, (dz['strike'], dz['danger_type']))
+
+            if cursor.fetchone():
+                continue  # Skip - already logged
+
+            distance_pct = ((dz['strike'] - spot_price) / spot_price * 100) if spot_price else 0
+
+            cursor.execute("""
+                INSERT INTO argus_danger_zone_logs
+                (detected_at, expiration_date, strike, danger_type, roc_1min, roc_5min, spot_price, distance_from_spot_pct, is_active)
+                VALUES (NOW(), %s, %s, %s, %s, %s, %s, %s, TRUE)
+            """, (
+                expiration,
+                dz['strike'],
+                dz['danger_type'],
+                dz.get('roc_1min', 0),
+                dz.get('roc_5min', 0),
+                spot_price,
+                distance_pct
+            ))
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+        logger.debug(f"Persisted {len(danger_zones)} danger zones to database")
+    except Exception as e:
+        logger.warning(f"Failed to persist danger zones: {e}")
+
+
 @router.get("/alerts")
 async def get_alerts():
     """
-    Get active alerts.
+    Get alerts with history from database.
 
-    Returns all unacknowledged alerts sorted by priority and time.
+    Returns alerts from database (persisted) sorted by priority and time.
     """
-    engine = get_engine()
-    if not engine:
-        raise HTTPException(status_code=503, detail="ARGUS engine not available")
-
     try:
-        alerts = engine.get_active_alerts()
+        # First get any new alerts from engine
+        engine = get_engine()
+        if engine:
+            new_alerts = engine.get_active_alerts()
+            # Persist new alerts to database
+            await persist_alerts_to_db(new_alerts)
 
-        # Sort by priority (HIGH first) then by time (newest first)
-        priority_order = {'HIGH': 0, 'MEDIUM': 1, 'LOW': 2}
-        alerts.sort(key=lambda a: (priority_order.get(a['priority'], 3), a['triggered_at']),
-                   reverse=False)
+        # Now fetch from database (includes history)
+        conn = get_connection()
+        if not conn:
+            # Fallback to in-memory alerts
+            if engine:
+                alerts = engine.get_active_alerts()
+                priority_order = {'HIGH': 0, 'MEDIUM': 1, 'LOW': 2}
+                alerts.sort(key=lambda a: (priority_order.get(a['priority'], 3), a['triggered_at']), reverse=False)
+                return {"success": True, "data": {"alerts": alerts, "count": len(alerts)}}
+            return {"success": True, "data": {"alerts": [], "count": 0}}
+
+        cursor = conn.cursor()
+
+        # Get alerts from the last 24 hours
+        cursor.execute("""
+            SELECT
+                alert_type, strike, message, priority, spot_price,
+                old_value, new_value, triggered_at, acknowledged
+            FROM argus_alerts
+            WHERE triggered_at > NOW() - INTERVAL '24 hours'
+            ORDER BY
+                CASE priority WHEN 'HIGH' THEN 1 WHEN 'MEDIUM' THEN 2 ELSE 3 END,
+                triggered_at DESC
+            LIMIT 50
+        """)
+
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        alerts = []
+        for row in rows:
+            alerts.append({
+                'alert_type': row[0],
+                'strike': float(row[1]) if row[1] else None,
+                'message': row[2],
+                'priority': row[3],
+                'spot_price': float(row[4]) if row[4] else None,
+                'old_value': row[5],
+                'new_value': row[6],
+                'triggered_at': row[7].isoformat() if row[7] else None,
+                'acknowledged': row[8]
+            })
 
         return {
             "success": True,
@@ -630,6 +797,75 @@ async def get_alerts():
     except Exception as e:
         logger.error(f"Error getting alerts: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/danger-zones/log")
+async def get_danger_zone_logs():
+    """
+    Get danger zone history logs.
+
+    Returns recent danger zone events with timestamps.
+    """
+    try:
+        conn = get_connection()
+        if not conn:
+            return {
+                "success": True,
+                "data": {
+                    "logs": [],
+                    "message": "Database not connected"
+                }
+            }
+
+        cursor = conn.cursor()
+
+        # Get danger zone logs from the last 24 hours
+        cursor.execute("""
+            SELECT
+                id, detected_at, strike, danger_type, roc_1min, roc_5min,
+                spot_price, distance_from_spot_pct, is_active, resolved_at
+            FROM argus_danger_zone_logs
+            WHERE detected_at > NOW() - INTERVAL '24 hours'
+            ORDER BY detected_at DESC
+            LIMIT 100
+        """)
+
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        logs = []
+        for row in rows:
+            logs.append({
+                'id': row[0],
+                'detected_at': row[1].isoformat() if row[1] else None,
+                'strike': float(row[2]) if row[2] else None,
+                'danger_type': row[3],
+                'roc_1min': float(row[4]) if row[4] else 0,
+                'roc_5min': float(row[5]) if row[5] else 0,
+                'spot_price': float(row[6]) if row[6] else None,
+                'distance_from_spot_pct': float(row[7]) if row[7] else 0,
+                'is_active': row[8],
+                'resolved_at': row[9].isoformat() if row[9] else None
+            })
+
+        return {
+            "success": True,
+            "data": {
+                "logs": logs,
+                "count": len(logs)
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting danger zone logs: {e}")
+        return {
+            "success": True,
+            "data": {
+                "logs": [],
+                "message": f"Error: {str(e)}"
+            }
+        }
 
 
 @router.get("/commentary")
