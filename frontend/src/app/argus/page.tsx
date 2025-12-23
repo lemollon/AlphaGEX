@@ -1521,9 +1521,12 @@ export default function ArgusPage() {
                     )}
                   </div>
                 ) : (
-                  <div className="text-center py-3 text-gray-500 mb-3">
-                    <Shield className="w-5 h-5 mx-auto mb-1 opacity-30" />
-                    <p className="text-xs">No active danger zones</p>
+                  <div className="text-center py-3 text-gray-500 mb-3 bg-gray-800/30 rounded-lg">
+                    <Shield className="w-5 h-5 mx-auto mb-1 opacity-40" />
+                    <p className="text-xs font-medium">No active danger zones</p>
+                    <p className="text-[10px] text-gray-600 mt-1">
+                      All strikes have stable gamma (ROC within ±25%)
+                    </p>
                   </div>
                 )}
 
