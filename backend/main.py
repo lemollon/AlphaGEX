@@ -297,14 +297,15 @@ app.include_router(docs_routes.router)
 print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, ares, daily-manna, prometheus, argus, docs")
 
 # Initialize existing AlphaGEX components (singleton pattern)
-api_client = TradingVolatilityAPI()
-claude_ai = ClaudeIntelligence()
-monte_carlo = MonteCarloEngine()
-pricer = BlackScholesPricer()
-strategy_optimizer = MultiStrategyOptimizer()
+# Only instantiate if import succeeded
+api_client = TradingVolatilityAPI() if TradingVolatilityAPI else None
+claude_ai = ClaudeIntelligence() if ClaudeIntelligence else None
+monte_carlo = MonteCarloEngine() if MonteCarloEngine else None
+pricer = BlackScholesPricer() if BlackScholesPricer else None
+strategy_optimizer = MultiStrategyOptimizer() if MultiStrategyOptimizer else None
 
 # Initialize probability calculator (NEW - Phase 2 Self-Learning)
-probability_calc = ProbabilityCalculator()
+probability_calc = ProbabilityCalculator() if ProbabilityCalculator else None
 
 # RSI Data Cache - Prevent Polygon.io rate limit (5 calls/min on free tier)
 # Cache RSI data for 5 minutes to avoid repeated API calls
