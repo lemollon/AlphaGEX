@@ -25,6 +25,8 @@ interface ScanActivity {
   gex_regime?: string
   call_wall?: number
   put_wall?: number
+  error_message?: string
+  error_type?: string
   checks_performed?: Array<{
     check_name: string
     passed: boolean
@@ -261,14 +263,59 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
               </div>
             )}
 
-            {/* Full Reasoning (expandable) */}
+            {/* Full Reasoning - No truncation */}
             {scan.full_reasoning && (
-              <p className="mt-2 text-xs text-gray-500 line-clamp-3">
-                {scan.full_reasoning}
-              </p>
+              <details className="mt-2">
+                <summary className="text-xs text-blue-400 cursor-pointer hover:text-blue-300">
+                  📋 View Full Analysis
+                </summary>
+                <div className="mt-2 p-2 bg-gray-900/50 rounded text-xs text-gray-300 whitespace-pre-wrap">
+                  {scan.full_reasoning}
+                </div>
+              </details>
+            )}
+
+            {/* Error details for crashes */}
+            {scan.outcome === 'ERROR' && scan.error_message && (
+              <div className="mt-2 p-2 bg-red-500/10 border border-red-500/30 rounded text-xs">
+                <span className="text-red-400 font-medium">⚠️ Error: </span>
+                <span className="text-gray-300">{scan.error_message}</span>
+              </div>
             )}
           </div>
         ))}
+      </div>
+
+      {/* Export Button */}
+      <div className="mt-4 pt-3 border-t border-gray-700 flex justify-end">
+        <button
+          onClick={() => {
+            const csv = [
+              ['Scan #', 'Time', 'Outcome', 'Summary', 'R:R', 'SPY', 'VIX', 'What Would Trigger', 'Market Insight'].join(','),
+              ...scans.map(s => [
+                s.scan_number,
+                s.time_ct,
+                s.outcome,
+                `"${(s.decision_summary || '').replace(/"/g, '""')}"`,
+                s.risk_reward_ratio?.toFixed(2) || '',
+                s.underlying_price?.toFixed(2) || '',
+                s.vix?.toFixed(1) || '',
+                `"${(s.what_would_trigger || '').replace(/"/g, '""')}"`,
+                `"${(s.market_insight || '').replace(/"/g, '""')}"`
+              ].join(','))
+            ].join('\n')
+            const blob = new Blob([csv], { type: 'text/csv' })
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url
+            a.download = `${botName.toLowerCase()}-scan-activity-${new Date().toISOString().split('T')[0]}.csv`
+            a.click()
+            URL.revokeObjectURL(url)
+          }}
+          className="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded flex items-center gap-1"
+        >
+          📥 Export CSV
+        </button>
       </div>
     </div>
   )

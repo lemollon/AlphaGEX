@@ -610,18 +610,52 @@ export default function ARESPage() {
                   <h3 className="text-lg font-semibold text-white flex items-center gap-2">
                     <FileText className="w-5 h-5 text-red-400" /> Recent Decisions
                   </h3>
-                  <button onClick={() => setActiveTab('decisions')} className="text-sm text-red-400 hover:underline">View All →</button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        const csv = [
+                          ['Time', 'Type', 'What', 'Why'].join(','),
+                          ...decisions.map(d => [
+                            new Date(d.timestamp).toLocaleString(),
+                            d.decision_type?.replace(/_/g, ' '),
+                            `"${(d.what || '').replace(/"/g, '""')}"`,
+                            `"${(d.why || '').replace(/"/g, '""')}"`
+                          ].join(','))
+                        ].join('\n')
+                        const blob = new Blob([csv], { type: 'text/csv' })
+                        const url = URL.createObjectURL(blob)
+                        const a = document.createElement('a')
+                        a.href = url
+                        a.download = `ares-decisions-${new Date().toISOString().split('T')[0]}.csv`
+                        a.click()
+                        URL.revokeObjectURL(url)
+                      }}
+                      className="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded"
+                    >
+                      📥 Export
+                    </button>
+                    <button onClick={() => setActiveTab('decisions')} className="text-sm text-red-400 hover:underline">View All →</button>
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  {decisions.slice(0, 5).map((d) => (
-                    <div key={d.id} className="flex items-center justify-between bg-gray-900/50 rounded p-2">
-                      <div className="flex items-center gap-2">
-                        <span className={`px-2 py-0.5 rounded text-xs ${getDecisionTypeBadge(d.decision_type).bg} ${getDecisionTypeBadge(d.decision_type).text}`}>
-                          {d.decision_type?.replace(/_/g, ' ')}
-                        </span>
-                        <span className="text-gray-300 text-sm truncate max-w-xs">{d.what}</span>
+                <div className="space-y-2 max-h-80 overflow-y-auto">
+                  {decisions.slice(0, 8).map((d) => (
+                    <div key={d.id} className="bg-gray-900/50 rounded p-3 border border-gray-700/50">
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-2">
+                          <span className={`px-2 py-0.5 rounded text-xs ${getDecisionTypeBadge(d.decision_type).bg} ${getDecisionTypeBadge(d.decision_type).text}`}>
+                            {d.decision_type?.replace(/_/g, ' ')}
+                          </span>
+                          <span className="text-xs text-gray-500">{new Date(d.timestamp).toLocaleTimeString()}</span>
+                        </div>
                       </div>
-                      <span className="text-xs text-gray-500">{new Date(d.timestamp).toLocaleTimeString()}</span>
+                      {/* WHAT - Full text, no truncation */}
+                      <p className="text-gray-200 text-sm mb-1">{d.what}</p>
+                      {/* WHY - Show the reason */}
+                      {d.why && (
+                        <p className="text-gray-400 text-xs italic">
+                          <span className="text-yellow-500 font-medium">Why:</span> {d.why}
+                        </p>
+                      )}
                     </div>
                   ))}
                   {decisions.length === 0 && <p className="text-center text-gray-500 py-4">No decisions yet</p>}
