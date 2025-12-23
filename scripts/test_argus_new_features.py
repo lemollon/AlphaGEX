@@ -6,13 +6,21 @@ Test script for new ARGUS features:
 - API endpoint verification
 
 Run: python scripts/test_argus_new_features.py
+Or with custom URL: API_URL=https://your-api.onrender.com python scripts/test_argus_new_features.py
 """
 
 import requests
 import sys
+import os
 from datetime import datetime
 
-BASE_URL = "http://localhost:8000"
+# Use environment variable or default to localhost
+BASE_URL = os.environ.get("API_URL", "http://localhost:8000").rstrip("/")
+
+# Production URL - alphagex-api.onrender.com is the correct backend
+FALLBACK_URLS = [
+    "https://alphagex-api.onrender.com",
+]
 
 def test_strike_trends():
     """Test /api/argus/strike-trends endpoint"""
@@ -247,11 +255,46 @@ def test_expirations():
         return False
 
 
+def find_working_url():
+    """Try to find a working API URL"""
+    global BASE_URL
+
+    urls_to_try = [BASE_URL] + FALLBACK_URLS
+
+    for url in urls_to_try:
+        try:
+            print(f"Trying {url}...")
+            response = requests.get(f"{url}/health", timeout=5)
+            if response.status_code == 200:
+                print(f"  Connected!")
+                return url
+        except:
+            print(f"  Failed to connect")
+            continue
+
+    return None
+
+
 def main():
+    global BASE_URL
+
     print("="*60)
     print("ARGUS New Features Test Suite")
-    print(f"Testing against: {BASE_URL}")
     print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("="*60)
+
+    # Find working URL
+    print("\nFinding API server...")
+    working_url = find_working_url()
+
+    if not working_url:
+        print("\nERROR: Cannot connect to any API server!")
+        print("Try setting API_URL environment variable:")
+        print("  API_URL=https://your-api-url.com python scripts/test_argus_new_features.py")
+        return 1
+
+    BASE_URL = working_url
+    print(f"\nUsing: {BASE_URL}")
     print("="*60)
 
     results = {

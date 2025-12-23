@@ -2,16 +2,45 @@
 #
 # Quick ARGUS API tests using curl
 # Run: bash scripts/test_argus_curl.sh
+# Or with custom URL: API_URL=https://your-api.onrender.com bash scripts/test_argus_curl.sh
 #
 
-BASE_URL="${API_URL:-http://localhost:8000}"
-PASSED=0
-FAILED=0
+# Try to find a working URL
+find_api_url() {
+    local urls=("${API_URL:-}" "https://alphagex-api.onrender.com" "http://localhost:8000")
+
+    for url in "${urls[@]}"; do
+        if [ -z "$url" ]; then continue; fi
+        echo "Trying $url..." >&2
+        if curl -s --connect-timeout 3 "$url/health" > /dev/null 2>&1; then
+            echo "  Connected!" >&2
+            echo "$url"
+            return 0
+        fi
+        echo "  Failed" >&2
+    done
+    return 1
+}
 
 echo "========================================"
 echo "ARGUS API Tests (curl)"
-echo "Testing: $BASE_URL"
 echo "========================================"
+echo ""
+echo "Finding API server..."
+
+BASE_URL=$(find_api_url)
+if [ -z "$BASE_URL" ]; then
+    echo "ERROR: Cannot connect to any API server!"
+    echo "Try: API_URL=https://your-api-url.com bash scripts/test_argus_curl.sh"
+    exit 1
+fi
+
+echo ""
+echo "Using: $BASE_URL"
+echo "========================================"
+
+PASSED=0
+FAILED=0
 
 test_endpoint() {
     local name="$1"
