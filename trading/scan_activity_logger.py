@@ -661,8 +661,10 @@ def log_ares_scan(
     If generate_ai_explanation is True, uses Claude to create a detailed
     human-readable explanation of WHY this decision was made.
     """
-    # Pop full_reasoning from kwargs to avoid "multiple values" error when passing **kwargs
+    # Pop parameters from kwargs to avoid "multiple values" error when passing **kwargs
     full_reasoning = kwargs.pop('full_reasoning', '')
+    action_taken = kwargs.pop('action_taken', '')
+    error_type = kwargs.pop('error_type', '')
 
     # Generate AI explanation if requested and we have enough context
     if generate_ai_explanation and market_data:
@@ -741,6 +743,7 @@ def log_ares_scan(
         bot_name="ARES",
         outcome=outcome,
         decision_summary=decision_summary,
+        action_taken=action_taken,
         full_reasoning=full_reasoning,
         market_data=market_data,
         gex_data=gex_data,
@@ -753,6 +756,7 @@ def log_ares_scan(
         oracle_reasoning=oracle_reasoning,
         trade_executed=trade_executed,
         error_message=error_message,
+        error_type=error_type,
         **kwargs
     )
 
@@ -858,6 +862,7 @@ def log_athena_scan(
         bot_name="ATHENA",
         outcome=outcome,
         decision_summary=decision_summary,
+        action_taken=action_taken,
         full_reasoning=full_reasoning,
         market_data=market_data,
         gex_data=gex_data,
@@ -868,5 +873,6 @@ def log_athena_scan(
         signal_win_probability=signal_win_probability,
         trade_executed=trade_executed,
         error_message=error_message,
+        error_type=error_type,
         **kwargs
     )
