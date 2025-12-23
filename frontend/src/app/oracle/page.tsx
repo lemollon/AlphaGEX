@@ -378,7 +378,7 @@ export default function OraclePage() {
       i.vix || '',
       i.gex_regime || '',
       i.actual_outcome || 'Pending',
-      i.actual_pnl !== undefined ? `$${i.actual_pnl.toFixed(2)}` : '',
+      i.actual_pnl != null ? `$${i.actual_pnl.toFixed(2)}` : '',
       i.reasoning || ''
     ])
     const csv = [headers.join(','), ...rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(','))].join('\n')
