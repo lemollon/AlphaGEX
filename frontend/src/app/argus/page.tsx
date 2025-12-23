@@ -649,8 +649,28 @@ export default function ArgusPage() {
     : 1
 
   const highPriorityAlerts = alerts.filter(a => a.priority === 'HIGH' || a.priority === 'MEDIUM')
-  const buildingZones = gammaData?.danger_zones?.filter(d => d.danger_type === 'BUILDING') || []
-  const collapsingZones = gammaData?.danger_zones?.filter(d => d.danger_type === 'COLLAPSING') || []
+
+  // Merge danger zones from current snapshot AND active database logs
+  // This prevents zones from disappearing when ROC fluctuates between refreshes
+  const snapshotBuilding = gammaData?.danger_zones?.filter(d => d.danger_type === 'BUILDING') || []
+  const snapshotCollapsing = gammaData?.danger_zones?.filter(d => d.danger_type === 'COLLAPSING') || []
+  const activeLogBuilding = dangerZoneLogs.filter(log => log.is_active && log.danger_type === 'BUILDING')
+  const activeLogCollapsing = dangerZoneLogs.filter(log => log.is_active && log.danger_type === 'COLLAPSING')
+
+  // Combine and dedupe by strike
+  const buildingStrikes = new Set([...snapshotBuilding.map(d => d.strike), ...activeLogBuilding.map(d => d.strike)])
+  const collapsingStrikes = new Set([...snapshotCollapsing.map(d => d.strike), ...activeLogCollapsing.map(d => d.strike)])
+
+  const buildingZones = Array.from(buildingStrikes).map(strike => {
+    const fromSnapshot = snapshotBuilding.find(d => d.strike === strike)
+    const fromLog = activeLogBuilding.find(d => d.strike === strike)
+    return fromSnapshot || { strike, danger_type: 'BUILDING', roc_1min: fromLog?.roc_1min || 0, roc_5min: fromLog?.roc_5min || 0 }
+  })
+  const collapsingZones = Array.from(collapsingStrikes).map(strike => {
+    const fromSnapshot = snapshotCollapsing.find(d => d.strike === strike)
+    const fromLog = activeLogCollapsing.find(d => d.strike === strike)
+    return fromSnapshot || { strike, danger_type: 'COLLAPSING', roc_1min: fromLog?.roc_1min || 0, roc_5min: fromLog?.roc_5min || 0 }
+  })
 
   return (
     <div className="min-h-screen bg-background">

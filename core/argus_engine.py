@@ -184,10 +184,10 @@ class ArgusEngine:
     - Generate alerts for significant events
     """
 
-    # Thresholds
-    ROC_1MIN_SPIKE_THRESHOLD = 15.0  # % for SPIKE danger type
-    ROC_5MIN_BUILDING_THRESHOLD = 25.0  # % for BUILDING danger type
-    ROC_5MIN_COLLAPSING_THRESHOLD = -25.0  # % for COLLAPSING danger type
+    # Thresholds - lowered to catch more market activity
+    ROC_1MIN_SPIKE_THRESHOLD = 10.0  # % for SPIKE danger type (was 15)
+    ROC_5MIN_BUILDING_THRESHOLD = 15.0  # % for BUILDING danger type (was 25)
+    ROC_5MIN_COLLAPSING_THRESHOLD = -15.0  # % for COLLAPSING danger type (was -25)
     PIN_ZONE_PROXIMITY_PCT = 0.5  # % distance from likely pin
     GAMMA_SPIKE_THRESHOLD = 50.0  # % increase in 5 min for alert
     GAMMA_COLLAPSE_THRESHOLD = -20.0  # % decrease in 10 min for alert
