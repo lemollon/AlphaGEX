@@ -1758,9 +1758,31 @@ class ARESTrader:
         today = now.strftime('%Y-%m-%d')
 
         # Start a new scan cycle for session tracking
+        scan_number = 1
         if self.session_tracker:
             cycle_num = self.session_tracker.new_cycle()
+            scan_number = cycle_num
             logger.info(f"ARES: Starting scan cycle {cycle_num} for session {self.session_tracker.session_id}")
+
+        # Log scan START to database - ALWAYS log this
+        if SCAN_LOGGER_AVAILABLE:
+            try:
+                from database_adapter import get_connection
+                conn = get_connection()
+                c = conn.cursor()
+                c.execute("""
+                    INSERT INTO bot_heartbeat (bot_name, status, last_action, last_scan_time)
+                    VALUES ('ARES', 'SCANNING', %s, NOW())
+                    ON CONFLICT (bot_name) DO UPDATE SET
+                        status = 'SCANNING',
+                        last_action = EXCLUDED.last_action,
+                        last_scan_time = NOW()
+                """, (f"Scan #{scan_number} started at {now.strftime('%I:%M %p CT')}",))
+                conn.commit()
+                conn.close()
+                logger.info(f"[ARES] Scan #{scan_number} heartbeat logged to database")
+            except Exception as e:
+                logger.warning(f"[ARES] Failed to log scan start: {e}")
 
         # Create decision tracker for API calls, errors, and timing
         decision_tracker = None
@@ -1966,6 +1988,22 @@ class ARESTrader:
                 alternatives=["Check Tradier API for expiration calendar", "Retry later"],
                 decision_tracker=decision_tracker
             )
+            # Log scan activity - EXPIRATION ERROR
+            if SCAN_LOGGER_AVAILABLE and log_ares_scan:
+                log_ares_scan(
+                    outcome=ScanOutcome.ERROR,
+                    decision_summary="Could not determine today's expiration date for 0DTE options",
+                    action_taken="Will retry on next scan",
+                    market_data=market_data,
+                    gex_data=gex_data,
+                    error_message="Failed to get expiration date from Tradier API",
+                    error_type="EXPIRATION_ERROR",
+                    checks=[
+                        CheckResult("trading_window", True, now.strftime('%H:%M'), "09:35-15:30 CT", "Within window"),
+                        CheckResult("market_data", True, f"${market_data['underlying_price']:.2f}", "Required", "Available"),
+                        CheckResult("expiration_date", False, "None", "Required", "Could not determine 0DTE expiration")
+                    ]
+                )
             return result
 
         # Calculate expected move with SD multiplier

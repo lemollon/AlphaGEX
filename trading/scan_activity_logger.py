@@ -178,6 +178,8 @@ def log_scan_activity(
     # Oracle data
     oracle_advice: str = "",
     oracle_reasoning: str = "",
+    # Risk/Reward
+    risk_reward_ratio: float = 0,
     # Checks
     checks: Optional[List[CheckResult]] = None,
     # Trade data
@@ -190,8 +192,13 @@ def log_scan_activity(
     # Error
     error_message: str = "",
     error_type: str = "",
+    # Claude AI explanations
+    what_would_trigger: str = "",
+    market_insight: str = "",
     # Additional context
-    full_context: Optional[Dict] = None
+    full_context: Optional[Dict] = None,
+    # Generate AI explanation
+    generate_ai_explanation: bool = True
 ) -> Optional[str]:
     """
     Log a scan activity to the database.
@@ -288,7 +295,7 @@ def log_scan_activity(
         conn = get_connection()
         c = conn.cursor()
 
-        # Ensure table exists
+        # Ensure table exists with all columns
         c.execute("""
             CREATE TABLE IF NOT EXISTS scan_activity (
                 id SERIAL PRIMARY KEY,
@@ -318,6 +325,7 @@ def log_scan_activity(
                 signal_win_probability DECIMAL(5, 4),
                 oracle_advice VARCHAR(50),
                 oracle_reasoning TEXT,
+                risk_reward_ratio DECIMAL(10, 4),
                 checks_performed JSONB,
                 all_checks_passed BOOLEAN DEFAULT TRUE,
                 trade_executed BOOLEAN DEFAULT FALSE,
@@ -328,10 +336,80 @@ def log_scan_activity(
                 max_risk DECIMAL(15, 4),
                 error_message TEXT,
                 error_type VARCHAR(100),
+                what_would_trigger TEXT,
+                market_insight TEXT,
                 full_context JSONB,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+
+        # Add new columns if they don't exist (for existing tables)
+        try:
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS risk_reward_ratio DECIMAL(10, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS what_would_trigger TEXT")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS market_insight TEXT")
+        except Exception:
+            pass  # Columns may already exist
+
+        # Generate Claude AI explanation if enabled and market data available
+        ai_what_trigger = what_would_trigger
+        ai_market_insight = market_insight
+
+        if generate_ai_explanation and market_data and not ai_what_trigger:
+            try:
+                from trading.scan_explainer import generate_scan_explanation, ScanContext, MarketContext, SignalContext, CheckDetail, DecisionType
+
+                # Build context for Claude
+                check_details = []
+                if checks:
+                    for check in checks:
+                        if isinstance(check, CheckResult):
+                            check_details.append(CheckDetail(
+                                name=check.check_name,
+                                passed=check.passed,
+                                actual_value=check.value,
+                                required_value=check.threshold,
+                                explanation=check.reason
+                            ))
+
+                scan_ctx = ScanContext(
+                    bot_name=bot_name,
+                    scan_number=scan_number,
+                    decision_type=DecisionType(outcome.value),
+                    market=MarketContext(
+                        underlying_symbol=underlying_symbol or "SPY",
+                        underlying_price=underlying_price,
+                        vix=vix,
+                        expected_move=expected_move,
+                        net_gex=net_gex,
+                        gex_regime=gex_regime,
+                        call_wall=call_wall,
+                        put_wall=put_wall,
+                        distance_to_call_wall_pct=distance_to_call_wall_pct,
+                        distance_to_put_wall_pct=distance_to_put_wall_pct
+                    ),
+                    signal=SignalContext(
+                        source=signal_source or "None",
+                        direction=signal_direction or "NONE",
+                        confidence=signal_confidence,
+                        win_probability=signal_win_probability,
+                        advice=oracle_advice,
+                        reasoning=oracle_reasoning
+                    ) if signal_source else None,
+                    checks=check_details if check_details else None,
+                    error_message=error_message
+                )
+
+                explanation = generate_scan_explanation(scan_ctx)
+                ai_what_trigger = explanation.get('what_would_trigger', '')
+                ai_market_insight = explanation.get('market_insight', '')
+
+                # Use Claude's full explanation if we don't have one
+                if not full_reasoning and explanation.get('full_explanation'):
+                    full_reasoning = explanation.get('full_explanation', '')
+
+            except Exception as e:
+                logger.debug(f"Could not generate Claude explanation: {e}")
 
         # Insert scan activity
         c.execute("""
@@ -344,10 +422,12 @@ def log_scan_activity(
                 distance_to_call_wall_pct, distance_to_put_wall_pct,
                 signal_source, signal_direction, signal_confidence, signal_win_probability,
                 oracle_advice, oracle_reasoning,
+                risk_reward_ratio,
                 checks_performed, all_checks_passed,
                 trade_executed, position_id, strike_selection, contracts,
                 premium_collected, max_risk,
                 error_message, error_type,
+                what_would_trigger, market_insight,
                 full_context
             ) VALUES (
                 %s, %s, %s,
@@ -358,8 +438,10 @@ def log_scan_activity(
                 %s, %s,
                 %s, %s, %s, %s,
                 %s, %s,
+                %s,
                 %s, %s,
                 %s, %s, %s, %s,
+                %s, %s,
                 %s, %s,
                 %s, %s,
                 %s
@@ -373,10 +455,12 @@ def log_scan_activity(
             distance_to_call_wall_pct, distance_to_put_wall_pct,
             signal_source, signal_direction, signal_confidence, signal_win_probability,
             oracle_advice, oracle_reasoning,
+            risk_reward_ratio,
             json.dumps(checks_json) if checks_json else None, all_checks_passed,
             trade_executed, position_id, json.dumps(strike_selection) if strike_selection else None, contracts,
             premium_collected, max_risk,
             error_message, error_type,
+            ai_what_trigger, ai_market_insight,
             json.dumps(context)
         ))
 
@@ -425,10 +509,12 @@ def get_recent_scans(
                 distance_to_call_wall_pct, distance_to_put_wall_pct,
                 signal_source, signal_direction, signal_confidence, signal_win_probability,
                 oracle_advice, oracle_reasoning,
+                risk_reward_ratio,
                 checks_performed, all_checks_passed,
                 trade_executed, position_id, strike_selection, contracts,
                 premium_collected, max_risk,
-                error_message, error_type
+                error_message, error_type,
+                what_would_trigger, market_insight
             FROM scan_activity
             WHERE 1=1
         """
@@ -460,10 +546,12 @@ def get_recent_scans(
             'distance_to_call_wall_pct', 'distance_to_put_wall_pct',
             'signal_source', 'signal_direction', 'signal_confidence', 'signal_win_probability',
             'oracle_advice', 'oracle_reasoning',
+            'risk_reward_ratio',
             'checks_performed', 'all_checks_passed',
             'trade_executed', 'position_id', 'strike_selection', 'contracts',
             'premium_collected', 'max_risk',
-            'error_message', 'error_type'
+            'error_message', 'error_type',
+            'what_would_trigger', 'market_insight'
         ]
 
         results = []

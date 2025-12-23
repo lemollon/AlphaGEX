@@ -2337,8 +2337,32 @@ class ATHENATrader:
     def run_daily_cycle(self) -> Dict[str, Any]:
         """Run the daily trading cycle using ML signals"""
         now = datetime.now(CENTRAL_TZ)
-        self._log_to_db("INFO", f"=== ATHENA Scan #{self.daily_trades + 1} at {now.strftime('%I:%M %p CT')} ===")
+        scan_number = self.daily_trades + 1
+        self._log_to_db("INFO", f"=== ATHENA Scan #{scan_number} at {now.strftime('%I:%M %p CT')} ===")
         self._log_to_db("INFO", f"ATHENA is ACTIVE - checking for directional spread opportunities...")
+
+        # Log scan START to scan_activity table - ALWAYS log this
+        if SCAN_LOGGER_AVAILABLE and log_athena_scan:
+            try:
+                from trading.scan_activity_logger import log_scan_activity, ScanOutcome as SO
+                from database_adapter import get_connection
+
+                # Ensure table exists and log scan start
+                conn = get_connection()
+                c = conn.cursor()
+                c.execute("""
+                    INSERT INTO bot_heartbeat (bot_name, status, last_action, last_scan_time)
+                    VALUES ('ATHENA', 'SCANNING', %s, NOW())
+                    ON CONFLICT (bot_name) DO UPDATE SET
+                        status = 'SCANNING',
+                        last_action = EXCLUDED.last_action,
+                        last_scan_time = NOW()
+                """, (f"Scan #{scan_number} started at {now.strftime('%I:%M %p CT')}",))
+                conn.commit()
+                conn.close()
+                logger.info(f"[ATHENA] Scan #{scan_number} heartbeat logged to database")
+            except Exception as e:
+                logger.warning(f"[ATHENA] Failed to log scan start: {e}")
 
         result = {
             'trades_attempted': 0,
@@ -2501,6 +2525,32 @@ class ATHENATrader:
                     self._log_skip_decision(skip_reason, gex_data, ml_signal)
                     result['signal_source'] = 'ML+Oracle' if ml_said_stay_out else 'Oracle'
                     result['decision_reason'] = f"NO TRADE: {skip_reason}"
+                    # Log scan activity - ORACLE SKIP
+                    if SCAN_LOGGER_AVAILABLE and log_athena_scan:
+                        spot = gex_data.get('spot_price', 0)
+                        try:
+                            from data.unified_data_provider import get_vix
+                            vix = get_vix() or 20.0
+                        except Exception:
+                            vix = 20.0
+
+                        log_athena_scan(
+                            outcome=ScanOutcome.NO_TRADE,
+                            decision_summary=skip_reason[:200],
+                            action_taken="No trade - Oracle AI recommends skip",
+                            market_data={'underlying_price': spot, 'vix': vix, 'symbol': 'SPY'},
+                            gex_data=gex_data,
+                            signal_source='ML+Oracle' if ml_said_stay_out else 'Oracle',
+                            signal_direction="NEUTRAL",
+                            signal_confidence=oracle_advice.confidence,
+                            signal_win_probability=oracle_advice.win_probability,
+                            checks=[
+                                CheckResult("should_trade", True, "Yes", "Yes", "Trade conditions met"),
+                                CheckResult("gex_data", True, f"Spot ${spot:.2f}", "Required", f"GEX regime: {gex_data.get('regime', 'UNKNOWN')}"),
+                                CheckResult("ml_signal", ml_said_stay_out, "STAY_OUT" if ml_said_stay_out else "N/A", "Actionable", "ML recommends staying out" if ml_said_stay_out else "ML not available"),
+                                CheckResult("oracle_signal", True, "SKIP_TODAY", "TRADE", f"Oracle: {oracle_advice.reasoning[:50]}")
+                            ]
+                        )
                     # Still check exits
                     closed = self.check_exits()
                     result['positions_closed'] = len(closed)
@@ -2612,6 +2662,34 @@ class ATHENATrader:
             self._log_skip_decision(skip_reason, gex_data, ml_signal)
             result['errors'].append(f"R:R {rr_ratio:.2f}:1 < {self.config.min_rr_ratio}:1 minimum")
             result['decision_reason'] = f"NO TRADE: {skip_reason}"
+            # Log scan activity - R:R RATIO FAILED
+            if SCAN_LOGGER_AVAILABLE and log_athena_scan:
+                spot = gex_data.get('spot_price', 0)
+                try:
+                    from data.unified_data_provider import get_vix
+                    vix = get_vix() or 20.0
+                except Exception:
+                    vix = 20.0
+
+                log_athena_scan(
+                    outcome=ScanOutcome.NO_TRADE,
+                    decision_summary=skip_reason,
+                    action_taken="No trade - risk/reward unfavorable",
+                    market_data={'underlying_price': spot, 'vix': vix, 'symbol': 'SPY'},
+                    gex_data=gex_data,
+                    signal_source=signal_source,
+                    signal_direction="BULLISH" if spread_type == SpreadType.BULL_CALL_SPREAD else "BEARISH",
+                    signal_confidence=ml_signal['confidence'] if ml_signal else 0,
+                    signal_win_probability=ml_signal['win_probability'] if ml_signal else 0,
+                    risk_reward_ratio=rr_ratio,
+                    checks=[
+                        CheckResult("should_trade", True, "Yes", "Yes", "Trade conditions met"),
+                        CheckResult("gex_data", True, f"Spot ${spot:.2f}", "Required", f"GEX regime: {gex_data.get('regime', 'UNKNOWN')}"),
+                        CheckResult("gex_walls", True, f"Put ${gex_data.get('put_wall', 0):.0f} / Call ${gex_data.get('call_wall', 0):.0f}", "Informational", "Used for R:R calculation"),
+                        CheckResult("signal", True, signal_source, "Actionable", f"{signal_source} signal received"),
+                        CheckResult("rr_ratio", False, f"{rr_ratio:.2f}:1", f">={self.config.min_rr_ratio}:1", f"R:R too low - need {self.config.min_rr_ratio}:1 minimum")
+                    ]
+                )
             # Still check exits for existing positions
             closed = self.check_exits()
             result['positions_closed'] = len(closed)
