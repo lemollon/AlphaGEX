@@ -232,9 +232,9 @@ export default function ArgusPage() {
     return day >= 1 && day <= 5 && timeInMinutes >= 570 && timeInMinutes <= 960
   }, [])
 
-  // Expand/Collapse State for sections
-  const [alertsExpanded, setAlertsExpanded] = useState(false)
-  const [dangerZonesExpanded, setDangerZonesExpanded] = useState(false)
+  // Expand/Collapse State for sections - default to expanded
+  const [alertsExpanded, setAlertsExpanded] = useState(true)
+  const [dangerZonesExpanded, setDangerZonesExpanded] = useState(true)
 
   // Historical Replay State
   const [replayMode, setReplayMode] = useState(false)
@@ -1637,21 +1637,23 @@ export default function ArgusPage() {
                       </div>
                     </div>
                     {/* Show top ROC strikes even when calm */}
-                    {gammaData && gammaData.strikes.length > 0 && (
-                      <div className="mt-2 grid grid-cols-3 gap-1">
-                        {gammaData.strikes
-                          .filter(s => s.roc_5min !== 0)
-                          .sort((a, b) => Math.abs(b.roc_5min) - Math.abs(a.roc_5min))
-                          .slice(0, 3)
-                          .map(s => (
-                            <div key={s.strike} className="px-2 py-1 bg-gray-700/30 rounded text-[10px] text-center">
-                              <span className="text-gray-400">${s.strike}</span>
-                              <span className={`ml-1 ${s.roc_5min > 0 ? 'text-emerald-400' : 'text-gray-500'}`}>
-                                {s.roc_5min > 0 ? '+' : ''}{s.roc_5min.toFixed(0)}%
-                              </span>
-                            </div>
-                          ))
-                        }
+                    {gammaData && gammaData.strikes && gammaData.strikes.length > 0 && (
+                      <div className="mt-2">
+                        <div className="text-[10px] text-gray-600 mb-1">Top activity:</div>
+                        <div className="grid grid-cols-3 gap-1">
+                          {[...gammaData.strikes]
+                            .sort((a, b) => Math.abs(b.roc_5min) - Math.abs(a.roc_5min))
+                            .slice(0, 3)
+                            .map(s => (
+                              <div key={s.strike} className="px-2 py-1.5 bg-gray-700/40 rounded text-xs text-center">
+                                <span className="text-white font-medium">${s.strike}</span>
+                                <span className={`ml-1 ${s.roc_5min > 0 ? 'text-emerald-400' : s.roc_5min < 0 ? 'text-rose-400' : 'text-gray-500'}`}>
+                                  {s.roc_5min > 0 ? '+' : ''}{s.roc_5min.toFixed(1)}%
+                                </span>
+                              </div>
+                            ))
+                          }
+                        </div>
                       </div>
                     )}
                   </div>
