@@ -689,8 +689,8 @@ async def persist_danger_zones_to_db(danger_zones: list, spot_price: float, expi
         active_strikes = [dz['strike'] for dz in danger_zones] if danger_zones else []
 
         # Mark old danger zones as resolved if they're no longer in the active list
-        # BUT: Keep danger zones active for at least 2 minutes to prevent flapping
-        # This prevents zones from disappearing immediately on next refresh
+        # BUT: Keep danger zones active for at least 5 minutes to prevent flapping
+        # This ensures users see spikes even after they calm down
         if active_strikes:
             placeholders = ','.join(['%s'] * len(active_strikes))
             cursor.execute(f"""
@@ -699,16 +699,16 @@ async def persist_danger_zones_to_db(danger_zones: list, spot_price: float, expi
                 WHERE is_active = TRUE
                 AND strike NOT IN ({placeholders})
                 AND detected_at > NOW() - INTERVAL '1 day'
-                AND detected_at < NOW() - INTERVAL '2 minutes'
+                AND detected_at < NOW() - INTERVAL '5 minutes'
             """, active_strikes)
         else:
-            # No active danger zones - mark as resolved (only if older than 2 minutes)
+            # No active danger zones - mark as resolved (only if older than 5 minutes)
             cursor.execute("""
                 UPDATE argus_danger_zone_logs
                 SET is_active = FALSE, resolved_at = NOW()
                 WHERE is_active = TRUE
                 AND detected_at > NOW() - INTERVAL '1 day'
-                AND detected_at < NOW() - INTERVAL '2 minutes'
+                AND detected_at < NOW() - INTERVAL '5 minutes'
             """)
 
         # Insert new danger zones
@@ -1615,6 +1615,200 @@ def get_default_context() -> dict:
         "monthly_magnets": {},
         "regime": {}
     }
+
+
+@router.get("/strike-trends")
+async def get_strike_trends():
+    """
+    Get 30-minute trend data for each strike.
+
+    Returns:
+    - Dominant status (BUILDING, COLLAPSING, SPIKE, or NEUTRAL)
+    - Duration of current/dominant status
+    - Count of each status type
+    - Gamma flip history
+    """
+    try:
+        conn = get_connection()
+        if not conn:
+            return {
+                "success": True,
+                "data": {"trends": {}, "message": "Database not connected"}
+            }
+
+        cursor = conn.cursor()
+
+        # Get danger zone events from the last 30 minutes, grouped by strike
+        cursor.execute("""
+            SELECT
+                strike,
+                danger_type,
+                detected_at,
+                resolved_at,
+                is_active,
+                roc_1min,
+                roc_5min
+            FROM argus_danger_zone_logs
+            WHERE detected_at > NOW() - INTERVAL '30 minutes'
+            ORDER BY strike, detected_at DESC
+        """)
+
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        # Process into per-strike trends
+        strike_events = {}
+        for row in rows:
+            strike = float(row[0])
+            if strike not in strike_events:
+                strike_events[strike] = []
+            strike_events[strike].append({
+                'danger_type': row[1],
+                'detected_at': row[2],
+                'resolved_at': row[3],
+                'is_active': row[4],
+                'roc_1min': float(row[5]) if row[5] else 0,
+                'roc_5min': float(row[6]) if row[6] else 0
+            })
+
+        # Calculate trends for each strike
+        trends = {}
+        now = datetime.now(CENTRAL_TZ)
+
+        for strike, events in strike_events.items():
+            # Count status occurrences
+            status_counts = {'BUILDING': 0, 'COLLAPSING': 0, 'SPIKE': 0}
+            status_durations = {'BUILDING': 0, 'COLLAPSING': 0, 'SPIKE': 0}
+
+            for event in events:
+                status = event['danger_type']
+                if status in status_counts:
+                    status_counts[status] += 1
+
+                    # Calculate duration (in minutes)
+                    start = event['detected_at']
+                    end = event['resolved_at'] or now
+                    if start.tzinfo is None:
+                        start = start.replace(tzinfo=CENTRAL_TZ)
+                    if hasattr(end, 'tzinfo') and end.tzinfo is None:
+                        end = end.replace(tzinfo=CENTRAL_TZ)
+                    duration = (end - start).total_seconds() / 60
+                    status_durations[status] += duration
+
+            # Determine dominant status (by total duration)
+            dominant = max(status_durations, key=status_durations.get)
+            dominant_duration = status_durations[dominant]
+
+            # Get current active status
+            current_status = None
+            current_duration = 0
+            for event in events:
+                if event['is_active']:
+                    current_status = event['danger_type']
+                    start = event['detected_at']
+                    if start.tzinfo is None:
+                        start = start.replace(tzinfo=CENTRAL_TZ)
+                    current_duration = (now - start).total_seconds() / 60
+                    break
+
+            trends[str(strike)] = {
+                'dominant_status': dominant if dominant_duration > 0 else 'NEUTRAL',
+                'dominant_duration_mins': round(dominant_duration, 1),
+                'current_status': current_status,
+                'current_duration_mins': round(current_duration, 1),
+                'status_counts': status_counts,
+                'status_durations': {k: round(v, 1) for k, v in status_durations.items()},
+                'total_events': len(events)
+            }
+
+        return {
+            "success": True,
+            "data": {
+                "trends": trends,
+                "window_minutes": 30,
+                "generated_at": format_central_timestamp()
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting strike trends: {e}")
+        return {
+            "success": True,
+            "data": {"trends": {}, "message": f"Error: {str(e)}"}
+        }
+
+
+@router.get("/gamma-flips")
+async def get_gamma_flip_history():
+    """
+    Get gamma flip history for the last 30 minutes.
+
+    Returns strikes that changed from positive to negative gamma or vice versa.
+    """
+    engine = get_engine()
+    if not engine:
+        return {
+            "success": True,
+            "data": {"flips": [], "message": "Engine not available"}
+        }
+
+    try:
+        # Get flips from engine history
+        flips = []
+        now = datetime.now()
+        cutoff = now - timedelta(minutes=30)
+
+        for strike, history in engine.history.items():
+            if len(history) < 2:
+                continue
+
+            # Look for sign changes in history
+            for i in range(1, len(history)):
+                prev_time, prev_gamma = history[i-1]
+                curr_time, curr_gamma = history[i]
+
+                if curr_time < cutoff:
+                    continue
+
+                # Check for sign flip
+                if (prev_gamma > 0 and curr_gamma < 0):
+                    flips.append({
+                        'strike': strike,
+                        'direction': 'POS_TO_NEG',
+                        'flipped_at': curr_time.isoformat(),
+                        'gamma_before': round(prev_gamma, 2),
+                        'gamma_after': round(curr_gamma, 2),
+                        'mins_ago': round((now - curr_time).total_seconds() / 60, 1)
+                    })
+                elif (prev_gamma < 0 and curr_gamma > 0):
+                    flips.append({
+                        'strike': strike,
+                        'direction': 'NEG_TO_POS',
+                        'flipped_at': curr_time.isoformat(),
+                        'gamma_before': round(prev_gamma, 2),
+                        'gamma_after': round(curr_gamma, 2),
+                        'mins_ago': round((now - curr_time).total_seconds() / 60, 1)
+                    })
+
+        # Sort by most recent first
+        flips.sort(key=lambda x: x['mins_ago'])
+
+        return {
+            "success": True,
+            "data": {
+                "flips": flips,
+                "count": len(flips),
+                "window_minutes": 30
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting gamma flip history: {e}")
+        return {
+            "success": True,
+            "data": {"flips": [], "message": f"Error: {str(e)}"}
+        }
 
 
 @router.get("/expirations")
