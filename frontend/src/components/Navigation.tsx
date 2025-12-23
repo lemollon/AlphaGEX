@@ -65,6 +65,7 @@ const navItems = [
   { href: '/settings/notifications', label: 'Notification Settings', icon: Bell, category: 'System' },
   { href: '/database', label: 'Database Admin', icon: Database, category: 'System' },
   { href: '/logs', label: 'Decision Logs', icon: FileText, category: 'System' },
+  { href: '/data-transparency', label: 'Data Transparency', icon: Eye, category: 'System' },
 ]
 
 export default function Navigation() {
