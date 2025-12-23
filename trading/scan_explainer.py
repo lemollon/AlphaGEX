@@ -110,20 +110,38 @@ def generate_scan_explanation(context: ScanContext) -> Dict[str, str]:
 
         explanation_text = response.content[0].text
 
-        # Parse the response - expect format with SUMMARY: and EXPLANATION:
+        # Parse the response - expect format with SUMMARY:, EXPLANATION:, WHAT_WOULD_TRIGGER_TRADE:, MARKET_INSIGHT:
         lines = explanation_text.strip().split('\n')
         summary = ""
         full_explanation = ""
+        what_would_trigger = ""
+        market_insight = ""
 
-        in_explanation = False
+        current_section = None
         for line in lines:
+            line = line.strip()
             if line.startswith("SUMMARY:"):
+                current_section = "summary"
                 summary = line.replace("SUMMARY:", "").strip()
             elif line.startswith("EXPLANATION:"):
-                in_explanation = True
+                current_section = "explanation"
                 full_explanation = line.replace("EXPLANATION:", "").strip()
-            elif in_explanation:
-                full_explanation += " " + line.strip()
+            elif line.startswith("WHAT_WOULD_TRIGGER_TRADE:"):
+                current_section = "trigger"
+                what_would_trigger = line.replace("WHAT_WOULD_TRIGGER_TRADE:", "").strip()
+            elif line.startswith("MARKET_INSIGHT:"):
+                current_section = "insight"
+                market_insight = line.replace("MARKET_INSIGHT:", "").strip()
+            elif line and current_section:
+                # Append to current section
+                if current_section == "summary":
+                    summary += " " + line
+                elif current_section == "explanation":
+                    full_explanation += " " + line
+                elif current_section == "trigger":
+                    what_would_trigger += " " + line
+                elif current_section == "insight":
+                    market_insight += " " + line
 
         # If parsing failed, use the whole response
         if not summary:
@@ -131,9 +149,18 @@ def generate_scan_explanation(context: ScanContext) -> Dict[str, str]:
         if not full_explanation:
             full_explanation = explanation_text
 
+        # Build comprehensive explanation with all sections
+        comprehensive_explanation = full_explanation.strip()
+        if what_would_trigger:
+            comprehensive_explanation += f"\n\n**What Would Trigger Trade:** {what_would_trigger.strip()}"
+        if market_insight:
+            comprehensive_explanation += f"\n\n**Market Insight:** {market_insight.strip()}"
+
         return {
-            "summary": summary,
-            "full_explanation": full_explanation.strip()
+            "summary": summary.strip(),
+            "full_explanation": comprehensive_explanation,
+            "what_would_trigger": what_would_trigger.strip(),
+            "market_insight": market_insight.strip()
         }
 
     except Exception as e:
@@ -206,7 +233,7 @@ Signal Information:
     if context.error_message:
         error_str = f"\nError: {context.error_message}"
 
-    prompt = f"""You are explaining a trading bot's decision to a human trader who needs to understand exactly what happened and why.
+    prompt = f"""You are GEXIS, explaining a trading bot's decision to a human trader who needs to understand exactly what happened and why.
 
 Bot: {bot_desc}
 Scan #{context.scan_number}
@@ -217,12 +244,22 @@ Decision: {context.decision_type.value}
 {trade_str}
 {error_str}
 
-Provide a clear, concise explanation in this EXACT format:
+Provide a clear, detailed explanation in this EXACT format:
 
-SUMMARY: [One sentence explaining what happened and the main reason why]
-EXPLANATION: [2-3 sentences with specific numbers explaining the decision. If NO_TRADE, explain what check failed and what would need to change. If TRADED, explain why conditions were favorable. Be specific with prices and percentages.]
+SUMMARY: [One sentence explaining what happened and the main reason why - be specific with numbers]
 
-Focus on the WHY. Use actual numbers from the data provided. Be direct and informative."""
+EXPLANATION: [3-4 sentences with specific numbers explaining the decision. For NO_TRADE, explain which check failed and the exact values. For TRADED, explain why conditions were favorable.]
+
+WHAT_WOULD_TRIGGER_TRADE: [If NO_TRADE: Specific conditions that would need to change - e.g., "SPY would need to drop to $588 (closer to put wall) for a 1.5:1 R:R ratio" or "VIX would need to rise above 20 for higher premium". If TRADED: "N/A - trade executed"]
+
+MARKET_INSIGHT: [One sentence of actionable insight - what to watch for next scan, or pattern you notice in the data]
+
+Rules:
+- Use ACTUAL numbers from the data (prices, percentages, ratios)
+- Be direct and specific - traders want facts, not fluff
+- For R:R failures: calculate exactly where price would need to be
+- For signal failures: state exact confidence/probability that's missing
+- Always explain the WHY behind the decision"""
 
     return prompt
 
@@ -237,25 +274,33 @@ def _generate_fallback_explanation(context: ScanContext) -> Dict[str, str]:
     if decision == DecisionType.MARKET_CLOSED:
         return {
             "summary": f"{bot_name} scan skipped - market is closed",
-            "full_explanation": f"The market is currently closed. {bot_name} only trades during market hours (ARES: 9:35 AM - 3:55 PM CT, ATHENA: 8:30 AM - 3:00 PM CT). No trading decisions are made outside these windows."
+            "full_explanation": f"The market is currently closed. {bot_name} only trades during market hours (ARES: 9:35 AM - 3:55 PM CT, ATHENA: 8:30 AM - 3:00 PM CT). No trading decisions are made outside these windows.",
+            "what_would_trigger": "Market needs to open. Trading window starts at 9:35 AM CT for ARES, 8:30 AM CT for ATHENA.",
+            "market_insight": "Pre-market futures and overnight news should be reviewed before trading window opens."
         }
 
     if decision == DecisionType.BEFORE_WINDOW:
         return {
             "summary": f"{bot_name} scan skipped - before trading window",
-            "full_explanation": f"Current time is before {bot_name}'s trading window. ARES starts at 9:35 AM CT, ATHENA starts at 8:30 AM CT. The bot is waiting for the trading window to open."
+            "full_explanation": f"Current time is before {bot_name}'s trading window. ARES starts at 9:35 AM CT, ATHENA starts at 8:30 AM CT. The bot is waiting for the trading window to open.",
+            "what_would_trigger": f"Wait for trading window to open. {bot_name} will start scanning automatically.",
+            "market_insight": "Early session often has higher volatility - first 30 minutes after open tend to set the day's range."
         }
 
     if decision == DecisionType.AFTER_WINDOW:
         return {
             "summary": f"{bot_name} scan skipped - after trading window",
-            "full_explanation": f"Current time is after {bot_name}'s trading window. ARES ends at 3:55 PM CT, ATHENA ends at 3:00 PM CT. No new trades will be opened today."
+            "full_explanation": f"Current time is after {bot_name}'s trading window. ARES ends at 3:55 PM CT, ATHENA ends at 3:00 PM CT. No new trades will be opened today.",
+            "what_would_trigger": "N/A - trading window closed for today. Bot will resume tomorrow at market open.",
+            "market_insight": "Review today's performance and prepare for tomorrow's session."
         }
 
     if decision == DecisionType.ERROR:
         return {
             "summary": f"{bot_name} scan failed - {context.error_message or 'unknown error'}",
-            "full_explanation": f"An error occurred during the scan: {context.error_message or 'Unknown error'}. This prevented the bot from evaluating trading conditions. The error should be investigated."
+            "full_explanation": f"An error occurred during the scan: {context.error_message or 'Unknown error'}. This prevented the bot from evaluating trading conditions. The error should be investigated.",
+            "what_would_trigger": "Error needs to be resolved. Check API connections, credentials, and data availability.",
+            "market_insight": "Monitor error logs and retry on next scan interval."
         }
 
     if decision == DecisionType.NO_TRADE:
@@ -267,25 +312,59 @@ def _generate_fallback_explanation(context: ScanContext) -> Dict[str, str]:
                     failed_check = check
                     break
 
+        what_trigger = ""
         if failed_check:
-            summary = f"{bot_name} NO_TRADE - {failed_check.name} failed"
+            summary = f"{bot_name} NO_TRADE - {failed_check.name} failed ({failed_check.actual_value} vs required {failed_check.required_value})"
             explanation = f"Trade not taken because {failed_check.name} check failed. "
             explanation += f"Actual value: {failed_check.actual_value}, Required: {failed_check.required_value}. "
             if failed_check.explanation:
                 explanation += failed_check.explanation
             explanation += f" Market conditions: {market.underlying_symbol} at ${market.underlying_price:.2f}, VIX at {market.vix:.1f}."
+
+            # Generate specific trigger based on which check failed
+            if "rr_ratio" in failed_check.name.lower() or "risk" in failed_check.name.lower():
+                if market.call_wall and market.put_wall:
+                    # Calculate where price would need to be for 1.5:1 R:R
+                    wall_range = market.call_wall - market.put_wall
+                    bullish_trigger = market.put_wall + (wall_range * 0.4)  # 40% up from put wall = 1.5:1
+                    bearish_trigger = market.call_wall - (wall_range * 0.4)  # 40% down from call wall = 1.5:1
+                    what_trigger = f"For BULLISH: Price needs to drop to ~${bullish_trigger:.2f} (closer to put wall ${market.put_wall:.2f}). For BEARISH: Price needs to rise to ~${bearish_trigger:.2f} (closer to call wall ${market.call_wall:.2f})."
+                else:
+                    what_trigger = f"Need better R:R ratio. Current: {failed_check.actual_value}, Required: {failed_check.required_value}."
+            elif "confidence" in failed_check.name.lower():
+                what_trigger = f"Signal confidence needs to increase from {failed_check.actual_value} to at least {failed_check.required_value}."
+            elif "oracle" in failed_check.name.lower():
+                what_trigger = f"Oracle needs to change recommendation from {failed_check.actual_value} to TRADE."
+            else:
+                what_trigger = f"{failed_check.name} needs to change from {failed_check.actual_value} to meet threshold {failed_check.required_value}."
+
         elif context.signal and context.signal.advice in ["SKIP_TODAY", "STAY_OUT"]:
             summary = f"{bot_name} NO_TRADE - {context.signal.source} advised against trading"
             explanation = f"Trade not taken because {context.signal.source} recommended {context.signal.advice}. "
             if context.signal.reasoning:
                 explanation += f"Reason: {context.signal.reasoning}. "
             explanation += f"Market conditions: {market.underlying_symbol} at ${market.underlying_price:.2f}, VIX at {market.vix:.1f}."
+            what_trigger = f"{context.signal.source} needs to change recommendation. Watch for changing market conditions."
         else:
             summary = f"{bot_name} NO_TRADE - conditions not met"
             explanation = f"Trade not taken because entry conditions were not satisfied. "
             explanation += f"Market conditions: {market.underlying_symbol} at ${market.underlying_price:.2f}, VIX at {market.vix:.1f}."
+            what_trigger = "Entry conditions need to align. Continue monitoring on next scan."
 
-        return {"summary": summary, "full_explanation": explanation}
+        market_insight = ""
+        if market.vix < 15:
+            market_insight = f"VIX at {market.vix:.1f} is low - premium may be insufficient for iron condors. Higher VIX = more premium."
+        elif market.vix > 25:
+            market_insight = f"VIX at {market.vix:.1f} is elevated - wider spreads needed but higher premium available."
+        else:
+            market_insight = f"VIX at {market.vix:.1f} is normal range. Watch for GEX wall levels for directional bias."
+
+        return {
+            "summary": summary,
+            "full_explanation": explanation,
+            "what_would_trigger": what_trigger,
+            "market_insight": market_insight
+        }
 
     if decision == DecisionType.TRADED:
         trade = context.trade_details or {}
@@ -307,17 +386,29 @@ def _generate_fallback_explanation(context: ScanContext) -> Dict[str, str]:
 
         explanation += f"Market: {market.underlying_symbol} at ${market.underlying_price:.2f}, VIX at {market.vix:.1f}."
 
-        return {"summary": summary, "full_explanation": explanation}
+        return {
+            "summary": summary,
+            "full_explanation": explanation,
+            "what_would_trigger": "N/A - trade executed successfully.",
+            "market_insight": "Monitor position for exit signals. Watch for price approaching GEX walls."
+        }
 
     if decision == DecisionType.SKIP:
         summary = f"{bot_name} SKIP - already traded today"
         explanation = f"{bot_name} has already executed its daily trade. ARES trades once per day maximum. The bot will resume scanning tomorrow."
-        return {"summary": summary, "full_explanation": explanation}
+        return {
+            "summary": summary,
+            "full_explanation": explanation,
+            "what_would_trigger": "N/A - daily trade limit reached. Bot monitors existing position until close.",
+            "market_insight": "Focus on managing the open position. Watch for exit signals."
+        }
 
     # Default
     return {
         "summary": f"{bot_name} scan completed - {decision.value}",
-        "full_explanation": f"Scan completed with outcome: {decision.value}. Market conditions: {market.underlying_symbol} at ${market.underlying_price:.2f}, VIX at {market.vix:.1f}."
+        "full_explanation": f"Scan completed with outcome: {decision.value}. Market conditions: {market.underlying_symbol} at ${market.underlying_price:.2f}, VIX at {market.vix:.1f}.",
+        "what_would_trigger": "Continue monitoring market conditions.",
+        "market_insight": "Review scan details for specific requirements."
     }
 
 

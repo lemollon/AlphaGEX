@@ -11,6 +11,8 @@ interface ScanActivity {
   outcome: string
   decision_summary: string
   full_reasoning?: string
+  what_would_trigger?: string
+  market_insight?: string
   underlying_price?: number
   vix?: number
   signal_source?: string
@@ -19,6 +21,10 @@ interface ScanActivity {
   signal_win_probability?: number
   oracle_advice?: string
   trade_executed: boolean
+  risk_reward_ratio?: number
+  gex_regime?: string
+  call_wall?: number
+  put_wall?: number
   checks_performed?: Array<{
     check_name: string
     passed: boolean
@@ -176,7 +182,7 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
               </span>
             </div>
 
-            {/* Details Row */}
+            {/* Market Data Row */}
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-400">
               {scan.underlying_price && (
                 <span>SPY: ${scan.underlying_price.toFixed(2)}</span>
@@ -184,6 +190,31 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
               {scan.vix && (
                 <span>VIX: {scan.vix.toFixed(1)}</span>
               )}
+              {scan.gex_regime && (
+                <span className={`px-1.5 py-0.5 rounded ${
+                  scan.gex_regime === 'POSITIVE' ? 'bg-green-500/20 text-green-400' :
+                  scan.gex_regime === 'NEGATIVE' ? 'bg-red-500/20 text-red-400' : 'bg-gray-500/20'
+                }`}>
+                  GEX: {scan.gex_regime}
+                </span>
+              )}
+              {scan.risk_reward_ratio && (
+                <span className={scan.risk_reward_ratio >= 1.5 ? 'text-green-400' : 'text-yellow-400'}>
+                  R:R {scan.risk_reward_ratio.toFixed(2)}:1
+                </span>
+              )}
+            </div>
+
+            {/* GEX Walls (if available) */}
+            {(scan.call_wall || scan.put_wall) && (
+              <div className="mt-1 flex flex-wrap gap-x-4 text-xs text-gray-500">
+                {scan.put_wall && <span>Put Wall: ${scan.put_wall.toFixed(0)}</span>}
+                {scan.call_wall && <span>Call Wall: ${scan.call_wall.toFixed(0)}</span>}
+              </div>
+            )}
+
+            {/* Signal Details Row */}
+            <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-400">
               {scan.signal_source && (
                 <span>Signal: {scan.signal_source}</span>
               )}
@@ -201,22 +232,38 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
             {/* Checks Summary (if available) */}
             {scan.checks_performed && scan.checks_performed.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1">
-                {scan.checks_performed.slice(0, 5).map((check, i) => (
+                {scan.checks_performed.map((check, i) => (
                   <span
                     key={i}
                     className={`text-xs px-1.5 py-0.5 rounded ${
                       check.passed ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
                     }`}
+                    title={check.reason || `${check.value || 'N/A'}`}
                   >
-                    {check.passed ? '\u2713' : '\u2717'} {check.check_name}
+                    {check.passed ? '✓' : '✗'} {check.check_name}
                   </span>
                 ))}
               </div>
             )}
 
-            {/* Full Reasoning (expandable in future) */}
+            {/* What Would Trigger Trade - KEY INFO */}
+            {scan.what_would_trigger && !scan.trade_executed && (
+              <div className="mt-2 p-2 bg-blue-500/10 border border-blue-500/30 rounded text-xs">
+                <span className="text-blue-400 font-medium">📍 What would trigger trade: </span>
+                <span className="text-gray-300">{scan.what_would_trigger}</span>
+              </div>
+            )}
+
+            {/* Market Insight */}
+            {scan.market_insight && (
+              <div className="mt-1 text-xs text-gray-500 italic">
+                💡 {scan.market_insight}
+              </div>
+            )}
+
+            {/* Full Reasoning (expandable) */}
             {scan.full_reasoning && (
-              <p className="mt-2 text-xs text-gray-500 line-clamp-2">
+              <p className="mt-2 text-xs text-gray-500 line-clamp-3">
                 {scan.full_reasoning}
               </p>
             )}
