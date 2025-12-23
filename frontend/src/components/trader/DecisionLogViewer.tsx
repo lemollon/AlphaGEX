@@ -334,20 +334,20 @@ export default function DecisionLogViewer({ defaultBot, hideFilter = false }: De
                               <span className="font-medium text-text-primary">
                                 Leg {leg.leg_id}: {leg.action} {leg.option_type?.toUpperCase()}
                               </span>
-                              {leg.realized_pnl !== 0 && (
+                              {leg.realized_pnl != null && leg.realized_pnl !== 0 && (
                                 <span className={leg.realized_pnl > 0 ? 'text-green-400' : 'text-red-400'}>
-                                  P&L: ${leg.realized_pnl?.toFixed(2)}
+                                  P&L: ${leg.realized_pnl.toFixed(2)}
                                 </span>
                               )}
                             </div>
                             <div className="grid grid-cols-4 gap-2 text-text-secondary">
-                              <div><span className="text-text-muted">Strike:</span> ${leg.strike}</div>
-                              <div><span className="text-text-muted">Exp:</span> {leg.expiration}</div>
-                              <div><span className="text-text-muted">Entry:</span> ${leg.entry_price?.toFixed(2)}</div>
-                              <div><span className="text-text-muted">Exit:</span> ${leg.exit_price?.toFixed(2) || '-'}</div>
-                              <div><span className="text-text-muted">Contracts:</span> {leg.contracts}</div>
-                              <div><span className="text-text-muted">Delta:</span> {leg.delta?.toFixed(2)}</div>
-                              <div><span className="text-text-muted">IV:</span> {(leg.iv * 100)?.toFixed(1)}%</div>
+                              <div><span className="text-text-muted">Strike:</span> ${leg.strike ?? 'N/A'}</div>
+                              <div><span className="text-text-muted">Exp:</span> {leg.expiration ?? '-'}</div>
+                              <div><span className="text-text-muted">Entry:</span> ${leg.entry_price != null ? leg.entry_price.toFixed(2) : '-'}</div>
+                              <div><span className="text-text-muted">Exit:</span> ${leg.exit_price != null ? leg.exit_price.toFixed(2) : '-'}</div>
+                              <div><span className="text-text-muted">Contracts:</span> {leg.contracts ?? '-'}</div>
+                              <div><span className="text-text-muted">Delta:</span> {leg.delta != null ? leg.delta.toFixed(2) : '-'}</div>
+                              <div><span className="text-text-muted">IV:</span> {leg.iv != null ? `${(leg.iv * 100).toFixed(1)}%` : '-'}</div>
                               <div><span className="text-text-muted">Order:</span> {leg.order_id || '-'}</div>
                             </div>
                           </div>
@@ -405,7 +405,7 @@ export default function DecisionLogViewer({ defaultBot, hideFilter = false }: De
                   : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
               }`}
             >
-              {bot.name}: ${(bot.capital_allocation / 1000).toFixed(0)}K ({bot.capital_pct}%)
+              {bot.name}: {bot.capital_allocation != null ? `$${(bot.capital_allocation / 1000).toFixed(0)}K` : 'N/A'} ({bot.capital_pct ?? 0}%)
             </div>
           ))}
         </div>
