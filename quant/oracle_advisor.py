@@ -245,6 +245,10 @@ class ClaudeAnalysis:
     output_tokens: int = 0
     response_time_ms: int = 0
     model_used: Optional[str] = None
+    # Anti-hallucination fields
+    hallucination_risk: str = "LOW"  # LOW, MEDIUM, HIGH
+    data_citations: List[str] = None  # List of data points Claude cited
+    hallucination_warnings: List[str] = None  # Specific warnings about potential hallucinations
 
 
 # =============================================================================
@@ -326,10 +330,13 @@ class OracleLiveLog:
     def log_claude_exchange(self, bot_name: str, prompt: str, response: str,
                            market_context: Dict, ml_prediction: Dict,
                            tokens_used: int = 0, response_time_ms: int = 0,
-                           model: str = ""):
+                           model: str = "", hallucination_risk: str = "LOW",
+                           hallucination_warnings: List = None,
+                           data_citations: List = None):
         """
         Log a complete Claude AI exchange with full context.
         This is the key for transparency - shows exactly what AI sees and says.
+        Includes anti-hallucination validation results.
         """
         exchange = {
             "timestamp": datetime.now().isoformat(),
@@ -340,7 +347,10 @@ class OracleLiveLog:
             "response_received": response,
             "tokens_used": tokens_used,
             "response_time_ms": response_time_ms,
-            "model": model
+            "model": model,
+            "hallucination_risk": hallucination_risk,
+            "hallucination_warnings": hallucination_warnings or [],
+            "data_citations": data_citations or []
         }
         self._claude_exchanges.append(exchange)
 
@@ -348,14 +358,16 @@ class OracleLiveLog:
         if len(self._claude_exchanges) > self.MAX_DATA_FLOWS:
             self._claude_exchanges = self._claude_exchanges[-self.MAX_DATA_FLOWS:]
 
-        # Log summary
-        self.log("CLAUDE_EXCHANGE", f"{bot_name}: Claude AI consulted", {
+        # Log summary with hallucination status
+        self.log("CLAUDE_EXCHANGE", f"{bot_name}: Claude AI consulted (Hallucination Risk: {hallucination_risk})", {
             "bot": bot_name,
             "tokens": tokens_used,
             "time_ms": response_time_ms,
             "model": model,
             "prompt_length": len(prompt),
-            "response_length": len(response)
+            "response_length": len(response),
+            "hallucination_risk": hallucination_risk,
+            "hallucination_warnings_count": len(hallucination_warnings or [])
         })
 
     def _summarize_data(self, data: Dict, stage: str) -> Dict:
@@ -503,7 +515,14 @@ Your job is to review the ML model's prediction and market context, then:
 3. Recommend whether to AGREE, ADJUST (small confidence change), or OVERRIDE (significant change)
 4. Suggest a confidence adjustment (-0.10 to +0.10)
 
-Be concise and data-driven. Focus on GEX regime, VIX levels, and day-of-week patterns."""
+CRITICAL ANTI-HALLUCINATION RULES:
+- You MUST cite ONLY the exact data values provided in the MARKET CONTEXT and ML PREDICTION sections
+- Every claim you make MUST reference a specific data point (e.g., "VIX at 18.5 indicates...")
+- DO NOT invent data, metrics, or facts not provided in the input
+- If you're uncertain about something, say "Based on the provided data..." rather than making assumptions
+- In your DATA_CITATIONS section, list the exact data points you used for your analysis
+
+Be concise and data-driven. Focus ONLY on data provided: GEX regime, VIX levels, and day-of-week patterns."""
 
         user_prompt = f"""Validate this ML prediction for {bot_name.value}:
 
@@ -521,9 +540,10 @@ ML PREDICTION:
 - Top Factors: {ml_prediction.get('top_factors', [])}
 
 Provide your analysis in this format:
-ANALYSIS: [Your analysis in 2-3 sentences]
-RISK_FACTORS: [Comma-separated list]
-OPPORTUNITIES: [Comma-separated list]
+DATA_CITATIONS: [List the exact data values you're basing your analysis on, e.g., "VIX=18.5, GEX_REGIME=POSITIVE, Day=Monday"]
+ANALYSIS: [Your analysis in 2-3 sentences, citing specific data values]
+RISK_FACTORS: [Comma-separated list, each citing a data point]
+OPPORTUNITIES: [Comma-separated list, each citing a data point]
 CONFIDENCE_ADJUSTMENT: [Number between -0.10 and +0.10]
 RECOMMENDATION: [AGREE/ADJUST/OVERRIDE]
 OVERRIDE_ADVICE: [Only if OVERRIDE, what advice to give instead]"""
@@ -556,7 +576,7 @@ OVERRIDE_ADVICE: [Only if OVERRIDE, what advice to give instead]"""
             output_tokens = getattr(message.usage, 'output_tokens', 0) if hasattr(message, 'usage') else 0
             tokens_used = input_tokens + output_tokens
 
-            result = self._parse_validation_response(response)
+            result = self._parse_validation_response(response, context=context, ml_prediction=ml_prediction)
 
             # Add raw Claude data for transparency
             result.raw_prompt = full_prompt
@@ -598,7 +618,10 @@ OVERRIDE_ADVICE: [Only if OVERRIDE, what advice to give instead]"""
                 ml_prediction=ml_prediction,
                 tokens_used=tokens_used,
                 response_time_ms=response_time_ms,
-                model=self.CLAUDE_MODEL
+                model=self.CLAUDE_MODEL,
+                hallucination_risk=result.hallucination_risk,
+                hallucination_warnings=result.hallucination_warnings,
+                data_citations=result.data_citations
             )
 
             return result
@@ -614,8 +637,9 @@ OVERRIDE_ADVICE: [Only if OVERRIDE, what advice to give instead]"""
                 raw_prompt=full_prompt
             )
 
-    def _parse_validation_response(self, response: str) -> ClaudeAnalysis:
-        """Parse Claude's validation response"""
+    def _parse_validation_response(self, response: str, context: 'MarketContext' = None,
+                                     ml_prediction: Dict = None) -> ClaudeAnalysis:
+        """Parse Claude's validation response with hallucination detection"""
         lines = response.strip().split('\n')
 
         analysis = ""
@@ -624,10 +648,14 @@ OVERRIDE_ADVICE: [Only if OVERRIDE, what advice to give instead]"""
         confidence_adj = 0.0
         recommendation = "AGREE"
         override_advice = None
+        data_citations = []
 
         for line in lines:
             line = line.strip()
-            if line.startswith("ANALYSIS:"):
+            if line.startswith("DATA_CITATIONS:"):
+                citations_str = line.replace("DATA_CITATIONS:", "").strip()
+                data_citations = [c.strip() for c in citations_str.split(",") if c.strip()]
+            elif line.startswith("ANALYSIS:"):
                 analysis = line.replace("ANALYSIS:", "").strip()
             elif line.startswith("RISK_FACTORS:"):
                 factors = line.replace("RISK_FACTORS:", "").strip()
@@ -649,14 +677,119 @@ OVERRIDE_ADVICE: [Only if OVERRIDE, what advice to give instead]"""
             elif line.startswith("OVERRIDE_ADVICE:"):
                 override_advice = line.replace("OVERRIDE_ADVICE:", "").strip()
 
+        # Detect hallucination risk
+        hallucination_risk, hallucination_warnings = self._detect_hallucination_risk(
+            response=response,
+            analysis=analysis,
+            data_citations=data_citations,
+            context=context,
+            ml_prediction=ml_prediction
+        )
+
         return ClaudeAnalysis(
             analysis=analysis,
             confidence_adjustment=confidence_adj,
             risk_factors=risk_factors,
             opportunities=opportunities,
             recommendation=recommendation,
-            override_advice=override_advice
+            override_advice=override_advice,
+            hallucination_risk=hallucination_risk,
+            data_citations=data_citations,
+            hallucination_warnings=hallucination_warnings
         )
+
+    def _detect_hallucination_risk(
+        self,
+        response: str,
+        analysis: str,
+        data_citations: List[str],
+        context: 'MarketContext' = None,
+        ml_prediction: Dict = None
+    ) -> tuple:
+        """
+        Detect potential hallucinations in Claude's response.
+
+        Returns:
+            Tuple of (risk_level: str, warnings: List[str])
+        """
+        warnings = []
+        risk_score = 0
+
+        # Check 1: No data citations provided
+        if not data_citations:
+            warnings.append("No data citations provided - response may not be grounded in input data")
+            risk_score += 3
+
+        # Check 2: Validate citations against actual input data if context is available
+        if context and data_citations:
+            valid_data_markers = [
+                f"VIX={context.vix:.1f}",
+                f"VIX {context.vix:.1f}",
+                str(round(context.vix, 1)),
+                context.gex_regime.value,
+                f"${context.spot_price:,.0f}",
+                f"${context.spot_price:,.2f}",
+                str(round(context.spot_price, 2)),
+            ]
+
+            # Add day of week
+            day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+            if 0 <= context.day_of_week < 7:
+                valid_data_markers.append(day_names[context.day_of_week])
+
+            # Check if at least one citation matches input data
+            citations_text = " ".join(data_citations).upper()
+            response_upper = response.upper()
+
+            found_valid_citation = False
+            for marker in valid_data_markers:
+                if marker.upper() in citations_text or marker.upper() in response_upper:
+                    found_valid_citation = True
+                    break
+
+            if not found_valid_citation:
+                warnings.append("Citations don't match input data - potential fabricated values")
+                risk_score += 2
+
+        # Check 3: Look for common hallucination patterns
+        hallucination_patterns = [
+            ("according to recent", "Reference to external sources not provided"),
+            ("studies show", "Reference to external studies not in input"),
+            ("historical data suggests", "Reference to historical data not provided"),
+            ("typically", "Generalization without citing specific input data"),
+            ("usually", "Generalization without citing specific input data"),
+            ("research indicates", "Reference to research not in input"),
+            ("based on my knowledge", "Using external knowledge instead of input data"),
+        ]
+
+        response_lower = response.lower()
+        for pattern, warning in hallucination_patterns:
+            if pattern in response_lower:
+                warnings.append(warning)
+                risk_score += 1
+
+        # Check 4: ML prediction win probability should be cited
+        if ml_prediction:
+            win_prob = ml_prediction.get('win_probability', 0.68)
+            win_prob_str = f"{win_prob:.1%}"
+            if win_prob_str not in response and str(round(win_prob * 100)) not in response:
+                warnings.append("ML win probability not referenced in analysis")
+                risk_score += 1
+
+        # Check 5: Verify analysis isn't empty or generic
+        if len(analysis) < 20:
+            warnings.append("Analysis is too short to be meaningful")
+            risk_score += 2
+
+        # Determine risk level
+        if risk_score >= 4:
+            risk_level = "HIGH"
+        elif risk_score >= 2:
+            risk_level = "MEDIUM"
+        else:
+            risk_level = "LOW"
+
+        return risk_level, warnings
 
     # =========================================================================
     # 2. EXPLAIN ORACLE REASONING

@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState } from 'react'
-import { ChevronDown, ChevronUp, MessageSquare, Bot, Clock, Zap, AlertTriangle } from 'lucide-react'
+import { ChevronDown, ChevronUp, MessageSquare, Bot, Clock, Zap, AlertTriangle, ShieldAlert, CheckCircle, FileText } from 'lucide-react'
 
 interface ClaudeConversationViewerProps {
   prompt: string
@@ -13,18 +13,25 @@ interface ClaudeConversationViewerProps {
   confidence?: string
   warnings?: string[]
   className?: string
+  // Anti-hallucination fields
+  hallucinationRisk?: 'LOW' | 'MEDIUM' | 'HIGH'
+  hallucinationWarnings?: string[]
+  dataCitations?: string[]
 }
 
 export default function ClaudeConversationViewer({
   prompt,
   response,
-  model = 'claude-sonnet-4-5-latest',
+  model = 'claude-sonnet-4-5-20250929',
   tokensUsed = 0,
   responseTimeMs = 0,
   chainName = '',
   confidence = '',
   warnings = [],
-  className = ''
+  className = '',
+  hallucinationRisk = 'LOW',
+  hallucinationWarnings = [],
+  dataCitations = []
 }: ClaudeConversationViewerProps) {
   const [isExpanded, setIsExpanded] = useState(false)
   const [showFullPrompt, setShowFullPrompt] = useState(false)
@@ -92,6 +99,19 @@ export default function ClaudeConversationViewer({
               {confidence}
             </span>
           )}
+          {/* Hallucination Risk Badge */}
+          <span className={`text-xs px-2 py-0.5 rounded flex items-center gap-1 ${
+            hallucinationRisk === 'LOW' ? 'bg-green-800/50 text-green-300' :
+            hallucinationRisk === 'MEDIUM' ? 'bg-yellow-800/50 text-yellow-300' :
+            'bg-red-800/50 text-red-300'
+          }`}>
+            {hallucinationRisk === 'LOW' ? (
+              <CheckCircle className="w-3 h-3" />
+            ) : (
+              <ShieldAlert className="w-3 h-3" />
+            )}
+            <span>{hallucinationRisk === 'LOW' ? 'Verified' : hallucinationRisk === 'MEDIUM' ? 'Caution' : 'Risk'}</span>
+          </span>
           {isExpanded ? (
             <ChevronUp className="w-5 h-5 text-gray-400" />
           ) : (
@@ -103,6 +123,57 @@ export default function ClaudeConversationViewer({
       {/* Expanded Content */}
       {isExpanded && (
         <div className="p-4 space-y-4">
+          {/* Hallucination Risk Alert */}
+          {hallucinationRisk !== 'LOW' && (
+            <div className={`border rounded-lg p-3 ${
+              hallucinationRisk === 'HIGH'
+                ? 'bg-red-900/20 border-red-700/50'
+                : 'bg-yellow-900/20 border-yellow-700/50'
+            }`}>
+              <div className={`flex items-center gap-2 mb-2 ${
+                hallucinationRisk === 'HIGH' ? 'text-red-400' : 'text-yellow-400'
+              }`}>
+                <ShieldAlert className="w-4 h-4" />
+                <span className="font-medium text-sm">
+                  {hallucinationRisk === 'HIGH' ? 'High Hallucination Risk' : 'Moderate Hallucination Risk'}
+                </span>
+              </div>
+              <p className={`text-sm mb-2 ${
+                hallucinationRisk === 'HIGH' ? 'text-red-300/80' : 'text-yellow-300/80'
+              }`}>
+                {hallucinationRisk === 'HIGH'
+                  ? 'This response may contain fabricated information. Verify all claims against input data.'
+                  : 'Some aspects of this response may not be fully grounded in input data.'}
+              </p>
+              {hallucinationWarnings && hallucinationWarnings.length > 0 && (
+                <ul className={`text-sm list-disc list-inside space-y-1 ${
+                  hallucinationRisk === 'HIGH' ? 'text-red-300/70' : 'text-yellow-300/70'
+                }`}>
+                  {hallucinationWarnings.map((warning, i) => (
+                    <li key={i}>{warning}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {/* Data Citations - shown when LOW risk */}
+          {hallucinationRisk === 'LOW' && dataCitations && dataCitations.length > 0 && (
+            <div className="bg-green-900/20 border border-green-700/50 rounded-lg p-3">
+              <div className="flex items-center gap-2 text-green-400 mb-2">
+                <FileText className="w-4 h-4" />
+                <span className="font-medium text-sm">Data Citations (Verified)</span>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {dataCitations.map((citation, i) => (
+                  <span key={i} className="text-xs bg-green-800/30 text-green-300 px-2 py-1 rounded">
+                    {citation}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Warnings */}
           {warnings && warnings.length > 0 && (
             <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-lg p-3">
