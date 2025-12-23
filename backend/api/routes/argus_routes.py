@@ -101,17 +101,39 @@ def get_tradier():
         return None
 
 
+def is_market_hours() -> bool:
+    """Check if market is currently open (9:30 AM - 4:00 PM ET / 8:30 AM - 3:00 PM CT)"""
+    now = datetime.now(CENTRAL_TZ)
+    # Weekend
+    if now.weekday() >= 5:
+        return False
+    # Holiday check
+    from trading.market_calendar import MARKET_HOLIDAYS_2024_2025
+    date_str = now.strftime('%Y-%m-%d')
+    if date_str in MARKET_HOLIDAYS_2024_2025:
+        return False
+    # Time check (8:30 AM - 3:00 PM CT)
+    time_minutes = now.hour * 60 + now.minute
+    return 8 * 60 + 30 <= time_minutes < 15 * 60
+
+
 async def fetch_gamma_data(expiration: str = None) -> dict:
     """
     Fetch gamma data from Tradier API with caching.
 
     Returns processed options chain with gamma data.
+    When market is closed, uses longer cache (5 min) to prevent constant refetching.
     """
+    # Determine cache TTL based on market hours
+    # When market is closed, use longer cache (5 min) - data won't change
+    market_open = is_market_hours()
+    cache_ttl = CACHE_TTL_SECONDS if market_open else 300  # 30s when open, 5min when closed
+
     # Check cache first - but skip if cached data is mock (allow retry for live)
     cache_key = f"gamma_data_{expiration or 'today'}"
-    cached = get_cached(cache_key, CACHE_TTL_SECONDS)
+    cached = get_cached(cache_key, cache_ttl)
     if cached and not cached.get('is_mock', False):
-        logger.debug(f"ARGUS: Returning cached LIVE gamma data for {expiration or 'today'}")
+        logger.debug(f"ARGUS: Returning cached data for {expiration or 'today'} (market_open={market_open}, ttl={cache_ttl}s)")
         return cached
     elif cached and cached.get('is_mock', False):
         logger.debug(f"ARGUS: Skipping cached mock data, attempting fresh fetch")
@@ -327,13 +349,21 @@ async def get_gamma_data(
         cache_age_seconds = int(time.time() - cache_time) if cache_time else 0
         is_cached = cache_age_seconds > 2  # Data older than 2 seconds is from cache
 
-        if is_cached and engine.previous_snapshot:
+        # When market is closed, ALWAYS use previous snapshot if available
+        # This prevents ROC from constantly recalculating on stale after-hours data
+        market_open = is_market_hours()
+
+        if not market_open and engine.previous_snapshot:
+            # Market closed - use existing snapshot, don't reprocess
+            logger.debug(f"ARGUS: Market closed - using existing snapshot to prevent ROC recalculation")
+            snapshot = engine.previous_snapshot
+        elif is_cached and engine.previous_snapshot:
             # Use existing snapshot - don't reprocess cached data
             logger.debug(f"ARGUS: Using existing snapshot (cached data, age={cache_age_seconds}s)")
             snapshot = engine.previous_snapshot
         else:
             # Process fresh data through engine
-            logger.debug(f"ARGUS: Processing fresh data through engine")
+            logger.debug(f"ARGUS: Processing fresh data through engine (market_open={market_open})")
             snapshot = engine.process_options_chain(
                 raw_data,
                 raw_data['spot_price'],
