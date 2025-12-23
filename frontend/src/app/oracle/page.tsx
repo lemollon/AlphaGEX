@@ -754,72 +754,74 @@ export default function OraclePage() {
                 </button>
               </div>
 
-              {performance ? (
+              {performance?.overall ? (
                 <>
                   {/* Overall Stats */}
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <div className="card">
                       <p className="text-text-secondary text-sm mb-1">Total Predictions</p>
-                      <p className="text-3xl font-bold text-text-primary">{performance.total_predictions}</p>
+                      <p className="text-3xl font-bold text-text-primary">{performance.total_predictions ?? 0}</p>
                     </div>
                     <div className="card">
                       <p className="text-text-secondary text-sm mb-1">Win Rate</p>
-                      <p className="text-3xl font-bold text-green-400">{(performance.overall.win_rate * 100).toFixed(1)}%</p>
+                      <p className="text-3xl font-bold text-green-400">{((performance.overall.win_rate ?? 0) * 100).toFixed(1)}%</p>
                       <p className="text-text-muted text-xs">
-                        {performance.overall.wins}W / {performance.overall.losses}L
+                        {performance.overall.wins ?? 0}W / {performance.overall.losses ?? 0}L
                       </p>
                     </div>
                     <div className="card">
                       <p className="text-text-secondary text-sm mb-1">Calibration Error</p>
-                      <p className={`text-3xl font-bold ${performance.overall.calibration_error < 0.05 ? 'text-green-400' : performance.overall.calibration_error < 0.1 ? 'text-yellow-400' : 'text-red-400'}`}>
-                        {(performance.overall.calibration_error * 100).toFixed(1)}%
+                      <p className={`text-3xl font-bold ${(performance.overall.calibration_error ?? 1) < 0.05 ? 'text-green-400' : (performance.overall.calibration_error ?? 1) < 0.1 ? 'text-yellow-400' : 'text-red-400'}`}>
+                        {((performance.overall.calibration_error ?? 0) * 100).toFixed(1)}%
                       </p>
                       <p className="text-text-muted text-xs">Predicted vs Actual</p>
                     </div>
                     <div className="card">
                       <p className="text-text-secondary text-sm mb-1">Total P&L</p>
-                      <p className={`text-3xl font-bold ${performance.overall.total_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        ${performance.overall.total_pnl.toFixed(0)}
+                      <p className={`text-3xl font-bold ${(performance.overall.total_pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        ${(performance.overall.total_pnl ?? 0).toFixed(0)}
                       </p>
                     </div>
                   </div>
 
                   {/* By Bot */}
-                  <div className="card">
-                    <h4 className="text-lg font-semibold text-text-primary mb-4">Performance by Bot</h4>
-                    <div className="overflow-x-auto">
-                      <table className="w-full">
-                        <thead className="bg-background-deep">
-                          <tr>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-text-muted">Bot</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-text-muted">Predictions</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-text-muted">Wins</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-text-muted">Win Rate</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-text-muted">Avg Predicted</th>
-                            <th className="px-4 py-3 text-left text-xs font-medium text-text-muted">P&L</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-border">
-                          {Object.entries(performance.by_bot).map(([bot, data]) => (
-                            <tr key={bot} className="hover:bg-background-hover">
-                              <td className="px-4 py-3">
-                                <span className={`px-2 py-1 rounded text-xs font-medium ${getBotColor(bot)}`}>
-                                  {bot}
-                                </span>
-                              </td>
-                              <td className="px-4 py-3 text-text-primary">{data.total}</td>
-                              <td className="px-4 py-3 text-green-400">{data.wins}</td>
-                              <td className="px-4 py-3 text-text-primary">{(data.win_rate * 100).toFixed(1)}%</td>
-                              <td className="px-4 py-3 text-text-primary">{(data.avg_predicted_prob * 100).toFixed(1)}%</td>
-                              <td className={`px-4 py-3 font-medium ${data.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                ${data.pnl.toFixed(0)}
-                              </td>
+                  {performance.by_bot && Object.keys(performance.by_bot).length > 0 && (
+                    <div className="card">
+                      <h4 className="text-lg font-semibold text-text-primary mb-4">Performance by Bot</h4>
+                      <div className="overflow-x-auto">
+                        <table className="w-full">
+                          <thead className="bg-background-deep">
+                            <tr>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-text-muted">Bot</th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-text-muted">Predictions</th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-text-muted">Wins</th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-text-muted">Win Rate</th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-text-muted">Avg Predicted</th>
+                              <th className="px-4 py-3 text-left text-xs font-medium text-text-muted">P&L</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </thead>
+                          <tbody className="divide-y divide-border">
+                            {Object.entries(performance.by_bot).map(([bot, data]) => (
+                              <tr key={bot} className="hover:bg-background-hover">
+                                <td className="px-4 py-3">
+                                  <span className={`px-2 py-1 rounded text-xs font-medium ${getBotColor(bot)}`}>
+                                    {bot}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3 text-text-primary">{data.total ?? 0}</td>
+                                <td className="px-4 py-3 text-green-400">{data.wins ?? 0}</td>
+                                <td className="px-4 py-3 text-text-primary">{((data.win_rate ?? 0) * 100).toFixed(1)}%</td>
+                                <td className="px-4 py-3 text-text-primary">{((data.avg_predicted_prob ?? 0) * 100).toFixed(1)}%</td>
+                                <td className={`px-4 py-3 font-medium ${(data.pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                  ${(data.pnl ?? 0).toFixed(0)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </>
               ) : (
                 <div className="card text-center py-12">
@@ -955,19 +957,19 @@ export default function OraclePage() {
                             <div className="mt-3 pt-3 border-t border-border grid grid-cols-2 gap-2 text-sm">
                               <div>
                                 <span className="text-text-muted">Accuracy:</span>
-                                <span className="text-text-primary ml-2">{(trainingResult.training_metrics.accuracy * 100).toFixed(1)}%</span>
+                                <span className="text-text-primary ml-2">{((trainingResult.training_metrics.accuracy ?? 0) * 100).toFixed(1)}%</span>
                               </div>
                               <div>
                                 <span className="text-text-muted">AUC-ROC:</span>
-                                <span className="text-text-primary ml-2">{trainingResult.training_metrics.auc_roc.toFixed(3)}</span>
+                                <span className="text-text-primary ml-2">{(trainingResult.training_metrics.auc_roc ?? 0).toFixed(3)}</span>
                               </div>
                               <div>
                                 <span className="text-text-muted">Samples:</span>
-                                <span className="text-text-primary ml-2">{trainingResult.training_metrics.total_samples}</span>
+                                <span className="text-text-primary ml-2">{trainingResult.training_metrics.total_samples ?? 0}</span>
                               </div>
                               <div>
                                 <span className="text-text-muted">Method:</span>
-                                <span className="text-text-primary ml-2">{trainingResult.method}</span>
+                                <span className="text-text-primary ml-2">{trainingResult.method ?? 'N/A'}</span>
                               </div>
                             </div>
                           )}
@@ -982,35 +984,35 @@ export default function OraclePage() {
                         <div className="grid grid-cols-2 gap-3 text-sm">
                           <div className="flex justify-between">
                             <span className="text-text-muted">Accuracy:</span>
-                            <span className="text-text-primary">{(trainingStatus.training_metrics.accuracy * 100).toFixed(1)}%</span>
+                            <span className="text-text-primary">{((trainingStatus.training_metrics.accuracy ?? 0) * 100).toFixed(1)}%</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-text-muted">Precision:</span>
-                            <span className="text-text-primary">{(trainingStatus.training_metrics.precision * 100).toFixed(1)}%</span>
+                            <span className="text-text-primary">{((trainingStatus.training_metrics.precision ?? 0) * 100).toFixed(1)}%</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-text-muted">Recall:</span>
-                            <span className="text-text-primary">{(trainingStatus.training_metrics.recall * 100).toFixed(1)}%</span>
+                            <span className="text-text-primary">{((trainingStatus.training_metrics.recall ?? 0) * 100).toFixed(1)}%</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-text-muted">F1 Score:</span>
-                            <span className="text-text-primary">{(trainingStatus.training_metrics.f1_score * 100).toFixed(1)}%</span>
+                            <span className="text-text-primary">{((trainingStatus.training_metrics.f1_score ?? 0) * 100).toFixed(1)}%</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-text-muted">AUC-ROC:</span>
-                            <span className="text-text-primary">{trainingStatus.training_metrics.auc_roc.toFixed(3)}</span>
+                            <span className="text-text-primary">{(trainingStatus.training_metrics.auc_roc ?? 0).toFixed(3)}</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-text-muted">Brier Score:</span>
-                            <span className="text-text-primary">{trainingStatus.training_metrics.brier_score.toFixed(4)}</span>
+                            <span className="text-text-primary">{(trainingStatus.training_metrics.brier_score ?? 0).toFixed(4)}</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-text-muted">Samples:</span>
-                            <span className="text-text-primary">{trainingStatus.training_metrics.total_samples}</span>
+                            <span className="text-text-primary">{trainingStatus.training_metrics.total_samples ?? 0}</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-text-muted">Win Rate:</span>
-                            <span className="text-text-primary">{(trainingStatus.training_metrics.win_rate_actual * 100).toFixed(1)}%</span>
+                            <span className="text-text-primary">{((trainingStatus.training_metrics.win_rate_actual ?? 0) * 100).toFixed(1)}%</span>
                           </div>
                         </div>
                       </div>
