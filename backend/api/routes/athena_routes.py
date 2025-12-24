@@ -210,7 +210,7 @@ def _calculate_position_greeks(long_strike: float, short_strike: float, spot: fl
 @router.get("/positions")
 async def get_athena_positions(
     status_filter: Optional[str] = Query(None, description="Filter by status: open, closed, all"),
-    limit: int = Query(50, description="Max positions to return")
+    limit: int = Query(500, description="Max positions to return")
 ):
     """
     Get ATHENA positions from database.

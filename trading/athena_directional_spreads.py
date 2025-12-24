@@ -355,7 +355,11 @@ class ATHENATrader:
         # Load config from database if available
         self._load_config_from_db()
 
-        logger.info(f"ATHENA initialized: capital=${initial_capital:,.2f}, mode={self.config.mode.value}")
+        # CRITICAL: Load any existing open positions from database
+        # This ensures positions survive bot restarts
+        self._load_open_positions_from_db()
+
+        logger.info(f"ATHENA initialized: capital=${initial_capital:,.2f}, mode={self.config.mode.value}, open_positions={len(self.open_positions)}")
 
     def _load_config_from_db(self) -> None:
         """Load configuration from apache_config table"""
@@ -399,6 +403,76 @@ class ATHENATrader:
             logger.info("ATHENA: Loaded config from database")
         except Exception as e:
             logger.debug(f"ATHENA: Could not load config from DB: {e}")
+
+    def _load_open_positions_from_db(self) -> None:
+        """
+        Load all open positions from database on startup.
+
+        CRITICAL: This ensures positions survive bot restarts.
+        Without this, positions in the DB become invisible when the bot restarts
+        because self.open_positions starts as an empty list.
+        """
+        conn = None
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Get all positions with status='open' that haven't expired yet
+            today = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
+
+            cursor.execute('''
+                SELECT
+                    position_id, spread_type, created_at, expiration,
+                    long_strike, short_strike, entry_price, contracts,
+                    max_profit, max_loss, spot_at_entry, gex_regime,
+                    oracle_confidence, oracle_reasoning, ticker
+                FROM apache_positions
+                WHERE status = 'open' AND expiration >= %s
+                ORDER BY created_at ASC
+            ''', (today,))
+
+            loaded_count = 0
+            for row in cursor.fetchall():
+                spread_type = SpreadType.BULL_CALL_SPREAD if row[1] == 'BULL_CALL_SPREAD' else SpreadType.BEAR_CALL_SPREAD
+                open_date_val = str(row[2])[:10] if row[2] else ""
+
+                pos = SpreadPosition(
+                    position_id=row[0],
+                    spread_type=spread_type,
+                    open_date=open_date_val,
+                    expiration=str(row[3]) if row[3] else "",
+                    long_strike=float(row[4] or 0),
+                    short_strike=float(row[5] or 0),
+                    entry_debit=float(row[6] or 0),
+                    contracts=int(row[7] or 0),
+                    spread_width=abs(float(row[5] or 0) - float(row[4] or 0)),
+                    max_profit=float(row[8] or 0),
+                    max_loss=float(row[9] or 0),
+                    underlying_price_at_entry=float(row[10] or 0),
+                    gex_regime_at_entry=row[11] or "",
+                    oracle_confidence=float(row[12] or 0),
+                    oracle_reasoning=row[13] or "",
+                    order_id="",
+                    status='open',
+                    initial_contracts=int(row[7] or 0),
+                    contracts_remaining=int(row[7] or 0)
+                )
+
+                # Add to open_positions list
+                self.open_positions.append(pos)
+                loaded_count += 1
+                logger.info(f"ATHENA: Recovered position {pos.position_id} - {pos.spread_type.value} {pos.long_strike}/{pos.short_strike} exp {pos.expiration}")
+
+            if loaded_count > 0:
+                logger.info(f"ATHENA: Recovered {loaded_count} open positions from database")
+            else:
+                logger.info("ATHENA: No open positions to recover from database")
+
+        except Exception as e:
+            logger.error(f"ATHENA: Error loading open positions from DB: {e}")
+        finally:
+            if conn:
+                conn.close()
 
     def _log_to_db(self, level: str, message: str, details: Optional[Dict] = None) -> None:
         """Log message to apache_logs table"""
