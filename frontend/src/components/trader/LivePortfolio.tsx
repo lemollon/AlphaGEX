@@ -33,6 +33,9 @@ export interface LivePosition {
   pnl_pct: number
   underlying_at_entry?: number
   current_underlying?: number
+  // Timestamps
+  entry_time?: string
+  created_at?: string
   // For ARES Iron Condors
   put_short_strike?: number
   put_long_strike?: number

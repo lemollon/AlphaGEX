@@ -70,7 +70,7 @@ function AthenaPositionCard({ position, underlyingPrice, onClick }: { position: 
   const spreadType = position.spread_type?.includes('BULL') ? 'Bull Call Spread' : 'Bear Call Spread'
   const isBullish = position.spread_type?.includes('BULL')
   const { isFlashing, flashDirection } = usePnLAnimation(position.unrealized_pnl)
-  const positionAge = getPositionAge(position.entry_time)
+  const positionAge = getPositionAge(position.entry_time || position.created_at)
 
   return (
     <div
@@ -155,7 +155,7 @@ function AresPositionCard({ position, underlyingPrice, onClick }: { position: Li
   const isPositive = position.unrealized_pnl >= 0
   const isAtRisk = position.risk_status === 'AT_RISK'
   const { isFlashing, flashDirection } = usePnLAnimation(position.unrealized_pnl)
-  const positionAge = getPositionAge(position.entry_time)
+  const positionAge = getPositionAge(position.entry_time || position.created_at)
 
   // Visual representation of where price is relative to strikes
   const putShort = position.put_short_strike || 0
