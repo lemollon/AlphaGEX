@@ -1353,8 +1353,14 @@ Current:         ${self.current_capital:,.2f}
             self.open_positions.append(position)
             self.daily_trades += 1
 
-            # Save to database
-            self._save_position_to_db(position, signal_id)
+            # Save to database with full entry context
+            self._save_position_to_db(
+                position=position,
+                signal_id=signal_id,
+                gex_data=gex_data,
+                ml_signal=ml_signal,
+                rr_ratio=rr_ratio
+            )
 
             # Log comprehensive decision
             self._log_decision(
@@ -1445,8 +1451,14 @@ Current:         ${self.current_capital:,.2f}
                         self.open_positions.append(position)
                         self.daily_trades += 1
 
-                        # Save to database
-                        self._save_position_to_db(position, signal_id)
+                        # Save to database with full entry context
+                        self._save_position_to_db(
+                            position=position,
+                            signal_id=signal_id,
+                            gex_data=gex_data,
+                            ml_signal=ml_signal,
+                            rr_ratio=rr_ratio
+                        )
 
                         self._log_to_db("INFO", f"LIVE TRADE EXECUTED: {spread_type.value}", {
                             'position_id': position.position_id,
@@ -1479,19 +1491,59 @@ Current:         ${self.current_capital:,.2f}
 
         return None
 
-    def _save_position_to_db(self, position: SpreadPosition, signal_id: Optional[int]) -> None:
-        """Save position to apache_positions table"""
+    def _save_position_to_db(
+        self,
+        position: SpreadPosition,
+        signal_id: Optional[int],
+        gex_data: Optional[Dict] = None,
+        ml_signal: Optional[Dict] = None,
+        rr_ratio: float = 0
+    ) -> None:
+        """Save position to apache_positions table with full entry context"""
         try:
             conn = get_connection()
             c = conn.cursor()
+
+            # Extract GEX data
+            vix = gex_data.get('vix', 0) if gex_data else 0
+            put_wall = gex_data.get('put_wall', 0) if gex_data else 0
+            call_wall = gex_data.get('call_wall', 0) if gex_data else 0
+            flip_point = gex_data.get('flip_point', 0) if gex_data else 0
+            net_gex = gex_data.get('net_gex', 0) if gex_data else 0
+
+            # Calculate Greeks
+            spot = position.underlying_price_at_entry
+            greeks = self._get_leg_greeks(position, spot, vix if vix > 0 else 15)
+            net_delta = greeks.get('long_delta', 0) - greeks.get('short_delta', 0)
+            net_gamma = greeks.get('long_gamma', 0) - greeks.get('short_gamma', 0)
+            net_theta = greeks.get('long_theta', 0) - greeks.get('short_theta', 0)
+            net_vega = greeks.get('long_vega', 0) - greeks.get('short_vega', 0)
+
+            # Extract ML signal data
+            ml_direction = ml_signal.get('direction', ml_signal.get('model_predictions', {}).get('direction')) if ml_signal else None
+            ml_confidence = ml_signal.get('confidence', 0) if ml_signal else 0
+            ml_win_prob = ml_signal.get('win_probability', 0) if ml_signal else 0
+
+            # Calculate breakeven
+            is_bullish = position.spread_type == SpreadType.BULL_CALL_SPREAD
+            if is_bullish:
+                breakeven = position.long_strike + position.entry_debit
+            else:
+                breakeven = position.short_strike - abs(position.entry_debit)
 
             c.execute("""
                 INSERT INTO apache_positions (
                     position_id, signal_id, spread_type, ticker,
                     long_strike, short_strike, expiration,
                     entry_price, contracts, max_profit, max_loss,
-                    spot_at_entry, gex_regime, oracle_confidence, oracle_reasoning
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    spot_at_entry, gex_regime, oracle_confidence, oracle_reasoning,
+                    vix_at_entry, put_wall_at_entry, call_wall_at_entry,
+                    flip_point_at_entry, net_gex_at_entry,
+                    entry_delta, entry_gamma, entry_theta, entry_vega,
+                    ml_direction, ml_confidence, ml_win_probability,
+                    breakeven, rr_ratio
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                          %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 position.position_id,
                 signal_id,
@@ -1507,13 +1559,29 @@ Current:         ${self.current_capital:,.2f}
                 position.underlying_price_at_entry,
                 position.gex_regime_at_entry,
                 position.oracle_confidence,
-                position.oracle_reasoning
+                position.oracle_reasoning,
+                vix if vix > 0 else None,
+                put_wall if put_wall > 0 else None,
+                call_wall if call_wall > 0 else None,
+                flip_point if flip_point > 0 else None,
+                net_gex if net_gex != 0 else None,
+                net_delta,
+                net_gamma,
+                net_theta,
+                net_vega,
+                ml_direction,
+                ml_confidence if ml_confidence > 0 else None,
+                ml_win_prob if ml_win_prob > 0 else None,
+                breakeven,
+                rr_ratio if rr_ratio > 0 else None
             ))
 
             conn.commit()
             conn.close()
         except Exception as e:
             self._log_to_db("ERROR", f"Failed to save position: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _log_decision(
         self,
