@@ -837,7 +837,7 @@ export default function ARESPage() {
     return decisions
       .filter(d => d.timestamp?.startsWith(today) && (d.action === 'SKIP' || d.decision_type === 'SKIP'))
       .map(d => ({
-        id: d.id,
+        id: String(d.id),
         timestamp: d.timestamp,
         reason: d.why || d.what || 'No reason provided',
         category: d.signal_source?.includes('ML') ? 'ml' as const :
@@ -863,7 +863,7 @@ export default function ARESPage() {
       .filter(d => d.timestamp?.startsWith(today))
       .slice(0, 20)
       .map(d => ({
-        id: d.id,
+        id: String(d.id),
         timestamp: d.timestamp,
         type: d.decision_type?.toLowerCase().includes('entry') ? 'entry' as const :
               d.decision_type?.toLowerCase().includes('exit') ? 'exit' as const :
