@@ -172,6 +172,11 @@ class ARESConfig:
     min_credit_per_spread: float = 1.50   # Minimum credit to accept (SPX)
     min_credit_per_spread_spy: float = 0.02  # Minimum credit (SPY - lowered for liquidity)
 
+    # Paper trading mode selection
+    # True = Paper trade SPX using live Tradier data, record trades in AlphaGEX DB only
+    # False = Paper trade SPY via Tradier sandbox API (for order execution simulation)
+    paper_trade_spx: bool = True          # Default to SPX paper trading with live data
+
     # Trade management
     use_stop_loss: bool = False           # NO stop loss (defined risk)
     profit_target_pct: float = 50         # Take profit at 50% of max
@@ -212,17 +217,25 @@ class ARESTrader:
         self.tz = ZoneInfo("America/Chicago")
 
         # Initialize Tradier clients
-        # When TRADIER_SANDBOX=true: Use sandbox for BOTH market data AND orders
-        # When TRADIER_SANDBOX=false: Use production for market data, sandbox for paper orders
+        # Trading modes:
+        #   1. SPX Paper Trading (paper_trade_spx=True):
+        #      - Uses PRODUCTION Tradier for live SPX market data
+        #      - Trades recorded in AlphaGEX DB only (no Tradier order submission)
+        #      - tradier_sandbox = None → triggers SPX trading
+        #
+        #   2. SPY Sandbox Trading (paper_trade_spx=False OR TRADIER_SANDBOX=true):
+        #      - Uses Tradier SANDBOX for market data and order submission
+        #      - tradier_sandbox = client → triggers SPY trading
+        #
         self.tradier = None  # Primary client for market data
-        self.tradier_sandbox = None  # Sandbox client for paper trade submission
+        self.tradier_sandbox = None  # Sandbox client for paper trade submission (None = SPX mode)
 
         if TRADIER_AVAILABLE and mode != TradingMode.BACKTEST:
             from unified_config import APIConfig
             is_sandbox_mode = APIConfig.TRADIER_SANDBOX
 
-            if is_sandbox_mode:
-                # Sandbox-only mode: Use sandbox API for everything (market data + orders)
+            if is_sandbox_mode and not self.config.paper_trade_spx:
+                # SPY Sandbox-only mode: Use sandbox API for everything (market data + orders)
                 try:
                     sandbox_key = APIConfig.TRADIER_SANDBOX_API_KEY or APIConfig.TRADIER_API_KEY
                     sandbox_account = APIConfig.TRADIER_SANDBOX_ACCOUNT_ID or APIConfig.TRADIER_ACCOUNT_ID
@@ -237,21 +250,27 @@ class ARESTrader:
                         # Use same sandbox client for orders in PAPER mode
                         if mode == TradingMode.PAPER:
                             self.tradier_sandbox = self.tradier
-                        logger.info(f"ARES: Tradier SANDBOX client initialized (sandbox-only mode)")
+                        logger.info(f"ARES: Tradier SANDBOX client initialized (SPY sandbox mode)")
                     else:
                         logger.warning("ARES: Tradier sandbox credentials not configured")
                 except Exception as e:
                     logger.warning(f"ARES: Failed to initialize Tradier sandbox: {e}")
             else:
-                # Production mode: Use production API for market data
+                # SPX Paper Trading mode: Use production API for live market data
+                # No sandbox client = SPX trading with AlphaGEX-only paper trades
                 try:
                     self.tradier = TradierDataFetcher(sandbox=False)
-                    logger.info(f"ARES: Tradier PRODUCTION client initialized (for SPX market data)")
+                    logger.info(f"ARES: Tradier PRODUCTION client initialized (for live SPX market data)")
                 except Exception as e:
                     logger.warning(f"ARES: Failed to initialize Tradier production: {e}")
 
-                # Sandbox API for paper trade submission (only in PAPER mode)
-                if mode == TradingMode.PAPER:
+                # SPX Paper Trading: Do NOT set tradier_sandbox
+                # This ensures get_trading_ticker() returns "SPX" and trades are recorded internally
+                if self.config.paper_trade_spx:
+                    logger.info(f"ARES: SPX Paper Trading enabled - trades recorded in AlphaGEX DB only (no Tradier orders)")
+                    # tradier_sandbox stays None → SPX mode
+                elif mode == TradingMode.PAPER:
+                    # SPY Sandbox mode with production data (rare use case)
                     try:
                         sandbox_key = APIConfig.TRADIER_SANDBOX_API_KEY or APIConfig.TRADIER_API_KEY
                         sandbox_account = APIConfig.TRADIER_SANDBOX_ACCOUNT_ID or APIConfig.TRADIER_ACCOUNT_ID
@@ -262,7 +281,7 @@ class ARESTrader:
                                 account_id=sandbox_account,
                                 sandbox=True
                             )
-                            logger.info(f"ARES: Tradier SANDBOX client initialized (for paper trade submission)")
+                            logger.info(f"ARES: Tradier SANDBOX client initialized (for SPY paper trade submission)")
                         else:
                             logger.warning("ARES: Tradier credentials not configured - cannot submit to sandbox")
                     except Exception as e:
@@ -330,13 +349,19 @@ class ARESTrader:
         """
         Get the ticker to trade.
 
-        In PAPER mode with sandbox: Uses SPY (Tradier sandbox has SPY options)
-        In LIVE mode: Uses SPX/SPXW for higher premium
+        SPX Paper Trading (paper_trade_spx=True, tradier_sandbox=None):
+            - Uses SPX with live production data
+            - Trades recorded in AlphaGEX DB only
+
+        SPY Sandbox Trading (paper_trade_spx=False, tradier_sandbox exists):
+            - Uses SPY with Tradier sandbox
+            - Orders submitted to Tradier sandbox API
         """
-        # Use SPY in sandbox mode (Tradier sandbox doesn't support SPX options)
+        # SPX when no sandbox client (internal paper trading with live data)
+        # SPY when sandbox client exists (Tradier sandbox order submission)
         if self.tradier_sandbox is not None:
-            return self.config.sandbox_ticker  # SPY for sandbox
-        return self.config.ticker  # SPX for production
+            return self.config.sandbox_ticker  # SPY for Tradier sandbox
+        return self.config.ticker  # SPX for live data paper trading
 
     def get_spread_width(self) -> float:
         """
@@ -2042,19 +2067,22 @@ class ARESTrader:
         #   0.9 = high confidence (tighter strikes, more premium)
         #   1.0 = standard confidence
         #   1.2 = low confidence (wider strikes, safer)
-        # Apply Oracle's dynamic adjustment on top of config baseline
+        # Oracle's suggested_sd_multiplier IS the actual SD multiplier to use
+        # Config sd_multiplier is only used as fallback when Oracle doesn't provide one
         adjusted_expected_move = market_data['expected_move']
-        effective_sd_mult = self.config.sd_multiplier  # Default to config (0.5)
 
-        if oracle_sd_mult and oracle_sd_mult != 1.0:
-            # Oracle is suggesting an adjustment - apply it as a multiplier
-            # Example: config=0.5, oracle=1.2 -> effective = 0.5 * 1.2 = 0.6 (wider)
-            # Example: config=0.5, oracle=0.9 -> effective = 0.5 * 0.9 = 0.45 (tighter)
-            effective_sd_mult = self.config.sd_multiplier * oracle_sd_mult
-            logger.info(f"  Oracle adjusted SD: {self.config.sd_multiplier:.2f} x {oracle_sd_mult:.2f} = {effective_sd_mult:.2f}")
+        if oracle_sd_mult and oracle_sd_mult > 0:
+            # Oracle provides the SD multiplier directly - USE IT as the actual value
+            # Oracle calculates optimal SD based on win probability and market conditions
+            effective_sd_mult = oracle_sd_mult
+            logger.info(f"  Using Oracle SD multiplier: {effective_sd_mult:.2f} (Oracle overrides config {self.config.sd_multiplier:.2f})")
+        else:
+            # Fallback to config when Oracle doesn't provide SD multiplier
+            effective_sd_mult = self.config.sd_multiplier
+            logger.info(f"  Using config SD multiplier: {effective_sd_mult:.2f} (no Oracle suggestion)")
 
         adjusted_expected_move = market_data['expected_move'] * effective_sd_mult
-        logger.info(f"  SD Mult: {effective_sd_mult:.2f} (config={self.config.sd_multiplier}, oracle={oracle_sd_mult}) -> Adjusted Move: ${adjusted_expected_move:.2f}")
+        logger.info(f"  SD Mult: {effective_sd_mult:.2f} -> Adjusted Move: ${adjusted_expected_move:.2f} (expected move ${market_data['expected_move']:.2f})")
 
         # Find Iron Condor strikes
         # Uses GEX-Protected strikes if Oracle provides them (72% win rate)
