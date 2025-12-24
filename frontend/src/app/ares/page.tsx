@@ -922,6 +922,56 @@ export default function ARESPage() {
     return data.filter(d => new Date(d.date) >= startDate)
   }
 
+  // Build equity curve with live data point (includes unrealized P&L from open positions)
+  const equityDataWithLive = useMemo(() => {
+    const startingCapital = status?.capital || 200000
+
+    // Get historical equity data from backend
+    const historicalData = equityData.map((e: EquityPoint) => ({
+      date: e.date,
+      timestamp: new Date(e.date).getTime(),
+      equity: e.equity,
+      pnl: e.pnl
+    }))
+
+    // Calculate realized P&L from historical data
+    const lastHistoricalPnl = historicalData.length > 0
+      ? historicalData[historicalData.length - 1].pnl
+      : 0
+
+    // Get unrealized P&L from livePnL data (properly calculated with 100x multiplier)
+    const unrealizedPnl = livePnL?.total_unrealized_pnl || 0
+    const hasOpenPositions = positions.length > 0
+
+    // Add live "now" point with current equity (historical realized + current unrealized)
+    if (hasOpenPositions || historicalData.length > 0) {
+      const totalPnl = lastHistoricalPnl + unrealizedPnl
+      const now = new Date()
+      const livePoint = {
+        date: 'Now',
+        timestamp: now.getTime(),
+        equity: startingCapital + totalPnl,
+        pnl: totalPnl
+      }
+
+      // If no historical data but have open positions, add starting point
+      if (historicalData.length === 0 && hasOpenPositions) {
+        const todayStart = new Date()
+        todayStart.setHours(9, 30, 0, 0) // Market open
+        historicalData.push({
+          date: todayStart.toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }),
+          timestamp: todayStart.getTime(),
+          equity: startingCapital,
+          pnl: 0
+        })
+      }
+
+      return [...historicalData, livePoint]
+    }
+
+    return historicalData
+  }, [equityData, livePnL?.total_unrealized_pnl, positions.length, status?.capital])
+
   const spxEquityData = buildEquityCurve(spxClosedPositions, spxStats.capital)
   const spyEquityData = buildEquityCurve(spyClosedPositions, spyStats.capital)
 
@@ -1100,12 +1150,7 @@ export default function ARESPage() {
                 totalValue={(status?.capital || 200000) + (livePnL?.net_pnl || status?.total_pnl || 0)}
                 startingCapital={status?.capital || 200000}
                 livePnL={livePnL}
-                equityData={equityData.map((e: EquityPoint) => ({
-                  date: e.date,
-                  timestamp: new Date(e.date).getTime(),
-                  equity: e.equity,
-                  pnl: e.pnl
-                })) as EquityDataPoint[]}
+                equityData={equityDataWithLive as EquityDataPoint[]}
                 isLoading={livePnLLoading}
                 onRefresh={() => mutateLivePnL()}
                 lastUpdated={livePnL?.last_updated}

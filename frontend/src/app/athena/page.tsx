@@ -692,29 +692,70 @@ export default function ATHENAPage() {
   }
 
   // Build equity curve data for the chart (Robinhood-style)
+  // Includes both historical closed positions AND current live equity with unrealized P&L
   const equityChartData: EquityDataPoint[] = useMemo(() => {
+    const startingCapital = status?.capital || 100000
+
     // Include both 'closed' and 'expired' positions (0DTE trades expire with status='expired')
     const closedPositions = positions.filter(p => (p.status === 'closed' || p.status === 'expired') && p.exit_time)
-    if (closedPositions.length === 0) return []
+    const openPositions = positions.filter(p => p.status === 'open')
 
-    // Sort by close date
-    const sorted = [...closedPositions].sort((a, b) =>
-      new Date(a.exit_time!).getTime() - new Date(b.exit_time!).getTime()
-    )
+    // Calculate realized P&L from closed positions
+    let realizedPnl = 0
+    const historicalPoints: EquityDataPoint[] = []
 
-    // Build cumulative equity
-    const startingCapital = status?.capital || 100000
-    let cumPnl = 0
-    return sorted.map(pos => {
-      cumPnl += pos.realized_pnl || 0
-      return {
-        date: new Date(pos.exit_time!).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-        timestamp: new Date(pos.exit_time!).getTime(),
-        equity: startingCapital + cumPnl,
-        pnl: cumPnl
-      }
-    })
-  }, [positions, status?.capital])
+    if (closedPositions.length > 0) {
+      // Sort by close date
+      const sorted = [...closedPositions].sort((a, b) =>
+        new Date(a.exit_time!).getTime() - new Date(b.exit_time!).getTime()
+      )
+
+      // Build cumulative equity from closed positions
+      sorted.forEach(pos => {
+        realizedPnl += pos.realized_pnl || 0
+        historicalPoints.push({
+          date: new Date(pos.exit_time!).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          timestamp: new Date(pos.exit_time!).getTime(),
+          equity: startingCapital + realizedPnl,
+          pnl: realizedPnl
+        })
+      })
+    }
+
+    // Get unrealized P&L from livePnL data (properly calculated with 100x multiplier)
+    // This includes: (current_spread_value - entry_debit) * contracts * 100
+    const unrealizedPnl = livePnL?.total_unrealized_pnl || 0
+
+    // Add live "now" point with current equity (realized + unrealized)
+    const totalPnl = realizedPnl + unrealizedPnl
+    const now = new Date()
+    const livePoint: EquityDataPoint = {
+      date: 'Now',
+      timestamp: now.getTime(),
+      equity: startingCapital + totalPnl,
+      pnl: totalPnl
+    }
+
+    // If no historical data, start with starting capital point
+    if (historicalPoints.length === 0 && openPositions.length > 0) {
+      // Add a starting point at beginning of day
+      const todayStart = new Date()
+      todayStart.setHours(9, 30, 0, 0) // Market open
+      historicalPoints.push({
+        date: todayStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        timestamp: todayStart.getTime(),
+        equity: startingCapital,
+        pnl: 0
+      })
+    }
+
+    // Always add the live point if there are open positions or historical data
+    if (openPositions.length > 0 || historicalPoints.length > 0) {
+      return [...historicalPoints, livePoint]
+    }
+
+    return historicalPoints
+  }, [positions, status?.capital, livePnL?.total_unrealized_pnl])
 
   // Helper functions for decision display
   const getDecisionTypeBadge = (type: string) => {
