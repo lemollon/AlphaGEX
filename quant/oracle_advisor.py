@@ -1391,6 +1391,7 @@ class OracleAdvisor:
                 "action": "SKIP_TODAY"
             })
             return OraclePrediction(
+                bot_name=BotName.ARES,
                 advice=TradingAdvice.SKIP_TODAY,
                 win_probability=0.35,
                 confidence=0.95,  # High confidence in the skip decision
