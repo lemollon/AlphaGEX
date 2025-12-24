@@ -211,6 +211,174 @@ def simulate_oracle_decisions(trades: List[Dict], oracle) -> Dict[str, Any]:
     }
 
 
+def simulate_combined_decisions(trades: List[Dict], ml_advisor, oracle) -> Dict[str, Any]:
+    """
+    Simulate backtest with ML + Oracle working TOGETHER (how ARES actually operates).
+
+    Decision flow:
+    1. ML provides base win probability
+    2. Oracle adjusts based on GEX, VIX, market conditions
+    3. Final decision combines both signals
+
+    Thresholds:
+    - ≥70% combined confidence = TRADE_FULL
+    - 55-70% combined confidence = TRADE_REDUCED (smaller position)
+    - <55% combined confidence = SKIP
+    """
+    from quant.oracle_advisor import BotName
+
+    allowed_trades = []
+    skipped_trades = []
+    reduced_trades = []  # Trades with reduced position size
+
+    for trade in trades:
+        try:
+            # Get market context
+            vix = trade.get('vix', trade.get('vix_open', 20))
+            spot_price = trade.get('spot_price', trade.get('underlying_price', 6000))
+            expected_move = trade.get('expected_move', trade.get('exp_move', 30))
+            dow = get_day_of_week(trade.get('trade_date', trade.get('date', '')))
+
+            # ========== Step 1: Get ML Base Probability ==========
+            ml_prob = 0.65  # Default if ML fails
+            ml_sd_mult = 1.0
+            if ml_advisor:
+                try:
+                    ml_advice = ml_advisor.predict(vix=vix, day_of_week=dow)
+                    ml_prob = ml_advice.win_probability
+                    ml_sd_mult = ml_advice.suggested_sd_mult
+                except:
+                    pass
+
+            # ========== Step 2: Get Oracle Adjustments ==========
+            oracle_adjustment = 0.0
+            oracle_sd_mult = 1.0
+            oracle_reasoning = []
+
+            if oracle:
+                try:
+                    # Build GEX data if available
+                    gex_data = None
+                    if trade.get('gex_regime') or trade.get('put_wall'):
+                        from quant.kronos_gex_calculator import GEXData
+                        gex_data = GEXData(
+                            net_gex=trade.get('net_gex', 0),
+                            call_gex=trade.get('call_gex', 0),
+                            put_gex=trade.get('put_gex', 0),
+                            call_wall=trade.get('call_wall', spot_price + 50),
+                            put_wall=trade.get('put_wall', spot_price - 50),
+                            flip_point=trade.get('flip_point', spot_price),
+                            gex_normalized=trade.get('gex_normalized', 0),
+                            gex_regime=trade.get('gex_regime', 'NEUTRAL'),
+                            distance_to_flip_pct=trade.get('distance_to_flip_pct', 0),
+                            between_walls=trade.get('between_walls', True),
+                        )
+
+                    oracle_pred = oracle.get_prediction(
+                        bot_name=BotName.ARES,
+                        vix=vix,
+                        spot_price=spot_price,
+                        expected_move=expected_move,
+                        gex_data=gex_data,
+                    )
+
+                    # Oracle provides adjustments based on conditions
+                    oracle_sd_mult = oracle_pred.suggested_sd_multiplier
+
+                    # Calculate adjustment from Oracle's confidence vs baseline
+                    oracle_confidence = oracle_pred.win_probability
+                    oracle_adjustment = oracle_confidence - 0.65  # Deviation from neutral
+
+                    # Track reasoning
+                    if gex_data and gex_data.gex_regime == 'POSITIVE':
+                        oracle_reasoning.append("+GEX_POSITIVE")
+                    elif gex_data and gex_data.gex_regime == 'NEGATIVE':
+                        oracle_reasoning.append("-GEX_NEGATIVE")
+                    if vix > 25:
+                        oracle_reasoning.append("-HIGH_VIX")
+                    if vix < 15:
+                        oracle_reasoning.append("+LOW_VIX")
+
+                except Exception as e:
+                    oracle_reasoning.append(f"ORACLE_ERROR: {str(e)[:30]}")
+
+            # ========== Step 3: Combine Signals ==========
+            # Combined probability = ML base + Oracle adjustment (capped 0-1)
+            combined_prob = max(0.0, min(1.0, ml_prob + oracle_adjustment))
+
+            # Use Oracle's SD multiplier if it differs significantly from ML's
+            final_sd_mult = oracle_sd_mult if abs(oracle_sd_mult - 1.0) > 0.1 else ml_sd_mult
+
+            # ========== Step 4: Make Decision ==========
+            trade_data = {
+                **trade,
+                'ml_prob': ml_prob,
+                'oracle_adjustment': oracle_adjustment,
+                'combined_prob': combined_prob,
+                'final_sd_mult': final_sd_mult,
+                'oracle_reasoning': oracle_reasoning,
+            }
+
+            if combined_prob >= 0.70:
+                # TRADE_FULL - high confidence
+                trade_data['decision'] = 'TRADE_FULL'
+                trade_data['position_multiplier'] = 1.0
+                allowed_trades.append(trade_data)
+            elif combined_prob >= 0.55:
+                # TRADE_REDUCED - moderate confidence, smaller position
+                trade_data['decision'] = 'TRADE_REDUCED'
+                trade_data['position_multiplier'] = 0.5  # Half position
+                # Adjust P&L for reduced position
+                orig_pnl = trade.get('net_pnl', trade.get('pnl', 0))
+                trade_data['adjusted_pnl'] = orig_pnl * 0.5
+                reduced_trades.append(trade_data)
+                allowed_trades.append(trade_data)
+            else:
+                # SKIP - low confidence
+                trade_data['decision'] = 'SKIP'
+                trade_data['skip_reason'] = f"Combined prob {combined_prob:.1%} < 55%"
+                skipped_trades.append(trade_data)
+
+        except Exception as e:
+            # On error, allow trade with neutral settings
+            allowed_trades.append({
+                **trade,
+                'combined_prob': 0.65,
+                'decision': 'TRADE_FULL',
+                'error': str(e),
+            })
+
+    # Calculate metrics
+    # For reduced trades, use adjusted P&L
+    pnls = []
+    for t in allowed_trades:
+        if t.get('decision') == 'TRADE_REDUCED':
+            pnls.append(t.get('adjusted_pnl', t.get('net_pnl', t.get('pnl', 0)) * 0.5))
+        else:
+            pnls.append(t.get('net_pnl', t.get('pnl', 0)))
+
+    outcomes = [t.get('outcome', 'UNKNOWN') for t in allowed_trades]
+    wins = sum(1 for o in outcomes if o in ['MAX_PROFIT', 'WIN', 'PROFIT_TARGET'])
+
+    skipped_pnls = [t.get('net_pnl', t.get('pnl', 0)) for t in skipped_trades]
+    skipped_losses = sum(1 for p in skipped_pnls if p < 0)
+
+    return {
+        'allowed_trades': len(allowed_trades),
+        'skipped_trades': len(skipped_trades),
+        'reduced_trades': len(reduced_trades),
+        'full_trades': len(allowed_trades) - len(reduced_trades),
+        'total_pnl': sum(pnls),
+        'win_rate': (wins / len(allowed_trades) * 100) if allowed_trades else 0,
+        'sharpe_ratio': calculate_sharpe(pnls),
+        'avg_pnl': sum(pnls) / len(pnls) if pnls else 0,
+        'skipped_would_be_losses': skipped_losses,
+        'skipped_pnl_avoided': sum(p for p in skipped_pnls if p < 0),
+        'trades': allowed_trades,
+        'skipped': skipped_trades,
+    }
+
+
 def run_comparison(start_date: str, end_date: str, initial_capital: float = 1_000_000):
     """
     Run comparison backtest between ML Advisor and Oracle Advisor.
@@ -317,6 +485,13 @@ def run_comparison(start_date: str, end_date: str, initial_capital: float = 1_00
         oracle_results = simulate_oracle_decisions(all_trades, oracle)
         print(f"    Allowed: {oracle_results['allowed_trades']} | Skipped: {oracle_results['skipped_trades']}")
 
+    # Combined ML + Oracle (how ARES actually operates)
+    combined_results = None
+    if ml_advisor or oracle:
+        print("  Simulating COMBINED ML + Oracle decisions (ARES mode)...")
+        combined_results = simulate_combined_decisions(all_trades, ml_advisor, oracle)
+        print(f"    Full trades: {combined_results.get('full_trades', 0)} | Reduced: {combined_results.get('reduced_trades', 0)} | Skipped: {combined_results['skipped_trades']}")
+
     # =========================================================================
     # Phase 4: Comparison Summary
     # =========================================================================
@@ -334,8 +509,8 @@ def run_comparison(start_date: str, end_date: str, initial_capital: float = 1_00
     baseline_total = baseline_trades.get('total', len(all_trades))
 
     # Print comparison table
-    print(f"\n{'Metric':<30} {'Baseline':>15} {'ML Advisor':>15} {'Oracle':>15}")
-    print("-" * 80)
+    print(f"\n{'Metric':<25} {'Baseline':>12} {'ML Only':>12} {'Oracle Only':>12} {'COMBINED':>12}")
+    print("-" * 85)
 
     def fmt_pnl(v): return f"${v:,.0f}" if v else "$0"
     def fmt_pct(v): return f"{v:.1f}%" if v else "0.0%"
@@ -344,49 +519,63 @@ def run_comparison(start_date: str, end_date: str, initial_capital: float = 1_00
     metrics = [
         ('Total Trades', baseline_total,
          ml_results['allowed_trades'] if ml_results else 'N/A',
-         oracle_results['allowed_trades'] if oracle_results else 'N/A'),
+         oracle_results['allowed_trades'] if oracle_results else 'N/A',
+         combined_results['allowed_trades'] if combined_results else 'N/A'),
         ('Trades Skipped', 0,
          ml_results['skipped_trades'] if ml_results else 'N/A',
-         oracle_results['skipped_trades'] if oracle_results else 'N/A'),
+         oracle_results['skipped_trades'] if oracle_results else 'N/A',
+         combined_results['skipped_trades'] if combined_results else 'N/A'),
+        ('Reduced Position', 0, 'N/A', 'N/A',
+         combined_results.get('reduced_trades', 0) if combined_results else 'N/A'),
         ('Total P&L', baseline_pnl,
          ml_results['total_pnl'] if ml_results else 'N/A',
-         oracle_results['total_pnl'] if oracle_results else 'N/A'),
+         oracle_results['total_pnl'] if oracle_results else 'N/A',
+         combined_results['total_pnl'] if combined_results else 'N/A'),
         ('Win Rate %', baseline_win_rate,
          ml_results['win_rate'] if ml_results else 'N/A',
-         oracle_results['win_rate'] if oracle_results else 'N/A'),
+         oracle_results['win_rate'] if oracle_results else 'N/A',
+         combined_results['win_rate'] if combined_results else 'N/A'),
         ('Sharpe Ratio', baseline_sharpe,
          ml_results['sharpe_ratio'] if ml_results else 'N/A',
-         oracle_results['sharpe_ratio'] if oracle_results else 'N/A'),
+         oracle_results['sharpe_ratio'] if oracle_results else 'N/A',
+         combined_results['sharpe_ratio'] if combined_results else 'N/A'),
         ('Avg Trade P&L', baseline_pnl / baseline_total if baseline_total else 0,
          ml_results['avg_pnl'] if ml_results else 'N/A',
-         oracle_results['avg_pnl'] if oracle_results else 'N/A'),
+         oracle_results['avg_pnl'] if oracle_results else 'N/A',
+         combined_results['avg_pnl'] if combined_results else 'N/A'),
         ('Losses Avoided', 0,
          ml_results['skipped_would_be_losses'] if ml_results else 'N/A',
-         oracle_results['skipped_would_be_losses'] if oracle_results else 'N/A'),
+         oracle_results['skipped_would_be_losses'] if oracle_results else 'N/A',
+         combined_results['skipped_would_be_losses'] if combined_results else 'N/A'),
         ('Loss $ Avoided', 0,
          abs(ml_results['skipped_pnl_avoided']) if ml_results else 'N/A',
-         abs(oracle_results['skipped_pnl_avoided']) if oracle_results else 'N/A'),
+         abs(oracle_results['skipped_pnl_avoided']) if oracle_results else 'N/A',
+         abs(combined_results['skipped_pnl_avoided']) if combined_results else 'N/A'),
     ]
 
-    for name, baseline, ml, oracle in metrics:
+    for name, baseline, ml, oracle_val, combined in metrics:
         if isinstance(baseline, float) and 'P&L' in name or 'Avoided' in name:
             b_str = fmt_pnl(baseline)
             m_str = fmt_pnl(ml) if isinstance(ml, (int, float)) else str(ml)
-            o_str = fmt_pnl(oracle) if isinstance(oracle, (int, float)) else str(oracle)
+            o_str = fmt_pnl(oracle_val) if isinstance(oracle_val, (int, float)) else str(oracle_val)
+            c_str = fmt_pnl(combined) if isinstance(combined, (int, float)) else str(combined)
         elif isinstance(baseline, float) and '%' in name:
             b_str = fmt_pct(baseline)
             m_str = fmt_pct(ml) if isinstance(ml, (int, float)) else str(ml)
-            o_str = fmt_pct(oracle) if isinstance(oracle, (int, float)) else str(oracle)
+            o_str = fmt_pct(oracle_val) if isinstance(oracle_val, (int, float)) else str(oracle_val)
+            c_str = fmt_pct(combined) if isinstance(combined, (int, float)) else str(combined)
         elif isinstance(baseline, float):
             b_str = fmt_num(baseline)
             m_str = fmt_num(ml) if isinstance(ml, (int, float)) else str(ml)
-            o_str = fmt_num(oracle) if isinstance(oracle, (int, float)) else str(oracle)
+            o_str = fmt_num(oracle_val) if isinstance(oracle_val, (int, float)) else str(oracle_val)
+            c_str = fmt_num(combined) if isinstance(combined, (int, float)) else str(combined)
         else:
             b_str = str(baseline)
             m_str = str(ml)
-            o_str = str(oracle)
+            o_str = str(oracle_val)
+            c_str = str(combined)
 
-        print(f"{name:<30} {b_str:>15} {m_str:>15} {o_str:>15}")
+        print(f"{name:<25} {b_str:>12} {m_str:>12} {o_str:>12} {c_str:>12}")
 
     # =========================================================================
     # Phase 5: Winner Determination
@@ -397,52 +586,90 @@ def run_comparison(start_date: str, end_date: str, initial_capital: float = 1_00
 
     ml_score = 0
     oracle_score = 0
+    combined_score = 0
 
-    if ml_results and oracle_results:
-        # Win rate comparison
-        if ml_results['win_rate'] > oracle_results['win_rate']:
-            ml_score += 1
-            print(f"  Win Rate: ML wins ({ml_results['win_rate']:.1f}% vs {oracle_results['win_rate']:.1f}%)")
-        elif oracle_results['win_rate'] > ml_results['win_rate']:
-            oracle_score += 1
-            print(f"  Win Rate: Oracle wins ({oracle_results['win_rate']:.1f}% vs {ml_results['win_rate']:.1f}%)")
+    # Helper to get value or 0
+    def get_val(results, key, default=0):
+        return results.get(key, default) if results else default
 
-        # Total P&L comparison
-        if ml_results['total_pnl'] > oracle_results['total_pnl']:
-            ml_score += 2
-            print(f"  Total P&L: ML wins (${ml_results['total_pnl']:,.0f} vs ${oracle_results['total_pnl']:,.0f})")
-        elif oracle_results['total_pnl'] > ml_results['total_pnl']:
-            oracle_score += 2
-            print(f"  Total P&L: Oracle wins (${oracle_results['total_pnl']:,.0f} vs ${ml_results['total_pnl']:,.0f})")
+    # Compare all three approaches
+    results_list = [
+        ('ML Only', ml_results),
+        ('Oracle Only', oracle_results),
+        ('COMBINED', combined_results),
+    ]
 
-        # Sharpe ratio comparison
-        if ml_results['sharpe_ratio'] > oracle_results['sharpe_ratio']:
-            ml_score += 1
-            print(f"  Sharpe: ML wins ({ml_results['sharpe_ratio']:.2f} vs {oracle_results['sharpe_ratio']:.2f})")
-        elif oracle_results['sharpe_ratio'] > ml_results['sharpe_ratio']:
-            oracle_score += 1
-            print(f"  Sharpe: Oracle wins ({oracle_results['sharpe_ratio']:.2f} vs {ml_results['sharpe_ratio']:.2f})")
+    # Only compare if we have results
+    valid_results = [(name, r) for name, r in results_list if r]
 
-        # Loss avoidance (skipped losing trades)
-        if ml_results['skipped_would_be_losses'] > oracle_results['skipped_would_be_losses']:
-            ml_score += 1
-            print(f"  Loss Avoidance: ML wins ({ml_results['skipped_would_be_losses']} vs {oracle_results['skipped_would_be_losses']} losses avoided)")
-        elif oracle_results['skipped_would_be_losses'] > ml_results['skipped_would_be_losses']:
-            oracle_score += 1
-            print(f"  Loss Avoidance: Oracle wins ({oracle_results['skipped_would_be_losses']} vs {ml_results['skipped_would_be_losses']} losses avoided)")
+    if len(valid_results) >= 2:
+        print("\n  Performance Ranking:")
 
-    print(f"\n  ML Advisor Score:     {ml_score}")
-    print(f"  Oracle Advisor Score: {oracle_score}")
+        # Rank by P&L
+        by_pnl = sorted(valid_results, key=lambda x: x[1]['total_pnl'], reverse=True)
+        print(f"\n  By Total P&L:")
+        for i, (name, r) in enumerate(by_pnl, 1):
+            marker = " <-- BEST" if i == 1 else ""
+            print(f"    {i}. {name}: ${r['total_pnl']:,.0f}{marker}")
 
-    if ml_score > oracle_score:
-        winner = "ML Advisor"
-        reason = "Better pattern recognition and trade filtering"
-    elif oracle_score > ml_score:
-        winner = "Oracle Advisor"
-        reason = "Better multi-factor analysis with GEX and AI integration"
+        # Rank by Sharpe
+        by_sharpe = sorted(valid_results, key=lambda x: x[1]['sharpe_ratio'], reverse=True)
+        print(f"\n  By Sharpe Ratio:")
+        for i, (name, r) in enumerate(by_sharpe, 1):
+            marker = " <-- BEST" if i == 1 else ""
+            print(f"    {i}. {name}: {r['sharpe_ratio']:.2f}{marker}")
+
+        # Rank by Win Rate
+        by_winrate = sorted(valid_results, key=lambda x: x[1]['win_rate'], reverse=True)
+        print(f"\n  By Win Rate:")
+        for i, (name, r) in enumerate(by_winrate, 1):
+            marker = " <-- BEST" if i == 1 else ""
+            print(f"    {i}. {name}: {r['win_rate']:.1f}%{marker}")
+
+        # Rank by Losses Avoided
+        by_losses = sorted(valid_results, key=lambda x: x[1]['skipped_would_be_losses'], reverse=True)
+        print(f"\n  By Losses Avoided:")
+        for i, (name, r) in enumerate(by_losses, 1):
+            marker = " <-- BEST" if i == 1 else ""
+            losses = r['skipped_would_be_losses']
+            avoided = abs(r['skipped_pnl_avoided'])
+            print(f"    {i}. {name}: {losses} trades (${avoided:,.0f} saved){marker}")
+
+        # Calculate scores
+        for name, r in valid_results:
+            score = 0
+            if r == by_pnl[0][1]: score += 3
+            if r == by_sharpe[0][1]: score += 2
+            if r == by_winrate[0][1]: score += 1
+            if r == by_losses[0][1]: score += 1
+
+            if name == 'ML Only':
+                ml_score = score
+            elif name == 'Oracle Only':
+                oracle_score = score
+            elif name == 'COMBINED':
+                combined_score = score
+
+    print(f"\n  SCORES:")
+    print(f"    ML Only:      {ml_score}")
+    print(f"    Oracle Only:  {oracle_score}")
+    print(f"    COMBINED:     {combined_score}")
+
+    # Determine winner
+    scores = [('ML Only', ml_score), ('Oracle Only', oracle_score), ('COMBINED', combined_score)]
+    scores = [(n, s) for n, s in scores if s > 0]
+    if scores:
+        scores.sort(key=lambda x: x[1], reverse=True)
+        winner = scores[0][0]
+        if winner == 'COMBINED':
+            reason = "ML + Oracle together outperforms either alone (synergy effect)"
+        elif winner == 'ML Only':
+            reason = "Pure ML pattern recognition performed best"
+        else:
+            reason = "Oracle's multi-factor analysis won"
     else:
-        winner = "TIE"
-        reason = "Both advisors performed similarly"
+        winner = "BASELINE"
+        reason = "Advisors did not improve on baseline"
 
     print(f"\n  WINNER: {winner}")
     print(f"  Reason: {reason}")
@@ -454,30 +681,34 @@ def run_comparison(start_date: str, end_date: str, initial_capital: float = 1_00
     print("RECOMMENDATIONS")
     print("-" * 80)
 
-    if ml_results and oracle_results:
-        ml_skip_rate = ml_results['skipped_trades'] / len(all_trades) * 100
-        oracle_skip_rate = oracle_results['skipped_trades'] / len(all_trades) * 100
+    baseline_avg = baseline_pnl / baseline_total if baseline_total else 0
 
-        print(f"  - ML skips {ml_skip_rate:.1f}% of trades, Oracle skips {oracle_skip_rate:.1f}%")
+    if combined_results:
+        combined_improvement = combined_results['avg_pnl'] - baseline_avg
+        skip_rate = combined_results['skipped_trades'] / len(all_trades) * 100
+        reduced_rate = combined_results.get('reduced_trades', 0) / len(all_trades) * 100
 
-        if ml_skip_rate > 30:
-            print(f"  - ML may be too conservative (>30% skip rate)")
-        if oracle_skip_rate > 30:
-            print(f"  - Oracle may be too conservative (>30% skip rate)")
+        print(f"\n  COMBINED (ARES Mode) Analysis:")
+        print(f"    - Skips {skip_rate:.1f}% of trades")
+        print(f"    - Uses reduced position on {reduced_rate:.1f}% of trades")
+        print(f"    - Avoided {combined_results['skipped_would_be_losses']} losing trades")
+        print(f"    - Saved ${abs(combined_results['skipped_pnl_avoided']):,.0f} from avoided losses")
 
-        # Check if skipping improved returns
-        baseline_avg = baseline_pnl / baseline_total if baseline_total else 0
-        ml_improvement = ml_results['avg_pnl'] - baseline_avg
-        oracle_improvement = oracle_results['avg_pnl'] - baseline_avg
+        if combined_improvement > 0:
+            print(f"    - Improves avg trade by ${combined_improvement:,.0f} vs baseline")
+        else:
+            print(f"    - Avg trade is ${abs(combined_improvement):,.0f} WORSE than baseline")
 
-        if ml_improvement > 0:
-            print(f"  - ML filtering improves avg trade by ${ml_improvement:.0f}")
-        if oracle_improvement > 0:
-            print(f"  - Oracle filtering improves avg trade by ${oracle_improvement:.0f}")
-
-        # Hybrid recommendation
-        if ml_score >= 2 and oracle_score >= 2:
-            print(f"  - Consider HYBRID: Trade only when BOTH advisors agree")
+        # Final recommendation
+        print(f"\n  RECOMMENDATION:")
+        if combined_score >= max(ml_score, oracle_score):
+            print(f"    USE COMBINED MODE (current ARES setup) - best overall performance")
+        elif ml_score > oracle_score:
+            print(f"    Consider ML-only mode - better pattern recognition")
+        elif oracle_score > ml_score:
+            print(f"    Oracle-only mode shows promise - rely more on GEX/VIX signals")
+        else:
+            print(f"    Current setup is reasonable - continue monitoring")
 
     print("\n" + "=" * 80)
 
@@ -485,9 +716,11 @@ def run_comparison(start_date: str, end_date: str, initial_capital: float = 1_00
         'baseline': baseline_results,
         'ml_results': ml_results,
         'oracle_results': oracle_results,
+        'combined_results': combined_results,
         'comparison': {
             'ml_score': ml_score,
             'oracle_score': oracle_score,
+            'combined_score': combined_score,
             'winner': winner,
             'reason': reason,
         }
