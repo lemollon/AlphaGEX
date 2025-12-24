@@ -417,6 +417,285 @@ class ATHENATrader:
         except Exception as e:
             logger.debug(f"Could not log to DB: {e}")
 
+    def _log_detailed_trade_open(
+        self,
+        position: 'SpreadPosition',
+        gex_data: Dict,
+        advice: Any,
+        ml_signal: Optional[Dict] = None,
+        rr_ratio: float = 0
+    ) -> None:
+        """
+        Log super detailed trade information to console when a trade opens.
+        Provides complete visibility into trade setup, Greeks, market context, and reasoning.
+        """
+        try:
+            from datetime import datetime
+            now = datetime.now(CENTRAL_TZ)
+
+            # Calculate Greeks
+            vix = gex_data.get('vix', 15)
+            spot = position.underlying_price_at_entry
+            greeks = self._get_leg_greeks(position, spot, vix)
+
+            # Net Greeks
+            net_delta = greeks.get('long_delta', 0) - greeks.get('short_delta', 0)
+            net_gamma = greeks.get('long_gamma', 0) - greeks.get('short_gamma', 0)
+            net_theta = greeks.get('long_theta', 0) - greeks.get('short_theta', 0)
+            net_vega = greeks.get('long_vega', 0) - greeks.get('short_vega', 0)
+
+            # Calculate time to EOD exit
+            eod_time = now.replace(hour=15, minute=55, second=0)
+            time_to_eod = eod_time - now
+            hours_to_eod = time_to_eod.total_seconds() / 3600
+
+            # Trade direction
+            is_bullish = position.spread_type == SpreadType.BULL_CALL_SPREAD
+            direction = "BULLISH" if is_bullish else "BEARISH"
+            spread_name = "Bull Call Spread" if is_bullish else "Bear Call Spread"
+
+            # Breakeven calculation
+            if is_bullish:
+                breakeven = position.long_strike + position.entry_debit
+            else:
+                breakeven = position.short_strike - abs(position.entry_debit)
+
+            # Risk/Reward ratio
+            if position.max_loss > 0:
+                rr = position.max_profit / position.max_loss
+            else:
+                rr = rr_ratio if rr_ratio > 0 else 0
+
+            # GEX data
+            put_wall = gex_data.get('put_wall', 0)
+            call_wall = gex_data.get('call_wall', 0)
+            net_gex = gex_data.get('net_gex', 0)
+            regime = gex_data.get('regime', 'NEUTRAL')
+            flip_point = gex_data.get('flip_point', 0)
+
+            # ML Signal data
+            ml_direction = "N/A"
+            ml_confidence = 0
+            ml_win_prob = 0
+            flip_gravity = 0
+            magnet_pull = 0
+            if ml_signal:
+                ml_direction = ml_signal.get('direction', 'N/A')
+                ml_confidence = ml_signal.get('confidence', 0)
+                ml_win_prob = ml_signal.get('win_probability', 0)
+                flip_gravity = ml_signal.get('flip_gravity', 0)
+                magnet_pull = ml_signal.get('magnet_attraction', 0)
+
+            # Oracle data
+            oracle_confidence = getattr(advice, 'confidence', 0) * 100
+            oracle_win_prob = getattr(advice, 'win_probability', 0) * 100
+            oracle_reasoning = getattr(advice, 'reasoning', 'N/A')[:200]
+            suggested_risk = getattr(advice, 'suggested_risk_pct', 0)
+
+            # Total position cost
+            total_cost = abs(position.entry_debit) * position.contracts * 100
+
+            # Build detailed log
+            log_output = f"""
+════════════════════════════════════════════════════════════════════════════════
+🎯 ATHENA TRADE OPENED
+════════════════════════════════════════════════════════════════════════════════
+Position ID:     {position.position_id}
+Trade Type:      {position.spread_type.value} ({direction})
+Ticker:          {self.config.ticker}
+Time:            {now.strftime('%Y-%m-%d %H:%M:%S CT')}
+
+📅 EXPIRATION
+─────────────────────────────────────────────────────────────────────────────────
+Expiration:      {position.expiration} (0DTE - Today!)
+Time to Close:   {hours_to_eod:.1f}h until 15:55 CT EOD exit
+
+📊 STRIKES & PRICING
+─────────────────────────────────────────────────────────────────────────────────
+Long Strike:     ${position.long_strike:.2f} {'(ATM)' if is_bullish else '(OTM)'}
+Short Strike:    ${position.short_strike:.2f} {'(OTM)' if is_bullish else '(ATM)'}
+Spread Width:    ${position.spread_width:.2f}
+Entry {'Debit' if position.entry_debit > 0 else 'Credit'}:     ${abs(position.entry_debit):.2f} per contract
+Contracts:       {position.contracts}
+Total Cost:      ${total_cost:.2f}
+
+💰 PROFIT/LOSS POTENTIAL
+─────────────────────────────────────────────────────────────────────────────────
+Max Profit:      ${position.max_profit:.2f} (+{(position.max_profit/total_cost*100) if total_cost > 0 else 0:.1f}%)  @ SPY {'≥' if is_bullish else '≤'} ${position.short_strike:.2f}
+Max Loss:        ${position.max_loss:.2f} (-100.0%)    @ SPY {'≤' if is_bullish else '≥'} ${position.long_strike:.2f}
+Breakeven:       ${breakeven:.2f}
+Risk/Reward:     1:{rr:.2f}
+
+📈 GREEKS AT ENTRY
+─────────────────────────────────────────────────────────────────────────────────
+           Long Leg    Short Leg    Net
+Delta:     {greeks.get('long_delta', 0):+.3f}       {greeks.get('short_delta', 0):+.3f}        {net_delta:+.3f}
+Gamma:     {greeks.get('long_gamma', 0):+.3f}       {greeks.get('short_gamma', 0):+.3f}        {net_gamma:+.3f}
+Theta:     {greeks.get('long_theta', 0):+.3f}       {greeks.get('short_theta', 0):+.3f}        {net_theta:+.3f}
+Vega:      {greeks.get('long_vega', 0):+.3f}       {greeks.get('short_vega', 0):+.3f}        {net_vega:+.3f}
+IV:        {greeks.get('long_iv', 0)*100:.1f}%        {greeks.get('short_iv', 0)*100:.1f}%        ---
+
+📉 MARKET CONDITIONS
+─────────────────────────────────────────────────────────────────────────────────
+SPY Price:       ${spot:.2f}
+VIX:             {vix:.1f} ({'Low' if vix < 15 else 'Moderate' if vix < 25 else 'High'} volatility)
+GEX Regime:      {regime} ({'Bullish bias' if regime == 'POSITIVE' else 'Bearish bias' if regime == 'NEGATIVE' else 'Neutral'})
+Net GEX:         {net_gex/1e9:.2f}B
+Put Wall:        ${put_wall:.2f}
+Call Wall:       ${call_wall:.2f}
+Flip Point:      ${flip_point:.2f}
+SPY vs Walls:    ${spot - put_wall:.2f} above put wall, ${call_wall - spot:.2f} below call wall
+
+🤖 ML PREDICTION (ORACLE)
+─────────────────────────────────────────────────────────────────────────────────
+Direction:       {ml_direction}
+ML Confidence:   {ml_confidence*100:.1f}%
+Win Probability: {ml_win_prob*100:.1f}%
+Flip Gravity:    {flip_gravity*100:.1f}% (attraction to flip point)
+Magnet Pull:     {magnet_pull*100:.1f}% (attraction to {('call' if is_bullish else 'put')} wall)
+
+🧠 ORACLE AI ADVICE
+─────────────────────────────────────────────────────────────────────────────────
+Confidence:      {oracle_confidence:.1f}%
+Win Probability: {oracle_win_prob:.1f}%
+Suggested Risk:  {suggested_risk:.1f}%
+Reasoning:       {oracle_reasoning}
+
+✅ POSITION SIZING
+─────────────────────────────────────────────────────────────────────────────────
+Risk Per Trade:  {self.config.risk_per_trade_pct:.1f}% of capital
+Max Risk $:      ${self.current_capital * self.config.risk_per_trade_pct / 100:.2f}
+Position Size:   {position.contracts} contracts (${total_cost:.2f})
+Capital:         ${self.current_capital:,.2f}
+Daily Trades:    {self.daily_trades}/{self.config.max_daily_trades}
+Open Positions:  {len(self.open_positions)}/{self.config.max_open_positions}
+════════════════════════════════════════════════════════════════════════════════
+"""
+            # Print to console
+            print(log_output)
+            logger.info(f"ATHENA Trade Opened: {position.position_id} | {spread_name} {position.contracts}x ${position.long_strike}/${position.short_strike} | Entry: ${abs(position.entry_debit):.2f}")
+
+        except Exception as e:
+            logger.error(f"Error in detailed trade logging: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _log_detailed_trade_close(
+        self,
+        position: 'SpreadPosition',
+        exit_reason: str,
+        exit_price: float,
+        gex_data: Optional[Dict] = None
+    ) -> None:
+        """
+        Log super detailed trade information to console when a trade closes.
+        Shows entry vs exit comparison, P&L breakdown, and performance metrics.
+        """
+        try:
+            from datetime import datetime
+            now = datetime.now(CENTRAL_TZ)
+
+            # Calculate duration
+            try:
+                open_time = datetime.strptime(position.open_date, "%Y-%m-%d")
+                duration = now - open_time.replace(tzinfo=CENTRAL_TZ)
+                duration_str = f"{duration.seconds // 3600}h {(duration.seconds % 3600) // 60}m"
+            except:
+                duration_str = "N/A"
+
+            # P&L calculations
+            entry_cost = abs(position.entry_debit) * position.initial_contracts * 100
+            realized_pnl = position.realized_pnl if hasattr(position, 'realized_pnl') else 0
+            pnl_pct = (realized_pnl / entry_cost * 100) if entry_cost > 0 else 0
+
+            # Trade result
+            is_win = realized_pnl > 0
+            result_emoji = "✅ WIN" if is_win else "❌ LOSS" if realized_pnl < 0 else "➖ BREAKEVEN"
+
+            # Greeks at exit (if we have current market data)
+            vix = gex_data.get('vix', 15) if gex_data else 15
+            current_spot = gex_data.get('spot', position.underlying_price_at_entry) if gex_data else position.underlying_price_at_entry
+            greeks_exit = self._get_leg_greeks(position, current_spot, vix)
+            greeks_entry = self._get_leg_greeks(position, position.underlying_price_at_entry, vix)
+
+            net_delta_entry = greeks_entry.get('long_delta', 0) - greeks_entry.get('short_delta', 0)
+            net_delta_exit = greeks_exit.get('long_delta', 0) - greeks_exit.get('short_delta', 0)
+
+            # Scale-out summary
+            scale_out_info = ""
+            if position.scale_out_1_done or position.scale_out_2_done:
+                scale_out_info = f"""
+📊 SCALE-OUT SUMMARY
+─────────────────────────────────────────────────────────────────────────────────
+Scale-Out 1:     {'✓ Done' if position.scale_out_1_done else '✗ Not triggered'}
+Scale-Out 2:     {'✓ Done' if position.scale_out_2_done else '✗ Not triggered'}
+Scaled P&L:      ${position.total_scaled_pnl:.2f}
+Contracts Left:  {position.contracts_remaining}/{position.initial_contracts}
+"""
+
+            # Direction
+            is_bullish = position.spread_type == SpreadType.BULL_CALL_SPREAD
+            spread_name = "Bull Call Spread" if is_bullish else "Bear Call Spread"
+
+            # Spot price movement
+            spot_entry = position.underlying_price_at_entry
+            spot_exit = current_spot
+            spot_change = spot_exit - spot_entry
+            spot_change_pct = (spot_change / spot_entry * 100) if spot_entry > 0 else 0
+
+            log_output = f"""
+════════════════════════════════════════════════════════════════════════════════
+🏁 ATHENA TRADE CLOSED - {result_emoji}
+════════════════════════════════════════════════════════════════════════════════
+Position ID:     {position.position_id}
+Trade Type:      {spread_name}
+Exit Reason:     {exit_reason}
+Time:            {now.strftime('%Y-%m-%d %H:%M:%S CT')}
+
+📊 RESULT
+─────────────────────────────────────────────────────────────────────────────────
+Entry {'Debit' if position.entry_debit > 0 else 'Credit'}:     ${abs(position.entry_debit):.2f}
+Exit Price:      ${exit_price:.2f}
+P&L per Contract: ${realized_pnl / position.initial_contracts / 100 if position.initial_contracts > 0 else 0:+.2f} ({pnl_pct:+.1f}%)
+Contracts:       {position.initial_contracts}
+═══════════════════════════════════════════
+REALIZED P&L:    ${realized_pnl:+.2f} ({pnl_pct:+.1f}%)
+═══════════════════════════════════════════
+{scale_out_info}
+📈 PRICE MOVEMENT
+─────────────────────────────────────────────────────────────────────────────────
+SPY at Entry:    ${spot_entry:.2f}
+SPY at Exit:     ${spot_exit:.2f}
+Change:          ${spot_change:+.2f} ({spot_change_pct:+.2f}%)
+Long Strike:     ${position.long_strike:.2f}
+Short Strike:    ${position.short_strike:.2f}
+
+📉 GREEKS COMPARISON (Entry → Exit)
+─────────────────────────────────────────────────────────────────────────────────
+Net Delta:       {net_delta_entry:+.3f} → {net_delta_exit:+.3f} (Δ {net_delta_exit - net_delta_entry:+.3f})
+
+⏱️ DURATION
+─────────────────────────────────────────────────────────────────────────────────
+Opened:          {position.open_date}
+Closed:          {now.strftime('%Y-%m-%d %H:%M:%S')}
+Duration:        {duration_str}
+
+💰 UPDATED CAPITAL
+─────────────────────────────────────────────────────────────────────────────────
+Previous:        ${self.current_capital - realized_pnl:,.2f}
+P&L:             ${realized_pnl:+.2f}
+Current:         ${self.current_capital:,.2f}
+════════════════════════════════════════════════════════════════════════════════
+"""
+            # Print to console
+            print(log_output)
+            logger.info(f"ATHENA Trade Closed: {position.position_id} | {exit_reason} | P&L: ${realized_pnl:+.2f} ({pnl_pct:+.1f}%)")
+
+        except Exception as e:
+            logger.error(f"Error in detailed trade close logging: {e}")
+            import traceback
+            traceback.print_exc()
+
     def _calculate_atr(self, period: Optional[int] = None) -> float:
         """
         Calculate Average True Range (ATR) for volatility-adjusted trailing stops.
@@ -1094,6 +1373,15 @@ class ATHENATrader:
                 'entry_debit': entry_debit
             })
 
+            # Log super detailed trade info to console
+            self._log_detailed_trade_open(
+                position=position,
+                gex_data=gex_data,
+                advice=advice,
+                ml_signal=ml_signal,
+                rr_ratio=rr_ratio
+            )
+
             return position
 
         # Live execution via Tradier
@@ -1169,7 +1457,15 @@ class ATHENATrader:
                             'entry_debit': limit_debit
                         })
 
-                        logger.info(f"⚡ LIVE ORDER: {spread_type.value} {contracts}x {long_strike}/{short_strike}")
+                        # Log super detailed trade info to console
+                        self._log_detailed_trade_open(
+                            position=position,
+                            gex_data=gex_data,
+                            advice=advice,
+                            ml_signal=ml_signal,
+                            rr_ratio=rr_ratio
+                        )
+
                         return position
                     else:
                         self._log_to_db("ERROR", "Live order failed", {'response': str(order_response)})
@@ -1924,6 +2220,14 @@ class ATHENATrader:
 
         # Update capital
         self.current_capital += position.realized_pnl
+
+        # Log super detailed trade close info to console
+        self._log_detailed_trade_close(
+            position=position,
+            exit_reason=reason,
+            exit_price=current_spread_value,
+            gex_data=None  # Could fetch current GEX data if needed
+        )
 
         # Update database
         self._update_position_in_db(position, reason)

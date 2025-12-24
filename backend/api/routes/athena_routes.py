@@ -164,6 +164,35 @@ async def get_athena_status():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _calculate_position_greeks(long_strike: float, short_strike: float, spot: float, vix: float = 15) -> dict:
+    """Calculate simplified Greeks for a spread position."""
+    try:
+        # Long leg Greeks (ATM-ish)
+        long_moneyness = (spot - long_strike) / spot if spot > 0 else 0
+        long_delta = 0.5 + (long_moneyness * 2)
+        long_delta = max(-1, min(1, long_delta))
+
+        # Short leg Greeks (OTM)
+        short_moneyness = (spot - short_strike) / spot if spot > 0 else 0
+        short_delta = 0.5 + (short_moneyness * 2)
+        short_delta = max(-1, min(1, short_delta))
+
+        # Net Greeks
+        net_delta = long_delta - short_delta
+        net_gamma = 0.05 - 0.03  # Long gamma - short gamma
+        net_theta = (-0.10 * vix / 20) - (-0.08 * vix / 20)  # Long theta - short theta
+
+        return {
+            "net_delta": round(net_delta, 3),
+            "net_gamma": round(net_gamma, 3),
+            "net_theta": round(net_theta, 3),
+            "long_delta": round(long_delta, 3),
+            "short_delta": round(short_delta, 3)
+        }
+    except Exception:
+        return {"net_delta": 0, "net_gamma": 0, "net_theta": 0, "long_delta": 0, "short_delta": 0}
+
+
 @router.get("/positions")
 async def get_athena_positions(
     status_filter: Optional[str] = Query(None, description="Filter by status: open, closed, all"),
@@ -172,7 +201,7 @@ async def get_athena_positions(
     """
     Get ATHENA positions from database.
 
-    Returns open and/or closed positions with P&L details.
+    Returns open and/or closed positions with P&L details, Greeks, and market context.
     """
     try:
         conn = get_connection()
@@ -182,7 +211,7 @@ async def get_athena_positions(
         if status_filter == "open":
             where_clause = "WHERE status = 'open'"
         elif status_filter == "closed":
-            where_clause = "WHERE status = 'closed'"
+            where_clause = "WHERE status IN ('closed', 'expired')"
 
         c.execute(f"""
             SELECT
@@ -191,7 +220,7 @@ async def get_athena_positions(
                 entry_price, contracts, max_profit, max_loss,
                 spot_at_entry, gex_regime, oracle_confidence,
                 status, exit_price, exit_reason, realized_pnl,
-                created_at, exit_time
+                created_at, exit_time, oracle_reasoning
             FROM apache_positions
             {where_clause}
             ORDER BY created_at DESC
@@ -203,20 +232,55 @@ async def get_athena_positions(
 
         positions = []
         for row in rows:
+            long_strike = float(row[3]) if row[3] else 0
+            short_strike = float(row[4]) if row[4] else 0
+            spot_at_entry = float(row[10]) if row[10] else 0
+            entry_price = float(row[6]) if row[6] else 0
+            spread_width = abs(short_strike - long_strike)
+
+            # Calculate Greeks
+            greeks = _calculate_position_greeks(long_strike, short_strike, spot_at_entry)
+
+            # Calculate breakeven
+            spread_type = row[1] or ""
+            is_bullish = "BULL" in spread_type.upper()
+            if is_bullish:
+                breakeven = long_strike + entry_price
+            else:
+                breakeven = short_strike - abs(entry_price)
+
+            # Calculate time info
+            expiration = str(row[5]) if row[5] else None
+            is_0dte = False
+            if expiration:
+                from datetime import datetime
+                try:
+                    exp_date = datetime.strptime(expiration, "%Y-%m-%d").date()
+                    created_at = row[17]
+                    if created_at:
+                        is_0dte = exp_date == created_at.date()
+                except:
+                    pass
+
             positions.append({
                 "position_id": row[0],
                 "spread_type": row[1],
                 "ticker": row[2],
-                "long_strike": float(row[3]) if row[3] else 0,
-                "short_strike": float(row[4]) if row[4] else 0,
-                "expiration": str(row[5]) if row[5] else None,
-                "entry_price": float(row[6]) if row[6] else 0,
+                "long_strike": long_strike,
+                "short_strike": short_strike,
+                "spread_width": spread_width,
+                "expiration": expiration,
+                "is_0dte": is_0dte,
+                "entry_price": entry_price,
                 "contracts": row[7],
                 "max_profit": float(row[8]) if row[8] else 0,
                 "max_loss": float(row[9]) if row[9] else 0,
-                "spot_at_entry": float(row[10]) if row[10] else 0,
+                "breakeven": round(breakeven, 2),
+                "spot_at_entry": spot_at_entry,
                 "gex_regime": row[11],
                 "oracle_confidence": float(row[12]) if row[12] else 0,
+                "oracle_reasoning": row[19][:200] if row[19] else None,
+                "greeks": greeks,
                 "status": row[13],
                 "exit_price": float(row[14]) if row[14] else 0,
                 "exit_reason": row[15],
