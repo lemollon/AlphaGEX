@@ -912,7 +912,7 @@ export default function ATHENAPage() {
               <div className="bg-gray-900/50 rounded px-3 py-2">
                 <span className="text-gray-500 text-xs block">VIX</span>
                 <span className="text-yellow-400 font-bold">
-                  {(status?.heartbeat?.details?.vix || mlSignal?.gex_context?.vix || mlSignal?.market_context?.vix || 0).toFixed(1)}
+                  {(status?.heartbeat?.details?.vix || 0).toFixed(1)}
                 </span>
               </div>
               <div className="bg-green-900/20 rounded px-3 py-2">
