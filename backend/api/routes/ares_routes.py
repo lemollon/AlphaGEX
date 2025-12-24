@@ -569,21 +569,26 @@ async def get_ares_market_data():
         from unified_config import APIConfig
 
         # Determine which API to use:
-        # - If production credentials are available, use production (supports SPX/VIX indexes)
+        # - TRADIER_PROD_* credentials take priority for production (supports SPX/VIX indexes)
         # - Otherwise, fall back to sandbox (only SPY available, estimate SPX)
-        prod_key = APIConfig.TRADIER_API_KEY
-        prod_account = APIConfig.TRADIER_ACCOUNT_ID
-        sandbox_key = APIConfig.TRADIER_SANDBOX_API_KEY
-        sandbox_account = APIConfig.TRADIER_SANDBOX_ACCOUNT_ID
+        # This allows keeping sandbox creds in TRADIER_API_KEY while adding prod separately
+        has_explicit_prod = APIConfig.TRADIER_PROD_API_KEY and APIConfig.TRADIER_PROD_ACCOUNT_ID
+        sandbox_key = APIConfig.TRADIER_SANDBOX_API_KEY or APIConfig.TRADIER_API_KEY
+        sandbox_account = APIConfig.TRADIER_SANDBOX_ACCOUNT_ID or APIConfig.TRADIER_ACCOUNT_ID
 
         tradier = None
         using_sandbox = False
 
-        if prod_key and prod_account:
+        if has_explicit_prod:
+            # Use explicit production credentials for market data
             try:
-                tradier = TradierDataFetcher(sandbox=False)
+                tradier = TradierDataFetcher(
+                    api_key=APIConfig.TRADIER_PROD_API_KEY,
+                    account_id=APIConfig.TRADIER_PROD_ACCOUNT_ID,
+                    sandbox=False
+                )
                 using_sandbox = False
-                logger.info("ARES API: Using Tradier PRODUCTION API for market data")
+                logger.info("ARES API: Using Tradier PRODUCTION API (TRADIER_PROD_* credentials)")
             except Exception as e:
                 logger.warning(f"ARES API: Failed to initialize production client: {e}")
 

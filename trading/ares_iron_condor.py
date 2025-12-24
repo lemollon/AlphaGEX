@@ -356,10 +356,24 @@ class ARESTrader:
                 # we fall back to sandbox API and use SPY * 10 as SPX proxy.
                 try:
                     # Check if production credentials are available
-                    prod_key = APIConfig.TRADIER_API_KEY
-                    prod_account = APIConfig.TRADIER_ACCOUNT_ID
+                    # TRADIER_PROD_* takes priority (allows keeping sandbox creds in TRADIER_API_KEY)
+                    prod_key = APIConfig.TRADIER_PROD_API_KEY or APIConfig.TRADIER_API_KEY
+                    prod_account = APIConfig.TRADIER_PROD_ACCOUNT_ID or APIConfig.TRADIER_ACCOUNT_ID
 
-                    if prod_key and prod_account:
+                    # Only use as production if we have TRADIER_PROD_* OR if TRADIER_SANDBOX is false
+                    has_explicit_prod = APIConfig.TRADIER_PROD_API_KEY and APIConfig.TRADIER_PROD_ACCOUNT_ID
+                    sandbox_mode = APIConfig.TRADIER_SANDBOX
+
+                    if has_explicit_prod:
+                        # Explicit production credentials - use them for market data
+                        self.tradier = TradierDataFetcher(
+                            api_key=APIConfig.TRADIER_PROD_API_KEY,
+                            account_id=APIConfig.TRADIER_PROD_ACCOUNT_ID,
+                            sandbox=False
+                        )
+                        logger.info(f"ARES: Tradier PRODUCTION client initialized (using TRADIER_PROD_* credentials)")
+                    elif prod_key and prod_account and not sandbox_mode:
+                        # No explicit prod creds but TRADIER_SANDBOX=false, use main credentials
                         self.tradier = TradierDataFetcher(sandbox=False)
                         logger.info(f"ARES: Tradier PRODUCTION client initialized (for live SPX market data)")
                     else:

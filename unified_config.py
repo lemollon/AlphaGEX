@@ -121,6 +121,9 @@ class APIConfig:
     POLYGON_BASE_URL: str = 'https://api.polygon.io'
 
     # Tradier - PRODUCTION credentials (for live trading and real market data)
+    # TRADIER_PROD_* takes priority, falls back to TRADIER_API_KEY if not sandbox credentials
+    TRADIER_PROD_API_KEY: Optional[str] = os.getenv('TRADIER_PROD_API_KEY')
+    TRADIER_PROD_ACCOUNT_ID: Optional[str] = os.getenv('TRADIER_PROD_ACCOUNT_ID')
     TRADIER_API_KEY: Optional[str] = os.getenv('TRADIER_API_KEY')
     TRADIER_ACCOUNT_ID: Optional[str] = os.getenv('TRADIER_ACCOUNT_ID')
     TRADIER_SANDBOX: bool = env_bool('TRADIER_SANDBOX', False)  # Default to PRODUCTION
@@ -129,6 +132,13 @@ class APIConfig:
     # Get sandbox credentials from: https://developer.tradier.com/user/applications
     TRADIER_SANDBOX_API_KEY: Optional[str] = os.getenv('TRADIER_SANDBOX_API_KEY')
     TRADIER_SANDBOX_ACCOUNT_ID: Optional[str] = os.getenv('TRADIER_SANDBOX_ACCOUNT_ID')
+
+    @classmethod
+    def get_tradier_prod_credentials(cls) -> tuple:
+        """Get production credentials, checking TRADIER_PROD_* first, then TRADIER_API_KEY"""
+        api_key = cls.TRADIER_PROD_API_KEY or cls.TRADIER_API_KEY
+        account_id = cls.TRADIER_PROD_ACCOUNT_ID or cls.TRADIER_ACCOUNT_ID
+        return api_key, account_id
 
     # Claude AI
     ANTHROPIC_API_KEY: Optional[str] = os.getenv('ANTHROPIC_API_KEY')
