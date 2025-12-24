@@ -268,7 +268,7 @@ function AresPositionCard({ position, underlyingPrice, onClick }: { position: Li
   )
 }
 
-export default function OpenPositionsLive({ botName, positions, underlyingPrice, isLoading }: OpenPositionsLiveProps) {
+export default function OpenPositionsLive({ botName, positions, underlyingPrice, isLoading, onPositionClick }: OpenPositionsLiveProps) {
   if (isLoading) {
     return (
       <div className="bg-[#0a0a0a] rounded-lg p-6">
