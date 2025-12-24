@@ -2879,6 +2879,20 @@ async def get_oracle_bot_interactions(
 
         conn.close()
 
+        # Parse JSON fields (same as /oracle/predictions endpoint)
+        for interaction in interactions:
+            if interaction.get('top_factors') and isinstance(interaction['top_factors'], str):
+                try:
+                    interaction['top_factors'] = json.loads(interaction['top_factors'])
+                except json.JSONDecodeError:
+                    interaction['top_factors'] = {}
+
+            if interaction.get('claude_analysis') and isinstance(interaction['claude_analysis'], str):
+                try:
+                    interaction['claude_analysis'] = json.loads(interaction['claude_analysis'])
+                except json.JSONDecodeError:
+                    interaction['claude_analysis'] = None
+
         # Sort by timestamp
         interactions.sort(key=lambda x: x.get('timestamp') or x.get('trade_date') or '', reverse=True)
 
