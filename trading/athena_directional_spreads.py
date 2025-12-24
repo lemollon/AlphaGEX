@@ -3603,10 +3603,10 @@ Current:         ${self.current_capital:,.2f}
 
             cursor.execute('''
                 SELECT
-                    position_id, spread_type, open_date, expiration,
+                    position_id, spread_type, created_at, expiration,
                     long_strike, short_strike, entry_price, contracts,
                     max_profit, max_loss, spot_at_entry, gex_regime,
-                    oracle_confidence, oracle_reasoning, order_id
+                    oracle_confidence, oracle_reasoning
                 FROM apache_positions
                 WHERE expiration <= %s AND status = 'open'
                 ORDER BY expiration ASC
@@ -3614,10 +3614,12 @@ Current:         ${self.current_capital:,.2f}
 
             for row in cursor.fetchall():
                 spread_type = SpreadType.BULL_CALL_SPREAD if row[1] == 'BULL_CALL_SPREAD' else SpreadType.BEAR_CALL_SPREAD
+                # row[2] is created_at (timestamp), convert to date string for open_date
+                open_date_val = str(row[2])[:10] if row[2] else ""
                 pos = SpreadPosition(
                     position_id=row[0],
                     spread_type=spread_type,
-                    open_date=str(row[2]) if row[2] else "",
+                    open_date=open_date_val,
                     expiration=str(row[3]) if row[3] else "",
                     long_strike=float(row[4] or 0),
                     short_strike=float(row[5] or 0),
@@ -3630,7 +3632,7 @@ Current:         ${self.current_capital:,.2f}
                     gex_regime_at_entry=row[11] or "",
                     oracle_confidence=float(row[12] or 0),
                     oracle_reasoning=row[13] or "",
-                    order_id=row[14] or "",
+                    order_id="",  # Not stored in apache_positions table
                     status='open',
                     initial_contracts=int(row[7] or 0),
                     contracts_remaining=int(row[7] or 0)
