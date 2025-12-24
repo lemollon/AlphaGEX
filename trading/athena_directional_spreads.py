@@ -2221,12 +2221,32 @@ Current:         ${self.current_capital:,.2f}
         # Update capital
         self.current_capital += position.realized_pnl
 
+        # Fetch current market data for detailed logging
+        exit_gex_data = None
+        try:
+            current_gex = self.get_gex_data()
+            if current_gex:
+                # Add VIX to gex_data
+                vix = 20.0
+                if UNIFIED_DATA_AVAILABLE:
+                    try:
+                        from data.unified_data_provider import get_vix
+                        vix = get_vix() or 20.0
+                    except:
+                        pass
+                exit_gex_data = {
+                    'spot': current_gex.get('spot_price', position.underlying_price_at_entry),
+                    'vix': vix
+                }
+        except:
+            pass
+
         # Log super detailed trade close info to console
         self._log_detailed_trade_close(
             position=position,
             exit_reason=reason,
             exit_price=current_spread_value,
-            gex_data=None  # Could fetch current GEX data if needed
+            gex_data=exit_gex_data
         )
 
         # Update database
@@ -2783,6 +2803,16 @@ Current:         ${self.current_capital:,.2f}
                 )
             return result
 
+        # Fetch VIX and add to gex_data for consistent access
+        vix = 20.0  # Default
+        if UNIFIED_DATA_AVAILABLE:
+            try:
+                from data.unified_data_provider import get_vix
+                vix = get_vix() or 20.0
+            except:
+                pass
+        gex_data['vix'] = vix
+
         # Store GEX context for logging
         result['gex_context'] = {
             'spot_price': gex_data.get('spot_price'),
@@ -2790,7 +2820,8 @@ Current:         ${self.current_capital:,.2f}
             'put_wall': gex_data.get('put_wall'),
             'regime': gex_data.get('regime'),
             'net_gex': gex_data.get('net_gex'),
-            'source': gex_data.get('source')
+            'source': gex_data.get('source'),
+            'vix': vix
         }
 
         # === PRIMARY: Use ML Signal ===
