@@ -20,6 +20,16 @@ import {
 import ScanActivityFeed from '@/components/ScanActivityFeed'
 import LivePortfolio, { EquityDataPoint, LivePnLData } from '@/components/trader/LivePortfolio'
 import OpenPositionsLive from '@/components/trader/OpenPositionsLive'
+import {
+  BotStatusBanner,
+  WhyNotTrading,
+  TodayReportCard,
+  ActivityTimeline,
+  ExitNotificationContainer,
+  RiskMetrics,
+  PerformanceComparison,
+  PositionDetailModal
+} from '@/components/trader'
 
 interface Heartbeat {
   last_scan: string | null
@@ -691,6 +701,53 @@ export default function ATHENAPage() {
   const [runningCycle, setRunningCycle] = useState(false)
   const [expandedDecision, setExpandedDecision] = useState<string | null>(null)
   const [expandedPosition, setExpandedPosition] = useState<string | null>(null)
+  const [selectedPosition, setSelectedPosition] = useState<any | null>(null)
+  const [exitNotifications, setExitNotifications] = useState<any[]>([])
+
+  // Build skip reasons from decisions
+  const skipReasons = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0]
+    return decisions
+      .filter(d => d.timestamp?.startsWith(today) && (d.action === 'SKIP' || d.decision_type === 'SKIP'))
+      .map(d => ({
+        id: d.decision_id,
+        timestamp: d.timestamp,
+        reason: d.why || d.what || 'No reason provided',
+        category: d.signal_source?.includes('ML') ? 'ml' as const :
+                  d.signal_source?.includes('Oracle') ? 'oracle' as const :
+                  d.why?.toLowerCase().includes('market') ? 'market' as const :
+                  d.why?.toLowerCase().includes('risk') ? 'risk' as const : 'other' as const,
+        details: {
+          ml_advice: d.ml_predictions?.advice,
+          ml_confidence: d.ml_predictions?.ml_confidence,
+          oracle_advice: d.oracle_advice?.advice,
+          oracle_confidence: d.oracle_advice?.confidence,
+          oracle_win_prob: d.oracle_advice?.win_probability,
+          vix: d.market_context?.vix,
+          spot_price: d.market_context?.spot_price,
+          gex_regime: d.market_context?.gex_regime
+        }
+      }))
+  }, [decisions])
+
+  // Build activity timeline
+  const activityItems = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0]
+    return decisions
+      .filter(d => d.timestamp?.startsWith(today))
+      .slice(0, 20)
+      .map(d => ({
+        id: d.decision_id,
+        timestamp: d.timestamp,
+        type: d.decision_type?.toLowerCase().includes('entry') ? 'entry' as const :
+              d.decision_type?.toLowerCase().includes('exit') ? 'exit' as const :
+              d.action === 'SKIP' ? 'skip' as const : 'scan' as const,
+        title: d.what || d.action,
+        description: d.why,
+        pnl: d.actual_pnl,
+        signalSource: d.signal_source
+      }))
+  }, [decisions])
 
   // Manual refresh function
   const fetchData = () => {
@@ -1027,6 +1084,14 @@ export default function ATHENAPage() {
                 positions={livePnL?.positions || []}
                 underlyingPrice={livePnL?.underlying_price}
                 isLoading={livePnLLoading}
+                onPositionClick={(pos) => setSelectedPosition(pos)}
+              />
+
+              {/* Why Not Trading - Shows skip reasons */}
+              <WhyNotTrading
+                skipReasons={skipReasons}
+                isLoading={decisionsValidating}
+                maxDisplay={5}
               />
 
               {/* Today's Status Summary */}
@@ -1057,6 +1122,47 @@ export default function ATHENAPage() {
                 isActive={status?.is_active || false}
                 hasOpenPosition={positions.some(p => p.status === 'open')}
               />
+
+              {/* Today's Stats & Activity Row */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* Today's Report Card */}
+                <TodayReportCard
+                  botName="ATHENA"
+                  scansToday={status?.heartbeat?.scan_count_today || 0}
+                  tradesToday={status?.daily_trades || 0}
+                  winsToday={positions.filter(p =>
+                    (p.status === 'closed' || p.status === 'expired') &&
+                    p.exit_time?.startsWith(new Date().toISOString().split('T')[0]) &&
+                    p.realized_pnl > 0
+                  ).length}
+                  lossesToday={positions.filter(p =>
+                    (p.status === 'closed' || p.status === 'expired') &&
+                    p.exit_time?.startsWith(new Date().toISOString().split('T')[0]) &&
+                    p.realized_pnl < 0
+                  ).length}
+                  totalPnl={(livePnL?.total_realized_pnl || 0) + (livePnL?.total_unrealized_pnl || 0)}
+                  unrealizedPnl={livePnL?.total_unrealized_pnl || 0}
+                  realizedPnl={livePnL?.total_realized_pnl || 0}
+                  bestTrade={Math.max(...positions.filter(p =>
+                    (p.status === 'closed' || p.status === 'expired') &&
+                    p.exit_time?.startsWith(new Date().toISOString().split('T')[0])
+                  ).map(p => p.realized_pnl || 0), 0) || undefined}
+                  worstTrade={Math.min(...positions.filter(p =>
+                    (p.status === 'closed' || p.status === 'expired') &&
+                    p.exit_time?.startsWith(new Date().toISOString().split('T')[0])
+                  ).map(p => p.realized_pnl || 0), 0) || undefined}
+                  openPositions={positions.filter(p => p.status === 'open').length}
+                  capitalAtRisk={positions.filter(p => p.status === 'open').reduce((sum, p) => sum + (p.max_loss || 0), 0)}
+                  capitalTotal={status?.capital || 100000}
+                />
+
+                {/* Activity Timeline */}
+                <ActivityTimeline
+                  activities={activityItems}
+                  isLoading={decisionsValidating}
+                  maxDisplay={8}
+                />
+              </div>
 
               {/* Today's Closed Trades */}
               {positions.filter(p => (p.status === 'closed' || p.status === 'expired') && p.exit_time?.startsWith(new Date().toISOString().split('T')[0])).length > 0 && (
@@ -2391,6 +2497,30 @@ export default function ATHENAPage() {
           )}
         </div>
       </main>
+
+      {/* Position Detail Modal */}
+      <PositionDetailModal
+        isOpen={selectedPosition !== null}
+        onClose={() => setSelectedPosition(null)}
+        position={selectedPosition || {
+          position_id: '',
+          spread_type: '',
+          long_strike: 0,
+          short_strike: 0,
+          expiration: '',
+          contracts: 0,
+          entry_price: 0,
+          status: ''
+        }}
+        underlyingPrice={livePnL?.underlying_price}
+        botType="ATHENA"
+      />
+
+      {/* Exit Notifications */}
+      <ExitNotificationContainer
+        notifications={exitNotifications}
+        onDismiss={(id) => setExitNotifications(prev => prev.filter(n => n.id !== id))}
+      />
     </div>
   )
 }

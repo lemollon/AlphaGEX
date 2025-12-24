@@ -18,6 +18,16 @@ interface PositionDetailModalProps {
     contracts: number
     contracts_remaining?: number
 
+    // Iron Condor specific
+    put_long_strike?: number
+    put_short_strike?: number
+    call_short_strike?: number
+    call_long_strike?: number
+    credit_received?: number
+    put_distance?: number
+    call_distance?: number
+    risk_status?: string
+
     // Pricing
     entry_price: number  // Entry debit/credit per contract
     current_price?: number  // Current spread value
@@ -27,6 +37,7 @@ interface PositionDetailModalProps {
     unrealized_pnl?: number
     realized_pnl?: number
     pnl_pct?: number
+    scaled_pnl?: number
 
     // Market context at entry
     spot_at_entry?: number
@@ -53,6 +64,18 @@ interface PositionDetailModalProps {
     ml_confidence?: number
     ml_win_probability?: number
 
+    // Signal source & Override tracking
+    signal_source?: string
+    override_occurred?: boolean
+    override_details?: {
+      overridden_signal?: string
+      overridden_advice?: string
+      override_reason?: string
+      override_by?: string
+      ml_confidence?: number
+      oracle_confidence?: number
+    }
+
     // Trade metrics
     max_profit?: number
     max_loss?: number
@@ -61,24 +84,45 @@ interface PositionDetailModalProps {
 
     // Timestamps
     created_at?: string
+    entry_time?: string
     exit_time?: string
     status: string
     exit_reason?: string
   }
   underlyingPrice?: number
+  botType?: 'ATHENA' | 'ARES'
 }
 
 export default function PositionDetailModal({
   isOpen,
   onClose,
   position,
-  underlyingPrice
+  underlyingPrice,
+  botType = 'ATHENA'
 }: PositionDetailModalProps) {
   if (!position) return null
 
   const isOpen_ = position.status === 'open'
   const isBullish = position.spread_type?.includes('BULL')
-  const ticker = position.ticker || 'SPY'
+  const isIronCondor = position.spread_type?.includes('IRON_CONDOR') || botType === 'ARES'
+  const ticker = position.ticker || (isIronCondor ? 'SPX' : 'SPY')
+
+  // Calculate position age
+  const getPositionAge = () => {
+    const entryTime = position.entry_time || position.created_at
+    if (!entryTime) return ''
+    const entry = new Date(entryTime)
+    const now = new Date()
+    const diffMs = now.getTime() - entry.getTime()
+    const diffMins = Math.floor(diffMs / 60000)
+    const diffHours = Math.floor(diffMins / 60)
+    const diffDays = Math.floor(diffHours / 24)
+
+    if (diffDays > 0) return `${diffDays}d ${diffHours % 24}h`
+    if (diffHours > 0) return `${diffHours}h ${diffMins % 60}m`
+    return `${diffMins}m`
+  }
+  const positionAge = getPositionAge()
 
   // Calculate values
   const contractMultiplier = 100
@@ -93,7 +137,25 @@ export default function PositionDetailModal({
   const returnPct = entryValue > 0 ? (totalReturn / entryValue) * 100 : 0
 
   // Format spread name
-  const spreadName = `${ticker} $${position.long_strike}/$${position.short_strike} ${isBullish ? 'Bull' : 'Bear'} Spread`
+  const spreadName = isIronCondor
+    ? `${ticker} Iron Condor ${position.put_short_strike}/${position.call_short_strike}`
+    : `${ticker} $${position.long_strike}/$${position.short_strike} ${isBullish ? 'Bull' : 'Bear'} Spread`
+
+  // Signal source styling
+  const getSignalSourceStyle = () => {
+    const source = position.signal_source || ''
+    if (source.includes('Oracle') && position.override_occurred) {
+      return { bg: 'bg-amber-500/20', border: 'border-amber-500/50', text: 'text-amber-400' }
+    }
+    if (source.includes('Oracle')) {
+      return { bg: 'bg-purple-500/20', border: 'border-purple-500/50', text: 'text-purple-400' }
+    }
+    if (source.includes('ML')) {
+      return { bg: 'bg-cyan-500/20', border: 'border-cyan-500/50', text: 'text-cyan-400' }
+    }
+    return { bg: 'bg-gray-500/20', border: 'border-gray-500/50', text: 'text-gray-400' }
+  }
+  const signalStyle = getSignalSourceStyle()
 
   // Calculate breakeven
   const spreadWidth = Math.abs(position.short_strike - position.long_strike)
@@ -135,12 +197,32 @@ export default function PositionDetailModal({
                 {/* Header */}
                 <div className="flex items-center justify-between p-6 border-b border-gray-700">
                   <div>
-                    <Dialog.Title className="text-xl font-bold text-white">
-                      {spreadName}
-                    </Dialog.Title>
-                    <p className="text-sm text-gray-400 mt-1">
-                      ${position.current_price?.toFixed(2) || position.entry_price?.toFixed(2)} per contract
-                    </p>
+                    <div className="flex items-center gap-3">
+                      <Dialog.Title className="text-xl font-bold text-white">
+                        {spreadName}
+                      </Dialog.Title>
+                      {position.signal_source && (
+                        <span className={`px-2 py-0.5 rounded text-xs ${signalStyle.bg} ${signalStyle.text} border ${signalStyle.border}`}>
+                          {position.signal_source}
+                        </span>
+                      )}
+                      {position.override_occurred && (
+                        <span className="px-2 py-0.5 rounded text-xs bg-amber-500/20 text-amber-400 border border-amber-500/50 animate-pulse">
+                          OVERRIDE
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3 mt-1">
+                      <p className="text-sm text-gray-400">
+                        ${position.current_price?.toFixed(2) || position.entry_price?.toFixed(2)} per contract
+                      </p>
+                      {positionAge && (
+                        <span className="text-xs text-gray-500">• Held for {positionAge}</span>
+                      )}
+                      {position.risk_status === 'AT_RISK' && (
+                        <span className="text-xs text-red-400 bg-red-500/20 px-2 py-0.5 rounded">AT RISK</span>
+                      )}
+                    </div>
                   </div>
                   <button
                     onClick={onClose}
@@ -283,6 +365,46 @@ export default function PositionDetailModal({
                       </div>
                     )}
                   </div>
+
+                  {/* Override Details - when Oracle overrode ML */}
+                  {position.override_occurred && position.override_details && (
+                    <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
+                      <h3 className="text-lg font-semibold text-amber-400 mb-4 flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+                        Override Details
+                      </h3>
+                      <div className="space-y-3 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Original Signal:</span>
+                          <span className="text-red-400 font-semibold">
+                            {position.override_details.overridden_signal} → {position.override_details.overridden_advice}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Override By:</span>
+                          <span className="text-purple-400 font-semibold">{position.override_details.override_by}</span>
+                        </div>
+                        {position.override_details.ml_confidence !== undefined && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">ML Confidence:</span>
+                            <span className="text-cyan-400">{(position.override_details.ml_confidence * 100).toFixed(0)}%</span>
+                          </div>
+                        )}
+                        {position.override_details.oracle_confidence !== undefined && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Oracle Confidence:</span>
+                            <span className="text-purple-400">{(position.override_details.oracle_confidence * 100).toFixed(0)}%</span>
+                          </div>
+                        )}
+                        {position.override_details.override_reason && (
+                          <div className="mt-3 pt-3 border-t border-amber-500/30">
+                            <p className="text-gray-400 mb-1">Override Reason:</p>
+                            <p className="text-amber-300 text-xs">{position.override_details.override_reason}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Greeks at Entry */}
                   {(position.entry_delta || position.entry_theta) && (

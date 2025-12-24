@@ -1,6 +1,7 @@
 'use client'
 
-import { TrendingUp, TrendingDown, AlertTriangle, Clock } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { TrendingUp, TrendingDown, AlertTriangle, Clock, ChevronRight, Timer } from 'lucide-react'
 import { LivePosition } from './LivePortfolio'
 
 interface OpenPositionsLiveProps {
@@ -8,6 +9,47 @@ interface OpenPositionsLiveProps {
   positions: LivePosition[]
   underlyingPrice?: number
   isLoading?: boolean
+  onPositionClick?: (position: LivePosition) => void
+}
+
+// Hook to track P&L changes and trigger animations
+function usePnLAnimation(pnl: number) {
+  const [isFlashing, setIsFlashing] = useState(false)
+  const [flashDirection, setFlashDirection] = useState<'up' | 'down' | null>(null)
+  const prevPnL = useRef(pnl)
+
+  useEffect(() => {
+    if (prevPnL.current !== pnl) {
+      const direction = pnl > prevPnL.current ? 'up' : 'down'
+      setFlashDirection(direction)
+      setIsFlashing(true)
+      prevPnL.current = pnl
+
+      const timer = setTimeout(() => {
+        setIsFlashing(false)
+        setFlashDirection(null)
+      }, 1000)
+
+      return () => clearTimeout(timer)
+    }
+  }, [pnl])
+
+  return { isFlashing, flashDirection }
+}
+
+// Calculate time since entry
+function getPositionAge(entryTime?: string): string {
+  if (!entryTime) return ''
+  const entry = new Date(entryTime)
+  const now = new Date()
+  const diffMs = now.getTime() - entry.getTime()
+  const diffMins = Math.floor(diffMs / 60000)
+  const diffHours = Math.floor(diffMins / 60)
+
+  if (diffHours > 0) {
+    return `${diffHours}h ${diffMins % 60}m`
+  }
+  return `${diffMins}m`
 }
 
 // Format currency
@@ -23,13 +65,20 @@ const formatPct = (value: number) => {
 }
 
 // Athena Spread Position Card
-function AthenaPositionCard({ position, underlyingPrice }: { position: LivePosition; underlyingPrice?: number }) {
+function AthenaPositionCard({ position, underlyingPrice, onClick }: { position: LivePosition; underlyingPrice?: number; onClick?: () => void }) {
   const isPositive = position.unrealized_pnl >= 0
   const spreadType = position.spread_type?.includes('BULL') ? 'Bull Call Spread' : 'Bear Call Spread'
   const isBullish = position.spread_type?.includes('BULL')
+  const { isFlashing, flashDirection } = usePnLAnimation(position.unrealized_pnl)
+  const positionAge = getPositionAge(position.entry_time)
 
   return (
-    <div className="bg-[#111] border border-gray-800 rounded-lg p-4 hover:border-gray-700 transition-colors">
+    <div
+      className={`bg-[#111] border border-gray-800 rounded-lg p-4 hover:border-gray-700 transition-all cursor-pointer ${
+        isFlashing ? (flashDirection === 'up' ? 'ring-2 ring-[#00C805]/50' : 'ring-2 ring-[#FF5000]/50') : ''
+      }`}
+      onClick={onClick}
+    >
       <div className="flex justify-between items-start mb-3">
         <div className="flex items-center gap-2">
           <div className={`w-2 h-2 rounded-full ${isPositive ? 'bg-[#00C805]' : 'bg-[#FF5000]'}`} />
@@ -51,6 +100,15 @@ function AthenaPositionCard({ position, underlyingPrice }: { position: LivePosit
         {position.expiration}
         <span className="mx-2">·</span>
         {position.contracts_remaining || position.contracts} contracts
+        {positionAge && (
+          <>
+            <span className="mx-2">·</span>
+            <span className="flex items-center gap-1 inline-flex">
+              <Timer className="w-3 h-3" />
+              {positionAge}
+            </span>
+          </>
+        )}
       </div>
 
       <div className="border-t border-gray-800 pt-3">
@@ -93,9 +151,11 @@ function AthenaPositionCard({ position, underlyingPrice }: { position: LivePosit
 }
 
 // ARES Iron Condor Position Card
-function AresPositionCard({ position, underlyingPrice }: { position: LivePosition; underlyingPrice?: number }) {
+function AresPositionCard({ position, underlyingPrice, onClick }: { position: LivePosition; underlyingPrice?: number; onClick?: () => void }) {
   const isPositive = position.unrealized_pnl >= 0
   const isAtRisk = position.risk_status === 'AT_RISK'
+  const { isFlashing, flashDirection } = usePnLAnimation(position.unrealized_pnl)
+  const positionAge = getPositionAge(position.entry_time)
 
   // Visual representation of where price is relative to strikes
   const putShort = position.put_short_strike || 0
@@ -105,9 +165,12 @@ function AresPositionCard({ position, underlyingPrice }: { position: LivePositio
   const pricePosition = range > 0 ? ((price - putShort) / range) * 100 : 50
 
   return (
-    <div className={`bg-[#111] border rounded-lg p-4 transition-colors ${
-      isAtRisk ? 'border-[#FF5000]' : 'border-gray-800 hover:border-gray-700'
-    }`}>
+    <div
+      className={`bg-[#111] border rounded-lg p-4 transition-all cursor-pointer ${
+        isAtRisk ? 'border-[#FF5000]' : 'border-gray-800 hover:border-gray-700'
+      } ${isFlashing ? (flashDirection === 'up' ? 'ring-2 ring-[#00C805]/50' : 'ring-2 ring-[#FF5000]/50') : ''}`}
+      onClick={onClick}
+    >
       <div className="flex justify-between items-start mb-3">
         <div className="flex items-center gap-2">
           <div className={`w-2 h-2 rounded-full ${isPositive ? 'bg-[#00C805]' : 'bg-[#FF5000]'}`} />
@@ -129,13 +192,22 @@ function AresPositionCard({ position, underlyingPrice }: { position: LivePositio
         </div>
       </div>
 
-      <div className="text-gray-400 text-sm mb-3 flex items-center gap-2">
+      <div className="text-gray-400 text-sm mb-3 flex items-center gap-2 flex-wrap">
         <Clock className="w-3 h-3" />
         {position.expiration}
         <span className="mx-1">·</span>
         {position.contracts} contracts
         <span className="mx-1">·</span>
         Credit: ${position.credit_received?.toFixed(2)}
+        {positionAge && (
+          <>
+            <span className="mx-1">·</span>
+            <span className="flex items-center gap-1">
+              <Timer className="w-3 h-3" />
+              {positionAge}
+            </span>
+          </>
+        )}
       </div>
 
       {/* Strike Visualization */}
@@ -242,12 +314,14 @@ export default function OpenPositionsLive({ botName, positions, underlyingPrice,
               key={position.position_id}
               position={position}
               underlyingPrice={underlyingPrice}
+              onClick={() => onPositionClick?.(position)}
             />
           ) : (
             <AresPositionCard
               key={position.position_id}
               position={position}
               underlyingPrice={underlyingPrice}
+              onClick={() => onPositionClick?.(position)}
             />
           )
         ))}

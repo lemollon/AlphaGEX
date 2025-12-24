@@ -21,6 +21,16 @@ import {
 import ScanActivityFeed from '@/components/ScanActivityFeed'
 import LivePortfolio, { EquityDataPoint, LivePnLData } from '@/components/trader/LivePortfolio'
 import OpenPositionsLive from '@/components/trader/OpenPositionsLive'
+import {
+  BotStatusBanner,
+  WhyNotTrading,
+  TodayReportCard,
+  ActivityTimeline,
+  ExitNotificationContainer,
+  RiskMetrics,
+  PerformanceComparison,
+  PositionDetailModal
+} from '@/components/trader'
 
 // ==================== INTERFACES ====================
 
@@ -818,6 +828,52 @@ export default function ARESPage() {
   const [expandedSpxPosition, setExpandedSpxPosition] = useState<string | null>(null)
   const [expandedSpyPosition, setExpandedSpyPosition] = useState<string | null>(null)
   const [changingStrategy, setChangingStrategy] = useState(false)
+  const [selectedPosition, setSelectedPosition] = useState<any | null>(null)
+  const [exitNotifications, setExitNotifications] = useState<any[]>([])
+
+  // Build skip reasons from decisions
+  const skipReasons = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0]
+    return decisions
+      .filter(d => d.timestamp?.startsWith(today) && (d.action === 'SKIP' || d.decision_type === 'SKIP'))
+      .map(d => ({
+        id: d.decision_id,
+        timestamp: d.timestamp,
+        reason: d.why || d.what || 'No reason provided',
+        category: d.signal_source?.includes('ML') ? 'ml' as const :
+                  d.signal_source?.includes('Oracle') ? 'oracle' as const :
+                  d.why?.toLowerCase().includes('market') ? 'market' as const :
+                  d.why?.toLowerCase().includes('risk') ? 'risk' as const :
+                  d.why?.toLowerCase().includes('vix') ? 'market' as const : 'other' as const,
+        details: {
+          oracle_advice: d.oracle_prediction?.advice,
+          oracle_confidence: d.oracle_prediction?.confidence,
+          oracle_win_prob: d.oracle_prediction?.win_probability,
+          vix: d.market_context?.vix,
+          spot_price: d.market_context?.underlying_price,
+          gex_regime: d.market_context?.gex_regime
+        }
+      }))
+  }, [decisions])
+
+  // Build activity timeline
+  const activityItems = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0]
+    return decisions
+      .filter(d => d.timestamp?.startsWith(today))
+      .slice(0, 20)
+      .map(d => ({
+        id: d.decision_id,
+        timestamp: d.timestamp,
+        type: d.decision_type?.toLowerCase().includes('entry') ? 'entry' as const :
+              d.decision_type?.toLowerCase().includes('exit') ? 'exit' as const :
+              d.action === 'SKIP' ? 'skip' as const : 'scan' as const,
+        title: d.what || d.action,
+        description: d.why,
+        pnl: d.actual_pnl,
+        signalSource: d.signal_source
+      }))
+  }, [decisions])
 
   // Strategy change handler
   const handleStrategyChange = async (presetId: string) => {
@@ -1171,6 +1227,14 @@ export default function ARESPage() {
                 positions={livePnL?.positions || []}
                 underlyingPrice={livePnL?.underlying_price || marketData?.underlying_price}
                 isLoading={livePnLLoading}
+                onPositionClick={(pos) => setSelectedPosition(pos)}
+              />
+
+              {/* Why Not Trading - Shows skip reasons */}
+              <WhyNotTrading
+                skipReasons={skipReasons}
+                isLoading={decisionsValidating}
+                maxDisplay={5}
               />
 
               {/* Today's Summary Card - Shows what happened today at a glance */}
@@ -1223,6 +1287,43 @@ export default function ARESPage() {
                 isTrading={status?.in_trading_window || false}
                 hasOpenPosition={positions.length > 0}
               />
+
+              {/* Today's Stats & Activity Row */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* Today's Report Card */}
+                <TodayReportCard
+                  botName="ARES"
+                  scansToday={status?.heartbeat?.scan_count_today || 0}
+                  tradesToday={closedPositions.filter(p => p.close_date?.startsWith(new Date().toISOString().split('T')[0])).length}
+                  winsToday={closedPositions.filter(p =>
+                    p.close_date?.startsWith(new Date().toISOString().split('T')[0]) &&
+                    (p.realized_pnl || 0) > 0
+                  ).length}
+                  lossesToday={closedPositions.filter(p =>
+                    p.close_date?.startsWith(new Date().toISOString().split('T')[0]) &&
+                    (p.realized_pnl || 0) < 0
+                  ).length}
+                  totalPnl={(livePnL?.total_realized_pnl || 0) + (livePnL?.total_unrealized_pnl || 0)}
+                  unrealizedPnl={livePnL?.total_unrealized_pnl || 0}
+                  realizedPnl={livePnL?.total_realized_pnl || 0}
+                  bestTrade={Math.max(...closedPositions.filter(p =>
+                    p.close_date?.startsWith(new Date().toISOString().split('T')[0])
+                  ).map(p => p.realized_pnl || 0), 0) || undefined}
+                  worstTrade={Math.min(...closedPositions.filter(p =>
+                    p.close_date?.startsWith(new Date().toISOString().split('T')[0])
+                  ).map(p => p.realized_pnl || 0), 0) || undefined}
+                  openPositions={positions.length}
+                  capitalAtRisk={positions.reduce((sum, p) => sum + (p.max_loss || 0), 0)}
+                  capitalTotal={status?.capital || 200000}
+                />
+
+                {/* Activity Timeline */}
+                <ActivityTimeline
+                  activities={activityItems}
+                  isLoading={decisionsValidating}
+                  maxDisplay={8}
+                />
+              </div>
 
               {/* Today's Closed Iron Condors */}
               {closedPositions.filter(p => p.close_date?.startsWith(new Date().toISOString().split('T')[0])).length > 0 && (
@@ -2401,6 +2502,40 @@ export default function ARESPage() {
           </div>
         </div>
       </main>
+
+      {/* Position Detail Modal */}
+      <PositionDetailModal
+        isOpen={selectedPosition !== null}
+        onClose={() => setSelectedPosition(null)}
+        position={selectedPosition ? {
+          ...selectedPosition,
+          position_id: selectedPosition.position_id || '',
+          spread_type: 'IRON_CONDOR',
+          long_strike: selectedPosition.put_long_strike || 0,
+          short_strike: selectedPosition.put_short_strike || 0,
+          expiration: selectedPosition.expiration || '',
+          contracts: selectedPosition.contracts || 1,
+          entry_price: selectedPosition.credit_received || selectedPosition.total_credit || 0,
+          status: selectedPosition.status || 'open'
+        } : {
+          position_id: '',
+          spread_type: 'IRON_CONDOR',
+          long_strike: 0,
+          short_strike: 0,
+          expiration: '',
+          contracts: 0,
+          entry_price: 0,
+          status: ''
+        }}
+        underlyingPrice={livePnL?.underlying_price || marketData?.underlying_price}
+        botType="ARES"
+      />
+
+      {/* Exit Notifications */}
+      <ExitNotificationContainer
+        notifications={exitNotifications}
+        onDismiss={(id) => setExitNotifications(prev => prev.filter(n => n.id !== id))}
+      />
     </div>
   )
 }

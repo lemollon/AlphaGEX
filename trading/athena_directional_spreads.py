@@ -1094,7 +1094,7 @@ Current:         ${self.current_capital:,.2f}
                 / gex_data['spot_price'] * 100
             ) if gex_data['flip_point'] else 0,
             gex_between_walls=self._is_between_walls(gex_data),
-            day_of_week=datetime.now().weekday()
+            day_of_week=datetime.now(CENTRAL_TZ).weekday()
         )
 
         try:
@@ -1349,8 +1349,8 @@ Current:         ${self.current_capital:,.2f}
             decision_tracker = DecisionTracker()
             decision_tracker.start()
 
-        # Get 0DTE expiration
-        today = datetime.now().strftime("%Y-%m-%d")
+        # Get 0DTE expiration - MUST use Central Time for correct market date
+        today = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
 
         # Calculate strikes
         # Use Oracle's suggested strike if available, otherwise calculate from spot
@@ -2341,7 +2341,7 @@ Current:         ${self.current_capital:,.2f}
     def _close_position(self, position: SpreadPosition, reason: str) -> None:
         """Close a position - includes P&L from all scale-outs"""
         position.status = "closed"
-        position.close_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        position.close_date = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
         # Get current spread value for final close price
         current_spread_value = self._get_current_spread_value(position)
@@ -2445,7 +2445,8 @@ Current:         ${self.current_capital:,.2f}
             conn = get_connection()
             c = conn.cursor()
 
-            today = datetime.now().strftime("%Y-%m-%d")
+            # CRITICAL: Must use Central Time to match market trading date
+            today = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
             is_win = position.realized_pnl > 0
             is_bullish = position.spread_type == SpreadType.BULL_CALL_SPREAD
 
@@ -3940,16 +3941,18 @@ Current:         ${self.current_capital:,.2f}
 
     def get_status(self) -> Dict[str, Any]:
         """Get current bot status"""
+        # Use Central Time for date comparisons to match market trading days
+        today_ct = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
         return {
             'bot_name': 'ATHENA',
             'mode': self.config.mode.value,
             'capital': self.current_capital,
             'open_positions': len(self.open_positions),
             'closed_today': len([p for p in self.closed_positions
-                                if p.close_date and p.close_date.startswith(datetime.now().strftime("%Y-%m-%d"))]),
+                                if p.close_date and p.close_date.startswith(today_ct)]),
             'daily_trades': self.daily_trades,
             'daily_pnl': sum(p.realized_pnl for p in self.closed_positions
-                           if p.close_date and p.close_date.startswith(datetime.now().strftime("%Y-%m-%d"))),
+                           if p.close_date and p.close_date.startswith(today_ct)),
             'oracle_available': self.oracle is not None,
             'kronos_available': self.kronos is not None,
             'tradier_available': self.tradier is not None,
