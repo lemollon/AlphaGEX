@@ -802,3 +802,73 @@ async def get_athena_decisions(
     except Exception as e:
         logger.error(f"Error getting ATHENA decisions: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/live-pnl")
+async def get_athena_live_pnl():
+    """
+    Get real-time unrealized P&L for all open ATHENA positions.
+
+    Returns:
+    - total_unrealized_pnl: Sum of all open position unrealized P&L
+    - total_realized_pnl: Today's realized P&L from closed positions
+    - net_pnl: Total (unrealized + realized)
+    - positions: List of position details with current P&L
+    - underlying_price: Current SPY price
+    """
+    athena = get_athena_instance()
+
+    if not athena:
+        return {
+            "success": True,
+            "data": {
+                "total_unrealized_pnl": 0,
+                "total_realized_pnl": 0,
+                "net_pnl": 0,
+                "positions": [],
+                "position_count": 0,
+                "message": "ATHENA not initialized"
+            }
+        }
+
+    try:
+        live_pnl = athena.get_live_pnl()
+
+        return {
+            "success": True,
+            "data": live_pnl
+        }
+    except Exception as e:
+        logger.error(f"Error getting ATHENA live P&L: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/process-expired")
+async def process_athena_expired_positions():
+    """
+    Manually trigger processing of all expired ATHENA positions.
+
+    This will process any positions that have expired but weren't processed
+    due to service downtime or errors. Useful for catching up after outages.
+
+    Processes positions where expiration <= today and status = 'open'.
+    """
+    athena = get_athena_instance()
+
+    if not athena:
+        raise HTTPException(
+            status_code=503,
+            detail="ATHENA not initialized. Wait for scheduled startup."
+        )
+
+    try:
+        result = athena.process_expired_positions()
+
+        return {
+            "success": True,
+            "data": result,
+            "message": f"Processed {result.get('processed_count', 0)} expired positions"
+        }
+    except Exception as e:
+        logger.error(f"Error processing expired positions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -18,6 +18,7 @@ TRADING BOTS:
 - ARES: Aggressive Iron Condor targeting 10% monthly (every 5 min 9:35 AM - 2:55 PM CT)
 - ARES EOD: Process expired 0DTE positions (daily at 3:05 PM CT)
 - ATHENA: GEX Directional Spreads (every 5 min 8:35 AM - 2:30 PM CT)
+- ATHENA EOD: Process expired 0DTE spreads (daily at 3:10 PM CT)
 - ARGUS: Gamma Commentary Generation (every 5 min 8:30 AM - 3:00 PM CT)
 
 All bots now scan every 5 minutes for optimal entry timing and log NO_TRADE
@@ -650,6 +651,59 @@ class AutonomousTraderScheduler:
             logger.info("ARES EOD will retry next trading day")
             logger.info(f"=" * 80)
 
+    def scheduled_athena_eod_logic(self):
+        """
+        ATHENA End-of-Day processing - runs daily at 3:10 PM CT
+
+        Processes expired 0DTE directional spread positions:
+        - Calculates realized P&L based on closing price
+        - Updates position status to 'expired'
+        - Updates daily performance metrics
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"ATHENA EOD (End-of-Day) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.athena_trader:
+            logger.warning("ATHENA trader not available - skipping EOD processing")
+            return
+
+        # EOD processing happens after market close, so we don't check is_market_open()
+        logger.info("Processing expired ATHENA positions...")
+
+        try:
+            # Run the EOD expiration processing
+            result = self.athena_trader.process_expired_positions()
+
+            if result:
+                logger.info(f"ATHENA EOD processing completed:")
+                logger.info(f"  Processed: {result.get('processed_count', 0)} positions")
+                logger.info(f"  Total P&L: ${result.get('total_pnl', 0):,.2f}")
+                logger.info(f"  Winners: {result.get('winners', 0)}")
+                logger.info(f"  Losers: {result.get('losers', 0)}")
+
+                # Log individual position results
+                for pos_result in result.get('positions', []):
+                    logger.info(f"    - {pos_result['position_id']}: {pos_result['outcome']} "
+                               f"({pos_result['spread_type']}) P&L: ${pos_result['realized_pnl']:.2f}")
+
+                if result.get('errors'):
+                    for error in result['errors']:
+                        logger.warning(f"    Error: {error}")
+            else:
+                logger.info("ATHENA EOD: No positions to process")
+
+            logger.info(f"ATHENA EOD processing completed successfully")
+            logger.info(f"=" * 80)
+
+        except Exception as e:
+            error_msg = f"ERROR in ATHENA EOD processing: {str(e)}"
+            logger.error(error_msg)
+            logger.error(traceback.format_exc())
+            logger.info("ATHENA EOD will retry next trading day")
+            logger.info(f"=" * 80)
+
     def _log_no_trade_decision(self, bot_name: str, reason: str, context: dict = None):
         """Log a NO_TRADE decision to the database for visibility"""
         try:
@@ -1057,6 +1111,23 @@ class AutonomousTraderScheduler:
                 replace_existing=True
             )
             logger.info("✅ ATHENA job scheduled (every 5 min during market hours)")
+
+            # =================================================================
+            # ATHENA EOD JOB: Process expired positions - runs at 3:10 PM CT
+            # =================================================================
+            self.scheduler.add_job(
+                self.scheduled_athena_eod_logic,
+                trigger=CronTrigger(
+                    hour=15,       # 3:00 PM CT - after market close
+                    minute=10,     # 3:10 PM CT (after ARES EOD at 3:05)
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='athena_eod',
+                name='ATHENA - EOD Position Expiration',
+                replace_existing=True
+            )
+            logger.info("✅ ATHENA EOD job scheduled (3:10 PM CT daily)")
         else:
             logger.warning("⚠️ ATHENA not available - GEX directional trading disabled")
 

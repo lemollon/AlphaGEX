@@ -2967,6 +2967,469 @@ class ATHENATrader:
             self._log_to_db("ERROR", f"Failed to save ML signal: {e}")
             return None
 
+    # =========================================================================
+    # EXPIRED POSITION HANDLING (EOD Processing)
+    # =========================================================================
+
+    def process_expired_positions(self) -> Dict:
+        """
+        Process all spread positions that have expired (today or earlier).
+
+        Called at market close (3:05-3:10 PM CT) to:
+        1. Find ALL open positions with expiration <= today (catches missed days)
+        2. Get closing price of underlying
+        3. Determine outcome (MAX_PROFIT, LOSS, PARTIAL)
+        4. Calculate realized P&L
+        5. Update position status to 'expired'
+        6. Update daily performance metrics
+
+        Returns:
+            Dict with processing results
+        """
+        result = {
+            'processed_count': 0,
+            'total_pnl': 0.0,
+            'winners': 0,
+            'losers': 0,
+            'positions': [],
+            'errors': []
+        }
+
+        today = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
+        logger.info(f"ATHENA EOD: Processing expired positions (expiration <= {today})")
+
+        try:
+            ticker = self.config.ticker
+
+            # Find ALL positions that should have expired (expiration <= today)
+            positions_to_process = []
+
+            # Check in-memory open positions - process ANY that have expired
+            for pos in self.open_positions[:]:  # Copy list to allow modification
+                if pos.expiration <= today and pos.status == 'open':
+                    positions_to_process.append(pos)
+                    logger.info(f"ATHENA EOD: Found in-memory position {pos.position_id} (expired {pos.expiration})")
+
+            # Also check database for any positions not in memory
+            db_positions = self._get_all_expired_positions_from_db(today)
+            for db_pos in db_positions:
+                # Avoid duplicates
+                if not any(p.position_id == db_pos.position_id for p in positions_to_process):
+                    positions_to_process.append(db_pos)
+                    logger.info(f"ATHENA EOD: Found DB position {db_pos.position_id} (expired {db_pos.expiration})")
+
+            if not positions_to_process:
+                logger.info(f"ATHENA EOD: No positions expiring today")
+                return result
+
+            logger.info(f"ATHENA EOD: Found {len(positions_to_process)} positions to process")
+
+            # Process each position with its own expiration date's closing price
+            for position in positions_to_process:
+                try:
+                    # Get closing price for THIS position's expiration date
+                    closing_price = self._get_underlying_close_price(ticker, position.expiration)
+
+                    if closing_price is None or closing_price <= 0:
+                        error_msg = f"Could not get closing price for {ticker} on {position.expiration}"
+                        result['errors'].append(error_msg)
+                        logger.error(f"ATHENA EOD: {error_msg}")
+                        continue
+
+                    logger.info(f"ATHENA EOD: {ticker} close on {position.expiration}: ${closing_price:.2f}")
+
+                    # Determine outcome based on closing price vs strikes
+                    outcome = self._determine_expiration_outcome(position, closing_price)
+                    realized_pnl = self._calculate_expiration_pnl(position, outcome, closing_price)
+
+                    # Update position
+                    position.status = 'expired'
+                    position.close_date = position.expiration  # Use actual expiration date
+                    position.close_price = closing_price
+                    position.realized_pnl = realized_pnl
+
+                    # Move from open to closed
+                    if position in self.open_positions:
+                        self.open_positions.remove(position)
+                    self.closed_positions.append(position)
+
+                    # Update capital
+                    self.current_capital += realized_pnl
+
+                    if realized_pnl > 0:
+                        result['winners'] += 1
+                    else:
+                        result['losers'] += 1
+
+                    # Save to database
+                    self._update_position_in_db(position, f"EXPIRED_{outcome}")
+
+                    # Update daily performance
+                    self._update_daily_performance(position)
+
+                    result['processed_count'] += 1
+                    result['total_pnl'] += realized_pnl
+                    result['positions'].append({
+                        'position_id': position.position_id,
+                        'spread_type': position.spread_type.value,
+                        'outcome': outcome,
+                        'realized_pnl': realized_pnl,
+                        'closing_price': closing_price,
+                        'long_strike': position.long_strike,
+                        'short_strike': position.short_strike
+                    })
+
+                    logger.info(f"ATHENA EOD: Processed {position.position_id} - {outcome} - P&L: ${realized_pnl:.2f}")
+
+                except Exception as e:
+                    error_msg = f"Error processing position {position.position_id}: {e}"
+                    result['errors'].append(error_msg)
+                    logger.error(f"ATHENA EOD: {error_msg}")
+
+            logger.info(f"ATHENA EOD: Complete - Processed {result['processed_count']} positions, "
+                       f"Total P&L: ${result['total_pnl']:.2f}, "
+                       f"Winners: {result['winners']}, Losers: {result['losers']}")
+
+            return result
+
+        except Exception as e:
+            result['errors'].append(f"EOD processing failed: {e}")
+            logger.error(f"ATHENA EOD: Processing failed: {e}")
+            return result
+
+    def _get_underlying_close_price(self, ticker: str, for_date: str = None) -> Optional[float]:
+        """
+        Get the closing price for the underlying on a specific date.
+
+        Args:
+            ticker: Stock symbol (SPY, SPX, etc.)
+            for_date: Date string (YYYY-MM-DD) to get price for. If None, gets current price.
+
+        Returns:
+            Closing price or None if unavailable
+        """
+        today = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
+
+        # If requesting today's price or no date specified, get current/latest price
+        if for_date is None or for_date >= today:
+            return self._get_current_price(ticker)
+
+        # For past dates, look up historical price
+        return self._get_historical_close_price(ticker, for_date)
+
+    def _get_current_price(self, ticker: str) -> Optional[float]:
+        """Get current/latest price for the underlying."""
+        try:
+            # Try unified data provider first
+            if UNIFIED_DATA_AVAILABLE:
+                price = get_price(ticker)
+                if price and price > 0:
+                    return float(price)
+
+            # Try Tradier production
+            if self.tradier:
+                quote = self.tradier.get_quote(ticker)
+                if quote:
+                    if 'close' in quote and quote['close']:
+                        return float(quote['close'])
+                    if 'last' in quote and quote['last']:
+                        return float(quote['last'])
+
+            # Try Tradier sandbox as fallback
+            if self.tradier_sandbox:
+                quote = self.tradier_sandbox.get_quote(ticker)
+                if quote:
+                    if 'close' in quote and quote['close']:
+                        return float(quote['close'])
+                    if 'last' in quote and quote['last']:
+                        return float(quote['last'])
+
+            return None
+        except Exception as e:
+            logger.error(f"ATHENA EOD: Error getting current price: {e}")
+            return None
+
+    def _get_historical_close_price(self, ticker: str, for_date: str) -> Optional[float]:
+        """Get historical closing price for a specific past date."""
+        try:
+            # Try Tradier history API
+            if self.tradier:
+                try:
+                    history = self.tradier.get_history(ticker, start=for_date, end=for_date)
+                    if history and len(history) > 0:
+                        return float(history[0].get('close', 0))
+                except Exception:
+                    pass
+
+            # Fallback: try to get from database
+            conn = None
+            try:
+                conn = get_connection()
+                c = conn.cursor()
+                c.execute("""
+                    SELECT close_price FROM daily_prices
+                    WHERE symbol = %s AND trade_date = %s
+                    LIMIT 1
+                """, (ticker, for_date))
+                row = c.fetchone()
+                if row:
+                    return float(row[0])
+            except Exception:
+                pass
+            finally:
+                if conn:
+                    conn.close()
+
+            return None
+        except Exception as e:
+            logger.error(f"ATHENA EOD: Error getting historical price: {e}")
+            return None
+
+    def _get_all_expired_positions_from_db(self, as_of_date: str) -> List[SpreadPosition]:
+        """
+        Find all open positions in the database that have expired but weren't processed.
+
+        This catches positions that may have been missed on previous days due to
+        service downtime or errors.
+        """
+        positions = []
+        conn = None
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                SELECT
+                    position_id, spread_type, open_date, expiration,
+                    long_strike, short_strike, entry_price, contracts,
+                    max_profit, max_loss, spot_at_entry, gex_regime,
+                    oracle_confidence, oracle_reasoning, order_id
+                FROM apache_positions
+                WHERE expiration <= %s AND status = 'open'
+                ORDER BY expiration ASC
+            ''', (as_of_date,))
+
+            for row in cursor.fetchall():
+                spread_type = SpreadType.BULL_CALL_SPREAD if row[1] == 'BULL_CALL_SPREAD' else SpreadType.BEAR_CALL_SPREAD
+                pos = SpreadPosition(
+                    position_id=row[0],
+                    spread_type=spread_type,
+                    open_date=str(row[2]) if row[2] else "",
+                    expiration=str(row[3]) if row[3] else "",
+                    long_strike=float(row[4] or 0),
+                    short_strike=float(row[5] or 0),
+                    entry_debit=float(row[6] or 0),
+                    contracts=int(row[7] or 0),
+                    spread_width=abs(float(row[5] or 0) - float(row[4] or 0)),
+                    max_profit=float(row[8] or 0),
+                    max_loss=float(row[9] or 0),
+                    underlying_price_at_entry=float(row[10] or 0),
+                    gex_regime_at_entry=row[11] or "",
+                    oracle_confidence=float(row[12] or 0),
+                    oracle_reasoning=row[13] or "",
+                    order_id=row[14] or "",
+                    status='open',
+                    initial_contracts=int(row[7] or 0),
+                    contracts_remaining=int(row[7] or 0)
+                )
+                positions.append(pos)
+                logger.info(f"ATHENA EOD: Found expired position {pos.position_id} from {pos.expiration}")
+
+            logger.info(f"ATHENA EOD: Found {len(positions)} expired positions in database")
+
+        except Exception as e:
+            logger.error(f"ATHENA EOD: Error loading expired positions from DB: {e}")
+        finally:
+            if conn:
+                conn.close()
+
+        return positions
+
+    def _determine_expiration_outcome(self, position: SpreadPosition, closing_price: float) -> str:
+        """
+        Determine the outcome of an expired spread.
+
+        For Bull Call Spread (buy low call, sell high call):
+        - MAX_PROFIT: Price >= short strike (both ITM, keep spread width - debit)
+        - PARTIAL: Price between strikes (long ITM, short OTM)
+        - MAX_LOSS: Price <= long strike (both OTM, lose debit)
+
+        For Bear Call Spread (sell low call, buy high call - credit spread):
+        - MAX_PROFIT: Price <= short strike (both OTM, keep credit)
+        - PARTIAL: Price between strikes (short ITM, long OTM)
+        - MAX_LOSS: Price >= long strike (both ITM, lose spread width - credit)
+        """
+        if position.spread_type == SpreadType.BULL_CALL_SPREAD:
+            if closing_price >= position.short_strike:
+                return "MAX_PROFIT"
+            elif closing_price <= position.long_strike:
+                return "MAX_LOSS"
+            else:
+                return "PARTIAL_PROFIT"
+        else:  # BEAR_CALL_SPREAD
+            if closing_price <= position.short_strike:
+                return "MAX_PROFIT"
+            elif closing_price >= position.long_strike:
+                return "MAX_LOSS"
+            else:
+                return "PARTIAL_LOSS"
+
+    def _calculate_expiration_pnl(self, position: SpreadPosition, outcome: str, closing_price: float) -> float:
+        """
+        Calculate realized P&L at expiration for a spread.
+
+        For Bull Call Spread (debit spread):
+        - Entry: Pay debit (entry_debit > 0)
+        - MAX_PROFIT: Spread worth spread_width, P&L = (spread_width - entry_debit) * 100 * contracts
+        - MAX_LOSS: Spread worth 0, P&L = -entry_debit * 100 * contracts
+        - PARTIAL: Spread worth (closing_price - long_strike), calculate partial P&L
+
+        For Bear Call Spread (credit spread):
+        - Entry: Receive credit (entry_debit < 0, so credit = -entry_debit)
+        - MAX_PROFIT: Both OTM, keep full credit
+        - MAX_LOSS: Both ITM, lose spread_width - credit
+        - PARTIAL: Calculate based on intrinsic value
+        """
+        contracts = position.contracts_remaining if position.contracts_remaining > 0 else position.contracts
+
+        if position.spread_type == SpreadType.BULL_CALL_SPREAD:
+            # Debit spread
+            debit_paid = position.entry_debit * 100 * contracts
+
+            if outcome == "MAX_PROFIT":
+                # Spread worth full width
+                spread_value = position.spread_width * 100 * contracts
+                return spread_value - debit_paid
+
+            elif outcome == "MAX_LOSS":
+                # Spread worth nothing
+                return -debit_paid
+
+            else:  # PARTIAL_PROFIT
+                # Long call is ITM, short call is OTM
+                intrinsic = closing_price - position.long_strike
+                spread_value = intrinsic * 100 * contracts
+                return spread_value - debit_paid
+
+        else:  # BEAR_CALL_SPREAD (credit spread)
+            # Credit received (entry_debit is negative for credit)
+            credit_received = abs(position.entry_debit) * 100 * contracts
+
+            if outcome == "MAX_PROFIT":
+                # Both OTM, keep full credit
+                return credit_received
+
+            elif outcome == "MAX_LOSS":
+                # Both ITM, owe spread width
+                max_loss = position.spread_width * 100 * contracts
+                return credit_received - max_loss
+
+            else:  # PARTIAL_LOSS
+                # Short call is ITM, long call is OTM
+                intrinsic = closing_price - position.short_strike
+                settlement_cost = intrinsic * 100 * contracts
+                return credit_received - settlement_cost
+
+    # =========================================================================
+    # LIVE P&L TRACKING
+    # =========================================================================
+
+    def get_live_pnl(self) -> Dict[str, Any]:
+        """
+        Get real-time unrealized P&L for all open positions.
+
+        Returns:
+            Dict with:
+            - total_unrealized_pnl: Sum of all open position unrealized P&L
+            - positions: List of position details with current P&L
+            - last_updated: Timestamp of the calculation
+        """
+        result = {
+            'total_unrealized_pnl': 0.0,
+            'total_realized_pnl': 0.0,
+            'positions': [],
+            'position_count': len(self.open_positions),
+            'last_updated': datetime.now(CENTRAL_TZ).isoformat()
+        }
+
+        try:
+            # Get current underlying price
+            current_price = 0
+            if UNIFIED_DATA_AVAILABLE:
+                current_price = get_price(self.config.ticker)
+            elif self.tradier:
+                quote = self.tradier.get_quote(self.config.ticker)
+                current_price = quote.get('last', 0) or quote.get('close', 0) if quote else 0
+
+            if current_price <= 0:
+                result['error'] = "Could not get current price"
+                return result
+
+            result['underlying_price'] = current_price
+
+            for position in self.open_positions:
+                try:
+                    # Get current spread value
+                    current_spread_value = self._get_current_spread_value(position)
+
+                    # Calculate unrealized P&L
+                    if position.spread_type == SpreadType.BULL_CALL_SPREAD:
+                        # Debit spread: P&L = (current_value - entry_debit) * contracts * 100
+                        unrealized = (current_spread_value - position.entry_debit) * position.contracts_remaining * 100
+                    else:
+                        # Credit spread: P&L = (entry_credit - current_value) * contracts * 100
+                        # entry_debit is negative for credits
+                        credit_received = abs(position.entry_debit)
+                        unrealized = (credit_received - current_spread_value) * position.contracts_remaining * 100
+
+                    # Include already-scaled P&L
+                    total_position_pnl = unrealized + position.total_scaled_pnl
+
+                    # Calculate P&L percentage
+                    entry_value = abs(position.entry_debit) * position.initial_contracts * 100
+                    pnl_pct = (total_position_pnl / entry_value * 100) if entry_value > 0 else 0
+
+                    pos_data = {
+                        'position_id': position.position_id,
+                        'spread_type': position.spread_type.value,
+                        'long_strike': position.long_strike,
+                        'short_strike': position.short_strike,
+                        'expiration': position.expiration,
+                        'contracts_remaining': position.contracts_remaining,
+                        'initial_contracts': position.initial_contracts,
+                        'entry_debit': position.entry_debit,
+                        'current_spread_value': current_spread_value,
+                        'unrealized_pnl': round(unrealized, 2),
+                        'scaled_pnl': round(position.total_scaled_pnl, 2),
+                        'total_pnl': round(total_position_pnl, 2),
+                        'pnl_pct': round(pnl_pct, 2),
+                        'underlying_at_entry': position.underlying_price_at_entry,
+                        'current_underlying': current_price
+                    }
+
+                    result['positions'].append(pos_data)
+                    result['total_unrealized_pnl'] += unrealized
+
+                except Exception as e:
+                    logger.error(f"Error calculating live P&L for {position.position_id}: {e}")
+
+            # Add realized P&L from closed positions today
+            today = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+            result['total_realized_pnl'] = sum(
+                p.realized_pnl for p in self.closed_positions
+                if p.close_date and p.close_date.startswith(today)
+            )
+
+            result['total_unrealized_pnl'] = round(result['total_unrealized_pnl'], 2)
+            result['total_realized_pnl'] = round(result['total_realized_pnl'], 2)
+            result['net_pnl'] = round(result['total_unrealized_pnl'] + result['total_realized_pnl'], 2)
+
+        except Exception as e:
+            logger.error(f"Error in get_live_pnl: {e}")
+            result['error'] = str(e)
+
+        return result
+
     def get_status(self) -> Dict[str, Any]:
         """Get current bot status"""
         return {

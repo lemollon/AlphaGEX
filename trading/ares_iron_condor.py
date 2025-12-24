@@ -3294,6 +3294,230 @@ class ARESTrader:
         except Exception as e:
             logger.debug(f"ARES EOD: Could not log expiration decision: {e}")
 
+    # =========================================================================
+    # LIVE P&L TRACKING
+    # =========================================================================
+
+    def get_live_pnl(self) -> Dict[str, Any]:
+        """
+        Get real-time unrealized P&L for all open Iron Condor positions.
+
+        For Iron Condors:
+        - We sold the condor for a credit
+        - Current value = cost to buy it back
+        - Unrealized P&L = Credit Received - Current Cost to Close
+
+        Returns:
+            Dict with:
+            - total_unrealized_pnl: Sum of all open position unrealized P&L
+            - positions: List of position details with current P&L
+            - last_updated: Timestamp of the calculation
+        """
+        result = {
+            'total_unrealized_pnl': 0.0,
+            'total_realized_pnl': 0.0,
+            'positions': [],
+            'position_count': len(self.open_positions),
+            'last_updated': datetime.now(self.tz).isoformat()
+        }
+
+        try:
+            ticker = self.get_trading_ticker()
+
+            # Get current underlying price
+            current_price = self._get_current_price(ticker)
+            if current_price is None or current_price <= 0:
+                result['error'] = "Could not get current price"
+                return result
+
+            result['underlying_price'] = current_price
+
+            for position in self.open_positions:
+                try:
+                    # Get current option prices to calculate cost to close
+                    current_value = self._get_current_iron_condor_value(position)
+
+                    if current_value is None:
+                        # Estimate value based on delta/proximity to strikes
+                        current_value = self._estimate_iron_condor_value(position, current_price)
+
+                    # Credit received at entry
+                    credit_received = position.total_credit * 100 * position.contracts
+
+                    # Cost to close now
+                    cost_to_close = current_value * 100 * position.contracts
+
+                    # Unrealized P&L = Credit - Cost to Close
+                    unrealized = credit_received - cost_to_close
+
+                    # Calculate P&L percentage based on max profit (credit)
+                    pnl_pct = (unrealized / credit_received * 100) if credit_received > 0 else 0
+
+                    # Calculate distance to short strikes
+                    put_distance = current_price - position.put_short_strike
+                    call_distance = position.call_short_strike - current_price
+
+                    pos_data = {
+                        'position_id': position.position_id,
+                        'expiration': position.expiration,
+                        'contracts': position.contracts,
+                        'put_short_strike': position.put_short_strike,
+                        'put_long_strike': position.put_long_strike,
+                        'call_short_strike': position.call_short_strike,
+                        'call_long_strike': position.call_long_strike,
+                        'credit_received': round(position.total_credit, 2),
+                        'current_value': round(current_value, 2) if current_value else None,
+                        'unrealized_pnl': round(unrealized, 2),
+                        'pnl_pct': round(pnl_pct, 2),
+                        'underlying_at_entry': position.underlying_price_at_entry,
+                        'current_underlying': current_price,
+                        'put_distance': round(put_distance, 2),
+                        'call_distance': round(call_distance, 2),
+                        'risk_status': 'SAFE' if put_distance > 0 and call_distance > 0 else 'AT_RISK'
+                    }
+
+                    result['positions'].append(pos_data)
+                    result['total_unrealized_pnl'] += unrealized
+
+                except Exception as e:
+                    logger.error(f"Error calculating live P&L for {position.position_id}: {e}")
+
+            # Add realized P&L from closed positions today
+            today = datetime.now(self.tz).strftime("%Y-%m-%d")
+            result['total_realized_pnl'] = sum(
+                p.realized_pnl for p in self.closed_positions
+                if p.close_date and p.close_date.startswith(today)
+            )
+
+            result['total_unrealized_pnl'] = round(result['total_unrealized_pnl'], 2)
+            result['total_realized_pnl'] = round(result['total_realized_pnl'], 2)
+            result['net_pnl'] = round(result['total_unrealized_pnl'] + result['total_realized_pnl'], 2)
+
+        except Exception as e:
+            logger.error(f"Error in get_live_pnl: {e}")
+            result['error'] = str(e)
+
+        return result
+
+    def _get_current_iron_condor_value(self, position: IronCondorPosition) -> Optional[float]:
+        """
+        Get current market value of the Iron Condor (cost to buy it back).
+
+        Returns the total premium you'd pay to close all 4 legs.
+        """
+        try:
+            ticker = self.get_trading_ticker()
+            expiration = position.expiration
+
+            # Get option quotes for all 4 legs
+            legs = [
+                (position.put_long_strike, 'put'),    # We're long this
+                (position.put_short_strike, 'put'),   # We're short this
+                (position.call_short_strike, 'call'), # We're short this
+                (position.call_long_strike, 'call')   # We're long this
+            ]
+
+            total_value = 0.0
+            tradier = self.tradier or self.tradier_sandbox
+
+            if not tradier:
+                return None
+
+            for strike, option_type in legs:
+                try:
+                    # Build option symbol
+                    option_symbol = self._build_option_symbol(ticker, expiration, strike, option_type)
+                    quote = tradier.get_option_quote(option_symbol)
+
+                    if quote:
+                        # Use mid price
+                        bid = quote.get('bid', 0) or 0
+                        ask = quote.get('ask', 0) or 0
+                        mid = (bid + ask) / 2 if bid and ask else (bid or ask)
+
+                        # Add or subtract based on position direction
+                        if strike in [position.put_long_strike, position.call_long_strike]:
+                            # Long legs: we'd sell these, so subtract
+                            total_value -= mid
+                        else:
+                            # Short legs: we'd buy these back, so add
+                            total_value += mid
+                except Exception:
+                    continue
+
+            return total_value if total_value != 0 else None
+
+        except Exception as e:
+            logger.debug(f"Could not get IC value: {e}")
+            return None
+
+    def _build_option_symbol(self, ticker: str, expiration: str, strike: float, option_type: str) -> str:
+        """Build OCC option symbol."""
+        # Format: SPY240115C00580000
+        exp_date = datetime.strptime(expiration, '%Y-%m-%d')
+        exp_str = exp_date.strftime('%y%m%d')
+        opt_char = 'C' if option_type == 'call' else 'P'
+        strike_str = f"{int(strike * 1000):08d}"
+        return f"{ticker}{exp_str}{opt_char}{strike_str}"
+
+    def _estimate_iron_condor_value(self, position: IronCondorPosition, current_price: float) -> float:
+        """
+        Estimate Iron Condor value when real-time quotes unavailable.
+
+        Uses approximation based on:
+        - Time to expiration (theta decay)
+        - Distance to short strikes (delta exposure)
+        """
+        try:
+            # Parse expiration
+            exp_date = datetime.strptime(position.expiration, '%Y-%m-%d')
+            now = datetime.now(self.tz)
+            dte = (exp_date - now.replace(tzinfo=None)).days + 1
+
+            # Credit received
+            credit = position.total_credit
+
+            # Calculate how much credit we've "earned" via theta
+            # Rough estimate: linear decay
+            if dte <= 0:
+                # Expired or expiring today
+                # Check if we're breached
+                if current_price < position.put_short_strike:
+                    # Put breached - we owe intrinsic
+                    intrinsic = min(position.put_short_strike - current_price, position.spread_width)
+                    return intrinsic
+                elif current_price > position.call_short_strike:
+                    # Call breached - we owe intrinsic
+                    intrinsic = min(current_price - position.call_short_strike, position.spread_width)
+                    return intrinsic
+                else:
+                    # Safe - worth very little
+                    return 0.05  # Minimal value
+
+            # Not expired yet - estimate based on time and position
+            time_decay_factor = max(0.1, dte / 30)  # Assumes ~30 day option
+
+            # Distance-based risk adjustment
+            put_distance = current_price - position.put_short_strike
+            call_distance = position.call_short_strike - current_price
+            min_distance = min(put_distance, call_distance)
+
+            if min_distance < 0:
+                # Already breached - value is intrinsic + some time value
+                intrinsic = abs(min_distance)
+                return min(intrinsic + credit * 0.3, position.spread_width)
+
+            # Safe position - estimate remaining value
+            # More time = more value, closer to strikes = more value
+            safety_factor = min_distance / (position.spread_width * 2)  # 0-1 range
+            estimated_value = credit * time_decay_factor * (1 - safety_factor * 0.5)
+
+            return max(0.05, min(estimated_value, credit))
+
+        except Exception as e:
+            logger.debug(f"Error estimating IC value: {e}")
+            return position.total_credit * 0.5  # Fallback: half the credit
+
     def get_status(self) -> Dict:
         """Get current ARES status"""
         now = datetime.now(self.tz)

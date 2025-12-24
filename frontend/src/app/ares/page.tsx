@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { Sword, TrendingUp, TrendingDown, Activity, DollarSign, Target, RefreshCw, BarChart3, ChevronDown, ChevronUp, Server, Play, AlertTriangle, Clock, Zap, Brain, Shield, Crosshair, TrendingUp as TrendUp, FileText, ListChecks, Settings } from 'lucide-react'
+import { useState, useMemo } from 'react'
+import { Sword, TrendingUp, TrendingDown, Activity, DollarSign, Target, RefreshCw, BarChart3, ChevronDown, ChevronUp, Server, Play, AlertTriangle, Clock, Zap, Brain, Shield, Crosshair, TrendingUp as TrendUp, FileText, ListChecks, Settings, Wallet } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
@@ -14,9 +14,12 @@ import {
   useARESTradierStatus,
   useARESConfig,
   useARESDecisions,
-  useScanActivityAres
+  useScanActivityAres,
+  useARESLivePnL
 } from '@/lib/hooks/useMarketData'
 import ScanActivityFeed from '@/components/ScanActivityFeed'
+import LivePortfolio, { EquityDataPoint, LivePnLData } from '@/components/trader/LivePortfolio'
+import OpenPositionsLive from '@/components/trader/OpenPositionsLive'
 
 // ==================== INTERFACES ====================
 
@@ -198,6 +201,7 @@ export default function ARESPage() {
   const { data: configRes, isValidating: configValidating, mutate: mutateConfig } = useARESConfig()
   const { data: decisionsRes, isValidating: decisionsValidating, mutate: mutateDecisions } = useARESDecisions(100)
   const { data: scanActivityRes, isLoading: scanActivityLoading, mutate: mutateScanActivity } = useScanActivityAres(50)
+  const { data: livePnLRes, isLoading: livePnLLoading, mutate: mutateLivePnL } = useARESLivePnL()
 
   // Extract data
   const status = statusRes?.data as ARESStatus | undefined
@@ -210,13 +214,14 @@ export default function ARESPage() {
   const tradierStatus = tradierRes?.data as TradierStatus | undefined
   const config = configRes?.data as Config | undefined
   const decisions = (decisionsRes?.data?.decisions || []) as DecisionLog[]
+  const livePnL = livePnLRes?.data as LivePnLData | null
 
   const loading = statusLoading && !status
   const error = statusError?.message || null
   const isRefreshing = statusValidating || perfValidating || equityValidating || posValidating || marketValidating || tradierValidating || configValidating || decisionsValidating
 
-  // UI State
-  const [activeTab, setActiveTab] = useState<'overview' | 'spx' | 'spy' | 'decisions' | 'config'>('overview')
+  // UI State - default to portfolio for Robinhood-style view
+  const [activeTab, setActiveTab] = useState<'portfolio' | 'overview' | 'spx' | 'spy' | 'decisions' | 'config'>('portfolio')
   const [expandedDecision, setExpandedDecision] = useState<number | null>(null)
   const [runningCycle, setRunningCycle] = useState(false)
 
@@ -418,16 +423,77 @@ export default function ARESPage() {
 
           {/* Tabs */}
           <div className="flex gap-2 mb-6 flex-wrap">
-            {(['overview', 'spx', 'spy', 'decisions', 'config'] as const).map((tab) => (
+            {(['portfolio', 'overview', 'spx', 'spy', 'decisions', 'config'] as const).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`px-4 py-2 rounded-lg capitalize transition ${activeTab === tab ? 'bg-red-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
+                className={`px-4 py-2 rounded-lg capitalize transition flex items-center gap-2 ${activeTab === tab ? 'bg-red-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
               >
+                {tab === 'portfolio' && <Wallet className="w-4 h-4" />}
                 {tab === 'spx' ? 'SPX' : tab === 'spy' ? 'SPY' : tab}
               </button>
             ))}
           </div>
+
+          {/* ==================== PORTFOLIO TAB - Robinhood-style ==================== */}
+          {activeTab === 'portfolio' && (
+            <div className="space-y-6">
+              {/* Live Portfolio Component */}
+              <LivePortfolio
+                botName="ARES"
+                totalValue={(status?.capital || 200000) + (livePnL?.net_pnl || status?.total_pnl || 0)}
+                startingCapital={status?.capital || 200000}
+                livePnL={livePnL}
+                equityData={equityData.map((e: EquityPoint) => ({
+                  date: e.date,
+                  timestamp: new Date(e.date).getTime(),
+                  equity: e.equity,
+                  pnl: e.pnl
+                })) as EquityDataPoint[]}
+                isLoading={livePnLLoading}
+                onRefresh={() => mutateLivePnL()}
+                lastUpdated={livePnL?.last_updated}
+              />
+
+              {/* Open Positions with Live P&L */}
+              <OpenPositionsLive
+                botName="ARES"
+                positions={livePnL?.positions || []}
+                underlyingPrice={livePnL?.underlying_price || marketData?.underlying_price}
+                isLoading={livePnLLoading}
+              />
+
+              {/* Today's Closed Iron Condors */}
+              {closedPositions.filter(p => p.close_date?.startsWith(new Date().toISOString().split('T')[0])).length > 0 && (
+                <div className="bg-[#0a0a0a] rounded-lg p-6">
+                  <h3 className="text-lg font-semibold text-white mb-4">Today&apos;s Closed Iron Condors</h3>
+                  <div className="space-y-2">
+                    {closedPositions
+                      .filter(p => p.close_date?.startsWith(new Date().toISOString().split('T')[0]))
+                      .map(pos => (
+                        <div key={pos.position_id} className="flex justify-between items-center p-3 bg-[#111] rounded-lg border border-gray-800">
+                          <div className="flex items-center gap-3">
+                            <div className={`w-2 h-2 rounded-full ${(pos.realized_pnl ?? 0) >= 0 ? 'bg-[#00C805]' : 'bg-[#FF5000]'}`} />
+                            <span className="text-white">
+                              {pos.ticker || 'SPY'} IC {pos.put_short_strike}/{pos.call_short_strike}
+                            </span>
+                            <span className="text-gray-500 text-sm">{pos.contracts} contracts</span>
+                          </div>
+                          <div className="text-right">
+                            <div className={`font-bold ${(pos.realized_pnl ?? 0) >= 0 ? 'text-[#00C805]' : 'text-[#FF5000]'}`}>
+                              {(pos.realized_pnl ?? 0) >= 0 ? '+' : ''}${(pos.realized_pnl ?? 0).toFixed(2)}
+                            </div>
+                            <div className="text-gray-500 text-xs">
+                              {pos.close_date}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* ==================== OVERVIEW TAB ==================== */}
           {activeTab === 'overview' && (

@@ -730,6 +730,45 @@ async def get_tradier_account_status():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/live-pnl")
+async def get_ares_live_pnl():
+    """
+    Get real-time unrealized P&L for all open ARES Iron Condor positions.
+
+    Returns:
+    - total_unrealized_pnl: Sum of all open position unrealized P&L
+    - total_realized_pnl: Today's realized P&L from closed positions
+    - net_pnl: Total (unrealized + realized)
+    - positions: List of position details with current P&L, strike distances, risk status
+    - underlying_price: Current SPY/SPX price
+    """
+    ares = get_ares_instance()
+
+    if not ares:
+        return {
+            "success": True,
+            "data": {
+                "total_unrealized_pnl": 0,
+                "total_realized_pnl": 0,
+                "net_pnl": 0,
+                "positions": [],
+                "position_count": 0,
+                "message": "ARES not initialized"
+            }
+        }
+
+    try:
+        live_pnl = ares.get_live_pnl()
+
+        return {
+            "success": True,
+            "data": live_pnl
+        }
+    except Exception as e:
+        logger.error(f"Error getting ARES live P&L: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/process-expired")
 async def process_expired_positions():
     """
