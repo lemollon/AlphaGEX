@@ -999,7 +999,7 @@ export default function ATHENAPage() {
                 onAdjustRisk={(newRisk) => console.log('Adjust risk to:', newRisk)}
                 onForceScan={() => runCycle()}
                 currentRisk={2}
-                isActive={status?.heartbeat?.is_active || false}
+                isActive={status?.is_active || false}
                 hasOpenPosition={positions.some(p => p.status === 'open')}
               />
 
