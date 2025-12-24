@@ -976,7 +976,7 @@ export default function ATHENAPage() {
 
               {/* Today's Status Summary */}
               <ATHENATodaySummaryCard
-                tradedToday={positions.some(p => p.entry_time?.startsWith(new Date().toISOString().split('T')[0]))}
+                tradedToday={positions.some(p => p.created_at?.startsWith(new Date().toISOString().split('T')[0]))}
                 openPosition={positions.find(p => p.status === 'open') || null}
                 lastDecision={decisions[0] || null}
                 oracleAdvice={oracleAdvice}
@@ -989,7 +989,7 @@ export default function ATHENAPage() {
               <ATHENADecisionPathCard
                 mlSignal={mlSignal}
                 oracleAdvice={oracleAdvice}
-                isTraded={positions.some(p => p.entry_time?.startsWith(new Date().toISOString().split('T')[0]))}
+                isTraded={positions.some(p => p.created_at?.startsWith(new Date().toISOString().split('T')[0]))}
                 gexRegime={mlSignal?.gex_context?.regime || status?.heartbeat?.details?.gex_context?.regime || 'UNKNOWN'}
               />
 
