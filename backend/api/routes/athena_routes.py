@@ -66,6 +66,8 @@ def get_athena_instance():
 
 def _get_heartbeat(bot_name: str) -> dict:
     """Get heartbeat info for a bot from the database"""
+    CENTRAL_TZ = ZoneInfo("America/Chicago")
+
     try:
         conn = get_connection()
         cursor = conn.cursor()
@@ -81,9 +83,21 @@ def _get_heartbeat(bot_name: str) -> dict:
 
         if row:
             last_heartbeat, status, scan_count, details = row
+
+            # Convert timestamp to Central Time
+            # PostgreSQL may return UTC or naive datetime - handle both cases
+            if last_heartbeat:
+                if last_heartbeat.tzinfo is None:
+                    # Naive datetime from PostgreSQL - assume it's UTC
+                    last_heartbeat = last_heartbeat.replace(tzinfo=ZoneInfo("UTC"))
+                # Convert to Central Time
+                last_heartbeat_ct = last_heartbeat.astimezone(CENTRAL_TZ)
+            else:
+                last_heartbeat_ct = None
+
             return {
-                'last_scan': last_heartbeat.strftime('%Y-%m-%d %H:%M:%S CT') if last_heartbeat else None,
-                'last_scan_iso': last_heartbeat.isoformat() if last_heartbeat else None,
+                'last_scan': last_heartbeat_ct.strftime('%Y-%m-%d %H:%M:%S CT') if last_heartbeat_ct else None,
+                'last_scan_iso': last_heartbeat_ct.isoformat() if last_heartbeat_ct else None,
                 'status': status,
                 'scan_count_today': scan_count or 0,
                 'details': details or {}
