@@ -47,6 +47,7 @@ try:
     import pandas as pd
     from sklearn.preprocessing import StandardScaler
     from sklearn.model_selection import TimeSeriesSplit
+    from sklearn.calibration import CalibratedClassifierCV
     from sklearn.metrics import (
         accuracy_score, precision_score, recall_score, f1_score,
         roc_auc_score, brier_score_loss, confusion_matrix
