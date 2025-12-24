@@ -459,7 +459,7 @@ export default function ARESPage() {
               <OpenPositionsLive
                 botName="ARES"
                 positions={livePnL?.positions || []}
-                underlyingPrice={livePnL?.underlying_price || marketData?.spy_price}
+                underlyingPrice={livePnL?.underlying_price || marketData?.underlying_price}
                 isLoading={livePnLLoading}
               />
 
@@ -473,15 +473,15 @@ export default function ARESPage() {
                       .map(pos => (
                         <div key={pos.position_id} className="flex justify-between items-center p-3 bg-[#111] rounded-lg border border-gray-800">
                           <div className="flex items-center gap-3">
-                            <div className={`w-2 h-2 rounded-full ${pos.realized_pnl >= 0 ? 'bg-[#00C805]' : 'bg-[#FF5000]'}`} />
+                            <div className={`w-2 h-2 rounded-full ${(pos.realized_pnl ?? 0) >= 0 ? 'bg-[#00C805]' : 'bg-[#FF5000]'}`} />
                             <span className="text-white">
                               {pos.ticker || 'SPY'} IC {pos.put_short_strike}/{pos.call_short_strike}
                             </span>
                             <span className="text-gray-500 text-sm">{pos.contracts} contracts</span>
                           </div>
                           <div className="text-right">
-                            <div className={`font-bold ${pos.realized_pnl >= 0 ? 'text-[#00C805]' : 'text-[#FF5000]'}`}>
-                              {pos.realized_pnl >= 0 ? '+' : ''}${pos.realized_pnl.toFixed(2)}
+                            <div className={`font-bold ${(pos.realized_pnl ?? 0) >= 0 ? 'text-[#00C805]' : 'text-[#FF5000]'}`}>
+                              {(pos.realized_pnl ?? 0) >= 0 ? '+' : ''}${(pos.realized_pnl ?? 0).toFixed(2)}
                             </div>
                             <div className="text-gray-500 text-xs">
                               {pos.close_date}
