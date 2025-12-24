@@ -275,7 +275,7 @@ function TodaySummaryCard({ tradedToday, openPosition, todayDecision, marketData
 
   // No trade today - show why
   // Check if scans have run today via heartbeat before falling back to "No scan completed yet"
-  const hasScannedToday = heartbeat?.scan_count_today > 0
+  const hasScannedToday = (heartbeat?.scan_count_today ?? 0) > 0
   const skipReason = todayDecision?.alternatives?.primary_reason || todayDecision?.why ||
     (hasScannedToday ? 'Market conditions not favorable' : 'No scan completed yet')
   const oracleConf = todayDecision?.oracle_advice?.win_probability || 0
