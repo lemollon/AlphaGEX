@@ -1,17 +1,24 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import Navigation from '@/components/Navigation';
 
-// Types for our process data
+// ============================================================================
+// TYPES & INTERFACES
+// ============================================================================
+
 interface ProcessNode {
   id: string;
   name: string;
+  label: string;
   description: string;
   status: 'active' | 'inactive' | 'error' | 'unknown';
   lastRun?: string;
   codeFile?: string;
   category: string;
+  type: NodeType;
+  dependencies?: string[];
+  executionHistory?: { timestamp: string; success: boolean; duration: number }[];
 }
 
 interface BotStatus {
@@ -21,7 +28,25 @@ interface BotStatus {
   tradesExecuted?: number;
 }
 
-// Tab definitions
+type NodeType = 'data' | 'decision' | 'process' | 'ai' | 'bot' | 'risk' | 'output';
+
+interface FlowChartProps {
+  id: string;
+  title: string;
+  nodes: { id: string; label: string; type: NodeType; dependencies?: string[] }[];
+  description?: string;
+  codeRef?: string;
+  searchQuery?: string;
+  onNodeClick?: (nodeId: string) => void;
+  selectedNode?: string | null;
+  showAnimations?: boolean;
+  theme?: 'dark' | 'light';
+}
+
+// ============================================================================
+// CONSTANTS
+// ============================================================================
+
 const TABS = [
   { id: 'overview', label: 'Overview', icon: '🏠' },
   { id: 'data', label: 'Data Layer', icon: '📊' },
@@ -33,87 +58,386 @@ const TABS = [
   { id: 'strategy', label: 'Strategies', icon: '♟️' },
   { id: 'operations', label: 'Operations', icon: '⚙️' },
   { id: 'timeline', label: 'Timeline', icon: '⏰' },
+  { id: 'comparison', label: 'Comparison', icon: '⚖️' },
 ];
 
-// Color coding for different node types
 const NODE_COLORS = {
-  data: { bg: 'bg-blue-900/30', border: 'border-blue-500', text: 'text-blue-400' },
-  decision: { bg: 'bg-green-900/30', border: 'border-green-500', text: 'text-green-400' },
-  process: { bg: 'bg-yellow-900/30', border: 'border-yellow-500', text: 'text-yellow-400' },
-  ai: { bg: 'bg-purple-900/30', border: 'border-purple-500', text: 'text-purple-400' },
-  bot: { bg: 'bg-pink-900/30', border: 'border-pink-500', text: 'text-pink-400' },
-  risk: { bg: 'bg-red-900/30', border: 'border-red-500', text: 'text-red-400' },
-  output: { bg: 'bg-cyan-900/30', border: 'border-cyan-500', text: 'text-cyan-400' },
+  dark: {
+    data: { bg: 'bg-blue-900/30', border: 'border-blue-500', text: 'text-blue-400', glow: 'shadow-blue-500/50' },
+    decision: { bg: 'bg-green-900/30', border: 'border-green-500', text: 'text-green-400', glow: 'shadow-green-500/50' },
+    process: { bg: 'bg-yellow-900/30', border: 'border-yellow-500', text: 'text-yellow-400', glow: 'shadow-yellow-500/50' },
+    ai: { bg: 'bg-purple-900/30', border: 'border-purple-500', text: 'text-purple-400', glow: 'shadow-purple-500/50' },
+    bot: { bg: 'bg-pink-900/30', border: 'border-pink-500', text: 'text-pink-400', glow: 'shadow-pink-500/50' },
+    risk: { bg: 'bg-red-900/30', border: 'border-red-500', text: 'text-red-400', glow: 'shadow-red-500/50' },
+    output: { bg: 'bg-cyan-900/30', border: 'border-cyan-500', text: 'text-cyan-400', glow: 'shadow-cyan-500/50' },
+  },
+  light: {
+    data: { bg: 'bg-blue-100', border: 'border-blue-600', text: 'text-blue-700', glow: 'shadow-blue-300/50' },
+    decision: { bg: 'bg-green-100', border: 'border-green-600', text: 'text-green-700', glow: 'shadow-green-300/50' },
+    process: { bg: 'bg-yellow-100', border: 'border-yellow-600', text: 'text-yellow-700', glow: 'shadow-yellow-300/50' },
+    ai: { bg: 'bg-purple-100', border: 'border-purple-600', text: 'text-purple-700', glow: 'shadow-purple-300/50' },
+    bot: { bg: 'bg-pink-100', border: 'border-pink-600', text: 'text-pink-700', glow: 'shadow-pink-300/50' },
+    risk: { bg: 'bg-red-100', border: 'border-red-600', text: 'text-red-700', glow: 'shadow-red-300/50' },
+    output: { bg: 'bg-cyan-100', border: 'border-cyan-600', text: 'text-cyan-700', glow: 'shadow-cyan-300/50' },
+  },
 };
 
-// Flowchart component for rendering diagrams
-function FlowChart({ title, nodes, description, codeRef }: {
-  title: string;
-  nodes: { id: string; label: string; type: keyof typeof NODE_COLORS; children?: string[] }[];
-  description?: string;
-  codeRef?: string;
-}) {
-  const [expanded, setExpanded] = useState(true);
+// All searchable content for filtering
+const ALL_PROCESSES = [
+  { id: 'data-pipeline', title: 'Data Pipeline Flow', category: 'data', keywords: ['tradier', 'polygon', 'api', 'data', 'pipeline'] },
+  { id: 'data-fallback', title: 'Data Priority & Fallback', category: 'data', keywords: ['fallback', 'priority', 'cache'] },
+  { id: 'caching', title: 'Caching Strategies', category: 'data', keywords: ['cache', 'memory', 'database'] },
+  { id: 'rate-limit', title: 'Rate Limiting', category: 'data', keywords: ['rate', 'limit', 'throttle'] },
+  { id: 'error-handling', title: 'Error Handling', category: 'data', keywords: ['error', 'retry', 'recovery'] },
+  { id: 'audit-trail', title: 'Audit Trail', category: 'data', keywords: ['audit', 'log', 'transparency'] },
+  { id: 'regime', title: 'Market Regime Classification', category: 'decisions', keywords: ['regime', 'gex', 'market', 'panicking', 'trapped', 'hunting', 'defending'] },
+  { id: 'strategy-selection', title: 'Strategy Selection Matrix', category: 'decisions', keywords: ['strategy', 'iron condor', 'spread', 'selection'] },
+  { id: 'position-sizing', title: 'Position Sizing (Kelly)', category: 'decisions', keywords: ['kelly', 'position', 'size', 'risk'] },
+  { id: 'exit-conditions', title: 'Exit Condition Checker', category: 'decisions', keywords: ['exit', 'profit', 'stop', 'loss'] },
+  { id: 'roll-close', title: 'Roll vs Close Decision', category: 'decisions', keywords: ['roll', 'close', 'expiry'] },
+  { id: 'vix-gate', title: 'VIX Gating Logic', category: 'decisions', keywords: ['vix', 'volatility', 'gate'] },
+  { id: 'strike-selection', title: 'Strike Selection', category: 'decisions', keywords: ['strike', 'delta', 'premium'] },
+  { id: 'trade-entry', title: 'Trade Entry Pipeline', category: 'execution', keywords: ['trade', 'entry', 'execute', 'order'] },
+  { id: 'spread-exec', title: 'Multi-Leg Spread Execution', category: 'execution', keywords: ['spread', 'leg', 'iron condor'] },
+  { id: 'paper-live', title: 'Paper vs Live Mode', category: 'execution', keywords: ['paper', 'live', 'simulate'] },
+  { id: 'order-mgmt', title: 'Order Management', category: 'execution', keywords: ['order', 'fill', 'partial'] },
+  { id: 'position-tracking', title: 'Position Tracking', category: 'execution', keywords: ['position', 'pnl', 'cost basis'] },
+  { id: 'ares', title: 'ARES Bot', category: 'bots', keywords: ['ares', 'iron condor', '0dte', 'spx'] },
+  { id: 'athena', title: 'ATHENA Bot', category: 'bots', keywords: ['athena', 'directional', 'spread'] },
+  { id: 'apollo', title: 'APOLLO Bot', category: 'bots', keywords: ['apollo', 'scanner', 'ai'] },
+  { id: 'argus', title: 'ARGUS Bot', category: 'bots', keywords: ['argus', 'gamma', 'monitor'] },
+  { id: 'oracle', title: 'ORACLE Bot', category: 'bots', keywords: ['oracle', 'ml', 'prediction'] },
+  { id: 'prometheus', title: 'PROMETHEUS Bot', category: 'bots', keywords: ['prometheus', 'training', 'ml'] },
+  { id: 'phoenix', title: 'PHOENIX Bot', category: 'bots', keywords: ['phoenix', 'recovery'] },
+  { id: 'hermes', title: 'HERMES Bot', category: 'bots', keywords: ['hermes', 'data', 'flow'] },
+  { id: 'atlas', title: 'ATLAS Bot', category: 'bots', keywords: ['atlas', 'portfolio'] },
+  { id: 'claude-ai', title: 'Claude AI Intelligence', category: 'ai', keywords: ['claude', 'gexis', 'ai', 'analysis'] },
+  { id: 'ml-pattern', title: 'ML Pattern Learning', category: 'ai', keywords: ['ml', 'pattern', 'randomforest'] },
+  { id: 'psychology', title: 'Psychology Trap Detector', category: 'ai', keywords: ['psychology', 'trap', 'fomo', 'revenge'] },
+  { id: 'rag', title: 'Trading RAG System', category: 'ai', keywords: ['rag', 'retrieval', 'knowledge'] },
+  { id: 'recommendations', title: 'AI Recommendations', category: 'ai', keywords: ['recommendation', 'suggest'] },
+];
+
+// ============================================================================
+// UTILITY FUNCTIONS
+// ============================================================================
+
+// Export to PNG using html2canvas
+const exportToPNG = async (elementId: string, filename: string) => {
+  try {
+    const element = document.getElementById(elementId);
+    if (!element) return;
+
+    // Dynamic import of html2canvas
+    const html2canvas = (await import('html2canvas')).default;
+    const canvas = await html2canvas(element, {
+      backgroundColor: '#1a1a2e',
+      scale: 2,
+    });
+
+    const link = document.createElement('a');
+    link.download = `${filename}-${new Date().toISOString().split('T')[0]}.png`;
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  } catch (error) {
+    console.error('Failed to export PNG:', error);
+    alert('Export failed. Please try again.');
+  }
+};
+
+// Export to PDF
+const exportToPDF = async (elementId: string, filename: string) => {
+  try {
+    const element = document.getElementById(elementId);
+    if (!element) return;
+
+    const html2canvas = (await import('html2canvas')).default;
+    const { jsPDF } = await import('jspdf');
+
+    const canvas = await html2canvas(element, {
+      backgroundColor: '#1a1a2e',
+      scale: 2,
+    });
+
+    const imgData = canvas.toDataURL('image/png');
+    const pdf = new jsPDF({
+      orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
+      unit: 'px',
+      format: [canvas.width, canvas.height],
+    });
+
+    pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+    pdf.save(`${filename}-${new Date().toISOString().split('T')[0]}.pdf`);
+  } catch (error) {
+    console.error('Failed to export PDF:', error);
+    alert('Export failed. Please try again.');
+  }
+};
+
+// ============================================================================
+// COMPONENTS
+// ============================================================================
+
+// Animated Flow Line Component
+function AnimatedFlowLine({ active }: { active: boolean }) {
+  if (!active) return <span className="text-gray-500 text-xl mx-1">→</span>;
 
   return (
-    <div className="bg-gray-800/50 rounded-lg border border-gray-700 mb-4">
+    <div className="relative mx-1 w-8 h-6 flex items-center justify-center overflow-hidden">
+      <div className="absolute inset-0 flex items-center">
+        <div className="h-0.5 w-full bg-gray-600 relative overflow-hidden">
+          <div className="absolute h-full w-3 bg-gradient-to-r from-transparent via-cyan-400 to-transparent animate-flow" />
+        </div>
+      </div>
+      <span className="text-cyan-400 text-xl z-10">→</span>
+    </div>
+  );
+}
+
+// Enhanced FlowChart with Zoom, Pan, Dependency Highlighting, Animations
+function FlowChart({
+  id,
+  title,
+  nodes,
+  description,
+  codeRef,
+  searchQuery = '',
+  onNodeClick,
+  selectedNode,
+  showAnimations = false,
+  theme = 'dark'
+}: FlowChartProps) {
+  const [expanded, setExpanded] = useState(true);
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const [hoveredNode, setHoveredNode] = useState<string | null>(null);
+  const [nodeNotes, setNodeNotes] = useState<Record<string, string>>({});
+  const [editingNote, setEditingNote] = useState<string | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const colors = NODE_COLORS[theme];
+
+  // Check if this flowchart matches search
+  const matchesSearch = searchQuery === '' ||
+    title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    nodes.some(n => n.label.toLowerCase().includes(searchQuery.toLowerCase()));
+
+  if (!matchesSearch) return null;
+
+  // Find dependencies for highlighting
+  const highlightedNodes = useMemo(() => {
+    if (!selectedNode) return new Set<string>();
+    const highlighted = new Set<string>([selectedNode]);
+
+    // Find nodes that depend on selected
+    nodes.forEach(node => {
+      if (node.dependencies?.includes(selectedNode)) {
+        highlighted.add(node.id);
+      }
+    });
+
+    // Find nodes that selected depends on
+    const selected = nodes.find(n => n.id === selectedNode);
+    selected?.dependencies?.forEach(dep => highlighted.add(dep));
+
+    return highlighted;
+  }, [selectedNode, nodes]);
+
+  // Mouse handlers for pan
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button === 0) {
+      setIsDragging(true);
+      setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+    }
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (isDragging) {
+      setPan({ x: e.clientX - dragStart.x, y: e.clientY - dragStart.y });
+    }
+  };
+
+  const handleMouseUp = () => setIsDragging(false);
+
+  // Wheel handler for zoom
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    setZoom(z => Math.min(Math.max(z * delta, 0.5), 3));
+  };
+
+  const resetView = () => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  };
+
+  return (
+    <div className={`rounded-lg border mb-4 ${theme === 'dark' ? 'bg-gray-800/50 border-gray-700' : 'bg-white border-gray-300'}`}>
       <div
-        className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-700/30"
+        className={`flex items-center justify-between p-4 cursor-pointer ${theme === 'dark' ? 'hover:bg-gray-700/30' : 'hover:bg-gray-100'}`}
         onClick={() => setExpanded(!expanded)}
       >
         <div className="flex items-center gap-3">
           <span className="text-xl">{expanded ? '▼' : '▶'}</span>
-          <h3 className="text-lg font-semibold text-white">{title}</h3>
+          <h3 className={`text-lg font-semibold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>{title}</h3>
         </div>
-        {codeRef && (
-          <span className="text-xs text-gray-500 font-mono">{codeRef}</span>
-        )}
+        <div className="flex items-center gap-2">
+          {codeRef && (
+            <span className="text-xs text-gray-500 font-mono">{codeRef}</span>
+          )}
+        </div>
       </div>
 
       {expanded && (
         <div className="p-4 pt-0">
           {description && (
-            <p className="text-gray-400 text-sm mb-4">{description}</p>
+            <p className={`text-sm mb-4 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>{description}</p>
           )}
-          <div className="flex flex-wrap gap-3 items-start justify-center">
-            {nodes.map((node, idx) => (
-              <div key={node.id} className="flex items-center gap-2">
-                <div
-                  className={`px-4 py-2 rounded-lg border-2 ${NODE_COLORS[node.type].bg} ${NODE_COLORS[node.type].border} ${NODE_COLORS[node.type].text} font-medium text-sm`}
-                  title={node.label}
-                >
-                  {node.label}
-                </div>
-                {idx < nodes.length - 1 && (
-                  <span className="text-gray-500 text-xl">→</span>
-                )}
-              </div>
-            ))}
+
+          {/* Zoom Controls */}
+          <div className="flex items-center gap-2 mb-3">
+            <button
+              onClick={() => setZoom(z => Math.min(z * 1.2, 3))}
+              className="px-2 py-1 bg-gray-700 text-white rounded text-sm hover:bg-gray-600"
+            >
+              🔍+
+            </button>
+            <button
+              onClick={() => setZoom(z => Math.max(z * 0.8, 0.5))}
+              className="px-2 py-1 bg-gray-700 text-white rounded text-sm hover:bg-gray-600"
+            >
+              🔍-
+            </button>
+            <button
+              onClick={resetView}
+              className="px-2 py-1 bg-gray-700 text-white rounded text-sm hover:bg-gray-600"
+            >
+              Reset
+            </button>
+            <span className="text-gray-500 text-sm ml-2">{Math.round(zoom * 100)}%</span>
           </div>
+
+          {/* Diagram Container with Pan/Zoom */}
+          <div
+            ref={containerRef}
+            className="overflow-hidden rounded-lg border border-gray-600 cursor-grab active:cursor-grabbing"
+            style={{ minHeight: '120px' }}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            onMouseLeave={handleMouseUp}
+            onWheel={handleWheel}
+          >
+            <div
+              className="flex flex-wrap gap-3 items-center justify-center p-4 transition-transform"
+              style={{
+                transform: `scale(${zoom}) translate(${pan.x / zoom}px, ${pan.y / zoom}px)`,
+                transformOrigin: 'center center'
+              }}
+            >
+              {nodes.map((node, idx) => {
+                const isHighlighted = highlightedNodes.has(node.id);
+                const isHovered = hoveredNode === node.id;
+                const nodeColors = colors[node.type];
+
+                return (
+                  <div key={node.id} className="flex items-center gap-2">
+                    <div
+                      className={`
+                        px-4 py-2 rounded-lg border-2 font-medium text-sm cursor-pointer
+                        transition-all duration-200 relative
+                        ${nodeColors.bg} ${nodeColors.border} ${nodeColors.text}
+                        ${isHighlighted ? `shadow-lg ${nodeColors.glow}` : ''}
+                        ${isHovered ? 'scale-110' : ''}
+                        ${selectedNode === node.id ? 'ring-2 ring-white ring-offset-2 ring-offset-gray-800' : ''}
+                      `}
+                      title={node.label}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onNodeClick?.(node.id);
+                      }}
+                      onMouseEnter={() => setHoveredNode(node.id)}
+                      onMouseLeave={() => setHoveredNode(null)}
+                    >
+                      {node.label}
+
+                      {/* Execution indicator */}
+                      <div className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${
+                        Math.random() > 0.5 ? 'bg-green-500 animate-pulse' : 'bg-gray-500'
+                      }`} />
+                    </div>
+
+                    {idx < nodes.length - 1 && (
+                      <AnimatedFlowLine active={showAnimations} />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Node Editor (when node is selected) */}
+          {selectedNode && (
+            <div className="mt-4 p-3 bg-gray-700/50 rounded-lg">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-white font-medium">
+                  Node: {nodes.find(n => n.id === selectedNode)?.label}
+                </span>
+                <button
+                  onClick={() => onNodeClick?.(selectedNode)}
+                  className="text-gray-400 hover:text-white"
+                >
+                  ✕
+                </button>
+              </div>
+              <textarea
+                className="w-full p-2 bg-gray-800 text-white rounded border border-gray-600 text-sm"
+                placeholder="Add notes about this node..."
+                value={nodeNotes[selectedNode] || ''}
+                onChange={(e) => setNodeNotes({ ...nodeNotes, [selectedNode]: e.target.value })}
+                rows={2}
+              />
+            </div>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-// Decision Tree component
-function DecisionTree({ title, tree, description, codeRef }: {
+// Decision Tree component with enhancements
+function DecisionTree({ title, tree, description, codeRef, theme = 'dark' as 'dark' | 'light', searchQuery = '' }: {
   title: string;
-  tree: { condition: string; yes: string; no: string; yesType?: keyof typeof NODE_COLORS; noType?: keyof typeof NODE_COLORS }[];
+  tree: { condition: string; yes: string; no: string; yesType?: NodeType; noType?: NodeType }[];
   description?: string;
   codeRef?: string;
+  theme?: 'dark' | 'light';
+  searchQuery?: string;
 }) {
   const [expanded, setExpanded] = useState(true);
+  const colors = NODE_COLORS[theme];
+
+  const matchesSearch = searchQuery === '' ||
+    title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    tree.some(t =>
+      t.condition.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      t.yes.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      t.no.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+
+  if (!matchesSearch) return null;
 
   return (
-    <div className="bg-gray-800/50 rounded-lg border border-gray-700 mb-4">
+    <div className={`rounded-lg border mb-4 ${theme === 'dark' ? 'bg-gray-800/50 border-gray-700' : 'bg-white border-gray-300'}`}>
       <div
-        className="flex items-center justify-between p-4 cursor-pointer hover:bg-gray-700/30"
+        className={`flex items-center justify-between p-4 cursor-pointer ${theme === 'dark' ? 'hover:bg-gray-700/30' : 'hover:bg-gray-100'}`}
         onClick={() => setExpanded(!expanded)}
       >
         <div className="flex items-center gap-3">
           <span className="text-xl">{expanded ? '▼' : '▶'}</span>
-          <h3 className="text-lg font-semibold text-white">{title}</h3>
+          <h3 className={`text-lg font-semibold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>{title}</h3>
         </div>
         {codeRef && (
           <span className="text-xs text-gray-500 font-mono">{codeRef}</span>
@@ -123,30 +447,35 @@ function DecisionTree({ title, tree, description, codeRef }: {
       {expanded && (
         <div className="p-4 pt-0">
           {description && (
-            <p className="text-gray-400 text-sm mb-4">{description}</p>
+            <p className={`text-sm mb-4 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>{description}</p>
           )}
           <div className="space-y-4">
-            {tree.map((node, idx) => (
-              <div key={idx} className="flex items-center gap-4 flex-wrap">
-                <div className="px-4 py-2 rounded-lg bg-yellow-900/30 border-2 border-yellow-500 text-yellow-400 font-medium">
-                  ◇ {node.condition}
-                </div>
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-green-500 text-sm">YES →</span>
-                    <div className={`px-3 py-1 rounded border ${NODE_COLORS[node.yesType || 'process'].bg} ${NODE_COLORS[node.yesType || 'process'].border} ${NODE_COLORS[node.yesType || 'process'].text} text-sm`}>
-                      {node.yes}
+            {tree.map((node, idx) => {
+              const yesColors = colors[node.yesType || 'process'];
+              const noColors = colors[node.noType || 'process'];
+
+              return (
+                <div key={idx} className="flex items-center gap-4 flex-wrap">
+                  <div className={`px-4 py-2 rounded-lg border-2 font-medium ${colors.decision.bg} ${colors.decision.border} ${colors.decision.text}`}>
+                    ◇ {node.condition}
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-green-500 text-sm font-bold">YES →</span>
+                      <div className={`px-3 py-1 rounded border ${yesColors.bg} ${yesColors.border} ${yesColors.text} text-sm`}>
+                        {node.yes}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-red-500 text-sm font-bold">NO →</span>
+                      <div className={`px-3 py-1 rounded border ${noColors.bg} ${noColors.border} ${noColors.text} text-sm`}>
+                        {node.no}
+                      </div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-red-500 text-sm">NO →</span>
-                    <div className={`px-3 py-1 rounded border ${NODE_COLORS[node.noType || 'process'].bg} ${NODE_COLORS[node.noType || 'process'].border} ${NODE_COLORS[node.noType || 'process'].text} text-sm`}>
-                      {node.no}
-                    </div>
-                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -154,9 +483,21 @@ function DecisionTree({ title, tree, description, codeRef }: {
   );
 }
 
-// Bot Status Card
-function BotCard({ bot }: { bot: { name: string; icon: string; description: string; status: string; features: string[]; codeRef: string } }) {
+// Bot Status Card with Execution History
+function BotCard({ bot, theme = 'dark' as 'dark' | 'light' }: {
+  bot: {
+    name: string;
+    icon: string;
+    description: string;
+    status: string;
+    features: string[];
+    codeRef: string;
+    executionHistory?: { timestamp: string; success: boolean; duration: number }[];
+  };
+  theme?: 'dark' | 'light';
+}) {
   const [expanded, setExpanded] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
 
   const statusColors = {
     running: 'bg-green-500',
@@ -164,30 +505,50 @@ function BotCard({ bot }: { bot: { name: string; icon: string; description: stri
     error: 'bg-red-500',
   };
 
+  // Mock execution history
+  const history = bot.executionHistory || [
+    { timestamp: new Date(Date.now() - 1000 * 60 * 5).toISOString(), success: true, duration: 234 },
+    { timestamp: new Date(Date.now() - 1000 * 60 * 20).toISOString(), success: true, duration: 189 },
+    { timestamp: new Date(Date.now() - 1000 * 60 * 35).toISOString(), success: false, duration: 45 },
+    { timestamp: new Date(Date.now() - 1000 * 60 * 50).toISOString(), success: true, duration: 312 },
+    { timestamp: new Date(Date.now() - 1000 * 60 * 65).toISOString(), success: true, duration: 198 },
+  ];
+
   return (
-    <div className="bg-gray-800/50 rounded-lg border border-gray-700 p-4">
+    <div className={`rounded-lg border p-4 ${theme === 'dark' ? 'bg-gray-800/50 border-gray-700' : 'bg-white border-gray-300'}`}>
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-3">
           <span className="text-2xl">{bot.icon}</span>
           <div>
-            <h4 className="text-white font-semibold">{bot.name}</h4>
-            <p className="text-gray-400 text-xs">{bot.description}</p>
+            <h4 className={`font-semibold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>{bot.name}</h4>
+            <p className={`text-xs ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>{bot.description}</p>
           </div>
         </div>
-        <div className={`w-3 h-3 rounded-full ${statusColors[bot.status as keyof typeof statusColors] || 'bg-gray-500'} animate-pulse`} />
+        <div className="flex items-center gap-2">
+          <div className={`w-3 h-3 rounded-full ${statusColors[bot.status as keyof typeof statusColors] || 'bg-gray-500'} animate-pulse`} />
+          <span className={`text-xs capitalize ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>{bot.status}</span>
+        </div>
       </div>
 
-      <button
-        className="text-blue-400 text-sm hover:underline"
-        onClick={() => setExpanded(!expanded)}
-      >
-        {expanded ? 'Hide details' : 'Show details'}
-      </button>
+      <div className="flex gap-2 mt-2">
+        <button
+          className="text-blue-400 text-sm hover:underline"
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded ? 'Hide details' : 'Show details'}
+        </button>
+        <button
+          className="text-purple-400 text-sm hover:underline"
+          onClick={() => setShowHistory(!showHistory)}
+        >
+          {showHistory ? 'Hide history' : 'Execution history'}
+        </button>
+      </div>
 
       {expanded && (
-        <div className="mt-3 pt-3 border-t border-gray-700">
+        <div className={`mt-3 pt-3 border-t ${theme === 'dark' ? 'border-gray-700' : 'border-gray-300'}`}>
           <p className="text-xs text-gray-500 font-mono mb-2">{bot.codeRef}</p>
-          <ul className="text-sm text-gray-300 space-y-1">
+          <ul className={`text-sm space-y-1 ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>
             {bot.features.map((f, i) => (
               <li key={i} className="flex items-center gap-2">
                 <span className="text-green-500">✓</span> {f}
@@ -196,18 +557,42 @@ function BotCard({ bot }: { bot: { name: string; icon: string; description: stri
           </ul>
         </div>
       )}
+
+      {showHistory && (
+        <div className={`mt-3 pt-3 border-t ${theme === 'dark' ? 'border-gray-700' : 'border-gray-300'}`}>
+          <h5 className={`text-sm font-medium mb-2 ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>Last 5 Executions</h5>
+          <div className="space-y-1">
+            {history.map((h, i) => (
+              <div key={i} className="flex items-center justify-between text-xs">
+                <span className={theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}>
+                  {new Date(h.timestamp).toLocaleTimeString()}
+                </span>
+                <span className={h.success ? 'text-green-400' : 'text-red-400'}>
+                  {h.success ? '✓' : '✗'} {h.duration}ms
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-// Process Metrics component
-function ProcessMetrics({ metrics }: { metrics: { label: string; value: string | number; trend?: 'up' | 'down' | 'neutral' }[] }) {
+// Process Metrics component with live status
+function ProcessMetrics({ metrics, theme = 'dark' as 'dark' | 'light' }: {
+  metrics: { label: string; value: string | number; trend?: 'up' | 'down' | 'neutral'; live?: boolean }[];
+  theme?: 'dark' | 'light';
+}) {
   return (
     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
       {metrics.map((m, i) => (
-        <div key={i} className="bg-gray-800/50 rounded-lg border border-gray-700 p-4">
-          <p className="text-gray-400 text-sm">{m.label}</p>
-          <p className="text-2xl font-bold text-white">{m.value}</p>
+        <div key={i} className={`rounded-lg border p-4 ${theme === 'dark' ? 'bg-gray-800/50 border-gray-700' : 'bg-white border-gray-300'}`}>
+          <div className="flex items-center justify-between">
+            <p className={`text-sm ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>{m.label}</p>
+            {m.live && <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />}
+          </div>
+          <p className={`text-2xl font-bold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>{m.value}</p>
           {m.trend && (
             <span className={m.trend === 'up' ? 'text-green-500' : m.trend === 'down' ? 'text-red-500' : 'text-gray-500'}>
               {m.trend === 'up' ? '↑' : m.trend === 'down' ? '↓' : '–'}
@@ -220,15 +605,17 @@ function ProcessMetrics({ metrics }: { metrics: { label: string; value: string |
 }
 
 // Legend component
-function Legend() {
+function Legend({ theme = 'dark' as 'dark' | 'light' }: { theme?: 'dark' | 'light' }) {
+  const colors = NODE_COLORS[theme];
+
   return (
-    <div className="bg-gray-800/50 rounded-lg border border-gray-700 p-4 mb-6">
-      <h4 className="text-white font-semibold mb-3">Color Legend</h4>
+    <div className={`rounded-lg border p-4 mb-6 ${theme === 'dark' ? 'bg-gray-800/50 border-gray-700' : 'bg-white border-gray-300'}`}>
+      <h4 className={`font-semibold mb-3 ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>Color Legend</h4>
       <div className="flex flex-wrap gap-4">
-        {Object.entries(NODE_COLORS).map(([type, colors]) => (
+        {Object.entries(colors).map(([type, c]) => (
           <div key={type} className="flex items-center gap-2">
-            <div className={`w-4 h-4 rounded ${colors.bg} border ${colors.border}`} />
-            <span className="text-gray-300 text-sm capitalize">{type}</span>
+            <div className={`w-4 h-4 rounded ${c.bg} border ${c.border}`} />
+            <span className={`text-sm capitalize ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'}`}>{type}</span>
           </div>
         ))}
       </div>
@@ -236,10 +623,172 @@ function Legend() {
   );
 }
 
+// Comparison View Component
+function ComparisonView({ theme = 'dark' as 'dark' | 'light' }: { theme?: 'dark' | 'light' }) {
+  const [mode, setMode] = useState<'paper' | 'live'>('paper');
+
+  const paperFlow = [
+    { id: '1', label: 'Signal Generated', type: 'ai' as NodeType },
+    { id: '2', label: 'Validate Setup', type: 'decision' as NodeType },
+    { id: '3', label: 'Paper Portfolio Check', type: 'process' as NodeType },
+    { id: '4', label: 'Simulate Execution', type: 'process' as NodeType },
+    { id: '5', label: 'Update Paper P&L', type: 'output' as NodeType },
+  ];
+
+  const liveFlow = [
+    { id: '1', label: 'Signal Generated', type: 'ai' as NodeType },
+    { id: '2', label: 'Validate Setup', type: 'decision' as NodeType },
+    { id: '3', label: 'Account Balance Check', type: 'risk' as NodeType },
+    { id: '4', label: 'Broker API Call', type: 'data' as NodeType },
+    { id: '5', label: 'Order Submission', type: 'output' as NodeType },
+    { id: '6', label: 'Fill Confirmation', type: 'output' as NodeType },
+    { id: '7', label: 'Position Update', type: 'data' as NodeType },
+  ];
+
+  return (
+    <div>
+      <h2 className={`text-2xl font-bold mb-4 ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
+        Paper vs Live Comparison
+      </h2>
+      <p className={`mb-6 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
+        Compare the execution flow between paper trading and live trading modes.
+      </p>
+
+      <div className="flex gap-4 mb-6">
+        <button
+          onClick={() => setMode('paper')}
+          className={`px-4 py-2 rounded-lg ${mode === 'paper' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300'}`}
+        >
+          Paper Mode
+        </button>
+        <button
+          onClick={() => setMode('live')}
+          className={`px-4 py-2 rounded-lg ${mode === 'live' ? 'bg-red-600 text-white' : 'bg-gray-700 text-gray-300'}`}
+        >
+          Live Mode
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className={`p-4 rounded-lg border ${mode === 'paper' ? 'border-blue-500 ring-2 ring-blue-500/50' : 'border-gray-700 opacity-50'}`}>
+          <h3 className="text-lg font-semibold text-blue-400 mb-4">Paper Trading Flow</h3>
+          <FlowChart
+            id="paper-flow"
+            title="Paper Execution"
+            nodes={paperFlow}
+            description="Simulated trading without real money"
+            theme={theme}
+          />
+          <div className="mt-4 space-y-2 text-sm text-gray-400">
+            <p>✓ No real money at risk</p>
+            <p>✓ Instant simulated fills</p>
+            <p>✓ No broker API calls</p>
+            <p>✓ Simplified flow</p>
+          </div>
+        </div>
+
+        <div className={`p-4 rounded-lg border ${mode === 'live' ? 'border-red-500 ring-2 ring-red-500/50' : 'border-gray-700 opacity-50'}`}>
+          <h3 className="text-lg font-semibold text-red-400 mb-4">Live Trading Flow</h3>
+          <FlowChart
+            id="live-flow"
+            title="Live Execution"
+            nodes={liveFlow}
+            description="Real trading with actual capital"
+            theme={theme}
+          />
+          <div className="mt-4 space-y-2 text-sm text-gray-400">
+            <p>⚠️ Real money at risk</p>
+            <p>⚠️ Market fills (may slip)</p>
+            <p>⚠️ Broker API integration</p>
+            <p>⚠️ Additional validation steps</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Print Optimized View Component
+function PrintView({ onClose, theme }: { onClose: () => void; theme: 'dark' | 'light' }) {
+  return (
+    <div className="fixed inset-0 bg-white z-50 overflow-auto print:relative">
+      <div className="max-w-4xl mx-auto p-8">
+        <div className="flex justify-between items-center mb-8 print:hidden">
+          <h1 className="text-2xl font-bold text-gray-900">AlphaGEX System Documentation</h1>
+          <div className="flex gap-4">
+            <button
+              onClick={() => window.print()}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg"
+            >
+              Print
+            </button>
+            <button
+              onClick={onClose}
+              className="px-4 py-2 bg-gray-600 text-white rounded-lg"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+
+        <div className="prose max-w-none">
+          <h1 className="text-3xl font-bold mb-4">AlphaGEX Trading System</h1>
+          <p className="text-gray-600 mb-8">Complete system architecture and process documentation</p>
+
+          <h2 className="text-xl font-bold mt-8 mb-4">1. Data Layer</h2>
+          <ul className="list-disc pl-6 text-gray-700">
+            <li>Tradier API (Primary data source)</li>
+            <li>Polygon API (Secondary)</li>
+            <li>Trading Volatility (GEX data)</li>
+            <li>FRED API (Economic data)</li>
+            <li>Yahoo Finance (Backup)</li>
+          </ul>
+
+          <h2 className="text-xl font-bold mt-8 mb-4">2. Decision Engines</h2>
+          <ul className="list-disc pl-6 text-gray-700">
+            <li>Market Regime Classification (5 states)</li>
+            <li>Strategy Selection Matrix (61+ paths)</li>
+            <li>Position Sizing (Kelly Criterion)</li>
+            <li>Exit Condition Checker</li>
+            <li>VIX Gating Logic</li>
+          </ul>
+
+          <h2 className="text-xl font-bold mt-8 mb-4">3. Autonomous Bots</h2>
+          <ul className="list-disc pl-6 text-gray-700">
+            <li>ARES - 0DTE Iron Condor</li>
+            <li>ATHENA - Directional Spreads</li>
+            <li>APOLLO - AI Scanner</li>
+            <li>ARGUS - Gamma Monitor</li>
+            <li>ORACLE - ML Predictions</li>
+            <li>PROMETHEUS - ML Training</li>
+            <li>PHOENIX - Recovery</li>
+            <li>HERMES - Data Flow</li>
+            <li>ATLAS - Portfolio Manager</li>
+          </ul>
+
+          <div className="mt-8 pt-4 border-t text-sm text-gray-500">
+            Generated: {new Date().toLocaleString()}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================================
+// MAIN PAGE COMPONENT
+// ============================================================================
+
 export default function SystemProcessesPage() {
   const [activeTab, setActiveTab] = useState('overview');
   const [searchQuery, setSearchQuery] = useState('');
   const [botStatuses, setBotStatuses] = useState<Record<string, string>>({});
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [showAnimations, setShowAnimations] = useState(false);
+  const [selectedNode, setSelectedNode] = useState<string | null>(null);
+  const [showPrintView, setShowPrintView] = useState(false);
+  const [processStatuses, setProcessStatuses] = useState<Record<string, 'active' | 'inactive' | 'error'>>({});
+  const contentRef = useRef<HTMLDivElement>(null);
 
   // Fetch bot statuses
   useEffect(() => {
@@ -258,6 +807,37 @@ export default function SystemProcessesPage() {
     fetchBotStatuses();
     const interval = setInterval(fetchBotStatuses, 30000);
     return () => clearInterval(interval);
+  }, []);
+
+  // Simulate live process statuses
+  useEffect(() => {
+    const updateStatuses = () => {
+      const statuses: Record<string, 'active' | 'inactive' | 'error'> = {};
+      ALL_PROCESSES.forEach(p => {
+        const rand = Math.random();
+        statuses[p.id] = rand > 0.7 ? 'active' : rand > 0.1 ? 'inactive' : 'error';
+      });
+      setProcessStatuses(statuses);
+    };
+
+    updateStatuses();
+    const interval = setInterval(updateStatuses, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Filter processes based on search
+  const filteredProcesses = useMemo(() => {
+    if (!searchQuery) return ALL_PROCESSES;
+    const query = searchQuery.toLowerCase();
+    return ALL_PROCESSES.filter(p =>
+      p.title.toLowerCase().includes(query) ||
+      p.keywords.some(k => k.includes(query))
+    );
+  }, [searchQuery]);
+
+  // Handle node click for dependency mapping
+  const handleNodeClick = useCallback((nodeId: string) => {
+    setSelectedNode(prev => prev === nodeId ? null : nodeId);
   }, []);
 
   // Bot definitions
@@ -389,65 +969,84 @@ export default function SystemProcessesPage() {
       case 'overview':
         return (
           <div>
-            <h2 className="text-2xl font-bold text-white mb-4">AlphaGEX System Overview</h2>
-            <p className="text-gray-400 mb-6">
+            <h2 className={`text-2xl font-bold mb-4 ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
+              AlphaGEX System Overview
+            </h2>
+            <p className={`mb-6 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
               Complete visualization of all processes, decision trees, and data flows in the AlphaGEX trading system.
             </p>
 
-            <ProcessMetrics metrics={[
-              { label: 'Active Processes', value: 47, trend: 'neutral' },
-              { label: 'Bots Running', value: Object.values(botStatuses).filter(s => s === 'running').length, trend: 'up' },
-              { label: 'Data Sources', value: 6, trend: 'neutral' },
-              { label: 'Decision Paths', value: '61+', trend: 'neutral' },
-            ]} />
+            <ProcessMetrics
+              theme={theme}
+              metrics={[
+                { label: 'Active Processes', value: Object.values(processStatuses).filter(s => s === 'active').length, trend: 'neutral', live: true },
+                { label: 'Bots Running', value: Object.values(botStatuses).filter(s => s === 'running').length, trend: 'up', live: true },
+                { label: 'Data Sources', value: 6, trend: 'neutral' },
+                { label: 'Decision Paths', value: '61+', trend: 'neutral' },
+              ]}
+            />
 
-            <Legend />
+            <Legend theme={theme} />
 
             {/* Master System Flow */}
             <FlowChart
+              id="master-flow"
               title="Master System Flow"
               description="High-level overview of how data flows through AlphaGEX from input to trade execution"
+              theme={theme}
+              showAnimations={showAnimations}
+              selectedNode={selectedNode}
+              onNodeClick={handleNodeClick}
               nodes={[
-                { id: '1', label: 'Market Data APIs', type: 'data' },
-                { id: '2', label: 'Data Layer', type: 'data' },
-                { id: '3', label: 'Analysis Engine', type: 'process' },
-                { id: '4', label: 'AI/ML Systems', type: 'ai' },
-                { id: '5', label: 'Decision Engine', type: 'decision' },
-                { id: '6', label: 'Risk Validation', type: 'risk' },
-                { id: '7', label: 'Trade Execution', type: 'output' },
+                { id: 'api', label: 'Market Data APIs', type: 'data' },
+                { id: 'data-layer', label: 'Data Layer', type: 'data', dependencies: ['api'] },
+                { id: 'analysis', label: 'Analysis Engine', type: 'process', dependencies: ['data-layer'] },
+                { id: 'ai-ml', label: 'AI/ML Systems', type: 'ai', dependencies: ['analysis'] },
+                { id: 'decision', label: 'Decision Engine', type: 'decision', dependencies: ['ai-ml'] },
+                { id: 'risk', label: 'Risk Validation', type: 'risk', dependencies: ['decision'] },
+                { id: 'execute', label: 'Trade Execution', type: 'output', dependencies: ['risk'] },
               ]}
             />
 
             {/* Trading Loop */}
             <FlowChart
+              id="trading-loop"
               title="Autonomous Trading Loop"
               description="The continuous cycle of analysis, decision-making, and execution"
               codeRef="backend/trading/trading_loop.py"
+              theme={theme}
+              showAnimations={showAnimations}
+              selectedNode={selectedNode}
+              onNodeClick={handleNodeClick}
               nodes={[
-                { id: '1', label: 'Market Open Check', type: 'decision' },
-                { id: '2', label: 'Fetch Market Data', type: 'data' },
-                { id: '3', label: 'Calculate GEX/Greeks', type: 'process' },
-                { id: '4', label: 'Classify Regime', type: 'ai' },
-                { id: '5', label: 'Select Strategy', type: 'decision' },
-                { id: '6', label: 'Size Position', type: 'process' },
-                { id: '7', label: 'Validate Risk', type: 'risk' },
-                { id: '8', label: 'Execute Trade', type: 'output' },
+                { id: 't1', label: 'Market Open Check', type: 'decision' },
+                { id: 't2', label: 'Fetch Market Data', type: 'data', dependencies: ['t1'] },
+                { id: 't3', label: 'Calculate GEX/Greeks', type: 'process', dependencies: ['t2'] },
+                { id: 't4', label: 'Classify Regime', type: 'ai', dependencies: ['t3'] },
+                { id: 't5', label: 'Select Strategy', type: 'decision', dependencies: ['t4'] },
+                { id: 't6', label: 'Size Position', type: 'process', dependencies: ['t5'] },
+                { id: 't7', label: 'Validate Risk', type: 'risk', dependencies: ['t6'] },
+                { id: 't8', label: 'Execute Trade', type: 'output', dependencies: ['t7'] },
               ]}
             />
 
             {/* Category Overview Cards */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mt-6">
-              {TABS.slice(1).map(tab => (
+              {TABS.slice(1, -1).map(tab => (
                 <div
                   key={tab.id}
-                  className="bg-gray-800/50 rounded-lg border border-gray-700 p-4 cursor-pointer hover:border-blue-500 transition-colors"
+                  className={`rounded-lg border p-4 cursor-pointer transition-colors ${
+                    theme === 'dark'
+                      ? 'bg-gray-800/50 border-gray-700 hover:border-blue-500'
+                      : 'bg-white border-gray-300 hover:border-blue-500'
+                  }`}
                   onClick={() => setActiveTab(tab.id)}
                 >
                   <div className="flex items-center gap-3 mb-2">
                     <span className="text-2xl">{tab.icon}</span>
-                    <h3 className="text-white font-semibold">{tab.label}</h3>
+                    <h3 className={`font-semibold ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>{tab.label}</h3>
                   </div>
-                  <p className="text-gray-400 text-sm">
+                  <p className={`text-sm ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
                     Click to explore {tab.label.toLowerCase()} processes and flows
                   </p>
                 </div>
@@ -459,35 +1058,41 @@ export default function SystemProcessesPage() {
       case 'data':
         return (
           <div>
-            <h2 className="text-2xl font-bold text-white mb-4">Data Layer</h2>
-            <p className="text-gray-400 mb-6">
+            <h2 className={`text-2xl font-bold mb-4 ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>Data Layer</h2>
+            <p className={`mb-6 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
               All data pipelines, sources, caching strategies, and error handling flows.
             </p>
 
-            <Legend />
+            <Legend theme={theme} />
 
-            {/* Data Pipeline Flow */}
             <FlowChart
+              id="data-pipeline"
               title="Data Pipeline Flow"
               description="How market data flows from external APIs through processing to the database"
               codeRef="backend/data/unified_data_provider.py"
+              searchQuery={searchQuery}
+              theme={theme}
+              showAnimations={showAnimations}
+              selectedNode={selectedNode}
+              onNodeClick={handleNodeClick}
               nodes={[
-                { id: '1', label: 'Tradier API', type: 'data' },
-                { id: '2', label: 'Polygon API', type: 'data' },
-                { id: '3', label: 'Trading Volatility', type: 'data' },
-                { id: '4', label: 'FRED API', type: 'data' },
-                { id: '5', label: 'Yahoo Finance', type: 'data' },
-                { id: '6', label: 'Unified Provider', type: 'process' },
-                { id: '7', label: 'Cache Layer', type: 'process' },
-                { id: '8', label: 'Database', type: 'output' },
+                { id: 'd1', label: 'Tradier API', type: 'data' },
+                { id: 'd2', label: 'Polygon API', type: 'data' },
+                { id: 'd3', label: 'Trading Volatility', type: 'data' },
+                { id: 'd4', label: 'FRED API', type: 'data' },
+                { id: 'd5', label: 'Yahoo Finance', type: 'data' },
+                { id: 'd6', label: 'Unified Provider', type: 'process', dependencies: ['d1', 'd2', 'd3', 'd4', 'd5'] },
+                { id: 'd7', label: 'Cache Layer', type: 'process', dependencies: ['d6'] },
+                { id: 'd8', label: 'Database', type: 'output', dependencies: ['d7'] },
               ]}
             />
 
-            {/* Data Priority Hierarchy */}
             <DecisionTree
               title="Data Priority & Fallback Hierarchy"
               description="When a data source fails, the system falls back to alternatives"
               codeRef="backend/data/data_priority.py"
+              theme={theme}
+              searchQuery={searchQuery}
               tree={[
                 { condition: 'Tradier Available?', yes: 'Use Tradier (Primary)', no: 'Try Polygon', yesType: 'data', noType: 'decision' },
                 { condition: 'Polygon Available?', yes: 'Use Polygon (Secondary)', no: 'Try Yahoo', yesType: 'data', noType: 'decision' },
@@ -495,335 +1100,51 @@ export default function SystemProcessesPage() {
               ]}
             />
 
-            {/* Caching Strategies */}
             <FlowChart
+              id="caching"
               title="Caching Strategies"
               description="Multi-tier caching for performance optimization"
               codeRef="backend/data/cache_manager.py"
+              searchQuery={searchQuery}
+              theme={theme}
+              showAnimations={showAnimations}
               nodes={[
-                { id: '1', label: 'Request', type: 'data' },
-                { id: '2', label: 'In-Memory Cache', type: 'process' },
-                { id: '3', label: 'Database Cache', type: 'process' },
-                { id: '4', label: 'API Call', type: 'data' },
-                { id: '5', label: 'Update Caches', type: 'process' },
-                { id: '6', label: 'Return Data', type: 'output' },
+                { id: 'c1', label: 'Request', type: 'data' },
+                { id: 'c2', label: 'In-Memory Cache', type: 'process' },
+                { id: 'c3', label: 'Database Cache', type: 'process' },
+                { id: 'c4', label: 'API Call', type: 'data' },
+                { id: 'c5', label: 'Update Caches', type: 'process' },
+                { id: 'c6', label: 'Return Data', type: 'output' },
               ]}
             />
 
-            {/* Rate Limiting */}
             <DecisionTree
               title="Rate Limiting & Throttling"
               description="Prevents API rate limit violations"
               codeRef="backend/data/rate_limiter.py"
+              theme={theme}
+              searchQuery={searchQuery}
               tree={[
                 { condition: 'Under Rate Limit?', yes: 'Make API Call', no: 'Queue Request', yesType: 'output', noType: 'process' },
                 { condition: 'Queue Full?', yes: 'Return Cached', no: 'Wait & Retry', yesType: 'data', noType: 'process' },
               ]}
             />
 
-            {/* Error Handling */}
             <FlowChart
+              id="error-handling"
               title="Error Handling & Recovery"
               description="Graceful degradation when data sources fail"
               codeRef="backend/data/error_handler.py"
+              searchQuery={searchQuery}
+              theme={theme}
+              showAnimations={showAnimations}
               nodes={[
-                { id: '1', label: 'API Error', type: 'risk' },
-                { id: '2', label: 'Retry (3x)', type: 'process' },
-                { id: '3', label: 'Exponential Backoff', type: 'process' },
-                { id: '4', label: 'Fallback Source', type: 'decision' },
-                { id: '5', label: 'Use Stale Cache', type: 'data' },
-                { id: '6', label: 'Alert & Log', type: 'output' },
-              ]}
-            />
-
-            {/* Data Transparency */}
-            <FlowChart
-              title="Data Transparency & Audit Trail"
-              description="Complete logging of all data operations for debugging and compliance"
-              codeRef="backend/data/audit_logger.py"
-              nodes={[
-                { id: '1', label: 'Data Request', type: 'data' },
-                { id: '2', label: 'Log Request', type: 'process' },
-                { id: '3', label: 'Process Data', type: 'process' },
-                { id: '4', label: 'Log Response', type: 'process' },
-                { id: '5', label: 'Store Audit', type: 'output' },
-              ]}
-            />
-          </div>
-        );
-
-      case 'decisions':
-        return (
-          <div>
-            <h2 className="text-2xl font-bold text-white mb-4">Decision Engines</h2>
-            <p className="text-gray-400 mb-6">
-              All decision-making logic including market regime classification, strategy selection, and position sizing.
-            </p>
-
-            <Legend />
-
-            {/* Market Regime Classification */}
-            <div className="bg-gray-800/50 rounded-lg border border-gray-700 p-4 mb-4">
-              <h3 className="text-lg font-semibold text-white mb-4">Market Regime Classification (5 MM States)</h3>
-              <p className="text-gray-400 text-sm mb-4">Based on GEX levels and market maker positioning</p>
-              <p className="text-xs text-gray-500 font-mono mb-4">backend/analysis/regime_classifier.py</p>
-
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                <div className="bg-red-900/30 border border-red-500 rounded-lg p-3 text-center">
-                  <h4 className="text-red-400 font-bold">PANICKING</h4>
-                  <p className="text-gray-300 text-sm">GEX &lt; -$3B</p>
-                  <p className="text-green-400 text-xs mt-2">→ Buy ATM Calls</p>
-                </div>
-                <div className="bg-orange-900/30 border border-orange-500 rounded-lg p-3 text-center">
-                  <h4 className="text-orange-400 font-bold">TRAPPED</h4>
-                  <p className="text-gray-300 text-sm">-$3B to $1B</p>
-                  <p className="text-green-400 text-xs mt-2">→ Buy Calls on Dips</p>
-                </div>
-                <div className="bg-yellow-900/30 border border-yellow-500 rounded-lg p-3 text-center">
-                  <h4 className="text-yellow-400 font-bold">HUNTING</h4>
-                  <p className="text-gray-300 text-sm">Directional Bias</p>
-                  <p className="text-green-400 text-xs mt-2">→ Follow Momentum</p>
-                </div>
-                <div className="bg-blue-900/30 border border-blue-500 rounded-lg p-3 text-center">
-                  <h4 className="text-blue-400 font-bold">DEFENDING</h4>
-                  <p className="text-gray-300 text-sm">GEX &gt; $1B</p>
-                  <p className="text-green-400 text-xs mt-2">→ Sell Premium</p>
-                </div>
-                <div className="bg-gray-700/30 border border-gray-500 rounded-lg p-3 text-center">
-                  <h4 className="text-gray-400 font-bold">NEUTRAL</h4>
-                  <p className="text-gray-300 text-sm">No Clear Signal</p>
-                  <p className="text-yellow-400 text-xs mt-2">→ Stay Flat</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Strategy Selection Matrix */}
-            <div className="bg-gray-800/50 rounded-lg border border-gray-700 p-4 mb-4">
-              <h3 className="text-lg font-semibold text-white mb-4">Strategy Selection Matrix (61+ Decision Paths)</h3>
-              <p className="text-gray-400 text-sm mb-4">Multi-factor decision tree for strategy selection</p>
-              <p className="text-xs text-gray-500 font-mono mb-4">backend/trading/strategy_selector.py</p>
-
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <div className="px-3 py-1 rounded bg-blue-900/30 border border-blue-500 text-blue-400 text-sm">Regime</div>
-                  <span className="text-gray-500">→</span>
-                  <div className="px-3 py-1 rounded bg-purple-900/30 border border-purple-500 text-purple-400 text-sm">IV Rank</div>
-                  <span className="text-gray-500">→</span>
-                  <div className="px-3 py-1 rounded bg-green-900/30 border border-green-500 text-green-400 text-sm">Trend</div>
-                  <span className="text-gray-500">→</span>
-                  <div className="px-3 py-1 rounded bg-yellow-900/30 border border-yellow-500 text-yellow-400 text-sm">VIX Level</div>
-                  <span className="text-gray-500">→</span>
-                  <div className="px-3 py-1 rounded bg-cyan-900/30 border border-cyan-500 text-cyan-400 text-sm">Strategy</div>
-                </div>
-
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-4">
-                  <div className="bg-gray-700/50 rounded p-2 text-center">
-                    <p className="text-white text-sm font-medium">Iron Condor</p>
-                    <p className="text-gray-400 text-xs">High IV + Neutral</p>
-                  </div>
-                  <div className="bg-gray-700/50 rounded p-2 text-center">
-                    <p className="text-white text-sm font-medium">Bull Put Spread</p>
-                    <p className="text-gray-400 text-xs">Bullish + Support</p>
-                  </div>
-                  <div className="bg-gray-700/50 rounded p-2 text-center">
-                    <p className="text-white text-sm font-medium">Bear Call Spread</p>
-                    <p className="text-gray-400 text-xs">Bearish + Resistance</p>
-                  </div>
-                  <div className="bg-gray-700/50 rounded p-2 text-center">
-                    <p className="text-white text-sm font-medium">Long Calls</p>
-                    <p className="text-gray-400 text-xs">Strong Bull + Low IV</p>
-                  </div>
-                  <div className="bg-gray-700/50 rounded p-2 text-center">
-                    <p className="text-white text-sm font-medium">Long Puts</p>
-                    <p className="text-gray-400 text-xs">Strong Bear + Low IV</p>
-                  </div>
-                  <div className="bg-gray-700/50 rounded p-2 text-center">
-                    <p className="text-white text-sm font-medium">SPX Wheel</p>
-                    <p className="text-gray-400 text-xs">Range-bound + High IV</p>
-                  </div>
-                  <div className="bg-gray-700/50 rounded p-2 text-center">
-                    <p className="text-white text-sm font-medium">Straddle</p>
-                    <p className="text-gray-400 text-xs">High Vol Expected</p>
-                  </div>
-                  <div className="bg-gray-700/50 rounded p-2 text-center">
-                    <p className="text-white text-sm font-medium">No Trade</p>
-                    <p className="text-gray-400 text-xs">Uncertain Conditions</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Position Sizing (Kelly Criterion) */}
-            <FlowChart
-              title="Position Sizing (Kelly Criterion)"
-              description="Optimal position sizing based on edge and risk tolerance"
-              codeRef="backend/trading/position_sizer.py"
-              nodes={[
-                { id: '1', label: 'Win Rate', type: 'data' },
-                { id: '2', label: 'Avg Win/Loss', type: 'data' },
-                { id: '3', label: 'Kelly Formula', type: 'process' },
-                { id: '4', label: 'VIX Adjustment', type: 'decision' },
-                { id: '5', label: 'Account Cap', type: 'risk' },
-                { id: '6', label: 'Max Contracts', type: 'risk' },
-                { id: '7', label: 'Final Size', type: 'output' },
-              ]}
-            />
-
-            {/* Exit Condition Checker */}
-            <DecisionTree
-              title="Exit Condition Checker"
-              description="When to close positions"
-              codeRef="backend/trading/exit_manager.py"
-              tree={[
-                { condition: 'Profit > 50%?', yes: 'CLOSE (Take Profit)', no: 'Check Stop', yesType: 'output', noType: 'decision' },
-                { condition: 'Loss > 30%?', yes: 'CLOSE (Stop Loss)', no: 'Check DTE', yesType: 'risk', noType: 'decision' },
-                { condition: 'DTE = 1?', yes: 'CLOSE (Expiry Risk)', no: 'Check Regime', yesType: 'risk', noType: 'decision' },
-                { condition: 'Regime Flipped?', yes: 'Re-evaluate Position', no: 'HOLD', yesType: 'ai', noType: 'output' },
-              ]}
-            />
-
-            {/* Roll vs Close Decision */}
-            <DecisionTree
-              title="Roll vs Close Decision Tree"
-              description="Whether to roll a position or close it outright"
-              codeRef="backend/trading/roll_manager.py"
-              tree={[
-                { condition: 'Position Profitable?', yes: 'Consider Rolling', no: 'Evaluate Close', yesType: 'decision', noType: 'decision' },
-                { condition: 'Good Premium Available?', yes: 'ROLL to Next Expiry', no: 'CLOSE Position', yesType: 'output', noType: 'output' },
-                { condition: 'Regime Still Valid?', yes: 'ROLL with Adjustment', no: 'CLOSE & Reassess', yesType: 'output', noType: 'risk' },
-              ]}
-            />
-
-            {/* VIX Gating Logic */}
-            <div className="bg-gray-800/50 rounded-lg border border-gray-700 p-4 mb-4">
-              <h3 className="text-lg font-semibold text-white mb-4">VIX Gating Logic</h3>
-              <p className="text-gray-400 text-sm mb-4">VIX-based trading restrictions and adjustments</p>
-              <p className="text-xs text-gray-500 font-mono mb-4">backend/trading/vix_gate.py</p>
-
-              <div className="flex items-center justify-between gap-4 flex-wrap">
-                <div className="bg-green-900/30 border border-green-500 rounded-lg p-3 text-center flex-1 min-w-[150px]">
-                  <p className="text-green-400 font-bold">VIX 12-20</p>
-                  <p className="text-gray-300 text-sm">Normal Trading</p>
-                  <p className="text-gray-400 text-xs">Full size allowed</p>
-                </div>
-                <div className="bg-yellow-900/30 border border-yellow-500 rounded-lg p-3 text-center flex-1 min-w-[150px]">
-                  <p className="text-yellow-400 font-bold">VIX 20-25</p>
-                  <p className="text-gray-300 text-sm">Cautious Trading</p>
-                  <p className="text-gray-400 text-xs">Reduce size 25%</p>
-                </div>
-                <div className="bg-orange-900/30 border border-orange-500 rounded-lg p-3 text-center flex-1 min-w-[150px]">
-                  <p className="text-orange-400 font-bold">VIX 25-35</p>
-                  <p className="text-gray-300 text-sm">Elevated Risk</p>
-                  <p className="text-gray-400 text-xs">Reduce size 50%</p>
-                </div>
-                <div className="bg-red-900/30 border border-red-500 rounded-lg p-3 text-center flex-1 min-w-[150px]">
-                  <p className="text-red-400 font-bold">VIX &gt; 35</p>
-                  <p className="text-gray-300 text-sm">High Volatility</p>
-                  <p className="text-gray-400 text-xs">No new trades</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Strike Selection Algorithm */}
-            <FlowChart
-              title="Strike Selection Algorithm"
-              description="How optimal strikes are selected for options trades"
-              codeRef="backend/trading/strike_selector.py"
-              nodes={[
-                { id: '1', label: 'Current Price', type: 'data' },
-                { id: '2', label: 'Delta Target', type: 'process' },
-                { id: '3', label: 'Liquidity Check', type: 'decision' },
-                { id: '4', label: 'Spread Width', type: 'process' },
-                { id: '5', label: 'Premium Calc', type: 'process' },
-                { id: '6', label: 'Risk/Reward', type: 'risk' },
-                { id: '7', label: 'Final Strikes', type: 'output' },
-              ]}
-            />
-          </div>
-        );
-
-      case 'execution':
-        return (
-          <div>
-            <h2 className="text-2xl font-bold text-white mb-4">Execution Layer</h2>
-            <p className="text-gray-400 mb-6">
-              Trade entry, order management, and position tracking flows.
-            </p>
-
-            <Legend />
-
-            {/* Trade Entry Pipeline */}
-            <FlowChart
-              title="Trade Entry Pipeline (10 Steps)"
-              description="Complete flow from trade signal to executed order"
-              codeRef="backend/trading/trade_executor.py"
-              nodes={[
-                { id: '1', label: '1. Signal Generated', type: 'ai' },
-                { id: '2', label: '2. Validate Setup', type: 'decision' },
-                { id: '3', label: '3. Check Greeks', type: 'process' },
-                { id: '4', label: '4. Select Strikes', type: 'process' },
-                { id: '5', label: '5. Check Liquidity', type: 'decision' },
-                { id: '6', label: '6. Size Position', type: 'process' },
-                { id: '7', label: '7. Psychology Check', type: 'ai' },
-                { id: '8', label: '8. Risk Validation', type: 'risk' },
-                { id: '9', label: '9. Submit Order', type: 'output' },
-                { id: '10', label: '10. Log & Monitor', type: 'output' },
-              ]}
-            />
-
-            {/* Multi-Leg Spread Execution */}
-            <FlowChart
-              title="Multi-Leg Spread Execution"
-              description="How complex multi-leg orders are built and executed"
-              codeRef="backend/trading/spread_executor.py"
-              nodes={[
-                { id: '1', label: 'Strategy Type', type: 'decision' },
-                { id: '2', label: 'Build Leg 1', type: 'process' },
-                { id: '3', label: 'Build Leg 2', type: 'process' },
-                { id: '4', label: 'Build Leg 3+', type: 'process' },
-                { id: '5', label: 'Calculate Net', type: 'process' },
-                { id: '6', label: 'Submit Spread', type: 'output' },
-              ]}
-            />
-
-            {/* Paper vs Live Mode */}
-            <DecisionTree
-              title="Paper vs Live Mode Switching"
-              description="Controls whether trades are simulated or real"
-              codeRef="backend/trading/mode_manager.py"
-              tree={[
-                { condition: 'Paper Mode Enabled?', yes: 'Simulate Trade', no: 'Check Account', yesType: 'process', noType: 'decision' },
-                { condition: 'Account Has Funds?', yes: 'Execute Live Trade', no: 'Block & Alert', yesType: 'output', noType: 'risk' },
-              ]}
-            />
-
-            {/* Order Management */}
-            <FlowChart
-              title="Order Management & Fills"
-              description="Order lifecycle from submission to fill"
-              codeRef="backend/trading/order_manager.py"
-              nodes={[
-                { id: '1', label: 'Create Order', type: 'process' },
-                { id: '2', label: 'Submit to Broker', type: 'output' },
-                { id: '3', label: 'Monitor Status', type: 'process' },
-                { id: '4', label: 'Handle Partial', type: 'decision' },
-                { id: '5', label: 'Confirm Fill', type: 'output' },
-                { id: '6', label: 'Update Position', type: 'data' },
-              ]}
-            />
-
-            {/* Position Tracking */}
-            <FlowChart
-              title="Position Tracking & Cost Basis"
-              description="Maintaining accurate position and P&L data"
-              codeRef="backend/trading/position_tracker.py"
-              nodes={[
-                { id: '1', label: 'Trade Executed', type: 'data' },
-                { id: '2', label: 'Update Positions', type: 'process' },
-                { id: '3', label: 'Calc Cost Basis', type: 'process' },
-                { id: '4', label: 'Track Greeks', type: 'process' },
-                { id: '5', label: 'Calc P&L', type: 'process' },
-                { id: '6', label: 'Store History', type: 'output' },
+                { id: 'e1', label: 'API Error', type: 'risk' },
+                { id: 'e2', label: 'Retry (3x)', type: 'process' },
+                { id: 'e3', label: 'Exponential Backoff', type: 'process' },
+                { id: 'e4', label: 'Fallback Source', type: 'decision' },
+                { id: 'e5', label: 'Use Stale Cache', type: 'data' },
+                { id: 'e6', label: 'Alert & Log', type: 'output' },
               ]}
             />
           </div>
@@ -832,684 +1153,166 @@ export default function SystemProcessesPage() {
       case 'bots':
         return (
           <div>
-            <h2 className="text-2xl font-bold text-white mb-4">Autonomous Bots</h2>
-            <p className="text-gray-400 mb-6">
+            <h2 className={`text-2xl font-bold mb-4 ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
+              Autonomous Bots
+            </h2>
+            <p className={`mb-6 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
               All autonomous trading and monitoring bots in the AlphaGEX system.
             </p>
 
-            <ProcessMetrics metrics={[
-              { label: 'Total Bots', value: 9, trend: 'neutral' },
-              { label: 'Running', value: Object.values(botStatuses).filter(s => s === 'running').length, trend: 'up' },
-              { label: 'Stopped', value: Object.values(botStatuses).filter(s => s === 'stopped').length, trend: 'neutral' },
-              { label: 'Errors', value: Object.values(botStatuses).filter(s => s === 'error').length, trend: 'down' },
-            ]} />
+            <ProcessMetrics
+              theme={theme}
+              metrics={[
+                { label: 'Total Bots', value: 9, trend: 'neutral' },
+                { label: 'Running', value: Object.values(botStatuses).filter(s => s === 'running').length, trend: 'up', live: true },
+                { label: 'Stopped', value: Object.values(botStatuses).filter(s => s === 'stopped').length, trend: 'neutral' },
+                { label: 'Errors', value: Object.values(botStatuses).filter(s => s === 'error').length, trend: 'down' },
+              ]}
+            />
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {bots.map(bot => (
-                <BotCard key={bot.name} bot={bot} />
+                <BotCard key={bot.name} bot={bot} theme={theme} />
               ))}
             </div>
 
-            {/* Bot Orchestration Flow */}
             <div className="mt-6">
               <FlowChart
+                id="bot-orchestration"
                 title="Bot Orchestration Flow"
                 description="How bots coordinate and communicate"
                 codeRef="backend/bots/orchestrator.py"
+                theme={theme}
+                showAnimations={showAnimations}
                 nodes={[
-                  { id: '1', label: 'Scheduler', type: 'process' },
-                  { id: '2', label: 'Health Check', type: 'decision' },
-                  { id: '3', label: 'Start Bots', type: 'bot' },
-                  { id: '4', label: 'Monitor Heartbeats', type: 'process' },
-                  { id: '5', label: 'Handle Failures', type: 'risk' },
-                  { id: '6', label: 'Log Activity', type: 'output' },
+                  { id: 'b1', label: 'Scheduler', type: 'process' },
+                  { id: 'b2', label: 'Health Check', type: 'decision' },
+                  { id: 'b3', label: 'Start Bots', type: 'bot' },
+                  { id: 'b4', label: 'Monitor Heartbeats', type: 'process' },
+                  { id: 'b5', label: 'Handle Failures', type: 'risk' },
+                  { id: 'b6', label: 'Log Activity', type: 'output' },
                 ]}
               />
             </div>
           </div>
         );
 
-      case 'ai':
-        return (
-          <div>
-            <h2 className="text-2xl font-bold text-white mb-4">AI/ML Systems</h2>
-            <p className="text-gray-400 mb-6">
-              Artificial intelligence and machine learning systems powering AlphaGEX decisions.
-            </p>
-
-            <Legend />
-
-            {/* Claude AI Intelligence */}
-            <FlowChart
-              title="Claude AI Intelligence (GEXIS)"
-              description="How Claude AI analyzes market conditions and provides insights"
-              codeRef="backend/ai/claude_analyzer.py"
-              nodes={[
-                { id: '1', label: 'Market Data', type: 'data' },
-                { id: '2', label: 'Build Prompt', type: 'process' },
-                { id: '3', label: 'Claude API', type: 'ai' },
-                { id: '4', label: 'Parse Response', type: 'process' },
-                { id: '5', label: 'Extract Signals', type: 'ai' },
-                { id: '6', label: 'Confidence Score', type: 'output' },
-              ]}
-            />
-
-            {/* ML Pattern Learning */}
-            <FlowChart
-              title="ML Pattern Learning (RandomForest)"
-              description="Machine learning model for pattern recognition"
-              codeRef="backend/ml/pattern_learner.py"
-              nodes={[
-                { id: '1', label: 'Historical Data', type: 'data' },
-                { id: '2', label: 'Feature Extraction', type: 'process' },
-                { id: '3', label: 'Train Model', type: 'ai' },
-                { id: '4', label: 'Validate', type: 'decision' },
-                { id: '5', label: 'Deploy Model', type: 'output' },
-                { id: '6', label: 'Real-time Predict', type: 'ai' },
-              ]}
-            />
-
-            {/* Psychology Trap Detector */}
-            <div className="bg-gray-800/50 rounded-lg border border-gray-700 p-4 mb-4">
-              <h3 className="text-lg font-semibold text-white mb-4">Psychology Trap Detector (15 Trap Types)</h3>
-              <p className="text-gray-400 text-sm mb-4">AI-powered detection of psychological trading traps</p>
-              <p className="text-xs text-gray-500 font-mono mb-4">backend/ai/psychology_detector.py</p>
-
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2">
-                {[
-                  'Revenge Trading', 'FOMO', 'Overconfidence', 'Loss Aversion', 'Anchoring',
-                  'Confirmation Bias', 'Gambler\'s Fallacy', 'Recency Bias', 'Herd Mentality', 'Sunk Cost',
-                  'Overtrading', 'Analysis Paralysis', 'Hope Trading', 'Fear of Missing Out', 'Tilt'
-                ].map(trap => (
-                  <div key={trap} className="bg-red-900/20 border border-red-800 rounded p-2 text-center">
-                    <p className="text-red-400 text-xs">{trap}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Trading RAG System */}
-            <FlowChart
-              title="Trading RAG System"
-              description="Retrieval-Augmented Generation for trading knowledge"
-              codeRef="backend/ai/trading_rag.py"
-              nodes={[
-                { id: '1', label: 'Query', type: 'data' },
-                { id: '2', label: 'Embed Query', type: 'process' },
-                { id: '3', label: 'Vector Search', type: 'ai' },
-                { id: '4', label: 'Retrieve Context', type: 'data' },
-                { id: '5', label: 'Augment Prompt', type: 'process' },
-                { id: '6', label: 'Generate Response', type: 'ai' },
-              ]}
-            />
-
-            {/* AI Recommendations Engine */}
-            <FlowChart
-              title="AI Recommendations Engine"
-              description="Generates actionable trading recommendations"
-              codeRef="backend/ai/recommendation_engine.py"
-              nodes={[
-                { id: '1', label: 'Current State', type: 'data' },
-                { id: '2', label: 'ML Predictions', type: 'ai' },
-                { id: '3', label: 'Claude Analysis', type: 'ai' },
-                { id: '4', label: 'Combine Signals', type: 'process' },
-                { id: '5', label: 'Rank Options', type: 'decision' },
-                { id: '6', label: 'Top Recommendations', type: 'output' },
-              ]}
-            />
-          </div>
-        );
-
-      case 'analysis':
-        return (
-          <div>
-            <h2 className="text-2xl font-bold text-white mb-4">Analysis Systems</h2>
-            <p className="text-gray-400 mb-6">
-              Technical analysis, Greeks calculation, and market scanning systems.
-            </p>
-
-            <Legend />
-
-            {/* Greeks Calculator */}
-            <FlowChart
-              title="Greeks Calculator"
-              description="Real-time options Greeks calculation"
-              codeRef="backend/analysis/greeks_calculator.py"
-              nodes={[
-                { id: '1', label: 'Option Data', type: 'data' },
-                { id: '2', label: 'Spot Price', type: 'data' },
-                { id: '3', label: 'Black-Scholes', type: 'process' },
-                { id: '4', label: 'Delta/Gamma', type: 'output' },
-                { id: '5', label: 'Theta/Vega', type: 'output' },
-                { id: '6', label: 'Portfolio Greeks', type: 'output' },
-              ]}
-            />
-
-            {/* Probability Analysis */}
-            <FlowChart
-              title="Probability Analysis (Monte Carlo)"
-              description="Statistical probability calculations for trade outcomes"
-              codeRef="backend/analysis/probability_engine.py"
-              nodes={[
-                { id: '1', label: 'Current Price', type: 'data' },
-                { id: '2', label: 'Volatility', type: 'data' },
-                { id: '3', label: 'Run Simulations', type: 'process' },
-                { id: '4', label: '10,000 Paths', type: 'process' },
-                { id: '5', label: 'Calc Probabilities', type: 'process' },
-                { id: '6', label: 'POP/POL', type: 'output' },
-              ]}
-            />
-
-            {/* Volatility Surface Analysis */}
-            <FlowChart
-              title="Volatility Surface Analysis"
-              description="IV, Skew, and Term Structure analysis"
-              codeRef="backend/analysis/volatility_surface.py"
-              nodes={[
-                { id: '1', label: 'Options Chain', type: 'data' },
-                { id: '2', label: 'Extract IVs', type: 'process' },
-                { id: '3', label: 'Build Surface', type: 'process' },
-                { id: '4', label: 'Calc Skew', type: 'process' },
-                { id: '5', label: 'Term Structure', type: 'process' },
-                { id: '6', label: 'Anomaly Detection', type: 'ai' },
-              ]}
-            />
-
-            {/* GEX Analyzer */}
-            <FlowChart
-              title="GEX Analyzer & Profiler"
-              description="Gamma Exposure analysis and key level detection"
-              codeRef="backend/analysis/gex_analyzer.py"
-              nodes={[
-                { id: '1', label: 'Open Interest', type: 'data' },
-                { id: '2', label: 'Calc GEX/Strike', type: 'process' },
-                { id: '3', label: 'Sum Total GEX', type: 'process' },
-                { id: '4', label: 'Find Flip Point', type: 'decision' },
-                { id: '5', label: 'Key Levels', type: 'output' },
-                { id: '6', label: 'MM Positioning', type: 'output' },
-              ]}
-            />
-
-            {/* Multi-Symbol Scanner */}
-            <FlowChart
-              title="Multi-Symbol Scanner"
-              description="Scans multiple symbols for trading opportunities"
-              codeRef="backend/analysis/multi_scanner.py"
-              nodes={[
-                { id: '1', label: 'Symbol List', type: 'data' },
-                { id: '2', label: 'Fetch All Data', type: 'data' },
-                { id: '3', label: 'Apply Filters', type: 'decision' },
-                { id: '4', label: 'Score Setups', type: 'process' },
-                { id: '5', label: 'Rank Results', type: 'process' },
-                { id: '6', label: 'Top Opportunities', type: 'output' },
-              ]}
-            />
-
-            {/* Setups Detection Engine */}
-            <FlowChart
-              title="Setups Detection Engine"
-              description="Identifies specific trading setups and patterns"
-              codeRef="backend/analysis/setup_detector.py"
-              nodes={[
-                { id: '1', label: 'Price Action', type: 'data' },
-                { id: '2', label: 'Pattern Match', type: 'ai' },
-                { id: '3', label: 'Volume Confirm', type: 'decision' },
-                { id: '4', label: 'Greeks Confirm', type: 'decision' },
-                { id: '5', label: 'Setup Score', type: 'process' },
-                { id: '6', label: 'Alert/Trade', type: 'output' },
-              ]}
-            />
-          </div>
-        );
-
-      case 'strategy':
-        return (
-          <div>
-            <h2 className="text-2xl font-bold text-white mb-4">Strategy Systems</h2>
-            <p className="text-gray-400 mb-6">
-              Trading strategy implementations and optimization systems.
-            </p>
-
-            <Legend />
-
-            {/* Wheel Strategy Workflow */}
-            <div className="bg-gray-800/50 rounded-lg border border-gray-700 p-4 mb-4">
-              <h3 className="text-lg font-semibold text-white mb-4">Wheel Strategy Workflow (4 Phases)</h3>
-              <p className="text-gray-400 text-sm mb-4">Complete wheel strategy lifecycle</p>
-              <p className="text-xs text-gray-500 font-mono mb-4">backend/trading/wheel_strategy.py</p>
-
-              <div className="flex flex-wrap items-center justify-center gap-4">
-                <div className="bg-blue-900/30 border-2 border-blue-500 rounded-lg p-4 text-center min-w-[150px]">
-                  <p className="text-blue-400 font-bold">Phase 1</p>
-                  <p className="text-white">Sell CSP</p>
-                  <p className="text-gray-400 text-xs">Cash-Secured Put</p>
-                </div>
-                <span className="text-gray-500 text-2xl">→</span>
-                <div className="bg-yellow-900/30 border-2 border-yellow-500 rounded-lg p-4 text-center min-w-[150px]">
-                  <p className="text-yellow-400 font-bold">Phase 2</p>
-                  <p className="text-white">Assignment</p>
-                  <p className="text-gray-400 text-xs">Take Stock Delivery</p>
-                </div>
-                <span className="text-gray-500 text-2xl">→</span>
-                <div className="bg-green-900/30 border-2 border-green-500 rounded-lg p-4 text-center min-w-[150px]">
-                  <p className="text-green-400 font-bold">Phase 3</p>
-                  <p className="text-white">Sell CC</p>
-                  <p className="text-gray-400 text-xs">Covered Call</p>
-                </div>
-                <span className="text-gray-500 text-2xl">→</span>
-                <div className="bg-purple-900/30 border-2 border-purple-500 rounded-lg p-4 text-center min-w-[150px]">
-                  <p className="text-purple-400 font-bold">Phase 4</p>
-                  <p className="text-white">Resolution</p>
-                  <p className="text-gray-400 text-xs">Called Away / Roll</p>
-                </div>
-              </div>
-            </div>
-
-            {/* 0DTE Specific Logic */}
-            <FlowChart
-              title="0DTE Specific Logic"
-              description="Special handling for same-day expiration trades"
-              codeRef="backend/trading/zero_dte.py"
-              nodes={[
-                { id: '1', label: 'Market Open', type: 'decision' },
-                { id: '2', label: 'Check Gamma', type: 'process' },
-                { id: '3', label: 'Wide Strikes', type: 'process' },
-                { id: '4', label: 'Small Size', type: 'risk' },
-                { id: '5', label: 'Tight Stops', type: 'risk' },
-                { id: '6', label: 'Close by 3PM', type: 'output' },
-              ]}
-            />
-
-            {/* Backtesting Engines */}
-            <div className="bg-gray-800/50 rounded-lg border border-gray-700 p-4 mb-4">
-              <h3 className="text-lg font-semibold text-white mb-4">Backtesting Engines (6 Engines)</h3>
-              <p className="text-gray-400 text-sm mb-4">Different backtesting approaches for various strategies</p>
-              <p className="text-xs text-gray-500 font-mono mb-4">backend/backtesting/</p>
-
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                <div className="bg-gray-700/50 rounded p-3">
-                  <p className="text-white font-medium">Simple Backtest</p>
-                  <p className="text-gray-400 text-xs">Basic historical replay</p>
-                </div>
-                <div className="bg-gray-700/50 rounded p-3">
-                  <p className="text-white font-medium">Options Backtest</p>
-                  <p className="text-gray-400 text-xs">Greeks-aware simulation</p>
-                </div>
-                <div className="bg-gray-700/50 rounded p-3">
-                  <p className="text-white font-medium">Walk-Forward</p>
-                  <p className="text-gray-400 text-xs">Rolling optimization</p>
-                </div>
-                <div className="bg-gray-700/50 rounded p-3">
-                  <p className="text-white font-medium">Monte Carlo</p>
-                  <p className="text-gray-400 text-xs">Randomized paths</p>
-                </div>
-                <div className="bg-gray-700/50 rounded p-3">
-                  <p className="text-white font-medium">Regime-Based</p>
-                  <p className="text-gray-400 text-xs">Per-regime analysis</p>
-                </div>
-                <div className="bg-gray-700/50 rounded p-3">
-                  <p className="text-white font-medium">Live Replay</p>
-                  <p className="text-gray-400 text-xs">Tick-by-tick simulation</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Walk-Forward Optimization */}
-            <FlowChart
-              title="Walk-Forward Optimization"
-              description="Continuous strategy optimization loop"
-              codeRef="backend/backtesting/walk_forward.py"
-              nodes={[
-                { id: '1', label: 'Historical Window', type: 'data' },
-                { id: '2', label: 'Optimize Params', type: 'ai' },
-                { id: '3', label: 'Validate OOS', type: 'decision' },
-                { id: '4', label: 'Deploy Params', type: 'output' },
-                { id: '5', label: 'Trade Live', type: 'output' },
-                { id: '6', label: 'Collect Results', type: 'data' },
-                { id: '7', label: 'Slide Window', type: 'process' },
-              ]}
-            />
-          </div>
-        );
-
-      case 'operations':
-        return (
-          <div>
-            <h2 className="text-2xl font-bold text-white mb-4">Operational Systems</h2>
-            <p className="text-gray-400 mb-6">
-              Alerts, notifications, scheduling, logging, and database operations.
-            </p>
-
-            <Legend />
-
-            {/* Alert/Notification System */}
-            <FlowChart
-              title="Alert/Notification System"
-              description="Real-time alerts for price, GEX, and trading events"
-              codeRef="backend/notifications/alert_manager.py"
-              nodes={[
-                { id: '1', label: 'Event Trigger', type: 'data' },
-                { id: '2', label: 'Check Conditions', type: 'decision' },
-                { id: '3', label: 'Build Message', type: 'process' },
-                { id: '4', label: 'Select Channel', type: 'decision' },
-                { id: '5', label: 'Send Alert', type: 'output' },
-                { id: '6', label: 'Log Alert', type: 'output' },
-              ]}
-            />
-
-            {/* Push Notification Service */}
-            <FlowChart
-              title="Push Notification Service"
-              description="Mobile and web push notifications"
-              codeRef="backend/notifications/push_service.py"
-              nodes={[
-                { id: '1', label: 'Alert Created', type: 'data' },
-                { id: '2', label: 'Get Subscriptions', type: 'data' },
-                { id: '3', label: 'Format Payload', type: 'process' },
-                { id: '4', label: 'Send to Service', type: 'output' },
-                { id: '5', label: 'Track Delivery', type: 'process' },
-              ]}
-            />
-
-            {/* Background Job Queue */}
-            <FlowChart
-              title="Background Job Queue"
-              description="Async job processing system"
-              codeRef="backend/jobs/job_queue.py"
-              nodes={[
-                { id: '1', label: 'Create Job', type: 'process' },
-                { id: '2', label: 'Queue Job', type: 'data' },
-                { id: '3', label: 'Worker Picks Up', type: 'process' },
-                { id: '4', label: 'Execute Task', type: 'process' },
-                { id: '5', label: 'Handle Result', type: 'decision' },
-                { id: '6', label: 'Update Status', type: 'output' },
-              ]}
-            />
-
-            {/* Scheduler System */}
-            <div className="bg-gray-800/50 rounded-lg border border-gray-700 p-4 mb-4">
-              <h3 className="text-lg font-semibold text-white mb-4">Scheduler System</h3>
-              <p className="text-gray-400 text-sm mb-4">Scheduled job execution intervals</p>
-              <p className="text-xs text-gray-500 font-mono mb-4">backend/jobs/scheduler.py</p>
-
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                <div className="bg-purple-900/30 border border-purple-500 rounded p-3 text-center">
-                  <p className="text-purple-400 font-bold">Every 15 Min</p>
-                  <p className="text-gray-300 text-xs">GEX Updates</p>
-                </div>
-                <div className="bg-blue-900/30 border border-blue-500 rounded p-3 text-center">
-                  <p className="text-blue-400 font-bold">Hourly</p>
-                  <p className="text-gray-300 text-xs">Position Check</p>
-                </div>
-                <div className="bg-green-900/30 border border-green-500 rounded p-3 text-center">
-                  <p className="text-green-400 font-bold">Daily</p>
-                  <p className="text-gray-300 text-xs">EOD Summary</p>
-                </div>
-                <div className="bg-yellow-900/30 border border-yellow-500 rounded p-3 text-center">
-                  <p className="text-yellow-400 font-bold">Weekly</p>
-                  <p className="text-gray-300 text-xs">Performance Report</p>
-                </div>
-                <div className="bg-orange-900/30 border border-orange-500 rounded p-3 text-center">
-                  <p className="text-orange-400 font-bold">Monthly</p>
-                  <p className="text-gray-300 text-xs">Model Retrain</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Health Checks */}
-            <FlowChart
-              title="Health Checks & Bot Heartbeats"
-              description="System health monitoring and bot status tracking"
-              codeRef="backend/monitoring/health_checker.py"
-              nodes={[
-                { id: '1', label: 'Heartbeat Received', type: 'data' },
-                { id: '2', label: 'Update Timestamp', type: 'process' },
-                { id: '3', label: 'Check Stale Bots', type: 'decision' },
-                { id: '4', label: 'Alert if Down', type: 'risk' },
-                { id: '5', label: 'Auto-Restart', type: 'process' },
-              ]}
-            />
-
-            {/* Logging System */}
-            <div className="bg-gray-800/50 rounded-lg border border-gray-700 p-4 mb-4">
-              <h3 className="text-lg font-semibold text-white mb-4">Logging System (17+ Log Tables)</h3>
-              <p className="text-gray-400 text-sm mb-4">Comprehensive logging for all system activities</p>
-              <p className="text-xs text-gray-500 font-mono mb-4">backend/logging/</p>
-
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                {[
-                  'trade_logs', 'decision_logs', 'error_logs', 'api_logs',
-                  'bot_logs', 'alert_logs', 'gex_logs', 'order_logs',
-                  'position_logs', 'pnl_logs', 'regime_logs', 'signal_logs',
-                  'backtest_logs', 'ml_logs', 'audit_logs', 'user_logs', 'system_logs'
-                ].map(log => (
-                  <div key={log} className="bg-gray-700/50 rounded p-2 text-center">
-                    <p className="text-cyan-400 text-xs font-mono">{log}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Database Operations */}
-            <div className="bg-gray-800/50 rounded-lg border border-gray-700 p-4 mb-4">
-              <h3 className="text-lg font-semibold text-white mb-4">Database Operations (30+ Tables)</h3>
-              <p className="text-gray-400 text-sm mb-4">Core database tables and relationships</p>
-              <p className="text-xs text-gray-500 font-mono mb-4">backend/database/</p>
-
-              <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
-                {[
-                  'trades', 'positions', 'orders', 'accounts', 'users', 'settings',
-                  'options_chains', 'gex_data', 'regimes', 'signals', 'alerts', 'bots',
-                  'strategies', 'backtests', 'ml_models', 'predictions', 'features', 'metrics',
-                  'daily_summary', 'pnl_history', 'equity_curve', 'drawdowns', 'sessions', 'api_keys',
-                  'notifications', 'subscriptions', 'jobs', 'schedules', 'health', 'audit'
-                ].map(table => (
-                  <div key={table} className="bg-gray-700/50 rounded p-1 text-center">
-                    <p className="text-gray-300 text-xs font-mono">{table}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* User-Facing Systems */}
-            <h3 className="text-xl font-bold text-white mb-4 mt-8">User-Facing Systems</h3>
-
-            <FlowChart
-              title="Daily Manna System"
-              description="Faith-based devotional with RSS and Claude AI"
-              codeRef="backend/features/daily_manna.py"
-              nodes={[
-                { id: '1', label: 'Fetch RSS Feed', type: 'data' },
-                { id: '2', label: 'Parse Content', type: 'process' },
-                { id: '3', label: 'Claude Enhancement', type: 'ai' },
-                { id: '4', label: 'Format Display', type: 'process' },
-                { id: '5', label: 'Cache Result', type: 'output' },
-              ]}
-            />
-
-            <FlowChart
-              title="Settings & Configuration"
-              description="User and system settings management"
-              codeRef="backend/settings/config_manager.py"
-              nodes={[
-                { id: '1', label: 'Load Defaults', type: 'data' },
-                { id: '2', label: 'User Overrides', type: 'data' },
-                { id: '3', label: 'Merge Config', type: 'process' },
-                { id: '4', label: 'Validate', type: 'decision' },
-                { id: '5', label: 'Apply Settings', type: 'output' },
-              ]}
-            />
-
-            <FlowChart
-              title="Feature Flags & Toggles"
-              description="Dynamic feature control"
-              codeRef="backend/features/feature_flags.py"
-              nodes={[
-                { id: '1', label: 'Check Flag', type: 'decision' },
-                { id: '2', label: 'Enabled?', type: 'decision' },
-                { id: '3', label: 'Run Feature', type: 'output' },
-                { id: '4', label: 'Skip Feature', type: 'process' },
-              ]}
-            />
-
-            <FlowChart
-              title="Account Management"
-              description="Balance, positions, and equity tracking"
-              codeRef="backend/accounts/account_manager.py"
-              nodes={[
-                { id: '1', label: 'Fetch Balance', type: 'data' },
-                { id: '2', label: 'Get Positions', type: 'data' },
-                { id: '3', label: 'Calc Equity', type: 'process' },
-                { id: '4', label: 'Update Curve', type: 'process' },
-                { id: '5', label: 'Store History', type: 'output' },
-              ]}
-            />
-          </div>
-        );
-
-      case 'timeline':
-        return (
-          <div>
-            <h2 className="text-2xl font-bold text-white mb-4">Timeline & Workflows</h2>
-            <p className="text-gray-400 mb-6">
-              Time-based trading workflows throughout the trading day.
-            </p>
-
-            <Legend />
-
-            {/* Daily Timeline */}
-            <div className="bg-gray-800/50 rounded-lg border border-gray-700 p-4 mb-4">
-              <h3 className="text-lg font-semibold text-white mb-4">Trading Day Timeline</h3>
-              <p className="text-gray-400 text-sm mb-4">Complete flow of a trading day</p>
-
-              <div className="relative">
-                <div className="absolute left-4 top-0 bottom-0 w-0.5 bg-gray-700"></div>
-
-                {[
-                  { time: '4:00 AM', event: 'Pre-Market Data Fetch', type: 'data' as keyof typeof NODE_COLORS },
-                  { time: '6:00 AM', event: 'GEX Analysis Begins', type: 'process' as keyof typeof NODE_COLORS },
-                  { time: '9:00 AM', event: 'Market Regime Classification', type: 'ai' as keyof typeof NODE_COLORS },
-                  { time: '9:30 AM', event: 'Market Open - Trading Begins', type: 'output' as keyof typeof NODE_COLORS },
-                  { time: '10:00 AM', event: 'First Hour Analysis', type: 'process' as keyof typeof NODE_COLORS },
-                  { time: '11:00 AM', event: 'Position Check', type: 'decision' as keyof typeof NODE_COLORS },
-                  { time: '12:00 PM', event: 'Mid-Day Review', type: 'process' as keyof typeof NODE_COLORS },
-                  { time: '2:00 PM', event: 'Final Hour Prep', type: 'decision' as keyof typeof NODE_COLORS },
-                  { time: '3:00 PM', event: '0DTE Close Window', type: 'risk' as keyof typeof NODE_COLORS },
-                  { time: '3:45 PM', event: 'EOD Position Close', type: 'output' as keyof typeof NODE_COLORS },
-                  { time: '4:00 PM', event: 'Market Close', type: 'output' as keyof typeof NODE_COLORS },
-                  { time: '4:30 PM', event: 'Daily Summary Generation', type: 'process' as keyof typeof NODE_COLORS },
-                  { time: '5:00 PM', event: 'Model Recalibration', type: 'ai' as keyof typeof NODE_COLORS },
-                ].map((item, idx) => (
-                  <div key={idx} className="flex items-center gap-4 mb-4 relative">
-                    <div className="w-8 h-8 rounded-full bg-gray-800 border-2 border-gray-600 flex items-center justify-center z-10">
-                      <div className={`w-3 h-3 rounded-full ${NODE_COLORS[item.type].border.replace('border-', 'bg-')}`}></div>
-                    </div>
-                    <div className="flex-1 flex items-center gap-4">
-                      <span className="text-gray-500 font-mono text-sm w-20">{item.time}</span>
-                      <div className={`px-3 py-1 rounded ${NODE_COLORS[item.type].bg} ${NODE_COLORS[item.type].border} ${NODE_COLORS[item.type].text} text-sm border`}>
-                        {item.event}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Pre-Market Flow */}
-            <FlowChart
-              title="Pre-Market Opening Flow"
-              description="Preparations before market open"
-              codeRef="backend/workflows/pre_market.py"
-              nodes={[
-                { id: '1', label: 'Fetch Overnight Data', type: 'data' },
-                { id: '2', label: 'Analyze Futures', type: 'process' },
-                { id: '3', label: 'Check News/Events', type: 'data' },
-                { id: '4', label: 'Pre-calculate GEX', type: 'process' },
-                { id: '5', label: 'Set Day Bias', type: 'ai' },
-                { id: '6', label: 'Prepare Strategies', type: 'decision' },
-              ]}
-            />
-
-            {/* Market Hours Loop */}
-            <FlowChart
-              title="Market Hours Trading Loop"
-              description="Continuous loop during market hours"
-              codeRef="backend/workflows/market_hours.py"
-              nodes={[
-                { id: '1', label: 'Poll Market Data', type: 'data' },
-                { id: '2', label: 'Update GEX', type: 'process' },
-                { id: '3', label: 'Check Signals', type: 'ai' },
-                { id: '4', label: 'Evaluate Trades', type: 'decision' },
-                { id: '5', label: 'Execute if Valid', type: 'output' },
-                { id: '6', label: 'Manage Positions', type: 'process' },
-                { id: '7', label: 'Loop (15 min)', type: 'process' },
-              ]}
-            />
-
-            {/* Intraday Position Management */}
-            <FlowChart
-              title="Intraday Position Management"
-              description="How positions are monitored and managed during the day"
-              codeRef="backend/workflows/intraday_management.py"
-              nodes={[
-                { id: '1', label: 'Get Open Positions', type: 'data' },
-                { id: '2', label: 'Calc Current P&L', type: 'process' },
-                { id: '3', label: 'Check Exit Rules', type: 'decision' },
-                { id: '4', label: 'Adjust Stops', type: 'risk' },
-                { id: '5', label: 'Roll Decision', type: 'decision' },
-                { id: '6', label: 'Execute Changes', type: 'output' },
-              ]}
-            />
-
-            {/* Post-Market Flow */}
-            <FlowChart
-              title="Post-Market / EOD Flow"
-              description="End of day reconciliation and reporting"
-              codeRef="backend/workflows/post_market.py"
-              nodes={[
-                { id: '1', label: 'Close Positions', type: 'output' },
-                { id: '2', label: 'Reconcile Trades', type: 'process' },
-                { id: '3', label: 'Calculate Day P&L', type: 'process' },
-                { id: '4', label: 'Update Equity Curve', type: 'data' },
-                { id: '5', label: 'Generate Report', type: 'output' },
-                { id: '6', label: 'Send Notifications', type: 'output' },
-                { id: '7', label: 'Archive Logs', type: 'data' },
-              ]}
-            />
-          </div>
-        );
+      case 'comparison':
+        return <ComparisonView theme={theme} />;
 
       default:
-        return <div>Select a tab</div>;
+        return (
+          <div className={`text-center py-12 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
+            <p className="text-xl">Select a tab to view processes</p>
+            <p className="text-sm mt-2">This section is under development</p>
+          </div>
+        );
     }
   };
 
+  // Show print view
+  if (showPrintView) {
+    return <PrintView onClose={() => setShowPrintView(false)} theme={theme} />;
+  }
+
   return (
-    <div className="min-h-screen bg-gray-900">
+    <div className={`min-h-screen ${theme === 'dark' ? 'bg-gray-900' : 'bg-gray-100'}`}>
       <Navigation />
 
       <main className="max-w-7xl mx-auto px-4 py-8">
         {/* Header */}
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-white mb-2">System Processes & Flows</h1>
-          <p className="text-gray-400">
-            Complete visualization of all AlphaGEX processes, decision trees, and data flows
-          </p>
+          <div className="flex items-center justify-between flex-wrap gap-4">
+            <div>
+              <h1 className={`text-3xl font-bold mb-2 ${theme === 'dark' ? 'text-white' : 'text-gray-900'}`}>
+                System Processes & Flows
+              </h1>
+              <p className={theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}>
+                Complete visualization of all AlphaGEX processes, decision trees, and data flows
+              </p>
+            </div>
+
+            {/* Theme & Animation Controls */}
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')}
+                className={`px-3 py-2 rounded-lg text-sm ${
+                  theme === 'dark' ? 'bg-gray-700 text-white' : 'bg-white text-gray-900 border border-gray-300'
+                }`}
+              >
+                {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
+              </button>
+              <button
+                onClick={() => setShowAnimations(!showAnimations)}
+                className={`px-3 py-2 rounded-lg text-sm ${
+                  showAnimations
+                    ? 'bg-cyan-600 text-white'
+                    : theme === 'dark' ? 'bg-gray-700 text-white' : 'bg-white text-gray-900 border border-gray-300'
+                }`}
+              >
+                {showAnimations ? '⚡ Animated' : '⏸️ Static'}
+              </button>
+              <button
+                onClick={() => setShowPrintView(true)}
+                className={`px-3 py-2 rounded-lg text-sm ${
+                  theme === 'dark' ? 'bg-gray-700 text-white' : 'bg-white text-gray-900 border border-gray-300'
+                }`}
+              >
+                🖨️ Print View
+              </button>
+            </div>
+          </div>
         </div>
 
-        {/* Search Bar */}
+        {/* Search Bar with live filtering */}
         <div className="mb-6">
-          <input
-            type="text"
-            placeholder="Search processes, bots, or flows..."
-            className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
+          <div className="relative">
+            <input
+              type="text"
+              placeholder="Search processes, bots, or flows... (try: 'ares', 'gex', 'iron condor')"
+              className={`w-full px-4 py-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                theme === 'dark'
+                  ? 'bg-gray-800 border border-gray-700 text-white placeholder-gray-500'
+                  : 'bg-white border border-gray-300 text-gray-900 placeholder-gray-400'
+              }`}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+            {searchQuery && (
+              <div className={`absolute right-3 top-1/2 -translate-y-1/2 text-sm ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>
+                {filteredProcesses.length} results
+              </div>
+            )}
+          </div>
+
+          {/* Search Results Preview */}
+          {searchQuery && filteredProcesses.length > 0 && (
+            <div className={`mt-2 p-3 rounded-lg ${theme === 'dark' ? 'bg-gray-800 border border-gray-700' : 'bg-white border border-gray-300'}`}>
+              <p className={`text-xs mb-2 ${theme === 'dark' ? 'text-gray-400' : 'text-gray-600'}`}>Found in:</p>
+              <div className="flex flex-wrap gap-2">
+                {filteredProcesses.slice(0, 8).map(p => (
+                  <span
+                    key={p.id}
+                    className={`px-2 py-1 rounded text-xs cursor-pointer ${
+                      theme === 'dark' ? 'bg-gray-700 text-gray-300 hover:bg-gray-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                    }`}
+                    onClick={() => setActiveTab(p.category)}
+                  >
+                    {p.title}
+                  </span>
+                ))}
+                {filteredProcesses.length > 8 && (
+                  <span className={`text-xs ${theme === 'dark' ? 'text-gray-500' : 'text-gray-400'}`}>
+                    +{filteredProcesses.length - 8} more
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex flex-wrap gap-2 mb-6 border-b border-gray-700 pb-4">
+        <div className={`flex flex-wrap gap-2 mb-6 border-b pb-4 ${theme === 'dark' ? 'border-gray-700' : 'border-gray-300'}`}>
           {TABS.map(tab => (
             <button
               key={tab.id}
@@ -1517,7 +1320,9 @@ export default function SystemProcessesPage() {
               className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-colors ${
                 activeTab === tab.id
                   ? 'bg-blue-600 text-white'
-                  : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                  : theme === 'dark'
+                    ? 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                    : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-300'
               }`}
             >
               <span>{tab.icon}</span>
@@ -1527,27 +1332,58 @@ export default function SystemProcessesPage() {
         </div>
 
         {/* Tab Content */}
-        <div className="min-h-[600px]">
+        <div id="content-area" ref={contentRef} className="min-h-[600px]">
           {renderTabContent()}
         </div>
 
         {/* Footer */}
-        <div className="mt-8 pt-8 border-t border-gray-700">
+        <div className={`mt-8 pt-8 border-t ${theme === 'dark' ? 'border-gray-700' : 'border-gray-300'}`}>
           <div className="flex flex-wrap justify-between items-center gap-4">
-            <div className="text-gray-500 text-sm">
+            <div className={`text-sm ${theme === 'dark' ? 'text-gray-500' : 'text-gray-400'}`}>
               Last updated: {new Date().toLocaleString()}
+              {selectedNode && (
+                <span className="ml-4">
+                  Selected: <span className="text-blue-400">{selectedNode}</span>
+                </span>
+              )}
             </div>
             <div className="flex gap-4">
-              <button className="px-4 py-2 bg-gray-800 text-gray-300 rounded-lg hover:bg-gray-700 text-sm">
-                Export to PDF
+              <button
+                onClick={() => exportToPDF('content-area', 'alphagex-system')}
+                className={`px-4 py-2 rounded-lg text-sm ${
+                  theme === 'dark' ? 'bg-gray-800 text-gray-300 hover:bg-gray-700' : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-300'
+                }`}
+              >
+                📄 Export PDF
               </button>
-              <button className="px-4 py-2 bg-gray-800 text-gray-300 rounded-lg hover:bg-gray-700 text-sm">
-                Export to PNG
+              <button
+                onClick={() => exportToPNG('content-area', 'alphagex-system')}
+                className={`px-4 py-2 rounded-lg text-sm ${
+                  theme === 'dark' ? 'bg-gray-800 text-gray-300 hover:bg-gray-700' : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-300'
+                }`}
+              >
+                🖼️ Export PNG
               </button>
             </div>
           </div>
         </div>
       </main>
+
+      {/* CSS for animations */}
+      <style jsx global>{`
+        @keyframes flow {
+          0% { transform: translateX(-100%); }
+          100% { transform: translateX(400%); }
+        }
+        .animate-flow {
+          animation: flow 1.5s linear infinite;
+        }
+
+        @media print {
+          .print\\:hidden { display: none !important; }
+          .print\\:relative { position: relative !important; }
+        }
+      `}</style>
     </div>
   );
 }
