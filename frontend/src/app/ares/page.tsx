@@ -198,9 +198,10 @@ interface TodaySummaryProps {
   todayDecision: DecisionLog | null
   marketData: MarketData | undefined
   gexContext: MarketData['gex_context']
+  heartbeat?: Heartbeat
 }
 
-function TodaySummaryCard({ tradedToday, openPosition, todayDecision, marketData, gexContext }: TodaySummaryProps) {
+function TodaySummaryCard({ tradedToday, openPosition, todayDecision, marketData, gexContext, heartbeat }: TodaySummaryProps) {
   const today = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 
   if (tradedToday && openPosition) {
@@ -273,7 +274,10 @@ function TodaySummaryCard({ tradedToday, openPosition, todayDecision, marketData
   }
 
   // No trade today - show why
-  const skipReason = todayDecision?.alternatives?.primary_reason || todayDecision?.why || 'No scan completed yet'
+  // Check if scans have run today via heartbeat before falling back to "No scan completed yet"
+  const hasScannedToday = heartbeat?.scan_count_today > 0
+  const skipReason = todayDecision?.alternatives?.primary_reason || todayDecision?.why ||
+    (hasScannedToday ? 'Market conditions not favorable' : 'No scan completed yet')
   const oracleConf = todayDecision?.oracle_advice?.win_probability || 0
 
   return (
@@ -1083,6 +1087,7 @@ export default function ARESPage() {
                 todayDecision={decisions.find(d => d.timestamp?.startsWith(new Date().toISOString().split('T')[0])) || null}
                 marketData={marketData}
                 gexContext={marketData?.gex_context}
+                heartbeat={status?.heartbeat}
               />
 
               {/* Decision Tree - Shows Oracle vs ML decision path */}
