@@ -330,19 +330,49 @@ async def get_athena_positions(
                 except:
                     pass
 
+            # Format spread string based on type
+            spread_type_str = row[1] or ""
+            is_call = "CALL" in spread_type_str.upper()
+            is_bullish = "BULL" in spread_type_str.upper()
+            strike_suffix = "C" if is_call else "P"
+
+            # For bull spreads: buy lower, sell higher; for bear spreads: buy higher, sell lower
+            if is_bullish:
+                spread_formatted = f"{long_strike}/{short_strike}{strike_suffix}"
+            else:
+                spread_formatted = f"{short_strike}/{long_strike}{strike_suffix}"
+
+            # Calculate DTE
+            dte = 0
+            if expiration:
+                try:
+                    exp_date = datetime.strptime(expiration, "%Y-%m-%d").date()
+                    today = datetime.now(ZoneInfo("America/Chicago")).date()
+                    dte = (exp_date - today).days
+                except:
+                    pass
+
+            # Calculate return percentage for closed positions
+            max_profit_val = float(row[8]) if row[8] else 0
+            realized_pnl = float(row[16]) if row[16] else 0
+            return_pct = round((realized_pnl / max_profit_val) * 100, 1) if max_profit_val and realized_pnl else 0
+
             position_data = {
                 "position_id": row[0],
                 "spread_type": row[1],
                 "ticker": row[2],
                 "long_strike": long_strike,
                 "short_strike": short_strike,
+                "spread_formatted": spread_formatted,
                 "spread_width": spread_width,
                 "expiration": expiration,
+                "dte": dte,
                 "is_0dte": is_0dte,
                 "entry_price": entry_price,
                 "contracts": row[7],
-                "max_profit": float(row[8]) if row[8] else 0,
+                "max_profit": max_profit_val,
                 "max_loss": float(row[9]) if row[9] else 0,
+                "rr_ratio": round(max_profit_val / float(row[9]), 2) if row[9] and float(row[9]) > 0 else 0,
                 "breakeven": round(breakeven, 2),
                 "spot_at_entry": spot_at_entry,
                 "gex_regime": row[11],
@@ -352,7 +382,8 @@ async def get_athena_positions(
                 "status": row[13],
                 "exit_price": float(row[14]) if row[14] else 0,
                 "exit_reason": row[15],
-                "realized_pnl": float(row[16]) if row[16] else 0,
+                "realized_pnl": realized_pnl,
+                "return_pct": return_pct,
                 "created_at": row[17].isoformat() if row[17] else None,
                 "exit_time": row[18].isoformat() if row[18] else None,
             }
@@ -1020,3 +1051,78 @@ async def process_athena_expired_positions():
     except Exception as e:
         logger.error(f"Error processing expired positions: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/scan-activity")
+async def get_athena_scan_activity(
+    date: str = None,
+    outcome: str = None,
+    limit: int = 50
+):
+    """
+    Get ATHENA scan activity with full decision context.
+
+    Each scan shows:
+    - Market conditions at time of scan
+    - ML signals and Oracle advice
+    - Risk/Reward ratio analysis
+    - GEX regime and wall positions
+    - Why trade was/wasn't taken
+    - All checks performed
+
+    This is the key endpoint for understanding ATHENA behavior.
+    """
+    try:
+        from trading.scan_activity_logger import get_recent_scans
+
+        scans = get_recent_scans(
+            bot_name="ATHENA",
+            date=date,
+            outcome=outcome.upper() if outcome else None,
+            limit=min(limit, 200)
+        )
+
+        # Calculate summary stats
+        trades = sum(1 for s in scans if s.get('trade_executed'))
+        no_trades = sum(1 for s in scans if s.get('outcome') == 'NO_TRADE')
+        skips = sum(1 for s in scans if s.get('outcome') == 'SKIP')
+        errors = sum(1 for s in scans if s.get('outcome') == 'ERROR')
+
+        # Calculate direction breakdown
+        bullish = sum(1 for s in scans if s.get('signal_direction') == 'BULLISH' and s.get('trade_executed'))
+        bearish = sum(1 for s in scans if s.get('signal_direction') == 'BEARISH' and s.get('trade_executed'))
+
+        return {
+            "success": True,
+            "data": {
+                "count": len(scans),
+                "summary": {
+                    "trades_executed": trades,
+                    "bullish_trades": bullish,
+                    "bearish_trades": bearish,
+                    "no_trade_scans": no_trades,
+                    "skips": skips,
+                    "errors": errors
+                },
+                "scans": scans
+            }
+        }
+    except ImportError:
+        return {
+            "success": True,
+            "data": {
+                "count": 0,
+                "scans": [],
+                "message": "Scan activity logger not available"
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting ATHENA scan activity: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/scan-activity/today")
+async def get_athena_scan_activity_today():
+    """Get all ATHENA scans from today with summary."""
+    today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
+    return await get_athena_scan_activity(date=today, limit=200)
