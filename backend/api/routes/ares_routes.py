@@ -46,6 +46,8 @@ def get_ares_instance():
 
 def _get_heartbeat(bot_name: str) -> dict:
     """Get heartbeat info for a bot from the database"""
+    CENTRAL_TZ = ZoneInfo("America/Chicago")
+
     try:
         conn = get_connection()
         cursor = conn.cursor()
@@ -61,9 +63,22 @@ def _get_heartbeat(bot_name: str) -> dict:
 
         if row:
             last_heartbeat, status, scan_count, details = row
+
+            # Convert timestamp to Central Time
+            # PostgreSQL may return UTC or naive datetime - handle both cases
+            if last_heartbeat:
+                if last_heartbeat.tzinfo is None:
+                    # Naive datetime from PostgreSQL - assume it's UTC
+                    from zoneinfo import ZoneInfo
+                    last_heartbeat = last_heartbeat.replace(tzinfo=ZoneInfo("UTC"))
+                # Convert to Central Time
+                last_heartbeat_ct = last_heartbeat.astimezone(CENTRAL_TZ)
+            else:
+                last_heartbeat_ct = None
+
             return {
-                'last_scan': last_heartbeat.strftime('%Y-%m-%d %H:%M:%S CT') if last_heartbeat else None,
-                'last_scan_iso': last_heartbeat.isoformat() if last_heartbeat else None,
+                'last_scan': last_heartbeat_ct.strftime('%Y-%m-%d %H:%M:%S CT') if last_heartbeat_ct else None,
+                'last_scan_iso': last_heartbeat_ct.isoformat() if last_heartbeat_ct else None,
                 'status': status,
                 'scan_count_today': scan_count or 0,
                 'details': details or {}
@@ -174,15 +189,34 @@ async def get_ares_positions():
 
         open_positions = []
         for pos in ares.open_positions:
+            # Calculate DTE
+            dte = 0
+            if pos.expiration:
+                try:
+                    from datetime import datetime
+                    exp_date = datetime.strptime(pos.expiration, "%Y-%m-%d").date()
+                    today = datetime.now(ZoneInfo("America/Chicago")).date()
+                    dte = (exp_date - today).days
+                except:
+                    pass
+
+            # Format spread strings
+            put_spread = f"{pos.put_long_strike}/{pos.put_short_strike}P"
+            call_spread = f"{pos.call_short_strike}/{pos.call_long_strike}C"
+
             open_positions.append({
                 "position_id": pos.position_id,
                 "ticker": get_ticker(pos),
                 "open_date": pos.open_date,
                 "expiration": pos.expiration,
+                "dte": dte,
+                "is_0dte": dte == 0,
                 "put_long_strike": pos.put_long_strike,
                 "put_short_strike": pos.put_short_strike,
                 "call_short_strike": pos.call_short_strike,
                 "call_long_strike": pos.call_long_strike,
+                "put_spread": put_spread,
+                "call_spread": call_spread,
                 "put_credit": pos.put_credit,
                 "call_credit": pos.call_credit,
                 "total_credit": pos.total_credit,
@@ -190,19 +224,40 @@ async def get_ares_positions():
                 "spread_width": pos.spread_width,
                 "max_loss": pos.max_loss,
                 "premium_collected": pos.total_credit * 100 * pos.contracts,
+                "max_profit": pos.total_credit * 100 * pos.contracts,
+                "rr_ratio": round((pos.total_credit * 100 * pos.contracts) / pos.max_loss, 2) if pos.max_loss else 0,
                 "underlying_at_entry": pos.underlying_price_at_entry,
                 "vix_at_entry": pos.vix_at_entry,
+                "gex_regime": getattr(pos, 'gex_regime', None),
+                "oracle_confidence": getattr(pos, 'oracle_confidence', None),
                 "status": pos.status
             })
 
         closed_positions = []
         for pos in ares.closed_positions[-100:]:  # Last 100 closed (increased from 20)
+            # Calculate DTE at entry
+            dte_at_entry = 0
+            if pos.expiration and pos.open_date:
+                try:
+                    from datetime import datetime
+                    exp_date = datetime.strptime(pos.expiration, "%Y-%m-%d").date()
+                    open_date = datetime.strptime(pos.open_date, "%Y-%m-%d").date()
+                    dte_at_entry = (exp_date - open_date).days
+                except:
+                    pass
+
+            # Calculate return percentage
+            max_profit = pos.total_credit * 100 * pos.contracts if pos.total_credit and pos.contracts else 0
+            return_pct = round((pos.realized_pnl / max_profit) * 100, 1) if max_profit and pos.realized_pnl else 0
+
             closed_positions.append({
                 "position_id": pos.position_id,
                 "ticker": get_ticker(pos),
                 "open_date": pos.open_date,
                 "close_date": pos.close_date,
                 "expiration": pos.expiration,
+                "dte_at_entry": dte_at_entry,
+                "was_0dte": dte_at_entry == 0,
                 "put_long_strike": pos.put_long_strike,
                 "put_short_strike": pos.put_short_strike,
                 "call_short_strike": pos.call_short_strike,
@@ -212,9 +267,15 @@ async def get_ares_positions():
                 "contracts": pos.contracts,
                 "spread_width": pos.spread_width,
                 "total_credit": pos.total_credit,
+                "max_profit": max_profit,
+                "max_loss": pos.max_loss,
                 "close_price": pos.close_price,
                 "realized_pnl": pos.realized_pnl,
+                "return_pct": return_pct,
+                "exit_reason": getattr(pos, 'exit_reason', None),
                 "underlying_at_entry": pos.underlying_price_at_entry,
+                "vix_at_entry": getattr(pos, 'vix_at_entry', None),
+                "gex_regime": getattr(pos, 'gex_regime', None),
                 "status": pos.status
             })
 
@@ -889,3 +950,71 @@ async def update_ares_config(updates: dict):
     except Exception as e:
         logger.error(f"Error updating ARES config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/scan-activity")
+async def get_ares_scan_activity(
+    date: str = None,
+    outcome: str = None,
+    limit: int = 50
+):
+    """
+    Get ARES scan activity with full decision context.
+
+    Each scan shows:
+    - Market conditions at time of scan
+    - Oracle advice and reasoning
+    - Why trade was/wasn't taken
+    - All checks performed
+    - GEX regime and signal quality
+
+    This is the key endpoint for understanding ARES behavior.
+    """
+    try:
+        from trading.scan_activity_logger import get_recent_scans
+
+        scans = get_recent_scans(
+            bot_name="ARES",
+            date=date,
+            outcome=outcome.upper() if outcome else None,
+            limit=min(limit, 200)
+        )
+
+        # Calculate summary stats
+        trades = sum(1 for s in scans if s.get('trade_executed'))
+        no_trades = sum(1 for s in scans if s.get('outcome') == 'NO_TRADE')
+        skips = sum(1 for s in scans if s.get('outcome') == 'SKIP')
+        errors = sum(1 for s in scans if s.get('outcome') == 'ERROR')
+
+        return {
+            "success": True,
+            "data": {
+                "count": len(scans),
+                "summary": {
+                    "trades_executed": trades,
+                    "no_trade_scans": no_trades,
+                    "skips": skips,
+                    "errors": errors
+                },
+                "scans": scans
+            }
+        }
+    except ImportError:
+        return {
+            "success": True,
+            "data": {
+                "count": 0,
+                "scans": [],
+                "message": "Scan activity logger not available"
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting ARES scan activity: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/scan-activity/today")
+async def get_ares_scan_activity_today():
+    """Get all ARES scans from today with summary."""
+    today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
+    return await get_ares_scan_activity(date=today, limit=200)
