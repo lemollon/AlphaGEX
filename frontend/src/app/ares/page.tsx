@@ -188,6 +188,15 @@ interface DecisionLog {
   underlying_price_at_entry?: number
   underlying_price_at_exit?: number
   outcome_notes?: string
+  // SIGNAL SOURCE TRACKING
+  signal_source?: string  // "Oracle", "Config", etc.
+  override_occurred?: boolean
+  override_details?: {
+    overridden_signal?: string
+    overridden_advice?: string
+    override_reason?: string
+    override_by?: string
+  }
   legs?: Array<{
     leg_id: number; action: string; option_type: string; strike: number; expiration: string
     entry_price: number; exit_price: number; contracts: number; premium_per_contract: number
@@ -2180,6 +2189,18 @@ export default function ARESPage() {
                               <span className={`px-2 py-0.5 rounded text-xs font-medium ${badge.bg} ${badge.text}`}>{decision.decision_type?.replace(/_/g, ' ')}</span>
                               <span className={`text-sm font-medium ${getActionColor(decision.action)}`}>{decision.action}</span>
                               {decision.symbol && <span className="text-xs text-gray-400 font-mono">{decision.symbol}</span>}
+                              {/* SIGNAL SOURCE BADGE */}
+                              {decision.signal_source && (
+                                <span className={`px-2 py-0.5 rounded text-xs ${
+                                  decision.signal_source.includes('override')
+                                    ? 'bg-amber-900/30 text-amber-300'
+                                    : decision.signal_source === 'Oracle'
+                                    ? 'bg-purple-900/30 text-purple-300'
+                                    : 'bg-blue-900/30 text-blue-300'
+                                }`}>
+                                  {decision.signal_source}
+                                </span>
+                              )}
                               {decision.actual_pnl !== undefined && decision.actual_pnl !== 0 && (
                                 <span className={`text-xs font-bold ${decision.actual_pnl > 0 ? 'text-green-400' : 'text-red-400'}`}>
                                   {decision.actual_pnl > 0 ? '+' : ''}{formatCurrency(decision.actual_pnl)}

@@ -177,6 +177,20 @@ interface DecisionLog {
   underlying_price_at_entry?: number
   underlying_price_at_exit?: number
 
+  // SIGNAL SOURCE & OVERRIDE TRACKING
+  signal_source?: string  // "ML", "Oracle", "Oracle (override ML)", etc.
+  override_occurred?: boolean
+  override_details?: {
+    overridden_signal?: string
+    overridden_advice?: string
+    override_reason?: string
+    override_by?: string
+    oracle_advice?: string
+    oracle_confidence?: number
+    oracle_win_probability?: number
+    ml_was_saying?: string
+  }
+
   // Trade legs with Greeks
   legs?: Array<{
     leg_id: number
@@ -1560,6 +1574,22 @@ export default function ATHENAPage() {
                                   {decision.symbol && (
                                     <span className="text-xs text-gray-400 font-mono">{decision.symbol}</span>
                                   )}
+                                  {/* OVERRIDE INDICATOR - Very prominent */}
+                                  {decision.override_occurred && (
+                                    <span className="px-2 py-0.5 rounded text-xs font-bold bg-amber-500/30 text-amber-400 border border-amber-500/50 animate-pulse">
+                                      OVERRIDE
+                                    </span>
+                                  )}
+                                  {/* Signal Source Badge */}
+                                  {decision.signal_source && (
+                                    <span className={`px-2 py-0.5 rounded text-xs ${
+                                      decision.signal_source.includes('override')
+                                        ? 'bg-amber-900/30 text-amber-300'
+                                        : 'bg-blue-900/30 text-blue-300'
+                                    }`}>
+                                      {decision.signal_source}
+                                    </span>
+                                  )}
                                   {decision.actual_pnl !== undefined && decision.actual_pnl !== 0 && (
                                     <span className={`text-xs font-bold ${decision.actual_pnl > 0 ? 'text-green-400' : 'text-red-400'}`}>
                                       {decision.actual_pnl > 0 ? '+' : ''}{formatCurrency(decision.actual_pnl)}
@@ -1589,6 +1619,43 @@ export default function ATHENAPage() {
                           {/* Expanded Details */}
                           {isExpanded && (
                             <div className="px-3 pb-3 space-y-3 border-t border-gray-700/50 pt-3">
+                              {/* OVERRIDE DETAILS - Most prominent when present */}
+                              {decision.override_occurred && decision.override_details && (
+                                <div className="bg-amber-900/20 border-2 border-amber-500/50 rounded-lg p-3">
+                                  <div className="flex items-center gap-2 mb-2">
+                                    <span className="text-amber-400 text-sm font-bold">SIGNAL OVERRIDE</span>
+                                    <span className="px-2 py-0.5 rounded text-xs bg-amber-500/30 text-amber-300">
+                                      {decision.override_details.override_by} overrode {decision.override_details.overridden_signal}
+                                    </span>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2 text-xs">
+                                    <div>
+                                      <span className="text-gray-400">ML was saying:</span>
+                                      <span className="ml-2 text-red-400 font-medium">{decision.override_details.ml_was_saying || decision.override_details.overridden_advice}</span>
+                                    </div>
+                                    <div>
+                                      <span className="text-gray-400">Oracle said:</span>
+                                      <span className="ml-2 text-green-400 font-medium">{decision.override_details.oracle_advice}</span>
+                                    </div>
+                                    <div>
+                                      <span className="text-gray-400">Oracle Confidence:</span>
+                                      <span className="ml-2 text-white font-medium">
+                                        {decision.override_details.oracle_confidence ? `${(decision.override_details.oracle_confidence * 100).toFixed(0)}%` : 'N/A'}
+                                      </span>
+                                    </div>
+                                    <div>
+                                      <span className="text-gray-400">Win Probability:</span>
+                                      <span className="ml-2 text-white font-medium">
+                                        {decision.override_details.oracle_win_probability ? `${(decision.override_details.oracle_win_probability * 100).toFixed(0)}%` : 'N/A'}
+                                      </span>
+                                    </div>
+                                  </div>
+                                  <p className="text-xs text-amber-200 mt-2 italic">
+                                    {decision.override_details.override_reason}
+                                  </p>
+                                </div>
+                              )}
+
                               {/* WHY Section */}
                               <div className="bg-yellow-900/10 border-l-2 border-yellow-500 pl-3 py-2">
                                 <span className="text-yellow-400 text-xs font-bold">WHY:</span>

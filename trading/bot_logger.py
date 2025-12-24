@@ -186,6 +186,16 @@ class BotDecision:
     symbol: str = "SPY"
     strategy: str = ""
 
+    # SIGNAL SOURCE & OVERRIDE TRACKING
+    # Captures where the signal came from and if any override happened
+    # Examples: "ML", "Oracle", "Oracle (override ML)", "ML+Oracle", "Manual"
+    signal_source: str = ""
+    # If True, trade was made despite one signal saying SKIP
+    override_occurred: bool = False
+    # Detailed override info: {"overridden_signal": "ML", "overridden_advice": "STAY_OUT",
+    #                         "override_reason": "Oracle high confidence", "override_confidence": 0.85}
+    override_details: Dict[str, Any] = field(default_factory=dict)
+
     # TRADE DETAILS
     strike: float = 0.0
     expiration: Optional[str] = None  # YYYY-MM-DD
@@ -506,6 +516,7 @@ def log_bot_decision(decision: BotDecision) -> Optional[str]:
             INSERT INTO bot_decision_logs (
                 decision_id, bot_name, session_id, scan_cycle, decision_sequence,
                 decision_type, action, symbol, strategy,
+                signal_source, override_occurred, override_details,
                 strike, expiration, option_type, contracts,
                 spot_price, vix, net_gex, gex_regime, flip_point, call_wall, put_wall, trend,
                 claude_prompt, claude_response, claude_model, claude_tokens_used, claude_response_time_ms,
@@ -523,6 +534,7 @@ def log_bot_decision(decision: BotDecision) -> Optional[str]:
             ) VALUES (
                 %s, %s, %s, %s, %s,
                 %s, %s, %s, %s,
+                %s, %s, %s,
                 %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s,
@@ -542,6 +554,7 @@ def log_bot_decision(decision: BotDecision) -> Optional[str]:
         """, (
             decision_id, decision.bot_name, decision.session_id, decision.scan_cycle, decision.decision_sequence,
             decision.decision_type, decision.action, decision.symbol, decision.strategy,
+            decision.signal_source, decision.override_occurred, json.dumps(decision.override_details),
             decision.strike, decision.expiration, decision.option_type, decision.contracts,
             decision.market_context.spot_price, decision.market_context.vix, decision.market_context.net_gex,
             decision.market_context.gex_regime, decision.market_context.flip_point,
