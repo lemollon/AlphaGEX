@@ -127,11 +127,17 @@ def simulate_oracle_decisions(trades: List[Dict], oracle) -> Dict[str, Any]:
     """
     Simulate backtest with Oracle advisor filtering.
     Returns metrics for trades Oracle would have allowed.
+
+    VIX-based skip rules (applied even without GEX data):
+    - VIX > 35: SKIP (too volatile)
+    - VIX > 30 + Monday/Friday: SKIP (volatile + bad day)
+    - VIX > 28 + losing streak: SKIP (compound risk)
     """
     from quant.oracle_advisor import BotName
 
     allowed_trades = []
     skipped_trades = []
+    recent_losses = 0  # Track losing streak
 
     for trade in trades:
         try:
@@ -139,6 +145,40 @@ def simulate_oracle_decisions(trades: List[Dict], oracle) -> Dict[str, Any]:
             vix = trade.get('vix', trade.get('vix_open', 20))
             spot_price = trade.get('spot_price', trade.get('underlying_price', 6000))
             expected_move = trade.get('expected_move', trade.get('exp_move', 30))
+            day_of_week = get_day_of_week(trade.get('trade_date', trade.get('date', '')))
+
+            # ========== VIX-Based Skip Rules (No GEX Required) ==========
+            skip_reason = None
+
+            # Rule 1: Extreme VIX - always skip
+            if vix > 35:
+                skip_reason = f"VIX_EXTREME ({vix:.1f} > 35)"
+
+            # Rule 2: High VIX + Bad Day (Monday=0, Friday=4)
+            elif vix > 30 and day_of_week in [0, 4]:
+                skip_reason = f"VIX_HIGH_BAD_DAY (VIX={vix:.1f}, Day={day_of_week})"
+
+            # Rule 3: Elevated VIX + Losing Streak
+            elif vix > 28 and recent_losses >= 2:
+                skip_reason = f"VIX_ELEVATED_STREAK (VIX={vix:.1f}, Losses={recent_losses})"
+
+            # Rule 4: Very High VIX
+            elif vix > 32:
+                skip_reason = f"VIX_VERY_HIGH ({vix:.1f} > 32)"
+
+            if skip_reason:
+                skipped_trades.append({
+                    **trade,
+                    'skip_reason': skip_reason,
+                    'vix': vix,
+                    'day_of_week': day_of_week,
+                })
+                # Update losing streak from skipped trade's actual outcome
+                if trade.get('outcome', '') in ['PUT_BREACHED', 'CALL_BREACHED', 'DOUBLE_BREACH']:
+                    recent_losses += 1
+                else:
+                    recent_losses = 0
+                continue
 
             # Get GEX data if available
             gex_data = None
@@ -177,6 +217,11 @@ def simulate_oracle_decisions(trades: List[Dict], oracle) -> Dict[str, Any]:
                     'oracle_risk_pct': prediction.suggested_risk_pct,
                     'oracle_sd_mult': prediction.suggested_sd_multiplier,
                 })
+                # Update losing streak
+                if trade.get('outcome', '') in ['PUT_BREACHED', 'CALL_BREACHED', 'DOUBLE_BREACH']:
+                    recent_losses += 1
+                else:
+                    recent_losses = 0
             else:
                 skipped_trades.append({
                     **trade,
@@ -216,9 +261,10 @@ def simulate_combined_decisions(trades: List[Dict], ml_advisor, oracle) -> Dict[
     Simulate backtest with ML + Oracle working TOGETHER (how ARES actually operates).
 
     Decision flow:
-    1. ML provides base win probability
-    2. Oracle adjusts based on GEX, VIX, market conditions
-    3. Final decision combines both signals
+    1. VIX-based pre-filter (skip extreme conditions)
+    2. ML provides base win probability
+    3. Oracle adjusts based on GEX, VIX, market conditions
+    4. Final decision combines both signals
 
     Thresholds:
     - ≥70% combined confidence = TRADE_FULL
@@ -230,6 +276,7 @@ def simulate_combined_decisions(trades: List[Dict], ml_advisor, oracle) -> Dict[
     allowed_trades = []
     skipped_trades = []
     reduced_trades = []  # Trades with reduced position size
+    recent_losses = 0  # Track losing streak
 
     for trade in trades:
         try:
@@ -238,6 +285,40 @@ def simulate_combined_decisions(trades: List[Dict], ml_advisor, oracle) -> Dict[
             spot_price = trade.get('spot_price', trade.get('underlying_price', 6000))
             expected_move = trade.get('expected_move', trade.get('exp_move', 30))
             dow = get_day_of_week(trade.get('trade_date', trade.get('date', '')))
+
+            # ========== Step 0: VIX-Based Pre-Filter ==========
+            skip_reason = None
+
+            # Rule 1: Extreme VIX - always skip
+            if vix > 35:
+                skip_reason = f"VIX_EXTREME ({vix:.1f} > 35)"
+
+            # Rule 2: High VIX + Bad Day (Monday=0, Friday=4)
+            elif vix > 30 and dow in [0, 4]:
+                skip_reason = f"VIX_HIGH_BAD_DAY (VIX={vix:.1f}, Day={dow})"
+
+            # Rule 3: Elevated VIX + Losing Streak
+            elif vix > 28 and recent_losses >= 2:
+                skip_reason = f"VIX_ELEVATED_STREAK (VIX={vix:.1f}, Losses={recent_losses})"
+
+            # Rule 4: Very High VIX
+            elif vix > 32:
+                skip_reason = f"VIX_VERY_HIGH ({vix:.1f} > 32)"
+
+            if skip_reason:
+                skipped_trades.append({
+                    **trade,
+                    'skip_reason': skip_reason,
+                    'decision': 'SKIP',
+                    'vix': vix,
+                    'day_of_week': dow,
+                })
+                # Update losing streak
+                if trade.get('outcome', '') in ['PUT_BREACHED', 'CALL_BREACHED', 'DOUBLE_BREACH']:
+                    recent_losses += 1
+                else:
+                    recent_losses = 0
+                continue
 
             # ========== Step 1: Get ML Base Probability ==========
             ml_prob = 0.65  # Default if ML fails
@@ -324,6 +405,11 @@ def simulate_combined_decisions(trades: List[Dict], ml_advisor, oracle) -> Dict[
                 trade_data['decision'] = 'TRADE_FULL'
                 trade_data['position_multiplier'] = 1.0
                 allowed_trades.append(trade_data)
+                # Update losing streak
+                if trade.get('outcome', '') in ['PUT_BREACHED', 'CALL_BREACHED', 'DOUBLE_BREACH']:
+                    recent_losses += 1
+                else:
+                    recent_losses = 0
             elif combined_prob >= 0.55:
                 # TRADE_REDUCED - moderate confidence, smaller position
                 trade_data['decision'] = 'TRADE_REDUCED'
@@ -333,6 +419,11 @@ def simulate_combined_decisions(trades: List[Dict], ml_advisor, oracle) -> Dict[
                 trade_data['adjusted_pnl'] = orig_pnl * 0.5
                 reduced_trades.append(trade_data)
                 allowed_trades.append(trade_data)
+                # Update losing streak
+                if trade.get('outcome', '') in ['PUT_BREACHED', 'CALL_BREACHED', 'DOUBLE_BREACH']:
+                    recent_losses += 1
+                else:
+                    recent_losses = 0
             else:
                 # SKIP - low confidence
                 trade_data['decision'] = 'SKIP'
