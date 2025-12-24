@@ -213,24 +213,48 @@ async def get_athena_positions(
         elif status_filter == "closed":
             where_clause = "WHERE status IN ('closed', 'expired')"
 
-        c.execute(f"""
-            SELECT
-                position_id, spread_type, ticker,
-                long_strike, short_strike, expiration,
-                entry_price, contracts, max_profit, max_loss,
-                spot_at_entry, gex_regime, oracle_confidence,
-                status, exit_price, exit_reason, realized_pnl,
-                created_at, exit_time, oracle_reasoning,
-                vix_at_entry, put_wall_at_entry, call_wall_at_entry,
-                flip_point_at_entry, net_gex_at_entry,
-                entry_delta, entry_gamma, entry_theta, entry_vega,
-                ml_direction, ml_confidence, ml_win_probability,
-                breakeven, rr_ratio
-            FROM apache_positions
-            {where_clause}
-            ORDER BY created_at DESC
-            LIMIT %s
-        """, (limit,))
+        # Check if new columns exist (migration 010)
+        c.execute("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'apache_positions' AND column_name = 'vix_at_entry'
+        """)
+        has_new_columns = c.fetchone() is not None
+
+        if has_new_columns:
+            # Full query with all new columns
+            c.execute(f"""
+                SELECT
+                    position_id, spread_type, ticker,
+                    long_strike, short_strike, expiration,
+                    entry_price, contracts, max_profit, max_loss,
+                    spot_at_entry, gex_regime, oracle_confidence,
+                    status, exit_price, exit_reason, realized_pnl,
+                    created_at, exit_time, oracle_reasoning,
+                    vix_at_entry, put_wall_at_entry, call_wall_at_entry,
+                    flip_point_at_entry, net_gex_at_entry,
+                    entry_delta, entry_gamma, entry_theta, entry_vega,
+                    ml_direction, ml_confidence, ml_win_probability,
+                    breakeven, rr_ratio
+                FROM apache_positions
+                {where_clause}
+                ORDER BY created_at DESC
+                LIMIT %s
+            """, (limit,))
+        else:
+            # Legacy query without new columns (pre-migration)
+            c.execute(f"""
+                SELECT
+                    position_id, spread_type, ticker,
+                    long_strike, short_strike, expiration,
+                    entry_price, contracts, max_profit, max_loss,
+                    spot_at_entry, gex_regime, oracle_confidence,
+                    status, exit_price, exit_reason, realized_pnl,
+                    created_at, exit_time, oracle_reasoning
+                FROM apache_positions
+                {where_clause}
+                ORDER BY created_at DESC
+                LIMIT %s
+            """, (limit,))
 
         rows = c.fetchall()
         conn.close()
@@ -243,36 +267,41 @@ async def get_athena_positions(
             entry_price = float(row[6]) if row[6] else 0
             spread_width = abs(short_strike - long_strike)
 
-            # Use stored Greeks if available, otherwise calculate
-            stored_delta = row[25]
-            stored_gamma = row[26]
-            stored_theta = row[27]
-            stored_vega = row[28]
+            # Use stored Greeks if available (new schema), otherwise calculate
+            if has_new_columns and len(row) > 25:
+                stored_delta = row[25]
+                stored_gamma = row[26]
+                stored_theta = row[27]
+                stored_vega = row[28]
 
-            if stored_delta is not None:
-                greeks = {
-                    "net_delta": round(float(stored_delta), 3),
-                    "net_gamma": round(float(stored_gamma), 3) if stored_gamma else 0,
-                    "net_theta": round(float(stored_theta), 3) if stored_theta else 0,
-                    "net_vega": round(float(stored_vega), 3) if stored_vega else 0,
-                    "long_delta": 0,  # Individual leg deltas not stored separately
-                    "short_delta": 0
-                }
+                if stored_delta is not None:
+                    greeks = {
+                        "net_delta": round(float(stored_delta), 3),
+                        "net_gamma": round(float(stored_gamma), 3) if stored_gamma else 0,
+                        "net_theta": round(float(stored_theta), 3) if stored_theta else 0,
+                        "net_vega": round(float(stored_vega), 3) if stored_vega else 0,
+                        "long_delta": 0,
+                        "short_delta": 0
+                    }
+                else:
+                    greeks = _calculate_position_greeks(long_strike, short_strike, spot_at_entry)
             else:
-                # Fallback to calculated Greeks for older positions
+                # Fallback to calculated Greeks for older schema
                 greeks = _calculate_position_greeks(long_strike, short_strike, spot_at_entry)
 
             # Use stored breakeven if available, otherwise calculate
-            stored_breakeven = row[32]
-            if stored_breakeven:
-                breakeven = float(stored_breakeven)
+            if has_new_columns and len(row) > 32:
+                stored_breakeven = row[32]
+                if stored_breakeven:
+                    breakeven = float(stored_breakeven)
+                else:
+                    spread_type_str = row[1] or ""
+                    is_bullish = "BULL" in spread_type_str.upper()
+                    breakeven = long_strike + entry_price if is_bullish else short_strike - abs(entry_price)
             else:
                 spread_type_str = row[1] or ""
                 is_bullish = "BULL" in spread_type_str.upper()
-                if is_bullish:
-                    breakeven = long_strike + entry_price
-                else:
-                    breakeven = short_strike - abs(entry_price)
+                breakeven = long_strike + entry_price if is_bullish else short_strike - abs(entry_price)
 
             # Calculate time info
             expiration = str(row[5]) if row[5] else None
@@ -287,7 +316,7 @@ async def get_athena_positions(
                 except:
                     pass
 
-            positions.append({
+            position_data = {
                 "position_id": row[0],
                 "spread_type": row[1],
                 "ticker": row[2],
@@ -312,17 +341,23 @@ async def get_athena_positions(
                 "realized_pnl": float(row[16]) if row[16] else 0,
                 "created_at": row[17].isoformat() if row[17] else None,
                 "exit_time": row[18].isoformat() if row[18] else None,
-                # New fields from stored entry context
-                "vix_at_entry": float(row[20]) if row[20] else None,
-                "put_wall_at_entry": float(row[21]) if row[21] else None,
-                "call_wall_at_entry": float(row[22]) if row[22] else None,
-                "flip_point_at_entry": float(row[23]) if row[23] else None,
-                "net_gex_at_entry": float(row[24]) if row[24] else None,
-                "ml_direction": row[29],
-                "ml_confidence": float(row[30]) if row[30] else None,
-                "ml_win_probability": float(row[31]) if row[31] else None,
-                "rr_ratio": float(row[33]) if row[33] else None
-            })
+            }
+
+            # Add new fields if available
+            if has_new_columns and len(row) > 33:
+                position_data.update({
+                    "vix_at_entry": float(row[20]) if row[20] else None,
+                    "put_wall_at_entry": float(row[21]) if row[21] else None,
+                    "call_wall_at_entry": float(row[22]) if row[22] else None,
+                    "flip_point_at_entry": float(row[23]) if row[23] else None,
+                    "net_gex_at_entry": float(row[24]) if row[24] else None,
+                    "ml_direction": row[29],
+                    "ml_confidence": float(row[30]) if row[30] else None,
+                    "ml_win_probability": float(row[31]) if row[31] else None,
+                    "rr_ratio": float(row[33]) if row[33] else None
+                })
+
+            positions.append(position_data)
 
         return {
             "success": True,
