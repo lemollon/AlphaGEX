@@ -837,7 +837,7 @@ export default function ARESPage() {
     return decisions
       .filter(d => d.timestamp?.startsWith(today) && (d.action === 'SKIP' || d.decision_type === 'SKIP'))
       .map(d => ({
-        id: d.decision_id,
+        id: d.id,
         timestamp: d.timestamp,
         reason: d.why || d.what || 'No reason provided',
         category: d.signal_source?.includes('ML') ? 'ml' as const :
@@ -846,12 +846,12 @@ export default function ARESPage() {
                   d.why?.toLowerCase().includes('risk') ? 'risk' as const :
                   d.why?.toLowerCase().includes('vix') ? 'market' as const : 'other' as const,
         details: {
-          oracle_advice: d.oracle_prediction?.advice,
-          oracle_confidence: d.oracle_prediction?.confidence,
-          oracle_win_prob: d.oracle_prediction?.win_probability,
+          oracle_advice: d.oracle_advice?.advice,
+          oracle_confidence: d.oracle_advice?.confidence,
+          oracle_win_prob: d.oracle_advice?.win_probability,
           vix: d.market_context?.vix,
-          spot_price: d.market_context?.underlying_price,
-          gex_regime: d.market_context?.gex_regime
+          spot_price: d.market_context?.spot_price,
+          gex_regime: d.gex_context?.regime
         }
       }))
   }, [decisions])
@@ -863,7 +863,7 @@ export default function ARESPage() {
       .filter(d => d.timestamp?.startsWith(today))
       .slice(0, 20)
       .map(d => ({
-        id: d.decision_id,
+        id: d.id,
         timestamp: d.timestamp,
         type: d.decision_type?.toLowerCase().includes('entry') ? 'entry' as const :
               d.decision_type?.toLowerCase().includes('exit') ? 'exit' as const :

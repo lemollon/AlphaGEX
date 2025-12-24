@@ -725,7 +725,7 @@ export default function ATHENAPage() {
           oracle_win_prob: d.oracle_advice?.win_probability,
           vix: d.market_context?.vix,
           spot_price: d.market_context?.spot_price,
-          gex_regime: d.market_context?.gex_regime
+          gex_regime: d.gex_context?.regime
         }
       }))
   }, [decisions])
