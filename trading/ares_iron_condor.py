@@ -350,11 +350,49 @@ class ARESTrader:
             else:
                 # SPX Paper Trading mode: Use production API for live market data
                 # No sandbox client = SPX trading with AlphaGEX-only paper trades
+                #
+                # IMPORTANT: SPX/VIX index quotes ($SPX.X, $VIX.X) are ONLY available
+                # on Tradier's PRODUCTION API. If production credentials aren't available,
+                # we fall back to sandbox API and use SPY * 10 as SPX proxy.
                 try:
-                    self.tradier = TradierDataFetcher(sandbox=False)
-                    logger.info(f"ARES: Tradier PRODUCTION client initialized (for live SPX market data)")
+                    # Check if production credentials are available
+                    # TRADIER_PROD_* takes priority (allows keeping sandbox creds in TRADIER_API_KEY)
+                    prod_key = APIConfig.TRADIER_PROD_API_KEY or APIConfig.TRADIER_API_KEY
+                    prod_account = APIConfig.TRADIER_PROD_ACCOUNT_ID or APIConfig.TRADIER_ACCOUNT_ID
+
+                    # Only use as production if we have TRADIER_PROD_* OR if TRADIER_SANDBOX is false
+                    has_explicit_prod = APIConfig.TRADIER_PROD_API_KEY and APIConfig.TRADIER_PROD_ACCOUNT_ID
+                    sandbox_mode = APIConfig.TRADIER_SANDBOX
+
+                    if has_explicit_prod:
+                        # Explicit production credentials - use them for market data
+                        self.tradier = TradierDataFetcher(
+                            api_key=APIConfig.TRADIER_PROD_API_KEY,
+                            account_id=APIConfig.TRADIER_PROD_ACCOUNT_ID,
+                            sandbox=False
+                        )
+                        logger.info(f"ARES: Tradier PRODUCTION client initialized (using TRADIER_PROD_* credentials)")
+                    elif prod_key and prod_account and not sandbox_mode:
+                        # No explicit prod creds but TRADIER_SANDBOX=false, use main credentials
+                        self.tradier = TradierDataFetcher(sandbox=False)
+                        logger.info(f"ARES: Tradier PRODUCTION client initialized (for live SPX market data)")
+                    else:
+                        # No production credentials - fall back to sandbox for SPY data
+                        logger.warning("ARES: No Tradier production credentials - falling back to sandbox")
+                        sandbox_key = APIConfig.TRADIER_SANDBOX_API_KEY
+                        sandbox_account = APIConfig.TRADIER_SANDBOX_ACCOUNT_ID
+
+                        if sandbox_key and sandbox_account:
+                            self.tradier = TradierDataFetcher(
+                                api_key=sandbox_key,
+                                account_id=sandbox_account,
+                                sandbox=True
+                            )
+                            logger.info("ARES: Tradier SANDBOX client initialized (will use SPY*10 for SPX)")
+                        else:
+                            logger.error("ARES: No Tradier credentials available (neither production nor sandbox)")
                 except Exception as e:
-                    logger.warning(f"ARES: Failed to initialize Tradier production: {e}")
+                    logger.warning(f"ARES: Failed to initialize Tradier: {e}")
 
                 # SPX Paper Trading: Do NOT set tradier_sandbox
                 # This ensures get_trading_ticker() returns "SPX" and trades are recorded internally
@@ -538,41 +576,75 @@ class ARESTrader:
             ticker = self.get_trading_ticker()
             underlying_price = None
 
+            # Debug: Log Tradier client configuration
+            tradier_mode = "SANDBOX" if self.tradier.sandbox else "PRODUCTION"
+            logger.info(f"ARES: Tradier client mode: {tradier_mode}, Trading ticker: {ticker}")
+
             if ticker == "SPY":
                 # Sandbox mode - use SPY directly
                 quote = self.tradier.get_quote("SPY")
+                logger.debug(f"ARES: SPY quote response: {quote}")
                 if quote and quote.get('last'):
                     underlying_price = float(quote['last'])
                 else:
-                    logger.warning("ARES: Could not get SPY quote")
+                    logger.warning(f"ARES: Could not get SPY quote, response was: {quote}")
                     return None
             else:
-                # Production mode - use SPX
-                quote = self.tradier.get_quote("$SPX.X")
-                if not quote or not quote.get('last'):
-                    # Fallback to SPY * 10 estimate
+                # SPX mode - need index quote
+                # NOTE: $SPX.X is ONLY available on Tradier PRODUCTION API, not sandbox!
+                # If using sandbox, skip SPX attempt and go straight to SPY * 10
+
+                if self.tradier.sandbox:
+                    # Sandbox mode: Index quotes not available, use SPY * 10 directly
+                    logger.info("ARES: Using sandbox API - fetching SPY for SPX estimate (indexes not available in sandbox)")
                     spy_quote = self.tradier.get_quote("SPY")
+                    logger.debug(f"ARES: SPY quote response: {spy_quote}")
                     if spy_quote and spy_quote.get('last'):
                         underlying_price = float(spy_quote['last']) * 10
-                        logger.info("ARES: Using SPY*10 as SPX proxy")
+                        logger.info(f"ARES: SPX estimated from SPY*10: ${underlying_price:.2f}")
                     else:
-                        logger.warning("ARES: Could not get SPX or SPY quote")
+                        logger.warning(f"ARES: Could not get SPY quote from sandbox. Response: {spy_quote}")
                         return None
                 else:
-                    underlying_price = float(quote['last'])
+                    # Production mode: Try $SPX.X first, fall back to SPY * 10
+                    quote = self.tradier.get_quote("$SPX.X")
+                    logger.debug(f"ARES: $SPX.X quote response: {quote}")
+                    if quote and quote.get('last'):
+                        underlying_price = float(quote['last'])
+                        logger.info(f"ARES: SPX price from Tradier: ${underlying_price:.2f}")
+                    else:
+                        logger.info("ARES: $SPX.X not available, trying SPY fallback")
+                        # Fallback to SPY * 10 estimate
+                        spy_quote = self.tradier.get_quote("SPY")
+                        logger.debug(f"ARES: SPY fallback quote response: {spy_quote}")
+                        if spy_quote and spy_quote.get('last'):
+                            underlying_price = float(spy_quote['last']) * 10
+                            logger.info(f"ARES: Using SPY*10 as SPX proxy: ${underlying_price:.2f}")
+                        else:
+                            logger.warning(f"ARES: Could not get SPX or SPY quote. SPX response: {quote}, SPY response: {spy_quote}")
+                            return None
 
             # Get VIX for expected move calculation
+            # NOTE: $VIX.X is ONLY available on Tradier PRODUCTION API, not sandbox!
             vix = 15.0  # Default if not available
-            vix_quote = self.tradier.get_quote("$VIX.X")
-            if vix_quote and vix_quote.get('last'):
-                vix = float(vix_quote['last'])
+
+            if self.tradier.sandbox:
+                # Sandbox mode: VIX quotes not available, use default
+                logger.info("ARES: Using sandbox API - VIX not available, using default 15.0")
             else:
-                # Try alternate symbol
-                vix_quote = self.tradier.get_quote("VIX")
+                # Production mode: Try to get VIX
+                vix_quote = self.tradier.get_quote("$VIX.X")
                 if vix_quote and vix_quote.get('last'):
                     vix = float(vix_quote['last'])
+                    logger.debug(f"ARES: VIX from Tradier: {vix}")
                 else:
-                    logger.info("ARES: VIX not available, using default 15.0")
+                    # Try alternate symbol
+                    vix_quote = self.tradier.get_quote("VIX")
+                    if vix_quote and vix_quote.get('last'):
+                        vix = float(vix_quote['last'])
+                        logger.debug(f"ARES: VIX from alternate symbol: {vix}")
+                    else:
+                        logger.info("ARES: VIX not available from Tradier, using default 15.0")
 
             # Validate underlying price before calculation
             if not underlying_price or underlying_price <= 0:

@@ -556,39 +556,89 @@ async def get_ares_market_data():
     Get current market data for ARES (SPX, SPY, VIX, expected moves).
 
     Returns both SPX and SPY data with their respective expected moves.
-    Uses TRADIER_SANDBOX env var to determine sandbox vs production.
+
+    IMPORTANT: SPX and VIX index quotes ($SPX.X, $VIX.X) are ONLY available
+    on Tradier's PRODUCTION API, not sandbox. If production credentials aren't
+    available, we use sandbox and estimate SPX from SPY * 10.
     """
     import math
     import os
 
     try:
         from data.tradier_data_fetcher import TradierDataFetcher
+        from unified_config import APIConfig
 
-        # Respect TRADIER_SANDBOX env var (defaults to True for safety)
-        use_sandbox = os.getenv('TRADIER_SANDBOX', 'true').lower() == 'true'
-        tradier = TradierDataFetcher(sandbox=use_sandbox)
+        # Determine which API to use:
+        # - TRADIER_PROD_* credentials take priority for production (supports SPX/VIX indexes)
+        # - Otherwise, fall back to sandbox (only SPY available, estimate SPX)
+        # This allows keeping sandbox creds in TRADIER_API_KEY while adding prod separately
+        has_explicit_prod = APIConfig.TRADIER_PROD_API_KEY and APIConfig.TRADIER_PROD_ACCOUNT_ID
+        sandbox_key = APIConfig.TRADIER_SANDBOX_API_KEY or APIConfig.TRADIER_API_KEY
+        sandbox_account = APIConfig.TRADIER_SANDBOX_ACCOUNT_ID or APIConfig.TRADIER_ACCOUNT_ID
 
-        # Get VIX first (used for both)
-        vix = 15.0
-        vix_quote = tradier.get_quote("$VIX.X")
-        if vix_quote and vix_quote.get('last'):
-            vix = float(vix_quote['last'])
+        tradier = None
+        using_sandbox = False
 
-        # Get SPX
-        spx_price = None
-        spx_quote = tradier.get_quote("$SPX.X")
-        if spx_quote and spx_quote.get('last'):
-            spx_price = float(spx_quote['last'])
+        if has_explicit_prod:
+            # Use explicit production credentials for market data
+            try:
+                tradier = TradierDataFetcher(
+                    api_key=APIConfig.TRADIER_PROD_API_KEY,
+                    account_id=APIConfig.TRADIER_PROD_ACCOUNT_ID,
+                    sandbox=False
+                )
+                using_sandbox = False
+                logger.info("ARES API: Using Tradier PRODUCTION API (TRADIER_PROD_* credentials)")
+            except Exception as e:
+                logger.warning(f"ARES API: Failed to initialize production client: {e}")
 
-        # Get SPY
+        if not tradier and sandbox_key and sandbox_account:
+            try:
+                tradier = TradierDataFetcher(
+                    api_key=sandbox_key,
+                    account_id=sandbox_account,
+                    sandbox=True
+                )
+                using_sandbox = True
+                logger.info("ARES API: Using Tradier SANDBOX API (SPX/VIX will be estimated)")
+            except Exception as e:
+                logger.error(f"ARES API: Failed to initialize sandbox client: {e}")
+
+        if not tradier:
+            return {
+                "success": False,
+                "message": "No Tradier credentials available (neither production nor sandbox)",
+                "data": None
+            }
+
+        # Get SPY first (works on both sandbox and production)
         spy_price = None
         spy_quote = tradier.get_quote("SPY")
         if spy_quote and spy_quote.get('last'):
             spy_price = float(spy_quote['last'])
 
-        # Fallback: estimate SPX from SPY if needed
-        if not spx_price and spy_price:
-            spx_price = spy_price * 10
+        # Get SPX and VIX based on API type
+        spx_price = None
+        vix = 15.0  # Default VIX
+
+        if using_sandbox:
+            # Sandbox: Index quotes not available, estimate from SPY
+            if spy_price:
+                spx_price = spy_price * 10
+            logger.info(f"ARES API: Sandbox mode - SPX estimated from SPY*10: ${spx_price}")
+        else:
+            # Production: Try to get SPX and VIX directly
+            spx_quote = tradier.get_quote("$SPX.X")
+            if spx_quote and spx_quote.get('last'):
+                spx_price = float(spx_quote['last'])
+            elif spy_price:
+                # Fallback if production SPX fails
+                spx_price = spy_price * 10
+                logger.warning("ARES API: $SPX.X failed, using SPY*10 fallback")
+
+            vix_quote = tradier.get_quote("$VIX.X")
+            if vix_quote and vix_quote.get('last'):
+                vix = float(vix_quote['last'])
 
         # Validate VIX is reasonable (between 8 and 100)
         if vix < 8 or vix > 100:
@@ -611,7 +661,8 @@ async def get_ares_market_data():
                 logger.error(f"ARES API: SPY expected move calculation failed, using fallback")
                 spy_expected_move = spy_price * (vix / 100) * 0.063
 
-        logger.info(f"ARES API: SPX=${spx_price}, SPY=${spy_price}, VIX={vix}, SPX_EM=${spx_expected_move:.2f}, SPY_EM=${spy_expected_move:.2f}")
+        api_source = "Tradier Sandbox API (SPX estimated)" if using_sandbox else "Tradier Production API"
+        logger.info(f"ARES API: SPX=${spx_price}, SPY=${spy_price}, VIX={vix}, SPX_EM=${spx_expected_move:.2f}, SPY_EM={spy_expected_move:.2f}, Source={api_source}")
 
         return {
             "success": True,
@@ -619,7 +670,8 @@ async def get_ares_market_data():
                 "spx": {
                     "ticker": "SPX",
                     "price": round(spx_price, 2) if spx_price else None,
-                    "expected_move": round(spx_expected_move, 2)
+                    "expected_move": round(spx_expected_move, 2),
+                    "estimated": using_sandbox  # Indicates if SPX was estimated from SPY
                 },
                 "spy": {
                     "ticker": "SPY",
@@ -628,7 +680,7 @@ async def get_ares_market_data():
                 },
                 "vix": round(vix, 2),
                 "timestamp": datetime.now(ZoneInfo("America/Chicago")).isoformat(),
-                "source": "Tradier Production API",
+                "source": api_source,
                 # Legacy fields for backward compatibility
                 "ticker": "SPX",
                 "underlying_price": round(spx_price, 2) if spx_price else None,
@@ -636,7 +688,7 @@ async def get_ares_market_data():
             }
         }
     except Exception as e:
-        logger.error(f"Error fetching market data: {e}")
+        logger.error(f"Error fetching market data: {e}", exc_info=True)
         return {
             "success": False,
             "message": f"Could not fetch market data: {str(e)}",
