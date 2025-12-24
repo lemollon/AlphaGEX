@@ -311,6 +311,7 @@ class ARESTrader:
         self.open_positions: List[IronCondorPosition] = []
         self.closed_positions: List[IronCondorPosition] = []
         self.daily_trade_executed: Dict[str, bool] = {}  # date -> traded
+        self.skip_date = None  # Date to skip trading (set via API)
 
         # Performance tracking
         self.total_pnl = 0
@@ -1845,6 +1846,22 @@ class ARESTrader:
         if BOT_LOGGER_AVAILABLE and DecisionTracker:
             decision_tracker = DecisionTracker()
             decision_tracker.start()
+
+        # Check if today is a skip day (set via API)
+        if self.skip_date and self.skip_date == now.date():
+            logger.info(f"ARES: Skip day is set for {self.skip_date} - not trading today")
+            if SCAN_LOGGER_AVAILABLE and log_ares_scan:
+                log_ares_scan(
+                    outcome=ScanOutcome.SKIPPED,
+                    decision_summary="Manual skip requested via API",
+                    action_taken="No trade - user requested skip for today",
+                    checks=[CheckResult("skip_day", False, "Skip day set", "Skip day not set")]
+                )
+            return {
+                "status": "skipped",
+                "reason": "Skip day set via API",
+                "skip_date": self.skip_date.isoformat()
+            }
 
         logger.info(f"=" * 60)
         logger.info(f"ARES Daily Cycle - {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")

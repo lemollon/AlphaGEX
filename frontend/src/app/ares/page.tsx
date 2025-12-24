@@ -188,7 +188,556 @@ interface DecisionLog {
   passed_risk_checks?: boolean
 }
 
-// ==================== COMPONENT ====================
+// ==================== HELPER COMPONENTS ====================
+
+// Today's Summary Card - Shows what happened today at a glance
+interface TodaySummaryProps {
+  tradedToday: boolean
+  openPosition: IronCondorPosition | null
+  todayDecision: DecisionLog | null
+  marketData: MarketData | undefined
+  gexContext: MarketData['gex_context']
+}
+
+function TodaySummaryCard({ tradedToday, openPosition, todayDecision, marketData, gexContext }: TodaySummaryProps) {
+  const today = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+
+  if (tradedToday && openPosition) {
+    // We traded today - show the position
+    const credit = openPosition.total_credit * 100 * openPosition.contracts
+    const maxRisk = openPosition.max_loss
+    const oracleConf = todayDecision?.oracle_advice?.confidence || todayDecision?.oracle_advice?.win_probability || 0
+
+    return (
+      <div className="bg-gradient-to-r from-green-900/30 to-gray-800 rounded-xl p-5 border border-green-700/50">
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-3 h-3 rounded-full bg-green-500 animate-pulse" />
+            <div>
+              <h3 className="text-lg font-bold text-white">TODAY&apos;S STATUS</h3>
+              <span className="text-gray-400 text-sm">{today}</span>
+            </div>
+          </div>
+          <span className="px-3 py-1 bg-green-900/50 text-green-400 rounded-full text-sm font-medium">
+            ✓ TRADED
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Position Details */}
+          <div className="bg-black/30 rounded-lg p-4">
+            <div className="text-gray-400 text-xs mb-2">POSITION</div>
+            <div className="text-white font-mono text-lg mb-2">
+              {openPosition.ticker || 'SPX'} Iron Condor
+            </div>
+            <div className="text-purple-300 font-mono">
+              {openPosition.put_short_strike}P / {openPosition.call_short_strike}C
+            </div>
+            <div className="flex gap-4 mt-3 text-sm">
+              <div>
+                <span className="text-gray-500">Credit: </span>
+                <span className="text-green-400 font-bold">${credit.toFixed(0)}</span>
+              </div>
+              <div>
+                <span className="text-gray-500">Max Risk: </span>
+                <span className="text-red-400">${maxRisk.toFixed(0)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Why We Traded */}
+          <div className="bg-black/30 rounded-lg p-4">
+            <div className="text-gray-400 text-xs mb-2">WHY WE TRADED</div>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Brain className="w-4 h-4 text-green-400" />
+                <span className="text-white">Oracle: <span className="text-green-400 font-bold">{(oracleConf * 100).toFixed(0)}%</span> confidence</span>
+              </div>
+              {gexContext && (
+                <div className="flex items-center gap-2">
+                  <Shield className="w-4 h-4 text-blue-400" />
+                  <span className="text-white">GEX: <span className={gexContext.regime === 'POSITIVE' ? 'text-blue-400' : 'text-orange-400'}>{gexContext.regime}</span></span>
+                </div>
+              )}
+              {gexContext && (
+                <div className="text-xs text-gray-400">
+                  Put wall ${gexContext.put_wall?.toFixed(0)} ({((marketData?.underlying_price || 0) - gexContext.put_wall).toFixed(0)} pts buffer)
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // No trade today - show why
+  const skipReason = todayDecision?.alternatives?.primary_reason || todayDecision?.why || 'No scan completed yet'
+  const oracleConf = todayDecision?.oracle_advice?.win_probability || 0
+
+  return (
+    <div className="bg-gradient-to-r from-yellow-900/20 to-gray-800 rounded-xl p-5 border border-yellow-700/30">
+      <div className="flex items-start justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <div className="w-3 h-3 rounded-full bg-yellow-500" />
+          <div>
+            <h3 className="text-lg font-bold text-white">TODAY&apos;S STATUS</h3>
+            <span className="text-gray-400 text-sm">{today}</span>
+          </div>
+        </div>
+        <span className="px-3 py-1 bg-yellow-900/50 text-yellow-400 rounded-full text-sm font-medium">
+          ⚠ NO TRADE
+        </span>
+      </div>
+
+      <div className="bg-black/30 rounded-lg p-4">
+        <div className="text-gray-400 text-xs mb-2">REASON</div>
+        <div className="text-white mb-3">{skipReason}</div>
+
+        {todayDecision?.oracle_advice && (
+          <div className="space-y-2 text-sm">
+            <div className="flex items-center gap-2">
+              <Brain className="w-4 h-4 text-yellow-400" />
+              <span className="text-gray-300">
+                Oracle confidence: <span className={oracleConf >= 0.55 ? 'text-green-400' : 'text-red-400'}>{(oracleConf * 100).toFixed(0)}%</span>
+                <span className="text-gray-500 ml-2">(need 55% to trade)</span>
+              </span>
+            </div>
+            {todayDecision.oracle_advice.top_factors?.slice(0, 3).map(([factor, value], i) => (
+              <div key={i} className="flex items-center gap-2 text-gray-400">
+                <span className="text-gray-600">•</span>
+                <span>{factor}: {typeof value === 'number' ? value.toFixed(2) : value}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* What would change this */}
+        <div className="mt-4 pt-3 border-t border-gray-700">
+          <div className="text-gray-400 text-xs mb-2">WHAT WOULD HELP</div>
+          <div className="flex flex-wrap gap-2">
+            {gexContext?.regime !== 'POSITIVE' && (
+              <span className="px-2 py-1 bg-blue-900/30 text-blue-400 rounded text-xs">GEX flip to POSITIVE (+8%)</span>
+            )}
+            {(marketData?.vix || 0) > 22 && (
+              <span className="px-2 py-1 bg-yellow-900/30 text-yellow-400 rounded text-xs">VIX drop below 22 (+4%)</span>
+            )}
+            {gexContext && !gexContext.between_walls && (
+              <span className="px-2 py-1 bg-purple-900/30 text-purple-400 rounded text-xs">Price return between walls (+3%)</span>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Strike Placement Diagram - Visual representation of position vs market
+interface StrikeDiagramProps {
+  position: IronCondorPosition | null
+  spotPrice: number
+  expectedMove: number
+  putWall: number | undefined
+  callWall: number | undefined
+}
+
+function StrikePlacementDiagram({ position, spotPrice, expectedMove, putWall, callWall }: StrikeDiagramProps) {
+  if (!position || !spotPrice) return null
+
+  const minStrike = Math.min(
+    position.put_long_strike,
+    putWall || position.put_long_strike,
+    spotPrice - expectedMove * 1.5
+  )
+  const maxStrike = Math.max(
+    position.call_long_strike,
+    callWall || position.call_long_strike,
+    spotPrice + expectedMove * 1.5
+  )
+  const range = maxStrike - minStrike
+  const toPercent = (val: number) => ((val - minStrike) / range) * 100
+
+  const spotPct = toPercent(spotPrice)
+  const putLongPct = toPercent(position.put_long_strike)
+  const putShortPct = toPercent(position.put_short_strike)
+  const callShortPct = toPercent(position.call_short_strike)
+  const callLongPct = toPercent(position.call_long_strike)
+  const putWallPct = putWall ? toPercent(putWall) : null
+  const callWallPct = callWall ? toPercent(callWall) : null
+  const expMoveLowPct = toPercent(spotPrice - expectedMove)
+  const expMoveHighPct = toPercent(spotPrice + expectedMove)
+
+  return (
+    <div className="bg-gray-800/50 rounded-xl p-5 border border-gray-700">
+      <div className="flex items-center gap-2 mb-4">
+        <Crosshair className="w-5 h-5 text-purple-400" />
+        <h3 className="text-lg font-semibold text-white">Strike Placement</h3>
+      </div>
+
+      {/* Legend */}
+      <div className="flex flex-wrap gap-4 mb-4 text-xs">
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-3 rounded-full bg-green-500" />
+          <span className="text-gray-400">Profit Zone</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-3 rounded-full bg-red-500" />
+          <span className="text-gray-400">Max Loss Zone</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-3 rounded bg-blue-500/50" />
+          <span className="text-gray-400">GEX Walls</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="w-6 h-0.5 bg-yellow-500" />
+          <span className="text-gray-400">Expected Move</span>
+        </div>
+      </div>
+
+      {/* Diagram */}
+      <div className="relative h-20 mb-4">
+        {/* Background track */}
+        <div className="absolute top-8 left-0 right-0 h-4 bg-gray-700 rounded-full" />
+
+        {/* Max Loss Zones (wings) */}
+        <div
+          className="absolute top-8 h-4 bg-red-900/50 rounded-l-full"
+          style={{ left: `${putLongPct}%`, width: `${putShortPct - putLongPct}%` }}
+        />
+        <div
+          className="absolute top-8 h-4 bg-red-900/50 rounded-r-full"
+          style={{ left: `${callShortPct}%`, width: `${callLongPct - callShortPct}%` }}
+        />
+
+        {/* Profit Zone */}
+        <div
+          className="absolute top-8 h-4 bg-green-900/70"
+          style={{ left: `${putShortPct}%`, width: `${callShortPct - putShortPct}%` }}
+        />
+
+        {/* GEX Walls */}
+        {putWallPct !== null && (
+          <div
+            className="absolute top-6 w-1 h-8 bg-blue-500/70"
+            style={{ left: `${putWallPct}%` }}
+            title={`Put Wall: $${putWall?.toFixed(0)}`}
+          />
+        )}
+        {callWallPct !== null && (
+          <div
+            className="absolute top-6 w-1 h-8 bg-blue-500/70"
+            style={{ left: `${callWallPct}%` }}
+            title={`Call Wall: $${callWall?.toFixed(0)}`}
+          />
+        )}
+
+        {/* Expected Move Range */}
+        <div
+          className="absolute top-12 h-0.5 bg-yellow-500/50"
+          style={{ left: `${expMoveLowPct}%`, width: `${expMoveHighPct - expMoveLowPct}%` }}
+        />
+
+        {/* Strike Labels */}
+        <div className="absolute top-0 text-xs text-red-400 font-mono" style={{ left: `${putLongPct}%`, transform: 'translateX(-50%)' }}>
+          ${position.put_long_strike}
+        </div>
+        <div className="absolute top-0 text-xs text-green-400 font-mono" style={{ left: `${putShortPct}%`, transform: 'translateX(-50%)' }}>
+          ${position.put_short_strike}
+        </div>
+        <div className="absolute top-0 text-xs text-green-400 font-mono" style={{ left: `${callShortPct}%`, transform: 'translateX(-50%)' }}>
+          ${position.call_short_strike}
+        </div>
+        <div className="absolute top-0 text-xs text-red-400 font-mono" style={{ left: `${callLongPct}%`, transform: 'translateX(-50%)' }}>
+          ${position.call_long_strike}
+        </div>
+
+        {/* Current Price Marker */}
+        <div
+          className="absolute top-5 flex flex-col items-center"
+          style={{ left: `${spotPct}%`, transform: 'translateX(-50%)' }}
+        >
+          <div className="text-xs text-white font-bold">${spotPrice.toFixed(0)}</div>
+          <div className="w-0.5 h-8 bg-white" />
+          <div className="w-2 h-2 rounded-full bg-white" />
+        </div>
+      </div>
+
+      {/* Buffer Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-center text-sm">
+        <div className="bg-gray-900/50 rounded-lg p-2">
+          <div className="text-gray-500 text-xs">Put Buffer</div>
+          <div className="text-green-400 font-mono font-bold">
+            {(spotPrice - position.put_short_strike).toFixed(0)} pts
+          </div>
+        </div>
+        <div className="bg-gray-900/50 rounded-lg p-2">
+          <div className="text-gray-500 text-xs">Call Buffer</div>
+          <div className="text-green-400 font-mono font-bold">
+            {(position.call_short_strike - spotPrice).toFixed(0)} pts
+          </div>
+        </div>
+        {putWall && (
+          <div className="bg-gray-900/50 rounded-lg p-2">
+            <div className="text-gray-500 text-xs">Put Wall Gap</div>
+            <div className="text-blue-400 font-mono font-bold">
+              {(position.put_short_strike - putWall).toFixed(0)} pts
+            </div>
+          </div>
+        )}
+        {callWall && (
+          <div className="bg-gray-900/50 rounded-lg p-2">
+            <div className="text-gray-500 text-xs">Call Wall Gap</div>
+            <div className="text-blue-400 font-mono font-bold">
+              {(callWall - position.call_short_strike).toFixed(0)} pts
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Decision Tree Display - Shows Oracle vs ML decision flow
+interface DecisionTreeProps {
+  decision: DecisionLog | null
+}
+
+function DecisionTreeDisplay({ decision }: DecisionTreeProps) {
+  if (!decision) return null
+
+  const oracle = decision.oracle_advice
+  const gex = decision.gex_context
+  const market = decision.market_context
+
+  // Calculate decision path
+  const mlBaseProb = oracle?.win_probability || 0
+  let adjustedProb = mlBaseProb
+
+  const adjustments: Array<{ label: string; value: number; color: string }> = []
+
+  if (gex?.regime === 'POSITIVE') {
+    adjustments.push({ label: 'GEX Positive Regime', value: 0.03, color: 'text-blue-400' })
+    adjustedProb += 0.03
+  } else if (gex?.regime === 'NEGATIVE') {
+    adjustments.push({ label: 'GEX Negative Regime', value: -0.05, color: 'text-orange-400' })
+    adjustedProb -= 0.05
+  }
+
+  if (gex && !gex.between_walls) {
+    adjustments.push({ label: 'Price outside walls', value: -0.03, color: 'text-red-400' })
+    adjustedProb -= 0.03
+  }
+
+  if ((market?.vix || 0) > 25) {
+    adjustments.push({ label: 'High VIX (>25)', value: -0.02, color: 'text-yellow-400' })
+    adjustedProb -= 0.02
+  }
+
+  const finalAdvice = oracle?.advice || decision.action
+  const isTraded = finalAdvice?.includes('TRADE') || decision.action === 'OPEN'
+
+  return (
+    <div className="bg-gray-800/50 rounded-xl p-5 border border-gray-700">
+      <div className="flex items-center gap-2 mb-4">
+        <Brain className="w-5 h-5 text-green-400" />
+        <h3 className="text-lg font-semibold text-white">Decision Path</h3>
+      </div>
+
+      <div className="space-y-4">
+        {/* Step 1: ML Base */}
+        <div className="flex items-start gap-3">
+          <div className="w-6 h-6 rounded-full bg-purple-900/50 flex items-center justify-center text-purple-400 text-xs font-bold">1</div>
+          <div className="flex-1">
+            <div className="text-gray-400 text-xs mb-1">GEX ML MODELS</div>
+            <div className="flex items-center gap-2">
+              <span className="text-white">Base Win Probability:</span>
+              <span className="text-purple-400 font-bold">{(mlBaseProb * 100).toFixed(0)}%</span>
+            </div>
+            {oracle?.top_factors && oracle.top_factors.length > 0 && (
+              <div className="mt-2 text-xs text-gray-500">
+                Top factors: {oracle.top_factors.slice(0, 2).map(([f]) => f).join(', ')}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Step 2: Oracle Adjustments */}
+        <div className="flex items-start gap-3">
+          <div className="w-6 h-6 rounded-full bg-green-900/50 flex items-center justify-center text-green-400 text-xs font-bold">2</div>
+          <div className="flex-1">
+            <div className="text-gray-400 text-xs mb-1">ORACLE ADJUSTMENTS</div>
+            <div className="space-y-1">
+              {adjustments.length > 0 ? (
+                adjustments.map((adj, i) => (
+                  <div key={i} className="flex items-center gap-2 text-sm">
+                    <span className={adj.color}>{adj.value >= 0 ? '+' : ''}{(adj.value * 100).toFixed(0)}%</span>
+                    <span className="text-gray-400">{adj.label}</span>
+                  </div>
+                ))
+              ) : (
+                <div className="text-gray-500 text-sm">No adjustments applied</div>
+              )}
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <span className="text-gray-500">→ Final:</span>
+              <span className={`font-bold ${adjustedProb >= 0.70 ? 'text-green-400' : adjustedProb >= 0.55 ? 'text-yellow-400' : 'text-red-400'}`}>
+                {(adjustedProb * 100).toFixed(0)}%
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Step 3: Decision */}
+        <div className="flex items-start gap-3">
+          <div className="w-6 h-6 rounded-full bg-blue-900/50 flex items-center justify-center text-blue-400 text-xs font-bold">3</div>
+          <div className="flex-1">
+            <div className="text-gray-400 text-xs mb-1">FINAL DECISION</div>
+            <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full ${isTraded ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'}`}>
+              {isTraded ? '✓ TRADE' : '✗ SKIP'}
+              <span className="text-xs opacity-70">
+                ({adjustedProb >= 0.70 ? '≥70%' : adjustedProb >= 0.55 ? '55-70%' : '<55%'})
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Thresholds Legend */}
+        <div className="mt-4 pt-3 border-t border-gray-700">
+          <div className="text-gray-500 text-xs mb-2">DECISION THRESHOLDS</div>
+          <div className="flex gap-4 text-xs">
+            <div className="flex items-center gap-1">
+              <div className="w-2 h-2 rounded-full bg-green-500" />
+              <span className="text-gray-400">≥70% = TRADE_FULL</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="w-2 h-2 rounded-full bg-yellow-500" />
+              <span className="text-gray-400">55-70% = TRADE_REDUCED</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="w-2 h-2 rounded-full bg-red-500" />
+              <span className="text-gray-400">&lt;55% = SKIP</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Quick Actions Panel
+interface QuickActionsProps {
+  onSkipToday: () => void
+  onAdjustRisk: (newRisk: number) => void
+  currentRisk: number
+  isTrading: boolean
+  hasOpenPosition: boolean
+}
+
+function QuickActionsPanel({ onSkipToday, onAdjustRisk, currentRisk, isTrading, hasOpenPosition }: QuickActionsProps) {
+  const [riskValue, setRiskValue] = useState(currentRisk)
+  const [showConfirm, setShowConfirm] = useState<'skip' | 'risk' | null>(null)
+
+  return (
+    <div className="bg-gray-800/50 rounded-xl p-5 border border-gray-700">
+      <div className="flex items-center gap-2 mb-4">
+        <Zap className="w-5 h-5 text-yellow-400" />
+        <h3 className="text-lg font-semibold text-white">Quick Actions</h3>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {/* Skip Today */}
+        <div className="relative">
+          {showConfirm === 'skip' ? (
+            <div className="flex flex-col gap-2">
+              <span className="text-xs text-gray-400">Skip trading today?</span>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => { onSkipToday(); setShowConfirm(null) }}
+                  className="flex-1 px-2 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-500"
+                >
+                  Yes
+                </button>
+                <button
+                  onClick={() => setShowConfirm(null)}
+                  className="flex-1 px-2 py-1 bg-gray-600 text-white text-xs rounded hover:bg-gray-500"
+                >
+                  No
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => setShowConfirm('skip')}
+              disabled={hasOpenPosition}
+              className="w-full px-4 py-3 bg-yellow-900/30 text-yellow-400 rounded-lg hover:bg-yellow-900/50 disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center gap-1"
+            >
+              <AlertTriangle className="w-5 h-5" />
+              <span className="text-xs">Skip Today</span>
+            </button>
+          )}
+        </div>
+
+        {/* Adjust Risk */}
+        <div className="relative">
+          {showConfirm === 'risk' ? (
+            <div className="flex flex-col gap-2">
+              <input
+                type="range"
+                min="1"
+                max="15"
+                value={riskValue}
+                onChange={(e) => setRiskValue(Number(e.target.value))}
+                className="w-full"
+              />
+              <div className="flex justify-between text-xs text-gray-400">
+                <span>{riskValue}%</span>
+                <button
+                  onClick={() => { onAdjustRisk(riskValue); setShowConfirm(null) }}
+                  className="px-2 py-0.5 bg-blue-600 text-white rounded"
+                >
+                  Apply
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => setShowConfirm('risk')}
+              className="w-full px-4 py-3 bg-blue-900/30 text-blue-400 rounded-lg hover:bg-blue-900/50 flex flex-col items-center gap-1"
+            >
+              <Target className="w-5 h-5" />
+              <span className="text-xs">Risk: {currentRisk}%</span>
+            </button>
+          )}
+        </div>
+
+        {/* Force Run */}
+        <button
+          disabled={isTrading}
+          className="px-4 py-3 bg-green-900/30 text-green-400 rounded-lg hover:bg-green-900/50 disabled:opacity-50 flex flex-col items-center gap-1"
+        >
+          <Play className="w-5 h-5" />
+          <span className="text-xs">Force Scan</span>
+        </button>
+
+        {/* Status */}
+        <div className="px-4 py-3 bg-gray-900/50 rounded-lg flex flex-col items-center gap-1">
+          <div className={`w-5 h-5 rounded-full ${isTrading ? 'bg-green-500 animate-pulse' : 'bg-gray-500'}`} />
+          <span className="text-xs text-gray-400">{isTrading ? 'Active' : 'Idle'}</span>
+        </div>
+      </div>
+
+      {/* Current Config Summary */}
+      <div className="mt-4 pt-3 border-t border-gray-700 flex flex-wrap gap-4 text-xs text-gray-500">
+        <span>Risk: <span className="text-white">{currentRisk}%</span></span>
+        <span>SD: <span className="text-white">Oracle Dynamic</span></span>
+        <span>Target: <span className="text-green-400">50% profit</span></span>
+        <span>Window: <span className="text-cyan-400">9:35-15:55 CT</span></span>
+      </div>
+    </div>
+  )
+}
+
+// ==================== MAIN COMPONENT ====================
 
 type TimePeriod = '1D' | '1W' | '1M' | '3M' | 'YTD' | '1Y' | 'ALL'
 
@@ -524,6 +1073,56 @@ export default function ARESPage() {
                 positions={livePnL?.positions || []}
                 underlyingPrice={livePnL?.underlying_price || marketData?.underlying_price}
                 isLoading={livePnLLoading}
+              />
+
+              {/* Today's Summary Card - Shows what happened today at a glance */}
+              <TodaySummaryCard
+                tradedToday={status?.traded_today || false}
+                openPosition={positions[0] || null}
+                todayDecision={decisions.find(d => d.timestamp?.startsWith(new Date().toISOString().split('T')[0])) || null}
+                marketData={marketData}
+                gexContext={marketData?.gex_context}
+              />
+
+              {/* Decision Tree - Shows Oracle vs ML decision path */}
+              {decisions.length > 0 && (
+                <DecisionTreeDisplay
+                  decision={decisions.find(d => d.timestamp?.startsWith(new Date().toISOString().split('T')[0])) || decisions[0]}
+                />
+              )}
+
+              {/* Strike Placement Diagram - Visual representation of position vs market */}
+              {positions[0] && marketData?.underlying_price && (
+                <StrikePlacementDiagram
+                  position={positions[0]}
+                  spotPrice={marketData.underlying_price}
+                  expectedMove={marketData.expected_move || 0}
+                  putWall={marketData.gex_context?.put_wall}
+                  callWall={marketData.gex_context?.call_wall}
+                />
+              )}
+
+              {/* Quick Actions Panel */}
+              <QuickActionsPanel
+                onSkipToday={async () => {
+                  try {
+                    await apiClient.skipARESToday()
+                    fetchData()
+                  } catch (err) {
+                    console.error('Failed to skip today:', err)
+                  }
+                }}
+                onAdjustRisk={async (newRisk: number) => {
+                  try {
+                    await apiClient.updateARESConfig({ risk_per_trade_pct: newRisk })
+                    mutateConfig()
+                  } catch (err) {
+                    console.error('Failed to adjust risk:', err)
+                  }
+                }}
+                currentRisk={config?.risk_per_trade_pct || 5}
+                isTrading={status?.in_trading_window || false}
+                hasOpenPosition={positions.length > 0}
               />
 
               {/* Today's Closed Iron Condors */}

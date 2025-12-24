@@ -350,6 +350,9 @@ export const apiClient = {
   // ARES - Live P&L
   getARESLivePnL: () => api.get('/api/ares/live-pnl'),
   processARESExpired: () => api.post('/api/ares/process-expired'),
+  skipARESToday: () => api.post('/api/ares/skip-today'),
+  updateARESConfig: (config: { risk_per_trade_pct?: number; sd_multiplier?: number }) =>
+    api.post('/api/ares/config', config),
 
   // AI Intelligence Enhancements - 7 Advanced Features
   generatePreTradeChecklist: (data: {
