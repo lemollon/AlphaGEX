@@ -118,6 +118,7 @@ interface MarketData {
     net_gex: number
     regime: string
     flip_point: number
+    between_walls?: boolean
   }
 }
 
