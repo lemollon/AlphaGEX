@@ -798,3 +798,94 @@ async def process_expired_positions():
     except Exception as e:
         logger.error(f"Error processing expired positions: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/skip-today")
+async def skip_ares_today():
+    """
+    Skip trading for the rest of today.
+
+    This will prevent ARES from opening any new positions until tomorrow.
+    Existing positions will still be managed.
+    """
+    ares = get_ares_instance()
+
+    if not ares:
+        raise HTTPException(
+            status_code=503,
+            detail="ARES not initialized. Wait for scheduled startup."
+        )
+
+    try:
+        # Set the skip flag for today
+        today = datetime.now(ZoneInfo("America/Chicago")).date()
+        ares.skip_date = today
+
+        return {
+            "success": True,
+            "message": f"ARES will skip trading for {today.isoformat()}",
+            "data": {
+                "skip_date": today.isoformat()
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error setting skip date: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/config")
+async def update_ares_config(updates: dict):
+    """
+    Update ARES configuration parameters.
+
+    Supports updating:
+    - risk_per_trade_pct: Risk per trade percentage (1-15)
+    - sd_multiplier: Standard deviation multiplier (0.3-1.5)
+    """
+    ares = get_ares_instance()
+
+    if not ares:
+        raise HTTPException(
+            status_code=503,
+            detail="ARES not initialized. Wait for scheduled startup."
+        )
+
+    try:
+        updated = {}
+
+        if 'risk_per_trade_pct' in updates:
+            new_risk = updates['risk_per_trade_pct']
+            if not (1 <= new_risk <= 15):
+                raise HTTPException(
+                    status_code=400,
+                    detail="risk_per_trade_pct must be between 1 and 15"
+                )
+            ares.config.risk_per_trade_pct = new_risk
+            updated['risk_per_trade_pct'] = new_risk
+
+        if 'sd_multiplier' in updates:
+            new_sd = updates['sd_multiplier']
+            if not (0.3 <= new_sd <= 1.5):
+                raise HTTPException(
+                    status_code=400,
+                    detail="sd_multiplier must be between 0.3 and 1.5"
+                )
+            ares.config.sd_multiplier = new_sd
+            updated['sd_multiplier'] = new_sd
+
+        return {
+            "success": True,
+            "message": "Configuration updated successfully",
+            "data": {
+                "updated": updated,
+                "current_config": {
+                    "risk_per_trade_pct": ares.config.risk_per_trade_pct,
+                    "sd_multiplier": ares.config.sd_multiplier
+                }
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating ARES config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
