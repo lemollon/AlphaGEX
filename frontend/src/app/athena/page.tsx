@@ -1626,7 +1626,7 @@ export default function ATHENAPage() {
                       .filter(p => showClosedPositions || p.status === 'open')
                       .map((pos) => {
                         const isExpanded = expandedPosition === pos.position_id
-                        const greeks = pos.greeks || { net_delta: 0, net_gamma: 0, net_theta: 0 }
+                        const greeks = pos.greeks || { net_delta: 0, net_gamma: 0, net_theta: 0, long_delta: 0, short_delta: 0 }
                         return (
                           <React.Fragment key={pos.position_id}>
                             <tr
