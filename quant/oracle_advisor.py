@@ -1950,30 +1950,57 @@ class OracleAdvisor:
 
     def _fallback_prediction(self, context: MarketContext) -> Dict[str, Any]:
         """Rule-based fallback when model not trained"""
-        base_prob = 0.68
+        # Start neutral - let conditions determine probability
+        base_prob = 0.60
 
-        # VIX adjustment
+        # VIX is the primary filter (major impact on IC success)
         if context.vix > 35:
-            base_prob -= 0.10
+            base_prob -= 0.20  # High VIX = volatile = bad for IC
+        elif context.vix > 30:
+            base_prob -= 0.15
         elif context.vix > 25:
+            base_prob -= 0.10
+        elif context.vix > 20:
             base_prob -= 0.05
         elif context.vix < 12:
-            base_prob -= 0.03
+            base_prob -= 0.05  # Too low VIX = low premium, not worth it
+        elif 14 <= context.vix <= 18:
+            base_prob += 0.08  # Sweet spot for premium selling
 
-        # Day of week
-        dow_adj = {0: -0.02, 1: 0.01, 2: 0.02, 3: 0.01, 4: 0.00}
+        # Day of week (Monday/Friday are historically worse)
+        dow_adj = {0: -0.08, 1: 0.02, 2: 0.03, 3: 0.02, 4: -0.05}
         base_prob += dow_adj.get(context.day_of_week, 0)
 
-        # GEX
+        # GEX regime (major factor for mean reversion)
         if context.gex_regime == GEXRegime.POSITIVE:
-            base_prob += 0.05
+            base_prob += 0.10  # Positive GEX = mean reversion = good for IC
         elif context.gex_regime == GEXRegime.NEGATIVE:
-            base_prob -= 0.03
+            base_prob -= 0.12  # Negative GEX = trending = bad for IC
 
+        # Price position relative to GEX walls
         if not context.gex_between_walls:
-            base_prob -= 0.03
+            base_prob -= 0.10  # Outside walls = more risky
 
-        win_probability = max(0.40, min(0.85, base_prob))
+        # Distance to flip point (closer = more uncertain)
+        if context.gex_distance_to_flip_pct is not None:
+            if abs(context.gex_distance_to_flip_pct) < 0.5:
+                base_prob -= 0.08  # Very close to flip = regime change possible
+
+        # Recent performance (momentum)
+        if context.win_rate_30d is not None:
+            if context.win_rate_30d < 0.50:
+                base_prob -= 0.08  # Recent poor performance = be cautious
+            elif context.win_rate_30d > 0.80:
+                base_prob += 0.05  # Strong recent performance
+
+        # Expected move (if unusually high, skip)
+        if context.expected_move_pct is not None:
+            if context.expected_move_pct > 2.0:  # >2% expected move is dangerous
+                base_prob -= 0.10
+            elif context.expected_move_pct > 1.5:
+                base_prob -= 0.05
+
+        win_probability = max(0.30, min(0.85, base_prob))
 
         return {
             'win_probability': win_probability,
