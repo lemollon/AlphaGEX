@@ -117,6 +117,14 @@ const fetchers = {
       return { success: false, data: null }
     }
   },
+  aresStrategyPresets: async () => {
+    try {
+      const response = await apiClient.getARESStrategyPresets()
+      return response.data
+    } catch {
+      return { success: false, data: { presets: [], active_preset: 'moderate' } }
+    }
+  },
 
   // ATHENA Bot
   athenaStatus: async () => {
@@ -697,6 +705,14 @@ export function useARESConfig(options?: SWRConfiguration) {
   return useSWR('ares-config', fetchers.aresConfig, {
     ...swrConfig,
     refreshInterval: 5 * 60 * 1000,
+    ...options,
+  })
+}
+
+export function useARESStrategyPresets(options?: SWRConfiguration) {
+  return useSWR('ares-strategy-presets', fetchers.aresStrategyPresets, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000, // Refresh every minute
     ...options,
   })
 }

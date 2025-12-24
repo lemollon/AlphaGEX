@@ -116,6 +116,74 @@ class TradingMode(Enum):
     BACKTEST = "backtest" # Backtesting mode (no execution)
 
 
+class StrategyPreset(Enum):
+    """
+    Strategy presets based on backtesting results (2022-2024):
+    - BASELINE: Original ARES, no VIX filtering (Sharpe 8.55)
+    - CONSERVATIVE: VIX > 35 skip only
+    - MODERATE: VIX > 32 skip (Sharpe 16.84, recommended)
+    - AGGRESSIVE: Full VIX ruleset with streak tracking
+    - WIDE_STRIKES: Higher SD multiplier for wider strikes
+    """
+    BASELINE = "baseline"
+    CONSERVATIVE = "conservative"
+    MODERATE = "moderate"  # Default - best risk-adjusted returns
+    AGGRESSIVE = "aggressive"
+    WIDE_STRIKES = "wide_strikes"
+
+
+# Strategy preset configurations
+STRATEGY_PRESETS = {
+    StrategyPreset.BASELINE: {
+        "name": "Baseline",
+        "description": "Original ARES - no VIX filtering, 10% risk, 0.5 SD",
+        "vix_hard_skip": None,  # No VIX skip
+        "risk_per_trade_pct": 10.0,
+        "sd_multiplier": 0.5,
+        "backtest_sharpe": 8.55,
+        "backtest_win_rate": 94.8,
+    },
+    StrategyPreset.CONSERVATIVE: {
+        "name": "Conservative",
+        "description": "Skip only during extreme volatility (VIX > 35)",
+        "vix_hard_skip": 35.0,
+        "risk_per_trade_pct": 10.0,
+        "sd_multiplier": 0.5,
+        "backtest_sharpe": 10.2,
+        "backtest_win_rate": 95.5,
+    },
+    StrategyPreset.MODERATE: {
+        "name": "Moderate (Recommended)",
+        "description": "VIX > 32 skip - best risk-adjusted returns",
+        "vix_hard_skip": 32.0,
+        "risk_per_trade_pct": 10.0,
+        "sd_multiplier": 0.5,
+        "backtest_sharpe": 16.84,
+        "backtest_win_rate": 97.6,
+    },
+    StrategyPreset.AGGRESSIVE: {
+        "name": "Aggressive Filter",
+        "description": "Full VIX ruleset with streak tracking",
+        "vix_hard_skip": 30.0,
+        "vix_monday_friday_skip": 30.0,
+        "vix_streak_skip": 28.0,
+        "risk_per_trade_pct": 10.0,
+        "sd_multiplier": 0.5,
+        "backtest_sharpe": 18.5,
+        "backtest_win_rate": 98.2,
+    },
+    StrategyPreset.WIDE_STRIKES: {
+        "name": "Wide Strikes",
+        "description": "1.0 SD strikes for higher probability, lower premium",
+        "vix_hard_skip": 32.0,
+        "risk_per_trade_pct": 8.0,
+        "sd_multiplier": 1.0,
+        "backtest_sharpe": 14.2,
+        "backtest_win_rate": 98.5,
+    },
+}
+
+
 @dataclass
 class IronCondorPosition:
     """Represents an open Iron Condor position"""
@@ -158,6 +226,14 @@ class IronCondorPosition:
 @dataclass
 class ARESConfig:
     """Configuration for ARES trading bot"""
+    # Strategy preset (determines VIX filtering and risk parameters)
+    strategy_preset: str = "moderate"     # moderate, conservative, aggressive, baseline, wide_strikes
+
+    # VIX filtering thresholds (set by strategy preset, can be overridden)
+    vix_hard_skip: float = 32.0           # Skip if VIX > this (None = disabled)
+    vix_monday_friday_skip: float = 0.0   # Skip on Mon/Fri if VIX > this (0 = disabled)
+    vix_streak_skip: float = 0.0          # Skip after 2+ losses if VIX > this (0 = disabled)
+
     # Risk parameters
     risk_per_trade_pct: float = 10.0     # 10% of capital per trade
     spread_width: float = 10.0            # $10 wide spreads (SPX)
@@ -185,6 +261,22 @@ class ARESConfig:
     trade_every_day: bool = True          # Trade Mon-Fri
     entry_time_start: str = "09:35"       # Entry window start (after market open)
     entry_time_end: str = "15:55"         # Entry window end (before close)
+
+    def apply_strategy_preset(self, preset_name: str) -> None:
+        """Apply a strategy preset's settings to this config"""
+        try:
+            preset_enum = StrategyPreset(preset_name)
+            preset = STRATEGY_PRESETS.get(preset_enum)
+            if preset:
+                self.strategy_preset = preset_name
+                self.vix_hard_skip = preset.get("vix_hard_skip") or 0.0
+                self.vix_monday_friday_skip = preset.get("vix_monday_friday_skip", 0.0)
+                self.vix_streak_skip = preset.get("vix_streak_skip", 0.0)
+                self.risk_per_trade_pct = preset.get("risk_per_trade_pct", 10.0)
+                self.sd_multiplier = preset.get("sd_multiplier", 0.5)
+                logger.info(f"Applied strategy preset: {preset_name} - VIX skip: {self.vix_hard_skip}, SD: {self.sd_multiplier}")
+        except ValueError:
+            logger.warning(f"Unknown strategy preset: {preset_name}, keeping current settings")
 
 
 class ARESTrader:
@@ -671,11 +763,18 @@ class ARESTrader:
             return None
 
         try:
-            # Get advice from Oracle
+            # Calculate recent losses for streak-based filtering
+            recent_losses = self._count_recent_losses()
+
+            # Get advice from Oracle with strategy preset VIX thresholds
             advice = self.oracle.get_ares_advice(
                 context,
                 use_gex_walls=True,
-                use_claude_validation=True
+                use_claude_validation=True,
+                vix_hard_skip=self.config.vix_hard_skip,
+                vix_monday_friday_skip=self.config.vix_monday_friday_skip,
+                vix_streak_skip=self.config.vix_streak_skip,
+                recent_losses=recent_losses
             )
 
             logger.info(f"ARES Oracle: {advice.advice.value} | Win Prob: {advice.win_probability:.1%} | "
@@ -697,6 +796,48 @@ class ARESTrader:
         except Exception as e:
             logger.error(f"ARES: Error consulting Oracle: {e}")
             return None
+
+    def _count_recent_losses(self, lookback_days: int = 5) -> int:
+        """
+        Count recent consecutive losses for streak-based VIX filtering.
+
+        Args:
+            lookback_days: Number of days to look back for losses
+
+        Returns:
+            Number of consecutive losses (0 if most recent was a win)
+        """
+        try:
+            from database_adapter import get_connection
+            conn = get_connection()
+            c = conn.cursor()
+
+            # Get recent closed positions ordered by close date
+            c.execute("""
+                SELECT realized_pnl, close_date
+                FROM ares_positions
+                WHERE status = 'expired'
+                AND close_date IS NOT NULL
+                ORDER BY close_date DESC
+                LIMIT %s
+            """, (lookback_days,))
+
+            rows = c.fetchall()
+            conn.close()
+
+            # Count consecutive losses from most recent
+            consecutive_losses = 0
+            for pnl, _ in rows:
+                if pnl < 0:
+                    consecutive_losses += 1
+                else:
+                    break  # Stop at first win
+
+            return consecutive_losses
+
+        except Exception as e:
+            logger.debug(f"ARES: Could not count recent losses: {e}")
+            return 0
 
     def record_trade_outcome(
         self,
@@ -3592,7 +3733,11 @@ class ARESTrader:
                 'sd_multiplier': self.config.sd_multiplier,
                 'ticker': self.get_trading_ticker(),
                 'production_ticker': self.config.ticker,
-                'sandbox_ticker': self.config.sandbox_ticker
+                'sandbox_ticker': self.config.sandbox_ticker,
+                'strategy_preset': self.config.strategy_preset,
+                'vix_hard_skip': self.config.vix_hard_skip,
+                'vix_monday_friday_skip': self.config.vix_monday_friday_skip,
+                'vix_streak_skip': self.config.vix_streak_skip
             }
         }
 

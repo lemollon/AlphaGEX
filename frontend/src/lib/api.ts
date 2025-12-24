@@ -354,6 +354,10 @@ export const apiClient = {
   updateARESConfig: (config: { risk_per_trade_pct?: number; sd_multiplier?: number }) =>
     api.post('/api/ares/config', config),
 
+  // ARES Strategy Presets
+  getARESStrategyPresets: () => api.get('/api/ares/strategy/presets'),
+  setARESStrategyPreset: (preset: string) => api.post('/api/ares/strategy/preset', { preset }),
+
   // AI Intelligence Enhancements - 7 Advanced Features
   generatePreTradeChecklist: (data: {
     symbol: string,
