@@ -20,6 +20,16 @@ import {
 import ScanActivityFeed from '@/components/ScanActivityFeed'
 import LivePortfolio, { EquityDataPoint, LivePnLData } from '@/components/trader/LivePortfolio'
 import OpenPositionsLive from '@/components/trader/OpenPositionsLive'
+import {
+  BotStatusBanner,
+  WhyNotTrading,
+  TodayReportCard,
+  ActivityTimeline,
+  ExitNotificationContainer,
+  RiskMetrics,
+  PerformanceComparison,
+  PositionDetailModal
+} from '@/components/trader'
 
 interface Heartbeat {
   last_scan: string | null
@@ -176,6 +186,20 @@ interface DecisionLog {
   outcome_notes?: string
   underlying_price_at_entry?: number
   underlying_price_at_exit?: number
+
+  // SIGNAL SOURCE & OVERRIDE TRACKING
+  signal_source?: string  // "ML", "Oracle", "Oracle (override ML)", etc.
+  override_occurred?: boolean
+  override_details?: {
+    overridden_signal?: string
+    overridden_advice?: string
+    override_reason?: string
+    override_by?: string
+    oracle_advice?: string
+    oracle_confidence?: number
+    oracle_win_probability?: number
+    ml_was_saying?: string
+  }
 
   // Trade legs with Greeks
   legs?: Array<{
@@ -677,6 +701,53 @@ export default function ATHENAPage() {
   const [runningCycle, setRunningCycle] = useState(false)
   const [expandedDecision, setExpandedDecision] = useState<string | null>(null)
   const [expandedPosition, setExpandedPosition] = useState<string | null>(null)
+  const [selectedPosition, setSelectedPosition] = useState<any | null>(null)
+  const [exitNotifications, setExitNotifications] = useState<any[]>([])
+
+  // Build skip reasons from decisions
+  const skipReasons = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0]
+    return decisions
+      .filter(d => d.timestamp?.startsWith(today) && (d.action === 'SKIP' || d.decision_type === 'SKIP'))
+      .map(d => ({
+        id: d.decision_id,
+        timestamp: d.timestamp,
+        reason: d.why || d.what || 'No reason provided',
+        category: d.signal_source?.includes('ML') ? 'ml' as const :
+                  d.signal_source?.includes('Oracle') ? 'oracle' as const :
+                  d.why?.toLowerCase().includes('market') ? 'market' as const :
+                  d.why?.toLowerCase().includes('risk') ? 'risk' as const : 'other' as const,
+        details: {
+          ml_advice: d.ml_predictions?.advice,
+          ml_confidence: d.ml_predictions?.ml_confidence,
+          oracle_advice: d.oracle_advice?.advice,
+          oracle_confidence: d.oracle_advice?.confidence,
+          oracle_win_prob: d.oracle_advice?.win_probability,
+          vix: d.market_context?.vix,
+          spot_price: d.market_context?.spot_price,
+          gex_regime: d.gex_context?.regime
+        }
+      }))
+  }, [decisions])
+
+  // Build activity timeline
+  const activityItems = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0]
+    return decisions
+      .filter(d => d.timestamp?.startsWith(today))
+      .slice(0, 20)
+      .map(d => ({
+        id: d.decision_id,
+        timestamp: d.timestamp,
+        type: d.decision_type?.toLowerCase().includes('entry') ? 'entry' as const :
+              d.decision_type?.toLowerCase().includes('exit') ? 'exit' as const :
+              d.action === 'SKIP' ? 'skip' as const : 'scan' as const,
+        title: d.what || d.action,
+        description: d.why,
+        pnl: d.actual_pnl,
+        signalSource: d.signal_source
+      }))
+  }, [decisions])
 
   // Manual refresh function
   const fetchData = () => {
@@ -692,29 +763,70 @@ export default function ATHENAPage() {
   }
 
   // Build equity curve data for the chart (Robinhood-style)
+  // Includes both historical closed positions AND current live equity with unrealized P&L
   const equityChartData: EquityDataPoint[] = useMemo(() => {
+    const startingCapital = status?.capital || 100000
+
     // Include both 'closed' and 'expired' positions (0DTE trades expire with status='expired')
     const closedPositions = positions.filter(p => (p.status === 'closed' || p.status === 'expired') && p.exit_time)
-    if (closedPositions.length === 0) return []
+    const openPositions = positions.filter(p => p.status === 'open')
 
-    // Sort by close date
-    const sorted = [...closedPositions].sort((a, b) =>
-      new Date(a.exit_time!).getTime() - new Date(b.exit_time!).getTime()
-    )
+    // Calculate realized P&L from closed positions
+    let realizedPnl = 0
+    const historicalPoints: EquityDataPoint[] = []
 
-    // Build cumulative equity
-    const startingCapital = status?.capital || 100000
-    let cumPnl = 0
-    return sorted.map(pos => {
-      cumPnl += pos.realized_pnl || 0
-      return {
-        date: new Date(pos.exit_time!).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-        timestamp: new Date(pos.exit_time!).getTime(),
-        equity: startingCapital + cumPnl,
-        pnl: cumPnl
-      }
-    })
-  }, [positions, status?.capital])
+    if (closedPositions.length > 0) {
+      // Sort by close date
+      const sorted = [...closedPositions].sort((a, b) =>
+        new Date(a.exit_time!).getTime() - new Date(b.exit_time!).getTime()
+      )
+
+      // Build cumulative equity from closed positions
+      sorted.forEach(pos => {
+        realizedPnl += pos.realized_pnl || 0
+        historicalPoints.push({
+          date: new Date(pos.exit_time!).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          timestamp: new Date(pos.exit_time!).getTime(),
+          equity: startingCapital + realizedPnl,
+          pnl: realizedPnl
+        })
+      })
+    }
+
+    // Get unrealized P&L from livePnL data (properly calculated with 100x multiplier)
+    // This includes: (current_spread_value - entry_debit) * contracts * 100
+    const unrealizedPnl = livePnL?.total_unrealized_pnl || 0
+
+    // Add live "now" point with current equity (realized + unrealized)
+    const totalPnl = realizedPnl + unrealizedPnl
+    const now = new Date()
+    const livePoint: EquityDataPoint = {
+      date: 'Now',
+      timestamp: now.getTime(),
+      equity: startingCapital + totalPnl,
+      pnl: totalPnl
+    }
+
+    // If no historical data, start with starting capital point
+    if (historicalPoints.length === 0 && openPositions.length > 0) {
+      // Add a starting point at beginning of day
+      const todayStart = new Date()
+      todayStart.setHours(9, 30, 0, 0) // Market open
+      historicalPoints.push({
+        date: todayStart.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        timestamp: todayStart.getTime(),
+        equity: startingCapital,
+        pnl: 0
+      })
+    }
+
+    // Always add the live point if there are open positions or historical data
+    if (openPositions.length > 0 || historicalPoints.length > 0) {
+      return [...historicalPoints, livePoint]
+    }
+
+    return historicalPoints
+  }, [positions, status?.capital, livePnL?.total_unrealized_pnl])
 
   // Helper functions for decision display
   const getDecisionTypeBadge = (type: string) => {
@@ -972,6 +1084,14 @@ export default function ATHENAPage() {
                 positions={livePnL?.positions || []}
                 underlyingPrice={livePnL?.underlying_price}
                 isLoading={livePnLLoading}
+                onPositionClick={(pos) => setSelectedPosition(pos)}
+              />
+
+              {/* Why Not Trading - Shows skip reasons */}
+              <WhyNotTrading
+                skipReasons={skipReasons}
+                isLoading={decisionsValidating}
+                maxDisplay={5}
               />
 
               {/* Today's Status Summary */}
@@ -1002,6 +1122,47 @@ export default function ATHENAPage() {
                 isActive={status?.is_active || false}
                 hasOpenPosition={positions.some(p => p.status === 'open')}
               />
+
+              {/* Today's Stats & Activity Row */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* Today's Report Card */}
+                <TodayReportCard
+                  botName="ATHENA"
+                  scansToday={status?.heartbeat?.scan_count_today || 0}
+                  tradesToday={status?.daily_trades || 0}
+                  winsToday={positions.filter(p =>
+                    (p.status === 'closed' || p.status === 'expired') &&
+                    p.exit_time?.startsWith(new Date().toISOString().split('T')[0]) &&
+                    p.realized_pnl > 0
+                  ).length}
+                  lossesToday={positions.filter(p =>
+                    (p.status === 'closed' || p.status === 'expired') &&
+                    p.exit_time?.startsWith(new Date().toISOString().split('T')[0]) &&
+                    p.realized_pnl < 0
+                  ).length}
+                  totalPnl={(livePnL?.total_realized_pnl || 0) + (livePnL?.total_unrealized_pnl || 0)}
+                  unrealizedPnl={livePnL?.total_unrealized_pnl || 0}
+                  realizedPnl={livePnL?.total_realized_pnl || 0}
+                  bestTrade={Math.max(...positions.filter(p =>
+                    (p.status === 'closed' || p.status === 'expired') &&
+                    p.exit_time?.startsWith(new Date().toISOString().split('T')[0])
+                  ).map(p => p.realized_pnl || 0), 0) || undefined}
+                  worstTrade={Math.min(...positions.filter(p =>
+                    (p.status === 'closed' || p.status === 'expired') &&
+                    p.exit_time?.startsWith(new Date().toISOString().split('T')[0])
+                  ).map(p => p.realized_pnl || 0), 0) || undefined}
+                  openPositions={positions.filter(p => p.status === 'open').length}
+                  capitalAtRisk={positions.filter(p => p.status === 'open').reduce((sum, p) => sum + (p.max_loss || 0), 0)}
+                  capitalTotal={status?.capital || 100000}
+                />
+
+                {/* Activity Timeline */}
+                <ActivityTimeline
+                  activities={activityItems}
+                  isLoading={decisionsValidating}
+                  maxDisplay={8}
+                />
+              </div>
 
               {/* Today's Closed Trades */}
               {positions.filter(p => (p.status === 'closed' || p.status === 'expired') && p.exit_time?.startsWith(new Date().toISOString().split('T')[0])).length > 0 && (
@@ -1519,6 +1680,22 @@ export default function ATHENAPage() {
                                   {decision.symbol && (
                                     <span className="text-xs text-gray-400 font-mono">{decision.symbol}</span>
                                   )}
+                                  {/* OVERRIDE INDICATOR - Very prominent */}
+                                  {decision.override_occurred && (
+                                    <span className="px-2 py-0.5 rounded text-xs font-bold bg-amber-500/30 text-amber-400 border border-amber-500/50 animate-pulse">
+                                      OVERRIDE
+                                    </span>
+                                  )}
+                                  {/* Signal Source Badge */}
+                                  {decision.signal_source && (
+                                    <span className={`px-2 py-0.5 rounded text-xs ${
+                                      decision.signal_source.includes('override')
+                                        ? 'bg-amber-900/30 text-amber-300'
+                                        : 'bg-blue-900/30 text-blue-300'
+                                    }`}>
+                                      {decision.signal_source}
+                                    </span>
+                                  )}
                                   {decision.actual_pnl !== undefined && decision.actual_pnl !== 0 && (
                                     <span className={`text-xs font-bold ${decision.actual_pnl > 0 ? 'text-green-400' : 'text-red-400'}`}>
                                       {decision.actual_pnl > 0 ? '+' : ''}{formatCurrency(decision.actual_pnl)}
@@ -1548,6 +1725,43 @@ export default function ATHENAPage() {
                           {/* Expanded Details */}
                           {isExpanded && (
                             <div className="px-3 pb-3 space-y-3 border-t border-gray-700/50 pt-3">
+                              {/* OVERRIDE DETAILS - Most prominent when present */}
+                              {decision.override_occurred && decision.override_details && (
+                                <div className="bg-amber-900/20 border-2 border-amber-500/50 rounded-lg p-3">
+                                  <div className="flex items-center gap-2 mb-2">
+                                    <span className="text-amber-400 text-sm font-bold">SIGNAL OVERRIDE</span>
+                                    <span className="px-2 py-0.5 rounded text-xs bg-amber-500/30 text-amber-300">
+                                      {decision.override_details.override_by} overrode {decision.override_details.overridden_signal}
+                                    </span>
+                                  </div>
+                                  <div className="grid grid-cols-2 gap-2 text-xs">
+                                    <div>
+                                      <span className="text-gray-400">ML was saying:</span>
+                                      <span className="ml-2 text-red-400 font-medium">{decision.override_details.ml_was_saying || decision.override_details.overridden_advice}</span>
+                                    </div>
+                                    <div>
+                                      <span className="text-gray-400">Oracle said:</span>
+                                      <span className="ml-2 text-green-400 font-medium">{decision.override_details.oracle_advice}</span>
+                                    </div>
+                                    <div>
+                                      <span className="text-gray-400">Oracle Confidence:</span>
+                                      <span className="ml-2 text-white font-medium">
+                                        {decision.override_details.oracle_confidence ? `${(decision.override_details.oracle_confidence * 100).toFixed(0)}%` : 'N/A'}
+                                      </span>
+                                    </div>
+                                    <div>
+                                      <span className="text-gray-400">Win Probability:</span>
+                                      <span className="ml-2 text-white font-medium">
+                                        {decision.override_details.oracle_win_probability ? `${(decision.override_details.oracle_win_probability * 100).toFixed(0)}%` : 'N/A'}
+                                      </span>
+                                    </div>
+                                  </div>
+                                  <p className="text-xs text-amber-200 mt-2 italic">
+                                    {decision.override_details.override_reason}
+                                  </p>
+                                </div>
+                              )}
+
                               {/* WHY Section */}
                               <div className="bg-yellow-900/10 border-l-2 border-yellow-500 pl-3 py-2">
                                 <span className="text-yellow-400 text-xs font-bold">WHY:</span>
@@ -2283,6 +2497,30 @@ export default function ATHENAPage() {
           )}
         </div>
       </main>
+
+      {/* Position Detail Modal */}
+      <PositionDetailModal
+        isOpen={selectedPosition !== null}
+        onClose={() => setSelectedPosition(null)}
+        position={selectedPosition || {
+          position_id: '',
+          spread_type: '',
+          long_strike: 0,
+          short_strike: 0,
+          expiration: '',
+          contracts: 0,
+          entry_price: 0,
+          status: ''
+        }}
+        underlyingPrice={livePnL?.underlying_price}
+        botType="ATHENA"
+      />
+
+      {/* Exit Notifications */}
+      <ExitNotificationContainer
+        notifications={exitNotifications}
+        onDismiss={(id) => setExitNotifications(prev => prev.filter(n => n.id !== id))}
+      />
     </div>
   )
 }

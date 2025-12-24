@@ -1531,12 +1531,19 @@ class ARESTrader:
                         for alt in (alternatives or [])
                     ]
 
+                    # Determine signal source for SKIP
+                    skip_signal_source = "Oracle" if oracle_advice else "Config"
+
                     comprehensive_decision = BotDecision(
                         bot_name="ARES",
                         decision_type="SKIP",
                         action="SKIP",
                         symbol=self.get_trading_ticker(),
                         strategy="aggressive_iron_condor",
+                        # SIGNAL SOURCE TRACKING
+                        signal_source=skip_signal_source,
+                        override_occurred=False,  # ARES doesn't have ML override scenario
+                        override_details={},
                         session_id=self.session_tracker.session_id if self.session_tracker else generate_session_id(),
                         scan_cycle=self.session_tracker.current_cycle if self.session_tracker else 0,
                         decision_sequence=self.session_tracker.next_decision() if self.session_tracker else 0,
@@ -1844,12 +1851,19 @@ class ARESTrader:
                         ),
                     ]
 
+                    # Determine signal source for ARES
+                    ares_signal_source = "Oracle" if oracle_advice else "Config"
+
                     comprehensive_decision = BotDecision(
                         bot_name="ARES",
                         decision_type="ENTRY",
                         action="SELL",
                         symbol=self.get_trading_ticker(),
                         strategy="aggressive_iron_condor",
+                        # SIGNAL SOURCE TRACKING
+                        signal_source=ares_signal_source,
+                        override_occurred=False,  # ARES doesn't have ML override scenario
+                        override_details={},
                         strike=position.put_short_strike,  # Primary strike for display
                         expiration=position.expiration,
                         option_type="IRON_CONDOR",

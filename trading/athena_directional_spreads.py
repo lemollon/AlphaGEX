@@ -355,7 +355,11 @@ class ATHENATrader:
         # Load config from database if available
         self._load_config_from_db()
 
-        logger.info(f"ATHENA initialized: capital=${initial_capital:,.2f}, mode={self.config.mode.value}")
+        # CRITICAL: Load any existing open positions from database
+        # This ensures positions survive bot restarts
+        self._load_open_positions_from_db()
+
+        logger.info(f"ATHENA initialized: capital=${initial_capital:,.2f}, mode={self.config.mode.value}, open_positions={len(self.open_positions)}")
 
     def _load_config_from_db(self) -> None:
         """Load configuration from apache_config table"""
@@ -399,6 +403,76 @@ class ATHENATrader:
             logger.info("ATHENA: Loaded config from database")
         except Exception as e:
             logger.debug(f"ATHENA: Could not load config from DB: {e}")
+
+    def _load_open_positions_from_db(self) -> None:
+        """
+        Load all open positions from database on startup.
+
+        CRITICAL: This ensures positions survive bot restarts.
+        Without this, positions in the DB become invisible when the bot restarts
+        because self.open_positions starts as an empty list.
+        """
+        conn = None
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Get all positions with status='open' that haven't expired yet
+            today = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
+
+            cursor.execute('''
+                SELECT
+                    position_id, spread_type, created_at, expiration,
+                    long_strike, short_strike, entry_price, contracts,
+                    max_profit, max_loss, spot_at_entry, gex_regime,
+                    oracle_confidence, oracle_reasoning, ticker
+                FROM apache_positions
+                WHERE status = 'open' AND expiration >= %s
+                ORDER BY created_at ASC
+            ''', (today,))
+
+            loaded_count = 0
+            for row in cursor.fetchall():
+                spread_type = SpreadType.BULL_CALL_SPREAD if row[1] == 'BULL_CALL_SPREAD' else SpreadType.BEAR_CALL_SPREAD
+                open_date_val = str(row[2])[:10] if row[2] else ""
+
+                pos = SpreadPosition(
+                    position_id=row[0],
+                    spread_type=spread_type,
+                    open_date=open_date_val,
+                    expiration=str(row[3]) if row[3] else "",
+                    long_strike=float(row[4] or 0),
+                    short_strike=float(row[5] or 0),
+                    entry_debit=float(row[6] or 0),
+                    contracts=int(row[7] or 0),
+                    spread_width=abs(float(row[5] or 0) - float(row[4] or 0)),
+                    max_profit=float(row[8] or 0),
+                    max_loss=float(row[9] or 0),
+                    underlying_price_at_entry=float(row[10] or 0),
+                    gex_regime_at_entry=row[11] or "",
+                    oracle_confidence=float(row[12] or 0),
+                    oracle_reasoning=row[13] or "",
+                    order_id="",
+                    status='open',
+                    initial_contracts=int(row[7] or 0),
+                    contracts_remaining=int(row[7] or 0)
+                )
+
+                # Add to open_positions list
+                self.open_positions.append(pos)
+                loaded_count += 1
+                logger.info(f"ATHENA: Recovered position {pos.position_id} - {pos.spread_type.value} {pos.long_strike}/{pos.short_strike} exp {pos.expiration}")
+
+            if loaded_count > 0:
+                logger.info(f"ATHENA: Recovered {loaded_count} open positions from database")
+            else:
+                logger.info("ATHENA: No open positions to recover from database")
+
+        except Exception as e:
+            logger.error(f"ATHENA: Error loading open positions from DB: {e}")
+        finally:
+            if conn:
+                conn.close()
 
     def _log_to_db(self, level: str, message: str, details: Optional[Dict] = None) -> None:
         """Log message to apache_logs table"""
@@ -1020,7 +1094,7 @@ Current:         ${self.current_capital:,.2f}
                 / gex_data['spot_price'] * 100
             ) if gex_data['flip_point'] else 0,
             gex_between_walls=self._is_between_walls(gex_data),
-            day_of_week=datetime.now().weekday()
+            day_of_week=datetime.now(CENTRAL_TZ).weekday()
         )
 
         try:
@@ -1264,7 +1338,10 @@ Current:         ${self.current_capital:,.2f}
         advice: OraclePrediction,
         signal_id: Optional[int] = None,
         ml_signal: Optional[Dict] = None,
-        rr_ratio: float = 0
+        rr_ratio: float = 0,
+        signal_source: str = "ML",
+        override_occurred: bool = False,
+        override_details: Optional[Dict] = None
     ) -> Optional[SpreadPosition]:
         """Execute a spread trade"""
         decision_tracker = None
@@ -1272,8 +1349,8 @@ Current:         ${self.current_capital:,.2f}
             decision_tracker = DecisionTracker()
             decision_tracker.start()
 
-        # Get 0DTE expiration
-        today = datetime.now().strftime("%Y-%m-%d")
+        # Get 0DTE expiration - MUST use Central Time for correct market date
+        today = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
 
         # Calculate strikes
         # Use Oracle's suggested strike if available, otherwise calculate from spot
@@ -1918,8 +1995,10 @@ Current:         ${self.current_capital:,.2f}
 
             # Build comprehensive "what"
             spread_name = "Bull Call Spread" if position.spread_type == SpreadType.BULL_CALL_SPREAD else "Bear Call Spread"
-            signal_source = "ML" if ml_signal else "Oracle"
-            what_desc = f"{spread_name} {position.contracts}x ${position.long_strike}/${position.short_strike} @ ${abs(position.entry_debit):.2f} ({signal_source} signal)"
+            # Note: signal_source is now passed in from run_daily_cycle, don't override it
+            # Add override indicator to the description if applicable
+            override_indicator = " [OVERRIDE]" if override_occurred else ""
+            what_desc = f"{spread_name} {position.contracts}x ${position.long_strike}/${position.short_strike} @ ${abs(position.entry_debit):.2f} ({signal_source}{override_indicator})"
 
             # Build comprehensive "why"
             why_parts = [f"GEX-based directional {spread_name} for premium capture."]
@@ -2003,6 +2082,10 @@ Current:         ${self.current_capital:,.2f}
                         action="SELL" if position.spread_type == SpreadType.BEAR_CALL_SPREAD else "BUY",
                         symbol=self.config.ticker,
                         strategy=position.spread_type.value,
+                        # SIGNAL SOURCE & OVERRIDE TRACKING
+                        signal_source=signal_source,
+                        override_occurred=override_occurred,
+                        override_details=override_details or {},
                         strike=position.short_strike,
                         expiration=str(position.expiration),
                         option_type="call",
@@ -2025,11 +2108,11 @@ Current:         ${self.current_capital:,.2f}
                             response_time_ms=0,
                             confidence=str(oracle_advice_dict.get('confidence', '')) if oracle_advice_dict else "",
                         ) if ClaudeContext and oracle_advice_dict else None,
-                        entry_reasoning=why_desc,
+                        entry_reasoning=why_desc + (f" | OVERRIDE: {override_details}" if override_occurred and override_details else ""),
                         strike_reasoning=f"Long ${position.long_strike}, Short ${position.short_strike} ({position.spread_width} wide)",
                         size_reasoning=f"{self.config.risk_per_trade_pct:.0f}% risk = {position.contracts} contracts",
                         alternatives_considered=[
-                            Alternative(strategy="STAY_OUT", reason="Insufficient signal"),
+                            Alternative(strategy="STAY_OUT", reason="ML said STAY_OUT but Oracle overrode" if override_occurred else "Insufficient signal"),
                             Alternative(strategy="Opposite direction", reason="GEX confirms direction"),
                         ] if Alternative else [],
                         kelly_pct=self.config.risk_per_trade_pct / 100,
@@ -2039,7 +2122,8 @@ Current:         ${self.current_capital:,.2f}
                         passed_all_checks=True,
                     )
                     decision_id = log_bot_decision(comprehensive_decision)
-                    logger.info(f"ATHENA: Logged to bot_decision_logs (ENTRY) - ID: {decision_id}")
+                    override_msg = " [OVERRIDE RECORDED]" if override_occurred else ""
+                    logger.info(f"ATHENA: Logged to bot_decision_logs (ENTRY) - ID: {decision_id}{override_msg}")
                 except Exception as comp_e:
                     logger.warning(f"ATHENA: Could not log to comprehensive table: {comp_e}")
 
@@ -2257,7 +2341,7 @@ Current:         ${self.current_capital:,.2f}
     def _close_position(self, position: SpreadPosition, reason: str) -> None:
         """Close a position - includes P&L from all scale-outs"""
         position.status = "closed"
-        position.close_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        position.close_date = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
         # Get current spread value for final close price
         current_spread_value = self._get_current_spread_value(position)
@@ -2361,7 +2445,8 @@ Current:         ${self.current_capital:,.2f}
             conn = get_connection()
             c = conn.cursor()
 
-            today = datetime.now().strftime("%Y-%m-%d")
+            # CRITICAL: Must use Central Time to match market trading date
+            today = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
             is_win = position.realized_pnl > 0
             is_bullish = position.spread_type == SpreadType.BULL_CALL_SPREAD
 
@@ -2896,6 +2981,8 @@ Current:         ${self.current_capital:,.2f}
         ml_signal = None
         spread_type = None
         signal_source = "ML"
+        override_occurred = False
+        override_details = {}
 
         if self.gex_ml:
             ml_signal = self.get_ml_signal(gex_data)
@@ -2993,13 +3080,27 @@ Current:         ${self.current_capital:,.2f}
                     return result
 
                 # Oracle says TRADE - this OVERRIDES ML STAY_OUT
+                override_occurred = False
+                override_details = {}
                 if ml_said_stay_out:
+                    override_occurred = True
+                    override_details = {
+                        'overridden_signal': 'ML',
+                        'overridden_advice': 'STAY_OUT',
+                        'override_reason': f"Oracle high confidence: {oracle_advice.confidence:.0%}, win prob: {oracle_advice.win_probability:.0%}",
+                        'override_by': 'Oracle',
+                        'oracle_advice': oracle_advice.advice.value,
+                        'oracle_confidence': oracle_advice.confidence,
+                        'oracle_win_probability': oracle_advice.win_probability,
+                        'ml_was_saying': 'STAY_OUT'
+                    }
                     self._log_to_db("WARNING",
                         f"ORACLE OVERRIDE: Oracle says {oracle_advice.advice.value} (conf={oracle_advice.confidence:.0%}, "
                         f"win={oracle_advice.win_probability:.0%}) overriding ML STAY_OUT",
                         {'ml_advice': 'STAY_OUT', 'oracle_advice': oracle_advice.advice.value,
                          'oracle_confidence': oracle_advice.confidence,
-                         'oracle_win_prob': oracle_advice.win_probability}
+                         'oracle_win_prob': oracle_advice.win_probability,
+                         'override_details': override_details}
                     )
                     signal_source = "Oracle (override ML)"
 
@@ -3180,7 +3281,7 @@ Current:         ${self.current_capital:,.2f}
             'suggested_call_strike': getattr(advice_obj, 'suggested_call_strike', None)
         })
 
-        # Execute spread
+        # Execute spread with full override tracking
         position = self.execute_spread(
             spread_type=spread_type,
             spot_price=gex_data['spot_price'],
@@ -3188,7 +3289,10 @@ Current:         ${self.current_capital:,.2f}
             advice=advice_obj,
             signal_id=signal_id,
             ml_signal=ml_signal,
-            rr_ratio=rr_ratio
+            rr_ratio=rr_ratio,
+            signal_source=signal_source,
+            override_occurred=override_occurred,
+            override_details=override_details if override_occurred else None
         )
 
         if position:
@@ -3837,16 +3941,18 @@ Current:         ${self.current_capital:,.2f}
 
     def get_status(self) -> Dict[str, Any]:
         """Get current bot status"""
+        # Use Central Time for date comparisons to match market trading days
+        today_ct = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
         return {
             'bot_name': 'ATHENA',
             'mode': self.config.mode.value,
             'capital': self.current_capital,
             'open_positions': len(self.open_positions),
             'closed_today': len([p for p in self.closed_positions
-                                if p.close_date and p.close_date.startswith(datetime.now().strftime("%Y-%m-%d"))]),
+                                if p.close_date and p.close_date.startswith(today_ct)]),
             'daily_trades': self.daily_trades,
             'daily_pnl': sum(p.realized_pnl for p in self.closed_positions
-                           if p.close_date and p.close_date.startswith(datetime.now().strftime("%Y-%m-%d"))),
+                           if p.close_date and p.close_date.startswith(today_ct)),
             'oracle_available': self.oracle is not None,
             'kronos_available': self.kronos is not None,
             'tradier_available': self.tradier is not None,

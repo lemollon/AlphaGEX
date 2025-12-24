@@ -21,6 +21,16 @@ import {
 import ScanActivityFeed from '@/components/ScanActivityFeed'
 import LivePortfolio, { EquityDataPoint, LivePnLData } from '@/components/trader/LivePortfolio'
 import OpenPositionsLive from '@/components/trader/OpenPositionsLive'
+import {
+  BotStatusBanner,
+  WhyNotTrading,
+  TodayReportCard,
+  ActivityTimeline,
+  ExitNotificationContainer,
+  RiskMetrics,
+  PerformanceComparison,
+  PositionDetailModal
+} from '@/components/trader'
 
 // ==================== INTERFACES ====================
 
@@ -188,6 +198,15 @@ interface DecisionLog {
   underlying_price_at_entry?: number
   underlying_price_at_exit?: number
   outcome_notes?: string
+  // SIGNAL SOURCE TRACKING
+  signal_source?: string  // "Oracle", "Config", etc.
+  override_occurred?: boolean
+  override_details?: {
+    overridden_signal?: string
+    overridden_advice?: string
+    override_reason?: string
+    override_by?: string
+  }
   legs?: Array<{
     leg_id: number; action: string; option_type: string; strike: number; expiration: string
     entry_price: number; exit_price: number; contracts: number; premium_per_contract: number
@@ -809,6 +828,52 @@ export default function ARESPage() {
   const [expandedSpxPosition, setExpandedSpxPosition] = useState<string | null>(null)
   const [expandedSpyPosition, setExpandedSpyPosition] = useState<string | null>(null)
   const [changingStrategy, setChangingStrategy] = useState(false)
+  const [selectedPosition, setSelectedPosition] = useState<any | null>(null)
+  const [exitNotifications, setExitNotifications] = useState<any[]>([])
+
+  // Build skip reasons from decisions
+  const skipReasons = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0]
+    return decisions
+      .filter(d => d.timestamp?.startsWith(today) && (d.action === 'SKIP' || d.decision_type === 'SKIP'))
+      .map(d => ({
+        id: String(d.id),
+        timestamp: d.timestamp,
+        reason: d.why || d.what || 'No reason provided',
+        category: d.signal_source?.includes('ML') ? 'ml' as const :
+                  d.signal_source?.includes('Oracle') ? 'oracle' as const :
+                  d.why?.toLowerCase().includes('market') ? 'market' as const :
+                  d.why?.toLowerCase().includes('risk') ? 'risk' as const :
+                  d.why?.toLowerCase().includes('vix') ? 'market' as const : 'other' as const,
+        details: {
+          oracle_advice: d.oracle_advice?.advice,
+          oracle_confidence: d.oracle_advice?.confidence,
+          oracle_win_prob: d.oracle_advice?.win_probability,
+          vix: d.market_context?.vix,
+          spot_price: d.market_context?.spot_price,
+          gex_regime: d.gex_context?.regime
+        }
+      }))
+  }, [decisions])
+
+  // Build activity timeline
+  const activityItems = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0]
+    return decisions
+      .filter(d => d.timestamp?.startsWith(today))
+      .slice(0, 20)
+      .map(d => ({
+        id: String(d.id),
+        timestamp: d.timestamp,
+        type: d.decision_type?.toLowerCase().includes('entry') ? 'entry' as const :
+              d.decision_type?.toLowerCase().includes('exit') ? 'exit' as const :
+              d.action === 'SKIP' ? 'skip' as const : 'scan' as const,
+        title: d.what || d.action,
+        description: d.why,
+        pnl: d.actual_pnl,
+        signalSource: d.signal_source
+      }))
+  }, [decisions])
 
   // Strategy change handler
   const handleStrategyChange = async (presetId: string) => {
@@ -921,6 +986,56 @@ export default function ARESPage() {
 
     return data.filter(d => new Date(d.date) >= startDate)
   }
+
+  // Build equity curve with live data point (includes unrealized P&L from open positions)
+  const equityDataWithLive = useMemo(() => {
+    const startingCapital = status?.capital || 200000
+
+    // Get historical equity data from backend
+    const historicalData = equityData.map((e: EquityPoint) => ({
+      date: e.date,
+      timestamp: new Date(e.date).getTime(),
+      equity: e.equity,
+      pnl: e.pnl
+    }))
+
+    // Calculate realized P&L from historical data
+    const lastHistoricalPnl = historicalData.length > 0
+      ? historicalData[historicalData.length - 1].pnl
+      : 0
+
+    // Get unrealized P&L from livePnL data (properly calculated with 100x multiplier)
+    const unrealizedPnl = livePnL?.total_unrealized_pnl || 0
+    const hasOpenPositions = positions.length > 0
+
+    // Add live "now" point with current equity (historical realized + current unrealized)
+    if (hasOpenPositions || historicalData.length > 0) {
+      const totalPnl = lastHistoricalPnl + unrealizedPnl
+      const now = new Date()
+      const livePoint = {
+        date: 'Now',
+        timestamp: now.getTime(),
+        equity: startingCapital + totalPnl,
+        pnl: totalPnl
+      }
+
+      // If no historical data but have open positions, add starting point
+      if (historicalData.length === 0 && hasOpenPositions) {
+        const todayStart = new Date()
+        todayStart.setHours(9, 30, 0, 0) // Market open
+        historicalData.push({
+          date: todayStart.toLocaleDateString('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }),
+          timestamp: todayStart.getTime(),
+          equity: startingCapital,
+          pnl: 0
+        })
+      }
+
+      return [...historicalData, livePoint]
+    }
+
+    return historicalData
+  }, [equityData, livePnL?.total_unrealized_pnl, positions.length, status?.capital])
 
   const spxEquityData = buildEquityCurve(spxClosedPositions, spxStats.capital)
   const spyEquityData = buildEquityCurve(spyClosedPositions, spyStats.capital)
@@ -1100,12 +1215,7 @@ export default function ARESPage() {
                 totalValue={(status?.capital || 200000) + (livePnL?.net_pnl || status?.total_pnl || 0)}
                 startingCapital={status?.capital || 200000}
                 livePnL={livePnL}
-                equityData={equityData.map((e: EquityPoint) => ({
-                  date: e.date,
-                  timestamp: new Date(e.date).getTime(),
-                  equity: e.equity,
-                  pnl: e.pnl
-                })) as EquityDataPoint[]}
+                equityData={equityDataWithLive as EquityDataPoint[]}
                 isLoading={livePnLLoading}
                 onRefresh={() => mutateLivePnL()}
                 lastUpdated={livePnL?.last_updated}
@@ -1117,6 +1227,14 @@ export default function ARESPage() {
                 positions={livePnL?.positions || []}
                 underlyingPrice={livePnL?.underlying_price || marketData?.underlying_price}
                 isLoading={livePnLLoading}
+                onPositionClick={(pos) => setSelectedPosition(pos)}
+              />
+
+              {/* Why Not Trading - Shows skip reasons */}
+              <WhyNotTrading
+                skipReasons={skipReasons}
+                isLoading={decisionsValidating}
+                maxDisplay={5}
               />
 
               {/* Today's Summary Card - Shows what happened today at a glance */}
@@ -1169,6 +1287,43 @@ export default function ARESPage() {
                 isTrading={status?.in_trading_window || false}
                 hasOpenPosition={positions.length > 0}
               />
+
+              {/* Today's Stats & Activity Row */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {/* Today's Report Card */}
+                <TodayReportCard
+                  botName="ARES"
+                  scansToday={status?.heartbeat?.scan_count_today || 0}
+                  tradesToday={closedPositions.filter(p => p.close_date?.startsWith(new Date().toISOString().split('T')[0])).length}
+                  winsToday={closedPositions.filter(p =>
+                    p.close_date?.startsWith(new Date().toISOString().split('T')[0]) &&
+                    (p.realized_pnl || 0) > 0
+                  ).length}
+                  lossesToday={closedPositions.filter(p =>
+                    p.close_date?.startsWith(new Date().toISOString().split('T')[0]) &&
+                    (p.realized_pnl || 0) < 0
+                  ).length}
+                  totalPnl={(livePnL?.total_realized_pnl || 0) + (livePnL?.total_unrealized_pnl || 0)}
+                  unrealizedPnl={livePnL?.total_unrealized_pnl || 0}
+                  realizedPnl={livePnL?.total_realized_pnl || 0}
+                  bestTrade={Math.max(...closedPositions.filter(p =>
+                    p.close_date?.startsWith(new Date().toISOString().split('T')[0])
+                  ).map(p => p.realized_pnl || 0), 0) || undefined}
+                  worstTrade={Math.min(...closedPositions.filter(p =>
+                    p.close_date?.startsWith(new Date().toISOString().split('T')[0])
+                  ).map(p => p.realized_pnl || 0), 0) || undefined}
+                  openPositions={positions.length}
+                  capitalAtRisk={positions.reduce((sum, p) => sum + (p.max_loss || 0), 0)}
+                  capitalTotal={status?.capital || 200000}
+                />
+
+                {/* Activity Timeline */}
+                <ActivityTimeline
+                  activities={activityItems}
+                  isLoading={decisionsValidating}
+                  maxDisplay={8}
+                />
+              </div>
 
               {/* Today's Closed Iron Condors */}
               {closedPositions.filter(p => p.close_date?.startsWith(new Date().toISOString().split('T')[0])).length > 0 && (
@@ -2135,6 +2290,18 @@ export default function ARESPage() {
                               <span className={`px-2 py-0.5 rounded text-xs font-medium ${badge.bg} ${badge.text}`}>{decision.decision_type?.replace(/_/g, ' ')}</span>
                               <span className={`text-sm font-medium ${getActionColor(decision.action)}`}>{decision.action}</span>
                               {decision.symbol && <span className="text-xs text-gray-400 font-mono">{decision.symbol}</span>}
+                              {/* SIGNAL SOURCE BADGE */}
+                              {decision.signal_source && (
+                                <span className={`px-2 py-0.5 rounded text-xs ${
+                                  decision.signal_source.includes('override')
+                                    ? 'bg-amber-900/30 text-amber-300'
+                                    : decision.signal_source === 'Oracle'
+                                    ? 'bg-purple-900/30 text-purple-300'
+                                    : 'bg-blue-900/30 text-blue-300'
+                                }`}>
+                                  {decision.signal_source}
+                                </span>
+                              )}
                               {decision.actual_pnl !== undefined && decision.actual_pnl !== 0 && (
                                 <span className={`text-xs font-bold ${decision.actual_pnl > 0 ? 'text-green-400' : 'text-red-400'}`}>
                                   {decision.actual_pnl > 0 ? '+' : ''}{formatCurrency(decision.actual_pnl)}
@@ -2335,6 +2502,40 @@ export default function ARESPage() {
           </div>
         </div>
       </main>
+
+      {/* Position Detail Modal */}
+      <PositionDetailModal
+        isOpen={selectedPosition !== null}
+        onClose={() => setSelectedPosition(null)}
+        position={selectedPosition ? {
+          ...selectedPosition,
+          position_id: selectedPosition.position_id || '',
+          spread_type: 'IRON_CONDOR',
+          long_strike: selectedPosition.put_long_strike || 0,
+          short_strike: selectedPosition.put_short_strike || 0,
+          expiration: selectedPosition.expiration || '',
+          contracts: selectedPosition.contracts || 1,
+          entry_price: selectedPosition.credit_received || selectedPosition.total_credit || 0,
+          status: selectedPosition.status || 'open'
+        } : {
+          position_id: '',
+          spread_type: 'IRON_CONDOR',
+          long_strike: 0,
+          short_strike: 0,
+          expiration: '',
+          contracts: 0,
+          entry_price: 0,
+          status: ''
+        }}
+        underlyingPrice={livePnL?.underlying_price || marketData?.underlying_price}
+        botType="ARES"
+      />
+
+      {/* Exit Notifications */}
+      <ExitNotificationContainer
+        notifications={exitNotifications}
+        onDismiss={(id) => setExitNotifications(prev => prev.filter(n => n.id !== id))}
+      />
     </div>
   )
 }
