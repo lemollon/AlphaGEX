@@ -303,6 +303,345 @@ interface DecisionLog {
   }
 }
 
+// ==================== TODAY'S STATUS CARD ====================
+interface ATHENATodaySummaryProps {
+  tradedToday: boolean
+  openPosition: SpreadPosition | null
+  lastDecision: DecisionLog | null
+  oracleAdvice: OracleAdvice | undefined
+  mlSignal: MLSignal | undefined
+  gexContext: { regime: string; put_wall: number; call_wall: number; net_gex: number } | undefined
+  spotPrice: number
+}
+
+function ATHENATodaySummaryCard({ tradedToday, openPosition, lastDecision, oracleAdvice, mlSignal, gexContext, spotPrice }: ATHENATodaySummaryProps) {
+  const today = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+
+  if (tradedToday && openPosition) {
+    // We traded today - show the position
+    const oracleConf = oracleAdvice?.confidence || oracleAdvice?.win_probability || 0
+    const mlConf = mlSignal?.confidence || 0
+
+    return (
+      <div className="bg-gradient-to-r from-green-900/30 to-[#0a0a0a] rounded-xl p-5 border border-green-700/50">
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="w-3 h-3 rounded-full bg-green-500 animate-pulse" />
+            <div>
+              <h3 className="text-lg font-bold text-white">TODAY&apos;S STATUS</h3>
+              <span className="text-gray-400 text-sm">{today}</span>
+            </div>
+          </div>
+          <span className="px-3 py-1 bg-green-900/50 text-green-400 rounded-full text-sm font-medium">
+            ✓ TRADED
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Position Details */}
+          <div className="bg-black/30 rounded-lg p-4">
+            <div className="text-gray-400 text-xs mb-2">POSITION</div>
+            <div className="text-white font-mono text-lg mb-2">
+              {openPosition.ticker} {openPosition.spread_type?.replace(/_/g, ' ')}
+            </div>
+            <div className="text-orange-300 font-mono">
+              {openPosition.long_strike}/{openPosition.short_strike}
+            </div>
+            <div className="flex gap-4 mt-3 text-sm">
+              <div>
+                <span className="text-gray-500">Entry: </span>
+                <span className="text-white font-bold">${openPosition.entry_price?.toFixed(2)}</span>
+              </div>
+              <div>
+                <span className="text-gray-500">Max Risk: </span>
+                <span className="text-red-400">${openPosition.max_loss?.toFixed(0)}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Why We Traded */}
+          <div className="bg-black/30 rounded-lg p-4">
+            <div className="text-gray-400 text-xs mb-2">WHY WE TRADED</div>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Brain className="w-4 h-4 text-green-400" />
+                <span className="text-white">ML Signal: <span className="text-green-400 font-bold">{(mlConf * 100).toFixed(0)}%</span></span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Zap className="w-4 h-4 text-purple-400" />
+                <span className="text-white">Oracle: <span className="text-purple-400 font-bold">{(oracleConf * 100).toFixed(0)}%</span></span>
+              </div>
+              {gexContext && (
+                <div className="text-xs text-gray-400">
+                  GEX {gexContext.regime} • Put ${gexContext.put_wall?.toFixed(0)} / Call ${gexContext.call_wall?.toFixed(0)}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // No trade today - show why
+  const skipReason = lastDecision?.alternatives?.primary_reason || lastDecision?.why || 'Waiting for favorable conditions'
+  const mlConf = mlSignal?.confidence || 0
+  const oracleConf = oracleAdvice?.win_probability || 0
+
+  return (
+    <div className="bg-gradient-to-r from-yellow-900/20 to-[#0a0a0a] rounded-xl p-5 border border-yellow-700/30">
+      <div className="flex items-start justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <div className="w-3 h-3 rounded-full bg-yellow-500" />
+          <div>
+            <h3 className="text-lg font-bold text-white">TODAY&apos;S STATUS</h3>
+            <span className="text-gray-400 text-sm">{today}</span>
+          </div>
+        </div>
+        <span className="px-3 py-1 bg-yellow-900/50 text-yellow-400 rounded-full text-sm font-medium">
+          ⚠ NO TRADE
+        </span>
+      </div>
+
+      <div className="bg-black/30 rounded-lg p-4">
+        <div className="text-gray-400 text-xs mb-2">REASON</div>
+        <div className="text-white mb-3">{skipReason}</div>
+
+        <div className="space-y-2 text-sm">
+          <div className="flex items-center gap-2">
+            <Brain className="w-4 h-4 text-yellow-400" />
+            <span className="text-gray-300">
+              ML Confidence: <span className={mlConf >= 0.6 ? 'text-green-400' : 'text-red-400'}>{(mlConf * 100).toFixed(0)}%</span>
+              <span className="text-gray-500 ml-2">(need 60%+)</span>
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <Zap className="w-4 h-4 text-purple-400" />
+            <span className="text-gray-300">
+              Oracle Win Prob: <span className={oracleConf >= 0.55 ? 'text-green-400' : 'text-red-400'}>{(oracleConf * 100).toFixed(0)}%</span>
+              <span className="text-gray-500 ml-2">(need 55%+)</span>
+            </span>
+          </div>
+        </div>
+
+        {/* What would change this */}
+        <div className="mt-4 pt-3 border-t border-gray-700">
+          <div className="text-gray-400 text-xs mb-2">WHAT WOULD HELP</div>
+          <div className="flex flex-wrap gap-2">
+            {gexContext?.regime !== 'POSITIVE' && (
+              <span className="px-2 py-1 bg-blue-900/30 text-blue-400 rounded text-xs">GEX flip to POSITIVE (+10%)</span>
+            )}
+            {mlConf < 0.6 && (
+              <span className="px-2 py-1 bg-purple-900/30 text-purple-400 rounded text-xs">ML confidence above 60%</span>
+            )}
+            {oracleConf < 0.55 && (
+              <span className="px-2 py-1 bg-green-900/30 text-green-400 rounded text-xs">Oracle win prob above 55%</span>
+            )}
+            {gexContext && spotPrice > 0 && (
+              <span className="px-2 py-1 bg-orange-900/30 text-orange-400 rounded text-xs">
+                Better R:R ratio (spot ${spotPrice.toFixed(0)} vs walls)
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ==================== DECISION PATH CARD ====================
+interface ATHENADecisionPathProps {
+  mlSignal: MLSignal | undefined
+  oracleAdvice: OracleAdvice | undefined
+  isTraded: boolean
+  gexRegime: string
+}
+
+function ATHENADecisionPathCard({ mlSignal, oracleAdvice, isTraded, gexRegime }: ATHENADecisionPathProps) {
+  const mlConf = mlSignal?.confidence || 0
+  const mlWinProb = mlSignal?.win_probability || 0
+  const oracleConf = oracleAdvice?.confidence || 0
+  const oracleWinProb = oracleAdvice?.win_probability || 0
+
+  // Combined probability (simplified)
+  const combinedProb = Math.max(mlWinProb, oracleWinProb)
+
+  return (
+    <div className="bg-[#0a0a0a] rounded-xl p-5 border border-gray-700">
+      <div className="flex items-center gap-2 mb-4">
+        <Brain className="w-5 h-5 text-orange-400" />
+        <h3 className="text-lg font-semibold text-white">Decision Path</h3>
+      </div>
+
+      <div className="space-y-4">
+        {/* Step 1: ML Signal */}
+        <div className="flex items-start gap-3">
+          <div className="w-6 h-6 rounded-full bg-purple-900/50 flex items-center justify-center text-purple-400 text-xs font-bold">1</div>
+          <div className="flex-1">
+            <div className="text-gray-400 text-xs mb-1">GEX ML SIGNAL</div>
+            <div className="flex items-center gap-2">
+              <span className="text-white">Direction:</span>
+              <span className={`font-bold ${mlSignal?.model_predictions?.direction === 'BULLISH' ? 'text-green-400' : mlSignal?.model_predictions?.direction === 'BEARISH' ? 'text-red-400' : 'text-gray-400'}`}>
+                {mlSignal?.model_predictions?.direction || 'N/A'}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 mt-1">
+              <span className="text-white">Win Probability:</span>
+              <span className="text-purple-400 font-bold">{(mlWinProb * 100).toFixed(0)}%</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Step 2: Oracle Validation */}
+        <div className="flex items-start gap-3">
+          <div className="w-6 h-6 rounded-full bg-green-900/50 flex items-center justify-center text-green-400 text-xs font-bold">2</div>
+          <div className="flex-1">
+            <div className="text-gray-400 text-xs mb-1">ORACLE VALIDATION</div>
+            <div className="flex items-center gap-2">
+              <span className="text-white">Advice:</span>
+              <span className={`font-bold ${oracleAdvice?.advice === 'TRADE' ? 'text-green-400' : 'text-yellow-400'}`}>
+                {oracleAdvice?.advice || 'N/A'}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 mt-1">
+              <span className="text-white">Win Probability:</span>
+              <span className="text-green-400 font-bold">{(oracleWinProb * 100).toFixed(0)}%</span>
+            </div>
+            {oracleAdvice?.reasoning && (
+              <div className="mt-1 text-xs text-gray-500 truncate max-w-md">
+                {oracleAdvice.reasoning.slice(0, 80)}...
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Step 3: GEX Context */}
+        <div className="flex items-start gap-3">
+          <div className="w-6 h-6 rounded-full bg-blue-900/50 flex items-center justify-center text-blue-400 text-xs font-bold">3</div>
+          <div className="flex-1">
+            <div className="text-gray-400 text-xs mb-1">GEX REGIME</div>
+            <div className="flex items-center gap-2">
+              <span className="text-white">Current Regime:</span>
+              <span className={`font-bold ${gexRegime === 'POSITIVE' ? 'text-green-400' : 'text-red-400'}`}>
+                {gexRegime || 'N/A'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Step 4: Final Decision */}
+        <div className="flex items-start gap-3">
+          <div className="w-6 h-6 rounded-full bg-orange-900/50 flex items-center justify-center text-orange-400 text-xs font-bold">4</div>
+          <div className="flex-1">
+            <div className="text-gray-400 text-xs mb-1">FINAL DECISION</div>
+            <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full ${isTraded ? 'bg-green-900/50 text-green-400' : 'bg-red-900/50 text-red-400'}`}>
+              {isTraded ? '✓ TRADE' : '✗ SKIP'}
+              <span className="text-xs opacity-70">
+                ({combinedProb >= 0.60 ? '≥60%' : '<60%'})
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Thresholds Legend */}
+        <div className="mt-4 pt-3 border-t border-gray-700">
+          <div className="text-gray-500 text-xs mb-2">DECISION THRESHOLDS</div>
+          <div className="flex gap-4 text-xs flex-wrap">
+            <div className="flex items-center gap-1">
+              <div className="w-2 h-2 rounded-full bg-green-500" />
+              <span className="text-gray-400">≥60% = TRADE</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="w-2 h-2 rounded-full bg-yellow-500" />
+              <span className="text-gray-400">50-60% = REDUCED</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="w-2 h-2 rounded-full bg-red-500" />
+              <span className="text-gray-400">&lt;50% = SKIP</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ==================== QUICK ACTIONS PANEL ====================
+interface ATHENAQuickActionsProps {
+  onSkipToday: () => void
+  onAdjustRisk: (newRisk: number) => void
+  onForceScan: () => void
+  currentRisk: number
+  isActive: boolean
+  hasOpenPosition: boolean
+}
+
+function ATHENAQuickActionsPanel({ onSkipToday, onAdjustRisk, onForceScan, currentRisk, isActive, hasOpenPosition }: ATHENAQuickActionsProps) {
+  const [riskValue, setRiskValue] = useState(currentRisk)
+  const [showConfirm, setShowConfirm] = useState<'skip' | 'risk' | null>(null)
+
+  return (
+    <div className="bg-[#0a0a0a] rounded-xl p-5 border border-gray-700">
+      <div className="flex items-center gap-2 mb-4">
+        <Zap className="w-5 h-5 text-orange-400" />
+        <h3 className="text-lg font-semibold text-white">Quick Actions</h3>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {/* Skip Today */}
+        <button
+          onClick={() => showConfirm === 'skip' ? (onSkipToday(), setShowConfirm(null)) : setShowConfirm('skip')}
+          className={`p-3 rounded-lg border transition flex flex-col items-center gap-2 ${
+            showConfirm === 'skip'
+              ? 'bg-yellow-900/30 border-yellow-600 text-yellow-400'
+              : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:bg-gray-700'
+          }`}
+        >
+          <Clock className="w-5 h-5" />
+          <span className="text-xs">{showConfirm === 'skip' ? 'Confirm?' : 'Skip Today'}</span>
+        </button>
+
+        {/* Adjust Risk */}
+        <div className="p-3 rounded-lg border bg-gray-800/50 border-gray-700 flex flex-col items-center gap-2">
+          <Settings className="w-5 h-5 text-blue-400" />
+          <span className="text-xs text-gray-400">Risk: {(currentRisk * 100).toFixed(0)}%</span>
+        </div>
+
+        {/* Force Scan */}
+        <button
+          onClick={onForceScan}
+          disabled={hasOpenPosition}
+          className={`p-3 rounded-lg border transition flex flex-col items-center gap-2 ${
+            hasOpenPosition
+              ? 'bg-gray-900/50 border-gray-800 text-gray-600 cursor-not-allowed'
+              : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:bg-gray-700'
+          }`}
+        >
+          <Play className="w-5 h-5" />
+          <span className="text-xs">Force Scan</span>
+        </button>
+
+        {/* Status */}
+        <div className={`p-3 rounded-lg border flex flex-col items-center gap-2 ${
+          isActive ? 'bg-green-900/30 border-green-700' : 'bg-gray-800/50 border-gray-700'
+        }`}>
+          <div className={`w-3 h-3 rounded-full ${isActive ? 'bg-green-500 animate-pulse' : 'bg-gray-600'}`} />
+          <span className={`text-xs ${isActive ? 'text-green-400' : 'text-gray-400'}`}>
+            {isActive ? 'Active' : 'Inactive'}
+          </span>
+        </div>
+      </div>
+
+      {/* Config Summary */}
+      <div className="mt-4 pt-3 border-t border-gray-700 flex flex-wrap gap-4 text-xs text-gray-500">
+        <span>Risk: <span className="text-white">{(currentRisk * 100).toFixed(0)}%</span></span>
+        <span>Target: <span className="text-green-400">50% profit</span></span>
+        <span>Window: <span className="text-cyan-400">9:35-15:55 CT</span></span>
+      </div>
+    </div>
+  )
+}
+
 export default function ATHENAPage() {
   // SWR hooks for data fetching with caching
   const { data: statusRes, error: statusError, isLoading: statusLoading, isValidating: statusValidating, mutate: mutateStatus } = useATHENAStatus()
@@ -573,7 +912,7 @@ export default function ATHENAPage() {
               <div className="bg-gray-900/50 rounded px-3 py-2">
                 <span className="text-gray-500 text-xs block">VIX</span>
                 <span className="text-yellow-400 font-bold">
-                  {(status?.heartbeat?.details?.vix || mlSignal?.expected_volatility || 0).toFixed(1)}
+                  {(status?.heartbeat?.details?.vix || 0).toFixed(1)}
                 </span>
               </div>
               <div className="bg-green-900/20 rounded px-3 py-2">
@@ -633,6 +972,35 @@ export default function ATHENAPage() {
                 positions={livePnL?.positions || []}
                 underlyingPrice={livePnL?.underlying_price}
                 isLoading={livePnLLoading}
+              />
+
+              {/* Today's Status Summary */}
+              <ATHENATodaySummaryCard
+                tradedToday={positions.some(p => p.created_at?.startsWith(new Date().toISOString().split('T')[0]))}
+                openPosition={positions.find(p => p.status === 'open') || null}
+                lastDecision={decisions[0] || null}
+                oracleAdvice={oracleAdvice}
+                mlSignal={mlSignal}
+                gexContext={mlSignal?.gex_context || status?.heartbeat?.details?.gex_context}
+                spotPrice={mlSignal?.gex_context?.spot_price || status?.heartbeat?.details?.gex_context?.spot_price || 0}
+              />
+
+              {/* Decision Path Visualization */}
+              <ATHENADecisionPathCard
+                mlSignal={mlSignal}
+                oracleAdvice={oracleAdvice}
+                isTraded={positions.some(p => p.created_at?.startsWith(new Date().toISOString().split('T')[0]))}
+                gexRegime={mlSignal?.gex_context?.regime || status?.heartbeat?.details?.gex_context?.regime || 'UNKNOWN'}
+              />
+
+              {/* Quick Actions Panel */}
+              <ATHENAQuickActionsPanel
+                onSkipToday={() => console.log('Skip today not yet implemented')}
+                onAdjustRisk={(newRisk) => console.log('Adjust risk to:', newRisk)}
+                onForceScan={() => runCycle()}
+                currentRisk={2}
+                isActive={status?.is_active || false}
+                hasOpenPosition={positions.some(p => p.status === 'open')}
               />
 
               {/* Today's Closed Trades */}
