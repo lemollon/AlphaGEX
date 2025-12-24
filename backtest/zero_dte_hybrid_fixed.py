@@ -720,6 +720,34 @@ class HybridFixedBacktester:
         )
         return conn
 
+    def get_market_data_connection(self):
+        """
+        Get database connection for market_data_daily table.
+        Uses DATABASE_URL (main AlphaGEX database where backfill stores data).
+        """
+        import psycopg2
+        from urllib.parse import urlparse
+
+        # Market data is stored in the main DATABASE_URL, not ORAT
+        database_url = os.getenv('DATABASE_URL')
+
+        if not database_url:
+            return None  # Will fall back to Yahoo
+
+        try:
+            result = urlparse(database_url)
+            conn = psycopg2.connect(
+                host=result.hostname,
+                port=result.port or 5432,
+                user=result.username,
+                password=result.password,
+                database=result.path[1:],
+                connect_timeout=10,
+            )
+            return conn
+        except Exception:
+            return None  # Will fall back to Yahoo
+
     def get_current_tier(self) -> ScalingTier:
         """Get appropriate tier based on current equity"""
         for tier in SCALING_TIERS:
@@ -854,7 +882,10 @@ class HybridFixedBacktester:
     def _load_market_data_from_db(self, start_str: str, end_str: str) -> bool:
         """Load market data from stored database. Returns True if successful."""
         try:
-            conn = self.get_connection()
+            # Use main DATABASE_URL connection (where backfill stores market_data_daily)
+            conn = self.get_market_data_connection()
+            if conn is None:
+                return False
             cursor = conn.cursor()
 
             # Check if table exists and has data
