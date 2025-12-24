@@ -19,14 +19,16 @@ from database_adapter import get_connection
 router = APIRouter(prefix="/api/ares", tags=["ARES"])
 logger = logging.getLogger(__name__)
 
-# Try to import ARES trader
+# Try to import ARES trader and strategy presets
 ares_trader = None
 try:
-    from trading.ares_iron_condor import ARESTrader, TradingMode
+    from trading.ares_iron_condor import ARESTrader, TradingMode, StrategyPreset, STRATEGY_PRESETS
     # Note: ARES trader is initialized by scheduler, we query its state
     ARES_AVAILABLE = True
 except ImportError:
     ARES_AVAILABLE = False
+    StrategyPreset = None
+    STRATEGY_PRESETS = {}
     logger.warning("ARES module not available")
 
 
@@ -949,6 +951,109 @@ async def update_ares_config(updates: dict):
         raise
     except Exception as e:
         logger.error(f"Error updating ARES config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/strategy/presets")
+async def get_strategy_presets():
+    """
+    Get available strategy presets with their configurations.
+
+    Returns list of presets with:
+    - name: Display name
+    - description: What the strategy does
+    - vix_hard_skip: VIX threshold for skipping (0 = disabled)
+    - backtest_sharpe: Sharpe ratio from 2022-2024 backtest
+    - backtest_win_rate: Win rate from backtest
+    """
+    if not ARES_AVAILABLE or not STRATEGY_PRESETS:
+        return {
+            "success": True,
+            "data": {
+                "presets": [],
+                "active_preset": "moderate"
+            }
+        }
+
+    ares = get_ares_instance()
+    active_preset = ares.config.strategy_preset if ares else "moderate"
+
+    presets = []
+    for preset_enum, config in STRATEGY_PRESETS.items():
+        presets.append({
+            "id": preset_enum.value,
+            "name": config["name"],
+            "description": config["description"],
+            "vix_hard_skip": config.get("vix_hard_skip") or 0,
+            "vix_monday_friday_skip": config.get("vix_monday_friday_skip", 0),
+            "vix_streak_skip": config.get("vix_streak_skip", 0),
+            "risk_per_trade_pct": config["risk_per_trade_pct"],
+            "sd_multiplier": config["sd_multiplier"],
+            "backtest_sharpe": config.get("backtest_sharpe", 0),
+            "backtest_win_rate": config.get("backtest_win_rate", 0),
+            "is_active": preset_enum.value == active_preset
+        })
+
+    return {
+        "success": True,
+        "data": {
+            "presets": presets,
+            "active_preset": active_preset
+        }
+    }
+
+
+@router.post("/strategy/preset")
+async def set_strategy_preset(request: dict):
+    """
+    Set the active strategy preset.
+
+    Body:
+    - preset: Strategy preset ID (baseline, conservative, moderate, aggressive, wide_strikes)
+    """
+    ares = get_ares_instance()
+
+    if not ares:
+        raise HTTPException(
+            status_code=503,
+            detail="ARES not initialized. Wait for scheduled startup."
+        )
+
+    preset_id = request.get("preset", "").lower()
+
+    # Validate preset
+    valid_presets = ["baseline", "conservative", "moderate", "aggressive", "wide_strikes"]
+    if preset_id not in valid_presets:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid preset. Must be one of: {', '.join(valid_presets)}"
+        )
+
+    try:
+        # Apply the strategy preset
+        ares.config.apply_strategy_preset(preset_id)
+
+        # Get the preset config for response
+        preset_config = STRATEGY_PRESETS.get(StrategyPreset(preset_id), {})
+
+        return {
+            "success": True,
+            "message": f"Strategy preset changed to: {preset_config.get('name', preset_id)}",
+            "data": {
+                "preset": preset_id,
+                "name": preset_config.get("name", preset_id),
+                "description": preset_config.get("description", ""),
+                "current_config": {
+                    "vix_hard_skip": ares.config.vix_hard_skip,
+                    "vix_monday_friday_skip": ares.config.vix_monday_friday_skip,
+                    "vix_streak_skip": ares.config.vix_streak_skip,
+                    "risk_per_trade_pct": ares.config.risk_per_trade_pct,
+                    "sd_multiplier": ares.config.sd_multiplier
+                }
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error setting strategy preset: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

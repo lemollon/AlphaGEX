@@ -1323,7 +1323,11 @@ class OracleAdvisor:
         self,
         context: MarketContext,
         use_gex_walls: bool = False,
-        use_claude_validation: bool = True
+        use_claude_validation: bool = True,
+        vix_hard_skip: float = 32.0,
+        vix_monday_friday_skip: float = 0.0,
+        vix_streak_skip: float = 0.0,
+        recent_losses: int = 0
     ) -> OraclePrediction:
         """
         Get Iron Condor advice for ARES.
@@ -1332,6 +1336,10 @@ class OracleAdvisor:
             context: Current market conditions
             use_gex_walls: Whether to suggest strikes based on GEX walls
             use_claude_validation: Whether to use Claude AI to validate prediction
+            vix_hard_skip: Skip if VIX > this threshold (0 = disabled)
+            vix_monday_friday_skip: Skip on Mon/Fri if VIX > this (0 = disabled)
+            vix_streak_skip: Skip after recent losses if VIX > this (0 = disabled)
+            recent_losses: Number of recent consecutive losses
 
         Returns:
             OraclePrediction with IC-specific advice
@@ -1342,8 +1350,62 @@ class OracleAdvisor:
             "gex_regime": context.gex_regime.value,
             "spot_price": context.spot_price,
             "use_gex_walls": use_gex_walls,
-            "use_claude": use_claude_validation
+            "use_claude": use_claude_validation,
+            "vix_hard_skip": vix_hard_skip,
+            "vix_monday_friday_skip": vix_monday_friday_skip,
+            "vix_streak_skip": vix_streak_skip
         })
+
+        # =========================================================================
+        # VIX-BASED SKIP LOGIC (Configurable per Strategy Preset)
+        # Based on backtest: 2022-2024 showed Sharpe 8.55 → 16.84 with VIX filtering
+        # =========================================================================
+        skip_reason = None
+        skip_threshold_used = 0.0
+
+        # Rule 1: Hard VIX skip (e.g., VIX > 32 for Moderate strategy)
+        if vix_hard_skip > 0 and context.vix > vix_hard_skip:
+            skip_reason = f"VIX {context.vix:.1f} > {vix_hard_skip} - volatility too high for Iron Condor"
+            skip_threshold_used = vix_hard_skip
+
+        # Rule 2: Monday/Friday VIX skip (e.g., VIX > 30 on Mon/Fri for Aggressive strategy)
+        elif vix_monday_friday_skip > 0 and context.day_of_week in [0, 4]:  # Monday=0, Friday=4
+            if context.vix > vix_monday_friday_skip:
+                day_name = "Monday" if context.day_of_week == 0 else "Friday"
+                skip_reason = f"VIX {context.vix:.1f} > {vix_monday_friday_skip} on {day_name} - higher risk day"
+                skip_threshold_used = vix_monday_friday_skip
+
+        # Rule 3: Streak-based VIX skip (e.g., VIX > 28 after 2+ losses for Aggressive strategy)
+        elif vix_streak_skip > 0 and recent_losses >= 2:
+            if context.vix > vix_streak_skip:
+                skip_reason = f"VIX {context.vix:.1f} > {vix_streak_skip} with {recent_losses} recent losses - risk reduction"
+                skip_threshold_used = vix_streak_skip
+
+        # If any VIX skip rule triggered, return SKIP_TODAY
+        if skip_reason:
+            self.live_log.log("VIX_SKIP", skip_reason, {
+                "vix": context.vix,
+                "threshold": skip_threshold_used,
+                "day_of_week": context.day_of_week,
+                "recent_losses": recent_losses,
+                "action": "SKIP_TODAY"
+            })
+            return OraclePrediction(
+                bot_name=BotName.ARES,
+                advice=TradingAdvice.SKIP_TODAY,
+                win_probability=0.35,
+                confidence=0.95,  # High confidence in the skip decision
+                suggested_risk_pct=0.0,
+                suggested_sd_multiplier=1.0,
+                reasoning=skip_reason,
+                top_factors=[
+                    ("vix_level", context.vix),
+                    ("skip_threshold", skip_threshold_used),
+                    ("day_of_week", context.day_of_week),
+                    ("recent_losses", recent_losses)
+                ],
+                model_version=self.model_version
+            )
 
         # === FULL DATA FLOW LOGGING: INPUT ===
         input_data = {

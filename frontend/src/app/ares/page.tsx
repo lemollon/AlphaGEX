@@ -15,7 +15,8 @@ import {
   useARESConfig,
   useARESDecisions,
   useScanActivityAres,
-  useARESLivePnL
+  useARESLivePnL,
+  useARESStrategyPresets
 } from '@/lib/hooks/useMarketData'
 import ScanActivityFeed from '@/components/ScanActivityFeed'
 import LivePortfolio, { EquityDataPoint, LivePnLData } from '@/components/trader/LivePortfolio'
@@ -148,6 +149,24 @@ interface Config {
   profit_target_pct: number
   entry_window: string
   mode?: string
+  strategy_preset?: string
+  vix_hard_skip?: number
+  vix_monday_friday_skip?: number
+  vix_streak_skip?: number
+}
+
+interface StrategyPreset {
+  id: string
+  name: string
+  description: string
+  vix_hard_skip: number
+  vix_monday_friday_skip: number
+  vix_streak_skip: number
+  risk_per_trade_pct: number
+  sd_multiplier: number
+  backtest_sharpe: number
+  backtest_win_rate: number
+  is_active: boolean
 }
 
 interface DecisionLog {
@@ -758,6 +777,7 @@ export default function ARESPage() {
   const { data: decisionsRes, isValidating: decisionsValidating, mutate: mutateDecisions } = useARESDecisions(100)
   const { data: scanActivityRes, isLoading: scanActivityLoading, mutate: mutateScanActivity } = useScanActivityAres(50)
   const { data: livePnLRes, isLoading: livePnLLoading, mutate: mutateLivePnL } = useARESLivePnL()
+  const { data: strategyPresetsRes, mutate: mutateStrategyPresets } = useARESStrategyPresets()
 
   // Extract data
   const status = statusRes?.data as ARESStatus | undefined
@@ -771,6 +791,8 @@ export default function ARESPage() {
   const config = configRes?.data as Config | undefined
   const decisions = (decisionsRes?.data?.decisions || []) as DecisionLog[]
   const livePnL = livePnLRes?.data as LivePnLData | null
+  const strategyPresets = (strategyPresetsRes?.data?.presets || []) as StrategyPreset[]
+  const activeStrategyPreset = strategyPresetsRes?.data?.active_preset || 'moderate'
 
   const loading = statusLoading && !status
   const error = statusError?.message || null
@@ -786,6 +808,23 @@ export default function ARESPage() {
   const [showSpyClosedPositions, setShowSpyClosedPositions] = useState(true)
   const [expandedSpxPosition, setExpandedSpxPosition] = useState<string | null>(null)
   const [expandedSpyPosition, setExpandedSpyPosition] = useState<string | null>(null)
+  const [changingStrategy, setChangingStrategy] = useState(false)
+
+  // Strategy change handler
+  const handleStrategyChange = async (presetId: string) => {
+    if (changingStrategy) return
+    setChangingStrategy(true)
+    try {
+      await apiClient.setARESStrategyPreset(presetId)
+      mutateStrategyPresets()
+      mutateConfig()
+      mutateStatus()
+    } catch (err) {
+      console.error('Failed to change strategy:', err)
+    } finally {
+      setChangingStrategy(false)
+    }
+  }
 
   // Helpers
   const isSPX = (pos: IronCondorPosition) => pos.ticker === 'SPX' || (!pos.ticker && (pos.spread_width || 10) > 5)
@@ -2165,15 +2204,94 @@ export default function ARESPage() {
 
           {/* ==================== CONFIG TAB ==================== */}
           {activeTab === 'config' && (
-            <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
-              <div className="flex items-center gap-2 mb-6">
-                <Settings className="w-5 h-5 text-gray-400" />
-                <h2 className="text-lg font-semibold text-white">ARES Configuration</h2>
+            <div className="space-y-6">
+              {/* Strategy Preset Selector */}
+              <div className="bg-gradient-to-r from-purple-900/30 to-blue-900/30 rounded-xl border border-purple-700/50 p-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <Brain className="w-5 h-5 text-purple-400" />
+                  <h2 className="text-lg font-semibold text-white">Strategy Preset</h2>
+                  <span className="ml-auto text-xs text-gray-400">Based on 2022-2024 Backtests</span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {strategyPresets.map((preset) => (
+                    <button
+                      key={preset.id}
+                      onClick={() => handleStrategyChange(preset.id)}
+                      disabled={changingStrategy || preset.is_active}
+                      className={`relative p-4 rounded-lg border-2 transition-all text-left ${
+                        preset.is_active
+                          ? 'border-green-500 bg-green-900/30'
+                          : 'border-gray-600 bg-gray-800/50 hover:border-purple-500 hover:bg-purple-900/20'
+                      } ${changingStrategy ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      {preset.is_active && (
+                        <div className="absolute top-2 right-2">
+                          <span className="px-2 py-0.5 bg-green-900/50 text-green-400 rounded text-xs font-medium">ACTIVE</span>
+                        </div>
+                      )}
+                      <h3 className={`font-semibold mb-1 ${preset.is_active ? 'text-green-400' : 'text-white'}`}>
+                        {preset.name}
+                      </h3>
+                      <p className="text-gray-400 text-sm mb-3">{preset.description}</p>
+
+                      <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div>
+                          <span className="text-gray-500">VIX Skip:</span>
+                          <span className={`ml-1 font-mono ${preset.vix_hard_skip > 0 ? 'text-yellow-400' : 'text-gray-500'}`}>
+                            {preset.vix_hard_skip > 0 ? `>${preset.vix_hard_skip}` : 'Off'}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-gray-500">SD:</span>
+                          <span className="ml-1 font-mono text-white">{preset.sd_multiplier}</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-500">Sharpe:</span>
+                          <span className="ml-1 font-mono text-blue-400">{preset.backtest_sharpe.toFixed(2)}</span>
+                        </div>
+                        <div>
+                          <span className="text-gray-500">Win Rate:</span>
+                          <span className="ml-1 font-mono text-green-400">{preset.backtest_win_rate.toFixed(1)}%</span>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Current VIX Status */}
+                {marketData?.vix && (
+                  <div className="mt-4 pt-4 border-t border-gray-700 flex items-center gap-4">
+                    <span className="text-gray-400 text-sm">Current VIX:</span>
+                    <span className={`font-mono text-lg font-bold ${
+                      marketData.vix > 32 ? 'text-red-400' :
+                      marketData.vix > 25 ? 'text-yellow-400' :
+                      'text-green-400'
+                    }`}>
+                      {marketData.vix.toFixed(2)}
+                    </span>
+                    {config?.vix_hard_skip && config.vix_hard_skip > 0 && (
+                      <span className={`text-sm ${marketData.vix > config.vix_hard_skip ? 'text-red-400' : 'text-gray-500'}`}>
+                        {marketData.vix > config.vix_hard_skip
+                          ? `⚠️ Above skip threshold (${config.vix_hard_skip}) - will skip trades`
+                          : `Below skip threshold (${config.vix_hard_skip})`
+                        }
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* SPX Config */}
-                <div className="bg-purple-900/20 border border-purple-700/30 rounded-lg p-4">
+              {/* Settings Details */}
+              <div className="bg-gray-800 rounded-xl border border-gray-700 p-6">
+                <div className="flex items-center gap-2 mb-6">
+                  <Settings className="w-5 h-5 text-gray-400" />
+                  <h2 className="text-lg font-semibold text-white">ARES Configuration</h2>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* SPX Config */}
+                  <div className="bg-purple-900/20 border border-purple-700/30 rounded-lg p-4">
                   <h3 className="text-purple-300 font-semibold mb-4">SPX Settings</h3>
                   <div className="space-y-3">
                     <div className="flex justify-between"><span className="text-gray-400">Spread Width:</span><span className="text-white font-mono">${config?.spread_width || 10}</span></div>
@@ -2208,6 +2326,7 @@ export default function ARESPage() {
                 </div>
               </div>
             </div>
+          </div>
           )}
 
           {/* Footer */}
