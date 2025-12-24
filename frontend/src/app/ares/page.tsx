@@ -1,8 +1,8 @@
 'use client'
 
-import { useState, useMemo } from 'react'
-import { Sword, TrendingUp, TrendingDown, Activity, DollarSign, Target, RefreshCw, BarChart3, ChevronDown, ChevronUp, Server, Play, AlertTriangle, Clock, Zap, Brain, Shield, Crosshair, TrendingUp as TrendUp, FileText, ListChecks, Settings, Wallet } from 'lucide-react'
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import React, { useState, useMemo } from 'react'
+import { Sword, TrendingUp, TrendingDown, Activity, DollarSign, Target, RefreshCw, BarChart3, ChevronDown, ChevronUp, ChevronRight, Server, Play, AlertTriangle, Clock, Zap, Brain, Shield, Crosshair, TrendingUp as TrendUp, FileText, ListChecks, Settings, Wallet } from 'lucide-react'
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, ReferenceLine } from 'recharts'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
 import {
@@ -190,6 +190,8 @@ interface DecisionLog {
 
 // ==================== COMPONENT ====================
 
+type TimePeriod = '1D' | '1W' | '1M' | '3M' | 'YTD' | '1Y' | 'ALL'
+
 export default function ARESPage() {
   // SWR hooks for data fetching
   const { data: statusRes, error: statusError, isLoading: statusLoading, isValidating: statusValidating, mutate: mutateStatus } = useARESStatus()
@@ -224,6 +226,12 @@ export default function ARESPage() {
   const [activeTab, setActiveTab] = useState<'portfolio' | 'overview' | 'spx' | 'spy' | 'decisions' | 'config'>('portfolio')
   const [expandedDecision, setExpandedDecision] = useState<number | null>(null)
   const [runningCycle, setRunningCycle] = useState(false)
+  const [spxPeriod, setSpxPeriod] = useState<TimePeriod>('1M')
+  const [spyPeriod, setSpyPeriod] = useState<TimePeriod>('1M')
+  const [showSpxClosedPositions, setShowSpxClosedPositions] = useState(true)
+  const [showSpyClosedPositions, setShowSpyClosedPositions] = useState(true)
+  const [expandedSpxPosition, setExpandedSpxPosition] = useState<string | null>(null)
+  const [expandedSpyPosition, setExpandedSpyPosition] = useState<string | null>(null)
 
   // Helpers
   const isSPX = (pos: IronCondorPosition) => pos.ticker === 'SPX' || (!pos.ticker && (pos.spread_width || 10) > 5)
@@ -277,11 +285,66 @@ export default function ARESPage() {
     const byDate: Record<string, number> = {}
     sorted.forEach(p => { const d = p.close_date || p.expiration || ''; if (d) byDate[d] = (byDate[d] || 0) + (p.realized_pnl || 0) })
     let cum = 0
-    return Object.keys(byDate).sort().map(d => { cum += byDate[d]; return { date: d, equity: startCap + cum, daily_pnl: byDate[d], pnl: cum } })
+    return Object.keys(byDate).sort().map(d => {
+      cum += byDate[d]
+      return {
+        date: d,
+        timestamp: new Date(d).getTime(),
+        equity: startCap + cum,
+        daily_pnl: byDate[d],
+        pnl: cum
+      }
+    })
+  }
+
+  const filterEquityByPeriod = (data: { date: string; timestamp: number; equity: number; daily_pnl: number; pnl: number }[], period: TimePeriod) => {
+    if (data.length === 0) return []
+    const now = new Date()
+    let startDate: Date
+
+    switch (period) {
+      case '1D':
+        startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+        break
+      case '1W':
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
+        break
+      case '1M':
+        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)
+        break
+      case '3M':
+        startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000)
+        break
+      case 'YTD':
+        startDate = new Date(now.getFullYear(), 0, 1)
+        break
+      case '1Y':
+        startDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000)
+        break
+      case 'ALL':
+      default:
+        return data
+    }
+
+    return data.filter(d => new Date(d.date) >= startDate)
   }
 
   const spxEquityData = buildEquityCurve(spxClosedPositions, spxStats.capital)
   const spyEquityData = buildEquityCurve(spyClosedPositions, spyStats.capital)
+
+  const filteredSpxEquity = useMemo(() => filterEquityByPeriod(spxEquityData, spxPeriod), [spxEquityData, spxPeriod])
+  const filteredSpyEquity = useMemo(() => filterEquityByPeriod(spyEquityData, spyPeriod), [spyEquityData, spyPeriod])
+
+  // Determine chart colors based on period performance
+  const spxPeriodStart = filteredSpxEquity[0]?.equity ?? spxStats.capital
+  const spxPeriodEnd = filteredSpxEquity[filteredSpxEquity.length - 1]?.equity ?? (spxStats.capital + spxStats.totalPnl)
+  const spxChartColor = (spxPeriodEnd - spxPeriodStart) >= 0 ? '#00C805' : '#FF5000'
+
+  const spyPeriodStart = filteredSpyEquity[0]?.equity ?? spyStats.capital
+  const spyPeriodEnd = filteredSpyEquity[filteredSpyEquity.length - 1]?.equity ?? (spyStats.capital + spyStats.totalPnl)
+  const spyChartColor = (spyPeriodEnd - spyPeriodStart) >= 0 ? '#00C805' : '#FF5000'
+
+  const periods: TimePeriod[] = ['1D', '1W', '1M', '3M', 'YTD', '1Y', 'ALL']
 
   const fetchData = () => { mutateStatus(); mutatePerf(); mutateEquity(); mutatePositions(); mutateMarket(); mutateTradier(); mutateConfig(); mutateDecisions() }
 
@@ -730,184 +793,675 @@ export default function ARESPage() {
             </>
           )}
 
-          {/* ==================== SPX TAB ==================== */}
+          {/* ==================== SPX TAB - Robinhood Style ==================== */}
           {activeTab === 'spx' && (
             <div className="space-y-6">
-              <div className="bg-gradient-to-br from-purple-900/30 to-gray-800 rounded-lg border border-purple-700/50 p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-xl font-bold text-purple-300">SPX Iron Condors</h2>
-                  <span className="px-3 py-1 rounded text-xs bg-purple-900 text-purple-300">PAPER TRADING</span>
+              {/* Portfolio Header - Robinhood Style */}
+              <div className="bg-[#0a0a0a] rounded-lg p-6">
+                <div className="mb-6">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-400 text-sm">SPX Iron Condors</span>
+                      <span className="px-2 py-1 rounded text-xs bg-purple-900 text-purple-300">PAPER</span>
+                    </div>
+                  </div>
+
+                  {/* Big Portfolio Value */}
+                  <div className="text-4xl font-bold text-white mb-2">
+                    ${(spxStats.capital + spxStats.totalPnl).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+
+                  {/* P&L Change */}
+                  <div className="flex items-center gap-2">
+                    {spxStats.totalPnl >= 0 ? (
+                      <TrendingUp className="w-4 h-4 text-[#00C805]" />
+                    ) : (
+                      <TrendingDown className="w-4 h-4 text-[#FF5000]" />
+                    )}
+                    <span className={`font-semibold ${spxStats.totalPnl >= 0 ? 'text-[#00C805]' : 'text-[#FF5000]'}`}>
+                      {spxStats.totalPnl >= 0 ? '+' : ''}${spxStats.totalPnl.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                      {' '}({spxStats.totalPnl >= 0 ? '+' : ''}{((spxStats.totalPnl / spxStats.capital) * 100).toFixed(2)}%)
+                    </span>
+                    <span className="text-gray-500 text-sm">Total</span>
+                  </div>
+
+                  {/* Stats Row */}
+                  <div className="flex gap-4 mt-2 text-sm">
+                    <span className="text-gray-500">
+                      Win Rate: <span className="text-white font-bold">{spxStats.winRate.toFixed(1)}%</span>
+                    </span>
+                    <span className="text-gray-500">
+                      Trades: <span className="text-white font-bold">{spxStats.totalTrades}</span>
+                    </span>
+                    <span className="text-gray-500">
+                      Avg Trade: <span className={spxStats.avgTrade >= 0 ? 'text-[#00C805]' : 'text-[#FF5000]'}>${spxStats.avgTrade.toFixed(2)}</span>
+                    </span>
+                    <span className="text-gray-500">
+                      Max DD: <span className="text-[#FF5000]">${spxStats.maxDrawdown.toFixed(2)}</span>
+                    </span>
+                  </div>
                 </div>
 
-                {/* Stats Grid */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                  <div className="bg-gray-800/60 rounded-lg p-4 text-center">
-                    <span className="text-gray-400 text-xs">Capital</span>
-                    <p className="text-white font-bold text-xl">{formatCurrency(spxStats.capital + spxStats.totalPnl)}</p>
-                  </div>
-                  <div className="bg-gray-800/60 rounded-lg p-4 text-center">
-                    <span className="text-gray-400 text-xs">Total P&L</span>
-                    <p className={`font-bold text-xl ${spxStats.totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatCurrency(spxStats.totalPnl)}</p>
-                  </div>
-                  <div className="bg-gray-800/60 rounded-lg p-4 text-center">
-                    <span className="text-gray-400 text-xs">Win Rate</span>
-                    <p className="text-white font-bold text-xl">{spxStats.winRate.toFixed(1)}%</p>
-                  </div>
-                  <div className="bg-gray-800/60 rounded-lg p-4 text-center">
-                    <span className="text-gray-400 text-xs">Trades</span>
-                    <p className="text-white font-bold text-xl">{spxStats.totalTrades}</p>
-                  </div>
-                </div>
-
-                {/* Equity Curve */}
-                <div className="h-48 bg-gray-800/40 rounded-lg p-2 mb-6">
-                  {spxEquityData.length > 0 ? (
+                {/* Equity Chart - Robinhood Style */}
+                <div className="h-64 mb-4">
+                  {filteredSpxEquity.length > 0 ? (
                     <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={spxEquityData}>
+                      <LineChart data={filteredSpxEquity} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
                         <defs>
-                          <linearGradient id="spxEq" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#A855F7" stopOpacity={0.4} />
-                            <stop offset="95%" stopColor="#A855F7" stopOpacity={0} />
+                          <linearGradient id="spxGradient" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor={spxChartColor} stopOpacity={0.3} />
+                            <stop offset="100%" stopColor={spxChartColor} stopOpacity={0} />
                           </linearGradient>
                         </defs>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                        <XAxis dataKey="date" stroke="#6B7280" fontSize={10} />
-                        <YAxis stroke="#6B7280" fontSize={10} tickFormatter={(v) => `$${(v/1000).toFixed(0)}k`} />
-                        <Tooltip contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }} />
-                        <Area type="monotone" dataKey="equity" stroke="#A855F7" fill="url(#spxEq)" />
-                      </AreaChart>
+                        <XAxis dataKey="date" hide axisLine={false} tickLine={false} />
+                        <YAxis hide domain={['dataMin - 1000', 'dataMax + 1000']} />
+                        <Tooltip
+                          contentStyle={{ backgroundColor: '#1a1a1a', border: '1px solid #333', borderRadius: '8px', color: '#fff' }}
+                          formatter={(value: number) => [`$${value.toLocaleString('en-US', { minimumFractionDigits: 2 })}`, 'Equity']}
+                          labelFormatter={(label) => label}
+                        />
+                        <ReferenceLine y={spxStats.capital} stroke="#333" strokeDasharray="3 3" />
+                        <Line type="monotone" dataKey="equity" stroke={spxChartColor} strokeWidth={2} dot={false} activeDot={{ r: 4, fill: spxChartColor }} />
+                      </LineChart>
                     </ResponsiveContainer>
                   ) : (
-                    <div className="flex items-center justify-center h-full text-gray-500">No equity data yet</div>
+                    <div className="flex items-center justify-center h-full text-gray-500">
+                      <div className="text-center">
+                        <p>No equity data available</p>
+                        <p className="text-xs text-gray-600 mt-1">Chart will populate as trades are closed</p>
+                      </div>
+                    </div>
                   )}
                 </div>
 
-                {/* Open Positions */}
-                <h3 className="text-lg font-semibold text-purple-300 mb-3">Open Positions ({spxOpenPositions.length})</h3>
-                <div className="space-y-2 mb-6">
-                  {spxOpenPositions.map((pos) => (
-                    <div key={pos.position_id} className="flex items-center justify-between bg-gray-800/50 rounded p-3">
-                      <div>
-                        <span className="text-gray-400 text-sm">{pos.expiration}</span>
-                        <span className="text-purple-300 font-mono ml-2">{pos.put_short_strike}P / {pos.call_short_strike}C</span>
-                      </div>
-                      <div className="text-right">
-                        <span className="text-green-400">{formatCurrency(pos.total_credit * 100 * pos.contracts)}</span>
-                        <span className="text-gray-500 ml-2">x{pos.contracts}</span>
-                      </div>
-                    </div>
+                {/* Period Toggles - Robinhood Style */}
+                <div className="flex justify-center gap-2">
+                  {periods.map((period) => (
+                    <button
+                      key={period}
+                      onClick={() => setSpxPeriod(period)}
+                      className={`px-4 py-2 text-sm font-medium rounded-full transition-all ${
+                        spxPeriod === period
+                          ? 'bg-[#A855F7] text-black'
+                          : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                      }`}
+                    >
+                      {period}
+                    </button>
                   ))}
-                  {spxOpenPositions.length === 0 && <p className="text-center text-gray-500 py-4">No open SPX positions</p>}
                 </div>
+              </div>
 
-                {/* Closed Positions */}
-                <h3 className="text-lg font-semibold text-purple-300 mb-3">Closed Trades ({spxClosedPositions.length})</h3>
-                <div className="space-y-2 max-h-64 overflow-y-auto">
-                  {spxClosedPositions.slice(0, 20).map((pos) => (
-                    <div key={pos.position_id} className="flex items-center justify-between bg-gray-800/30 rounded p-2 text-sm">
-                      <span className="text-gray-400">{pos.close_date || pos.expiration}</span>
-                      <span className="text-gray-300 font-mono">{pos.put_short_strike}P / {pos.call_short_strike}C</span>
-                      <span className={(pos.realized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}>{formatCurrency(pos.realized_pnl || 0)}</span>
-                    </div>
-                  ))}
-                  {spxClosedPositions.length === 0 && <p className="text-center text-gray-500 py-4">No closed SPX trades</p>}
+              {/* Scan Activity for SPX */}
+              <div className="bg-gray-800 rounded-xl p-4 border border-purple-700/30">
+                <h3 className="text-lg font-semibold text-purple-300 mb-3 flex items-center gap-2">
+                  <Activity className="w-5 h-5" /> Recent SPX Scans
+                </h3>
+                <ScanActivityFeed
+                  scans={scanActivity.filter((s: any) => s.symbol === 'SPX' || s.ticker === 'SPX').slice(0, 10)}
+                  botName="ARES"
+                  isLoading={scanActivityLoading}
+                />
+              </div>
+
+              {/* Open Positions Section */}
+              <div className="bg-[#0a0a0a] rounded-lg p-6">
+                <h3 className="text-lg font-semibold text-purple-300 mb-4 flex items-center gap-2">
+                  <Target className="w-5 h-5" /> Open Positions ({spxOpenPositions.length})
+                </h3>
+                {spxOpenPositions.length > 0 ? (
+                  <div className="space-y-2">
+                    {spxOpenPositions.map((pos) => (
+                      <div key={pos.position_id} className="flex justify-between items-center p-3 bg-[#111] rounded-lg border border-gray-800">
+                        <div className="flex items-center gap-3">
+                          <div className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse" />
+                          <span className="text-white">
+                            SPX IC {pos.put_short_strike}P / {pos.call_short_strike}C
+                          </span>
+                          <span className="text-gray-500 text-sm">{pos.expiration}</span>
+                          <span className="text-gray-500 text-sm">{pos.contracts} contracts</span>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-green-400 font-bold">
+                            +${(pos.total_credit * 100 * pos.contracts).toFixed(2)} credit
+                          </div>
+                          <div className="text-gray-500 text-xs">
+                            Max Loss: ${pos.max_loss.toFixed(2)}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-center text-gray-500 py-4">No open SPX positions</p>
+                )}
+              </div>
+
+              {/* Closed Positions Table - Like Athena */}
+              <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
+                <div className="p-4 border-b border-gray-700 flex justify-between items-center">
+                  <h2 className="text-lg font-semibold text-purple-300 flex items-center gap-2">
+                    <BarChart3 className="w-5 h-5" /> Closed Trades ({spxClosedPositions.length})
+                  </h2>
+                  <button
+                    onClick={() => setShowSpxClosedPositions(!showSpxClosedPositions)}
+                    className="flex items-center gap-2 text-sm text-gray-400 hover:text-white transition"
+                  >
+                    {showSpxClosedPositions ? 'Hide' : 'Show'} Trades
+                    {showSpxClosedPositions ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </button>
                 </div>
+                {showSpxClosedPositions && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead className="bg-gray-900">
+                        <tr>
+                          <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">ID</th>
+                          <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Strikes</th>
+                          <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Exp</th>
+                          <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Closed</th>
+                          <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Qty</th>
+                          <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Credit</th>
+                          <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">VIX</th>
+                          <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">SPX Entry</th>
+                          <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">P&L</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-700">
+                        {spxClosedPositions.map((pos) => {
+                          const isExpanded = expandedSpxPosition === pos.position_id
+                          return (
+                            <React.Fragment key={pos.position_id}>
+                              <tr
+                                className="hover:bg-gray-700/50 cursor-pointer"
+                                onClick={() => setExpandedSpxPosition(isExpanded ? null : pos.position_id)}
+                              >
+                                <td className="px-3 py-3 text-sm text-gray-300 font-mono">
+                                  <div className="flex items-center gap-1">
+                                    <ChevronRight className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                                    {pos.position_id.slice(-8)}
+                                  </div>
+                                </td>
+                                <td className="px-3 py-3 text-sm text-purple-300 font-mono">
+                                  {pos.put_long_strike}P/{pos.put_short_strike}P - {pos.call_short_strike}C/{pos.call_long_strike}C
+                                </td>
+                                <td className="px-3 py-3 text-sm text-gray-400">{pos.expiration}</td>
+                                <td className="px-3 py-3 text-sm text-gray-400">{pos.close_date || pos.expiration}</td>
+                                <td className="px-3 py-3 text-sm text-gray-300">{pos.contracts}</td>
+                                <td className="px-3 py-3 text-sm text-green-400">${(pos.total_credit * 100).toFixed(2)}</td>
+                                <td className="px-3 py-3 text-sm text-yellow-400">{pos.vix_at_entry?.toFixed(1) || '--'}</td>
+                                <td className="px-3 py-3 text-sm text-gray-300">${pos.underlying_at_entry?.toFixed(0) || '--'}</td>
+                                <td className={`px-3 py-3 text-sm font-bold ${(pos.realized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                  {(pos.realized_pnl || 0) >= 0 ? '+' : ''}${(pos.realized_pnl || 0).toFixed(2)}
+                                </td>
+                              </tr>
+                              {isExpanded && (
+                                <tr className="bg-gray-900/50">
+                                  <td colSpan={9} className="px-4 py-4">
+                                    <div className="grid grid-cols-4 gap-4 text-sm">
+                                      <div className="space-y-2">
+                                        <h4 className="text-gray-400 font-medium text-xs uppercase">Position Details</h4>
+                                        <div className="space-y-1">
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-500">Full ID:</span>
+                                            <span className="text-gray-300 font-mono text-xs">{pos.position_id}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-500">Spread Width:</span>
+                                            <span className="text-gray-300">${pos.spread_width || 10}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-500">Open Date:</span>
+                                            <span className="text-gray-300">{pos.open_date}</span>
+                                          </div>
+                                        </div>
+                                      </div>
+                                      <div className="space-y-2">
+                                        <h4 className="text-gray-400 font-medium text-xs uppercase">Strikes</h4>
+                                        <div className="space-y-1">
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-500">Put Long:</span>
+                                            <span className="text-green-400">${pos.put_long_strike}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-500">Put Short:</span>
+                                            <span className="text-red-400">${pos.put_short_strike}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-500">Call Short:</span>
+                                            <span className="text-red-400">${pos.call_short_strike}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-500">Call Long:</span>
+                                            <span className="text-green-400">${pos.call_long_strike}</span>
+                                          </div>
+                                        </div>
+                                      </div>
+                                      <div className="space-y-2">
+                                        <h4 className="text-gray-400 font-medium text-xs uppercase">Risk / Reward</h4>
+                                        <div className="space-y-1">
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-500">Credit:</span>
+                                            <span className="text-green-400">${(pos.total_credit * 100 * pos.contracts).toFixed(2)}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-500">Max Loss:</span>
+                                            <span className="text-red-400">${pos.max_loss.toFixed(2)}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-500">Close Price:</span>
+                                            <span className="text-gray-300">${(pos.close_price || 0).toFixed(2)}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-500">R:R Ratio:</span>
+                                            <span className="text-gray-300">1:{((pos.max_loss || 1) / (pos.total_credit * 100 * pos.contracts || 1)).toFixed(1)}</span>
+                                          </div>
+                                        </div>
+                                      </div>
+                                      <div className="space-y-2">
+                                        <h4 className="text-gray-400 font-medium text-xs uppercase">Market Context</h4>
+                                        <div className="space-y-1">
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-500">SPX at Entry:</span>
+                                            <span className="text-gray-300">${pos.underlying_at_entry?.toFixed(2) || '--'}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-500">VIX at Entry:</span>
+                                            <span className="text-yellow-400">{pos.vix_at_entry?.toFixed(2) || '--'}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-500">Status:</span>
+                                            <span className={`px-2 py-0.5 rounded text-xs ${pos.status === 'closed' ? 'bg-gray-700 text-gray-300' : pos.status === 'expired' ? 'bg-purple-900/50 text-purple-400' : 'bg-yellow-900/50 text-yellow-400'}`}>
+                                              {pos.status}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
+                          )
+                        })}
+                        {spxClosedPositions.length === 0 && (
+                          <tr>
+                            <td colSpan={9} className="px-4 py-8 text-center text-gray-500">
+                              No closed SPX trades yet
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             </div>
           )}
 
-          {/* ==================== SPY TAB ==================== */}
+          {/* ==================== SPY TAB - Robinhood Style ==================== */}
           {activeTab === 'spy' && (
             <div className="space-y-6">
-              <div className="bg-gradient-to-br from-blue-900/30 to-gray-800 rounded-lg border border-blue-700/50 p-6">
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-xl font-bold text-blue-300">SPY Iron Condors</h2>
-                  <span className={`px-3 py-1 rounded text-xs ${tradierConnected ? 'bg-green-900 text-green-300' : 'bg-yellow-900 text-yellow-300'}`}>
-                    {tradierConnected ? 'TRADIER CONNECTED' : 'NOT CONNECTED'}
-                  </span>
+              {/* Portfolio Header - Robinhood Style */}
+              <div className="bg-[#0a0a0a] rounded-lg p-6">
+                <div className="mb-6">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-gray-400 text-sm">SPY Iron Condors</span>
+                      <span className={`px-2 py-1 rounded text-xs ${tradierConnected ? 'bg-green-900 text-green-300' : 'bg-yellow-900 text-yellow-300'}`}>
+                        {tradierConnected ? 'TRADIER' : 'DISCONNECTED'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Big Portfolio Value */}
+                  <div className="text-4xl font-bold text-white mb-2">
+                    ${(spyStats.capital + spyStats.totalPnl).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </div>
+
+                  {/* P&L Change */}
+                  <div className="flex items-center gap-2">
+                    {spyStats.totalPnl >= 0 ? (
+                      <TrendingUp className="w-4 h-4 text-[#00C805]" />
+                    ) : (
+                      <TrendingDown className="w-4 h-4 text-[#FF5000]" />
+                    )}
+                    <span className={`font-semibold ${spyStats.totalPnl >= 0 ? 'text-[#00C805]' : 'text-[#FF5000]'}`}>
+                      {spyStats.totalPnl >= 0 ? '+' : ''}${spyStats.totalPnl.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                      {' '}({spyStats.totalPnl >= 0 ? '+' : ''}{((spyStats.totalPnl / spyStats.capital) * 100).toFixed(2)}%)
+                    </span>
+                    <span className="text-gray-500 text-sm">Total</span>
+                  </div>
+
+                  {/* Stats Row */}
+                  <div className="flex gap-4 mt-2 text-sm flex-wrap">
+                    <span className="text-gray-500">
+                      Win Rate: <span className="text-white font-bold">{spyStats.winRate.toFixed(1)}%</span>
+                    </span>
+                    <span className="text-gray-500">
+                      Trades: <span className="text-white font-bold">{spyStats.totalTrades}</span>
+                    </span>
+                    <span className="text-gray-500">
+                      Avg Trade: <span className={spyStats.avgTrade >= 0 ? 'text-[#00C805]' : 'text-[#FF5000]'}>${spyStats.avgTrade.toFixed(2)}</span>
+                    </span>
+                    <span className="text-gray-500">
+                      Max DD: <span className="text-[#FF5000]">${spyStats.maxDrawdown.toFixed(2)}</span>
+                    </span>
+                    {tradierConnected && (
+                      <span className="text-gray-500">
+                        Buying Power: <span className="text-blue-400">${(tradierStatus?.account?.buying_power || 0).toLocaleString()}</span>
+                      </span>
+                    )}
+                  </div>
                 </div>
 
-                {tradierConnected ? (
-                  <>
-                    {/* Stats Grid */}
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                      <div className="bg-gray-800/60 rounded-lg p-4 text-center">
-                        <span className="text-gray-400 text-xs">Capital</span>
-                        <p className="text-white font-bold text-xl">{formatCurrency(spyStats.capital + spyStats.totalPnl)}</p>
-                      </div>
-                      <div className="bg-gray-800/60 rounded-lg p-4 text-center">
-                        <span className="text-gray-400 text-xs">Total P&L</span>
-                        <p className={`font-bold text-xl ${spyStats.totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatCurrency(spyStats.totalPnl)}</p>
-                      </div>
-                      <div className="bg-gray-800/60 rounded-lg p-4 text-center">
-                        <span className="text-gray-400 text-xs">Win Rate</span>
-                        <p className="text-white font-bold text-xl">{spyStats.winRate.toFixed(1)}%</p>
-                      </div>
-                      <div className="bg-gray-800/60 rounded-lg p-4 text-center">
-                        <span className="text-gray-400 text-xs">Trades</span>
-                        <p className="text-white font-bold text-xl">{spyStats.totalTrades}</p>
+                {/* Equity Chart - Robinhood Style */}
+                <div className="h-64 mb-4">
+                  {filteredSpyEquity.length > 0 ? (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={filteredSpyEquity} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
+                        <defs>
+                          <linearGradient id="spyGradient" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%" stopColor={spyChartColor} stopOpacity={0.3} />
+                            <stop offset="100%" stopColor={spyChartColor} stopOpacity={0} />
+                          </linearGradient>
+                        </defs>
+                        <XAxis dataKey="date" hide axisLine={false} tickLine={false} />
+                        <YAxis hide domain={['dataMin - 1000', 'dataMax + 1000']} />
+                        <Tooltip
+                          contentStyle={{ backgroundColor: '#1a1a1a', border: '1px solid #333', borderRadius: '8px', color: '#fff' }}
+                          formatter={(value: number) => [`$${value.toLocaleString('en-US', { minimumFractionDigits: 2 })}`, 'Equity']}
+                          labelFormatter={(label) => label}
+                        />
+                        <ReferenceLine y={spyStats.capital} stroke="#333" strokeDasharray="3 3" />
+                        <Line type="monotone" dataKey="equity" stroke={spyChartColor} strokeWidth={2} dot={false} activeDot={{ r: 4, fill: spyChartColor }} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <div className="flex items-center justify-center h-full text-gray-500">
+                      <div className="text-center">
+                        <p>No equity data available</p>
+                        <p className="text-xs text-gray-600 mt-1">Chart will populate as trades are closed</p>
                       </div>
                     </div>
+                  )}
+                </div>
 
-                    {/* Equity Curve */}
-                    <div className="h-48 bg-gray-800/40 rounded-lg p-2 mb-6">
-                      {spyEquityData.length > 0 ? (
-                        <ResponsiveContainer width="100%" height="100%">
-                          <AreaChart data={spyEquityData}>
-                            <defs>
-                              <linearGradient id="spyEq" x1="0" y1="0" x2="0" y2="1">
-                                <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.4} />
-                                <stop offset="95%" stopColor="#3B82F6" stopOpacity={0} />
-                              </linearGradient>
-                            </defs>
-                            <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                            <XAxis dataKey="date" stroke="#6B7280" fontSize={10} />
-                            <YAxis stroke="#6B7280" fontSize={10} tickFormatter={(v) => `$${(v/1000).toFixed(0)}k`} />
-                            <Tooltip contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151' }} />
-                            <Area type="monotone" dataKey="equity" stroke="#3B82F6" fill="url(#spyEq)" />
-                          </AreaChart>
-                        </ResponsiveContainer>
-                      ) : (
-                        <div className="flex items-center justify-center h-full text-gray-500">No equity data yet</div>
-                      )}
-                    </div>
+                {/* Period Toggles - Robinhood Style */}
+                <div className="flex justify-center gap-2">
+                  {periods.map((period) => (
+                    <button
+                      key={period}
+                      onClick={() => setSpyPeriod(period)}
+                      className={`px-4 py-2 text-sm font-medium rounded-full transition-all ${
+                        spyPeriod === period
+                          ? 'bg-[#3B82F6] text-white'
+                          : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                      }`}
+                    >
+                      {period}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-                    {/* Tradier Positions */}
-                    <h3 className="text-lg font-semibold text-blue-300 mb-3">Tradier Positions ({tradierStatus?.positions?.length || 0})</h3>
-                    <div className="space-y-2 mb-6">
-                      {tradierStatus?.positions?.map((pos, idx) => (
-                        <div key={idx} className="flex items-center justify-between bg-gray-800/50 rounded p-3">
-                          <span className="text-white font-mono">{pos.symbol}</span>
-                          <span className="text-gray-400">x{pos.quantity}</span>
-                          <span className="text-blue-300">{formatCurrency(pos.cost_basis)}</span>
+              {/* Scan Activity for SPY */}
+              <div className="bg-gray-800 rounded-xl p-4 border border-blue-700/30">
+                <h3 className="text-lg font-semibold text-blue-300 mb-3 flex items-center gap-2">
+                  <Activity className="w-5 h-5" /> Recent SPY Scans
+                </h3>
+                <ScanActivityFeed
+                  scans={scanActivity.filter((s: any) => s.symbol === 'SPY' || s.ticker === 'SPY').slice(0, 10)}
+                  botName="ARES"
+                  isLoading={scanActivityLoading}
+                />
+              </div>
+
+              {/* Open Positions Section */}
+              <div className="bg-[#0a0a0a] rounded-lg p-6">
+                <h3 className="text-lg font-semibold text-blue-300 mb-4 flex items-center gap-2">
+                  <Target className="w-5 h-5" /> Open Positions ({spyOpenPositions.length})
+                </h3>
+                {spyOpenPositions.length > 0 ? (
+                  <div className="space-y-2">
+                    {spyOpenPositions.map((pos) => (
+                      <div key={pos.position_id} className="flex justify-between items-center p-3 bg-[#111] rounded-lg border border-gray-800">
+                        <div className="flex items-center gap-3">
+                          <div className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse" />
+                          <span className="text-white">
+                            SPY IC {pos.put_short_strike}P / {pos.call_short_strike}C
+                          </span>
+                          <span className="text-gray-500 text-sm">{pos.expiration}</span>
+                          <span className="text-gray-500 text-sm">{pos.contracts} contracts</span>
                         </div>
-                      ))}
-                      {(!tradierStatus?.positions || tradierStatus.positions.length === 0) && <p className="text-center text-gray-500 py-4">No open positions</p>}
-                    </div>
-
-                    {/* Recent Orders */}
-                    <h3 className="text-lg font-semibold text-blue-300 mb-3">Recent Orders</h3>
-                    <div className="space-y-2 max-h-48 overflow-y-auto">
-                      {tradierStatus?.orders?.slice(0, 10).map((order) => (
-                        <div key={order.id} className="flex items-center justify-between bg-gray-800/30 rounded p-2 text-sm">
-                          <span className="text-white font-mono">{order.symbol}</span>
-                          <span className={order.side === 'buy' ? 'text-green-400' : 'text-red-400'}>{order.side.toUpperCase()} x{order.quantity}</span>
-                          <span className={`px-2 py-0.5 rounded text-xs ${order.status === 'filled' ? 'bg-green-900 text-green-300' : 'bg-gray-700 text-gray-300'}`}>{order.status}</span>
+                        <div className="text-right">
+                          <div className="text-green-400 font-bold">
+                            +${(pos.total_credit * 100 * pos.contracts).toFixed(2)} credit
+                          </div>
+                          <div className="text-gray-500 text-xs">
+                            Max Loss: ${pos.max_loss.toFixed(2)}
+                          </div>
                         </div>
-                      ))}
-                      {(!tradierStatus?.orders || tradierStatus.orders.length === 0) && <p className="text-center text-gray-500 py-4">No recent orders</p>}
-                    </div>
-                  </>
+                      </div>
+                    ))}
+                  </div>
                 ) : (
-                  <div className="text-center py-8">
-                    <AlertTriangle className="w-16 h-16 text-yellow-500 mx-auto mb-4" />
-                    <h4 className="text-white font-semibold text-lg mb-2">Tradier Sandbox Not Connected</h4>
-                    <p className="text-gray-400 text-sm mb-4">Configure Tradier sandbox credentials to enable real SPY paper trading</p>
-                    <div className="bg-gray-800/50 rounded-lg p-4 text-left text-sm max-w-md mx-auto">
-                      <code className="text-blue-400 block">TRADIER_API_KEY=your_sandbox_api_key</code>
-                      <code className="text-blue-400 block">TRADIER_ACCOUNT_ID=your_account_id</code>
-                      <code className="text-blue-400 block">TRADIER_SANDBOX=true</code>
+                  <p className="text-center text-gray-500 py-4">No open SPY positions</p>
+                )}
+              </div>
+
+              {/* Tradier Account Info */}
+              {tradierConnected && (
+                <div className="bg-gray-800 rounded-xl p-4 border border-blue-700/30">
+                  <h3 className="text-lg font-semibold text-blue-300 mb-3 flex items-center gap-2">
+                    <Server className="w-5 h-5" /> Tradier Account
+                  </h3>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                      <span className="text-gray-400 text-xs block">Account</span>
+                      <span className="text-white font-mono">{tradierStatus?.account?.account_number || '--'}</span>
                     </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                      <span className="text-gray-400 text-xs block">Equity</span>
+                      <span className="text-white font-bold">${(tradierStatus?.account?.equity || 0).toLocaleString()}</span>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                      <span className="text-gray-400 text-xs block">Cash</span>
+                      <span className="text-green-400 font-bold">${(tradierStatus?.account?.cash || 0).toLocaleString()}</span>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                      <span className="text-gray-400 text-xs block">Buying Power</span>
+                      <span className="text-blue-400 font-bold">${(tradierStatus?.account?.buying_power || 0).toLocaleString()}</span>
+                    </div>
+                  </div>
+
+                  {/* Recent Tradier Orders */}
+                  {tradierStatus?.orders && tradierStatus.orders.length > 0 && (
+                    <div className="mt-4">
+                      <h4 className="text-gray-400 text-sm mb-2">Recent Orders</h4>
+                      <div className="space-y-2 max-h-32 overflow-y-auto">
+                        {tradierStatus.orders.slice(0, 5).map((order) => (
+                          <div key={order.id} className="flex items-center justify-between bg-gray-900/50 rounded p-2 text-sm">
+                            <span className="text-white font-mono">{order.symbol}</span>
+                            <span className={order.side === 'buy' ? 'text-green-400' : 'text-red-400'}>{order.side.toUpperCase()} x{order.quantity}</span>
+                            <span className={`px-2 py-0.5 rounded text-xs ${order.status === 'filled' ? 'bg-green-900 text-green-300' : 'bg-gray-700 text-gray-300'}`}>{order.status}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Tradier Not Connected Warning */}
+              {!tradierConnected && (
+                <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-lg p-4">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="w-5 h-5 text-yellow-500 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <h4 className="text-yellow-400 font-medium">Tradier Not Connected</h4>
+                      <p className="text-gray-400 text-sm mt-1">Configure Tradier sandbox credentials to enable real SPY paper trading.</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Closed Positions Table - Like Athena */}
+              <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
+                <div className="p-4 border-b border-gray-700 flex justify-between items-center">
+                  <h2 className="text-lg font-semibold text-blue-300 flex items-center gap-2">
+                    <BarChart3 className="w-5 h-5" /> Closed Trades ({spyClosedPositions.length})
+                  </h2>
+                  <button
+                    onClick={() => setShowSpyClosedPositions(!showSpyClosedPositions)}
+                    className="flex items-center gap-2 text-sm text-gray-400 hover:text-white transition"
+                  >
+                    {showSpyClosedPositions ? 'Hide' : 'Show'} Trades
+                    {showSpyClosedPositions ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </button>
+                </div>
+                {showSpyClosedPositions && (
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead className="bg-gray-900">
+                        <tr>
+                          <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">ID</th>
+                          <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Strikes</th>
+                          <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Exp</th>
+                          <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Closed</th>
+                          <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Qty</th>
+                          <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Credit</th>
+                          <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">VIX</th>
+                          <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">SPY Entry</th>
+                          <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">P&L</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-700">
+                        {spyClosedPositions.map((pos) => {
+                          const isExpanded = expandedSpyPosition === pos.position_id
+                          return (
+                            <React.Fragment key={pos.position_id}>
+                              <tr
+                                className="hover:bg-gray-700/50 cursor-pointer"
+                                onClick={() => setExpandedSpyPosition(isExpanded ? null : pos.position_id)}
+                              >
+                                <td className="px-3 py-3 text-sm text-gray-300 font-mono">
+                                  <div className="flex items-center gap-1">
+                                    <ChevronRight className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                                    {pos.position_id.slice(-8)}
+                                  </div>
+                                </td>
+                                <td className="px-3 py-3 text-sm text-blue-300 font-mono">
+                                  {pos.put_long_strike}P/{pos.put_short_strike}P - {pos.call_short_strike}C/{pos.call_long_strike}C
+                                </td>
+                                <td className="px-3 py-3 text-sm text-gray-400">{pos.expiration}</td>
+                                <td className="px-3 py-3 text-sm text-gray-400">{pos.close_date || pos.expiration}</td>
+                                <td className="px-3 py-3 text-sm text-gray-300">{pos.contracts}</td>
+                                <td className="px-3 py-3 text-sm text-green-400">${(pos.total_credit * 100).toFixed(2)}</td>
+                                <td className="px-3 py-3 text-sm text-yellow-400">{pos.vix_at_entry?.toFixed(1) || '--'}</td>
+                                <td className="px-3 py-3 text-sm text-gray-300">${pos.underlying_at_entry?.toFixed(0) || '--'}</td>
+                                <td className={`px-3 py-3 text-sm font-bold ${(pos.realized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                  {(pos.realized_pnl || 0) >= 0 ? '+' : ''}${(pos.realized_pnl || 0).toFixed(2)}
+                                </td>
+                              </tr>
+                              {isExpanded && (
+                                <tr className="bg-gray-900/50">
+                                  <td colSpan={9} className="px-4 py-4">
+                                    <div className="grid grid-cols-4 gap-4 text-sm">
+                                      <div className="space-y-2">
+                                        <h4 className="text-gray-400 font-medium text-xs uppercase">Position Details</h4>
+                                        <div className="space-y-1">
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-500">Full ID:</span>
+                                            <span className="text-gray-300 font-mono text-xs">{pos.position_id}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-500">Spread Width:</span>
+                                            <span className="text-gray-300">${pos.spread_width || 2}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-500">Open Date:</span>
+                                            <span className="text-gray-300">{pos.open_date}</span>
+                                          </div>
+                                        </div>
+                                      </div>
+                                      <div className="space-y-2">
+                                        <h4 className="text-gray-400 font-medium text-xs uppercase">Strikes</h4>
+                                        <div className="space-y-1">
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-500">Put Long:</span>
+                                            <span className="text-green-400">${pos.put_long_strike}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-500">Put Short:</span>
+                                            <span className="text-red-400">${pos.put_short_strike}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-500">Call Short:</span>
+                                            <span className="text-red-400">${pos.call_short_strike}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-500">Call Long:</span>
+                                            <span className="text-green-400">${pos.call_long_strike}</span>
+                                          </div>
+                                        </div>
+                                      </div>
+                                      <div className="space-y-2">
+                                        <h4 className="text-gray-400 font-medium text-xs uppercase">Risk / Reward</h4>
+                                        <div className="space-y-1">
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-500">Credit:</span>
+                                            <span className="text-green-400">${(pos.total_credit * 100 * pos.contracts).toFixed(2)}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-500">Max Loss:</span>
+                                            <span className="text-red-400">${pos.max_loss.toFixed(2)}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-500">Close Price:</span>
+                                            <span className="text-gray-300">${(pos.close_price || 0).toFixed(2)}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-500">R:R Ratio:</span>
+                                            <span className="text-gray-300">1:{((pos.max_loss || 1) / (pos.total_credit * 100 * pos.contracts || 1)).toFixed(1)}</span>
+                                          </div>
+                                        </div>
+                                      </div>
+                                      <div className="space-y-2">
+                                        <h4 className="text-gray-400 font-medium text-xs uppercase">Market Context</h4>
+                                        <div className="space-y-1">
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-500">SPY at Entry:</span>
+                                            <span className="text-gray-300">${pos.underlying_at_entry?.toFixed(2) || '--'}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-500">VIX at Entry:</span>
+                                            <span className="text-yellow-400">{pos.vix_at_entry?.toFixed(2) || '--'}</span>
+                                          </div>
+                                          <div className="flex justify-between">
+                                            <span className="text-gray-500">Status:</span>
+                                            <span className={`px-2 py-0.5 rounded text-xs ${pos.status === 'closed' ? 'bg-gray-700 text-gray-300' : pos.status === 'expired' ? 'bg-purple-900/50 text-purple-400' : 'bg-yellow-900/50 text-yellow-400'}`}>
+                                              {pos.status}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              )}
+                            </React.Fragment>
+                          )
+                        })}
+                        {spyClosedPositions.length === 0 && (
+                          <tr>
+                            <td colSpan={9} className="px-4 py-8 text-center text-gray-500">
+                              No closed SPY trades yet
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
                   </div>
                 )}
               </div>
