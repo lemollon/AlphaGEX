@@ -1030,15 +1030,16 @@ class AutonomousTraderScheduler:
 
     def scheduled_solomon_logic(self):
         """
-        SOLOMON (Feedback Loop Intelligence) - runs weekly on Sundays at 6:00 PM CT
+        SOLOMON (Feedback Loop Intelligence) - runs DAILY at 4:00 PM CT
 
-        Orchestrates the feedback loop for all trading bots:
+        Orchestrates the autonomous feedback loop for all trading bots:
         - Collects trade outcomes from ARES, ATHENA, ATLAS, PHOENIX
         - Analyzes performance and detects degradation
-        - Creates proposals for model retraining or parameter changes
-        - Records performance snapshots for historical tracking
+        - Creates proposals for parameter adjustments
+        - Validates proposals via A/B testing (min 7 days, 20 trades, 5% improvement)
+        - Auto-applies PROVEN improvements - no manual intervention required
 
-        All changes require human approval via the Solomon dashboard.
+        "Iron sharpens iron, and one man sharpens another" - Proverbs 27:17
         """
         now = datetime.now(CENTRAL_TZ)
 
@@ -1050,7 +1051,7 @@ class AutonomousTraderScheduler:
             return
 
         try:
-            logger.info("SOLOMON: Running weekly feedback loop analysis...")
+            logger.info("SOLOMON: Running daily feedback loop analysis...")
 
             # Run the feedback loop
             result = run_feedback_loop()
@@ -1061,9 +1062,13 @@ class AutonomousTraderScheduler:
                 logger.info(f"  Bots checked: {', '.join(result.bots_checked)}")
                 logger.info(f"  Outcomes processed: {result.outcomes_processed}")
                 logger.info(f"  Proposals created: {len(result.proposals_created)}")
+                logger.info(f"  Proposals applied: {len(result.proposals_applied) if hasattr(result, 'proposals_applied') else 0}")
 
                 if result.proposals_created:
-                    logger.info(f"  Proposals awaiting approval: {result.proposals_created}")
+                    logger.info(f"  New proposals pending validation: {result.proposals_created}")
+
+                if hasattr(result, 'proposals_applied') and result.proposals_applied:
+                    logger.info(f"  ✅ PROVEN improvements auto-applied: {result.proposals_applied}")
 
                 if result.alerts_raised:
                     logger.warning(f"  ALERTS: {len(result.alerts_raised)} alerts raised!")
@@ -1079,17 +1084,19 @@ class AutonomousTraderScheduler:
                 'run_id': result.run_id,
                 'success': result.success,
                 'proposals_created': len(result.proposals_created),
+                'proposals_applied': len(result.proposals_applied) if hasattr(result, 'proposals_applied') else 0,
                 'alerts_raised': len(result.alerts_raised)
             })
 
-            logger.info(f"SOLOMON: Next run scheduled for next Sunday at 6:00 PM CT")
+            logger.info(f"SOLOMON: Next run tomorrow at 4:00 PM CT")
             logger.info(f"=" * 80)
 
         except Exception as e:
             error_msg = f"ERROR in SOLOMON feedback loop: {str(e)}"
             logger.error(error_msg)
             logger.error(traceback.format_exc())
-            logger.info("SOLOMON will retry next week")
+            self._save_heartbeat('SOLOMON', 'ERROR', {'error': str(e)})
+            logger.info("SOLOMON will retry tomorrow at 4:00 PM CT")
             logger.info(f"=" * 80)
 
     def start(self):
@@ -1110,9 +1117,9 @@ class AutonomousTraderScheduler:
         logger.info(f"PHOENIX Schedule: DISABLED here - handled by AutonomousTrader (every 5 min)")
         logger.info(f"ATLAS Schedule: Daily at 9:05 AM CT, Mon-Fri")
         logger.info(f"ARES Schedule: Daily at 9:35 AM CT, Mon-Fri")
-        logger.info(f"ATHENA Schedule: Every 30 min (8:35 AM - 2:30 PM CT), Mon-Fri")
+        logger.info(f"ATHENA Schedule: Every 5 min (8:35 AM - 2:30 PM CT), Mon-Fri")
         logger.info(f"ARGUS Schedule: Every 5 min (8:30 AM - 3:00 PM CT), Mon-Fri")
-        logger.info(f"SOLOMON Schedule: Weekly on Sundays at 6:00 PM CT")
+        logger.info(f"SOLOMON Schedule: DAILY at 4:00 PM CT (after market close)")
         logger.info(f"Log file: {LOG_FILE}")
         logger.info("=" * 80)
 
@@ -1262,24 +1269,27 @@ class AutonomousTraderScheduler:
         logger.info("✅ ARGUS job scheduled (every 5 min during market hours)")
 
         # =================================================================
-        # SOLOMON JOB: Feedback Loop Intelligence - runs weekly on Sundays
-        # Orchestrates bot learning: outcome collection, performance analysis,
-        # proposal creation, and version management
+        # SOLOMON JOB: Feedback Loop Intelligence - runs DAILY after market close
+        # Orchestrates autonomous bot improvement:
+        # - Collects trade outcomes and analyzes performance
+        # - Creates proposals for underperforming bots
+        # - Validates proposals via A/B testing (7 days, 20 trades, 5% improvement)
+        # - AUTO-APPLIES proven improvements - no manual intervention required
         # =================================================================
         if SOLOMON_AVAILABLE:
             self.scheduler.add_job(
                 self.scheduled_solomon_logic,
                 trigger=CronTrigger(
-                    hour=18,       # 6:00 PM CT - after weekend analysis
+                    hour=16,       # 4:00 PM CT - after market close
                     minute=0,
-                    day_of_week='sun',  # Every Sunday
+                    day_of_week='mon-fri',  # Every trading day
                     timezone='America/Chicago'
                 ),
                 id='solomon_feedback_loop',
-                name='SOLOMON - Weekly Feedback Loop Intelligence',
+                name='SOLOMON - Daily Feedback Loop Intelligence',
                 replace_existing=True
             )
-            logger.info("✅ SOLOMON job scheduled (Sundays at 6:00 PM CT)")
+            logger.info("✅ SOLOMON job scheduled (DAILY at 4:00 PM CT)")
         else:
             logger.warning("⚠️ SOLOMON not available - Feedback loop disabled")
 

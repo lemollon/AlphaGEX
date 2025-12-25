@@ -396,6 +396,7 @@ class FeedbackLoopResult:
 
     # Actions taken
     proposals_created: List[str]
+    proposals_applied: List[str]  # Proposals auto-applied after proving improvement
     models_retrained: List[str]
     alerts_raised: List[Dict]
 
@@ -411,6 +412,7 @@ class FeedbackLoopResult:
             'bots_checked': self.bots_checked,
             'outcomes_processed': self.outcomes_processed,
             'proposals_created': self.proposals_created,
+            'proposals_applied': self.proposals_applied,
             'models_retrained': self.models_retrained,
             'alerts_raised': self.alerts_raised,
             'success': self.success,
@@ -1962,6 +1964,7 @@ class SolomonFeedbackLoop:
         )
 
         proposals_created = []
+        proposals_applied = []
         models_retrained = []
         alerts_raised = []
         errors = []
@@ -1974,6 +1977,44 @@ class SolomonFeedbackLoop:
             expired_count = self.expire_old_proposals()
             if expired_count > 0:
                 logger.info(f"Expired {expired_count} old proposals")
+
+            # Step 1.5: AUTO-APPLY proven proposals (Solomon's autonomous improvement)
+            # Check all proposals with active validations for proven improvement
+            pending_proposals = self.get_pending_proposals()
+            for proposal in pending_proposals:
+                proposal_id = proposal.get('proposal_id')
+                if not proposal_id:
+                    continue
+
+                try:
+                    # Import and use the enhanced validation
+                    from quant.solomon_enhancements import get_solomon_enhanced
+                    enhanced = get_solomon_enhanced()
+                    validation_result = enhanced.can_apply_proposal(proposal_id)
+
+                    if validation_result.get('can_apply') and validation_result.get('improvement_proven'):
+                        # AUTO-APPLY: Improvement has been PROVEN
+                        improvement_pct = validation_result.get('improvement_metrics', {}).get('win_rate_improvement', 0)
+                        logger.info(f"🎯 AUTO-APPLYING proven improvement: {proposal_id} (+{improvement_pct:.1f}%)")
+
+                        # Apply the proposal
+                        success = self.approve_proposal(
+                            proposal_id=proposal_id,
+                            reviewer="SOLOMON_AUTO",
+                            notes=f"Auto-applied: {improvement_pct:.1f}% improvement proven over {validation_result.get('improvement_metrics', {}).get('days_validated', 0)} days"
+                        )
+                        if success:
+                            proposals_applied.append(proposal_id)
+                            self.log_action(
+                                bot_name=proposal.get('bot_name', 'UNKNOWN'),
+                                action_type=ActionType.PROPOSAL_APPROVED,
+                                description=f"Auto-applied proven improvement: {proposal_id}",
+                                reason=f"Improvement validated: {improvement_pct:.1f}% over {validation_result.get('improvement_metrics', {}).get('trades_validated', 0)} trades",
+                                justification=validation_result,
+                                success=True
+                            )
+                except Exception as e:
+                    logger.debug(f"Could not check proposal {proposal_id} for auto-apply: {e}")
 
             # Step 2-5: Process each bot
             for bot in bots:
@@ -2050,6 +2091,7 @@ class SolomonFeedbackLoop:
             bots_checked=[b.value for b in bots],
             outcomes_processed=outcomes_processed,
             proposals_created=proposals_created,
+            proposals_applied=proposals_applied,
             models_retrained=models_retrained,
             alerts_raised=alerts_raised,
             success=len(errors) == 0,
