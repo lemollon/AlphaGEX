@@ -1161,12 +1161,12 @@ export default function SystemProcessesPage() {
     '8': () => setActiveTab('strategy'),
     '9': () => setActiveTab('operations'),
     '0': () => setActiveTab('timeline'),
-    't': () => setTheme((t: string) => t === 'dark' ? 'light' : 'dark'),
-    'a': () => setShowAnimations((a: boolean) => !a),
-    'f': () => setShowFavorites((f: boolean) => !f),
+    't': () => setTheme(theme === 'dark' ? 'light' : 'dark'),
+    'a': () => setShowAnimations(!showAnimations),
+    'f': () => setShowFavorites(!showFavorites),
     '?': () => setShowShortcuts(true),
     'r': () => { /* Reset zoom handled in FlowChart */ },
-  }), [setTheme, setShowAnimations]);
+  }), [theme, showAnimations, showFavorites]);
 
   useKeyboardShortcuts(keyboardHandlers);
 
