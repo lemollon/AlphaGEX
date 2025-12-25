@@ -108,6 +108,16 @@ except ImportError:
     DECISION_LOGGER_AVAILABLE = False
     print("Warning: Decision logger not available.")
 
+# Import SOLOMON (Feedback Loop Intelligence System)
+try:
+    from quant.solomon_feedback_loop import get_solomon, run_feedback_loop
+    SOLOMON_AVAILABLE = True
+except ImportError:
+    SOLOMON_AVAILABLE = False
+    get_solomon = None
+    run_feedback_loop = None
+    print("Warning: Solomon not available. Feedback loop will be disabled.")
+
 # Setup logging
 LOG_DIR = Path("logs")
 LOG_DIR.mkdir(exist_ok=True)
@@ -445,6 +455,18 @@ class AutonomousTraderScheduler:
 
         logger.info("Market is OPEN. Running ATLAS wheel strategy...")
 
+        # Check Solomon kill switch before trading
+        if SOLOMON_AVAILABLE:
+            try:
+                solomon = get_solomon()
+                if solomon.is_bot_killed('ATLAS'):
+                    logger.warning("ATLAS: Kill switch is ACTIVE - skipping trade")
+                    self._save_heartbeat('ATLAS', 'KILLED', {'reason': 'Solomon kill switch active'})
+                    logger.info(f"=" * 80)
+                    return
+            except Exception as e:
+                logger.debug(f"ATLAS: Could not check Solomon kill switch: {e}")
+
         try:
             self.last_atlas_check = now
             traded = False
@@ -544,6 +566,18 @@ class AutonomousTraderScheduler:
             # Still scan but won't open new positions due to 0DTE risk
 
         logger.info("Market is OPEN. Scanning for ARES aggressive Iron Condor opportunities...")
+
+        # Check Solomon kill switch before trading
+        if SOLOMON_AVAILABLE:
+            try:
+                solomon = get_solomon()
+                if solomon.is_bot_killed('ARES'):
+                    logger.warning("ARES: Kill switch is ACTIVE - skipping trade scan")
+                    self._save_heartbeat('ARES', 'KILLED', {'reason': 'Solomon kill switch active'})
+                    logger.info(f"=" * 80)
+                    return
+            except Exception as e:
+                logger.debug(f"ARES: Could not check Solomon kill switch: {e}")
 
         try:
             self.last_ares_check = now
@@ -827,6 +861,18 @@ class AutonomousTraderScheduler:
 
         logger.info("Market is OPEN. Scanning live GEX data for directional opportunities...")
 
+        # Check Solomon kill switch before trading
+        if SOLOMON_AVAILABLE:
+            try:
+                solomon = get_solomon()
+                if solomon.is_bot_killed('ATHENA'):
+                    logger.warning("ATHENA: Kill switch is ACTIVE - skipping trade scan")
+                    self._save_heartbeat('ATHENA', 'KILLED', {'reason': 'Solomon kill switch active'})
+                    logger.info(f"=" * 80)
+                    return
+            except Exception as e:
+                logger.debug(f"ATHENA: Could not check Solomon kill switch: {e}")
+
         try:
             self.last_athena_check = now
 
@@ -982,6 +1028,70 @@ class AutonomousTraderScheduler:
             logger.info("ARGUS will retry next interval")
             logger.info(f"=" * 80)
 
+    def scheduled_solomon_logic(self):
+        """
+        SOLOMON (Feedback Loop Intelligence) - runs weekly on Sundays at 6:00 PM CT
+
+        Orchestrates the feedback loop for all trading bots:
+        - Collects trade outcomes from ARES, ATHENA, ATLAS, PHOENIX
+        - Analyzes performance and detects degradation
+        - Creates proposals for model retraining or parameter changes
+        - Records performance snapshots for historical tracking
+
+        All changes require human approval via the Solomon dashboard.
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"SOLOMON (Feedback Loop) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not SOLOMON_AVAILABLE:
+            logger.warning("SOLOMON: Feedback loop system not available")
+            return
+
+        try:
+            logger.info("SOLOMON: Running weekly feedback loop analysis...")
+
+            # Run the feedback loop
+            result = run_feedback_loop()
+
+            if result.success:
+                logger.info(f"SOLOMON: Feedback loop completed successfully")
+                logger.info(f"  Run ID: {result.run_id}")
+                logger.info(f"  Bots checked: {', '.join(result.bots_checked)}")
+                logger.info(f"  Outcomes processed: {result.outcomes_processed}")
+                logger.info(f"  Proposals created: {len(result.proposals_created)}")
+
+                if result.proposals_created:
+                    logger.info(f"  Proposals awaiting approval: {result.proposals_created}")
+
+                if result.alerts_raised:
+                    logger.warning(f"  ALERTS: {len(result.alerts_raised)} alerts raised!")
+                    for alert in result.alerts_raised:
+                        logger.warning(f"    - {alert.get('bot_name')}: {alert.get('alert_type')}")
+            else:
+                logger.error(f"SOLOMON: Feedback loop completed with errors")
+                for error in result.errors:
+                    logger.error(f"  Error: {error}")
+
+            # Save heartbeat
+            self._save_heartbeat('SOLOMON', 'FEEDBACK_LOOP_COMPLETE', {
+                'run_id': result.run_id,
+                'success': result.success,
+                'proposals_created': len(result.proposals_created),
+                'alerts_raised': len(result.alerts_raised)
+            })
+
+            logger.info(f"SOLOMON: Next run scheduled for next Sunday at 6:00 PM CT")
+            logger.info(f"=" * 80)
+
+        except Exception as e:
+            error_msg = f"ERROR in SOLOMON feedback loop: {str(e)}"
+            logger.error(error_msg)
+            logger.error(traceback.format_exc())
+            logger.info("SOLOMON will retry next week")
+            logger.info(f"=" * 80)
+
     def start(self):
         """Start the autonomous trading scheduler"""
         if not APSCHEDULER_AVAILABLE:
@@ -995,13 +1105,14 @@ class AutonomousTraderScheduler:
 
         logger.info("=" * 80)
         logger.info("STARTING AUTONOMOUS TRADING SCHEDULER")
-        logger.info(f"Bots: PHOENIX (0DTE), ATLAS (Wheel), ARES (Aggressive IC), ATHENA (GEX Directional), ARGUS (Commentary)")
+        logger.info(f"Bots: PHOENIX (0DTE), ATLAS (Wheel), ARES (Aggressive IC), ATHENA (GEX Directional), ARGUS (Commentary), SOLOMON (Feedback Loop)")
         logger.info(f"Timezone: America/Chicago (Texas Central Time)")
         logger.info(f"PHOENIX Schedule: DISABLED here - handled by AutonomousTrader (every 5 min)")
         logger.info(f"ATLAS Schedule: Daily at 9:05 AM CT, Mon-Fri")
         logger.info(f"ARES Schedule: Daily at 9:35 AM CT, Mon-Fri")
         logger.info(f"ATHENA Schedule: Every 30 min (8:35 AM - 2:30 PM CT), Mon-Fri")
         logger.info(f"ARGUS Schedule: Every 5 min (8:30 AM - 3:00 PM CT), Mon-Fri")
+        logger.info(f"SOLOMON Schedule: Weekly on Sundays at 6:00 PM CT")
         logger.info(f"Log file: {LOG_FILE}")
         logger.info("=" * 80)
 
@@ -1149,6 +1260,28 @@ class AutonomousTraderScheduler:
             replace_existing=True
         )
         logger.info("✅ ARGUS job scheduled (every 5 min during market hours)")
+
+        # =================================================================
+        # SOLOMON JOB: Feedback Loop Intelligence - runs weekly on Sundays
+        # Orchestrates bot learning: outcome collection, performance analysis,
+        # proposal creation, and version management
+        # =================================================================
+        if SOLOMON_AVAILABLE:
+            self.scheduler.add_job(
+                self.scheduled_solomon_logic,
+                trigger=CronTrigger(
+                    hour=18,       # 6:00 PM CT - after weekend analysis
+                    minute=0,
+                    day_of_week='sun',  # Every Sunday
+                    timezone='America/Chicago'
+                ),
+                id='solomon_feedback_loop',
+                name='SOLOMON - Weekly Feedback Loop Intelligence',
+                replace_existing=True
+            )
+            logger.info("✅ SOLOMON job scheduled (Sundays at 6:00 PM CT)")
+        else:
+            logger.warning("⚠️ SOLOMON not available - Feedback loop disabled")
 
         self.scheduler.start()
         self.is_running = True
