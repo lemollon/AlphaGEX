@@ -5,8 +5,9 @@ import {
   Brain, Activity, AlertTriangle, CheckCircle, XCircle,
   Clock, RefreshCw, ChevronDown, ChevronUp, ChevronRight,
   RotateCcw, Play, Pause, FileText, TrendingDown,
-  History, Zap, Target, Lock, Unlock,
-  BarChart2, Calendar, Sun, Moon, GitBranch, Layers
+  History, Target, Lock, Unlock,
+  BarChart2, Calendar, Sun, Moon, GitBranch, Layers,
+  Timer, Repeat, CircleCheck
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
@@ -55,6 +56,135 @@ const Sparkline = ({ data, color = '#8b5cf6', width = 100, height = 30 }: {
         fill={trendColor}
       />
     </svg>
+  )
+}
+
+// ==================== AUTOMATED SCHEDULE INDICATOR ====================
+
+const AutomatedScheduleIndicator = ({ lastRun, nextRun }: { lastRun: string | null, nextRun?: string }) => {
+  const [timeUntilRun, setTimeUntilRun] = useState<string>('')
+  const [progress, setProgress] = useState<number>(0)
+
+  useEffect(() => {
+    const calculateNextRun = () => {
+      // Solomon runs at 4:00 PM CT (16:00) every weekday
+      const now = new Date()
+      const ct = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }))
+      const ctHour = ct.getHours()
+      const ctMinutes = ct.getMinutes()
+      const ctDay = ct.getDay() // 0 = Sunday, 6 = Saturday
+
+      // Find next 4 PM CT on a weekday
+      let nextRunDate = new Date(ct)
+      nextRunDate.setHours(16, 0, 0, 0)
+
+      // If it's past 4 PM or weekend, find next weekday
+      if (ctHour >= 16 || ctDay === 0 || ctDay === 6) {
+        nextRunDate.setDate(nextRunDate.getDate() + 1)
+        // Skip to Monday if needed
+        while (nextRunDate.getDay() === 0 || nextRunDate.getDay() === 6) {
+          nextRunDate.setDate(nextRunDate.getDate() + 1)
+        }
+      }
+
+      const diff = nextRunDate.getTime() - ct.getTime()
+      const hours = Math.floor(diff / (1000 * 60 * 60))
+      const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
+
+      if (hours > 24) {
+        const days = Math.floor(hours / 24)
+        setTimeUntilRun(`${days}d ${hours % 24}h`)
+      } else if (hours > 0) {
+        setTimeUntilRun(`${hours}h ${minutes}m`)
+      } else {
+        setTimeUntilRun(`${minutes}m`)
+      }
+
+      // Calculate progress (24 hour cycle)
+      const totalMinutesInDay = 24 * 60
+      const minutesSinceLastRun = (24 * 60) - (hours * 60 + minutes)
+      setProgress(Math.min(100, (minutesSinceLastRun / totalMinutesInDay) * 100))
+    }
+
+    calculateNextRun()
+    const interval = setInterval(calculateNextRun, 60000) // Update every minute
+    return () => clearInterval(interval)
+  }, [])
+
+  const lastRunDate = lastRun ? new Date(lastRun) : null
+  const wasSuccessful = lastRunDate !== null // Assume success if we have a date
+
+  return (
+    <div className="bg-gradient-to-r from-purple-500/10 to-blue-500/10 border border-purple-500/30 rounded-lg p-4">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <div className="w-10 h-10 rounded-full bg-purple-500/20 flex items-center justify-center">
+              <Repeat className="w-5 h-5 text-purple-400" />
+            </div>
+            <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-green-500 flex items-center justify-center">
+              <CircleCheck className="w-3 h-3 text-white" />
+            </div>
+          </div>
+          <div>
+            <div className="text-sm font-bold text-white">Autonomous Mode</div>
+            <div className="text-xs text-gray-400">Runs daily at 4:00 PM CT</div>
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="text-xs text-gray-500">Next Run</div>
+          <div className="text-lg font-bold text-purple-400 flex items-center gap-1">
+            <Timer className="w-4 h-4" />
+            {timeUntilRun}
+          </div>
+        </div>
+      </div>
+
+      {/* Progress Bar */}
+      <div className="mb-3">
+        <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+          <span>Cycle Progress</span>
+          <span>{progress.toFixed(0)}%</span>
+        </div>
+        <div className="w-full bg-gray-700 rounded-full h-2 overflow-hidden">
+          <div
+            className="h-full bg-gradient-to-r from-purple-500 to-blue-500 rounded-full transition-all duration-1000 relative"
+            style={{ width: `${progress}%` }}
+          >
+            <div className="absolute inset-0 bg-white/20 animate-pulse" />
+          </div>
+        </div>
+      </div>
+
+      {/* Last Run Info */}
+      <div className="flex items-center justify-between text-xs">
+        <div className="flex items-center gap-2">
+          {wasSuccessful ? (
+            <CheckCircle className="w-4 h-4 text-green-400" />
+          ) : (
+            <Clock className="w-4 h-4 text-gray-400" />
+          )}
+          <span className="text-gray-400">
+            Last run: {lastRunDate ? lastRunDate.toLocaleString() : 'Awaiting first run'}
+          </span>
+        </div>
+        {wasSuccessful && (
+          <span className="px-2 py-0.5 bg-green-500/20 text-green-400 rounded text-xs">
+            Completed
+          </span>
+        )}
+      </div>
+
+      {/* Auto-Apply Indicator */}
+      <div className="mt-3 pt-3 border-t border-gray-700/50">
+        <div className="flex items-center gap-2 text-xs text-gray-400">
+          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+          <span>
+            Proven improvements auto-applied • No manual intervention required
+          </span>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -1082,17 +1212,6 @@ export default function SolomonPage() {
     }
   }
 
-  const handleTriggerFeedbackLoop = async () => {
-    try {
-      const response = await apiClient.runSolomonFeedbackLoop()
-      alert(`Feedback loop completed!\n\nRun ID: ${response.data.run_id}\nProposals created: ${response.data.proposals_created?.length || 0}`)
-      fetchDashboard()
-    } catch (err) {
-      console.error('Failed to trigger feedback loop:', err)
-      alert('Failed to trigger feedback loop')
-    }
-  }
-
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-900">
@@ -1150,13 +1269,6 @@ export default function SolomonPage() {
           </div>
           <div className="flex items-center gap-3">
             <button
-              onClick={handleTriggerFeedbackLoop}
-              className="px-4 py-2 bg-purple-500/20 text-purple-400 border border-purple-500/50 rounded-lg hover:bg-purple-500/30 transition-colors flex items-center gap-2"
-            >
-              <Zap className="w-4 h-4" />
-              Run Feedback Loop
-            </button>
-            <button
               onClick={() => setAutoRefresh(!autoRefresh)}
               className={`p-2 rounded-lg transition-colors ${
                 autoRefresh
@@ -1174,6 +1286,11 @@ export default function SolomonPage() {
               <RefreshCw className="w-4 h-4" />
             </button>
           </div>
+        </div>
+
+        {/* Automated Schedule Indicator */}
+        <div className="mb-6">
+          <AutomatedScheduleIndicator lastRun={dashboard.health.last_feedback_run} />
         </div>
 
         {/* Health Banner */}
@@ -1522,21 +1639,24 @@ export default function SolomonPage() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
                 <h4 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
-                  <Zap className="w-4 h-4 text-yellow-400" />
-                  Quick Actions
+                  <Repeat className="w-4 h-4 text-purple-400" />
+                  Automation Status
                 </h4>
                 <div className="space-y-2">
+                  <div className="px-3 py-2 bg-green-500/10 border border-green-500/30 rounded text-sm">
+                    <div className="flex items-center gap-2 text-green-400">
+                      <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                      <span className="font-medium">Autonomous Mode Active</span>
+                    </div>
+                    <div className="text-xs text-gray-400 mt-1">
+                      Solomon runs daily at 4:00 PM CT and auto-applies proven improvements
+                    </div>
+                  </div>
                   <button
                     onClick={() => apiClient.getSolomonWeekendPrecheck().then(r => alert(JSON.stringify(r.data, null, 2)))}
                     className="w-full text-left px-3 py-2 bg-gray-900/50 rounded text-sm text-gray-300 hover:bg-gray-700 transition-colors"
                   >
                     Weekend Pre-Check Analysis
-                  </button>
-                  <button
-                    onClick={handleTriggerFeedbackLoop}
-                    className="w-full text-left px-3 py-2 bg-purple-500/20 rounded text-sm text-purple-400 hover:bg-purple-500/30 transition-colors"
-                  >
-                    Run Feedback Loop Now
                   </button>
                 </div>
               </div>
