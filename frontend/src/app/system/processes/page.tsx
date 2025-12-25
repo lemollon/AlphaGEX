@@ -1112,10 +1112,10 @@ export default function SystemProcessesPage() {
   // Update statuses from WebSocket
   useEffect(() => {
     if (lastMessage?.type === 'bot_status') {
-      setBotStatuses(prev => ({ ...prev, [lastMessage.bot]: lastMessage.status }));
+      setBotStatuses((prev: Record<string, BotStatus>) => ({ ...prev, [lastMessage.bot]: lastMessage.status }));
     }
     if (lastMessage?.type === 'process_status') {
-      setProcessStatuses(prev => ({ ...prev, [lastMessage.process]: lastMessage.status }));
+      setProcessStatuses((prev: Record<string, string>) => ({ ...prev, [lastMessage.process]: lastMessage.status }));
     }
   }, [lastMessage]);
 
@@ -1181,12 +1181,12 @@ export default function SystemProcessesPage() {
 
   // Handlers
   const handleNodeClick = useCallback((nodeId: string) => {
-    setSelectedNode(prev => prev === nodeId ? null : nodeId);
+    setSelectedNode((prev: string | null) => prev === nodeId ? null : nodeId);
   }, []);
 
   const handleFavorite = useCallback((id: string) => {
-    setFavorites(prev => prev.includes(id) ? prev.filter(f => f !== id) : [...prev, id]);
-  }, [setFavorites]);
+    setFavorites(favorites.includes(id) ? favorites.filter(f => f !== id) : [...favorites, id]);
+  }, [favorites, setFavorites]);
 
   const handleShare = useCallback(async () => {
     if (selectedNode) {
