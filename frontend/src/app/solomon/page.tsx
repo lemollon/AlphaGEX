@@ -369,6 +369,16 @@ interface ValidationStatus {
   message?: string
 }
 
+interface ProposalReasoning {
+  problem_statement?: string
+  hypothesis?: string
+  supporting_evidence?: Array<{ description?: string; type?: string; data?: unknown }>
+  expected_improvement?: Record<string, number>
+  confidence_level?: number
+  success_criteria?: Record<string, number>
+  rollback_trigger?: Record<string, number>
+}
+
 const ValidationStatusBadge = ({ status }: { status: ValidationStatus | null }) => {
   if (!status) {
     return (
@@ -409,7 +419,7 @@ const ProposalCard = ({
   const [notes, setNotes] = useState('')
   const [processing, setProcessing] = useState(false)
   const [validationStatus, setValidationStatus] = useState<ValidationStatus | null>(null)
-  const [reasoning, setReasoning] = useState<Record<string, unknown> | null>(null)
+  const [reasoning, setReasoning] = useState<ProposalReasoning | null>(null)
   const [loadingValidation, setLoadingValidation] = useState(false)
 
   // Fetch validation status and reasoning on mount
@@ -533,31 +543,27 @@ const ProposalCard = ({
 
         {showWhy && (
           <div className="mt-3 space-y-3 text-xs">
-            {/* Problem Statement */}
-            {reasoning && (reasoning as Record<string, unknown>).problem_statement && (
+            {reasoning?.problem_statement && (
               <div>
                 <div className="text-gray-500 mb-1">Problem Statement</div>
-                <div className="text-gray-300">{(reasoning as Record<string, unknown>).problem_statement as string}</div>
+                <div className="text-gray-300">{reasoning.problem_statement}</div>
               </div>
             )}
 
-            {/* Hypothesis */}
-            {reasoning && (reasoning as Record<string, unknown>).hypothesis && (
+            {reasoning?.hypothesis && (
               <div>
                 <div className="text-gray-500 mb-1">Hypothesis</div>
-                <div className="text-gray-300">{(reasoning as Record<string, unknown>).hypothesis as string}</div>
+                <div className="text-gray-300">{reasoning.hypothesis}</div>
               </div>
             )}
 
-            {/* Reason (fallback if no detailed reasoning) */}
-            {(!reasoning || !(reasoning as Record<string, unknown>).hypothesis) && proposal.reason && (
+            {(!reasoning?.hypothesis) && proposal.reason && (
               <div>
                 <div className="text-gray-500 mb-1">Reason</div>
                 <div className="text-gray-300">{proposal.reason}</div>
               </div>
             )}
 
-            {/* Expected Improvement */}
             {Object.keys(expectedImprovement).length > 0 && (
               <div>
                 <div className="text-gray-500 mb-1">Expected Improvement</div>
@@ -574,33 +580,30 @@ const ProposalCard = ({
               </div>
             )}
 
-            {/* Supporting Evidence */}
-            {reasoning && Array.isArray((reasoning as Record<string, unknown>).supporting_evidence) &&
-             ((reasoning as Record<string, unknown>).supporting_evidence as unknown[]).length > 0 && (
+            {reasoning?.supporting_evidence && reasoning.supporting_evidence.length > 0 && (
               <div>
                 <div className="text-gray-500 mb-1">Supporting Evidence</div>
                 <ul className="list-disc list-inside text-gray-300">
-                  {((reasoning as Record<string, unknown>).supporting_evidence as Record<string, unknown>[]).map((evidence, i) => (
+                  {reasoning.supporting_evidence.map((evidence, i) => (
                     <li key={i}>
-                      {evidence.description as string || JSON.stringify(evidence)}
+                      {evidence.description || JSON.stringify(evidence)}
                     </li>
                   ))}
                 </ul>
               </div>
             )}
 
-            {/* Confidence Level */}
-            {reasoning && (reasoning as Record<string, unknown>).confidence_level && (
+            {reasoning?.confidence_level && (
               <div>
                 <div className="text-gray-500 mb-1">Confidence Level</div>
                 <div className="w-full bg-gray-700 rounded h-2">
                   <div
                     className="bg-blue-500 rounded h-2"
-                    style={{ width: `${((reasoning as Record<string, unknown>).confidence_level as number) * 100}%` }}
+                    style={{ width: `${reasoning.confidence_level * 100}%` }}
                   />
                 </div>
                 <div className="text-gray-400 mt-1">
-                  {(((reasoning as Record<string, unknown>).confidence_level as number) * 100).toFixed(0)}% confident
+                  {(reasoning.confidence_level * 100).toFixed(0)}% confident
                 </div>
               </div>
             )}
@@ -609,9 +612,7 @@ const ProposalCard = ({
 
         {!showWhy && (
           <div className="mt-2 text-xs text-gray-400 line-clamp-2">
-            {reasoning && (reasoning as Record<string, unknown>).problem_statement
-              ? (reasoning as Record<string, unknown>).problem_statement as string
-              : proposal.reason}
+            {reasoning?.problem_statement || proposal.reason}
           </div>
         )}
       </div>
@@ -666,22 +667,20 @@ const ProposalCard = ({
             </div>
           )}
 
-          {/* Success Criteria */}
-          {reasoning && (reasoning as Record<string, unknown>).success_criteria && (
+          {reasoning?.success_criteria && (
             <div className="bg-green-500/10 border border-green-500/30 rounded p-2">
               <div className="text-xs text-green-400 font-medium mb-1">Success Criteria</div>
               <pre className="text-xs text-gray-300">
-                {JSON.stringify((reasoning as Record<string, unknown>).success_criteria, null, 2)}
+                {JSON.stringify(reasoning.success_criteria, null, 2)}
               </pre>
             </div>
           )}
 
-          {/* Rollback Triggers */}
-          {reasoning && (reasoning as Record<string, unknown>).rollback_trigger && (
+          {reasoning?.rollback_trigger && (
             <div className="bg-orange-500/10 border border-orange-500/30 rounded p-2">
               <div className="text-xs text-orange-400 font-medium mb-1">Rollback Triggers</div>
               <pre className="text-xs text-gray-300">
-                {JSON.stringify((reasoning as Record<string, unknown>).rollback_trigger, null, 2)}
+                {JSON.stringify(reasoning.rollback_trigger, null, 2)}
               </pre>
             </div>
           )}
