@@ -1,16 +1,18 @@
 # AI-Powered Features Dependencies
 # Claude + LangChain Integration
+# Updated: 2025-12-25 (Security patches applied, versions aligned)
 
-# Core LangChain
-langchain==0.1.0
-langchain-anthropic==0.1.1
-langchain-community==0.0.20
+# Core LangChain (aligned to 0.3.x across all files)
+langchain>=0.3.0
+langchain-anthropic>=0.3.0
+langchain-community>=0.3.27
+langchain-core>=0.3.81
 
 # Anthropic Claude API
-anthropic==0.18.1
+anthropic>=0.40.0
 
 # Required for agents and tools
-pydantic==2.5.0
+pydantic>=2.7.4,<3.0.0
 
 # Already in main requirements but listing here for reference
 # These should already be installed:

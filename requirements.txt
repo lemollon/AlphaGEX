@@ -1,17 +1,29 @@
-requests>=2.31.0
+# AlphaGEX Core Dependencies
+# Updated: 2025-12-25 (Security patches applied)
+
+# HTTP Clients
+requests>=2.32.5
+aiohttp>=3.12.14
+
+# Data Processing
 pandas>=2.0.0
 numpy>=1.24.0
-plotly>=5.17.0
-yfinance>=0.2.52  # REQUIRED: Used for VIX data fetching (free, no API key needed)
-multitasking>=0.0.7
 scipy>=1.11.0
-py_vollib>=1.0.1
-twilio>=8.10.0
+
+# Visualization
+plotly>=5.17.0
+
+# Financial Data
+yfinance>=0.2.52  # REQUIRED: Used for VIX data fetching (free, no API key needed)
+
+# Date/Time
 pytz>=2023.3
+
+# Scheduling
 apscheduler>=3.10.0
-schedule>=1.2.0
+
+# Environment
 python-dotenv>=1.0.0
-aiohttp>=3.9.0
 
 # Machine Learning (for pattern recognition and regime classification)
 scikit-learn>=1.3.0
@@ -24,19 +36,19 @@ flask>=3.0.0
 psycopg2-binary>=2.9.9
 
 # Backend API
-fastapi>=0.104.0
+fastapi>=0.115.0
 uvicorn>=0.24.0
 pydantic-settings>=2.1.0
+python-multipart>=0.0.18
 
 # Push notifications
 pywebpush>=1.14.0
 py-vapid>=1.9.0
 
-# LangChain dependencies
-anthropic>=0.16.0
-langchain>=0.1.0
-langchain-anthropic>=0.1.0
-langchain-community>=0.0.20
-langchain-core>=0.1.0
-pydantic>=2.5.0
-langsmith>=0.0.70
+# LangChain dependencies (aligned to 0.3.x)
+anthropic>=0.40.0
+langchain>=0.3.0
+langchain-anthropic>=0.3.0
+langchain-community>=0.3.27
+langchain-core>=0.3.81
+pydantic>=2.7.4,<3.0.0
