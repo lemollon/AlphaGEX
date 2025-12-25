@@ -782,7 +782,8 @@ export default function SolomonPage() {
             </div>
             <div>
               <h1 className="text-2xl font-bold text-white">SOLOMON</h1>
-              <p className="text-gray-400">Feedback Loop Intelligence System</p>
+              <p className="text-gray-400 italic">"Iron sharpens iron, and one man sharpens another."</p>
+              <p className="text-gray-500 text-xs">Proverbs 27:17 — Feedback Loop Intelligence System</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
