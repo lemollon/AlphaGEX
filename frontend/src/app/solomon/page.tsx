@@ -1048,7 +1048,7 @@ export default function SolomonPage() {
     try {
       await apiClient.rejectSolomonProposal(proposalId, {
         reviewer: 'Dashboard User',
-        reason: notes
+        notes
       })
       fetchDashboard()
     } catch (err) {
@@ -1061,7 +1061,7 @@ export default function SolomonPage() {
     if (!versionModalBot) return
     try {
       await apiClient.rollbackSolomonBot(versionModalBot, {
-        version_id: versionId,
+        to_version_id: versionId,
         reason,
         user: 'Dashboard User'
       })
