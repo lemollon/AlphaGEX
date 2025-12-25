@@ -1,0 +1,313 @@
+"""
+ARES Iron Condor Routes Tests
+
+Tests for the ARES bot API endpoints including:
+- Status endpoint
+- Positions endpoint
+- Performance metrics
+- Trade history
+- Configuration
+
+Run with: pytest backend/tests/test_ares_routes.py -v
+"""
+
+import pytest
+from fastapi.testclient import TestClient
+from unittest.mock import patch, MagicMock
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from main import app
+
+client = TestClient(app)
+CENTRAL_TZ = ZoneInfo("America/Chicago")
+
+
+class TestAresStatusEndpoint:
+    """Tests for /api/ares/status endpoint"""
+
+    def test_get_status_success(self):
+        """Test that status endpoint returns valid data structure"""
+        response = client.get("/api/ares/status")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert "success" in data
+        assert data["success"] is True
+        assert "data" in data
+
+        status_data = data["data"]
+        assert "mode" in status_data
+        assert "capital" in status_data
+        assert "total_pnl" in status_data
+        assert "trade_count" in status_data
+        assert "win_rate" in status_data
+        assert "open_positions" in status_data
+        assert "heartbeat" in status_data
+
+    def test_status_has_config(self):
+        """Test that status includes configuration"""
+        response = client.get("/api/ares/status")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        if "config" in data["data"]:
+            config = data["data"]["config"]
+            assert "risk_per_trade" in config or "ticker" in config
+
+    def test_status_has_heartbeat(self):
+        """Test that status includes heartbeat info"""
+        response = client.get("/api/ares/status")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        heartbeat = data["data"]["heartbeat"]
+        assert "status" in heartbeat
+        assert "scan_count_today" in heartbeat
+
+
+class TestAresPositionsEndpoint:
+    """Tests for /api/ares/positions endpoint"""
+
+    def test_get_positions_success(self):
+        """Test positions endpoint returns valid structure"""
+        response = client.get("/api/ares/positions")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert "success" in data
+        assert data["success"] is True
+        assert "data" in data
+
+    def test_get_open_positions(self):
+        """Test getting open positions only"""
+        response = client.get("/api/ares/positions?status=open")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+
+    def test_get_closed_positions(self):
+        """Test getting closed positions only"""
+        response = client.get("/api/ares/positions?status=closed")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+
+
+class TestAresPerformanceEndpoint:
+    """Tests for /api/ares/performance endpoint"""
+
+    def test_get_performance_success(self):
+        """Test performance endpoint returns valid structure"""
+        response = client.get("/api/ares/performance")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert "success" in data
+        assert data["success"] is True
+
+    def test_performance_with_days_param(self):
+        """Test performance endpoint with days parameter"""
+        response = client.get("/api/ares/performance?days=30")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+
+
+class TestAresEquityCurveEndpoint:
+    """Tests for /api/ares/equity endpoint"""
+
+    def test_get_equity_curve_success(self):
+        """Test equity curve endpoint"""
+        response = client.get("/api/ares/equity")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert "success" in data
+        assert data["success"] is True
+
+    def test_equity_curve_with_days(self):
+        """Test equity curve with days parameter"""
+        response = client.get("/api/ares/equity?days=7")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+
+
+class TestAresTradesEndpoint:
+    """Tests for /api/ares/trades endpoint"""
+
+    def test_get_trades_success(self):
+        """Test trades endpoint returns valid structure"""
+        response = client.get("/api/ares/trades")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert "success" in data
+        assert data["success"] is True
+
+    def test_trades_with_limit(self):
+        """Test trades endpoint with limit parameter"""
+        response = client.get("/api/ares/trades?limit=10")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+
+    def test_trades_with_date_range(self):
+        """Test trades endpoint with date range"""
+        today = datetime.now().strftime("%Y-%m-%d")
+        response = client.get(f"/api/ares/trades?start_date={today}")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+
+
+class TestAresConfigEndpoint:
+    """Tests for /api/ares/config endpoint"""
+
+    def test_get_config_success(self):
+        """Test config endpoint returns valid structure"""
+        response = client.get("/api/ares/config")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert "success" in data
+        assert data["success"] is True
+
+
+class TestAresPresetsEndpoint:
+    """Tests for /api/ares/presets endpoint"""
+
+    def test_get_presets_success(self):
+        """Test presets endpoint returns available presets"""
+        response = client.get("/api/ares/presets")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert "success" in data
+        assert data["success"] is True
+
+
+class TestAresAnalysisEndpoint:
+    """Tests for /api/ares/analysis endpoint"""
+
+    def test_get_analysis_success(self):
+        """Test analysis endpoint returns market analysis"""
+        response = client.get("/api/ares/analysis")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert "success" in data
+        assert data["success"] is True
+
+
+class TestAresSignalsEndpoint:
+    """Tests for /api/ares/signals endpoint"""
+
+    def test_get_signals_success(self):
+        """Test signals endpoint returns trading signals"""
+        response = client.get("/api/ares/signals")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert "success" in data
+        assert data["success"] is True
+
+
+class TestAresLogsEndpoint:
+    """Tests for /api/ares/logs endpoint"""
+
+    def test_get_logs_success(self):
+        """Test logs endpoint returns decision logs"""
+        response = client.get("/api/ares/logs")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert "success" in data
+        assert data["success"] is True
+
+    def test_logs_with_limit(self):
+        """Test logs endpoint with limit parameter"""
+        response = client.get("/api/ares/logs?limit=50")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+
+
+class TestAresDataValidation:
+    """Tests for data validation in ARES endpoints"""
+
+    def test_capital_is_positive(self):
+        """Test that capital values are positive"""
+        response = client.get("/api/ares/status")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        capital = data["data"]["capital"]
+        assert capital >= 0
+
+    def test_win_rate_in_range(self):
+        """Test that win rate is between 0 and 100"""
+        response = client.get("/api/ares/status")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        win_rate = data["data"]["win_rate"]
+        assert 0 <= win_rate <= 100
+
+    def test_mode_is_valid(self):
+        """Test that mode is paper or live"""
+        response = client.get("/api/ares/status")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        mode = data["data"]["mode"]
+        assert mode in ["paper", "live"]
+
+
+class TestAresErrorHandling:
+    """Tests for error handling in ARES endpoints"""
+
+    def test_invalid_status_filter(self):
+        """Test handling of invalid status filter"""
+        response = client.get("/api/ares/positions?status=invalid")
+
+        # Should either return 200 with empty data or 400
+        assert response.status_code in [200, 400]
+
+    def test_invalid_date_format(self):
+        """Test handling of invalid date format"""
+        response = client.get("/api/ares/trades?start_date=not-a-date")
+
+        # Should handle gracefully
+        assert response.status_code in [200, 400, 422]
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])
