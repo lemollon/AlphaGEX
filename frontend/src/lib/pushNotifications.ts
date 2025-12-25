@@ -195,14 +195,17 @@ export class PushNotificationService {
       // Try to use service worker notification
       const registration = await navigator.serviceWorker.ready
 
-      await registration.showNotification(title, {
+      // vibrate is supported by browsers but not in TS NotificationOptions type
+      const notificationOptions = {
         badge: '/icons/badge-96x96.png',
         icon: '/icons/icon-192x192.png',
         vibrate: [200, 100, 200],
         tag: 'alphagex-alert',
         requireInteraction: true,
         ...options
-      })
+      } as NotificationOptions & { vibrate?: number[] }
+
+      await registration.showNotification(title, notificationOptions)
 
       // Play sound if enabled
       if (this.preferences.sound) {
