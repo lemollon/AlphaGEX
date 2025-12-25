@@ -917,15 +917,16 @@ export const apiClient = {
   getSolomonVersions: (botName: string) => api.get(`/api/solomon/versions/${botName}`),
   approveSolomonProposal: (proposalId: string, data: { reviewer: string; notes?: string }) =>
     api.post(`/api/solomon/proposals/${proposalId}/approve`, data),
-  rejectSolomonProposal: (proposalId: string, data: { reviewer: string; reason: string }) =>
+  rejectSolomonProposal: (proposalId: string, data: { reviewer: string; notes: string }) =>
     api.post(`/api/solomon/proposals/${proposalId}/reject`, data),
-  rollbackSolomonBot: (botName: string, data: { version_id: string; reason: string; user?: string }) =>
+  rollbackSolomonBot: (botName: string, data: { to_version_id: string; reason: string; user?: string }) =>
     api.post(`/api/solomon/rollback/${botName}`, data),
   activateSolomonVersion: (versionId: string, user: string) =>
     api.post(`/api/solomon/versions/${versionId}/activate`, null, { params: { user } }),
   runSolomonFeedbackLoop: () => api.post('/api/solomon/feedback-loop/run'),
   getSolomonValidationStatus: () => api.get('/api/solomon/validation/status'),
   getSolomonProposalReasoning: (proposalId: string) => api.get(`/api/solomon/validation/reasoning/${proposalId}`),
+  getSolomonValidationCanApply: (proposalId: string) => api.get(`/api/solomon/validation/can-apply/${proposalId}`),
 }
 
 // WebSocket connection
