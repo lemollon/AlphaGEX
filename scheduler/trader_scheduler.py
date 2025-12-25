@@ -1051,7 +1051,7 @@ class AutonomousTraderScheduler:
             return
 
         try:
-            logger.info("SOLOMON: Running weekly feedback loop analysis...")
+            logger.info("SOLOMON: Running daily feedback loop analysis...")
 
             # Run the feedback loop
             result = run_feedback_loop()
