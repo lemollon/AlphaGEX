@@ -903,6 +903,29 @@ export const apiClient = {
   getArgusDangerZoneLogs: () => api.get('/api/argus/danger-zones/log'),
   getArgusStrikeTrends: () => api.get('/api/argus/strike-trends'),
   getArgusGammaFlips: () => api.get('/api/argus/gamma-flips'),
+
+  // SOLOMON - Feedback Loop Intelligence System
+  getSolomonDashboard: () => api.get('/api/solomon/dashboard'),
+  getSolomonEnhancedDigest: () => api.get('/api/solomon/enhanced/digest'),
+  getSolomonEnhancedCorrelations: () => api.get('/api/solomon/enhanced/correlations'),
+  getSolomonEnhancedTimeAnalysis: (bot: string) => api.get(`/api/solomon/enhanced/time-analysis/${bot}`),
+  getSolomonWeekendPrecheck: () => api.get('/api/solomon/enhanced/weekend-precheck'),
+  activateSolomonKillswitch: (botName: string, data: { reason: string; duration_hours?: number; user?: string }) =>
+    api.post(`/api/solomon/killswitch/${botName}/activate`, data),
+  deactivateSolomonKillswitch: (botName: string, data: { user?: string }) =>
+    api.post(`/api/solomon/killswitch/${botName}/deactivate`, data),
+  getSolomonVersions: (botName: string) => api.get(`/api/solomon/versions/${botName}`),
+  approveSolomonProposal: (proposalId: string, data: { reviewer: string; notes?: string }) =>
+    api.post(`/api/solomon/proposals/${proposalId}/approve`, data),
+  rejectSolomonProposal: (proposalId: string, data: { reviewer: string; reason: string }) =>
+    api.post(`/api/solomon/proposals/${proposalId}/reject`, data),
+  rollbackSolomonBot: (botName: string, data: { version_id: string; reason: string; user?: string }) =>
+    api.post(`/api/solomon/rollback/${botName}`, data),
+  activateSolomonVersion: (versionId: string, user: string) =>
+    api.post(`/api/solomon/versions/${versionId}/activate`, null, { params: { user } }),
+  runSolomonFeedbackLoop: () => api.post('/api/solomon/feedback-loop/run'),
+  getSolomonValidationStatus: () => api.get('/api/solomon/validation/status'),
+  getSolomonProposalReasoning: (proposalId: string) => api.get(`/api/solomon/validation/reasoning/${proposalId}`),
 }
 
 // WebSocket connection
