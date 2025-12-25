@@ -202,7 +202,7 @@ export class PushNotificationService {
         tag: 'alphagex-alert',
         requireInteraction: true,
         ...options
-      })
+      } as NotificationOptions & { vibrate?: number[] })
 
       // Play sound if enabled
       if (this.preferences.sound) {
