@@ -142,6 +142,21 @@ except ImportError:
     ScanOutcome = None
     CheckResult = None
 
+# Circuit breaker for risk management - CRITICAL for production safety
+try:
+    from trading.circuit_breaker import (
+        get_circuit_breaker,
+        is_trading_enabled,
+        record_trade_pnl,
+        CircuitBreakerState
+    )
+    CIRCUIT_BREAKER_AVAILABLE = True
+except ImportError:
+    CIRCUIT_BREAKER_AVAILABLE = False
+    get_circuit_breaker = None
+    is_trading_enabled = None
+    record_trade_pnl = None
+
 # Import unified data provider
 try:
     from data.unified_data_provider import (
@@ -2373,6 +2388,14 @@ Current:         ${self.current_capital:,.2f}
         # Update capital
         self.current_capital += position.realized_pnl
 
+        # Record P&L to circuit breaker for daily loss tracking
+        if CIRCUIT_BREAKER_AVAILABLE and record_trade_pnl:
+            try:
+                record_trade_pnl(position.realized_pnl)
+                logger.debug(f"ATHENA: Recorded P&L ${position.realized_pnl:.2f} to circuit breaker")
+            except Exception as e:
+                logger.warning(f"ATHENA: Failed to record P&L to circuit breaker: {e}")
+
         # Fetch current market data for detailed logging
         exit_gex_data = None
         try:
@@ -2924,6 +2947,47 @@ Current:         ${self.current_capital:,.2f}
                     ]
                 )
             return result
+
+        # =========================================================================
+        # CIRCUIT BREAKER CHECK - FIRST LINE OF DEFENSE
+        # =========================================================================
+        if CIRCUIT_BREAKER_AVAILABLE and is_trading_enabled:
+            try:
+                can_trade, cb_reason = is_trading_enabled(
+                    current_positions=len(self.open_positions),
+                    margin_used=0  # ATHENA uses defined risk spreads, not margin
+                )
+
+                if not can_trade:
+                    reason = f"Circuit breaker: {cb_reason}"
+                    self._log_to_db("WARNING", f"ATHENA blocked by circuit breaker: {cb_reason}")
+                    result['decision_reason'] = f"BLOCKED: {reason}"
+                    if SCAN_LOGGER_AVAILABLE and log_athena_scan:
+                        # Get basic market data for logging
+                        try:
+                            from data.unified_data_provider import get_vix, get_price
+                            vix = get_vix() or 20.0
+                            spot = get_price("SPY") or 0
+                        except Exception:
+                            vix = 20.0
+                            spot = 0
+
+                        log_athena_scan(
+                            outcome=ScanOutcome.SKIP,
+                            decision_summary=f"CIRCUIT BREAKER ACTIVE: {cb_reason}",
+                            action_taken="No trade - circuit breaker prevented trading for risk management",
+                            market_data={'underlying_price': spot, 'vix': vix, 'symbol': 'SPY'},
+                            full_reasoning=f"The circuit breaker system has blocked trading to protect capital. "
+                                          f"This typically occurs when daily loss limits are hit or when too many "
+                                          f"positions are open. Reason: {cb_reason}",
+                            checks=[
+                                CheckResult("should_trade", True, "Yes", "Yes", "Trade conditions met"),
+                                CheckResult("circuit_breaker", False, "BLOCKED", "ENABLED", cb_reason)
+                            ]
+                        )
+                    return result
+            except Exception as e:
+                logger.warning(f"ATHENA: Circuit breaker check failed: {e} - continuing with trade")
 
         # Get GEX data first (needed for both ML and Oracle)
         gex_data = self.get_gex_data()
@@ -3562,6 +3626,14 @@ Current:         ${self.current_capital:,.2f}
 
                     # Update capital
                     self.current_capital += realized_pnl
+
+                    # Record P&L to circuit breaker for daily loss tracking
+                    if CIRCUIT_BREAKER_AVAILABLE and record_trade_pnl:
+                        try:
+                            record_trade_pnl(realized_pnl)
+                            logger.debug(f"ATHENA EOD: Recorded P&L ${realized_pnl:.2f} to circuit breaker")
+                        except Exception as e:
+                            logger.warning(f"ATHENA EOD: Failed to record P&L to circuit breaker: {e}")
 
                     if realized_pnl > 0:
                         result['winners'] += 1
