@@ -1586,7 +1586,8 @@ class ProposalValidator:
         val[key]['pnl'] += pnl
         if pnl > 0:
             val[key]['wins'] = val[key].get('wins', 0) + 1
-            val[key]['win_rate'] = (val[key]['wins'] / val[key]['trades']) * 100
+        # Always recalculate win_rate after every trade (not just wins)
+        val[key]['win_rate'] = (val[key].get('wins', 0) / val[key]['trades']) * 100 if val[key]['trades'] > 0 else 0
 
         # Persist to database
         self._save_to_database(val)
@@ -2028,6 +2029,46 @@ class SolomonEnhanced:
 
         Returns detailed status on why/why not.
         """
+        # First check if proposal exists and is not expired
+        proposals = self.solomon.get_pending_proposals()
+        proposal = next((p for p in proposals if p.get('proposal_id') == proposal_id), None)
+
+        if not proposal:
+            return {
+                'can_apply': False,
+                'improvement_proven': False,
+                'rejection_reasons': ['Proposal not found'],
+                'message': 'Proposal not found'
+            }
+
+        # Check if proposal has expired
+        if proposal.get('status') == 'EXPIRED':
+            return {
+                'can_apply': False,
+                'improvement_proven': False,
+                'rejection_reasons': ['Proposal has expired'],
+                'message': 'Proposal has expired and cannot be applied'
+            }
+
+        # Check expiration date
+        expires_at = proposal.get('expires_at')
+        if expires_at:
+            from datetime import datetime
+            try:
+                if isinstance(expires_at, str):
+                    exp_dt = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
+                else:
+                    exp_dt = expires_at
+                if exp_dt < datetime.now(CENTRAL_TZ):
+                    return {
+                        'can_apply': False,
+                        'improvement_proven': False,
+                        'rejection_reasons': ['Proposal has expired'],
+                        'message': 'Proposal has expired and cannot be applied'
+                    }
+            except (ValueError, TypeError):
+                pass  # If we can't parse the date, proceed with validation check
+
         # Find the validation for this proposal
         validations = self.proposal_validator.get_pending_validations()
         proposal_validation = None
@@ -2040,8 +2081,9 @@ class SolomonEnhanced:
         if not proposal_validation:
             return {
                 'can_apply': False,
-                'reason': 'No validation found for this proposal',
-                'action_required': 'Start validation before applying'
+                'improvement_proven': False,
+                'rejection_reasons': ['Validation not started'],
+                'message': 'No validation found for this proposal. Start validation before applying.'
             }
 
         # Evaluate the validation
@@ -2098,9 +2140,11 @@ class SolomonEnhanced:
 
         if success:
             # Log the detailed reasoning
+            # Import ActionType for logging
+            from quant.solomon_feedback_loop import ActionType
             self.solomon.log_action(
                 bot_name=reasoning.get('bot_name', 'UNKNOWN') if reasoning else 'UNKNOWN',
-                action_type=self.solomon.__class__.__dict__.get('ActionType', type('', (), {'MODEL_LOADED': type('', (), {'value': 'MODEL_LOADED'})()})).MODEL_LOADED if hasattr(self.solomon, 'ActionType') else type('', (), {'value': 'PROPOSAL_APPLIED'})(),
+                action_type=ActionType.PROPOSAL_APPROVED,
                 description=f"Proposal {proposal_id} applied after validation proved improvement",
                 reason="Improvement proven through validation",
                 justification={

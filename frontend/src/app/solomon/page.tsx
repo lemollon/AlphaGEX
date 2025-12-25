@@ -427,21 +427,19 @@ const ProposalCard = ({
     const fetchData = async () => {
       setLoadingValidation(true)
       try {
-        // Fetch validation status
-        const validationRes = await fetch(`/api/solomon/validation/can-apply/${proposal.proposal_id}`)
-        if (validationRes.ok) {
-          const data = await validationRes.json()
-          setValidationStatus(data)
+        // Fetch validation status using apiClient
+        const validationRes = await apiClient.getSolomonValidationCanApply(proposal.proposal_id)
+        if (validationRes.data) {
+          setValidationStatus(validationRes.data)
         }
 
-        // Fetch detailed reasoning
-        const reasoningRes = await fetch(`/api/solomon/validation/reasoning/${proposal.proposal_id}`)
-        if (reasoningRes.ok) {
-          const data = await reasoningRes.json()
-          setReasoning(data.reasoning)
+        // Fetch detailed reasoning using apiClient
+        const reasoningRes = await apiClient.getSolomonProposalReasoning(proposal.proposal_id)
+        if (reasoningRes.data?.reasoning) {
+          setReasoning(reasoningRes.data.reasoning)
         }
       } catch (error) {
-        console.log('Validation data not available yet')
+        console.log('Validation data not available yet:', error)
       }
       setLoadingValidation(false)
     }

@@ -926,6 +926,7 @@ export const apiClient = {
   runSolomonFeedbackLoop: () => api.post('/api/solomon/feedback-loop/run'),
   getSolomonValidationStatus: () => api.get('/api/solomon/validation/status'),
   getSolomonProposalReasoning: (proposalId: string) => api.get(`/api/solomon/validation/reasoning/${proposalId}`),
+  getSolomonValidationCanApply: (proposalId: string) => api.get(`/api/solomon/validation/can-apply/${proposalId}`),
 }
 
 // WebSocket connection
