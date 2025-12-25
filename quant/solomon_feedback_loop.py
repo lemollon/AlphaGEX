@@ -575,6 +575,57 @@ CREATE TABLE IF NOT EXISTS solomon_kill_switch (
     resumed_at TIMESTAMPTZ,
     resumed_by TEXT
 );
+
+-- Solomon Validations: Track proposal validations for proven improvement
+CREATE TABLE IF NOT EXISTS solomon_validations (
+    id SERIAL PRIMARY KEY,
+    validation_id TEXT UNIQUE NOT NULL,
+    proposal_id TEXT NOT NULL REFERENCES solomon_proposals(proposal_id),
+    bot_name TEXT NOT NULL,
+    method TEXT NOT NULL,  -- AB_TEST, BACKTEST, SHADOW_MODE, HISTORICAL
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at TIMESTAMPTZ,
+    status TEXT NOT NULL DEFAULT 'RUNNING',  -- RUNNING, COMPLETED, FAILED
+
+    -- Configuration being tested
+    current_config JSONB NOT NULL,
+    proposed_config JSONB NOT NULL,
+
+    -- Current (control) performance
+    current_trades INTEGER DEFAULT 0,
+    current_wins INTEGER DEFAULT 0,
+    current_pnl NUMERIC(12,2) DEFAULT 0,
+    current_win_rate NUMERIC(5,2) DEFAULT 0,
+
+    -- Proposed (variant) performance
+    proposed_trades INTEGER DEFAULT 0,
+    proposed_wins INTEGER DEFAULT 0,
+    proposed_pnl NUMERIC(12,2) DEFAULT 0,
+    proposed_win_rate NUMERIC(5,2) DEFAULT 0,
+
+    -- Validation results
+    improvement_proven BOOLEAN DEFAULT FALSE,
+    can_apply BOOLEAN DEFAULT FALSE,
+    rejection_reasons JSONB DEFAULT '[]',
+    improvement_metrics JSONB DEFAULT '{}',
+
+    -- Detailed reasoning (WHO, WHAT, WHY, WHEN)
+    problem_statement TEXT,
+    hypothesis TEXT,
+    supporting_evidence JSONB DEFAULT '[]',
+    expected_improvement JSONB DEFAULT '{}',
+    confidence_level NUMERIC(3,2) DEFAULT 0.7,
+    success_criteria JSONB DEFAULT '{}',
+    rollback_trigger JSONB DEFAULT '{}',
+
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Index for quick lookups
+CREATE INDEX IF NOT EXISTS idx_solomon_validations_proposal ON solomon_validations(proposal_id);
+CREATE INDEX IF NOT EXISTS idx_solomon_validations_bot ON solomon_validations(bot_name);
+CREATE INDEX IF NOT EXISTS idx_solomon_validations_status ON solomon_validations(status);
 """
 
 

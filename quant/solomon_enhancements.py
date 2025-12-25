@@ -1369,6 +1369,8 @@ class ProposalValidator:
     - Minimum trade count (default 20 trades)
     - Statistical significance (default 95%)
     - Clear improvement in primary metric
+
+    Data is persisted to solomon_validations table for durability across restarts.
     """
 
     VALIDATION_REQUIREMENTS = {
@@ -1382,8 +1384,147 @@ class ProposalValidator:
 
     def __init__(self, solomon):
         self.solomon = solomon
-        self._pending_validations: Dict[str, Dict] = {}
         self._ab_tests: Dict[str, str] = {}  # proposal_id -> ab_test_id
+        # In-memory cache, backed by database
+        self._pending_validations: Dict[str, Dict] = {}
+        self._load_from_database()
+
+    def _load_from_database(self) -> None:
+        """Load pending validations from database into cache"""
+        if not DB_AVAILABLE:
+            return
+
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT validation_id, proposal_id, bot_name, method, started_at,
+                       current_config, proposed_config, status,
+                       current_trades, current_wins, current_pnl, current_win_rate,
+                       proposed_trades, proposed_wins, proposed_pnl, proposed_win_rate,
+                       problem_statement, hypothesis, supporting_evidence,
+                       expected_improvement, confidence_level, success_criteria, rollback_trigger
+                FROM solomon_validations
+                WHERE status = 'RUNNING'
+            """)
+            rows = cursor.fetchall()
+            conn.close()
+
+            for row in rows:
+                validation_id = row[0]
+                self._pending_validations[validation_id] = {
+                    'validation_id': row[0],
+                    'proposal_id': row[1],
+                    'bot_name': row[2],
+                    'method': row[3],
+                    'started_at': row[4].isoformat() if row[4] else datetime.now(CENTRAL_TZ).isoformat(),
+                    'current_config': row[5] or {},
+                    'proposed_config': row[6] or {},
+                    'status': row[7],
+                    'current_performance': {
+                        'trades': row[8] or 0,
+                        'wins': row[9] or 0,
+                        'pnl': float(row[10] or 0),
+                        'win_rate': float(row[11] or 0)
+                    },
+                    'proposed_performance': {
+                        'trades': row[12] or 0,
+                        'wins': row[13] or 0,
+                        'pnl': float(row[14] or 0),
+                        'win_rate': float(row[15] or 0)
+                    },
+                    'reasoning': {
+                        'problem_statement': row[16],
+                        'hypothesis': row[17],
+                        'supporting_evidence': row[18] or [],
+                        'expected_improvement': row[19] or {},
+                        'confidence_level': float(row[20] or 0.7),
+                        'success_criteria': row[21] or {},
+                        'rollback_trigger': row[22] or {}
+                    }
+                }
+
+            logger.info(f"Loaded {len(self._pending_validations)} pending validations from database")
+
+        except Exception as e:
+            logger.warning(f"Failed to load validations from database (table may not exist yet): {e}")
+
+    def _save_to_database(self, validation: Dict) -> bool:
+        """Save or update validation in database"""
+        if not DB_AVAILABLE:
+            return False
+
+        try:
+            import json
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            reasoning = validation.get('reasoning', {})
+            current_perf = validation.get('current_performance', {})
+            proposed_perf = validation.get('proposed_performance', {})
+
+            cursor.execute("""
+                INSERT INTO solomon_validations (
+                    validation_id, proposal_id, bot_name, method, started_at,
+                    current_config, proposed_config, status,
+                    current_trades, current_wins, current_pnl, current_win_rate,
+                    proposed_trades, proposed_wins, proposed_pnl, proposed_win_rate,
+                    problem_statement, hypothesis, supporting_evidence,
+                    expected_improvement, confidence_level, success_criteria, rollback_trigger,
+                    updated_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s,
+                    %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s, %s, %s,
+                    %s, %s, %s,
+                    %s, %s, %s, %s,
+                    NOW()
+                )
+                ON CONFLICT (validation_id) DO UPDATE SET
+                    status = EXCLUDED.status,
+                    current_trades = EXCLUDED.current_trades,
+                    current_wins = EXCLUDED.current_wins,
+                    current_pnl = EXCLUDED.current_pnl,
+                    current_win_rate = EXCLUDED.current_win_rate,
+                    proposed_trades = EXCLUDED.proposed_trades,
+                    proposed_wins = EXCLUDED.proposed_wins,
+                    proposed_pnl = EXCLUDED.proposed_pnl,
+                    proposed_win_rate = EXCLUDED.proposed_win_rate,
+                    updated_at = NOW()
+            """, (
+                validation['validation_id'],
+                validation['proposal_id'],
+                validation['bot_name'],
+                validation['method'],
+                validation['started_at'],
+                json.dumps(validation.get('current_config', {})),
+                json.dumps(validation.get('proposed_config', {})),
+                validation.get('status', 'RUNNING'),
+                current_perf.get('trades', 0),
+                current_perf.get('wins', 0),
+                current_perf.get('pnl', 0),
+                current_perf.get('win_rate', 0),
+                proposed_perf.get('trades', 0),
+                proposed_perf.get('wins', 0),
+                proposed_perf.get('pnl', 0),
+                proposed_perf.get('win_rate', 0),
+                reasoning.get('problem_statement'),
+                reasoning.get('hypothesis'),
+                json.dumps(reasoning.get('supporting_evidence', [])),
+                json.dumps(reasoning.get('expected_improvement', {})),
+                reasoning.get('confidence_level', 0.7),
+                json.dumps(reasoning.get('success_criteria', {})),
+                json.dumps(reasoning.get('rollback_trigger', {}))
+            ))
+
+            conn.commit()
+            conn.close()
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to save validation to database: {e}")
+            return False
 
     def start_validation(
         self,
@@ -1391,18 +1532,19 @@ class ProposalValidator:
         bot_name: str,
         current_config: Dict,
         proposed_config: Dict,
-        method: str = "AB_TEST"
+        method: str = "AB_TEST",
+        reasoning: Dict = None
     ) -> str:
         """
         Start validation for a proposal.
 
-        Returns validation ID.
+        Returns validation ID. Data is persisted to database.
         """
         import uuid
 
         validation_id = f"VAL-{proposal_id}-{uuid.uuid4().hex[:8]}"
 
-        self._pending_validations[validation_id] = {
+        validation = {
             'validation_id': validation_id,
             'proposal_id': proposal_id,
             'bot_name': bot_name,
@@ -1411,10 +1553,14 @@ class ProposalValidator:
             'current_config': current_config,
             'proposed_config': proposed_config,
             'status': 'RUNNING',
-            'trades_recorded': 0,
-            'current_performance': {'trades': 0, 'pnl': 0, 'win_rate': 0},
-            'proposed_performance': {'trades': 0, 'pnl': 0, 'win_rate': 0}
+            'current_performance': {'trades': 0, 'wins': 0, 'pnl': 0, 'win_rate': 0},
+            'proposed_performance': {'trades': 0, 'wins': 0, 'pnl': 0, 'win_rate': 0},
+            'reasoning': reasoning or {}
         }
+
+        # Save to cache and database
+        self._pending_validations[validation_id] = validation
+        self._save_to_database(validation)
 
         logger.info(f"Started validation {validation_id} for proposal {proposal_id} using {method}")
         return validation_id
@@ -1425,21 +1571,25 @@ class ProposalValidator:
         is_proposed: bool,
         pnl: float
     ) -> None:
-        """Record a trade result during validation"""
+        """Record a trade result during validation. Persisted to database."""
         if validation_id not in self._pending_validations:
-            return
+            # Try loading from database
+            self._load_from_database()
+            if validation_id not in self._pending_validations:
+                logger.warning(f"Validation {validation_id} not found")
+                return
 
         val = self._pending_validations[validation_id]
-        val['trades_recorded'] += 1
 
         key = 'proposed_performance' if is_proposed else 'current_performance'
         val[key]['trades'] += 1
         val[key]['pnl'] += pnl
         if pnl > 0:
-            # Update win rate
-            wins = val[key].get('wins', 0) + 1
-            val[key]['wins'] = wins
-            val[key]['win_rate'] = (wins / val[key]['trades']) * 100
+            val[key]['wins'] = val[key].get('wins', 0) + 1
+            val[key]['win_rate'] = (val[key]['wins'] / val[key]['trades']) * 100
+
+        # Persist to database
+        self._save_to_database(val)
 
     def evaluate_validation(self, validation_id: str) -> ValidationResult:
         """
