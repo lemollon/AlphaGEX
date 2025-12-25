@@ -708,7 +708,7 @@ const ProposalCard = ({
         <div className="flex gap-2">
           <button
             onClick={handleApprove}
-            disabled={processing || (validationStatus && !validationStatus.can_apply)}
+            disabled={processing || Boolean(validationStatus && !validationStatus.can_apply)}
             className="flex-1 bg-green-500/20 text-green-400 border border-green-500/50 rounded py-2 text-sm font-medium hover:bg-green-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             <CheckCircle className="w-4 h-4" />
