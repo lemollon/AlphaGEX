@@ -2,6 +2,7 @@
 
 **Date:** 2025-12-25
 **Auditor:** Claude Code
+**Status:** ✅ REMEDIATED (see Known Residual Risks below)
 
 ## Executive Summary
 
@@ -249,3 +250,24 @@ plotly>=5.18.0
 | Outdated Packages | 20+ | LOW-MEDIUM |
 
 **Estimated Effort:** 2-4 hours for security patches, 1-2 days for full modernization
+
+---
+
+## 7. Remediation Status (Updated)
+
+All identified vulnerabilities have been patched except for one known residual risk:
+
+### Known Residual Risk
+
+| Package | Vulnerability | Status | Notes |
+|---------|--------------|--------|-------|
+| `ecdsa` 0.19.1 | CVE-2024-23342 | **No fix available** | Transitive dependency of `python-jose`. This is a timing side-channel attack on ECDSA signature verification with limited practical exploitability. |
+
+**Mitigation:** Monitor for `ecdsa` package updates. Consider switching to `PyJWT` if JWT support is needed without ECDSA.
+
+### Changes Made
+
+1. **Python dependencies** - All 14+ vulnerabilities patched
+2. **JavaScript dependencies** - All 3 vulnerabilities patched
+3. **Unused dependencies removed** - twilio, py_vollib, langsmith, schedule, multitasking
+4. **Version conflicts resolved** - All files now use consistent LangChain 0.3.x
