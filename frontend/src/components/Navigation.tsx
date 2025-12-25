@@ -59,6 +59,7 @@ const navItems = [
   { href: '/trader', label: 'PHOENIX (SPY 0DTE)', icon: Bot, category: 'Beta' },
   { href: '/wheel', label: 'HERMES (Manual Wheel)', icon: RotateCcw, category: 'Beta' },
   { href: '/spx-wheel', label: 'ATLAS (SPX Wheel)', icon: Target, category: 'Beta' },
+  { href: '/solomon', label: 'SOLOMON (Feedback Loop)', icon: BookOpen, category: 'System' },
   { href: '/spx', label: 'SPX Institutional', icon: TrendingUp, category: 'Beta' },
   { href: '/gexis-commands', label: 'GEXIS Commands', icon: MessageSquare, category: 'System' },
   { href: '/settings/system', label: 'System Settings', icon: Settings, category: 'System' },
