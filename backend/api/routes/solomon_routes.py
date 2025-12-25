@@ -806,3 +806,440 @@ async def record_performance_snapshot(bot_name: str):
     except Exception as e:
         logger.error(f"Failed to record snapshot: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# ENHANCED FEATURES
+# =============================================================================
+
+# Try to import enhanced Solomon features
+ENHANCED_AVAILABLE = False
+try:
+    from quant.solomon_enhancements import get_solomon_enhanced
+    ENHANCED_AVAILABLE = True
+    logger.info("Solomon enhanced features loaded")
+except ImportError as e:
+    logger.warning(f"Solomon enhanced features not available: {e}")
+
+
+@router.get("/enhanced/analysis/{bot_name}")
+async def get_enhanced_analysis(
+    bot_name: str,
+    days: int = Query(30, ge=1, le=365, description="Number of days to analyze")
+):
+    """
+    Get comprehensive enhanced analysis for a bot.
+
+    Includes:
+    - Consecutive loss tracking
+    - Daily P&L status
+    - Time of day performance
+    - Regime performance
+    - Version history comparison
+    """
+    if not ENHANCED_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Enhanced features not available")
+
+    try:
+        enhanced = get_solomon_enhanced()
+        analysis = enhanced.get_comprehensive_analysis(bot_name.upper())
+
+        return {
+            "success": True,
+            **analysis
+        }
+    except Exception as e:
+        logger.error(f"Failed to get enhanced analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/enhanced/correlations")
+async def get_cross_bot_correlations(
+    days: int = Query(30, ge=7, le=365, description="Number of days to analyze")
+):
+    """
+    Get cross-bot performance correlations.
+
+    Analyzes how bot performances are correlated to assess diversification.
+    """
+    if not ENHANCED_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Enhanced features not available")
+
+    try:
+        enhanced = get_solomon_enhanced()
+        correlations = enhanced.get_portfolio_correlations()
+
+        return {
+            "success": True,
+            "period_days": days,
+            **correlations
+        }
+    except Exception as e:
+        logger.error(f"Failed to get correlations: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/enhanced/time-analysis/{bot_name}")
+async def get_time_of_day_analysis(
+    bot_name: str,
+    days: int = Query(30, ge=7, le=365, description="Number of days to analyze")
+):
+    """
+    Get time-of-day performance analysis for a bot.
+
+    Shows which hours have the best/worst performance.
+    """
+    if not ENHANCED_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Enhanced features not available")
+
+    try:
+        enhanced = get_solomon_enhanced()
+        analysis = enhanced.time_analyzer.analyze(bot_name.upper(), days)
+
+        return {
+            "success": True,
+            "bot_name": bot_name.upper(),
+            "period_days": days,
+            "hourly_performance": [a.to_dict() for a in analysis]
+        }
+    except Exception as e:
+        logger.error(f"Failed to get time analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/enhanced/regime/{bot_name}")
+async def get_regime_performance(
+    bot_name: str,
+    days: int = Query(90, ge=30, le=365, description="Number of days to analyze")
+):
+    """
+    Get performance by market regime for a bot.
+
+    Shows how the bot performs in different market conditions.
+    """
+    if not ENHANCED_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Enhanced features not available")
+
+    try:
+        enhanced = get_solomon_enhanced()
+        analysis = enhanced.regime_tracker.analyze_regime_performance(bot_name.upper(), days)
+
+        return {
+            "success": True,
+            "bot_name": bot_name.upper(),
+            "period_days": days,
+            "regime_performance": [r.to_dict() for r in analysis]
+        }
+    except Exception as e:
+        logger.error(f"Failed to get regime performance: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/enhanced/digest")
+async def get_daily_digest(
+    date: Optional[str] = Query(None, description="Date for digest (YYYY-MM-DD), defaults to today")
+):
+    """
+    Get daily performance digest.
+
+    Summary of all bot performance for the day.
+    """
+    if not ENHANCED_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Enhanced features not available")
+
+    try:
+        enhanced = get_solomon_enhanced()
+        digest = enhanced.daily_digest.generate_digest(date)
+
+        return {
+            "success": True,
+            **digest
+        }
+    except Exception as e:
+        logger.error(f"Failed to generate digest: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/enhanced/weekend-precheck")
+async def get_weekend_precheck():
+    """
+    Get weekend pre-check analysis.
+
+    Analysis for preparing bots for the upcoming trading week.
+    """
+    if not ENHANCED_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Enhanced features not available")
+
+    try:
+        enhanced = get_solomon_enhanced()
+        precheck = enhanced.weekend_precheck.generate_precheck()
+
+        return {
+            "success": True,
+            **precheck.to_dict()
+        }
+    except Exception as e:
+        logger.error(f"Failed to generate weekend precheck: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/enhanced/version-compare/{bot_name}")
+async def compare_versions(
+    bot_name: str,
+    version_a: str = Query(..., description="First version ID"),
+    version_b: str = Query(..., description="Second version ID")
+):
+    """
+    Compare performance between two versions.
+    """
+    if not ENHANCED_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Enhanced features not available")
+
+    try:
+        enhanced = get_solomon_enhanced()
+        comparison = enhanced.version_comparer.compare_versions(
+            bot_name.upper(), version_a, version_b
+        )
+
+        return {
+            "success": True,
+            "bot_name": bot_name.upper(),
+            **comparison
+        }
+    except Exception as e:
+        logger.error(f"Failed to compare versions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/enhanced/version-history/{bot_name}")
+async def get_version_performance_history(
+    bot_name: str,
+    days: int = Query(30, ge=7, le=365, description="Number of days to analyze")
+):
+    """
+    Get performance history grouped by version.
+    """
+    if not ENHANCED_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Enhanced features not available")
+
+    try:
+        enhanced = get_solomon_enhanced()
+        history = enhanced.version_comparer.get_version_performance_history(
+            bot_name.upper(), days
+        )
+
+        return {
+            "success": True,
+            "bot_name": bot_name.upper(),
+            "period_days": days,
+            "versions": [v.to_dict() for v in history]
+        }
+    except Exception as e:
+        logger.error(f"Failed to get version history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# A/B TESTING
+# =============================================================================
+
+class ABTestCreateRequest(BaseModel):
+    """Request to create an A/B test"""
+    bot_name: str = Field(..., description="Bot name")
+    control_config: dict = Field(..., description="Control configuration")
+    variant_config: dict = Field(..., description="Variant configuration")
+    control_allocation: float = Field(0.5, ge=0.1, le=0.9, description="Allocation to control group")
+
+
+@router.post("/enhanced/ab-test")
+async def create_ab_test(request: ABTestCreateRequest):
+    """
+    Create a new A/B test for a bot.
+    """
+    if not ENHANCED_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Enhanced features not available")
+
+    try:
+        enhanced = get_solomon_enhanced()
+        test_id = enhanced.ab_testing.create_test(
+            request.bot_name.upper(),
+            request.control_config,
+            request.variant_config,
+            request.control_allocation
+        )
+
+        return {
+            "success": True,
+            "test_id": test_id,
+            "message": "A/B test created"
+        }
+    except Exception as e:
+        logger.error(f"Failed to create A/B test: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/enhanced/ab-test")
+async def get_active_ab_tests(
+    bot_name: Optional[str] = Query(None, description="Filter by bot name")
+):
+    """
+    Get active A/B tests.
+    """
+    if not ENHANCED_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Enhanced features not available")
+
+    try:
+        enhanced = get_solomon_enhanced()
+        tests = enhanced.ab_testing.get_active_tests(bot_name.upper() if bot_name else None)
+
+        return {
+            "success": True,
+            "tests": tests
+        }
+    except Exception as e:
+        logger.error(f"Failed to get A/B tests: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/enhanced/ab-test/{test_id}/evaluate")
+async def evaluate_ab_test(test_id: str):
+    """
+    Evaluate an A/B test's results.
+    """
+    if not ENHANCED_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Enhanced features not available")
+
+    try:
+        enhanced = get_solomon_enhanced()
+        result = enhanced.ab_testing.evaluate_test(test_id)
+
+        return {
+            "success": True,
+            **result
+        }
+    except Exception as e:
+        logger.error(f"Failed to evaluate A/B test: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# ROLLBACK COOLDOWN
+# =============================================================================
+
+@router.get("/enhanced/rollback-status/{bot_name}")
+async def get_rollback_status(bot_name: str):
+    """
+    Check if a rollback is allowed for a bot.
+    """
+    if not ENHANCED_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Enhanced features not available")
+
+    try:
+        enhanced = get_solomon_enhanced()
+        can_rollback, message = enhanced.rollback_cooldown.can_rollback(bot_name.upper())
+
+        return {
+            "bot_name": bot_name.upper(),
+            "can_rollback": can_rollback,
+            "message": message
+        }
+    except Exception as e:
+        logger.error(f"Failed to check rollback status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# AI ANALYSIS
+# =============================================================================
+
+AI_ANALYST_AVAILABLE = False
+try:
+    from quant.solomon_ai_analyst import SolomonAIAnalyst, get_ai_analyst
+    AI_ANALYST_AVAILABLE = True
+    logger.info("Solomon AI Analyst loaded")
+except ImportError as e:
+    logger.warning(f"Solomon AI Analyst not available: {e}")
+
+
+@router.get("/ai/analyze-performance/{bot_name}")
+async def ai_analyze_performance(bot_name: str):
+    """
+    Get AI analysis of bot performance.
+
+    Uses Claude to provide insights and recommendations.
+    """
+    if not AI_ANALYST_AVAILABLE:
+        raise HTTPException(status_code=503, detail="AI Analyst not available")
+
+    try:
+        analyst = get_ai_analyst()
+        analysis = await analyst.analyze_performance_drop(bot_name.upper())
+
+        return {
+            "success": True,
+            "bot_name": bot_name.upper(),
+            "analysis": analysis
+        }
+    except Exception as e:
+        logger.error(f"Failed to get AI analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ai/proposal-reasoning/{proposal_id}")
+async def ai_proposal_reasoning(proposal_id: str):
+    """
+    Get AI-generated reasoning for a proposal.
+    """
+    if not AI_ANALYST_AVAILABLE:
+        raise HTTPException(status_code=503, detail="AI Analyst not available")
+
+    try:
+        # Get proposal data
+        from database_adapter import get_connection
+
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM solomon_proposals WHERE proposal_id = %s", (proposal_id,))
+        columns = [desc[0] for desc in cursor.description]
+        row = cursor.fetchone()
+        conn.close()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Proposal not found")
+
+        proposal = dict(zip(columns, row))
+
+        analyst = get_ai_analyst()
+        reasoning = await analyst.generate_proposal_reasoning(proposal)
+
+        return {
+            "success": True,
+            "proposal_id": proposal_id,
+            "reasoning": reasoning
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get AI reasoning: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ai/weekend-analysis")
+async def ai_weekend_analysis():
+    """
+    Get AI-generated weekend market analysis.
+    """
+    if not AI_ANALYST_AVAILABLE:
+        raise HTTPException(status_code=503, detail="AI Analyst not available")
+
+    try:
+        analyst = get_ai_analyst()
+        analysis = await analyst.weekend_market_analysis()
+
+        return {
+            "success": True,
+            "analysis": analysis
+        }
+    except Exception as e:
+        logger.error(f"Failed to get weekend analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

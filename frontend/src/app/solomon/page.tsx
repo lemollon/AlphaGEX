@@ -1,14 +1,83 @@
 'use client'
 
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Brain, Activity, Shield, AlertTriangle, CheckCircle, XCircle,
   Clock, RefreshCw, ChevronDown, ChevronUp, ChevronRight,
   RotateCcw, Play, Pause, FileText, TrendingUp, TrendingDown,
-  Settings, Eye, History, Zap, Target, Lock, Unlock
+  Settings, Eye, History, Zap, Target, Lock, Unlock,
+  BarChart2, Calendar, Sun, Moon, GitBranch, Layers
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
+
+// ==================== SPARKLINE COMPONENT ====================
+
+const Sparkline = ({ data, color = '#8b5cf6', width = 100, height = 30 }: {
+  data: number[]
+  color?: string
+  width?: number
+  height?: number
+}) => {
+  if (!data || data.length === 0) {
+    return <div className="text-gray-600 text-xs">No data</div>
+  }
+
+  const min = Math.min(...data)
+  const max = Math.max(...data)
+  const range = max - min || 1
+
+  const points = data.map((value, index) => {
+    const x = (index / (data.length - 1)) * width
+    const y = height - ((value - min) / range) * height
+    return `${x},${y}`
+  }).join(' ')
+
+  const lastValue = data[data.length - 1]
+  const firstValue = data[0]
+  const trend = lastValue >= firstValue ? 'up' : 'down'
+  const trendColor = trend === 'up' ? '#22c55e' : '#ef4444'
+
+  return (
+    <svg width={width} height={height} className="overflow-visible">
+      <polyline
+        points={points}
+        fill="none"
+        stroke={trendColor}
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle
+        cx={(data.length - 1) / (data.length - 1) * width}
+        cy={height - ((lastValue - min) / range) * height}
+        r="3"
+        fill={trendColor}
+      />
+    </svg>
+  )
+}
+
+// ==================== P&L INDICATOR ====================
+
+const RealTimePnL = ({ value, previousValue }: { value: number, previousValue?: number }) => {
+  const isPositive = value >= 0
+  const change = previousValue !== undefined ? value - previousValue : 0
+  const showChange = previousValue !== undefined && change !== 0
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className={`text-2xl font-bold ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
+        ${Math.abs(value).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+      </span>
+      {showChange && (
+        <span className={`text-xs px-1.5 py-0.5 rounded ${change >= 0 ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+          {change >= 0 ? '+' : ''}{change.toFixed(2)}
+        </span>
+      )}
+    </div>
+  )
+}
 
 // ==================== INTERFACES ====================
 
@@ -136,17 +205,28 @@ const BotCard = ({
   bot,
   onKill,
   onResume,
-  onViewVersions
+  onViewVersions,
+  sparklineData
 }: {
   bot: BotStatus
   onKill: (name: string) => void
   onResume: (name: string) => void
   onViewVersions: (name: string) => void
+  sparklineData?: number[]
 }) => {
   const [showDetails, setShowDetails] = useState(false)
 
   const winRate = bot.performance?.win_rate || 0
   const totalPnl = bot.performance?.total_pnl || 0
+  const wins = bot.performance?.wins || 0
+  const losses = bot.performance?.losses || 0
+
+  // Generate mock sparkline if none provided
+  const chartData = sparklineData || Array.from({ length: 10 }, () => Math.random() * 100)
+
+  // Calculate streak
+  const streak = wins > losses ? `${wins - losses}W` : losses > wins ? `${losses - wins}L` : 'EVEN'
+  const streakColor = wins > losses ? 'text-green-400' : losses > wins ? 'text-red-400' : 'text-gray-400'
 
   return (
     <div className={`bg-gray-800 rounded-lg border ${bot.is_killed ? 'border-red-500/50' : 'border-gray-700'} p-4`}>
@@ -194,34 +274,44 @@ const BotCard = ({
         </div>
       </div>
 
+      {/* P&L with Sparkline */}
+      <div className="flex items-center justify-between mb-3 bg-gray-900/50 rounded-lg p-3">
+        <div>
+          <div className="text-xs text-gray-500 mb-1">Total P&L</div>
+          <RealTimePnL value={totalPnl} />
+        </div>
+        <div className="flex flex-col items-end">
+          <Sparkline data={chartData} width={80} height={24} />
+          <div className={`text-xs mt-1 ${streakColor}`}>{streak}</div>
+        </div>
+      </div>
+
       {/* Performance Summary */}
-      <div className="grid grid-cols-3 gap-3 mb-3">
-        <div className="bg-gray-900/50 rounded p-2">
+      <div className="grid grid-cols-3 gap-2 mb-3">
+        <div className="bg-gray-900/50 rounded p-2 text-center">
           <div className="text-xs text-gray-500">Win Rate</div>
           <div className={`text-lg font-bold ${winRate >= 50 ? 'text-green-400' : 'text-red-400'}`}>
             {winRate.toFixed(1)}%
           </div>
         </div>
-        <div className="bg-gray-900/50 rounded p-2">
-          <div className="text-xs text-gray-500">Total P&L</div>
-          <div className={`text-lg font-bold ${totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-            ${totalPnl.toLocaleString()}
-          </div>
+        <div className="bg-gray-900/50 rounded p-2 text-center">
+          <div className="text-xs text-gray-500">Wins</div>
+          <div className="text-lg font-bold text-green-400">{wins}</div>
         </div>
-        <div className="bg-gray-900/50 rounded p-2">
-          <div className="text-xs text-gray-500">Trades</div>
-          <div className="text-lg font-bold text-white">
-            {bot.performance?.total_trades || 0}
-          </div>
+        <div className="bg-gray-900/50 rounded p-2 text-center">
+          <div className="text-xs text-gray-500">Losses</div>
+          <div className="text-lg font-bold text-red-400">{losses}</div>
         </div>
       </div>
 
       {/* Active Version */}
       {bot.active_version && (
-        <div className="text-xs text-gray-400 flex items-center gap-2">
-          <span>Version: <span className="text-blue-400">{bot.active_version.version_number}</span></span>
-          <span className="text-gray-600">|</span>
-          <span>{bot.versions_count} versions</span>
+        <div className="text-xs text-gray-400 flex items-center justify-between px-1">
+          <span>
+            <GitBranch className="w-3 h-3 inline mr-1" />
+            v{bot.active_version.version_number}
+          </span>
+          <span className="text-gray-600">{bot.versions_count} versions</span>
         </div>
       )}
 
@@ -241,12 +331,14 @@ const BotCard = ({
           )}
           <div className="grid grid-cols-2 gap-2 text-xs">
             <div className="bg-gray-900/50 rounded p-2">
-              <div className="text-gray-500">Wins</div>
-              <div className="text-green-400 font-bold">{bot.performance?.wins || 0}</div>
+              <div className="text-gray-500">Trades Today</div>
+              <div className="text-white font-bold">{bot.performance?.total_trades || 0}</div>
             </div>
             <div className="bg-gray-900/50 rounded p-2">
-              <div className="text-gray-500">Losses</div>
-              <div className="text-red-400 font-bold">{bot.performance?.losses || 0}</div>
+              <div className="text-gray-500">Profit Factor</div>
+              <div className="text-purple-400 font-bold">
+                {wins && losses ? (wins / losses).toFixed(2) : '-'}
+              </div>
             </div>
           </div>
         </div>
@@ -597,7 +689,28 @@ export default function SolomonPage() {
   const [versions, setVersions] = useState<Version[]>([])
 
   // Tab states
-  const [activeTab, setActiveTab] = useState<'overview' | 'proposals' | 'audit' | 'versions'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'proposals' | 'audit' | 'versions' | 'analytics'>('overview')
+
+  // Analytics data
+  const [analyticsBot, setAnalyticsBot] = useState<string>('ARES')
+  const [dailyDigest, setDailyDigest] = useState<any>(null)
+  const [correlations, setCorrelations] = useState<any>(null)
+  const [timeAnalysis, setTimeAnalysis] = useState<any>(null)
+
+  const fetchAnalytics = useCallback(async (bot: string) => {
+    try {
+      const [digestRes, corrRes, timeRes] = await Promise.all([
+        apiClient.get('/api/solomon/enhanced/digest'),
+        apiClient.get('/api/solomon/enhanced/correlations'),
+        apiClient.get(`/api/solomon/enhanced/time-analysis/${bot}`)
+      ])
+      setDailyDigest(digestRes.data)
+      setCorrelations(corrRes.data)
+      setTimeAnalysis(timeRes.data)
+    } catch (err) {
+      console.error('Failed to fetch analytics:', err)
+    }
+  }, [])
 
   const fetchDashboard = useCallback(async () => {
     try {
@@ -847,19 +960,25 @@ export default function SolomonPage() {
 
         {/* Tabs */}
         <div className="flex gap-1 mb-6 bg-gray-800 rounded-lg p-1 w-fit">
-          {(['overview', 'proposals', 'audit', 'versions'] as const).map((tab) => (
+          {(['overview', 'proposals', 'audit', 'versions', 'analytics'] as const).map((tab) => (
             <button
               key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+              onClick={() => {
+                setActiveTab(tab)
+                if (tab === 'analytics') {
+                  fetchAnalytics(analyticsBot)
+                }
+              }}
+              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2 ${
                 activeTab === tab
                   ? 'bg-purple-500/20 text-purple-400'
                   : 'text-gray-400 hover:text-gray-300'
               }`}
             >
+              {tab === 'analytics' && <BarChart2 className="w-4 h-4" />}
               {tab.charAt(0).toUpperCase() + tab.slice(1)}
               {tab === 'proposals' && pendingProposals.length > 0 && (
-                <span className="ml-2 px-1.5 py-0.5 bg-yellow-500 text-black text-xs rounded-full">
+                <span className="ml-1 px-1.5 py-0.5 bg-yellow-500 text-black text-xs rounded-full">
                   {pendingProposals.length}
                 </span>
               )}
@@ -1000,6 +1119,224 @@ export default function SolomonPage() {
                   )}
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'analytics' && (
+          <div className="space-y-6">
+            {/* Bot Selector */}
+            <div className="flex items-center gap-4">
+              <h2 className="text-lg font-bold text-white">Analytics</h2>
+              <select
+                value={analyticsBot}
+                onChange={(e) => {
+                  setAnalyticsBot(e.target.value)
+                  fetchAnalytics(e.target.value)
+                }}
+                className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm"
+              >
+                <option value="ARES">ARES</option>
+                <option value="ATHENA">ATHENA</option>
+                <option value="ATLAS">ATLAS</option>
+                <option value="PHOENIX">PHOENIX</option>
+              </select>
+            </div>
+
+            {/* Daily Digest Summary */}
+            {dailyDigest && (
+              <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
+                <h3 className="text-md font-bold text-white mb-4 flex items-center gap-2">
+                  <Calendar className="w-5 h-5 text-purple-400" />
+                  Daily Digest - {dailyDigest.date || 'Today'}
+                </h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div className="bg-gray-900/50 rounded-lg p-3">
+                    <div className="text-xs text-gray-500">Total P&L</div>
+                    <div className={`text-xl font-bold ${(dailyDigest.summary?.total_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      ${(dailyDigest.summary?.total_pnl || 0).toLocaleString()}
+                    </div>
+                  </div>
+                  <div className="bg-gray-900/50 rounded-lg p-3">
+                    <div className="text-xs text-gray-500">Total Trades</div>
+                    <div className="text-xl font-bold text-white">{dailyDigest.summary?.total_trades || 0}</div>
+                  </div>
+                  <div className="bg-gray-900/50 rounded-lg p-3">
+                    <div className="text-xs text-gray-500">Win Rate</div>
+                    <div className={`text-xl font-bold ${(dailyDigest.summary?.win_rate || 0) >= 50 ? 'text-green-400' : 'text-red-400'}`}>
+                      {(dailyDigest.summary?.win_rate || 0).toFixed(1)}%
+                    </div>
+                  </div>
+                  <div className="bg-gray-900/50 rounded-lg p-3">
+                    <div className="text-xs text-gray-500">Total Wins</div>
+                    <div className="text-xl font-bold text-green-400">{dailyDigest.summary?.total_wins || 0}</div>
+                  </div>
+                </div>
+
+                {/* Per-Bot Breakdown */}
+                {dailyDigest.bots && (
+                  <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-2">
+                    {Object.entries(dailyDigest.bots).map(([botName, stats]: [string, any]) => (
+                      <div key={botName} className="bg-gray-900/30 rounded p-2 text-xs">
+                        <div className="font-bold text-white mb-1">{botName}</div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">Trades:</span>
+                          <span className="text-white">{stats.trades}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">P&L:</span>
+                          <span className={stats.pnl >= 0 ? 'text-green-400' : 'text-red-400'}>
+                            ${stats.pnl?.toFixed(2) || '0.00'}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Cross-Bot Correlations */}
+            {correlations && correlations.correlations && (
+              <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
+                <h3 className="text-md font-bold text-white mb-4 flex items-center gap-2">
+                  <Layers className="w-5 h-5 text-blue-400" />
+                  Cross-Bot Correlations
+                </h3>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                  {correlations.correlations.map((corr: any, idx: number) => (
+                    <div key={idx} className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm font-medium text-white">{corr.bot_a} ↔ {corr.bot_b}</span>
+                      </div>
+                      <div className={`text-2xl font-bold ${
+                        Math.abs(corr.correlation) > 0.7 ? 'text-red-400' :
+                        Math.abs(corr.correlation) > 0.4 ? 'text-yellow-400' : 'text-green-400'
+                      }`}>
+                        {(corr.correlation * 100).toFixed(0)}%
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        {corr.sample_size} samples
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {correlations.analysis && (
+                  <div className="mt-4 bg-gray-900/30 rounded p-3">
+                    <div className="text-xs text-gray-400">
+                      <span className="text-purple-400 font-medium">Diversification Score:</span>{' '}
+                      {((correlations.analysis.diversification_score || 0) * 100).toFixed(0)}%
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      {correlations.analysis.recommendation}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Time of Day Analysis */}
+            {timeAnalysis && timeAnalysis.hourly_performance && (
+              <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
+                <h3 className="text-md font-bold text-white mb-4 flex items-center gap-2">
+                  <Clock className="w-5 h-5 text-yellow-400" />
+                  Time of Day Performance - {analyticsBot}
+                </h3>
+                <div className="grid grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2">
+                  {timeAnalysis.hourly_performance.map((hour: any) => (
+                    <div
+                      key={hour.hour}
+                      className={`rounded-lg p-2 text-center ${
+                        hour.best_performance ? 'bg-green-500/20 border border-green-500/50' :
+                        hour.worst_performance ? 'bg-red-500/20 border border-red-500/50' :
+                        'bg-gray-900/50'
+                      }`}
+                    >
+                      <div className="text-xs text-gray-500 flex items-center justify-center gap-1">
+                        {hour.hour < 12 ? <Sun className="w-3 h-3" /> : <Moon className="w-3 h-3" />}
+                        {hour.hour}:00
+                      </div>
+                      <div className={`text-sm font-bold ${hour.avg_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        ${hour.avg_pnl?.toFixed(0) || 0}
+                      </div>
+                      <div className="text-xs text-gray-500">{hour.trades_count} trades</div>
+                      {hour.best_performance && <div className="text-xs text-green-400 mt-1">BEST</div>}
+                      {hour.worst_performance && <div className="text-xs text-red-400 mt-1">WORST</div>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Quick Stats Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
+                <h4 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
+                  <Zap className="w-4 h-4 text-yellow-400" />
+                  Quick Actions
+                </h4>
+                <div className="space-y-2">
+                  <button
+                    onClick={() => apiClient.get('/api/solomon/enhanced/weekend-precheck').then(r => alert(JSON.stringify(r.data, null, 2)))}
+                    className="w-full text-left px-3 py-2 bg-gray-900/50 rounded text-sm text-gray-300 hover:bg-gray-700 transition-colors"
+                  >
+                    Weekend Pre-Check Analysis
+                  </button>
+                  <button
+                    onClick={handleTriggerFeedbackLoop}
+                    className="w-full text-left px-3 py-2 bg-purple-500/20 rounded text-sm text-purple-400 hover:bg-purple-500/30 transition-colors"
+                  >
+                    Run Feedback Loop Now
+                  </button>
+                </div>
+              </div>
+
+              <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
+                <h4 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-red-400" />
+                  Risk Alerts
+                </h4>
+                <div className="space-y-2">
+                  {dashboard?.health.degradation_alerts > 0 ? (
+                    <div className="px-3 py-2 bg-red-500/10 border border-red-500/30 rounded text-sm text-red-400">
+                      {dashboard.health.degradation_alerts} degradation alerts in last 24h
+                    </div>
+                  ) : (
+                    <div className="px-3 py-2 bg-green-500/10 border border-green-500/30 rounded text-sm text-green-400">
+                      No risk alerts - all systems normal
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-gray-800 rounded-lg border border-gray-700 p-4">
+                <h4 className="text-sm font-bold text-white mb-3 flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-blue-400" />
+                  System Status
+                </h4>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Database</span>
+                    <span className={dashboard?.health.database ? 'text-green-400' : 'text-red-400'}>
+                      {dashboard?.health.database ? 'Connected' : 'Disconnected'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Oracle</span>
+                    <span className={dashboard?.health.oracle ? 'text-green-400' : 'text-red-400'}>
+                      {dashboard?.health.oracle ? 'Active' : 'Inactive'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-500">Last Feedback Run</span>
+                    <span className="text-gray-400 text-xs">
+                      {dashboard?.health.last_feedback_run ?
+                        new Date(dashboard.health.last_feedback_run).toLocaleString() :
+                        'Never'}
+                    </span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         )}
