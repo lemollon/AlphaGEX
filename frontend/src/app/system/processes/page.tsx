@@ -116,6 +116,7 @@ const ALL_PROCESSES = [
   { id: 'phoenix', title: 'PHOENIX Bot', category: 'bots', keywords: ['phoenix', 'recovery'], type: 'bot' as NodeType },
   { id: 'hermes', title: 'HERMES Bot', category: 'bots', keywords: ['hermes', 'data'], type: 'bot' as NodeType },
   { id: 'atlas', title: 'ATLAS Bot', category: 'bots', keywords: ['atlas', 'portfolio'], type: 'bot' as NodeType },
+  { id: 'solomon', title: 'SOLOMON Bot', category: 'bots', keywords: ['solomon', 'feedback', 'loop', 'optimization', 'self-improving'], type: 'bot' as NodeType },
   { id: 'claude-ai', title: 'Claude AI Intelligence', category: 'ai', keywords: ['claude', 'gexis'], type: 'ai' as NodeType },
   { id: 'ml-pattern', title: 'ML Pattern Learning', category: 'ai', keywords: ['ml', 'pattern'], type: 'ai' as NodeType },
   { id: 'psychology', title: 'Psychology Trap Detector', category: 'ai', keywords: ['psychology', 'trap'], type: 'ai' as NodeType },
@@ -1217,6 +1218,7 @@ export default function SystemProcessesPage() {
     { name: 'PHOENIX', icon: '🦅', description: 'Recovery Bot', status: botStatuses['phoenix']?.status || 'stopped', pnl: 0 },
     { name: 'HERMES', icon: '📨', description: 'Data Flow', status: botStatuses['hermes']?.status || 'stopped', pnl: 0 },
     { name: 'ATLAS', icon: '🗺️', description: 'Portfolio Manager', status: botStatuses['atlas']?.status || 'stopped', pnl: 0 },
+    { name: 'SOLOMON', icon: '📖', description: 'Feedback Loop Intelligence', status: botStatuses['solomon']?.status || 'stopped', pnl: 0 },
   ], [botStatuses]);
 
   return (

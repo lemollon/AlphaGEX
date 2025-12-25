@@ -1258,6 +1258,143 @@ def ares_strike_distance(spot, vix):
     tags: ['brier', 'calibration', 'probability', 'validation']
   },
 
+  // ==================== SOLOMON - Feedback Loop Intelligence ====================
+  {
+    id: 46,
+    name: 'Proposal Validation Score',
+    formula: 'score = (improvement_pct >= 5) && (trades >= 20) && (days >= 7)',
+    purpose: 'Determines if a bot configuration change has proven improvement before applying',
+    file: 'quant/solomon_enhancements.py',
+    line: 156,
+    category: 'Solomon',
+    subcategory: 'Validation',
+    description: 'Solomon\'s core validation logic ensures configuration changes only apply when improvement is PROVEN. Requires minimum 7 days, 20 trades, and 5% improvement over baseline to pass validation.',
+    codeSnippet: `def evaluate_validation(self, validation_id: str) -> Dict[str, Any]:
+    """Evaluate if validation period proves improvement"""
+    v = self.validations[validation_id]
+
+    # Minimum requirements
+    min_days = 7
+    min_trades = 20
+    min_improvement_pct = 5.0
+
+    days_elapsed = (datetime.now() - v['started_at']).days
+    improvement = ((v['proposed_win_rate'] - v['current_win_rate'])
+                   / max(v['current_win_rate'], 0.01)) * 100
+
+    can_apply = (days_elapsed >= min_days and
+                 v['proposed_trades'] >= min_trades and
+                 improvement >= min_improvement_pct)
+    return {'can_apply': can_apply, 'improvement': improvement}`,
+    example: {
+      inputs: 'days=10, trades=25, current_win_rate=55%, proposed_win_rate=60%',
+      output: 'improvement=9.1%, can_apply=True (all criteria met)'
+    },
+    related: ['A/B Test Framework', 'Rollback Trigger', 'Confidence Interval'],
+    tags: ['solomon', 'validation', 'improvement', 'proven']
+  },
+  {
+    id: 47,
+    name: 'Win Rate Improvement %',
+    formula: 'improvement = (proposed_win_rate - current_win_rate) / current_win_rate × 100',
+    purpose: 'Measures percentage improvement in win rate between control and variant',
+    file: 'quant/solomon_enhancements.py',
+    line: 178,
+    category: 'Solomon',
+    subcategory: 'Metrics',
+    description: 'Calculates the relative improvement in win rate between the current configuration (control) and the proposed configuration (variant). Used to determine if a change should be applied.',
+    codeSnippet: `def calculate_improvement(current_win_rate: float, proposed_win_rate: float) -> float:
+    """Calculate win rate improvement percentage"""
+    if current_win_rate <= 0:
+        return 0
+    return ((proposed_win_rate - current_win_rate) / current_win_rate) * 100`,
+    example: {
+      inputs: 'current=52%, proposed=58%',
+      output: 'improvement = (58-52)/52 × 100 = 11.5%'
+    },
+    related: ['Proposal Validation Score', 'PnL Improvement'],
+    tags: ['solomon', 'win-rate', 'improvement', 'comparison']
+  },
+  {
+    id: 48,
+    name: 'Proposal Confidence Score',
+    formula: 'confidence = min(1.0, trades/50) × min(1.0, days/14) × consistency_factor',
+    purpose: 'Quantifies confidence in a proposal based on sample size and consistency',
+    file: 'quant/solomon_enhancements.py',
+    line: 205,
+    category: 'Solomon',
+    subcategory: 'Validation',
+    description: 'Calculates confidence in a proposed change based on number of trades, days elapsed, and consistency of results. Higher confidence means more reliable validation.',
+    codeSnippet: `def calculate_confidence(trades: int, days: int, std_dev: float) -> float:
+    """Calculate confidence score for proposal validation"""
+    trade_factor = min(1.0, trades / 50)  # Max at 50 trades
+    time_factor = min(1.0, days / 14)     # Max at 14 days
+    consistency = 1.0 / (1.0 + std_dev)   # Lower std = higher consistency
+    return trade_factor * time_factor * consistency`,
+    example: {
+      inputs: 'trades=30, days=10, std_dev=0.15',
+      output: 'confidence = 0.6 × 0.71 × 0.87 = 0.37'
+    },
+    related: ['Proposal Validation Score', 'A/B Test Framework'],
+    tags: ['solomon', 'confidence', 'sample-size', 'consistency']
+  },
+  {
+    id: 49,
+    name: 'Rollback Trigger Score',
+    formula: 'trigger = (win_rate < baseline × 0.9) || (max_drawdown > threshold) || (consecutive_losses > 5)',
+    purpose: 'Determines if a configuration should be rolled back due to poor performance',
+    file: 'quant/solomon_enhancements.py',
+    line: 245,
+    category: 'Solomon',
+    subcategory: 'Safety',
+    description: 'Safety mechanism that triggers automatic rollback when a configuration underperforms. Monitors win rate degradation, drawdown limits, and consecutive losses.',
+    codeSnippet: `def check_rollback_trigger(metrics: Dict, baseline: Dict) -> bool:
+    """Check if rollback should be triggered"""
+    # Win rate dropped more than 10% from baseline
+    if metrics['win_rate'] < baseline['win_rate'] * 0.9:
+        return True
+    # Max drawdown exceeded threshold
+    if metrics['max_drawdown'] > baseline.get('max_drawdown_threshold', 0.15):
+        return True
+    # Too many consecutive losses
+    if metrics['consecutive_losses'] > 5:
+        return True
+    return False`,
+    example: {
+      inputs: 'current_win_rate=45%, baseline=55%, consecutive_losses=6',
+      output: 'trigger=True (both win rate drop and consecutive losses exceeded)'
+    },
+    related: ['Version Control', 'Emergency Killswitch'],
+    tags: ['solomon', 'rollback', 'safety', 'trigger']
+  },
+  {
+    id: 50,
+    name: 'Version Diff Score',
+    formula: 'diff_score = Σ|new_param - old_param| / |old_param| for each parameter',
+    purpose: 'Quantifies magnitude of configuration changes between versions',
+    file: 'quant/solomon_feedback_loop.py',
+    line: 312,
+    category: 'Solomon',
+    subcategory: 'Versioning',
+    description: 'Calculates the total magnitude of changes between configuration versions. Higher scores indicate more significant changes that may require more careful validation.',
+    codeSnippet: `def calculate_diff_score(old_config: Dict, new_config: Dict) -> float:
+    """Calculate magnitude of configuration changes"""
+    total_diff = 0.0
+    for key in new_config:
+        if key in old_config and isinstance(old_config[key], (int, float)):
+            old_val = old_config[key]
+            new_val = new_config[key]
+            if old_val != 0:
+                total_diff += abs(new_val - old_val) / abs(old_val)
+    return total_diff`,
+    example: {
+      inputs: 'old={delta: 0.30, width: 50}, new={delta: 0.35, width: 55}',
+      output: 'diff = |0.35-0.30|/0.30 + |55-50|/50 = 0.167 + 0.10 = 0.267'
+    },
+    related: ['Version History', 'Proposal Validation'],
+    tags: ['solomon', 'version', 'diff', 'magnitude']
+  },
+
   // Add more calculations here following the same pattern...
   // The full 268 calculations would continue with this level of detail
 ]
@@ -1267,7 +1404,7 @@ def ares_strike_distance(spot, vix):
 
 // Add remaining GEX calculations
 for (let i = 46; i <= 268; i++) {
-  const categories = ['GEX', 'Greeks', 'Technical', 'Costs', 'Kelly', 'Probability', 'Regime', 'Psychology', 'Risk', 'Volatility', 'Backtest', 'ARES', 'ATHENA', 'Gamma Exp', 'ML', 'Wheel', 'Ensemble', 'ARGUS', 'Validation']
+  const categories = ['GEX', 'Greeks', 'Technical', 'Costs', 'Kelly', 'Probability', 'Regime', 'Psychology', 'Risk', 'Volatility', 'Backtest', 'ARES', 'ATHENA', 'Gamma Exp', 'ML', 'Wheel', 'Ensemble', 'ARGUS', 'Validation', 'Solomon']
   const subcategories: { [key: string]: string[] } = {
     'GEX': ['Core Gamma', 'Distance Metrics', 'Normalized Metrics', 'Wall Analysis', 'Ratios', 'Changes'],
     'Greeks': ['Black-Scholes', 'First-Order Greeks', 'Second-Order Greeks', 'Volatility'],
@@ -1287,7 +1424,8 @@ for (let i = 46; i <= 268; i++) {
     'Wheel': ['Premium', 'Assignment', 'Rolling'],
     'Ensemble': ['Weighting', 'Signals', 'Performance'],
     'ARGUS': ['Gamma Momentum', 'Risk Detection', 'Real-time'],
-    'Validation': ['Probability Calibration', 'Regression', 'Classification']
+    'Validation': ['Probability Calibration', 'Regression', 'Classification'],
+    'Solomon': ['Validation', 'Metrics', 'Safety', 'Versioning', 'Feedback Loop']
   }
 
   // This would be populated with real data in production
@@ -1315,6 +1453,7 @@ const CATEGORIES = [
   { name: 'Ensemble', icon: Layers, color: 'text-teal-400', bgColor: 'bg-teal-500/20', subcategories: ['Weighting', 'Signals', 'Performance'] },
   { name: 'ARGUS', icon: Eye, color: 'text-orange-400', bgColor: 'bg-orange-500/20', subcategories: ['Gamma Momentum', 'Risk Detection', 'Real-time'] },
   { name: 'Validation', icon: Check, color: 'text-green-400', bgColor: 'bg-green-500/20', subcategories: ['Probability Calibration', 'Regression', 'Classification'] },
+  { name: 'Solomon', icon: BookOpen, color: 'text-amber-400', bgColor: 'bg-amber-500/20', subcategories: ['Validation', 'Metrics', 'Safety', 'Versioning', 'Feedback Loop'] },
 ]
 
 // ============================================================================
