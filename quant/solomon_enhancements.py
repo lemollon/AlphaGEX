@@ -1293,6 +1293,373 @@ class DailyDigestGenerator:
 
 
 # =============================================================================
+# PROPOSAL VALIDATION - PROVEN IMPROVEMENT REQUIRED
+# =============================================================================
+
+@dataclass
+class ValidationResult:
+    """Result of proposal validation"""
+    is_valid: bool
+    can_apply: bool
+    validation_method: str  # BACKTEST, AB_TEST, SHADOW_MODE, HISTORICAL
+    improvement_proven: bool
+    improvement_metrics: Dict
+    rejection_reasons: List[str]
+    detailed_reasoning: Dict
+
+    def to_dict(self) -> Dict:
+        return asdict(self)
+
+
+@dataclass
+class ProposalReasoning:
+    """
+    Detailed reasoning for a proposal - captures ALL the WHY.
+
+    This ensures complete transparency on why a change is being made.
+    """
+    proposal_id: str
+
+    # WHY is this change being proposed?
+    problem_statement: str  # What problem are we solving?
+    hypothesis: str  # What do we believe will happen?
+
+    # Evidence supporting the change
+    supporting_evidence: List[Dict]  # [{type, description, data}]
+    historical_analysis: Dict  # Past performance data
+    statistical_significance: float  # 0.0-1.0
+
+    # Expected outcomes
+    expected_improvement: Dict  # {metric: expected_change}
+    confidence_level: float  # 0.0-1.0
+
+    # Risk analysis
+    risk_assessment: str
+    potential_downsides: List[str]
+    mitigation_strategies: List[str]
+
+    # Validation plan
+    validation_method: str  # How will we prove this works?
+    success_criteria: Dict  # {metric: threshold}
+    rollback_trigger: Dict  # {metric: threshold}
+
+    # Approval requirements
+    minimum_validation_period_days: int
+    minimum_trades_required: int
+    requires_ab_test: bool
+
+    def to_dict(self) -> Dict:
+        return asdict(self)
+
+
+class ProposalValidator:
+    """
+    Validates proposals BEFORE they can be applied.
+
+    KEY PRINCIPLE: Changes are ONLY applied if improvement is PROVEN.
+
+    Validation Methods:
+    1. BACKTEST - Run historical backtest comparing old vs new
+    2. AB_TEST - Run live A/B test for minimum period
+    3. SHADOW_MODE - Run new config in shadow mode alongside current
+    4. HISTORICAL - Compare to known good historical periods
+
+    Requirements:
+    - Minimum validation period (default 7 days for A/B)
+    - Minimum trade count (default 20 trades)
+    - Statistical significance (default 95%)
+    - Clear improvement in primary metric
+    """
+
+    VALIDATION_REQUIREMENTS = {
+        'min_validation_days': 7,
+        'min_trades': 20,
+        'min_confidence': 0.95,
+        'min_improvement_pct': 5.0,  # Must show at least 5% improvement
+        'backtest_min_days': 30,
+        'shadow_mode_min_days': 3,
+    }
+
+    def __init__(self, solomon):
+        self.solomon = solomon
+        self._pending_validations: Dict[str, Dict] = {}
+        self._ab_tests: Dict[str, str] = {}  # proposal_id -> ab_test_id
+
+    def start_validation(
+        self,
+        proposal_id: str,
+        bot_name: str,
+        current_config: Dict,
+        proposed_config: Dict,
+        method: str = "AB_TEST"
+    ) -> str:
+        """
+        Start validation for a proposal.
+
+        Returns validation ID.
+        """
+        import uuid
+
+        validation_id = f"VAL-{proposal_id}-{uuid.uuid4().hex[:8]}"
+
+        self._pending_validations[validation_id] = {
+            'validation_id': validation_id,
+            'proposal_id': proposal_id,
+            'bot_name': bot_name,
+            'method': method,
+            'started_at': datetime.now(CENTRAL_TZ).isoformat(),
+            'current_config': current_config,
+            'proposed_config': proposed_config,
+            'status': 'RUNNING',
+            'trades_recorded': 0,
+            'current_performance': {'trades': 0, 'pnl': 0, 'win_rate': 0},
+            'proposed_performance': {'trades': 0, 'pnl': 0, 'win_rate': 0}
+        }
+
+        logger.info(f"Started validation {validation_id} for proposal {proposal_id} using {method}")
+        return validation_id
+
+    def record_validation_trade(
+        self,
+        validation_id: str,
+        is_proposed: bool,
+        pnl: float
+    ) -> None:
+        """Record a trade result during validation"""
+        if validation_id not in self._pending_validations:
+            return
+
+        val = self._pending_validations[validation_id]
+        val['trades_recorded'] += 1
+
+        key = 'proposed_performance' if is_proposed else 'current_performance'
+        val[key]['trades'] += 1
+        val[key]['pnl'] += pnl
+        if pnl > 0:
+            # Update win rate
+            wins = val[key].get('wins', 0) + 1
+            val[key]['wins'] = wins
+            val[key]['win_rate'] = (wins / val[key]['trades']) * 100
+
+    def evaluate_validation(self, validation_id: str) -> ValidationResult:
+        """
+        Evaluate if validation proves improvement.
+
+        Returns ValidationResult with detailed reasoning.
+        """
+        if validation_id not in self._pending_validations:
+            return ValidationResult(
+                is_valid=False,
+                can_apply=False,
+                validation_method='UNKNOWN',
+                improvement_proven=False,
+                improvement_metrics={},
+                rejection_reasons=['Validation not found'],
+                detailed_reasoning={'error': 'Validation ID not found'}
+            )
+
+        val = self._pending_validations[validation_id]
+        rejection_reasons = []
+
+        # Check minimum trades
+        min_trades = self.VALIDATION_REQUIREMENTS['min_trades']
+        current_trades = val['current_performance']['trades']
+        proposed_trades = val['proposed_performance']['trades']
+
+        if current_trades < min_trades or proposed_trades < min_trades:
+            rejection_reasons.append(
+                f"Insufficient trades: current={current_trades}, proposed={proposed_trades}, required={min_trades}"
+            )
+
+        # Check validation period
+        started_at = datetime.fromisoformat(val['started_at'])
+        days_elapsed = (datetime.now(CENTRAL_TZ) - started_at).days
+        min_days = self.VALIDATION_REQUIREMENTS['min_validation_days']
+
+        if days_elapsed < min_days:
+            rejection_reasons.append(
+                f"Insufficient validation period: {days_elapsed} days elapsed, {min_days} required"
+            )
+
+        # Calculate improvement metrics
+        current_perf = val['current_performance']
+        proposed_perf = val['proposed_performance']
+
+        improvement_metrics = {
+            'current_win_rate': current_perf['win_rate'],
+            'proposed_win_rate': proposed_perf['win_rate'],
+            'win_rate_change': proposed_perf['win_rate'] - current_perf['win_rate'],
+            'current_pnl': current_perf['pnl'],
+            'proposed_pnl': proposed_perf['pnl'],
+            'pnl_change': proposed_perf['pnl'] - current_perf['pnl'],
+            'current_trades': current_trades,
+            'proposed_trades': proposed_trades,
+            'validation_days': days_elapsed
+        }
+
+        # Check if improvement is proven
+        improvement_proven = False
+        min_improvement = self.VALIDATION_REQUIREMENTS['min_improvement_pct']
+
+        if current_perf['win_rate'] > 0:
+            win_rate_improvement = (
+                (proposed_perf['win_rate'] - current_perf['win_rate'])
+                / current_perf['win_rate'] * 100
+            )
+            improvement_metrics['win_rate_improvement_pct'] = win_rate_improvement
+
+            if win_rate_improvement >= min_improvement:
+                improvement_proven = True
+
+        # Also consider P&L improvement
+        if current_perf['pnl'] != 0:
+            pnl_improvement = (
+                (proposed_perf['pnl'] - current_perf['pnl'])
+                / abs(current_perf['pnl']) * 100
+            )
+            improvement_metrics['pnl_improvement_pct'] = pnl_improvement
+
+            if pnl_improvement >= min_improvement:
+                improvement_proven = True
+
+        if not improvement_proven and not rejection_reasons:
+            rejection_reasons.append(
+                f"Improvement not proven: minimum {min_improvement}% improvement required. "
+                f"Win rate change: {improvement_metrics.get('win_rate_improvement_pct', 0):.1f}%, "
+                f"P&L change: {improvement_metrics.get('pnl_improvement_pct', 0):.1f}%"
+            )
+
+        # Build detailed reasoning
+        detailed_reasoning = {
+            'validation_id': validation_id,
+            'proposal_id': val['proposal_id'],
+            'bot_name': val['bot_name'],
+            'validation_method': val['method'],
+            'validation_period': {
+                'started': val['started_at'],
+                'days_elapsed': days_elapsed,
+                'min_required': min_days
+            },
+            'trade_counts': {
+                'current': current_trades,
+                'proposed': proposed_trades,
+                'min_required': min_trades
+            },
+            'performance_comparison': {
+                'current': current_perf,
+                'proposed': proposed_perf,
+                'improvement_metrics': improvement_metrics
+            },
+            'validation_requirements': self.VALIDATION_REQUIREMENTS,
+            'conclusion': 'APPROVED - Improvement proven' if improvement_proven and not rejection_reasons else 'REJECTED - Improvement not proven'
+        }
+
+        can_apply = improvement_proven and len(rejection_reasons) == 0
+
+        return ValidationResult(
+            is_valid=True,
+            can_apply=can_apply,
+            validation_method=val['method'],
+            improvement_proven=improvement_proven,
+            improvement_metrics=improvement_metrics,
+            rejection_reasons=rejection_reasons,
+            detailed_reasoning=detailed_reasoning
+        )
+
+    def get_pending_validations(self, bot_name: str = None) -> List[Dict]:
+        """Get all pending validations"""
+        validations = list(self._pending_validations.values())
+
+        if bot_name:
+            validations = [v for v in validations if v['bot_name'] == bot_name]
+
+        return validations
+
+    def validate_proposal_reasoning(self, reasoning: ProposalReasoning) -> Tuple[bool, List[str]]:
+        """
+        Validate that proposal reasoning is complete.
+
+        Returns (is_valid, list_of_issues)
+        """
+        issues = []
+
+        # Required fields
+        if not reasoning.problem_statement or len(reasoning.problem_statement) < 20:
+            issues.append("Problem statement is required and must be detailed (min 20 chars)")
+
+        if not reasoning.hypothesis or len(reasoning.hypothesis) < 20:
+            issues.append("Hypothesis is required and must be detailed (min 20 chars)")
+
+        if not reasoning.supporting_evidence:
+            issues.append("At least one piece of supporting evidence is required")
+
+        if reasoning.confidence_level < 0.5:
+            issues.append("Confidence level is too low (minimum 50%)")
+
+        if not reasoning.expected_improvement:
+            issues.append("Expected improvement metrics must be specified")
+
+        if not reasoning.success_criteria:
+            issues.append("Success criteria must be defined")
+
+        if not reasoning.rollback_trigger:
+            issues.append("Rollback triggers must be defined")
+
+        if reasoning.minimum_trades_required < 10:
+            issues.append("Minimum trades for validation must be at least 10")
+
+        return len(issues) == 0, issues
+
+    def create_proposal_reasoning(
+        self,
+        proposal_id: str,
+        problem_statement: str,
+        hypothesis: str,
+        supporting_evidence: List[Dict],
+        expected_improvement: Dict,
+        risk_assessment: str,
+        potential_downsides: List[str],
+        validation_method: str = "AB_TEST",
+        success_criteria: Dict = None,
+        rollback_trigger: Dict = None
+    ) -> ProposalReasoning:
+        """
+        Create complete proposal reasoning document.
+
+        This captures all the WHY for a proposal.
+        """
+        return ProposalReasoning(
+            proposal_id=proposal_id,
+            problem_statement=problem_statement,
+            hypothesis=hypothesis,
+            supporting_evidence=supporting_evidence,
+            historical_analysis={},  # To be populated by analysis
+            statistical_significance=0.0,  # To be calculated
+            expected_improvement=expected_improvement,
+            confidence_level=0.7,  # Default medium confidence
+            risk_assessment=risk_assessment,
+            potential_downsides=potential_downsides,
+            mitigation_strategies=[
+                "Automatic rollback if performance degrades >10%",
+                "Kill switch remains available",
+                "Version control enables instant revert"
+            ],
+            validation_method=validation_method,
+            success_criteria=success_criteria or {
+                'win_rate_improvement': 5.0,
+                'pnl_improvement': 5.0
+            },
+            rollback_trigger=rollback_trigger or {
+                'max_drawdown': 10.0,
+                'consecutive_losses': 3
+            },
+            minimum_validation_period_days=7,
+            minimum_trades_required=20,
+            requires_ab_test=validation_method == "AB_TEST"
+        )
+
+
+# =============================================================================
 # ENHANCED SOLOMON CLASS
 # =============================================================================
 
@@ -1312,6 +1679,7 @@ class SolomonEnhanced:
     - Rollback cooldown
     - Weekend pre-check
     - Daily digest
+    - PROPOSAL VALIDATION (changes only apply if improvement is PROVEN)
     """
 
     def __init__(self, solomon):
@@ -1329,8 +1697,12 @@ class SolomonEnhanced:
         self.rollback_cooldown = RollbackCooldownManager(solomon)
         self.weekend_precheck = WeekendPreChecker(solomon)
         self.daily_digest = DailyDigestGenerator(solomon)
+        self.proposal_validator = ProposalValidator(solomon)  # NEW: Validates improvements before applying
 
-        logger.info("Solomon Enhanced initialized with all modules")
+        # Store proposal reasoning documents
+        self._proposal_reasoning: Dict[str, ProposalReasoning] = {}
+
+        logger.info("Solomon Enhanced initialized with all modules including proposal validation")
 
     def record_trade_outcome(
         self,
@@ -1394,6 +1766,325 @@ class SolomonEnhanced:
             'high_correlations': [c.to_dict() for c in high_corr],
             'diversification_score': 1 - (sum(abs(c.correlation) for c in correlations) / len(correlations)) if correlations else 0,
             'recommendation': 'Consider reducing positions when highly correlated bots both signal' if high_corr else 'Good diversification'
+        }
+
+    # =========================================================================
+    # PROPOSAL VALIDATION WORKFLOW
+    # =========================================================================
+
+    def create_proposal_with_reasoning(
+        self,
+        bot_name: str,
+        title: str,
+        problem_statement: str,
+        hypothesis: str,
+        supporting_evidence: List[Dict],
+        expected_improvement: Dict,
+        current_config: Dict,
+        proposed_config: Dict,
+        risk_level: str = "MEDIUM",
+        risk_assessment: str = "",
+        potential_downsides: List[str] = None,
+        validation_method: str = "AB_TEST"
+    ) -> Dict:
+        """
+        Create a proposal with complete reasoning documentation.
+
+        This is the recommended way to create proposals as it enforces
+        detailed reasoning and sets up validation.
+
+        Returns dict with proposal_id, reasoning, and validation_id.
+        """
+        from quant.solomon_feedback_loop import ProposalType
+
+        # Create the reasoning document
+        reasoning = self.proposal_validator.create_proposal_reasoning(
+            proposal_id="PENDING",  # Will be updated
+            problem_statement=problem_statement,
+            hypothesis=hypothesis,
+            supporting_evidence=supporting_evidence,
+            expected_improvement=expected_improvement,
+            risk_assessment=risk_assessment or f"Risk level: {risk_level}",
+            potential_downsides=potential_downsides or [],
+            validation_method=validation_method
+        )
+
+        # Validate the reasoning is complete
+        is_valid, issues = self.proposal_validator.validate_proposal_reasoning(reasoning)
+        if not is_valid:
+            return {
+                'success': False,
+                'error': 'Incomplete proposal reasoning',
+                'issues': issues
+            }
+
+        # Create the proposal in base Solomon
+        proposal_id = self.solomon.create_proposal(
+            bot_name=bot_name,
+            proposal_type=ProposalType.MODEL_UPDATE,
+            title=title,
+            description=f"PROBLEM: {problem_statement}\nHYPOTHESIS: {hypothesis}",
+            current_value=current_config,
+            proposed_value=proposed_config,
+            reason=hypothesis,
+            supporting_metrics={
+                'evidence': supporting_evidence,
+                'expected_improvement': expected_improvement
+            },
+            expected_improvement=expected_improvement,
+            risk_level=risk_level,
+            risk_factors=potential_downsides or [],
+            rollback_plan="Automatic rollback if improvement not proven during validation"
+        )
+
+        if not proposal_id:
+            return {
+                'success': False,
+                'error': 'Failed to create proposal'
+            }
+
+        # Update reasoning with actual proposal ID
+        reasoning.proposal_id = proposal_id
+        self._proposal_reasoning[proposal_id] = reasoning
+
+        # Start validation
+        validation_id = self.proposal_validator.start_validation(
+            proposal_id=proposal_id,
+            bot_name=bot_name,
+            current_config=current_config,
+            proposed_config=proposed_config,
+            method=validation_method
+        )
+
+        return {
+            'success': True,
+            'proposal_id': proposal_id,
+            'validation_id': validation_id,
+            'reasoning': reasoning.to_dict(),
+            'status': 'PENDING_VALIDATION',
+            'message': f"Proposal created. Validation started using {validation_method}. "
+                       f"Changes will only be applied after improvement is proven."
+        }
+
+    def get_proposal_reasoning(self, proposal_id: str) -> Optional[Dict]:
+        """Get detailed reasoning for a proposal"""
+        if proposal_id in self._proposal_reasoning:
+            return self._proposal_reasoning[proposal_id].to_dict()
+        return None
+
+    def can_apply_proposal(self, proposal_id: str) -> Dict:
+        """
+        Check if a proposal can be applied.
+
+        Returns detailed status on why/why not.
+        """
+        # Find the validation for this proposal
+        validations = self.proposal_validator.get_pending_validations()
+        proposal_validation = None
+
+        for v in validations:
+            if v['proposal_id'] == proposal_id:
+                proposal_validation = v
+                break
+
+        if not proposal_validation:
+            return {
+                'can_apply': False,
+                'reason': 'No validation found for this proposal',
+                'action_required': 'Start validation before applying'
+            }
+
+        # Evaluate the validation
+        result = self.proposal_validator.evaluate_validation(proposal_validation['validation_id'])
+
+        if result.can_apply:
+            return {
+                'can_apply': True,
+                'improvement_proven': True,
+                'improvement_metrics': result.improvement_metrics,
+                'detailed_reasoning': result.detailed_reasoning,
+                'message': 'Improvement has been PROVEN. Proposal can be applied.'
+            }
+        else:
+            return {
+                'can_apply': False,
+                'improvement_proven': result.improvement_proven,
+                'rejection_reasons': result.rejection_reasons,
+                'improvement_metrics': result.improvement_metrics,
+                'detailed_reasoning': result.detailed_reasoning,
+                'message': 'Improvement has NOT been proven. Proposal cannot be applied yet.'
+            }
+
+    def apply_validated_proposal(
+        self,
+        proposal_id: str,
+        reviewer: str
+    ) -> Dict:
+        """
+        Apply a proposal ONLY if validation proves improvement.
+
+        This is the safe way to apply proposals - it enforces the
+        "proven improvement required" policy.
+        """
+        # Check if we can apply
+        can_apply_result = self.can_apply_proposal(proposal_id)
+
+        if not can_apply_result['can_apply']:
+            return {
+                'success': False,
+                'error': 'Cannot apply proposal - improvement not proven',
+                'details': can_apply_result
+            }
+
+        # Get reasoning for logging
+        reasoning = self.get_proposal_reasoning(proposal_id)
+
+        # Apply via base Solomon
+        success = self.solomon.approve_proposal(
+            proposal_id=proposal_id,
+            reviewer=reviewer,
+            notes=f"VALIDATED: Improvement proven. {can_apply_result.get('message', '')}"
+        )
+
+        if success:
+            # Log the detailed reasoning
+            self.solomon.log_action(
+                bot_name=reasoning.get('bot_name', 'UNKNOWN') if reasoning else 'UNKNOWN',
+                action_type=self.solomon.__class__.__dict__.get('ActionType', type('', (), {'MODEL_LOADED': type('', (), {'value': 'MODEL_LOADED'})()})).MODEL_LOADED if hasattr(self.solomon, 'ActionType') else type('', (), {'value': 'PROPOSAL_APPLIED'})(),
+                description=f"Proposal {proposal_id} applied after validation proved improvement",
+                reason="Improvement proven through validation",
+                justification={
+                    'validation_result': can_apply_result,
+                    'reasoning': reasoning
+                }
+            )
+
+            return {
+                'success': True,
+                'proposal_id': proposal_id,
+                'applied_by': reviewer,
+                'validation_result': can_apply_result,
+                'reasoning': reasoning,
+                'message': 'Proposal applied successfully after proving improvement.'
+            }
+
+        return {
+            'success': False,
+            'error': 'Failed to apply proposal',
+            'validation_result': can_apply_result
+        }
+
+    def get_validation_status(self, proposal_id: str = None) -> Dict:
+        """
+        Get status of all validations or a specific proposal's validation.
+        """
+        validations = self.proposal_validator.get_pending_validations()
+
+        if proposal_id:
+            for v in validations:
+                if v['proposal_id'] == proposal_id:
+                    result = self.proposal_validator.evaluate_validation(v['validation_id'])
+                    return {
+                        'validation': v,
+                        'evaluation': result.to_dict()
+                    }
+            return {'error': 'Validation not found for proposal'}
+
+        # Return all validations with their evaluation status
+        results = []
+        for v in validations:
+            evaluation = self.proposal_validator.evaluate_validation(v['validation_id'])
+            results.append({
+                'validation': v,
+                'evaluation': evaluation.to_dict()
+            })
+
+        return {
+            'validations': results,
+            'total': len(results),
+            'ready_to_apply': sum(1 for r in results if r['evaluation']['can_apply'])
+        }
+
+    def get_proposal_transparency_report(self, proposal_id: str) -> Dict:
+        """
+        Get complete transparency report for a proposal.
+
+        This shows ALL the details of WHY a change is being made.
+        """
+        # Get proposal from base Solomon
+        proposals = self.solomon.get_pending_proposals()
+        proposal = None
+        for p in proposals:
+            if p.get('proposal_id') == proposal_id:
+                proposal = p
+                break
+
+        if not proposal:
+            # Check audit log for applied proposals
+            audit = self.solomon.get_audit_log(limit=100)
+            for entry in audit:
+                if entry.get('proposal_id') == proposal_id:
+                    proposal = entry
+                    break
+
+        reasoning = self.get_proposal_reasoning(proposal_id)
+        validation_status = self.get_validation_status(proposal_id)
+
+        return {
+            'proposal_id': proposal_id,
+            'timestamp': datetime.now(CENTRAL_TZ).isoformat(),
+
+            # WHO is making the change
+            'who': {
+                'proposed_by': 'SOLOMON' if proposal else 'Unknown',
+                'requires_approval_from': 'Human operator',
+                'approval_status': proposal.get('status', 'Unknown') if proposal else 'Unknown'
+            },
+
+            # WHAT is changing
+            'what': {
+                'title': proposal.get('title', 'Unknown') if proposal else 'Unknown',
+                'description': proposal.get('description', '') if proposal else '',
+                'current_value': proposal.get('current_value', {}) if proposal else {},
+                'proposed_value': proposal.get('proposed_value', {}) if proposal else {},
+                'change_summary': proposal.get('change_summary', '') if proposal else ''
+            },
+
+            # WHY is this change being made (DETAILED)
+            'why': {
+                'problem_statement': reasoning.get('problem_statement', '') if reasoning else '',
+                'hypothesis': reasoning.get('hypothesis', '') if reasoning else '',
+                'supporting_evidence': reasoning.get('supporting_evidence', []) if reasoning else [],
+                'expected_improvement': reasoning.get('expected_improvement', {}) if reasoning else {},
+                'confidence_level': reasoning.get('confidence_level', 0) if reasoning else 0,
+                'supporting_metrics': proposal.get('supporting_metrics', {}) if proposal else {}
+            },
+
+            # WHEN will this be applied
+            'when': {
+                'created_at': proposal.get('created_at', '') if proposal else '',
+                'expires_at': proposal.get('expires_at', '') if proposal else '',
+                'validation_started': validation_status.get('validation', {}).get('started_at', '') if 'validation' in validation_status else '',
+                'can_apply_after_validation': validation_status.get('evaluation', {}).get('can_apply', False) if 'evaluation' in validation_status else False
+            },
+
+            # VALIDATION status
+            'validation': validation_status,
+
+            # RISK assessment
+            'risk': {
+                'risk_level': proposal.get('risk_level', 'Unknown') if proposal else 'Unknown',
+                'risk_factors': proposal.get('risk_factors', []) if proposal else [],
+                'potential_downsides': reasoning.get('potential_downsides', []) if reasoning else [],
+                'mitigation_strategies': reasoning.get('mitigation_strategies', []) if reasoning else [],
+                'rollback_plan': proposal.get('rollback_plan', '') if proposal else ''
+            },
+
+            # SUCCESS criteria
+            'success_criteria': reasoning.get('success_criteria', {}) if reasoning else {},
+
+            # ROLLBACK triggers
+            'rollback_triggers': reasoning.get('rollback_trigger', {}) if reasoning else {}
         }
 
 

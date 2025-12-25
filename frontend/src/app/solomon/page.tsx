@@ -348,6 +348,53 @@ const BotCard = ({
   )
 }
 
+// ==================== VALIDATION STATUS COMPONENT ====================
+
+interface ValidationStatus {
+  can_apply: boolean
+  improvement_proven: boolean
+  validation_method?: string
+  improvement_metrics?: {
+    current_win_rate?: number
+    proposed_win_rate?: number
+    win_rate_change?: number
+    current_pnl?: number
+    proposed_pnl?: number
+    pnl_change?: number
+    validation_days?: number
+    current_trades?: number
+    proposed_trades?: number
+  }
+  rejection_reasons?: string[]
+  message?: string
+}
+
+const ValidationStatusBadge = ({ status }: { status: ValidationStatus | null }) => {
+  if (!status) {
+    return (
+      <span className="px-2 py-1 bg-gray-500/20 text-gray-400 border border-gray-500/50 rounded text-xs font-medium">
+        No Validation
+      </span>
+    )
+  }
+
+  if (status.can_apply && status.improvement_proven) {
+    return (
+      <span className="px-2 py-1 bg-green-500/20 text-green-400 border border-green-500/50 rounded text-xs font-medium flex items-center gap-1">
+        <CheckCircle className="w-3 h-3" />
+        IMPROVEMENT PROVEN
+      </span>
+    )
+  }
+
+  return (
+    <span className="px-2 py-1 bg-yellow-500/20 text-yellow-400 border border-yellow-500/50 rounded text-xs font-medium flex items-center gap-1">
+      <Clock className="w-3 h-3" />
+      VALIDATING...
+    </span>
+  )
+}
+
 const ProposalCard = ({
   proposal,
   onApprove,
@@ -358,10 +405,47 @@ const ProposalCard = ({
   onReject: (id: string, notes: string) => void
 }) => {
   const [showDetails, setShowDetails] = useState(false)
+  const [showWhy, setShowWhy] = useState(false)
   const [notes, setNotes] = useState('')
   const [processing, setProcessing] = useState(false)
+  const [validationStatus, setValidationStatus] = useState<ValidationStatus | null>(null)
+  const [reasoning, setReasoning] = useState<Record<string, unknown> | null>(null)
+  const [loadingValidation, setLoadingValidation] = useState(false)
+
+  // Fetch validation status and reasoning on mount
+  useEffect(() => {
+    const fetchData = async () => {
+      setLoadingValidation(true)
+      try {
+        // Fetch validation status
+        const validationRes = await fetch(`/api/solomon/validation/can-apply/${proposal.proposal_id}`)
+        if (validationRes.ok) {
+          const data = await validationRes.json()
+          setValidationStatus(data)
+        }
+
+        // Fetch detailed reasoning
+        const reasoningRes = await fetch(`/api/solomon/validation/reasoning/${proposal.proposal_id}`)
+        if (reasoningRes.ok) {
+          const data = await reasoningRes.json()
+          setReasoning(data.reasoning)
+        }
+      } catch (error) {
+        console.log('Validation data not available yet')
+      }
+      setLoadingValidation(false)
+    }
+
+    fetchData()
+  }, [proposal.proposal_id])
 
   const handleApprove = async () => {
+    // Check if improvement is proven before approving
+    if (validationStatus && !validationStatus.can_apply) {
+      alert('Cannot approve: Improvement has not been proven yet. Validation must complete successfully before applying changes.')
+      return
+    }
+
     setProcessing(true)
     await onApprove(proposal.proposal_id, notes)
     setProcessing(false)
@@ -377,13 +461,23 @@ const ProposalCard = ({
   const now = new Date()
   const hoursLeft = Math.max(0, Math.floor((expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60)))
 
+  // Extract WHY information
+  const supportingMetrics = proposal.supporting_metrics as { evidence?: unknown[], expected_improvement?: Record<string, unknown> } | null
+  const expectedImprovement = proposal.expected_improvement || supportingMetrics?.expected_improvement || {}
+
   return (
     <div className="bg-gray-800 rounded-lg border border-yellow-500/30 p-4">
+      {/* Header */}
       <div className="flex items-start justify-between mb-3">
         <div>
           <div className="flex items-center gap-2 mb-1">
             <span className="text-sm font-bold text-yellow-400">{proposal.bot_name}</span>
             <StatusBadge status={proposal.risk_level} size="sm" />
+            {loadingValidation ? (
+              <span className="text-xs text-gray-500">Loading...</span>
+            ) : (
+              <ValidationStatusBadge status={validationStatus} />
+            )}
           </div>
           <h4 className="text-white font-medium">{proposal.title}</h4>
         </div>
@@ -395,19 +489,146 @@ const ProposalCard = ({
         </div>
       </div>
 
-      <p className="text-sm text-gray-400 mb-3">{proposal.reason}</p>
+      {/* Validation Progress (if validating) */}
+      {validationStatus && !validationStatus.can_apply && validationStatus.improvement_metrics && (
+        <div className="bg-purple-500/10 border border-purple-500/30 rounded p-3 mb-3">
+          <div className="text-xs text-purple-400 font-medium mb-2 flex items-center gap-1">
+            <Activity className="w-3 h-3" />
+            Validation Progress
+          </div>
+          <div className="grid grid-cols-3 gap-2 text-xs">
+            <div>
+              <div className="text-gray-500">Days</div>
+              <div className="text-white font-bold">{validationStatus.improvement_metrics.validation_days || 0} / 7</div>
+            </div>
+            <div>
+              <div className="text-gray-500">Control Trades</div>
+              <div className="text-white font-bold">{validationStatus.improvement_metrics.current_trades || 0} / 20</div>
+            </div>
+            <div>
+              <div className="text-gray-500">Variant Trades</div>
+              <div className="text-white font-bold">{validationStatus.improvement_metrics.proposed_trades || 0} / 20</div>
+            </div>
+          </div>
+          {validationStatus.rejection_reasons && validationStatus.rejection_reasons.length > 0 && (
+            <div className="mt-2 text-xs text-yellow-400">
+              {validationStatus.rejection_reasons[0]}
+            </div>
+          )}
+        </div>
+      )}
 
+      {/* WHY Section - Always visible */}
+      <div className="bg-blue-500/10 border border-blue-500/30 rounded p-3 mb-3">
+        <button
+          onClick={() => setShowWhy(!showWhy)}
+          className="w-full flex items-center justify-between text-blue-400 text-xs font-medium"
+        >
+          <span className="flex items-center gap-1">
+            <Target className="w-3 h-3" />
+            WHY THIS CHANGE? (Click to {showWhy ? 'collapse' : 'expand'})
+          </span>
+          {showWhy ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+        </button>
+
+        {showWhy && (
+          <div className="mt-3 space-y-3 text-xs">
+            {/* Problem Statement */}
+            {reasoning && (reasoning as Record<string, unknown>).problem_statement && (
+              <div>
+                <div className="text-gray-500 mb-1">Problem Statement</div>
+                <div className="text-gray-300">{(reasoning as Record<string, unknown>).problem_statement as string}</div>
+              </div>
+            )}
+
+            {/* Hypothesis */}
+            {reasoning && (reasoning as Record<string, unknown>).hypothesis && (
+              <div>
+                <div className="text-gray-500 mb-1">Hypothesis</div>
+                <div className="text-gray-300">{(reasoning as Record<string, unknown>).hypothesis as string}</div>
+              </div>
+            )}
+
+            {/* Reason (fallback if no detailed reasoning) */}
+            {(!reasoning || !(reasoning as Record<string, unknown>).hypothesis) && proposal.reason && (
+              <div>
+                <div className="text-gray-500 mb-1">Reason</div>
+                <div className="text-gray-300">{proposal.reason}</div>
+              </div>
+            )}
+
+            {/* Expected Improvement */}
+            {Object.keys(expectedImprovement).length > 0 && (
+              <div>
+                <div className="text-gray-500 mb-1">Expected Improvement</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {Object.entries(expectedImprovement).map(([key, value]) => (
+                    <div key={key} className="bg-green-500/10 rounded p-1.5">
+                      <div className="text-gray-500 capitalize">{key.replace(/_/g, ' ')}</div>
+                      <div className="text-green-400 font-bold">
+                        {typeof value === 'number' ? `+${value}%` : String(value)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Supporting Evidence */}
+            {reasoning && Array.isArray((reasoning as Record<string, unknown>).supporting_evidence) &&
+             ((reasoning as Record<string, unknown>).supporting_evidence as unknown[]).length > 0 && (
+              <div>
+                <div className="text-gray-500 mb-1">Supporting Evidence</div>
+                <ul className="list-disc list-inside text-gray-300">
+                  {((reasoning as Record<string, unknown>).supporting_evidence as Record<string, unknown>[]).map((evidence, i) => (
+                    <li key={i}>
+                      {evidence.description as string || JSON.stringify(evidence)}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Confidence Level */}
+            {reasoning && (reasoning as Record<string, unknown>).confidence_level && (
+              <div>
+                <div className="text-gray-500 mb-1">Confidence Level</div>
+                <div className="w-full bg-gray-700 rounded h-2">
+                  <div
+                    className="bg-blue-500 rounded h-2"
+                    style={{ width: `${((reasoning as Record<string, unknown>).confidence_level as number) * 100}%` }}
+                  />
+                </div>
+                <div className="text-gray-400 mt-1">
+                  {(((reasoning as Record<string, unknown>).confidence_level as number) * 100).toFixed(0)}% confident
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {!showWhy && (
+          <div className="mt-2 text-xs text-gray-400 line-clamp-2">
+            {reasoning && (reasoning as Record<string, unknown>).problem_statement
+              ? (reasoning as Record<string, unknown>).problem_statement as string
+              : proposal.reason}
+          </div>
+        )}
+      </div>
+
+      {/* Change Summary */}
       <div className="bg-gray-900/50 rounded p-2 mb-3 text-xs">
         <div className="text-gray-500 mb-1">Change Summary</div>
         <div className="text-gray-300 font-mono">{proposal.change_summary}</div>
       </div>
 
+      {/* Show More Details Toggle */}
       <button
         onClick={() => setShowDetails(!showDetails)}
         className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 mb-3"
       >
         {showDetails ? <ChevronUp className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-        {showDetails ? 'Hide Details' : 'Show Details'}
+        {showDetails ? 'Hide Technical Details' : 'Show Technical Details'}
       </button>
 
       {showDetails && (
@@ -444,9 +665,30 @@ const ProposalCard = ({
               <div className="text-xs text-gray-300">{proposal.rollback_plan}</div>
             </div>
           )}
+
+          {/* Success Criteria */}
+          {reasoning && (reasoning as Record<string, unknown>).success_criteria && (
+            <div className="bg-green-500/10 border border-green-500/30 rounded p-2">
+              <div className="text-xs text-green-400 font-medium mb-1">Success Criteria</div>
+              <pre className="text-xs text-gray-300">
+                {JSON.stringify((reasoning as Record<string, unknown>).success_criteria, null, 2)}
+              </pre>
+            </div>
+          )}
+
+          {/* Rollback Triggers */}
+          {reasoning && (reasoning as Record<string, unknown>).rollback_trigger && (
+            <div className="bg-orange-500/10 border border-orange-500/30 rounded p-2">
+              <div className="text-xs text-orange-400 font-medium mb-1">Rollback Triggers</div>
+              <pre className="text-xs text-gray-300">
+                {JSON.stringify((reasoning as Record<string, unknown>).rollback_trigger, null, 2)}
+              </pre>
+            </div>
+          )}
         </div>
       )}
 
+      {/* Approval Section */}
       <div className="space-y-2">
         <input
           type="text"
@@ -455,14 +697,23 @@ const ProposalCard = ({
           placeholder="Review notes (optional)..."
           className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
         />
+
+        {/* Warning if validation not complete */}
+        {validationStatus && !validationStatus.can_apply && (
+          <div className="text-xs text-yellow-400 bg-yellow-500/10 border border-yellow-500/30 rounded p-2 flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4" />
+            <span>Improvement not proven yet. Wait for validation to complete before approving.</span>
+          </div>
+        )}
+
         <div className="flex gap-2">
           <button
             onClick={handleApprove}
-            disabled={processing}
-            className="flex-1 bg-green-500/20 text-green-400 border border-green-500/50 rounded py-2 text-sm font-medium hover:bg-green-500/30 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+            disabled={processing || (validationStatus && !validationStatus.can_apply)}
+            className="flex-1 bg-green-500/20 text-green-400 border border-green-500/50 rounded py-2 text-sm font-medium hover:bg-green-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
           >
             <CheckCircle className="w-4 h-4" />
-            Approve
+            {validationStatus && validationStatus.can_apply ? 'Apply (Validated)' : 'Approve'}
           </button>
           <button
             onClick={handleReject}

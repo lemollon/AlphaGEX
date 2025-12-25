@@ -1243,3 +1243,299 @@ async def ai_weekend_analysis():
     except Exception as e:
         logger.error(f"Failed to get weekend analysis: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# PROPOSAL VALIDATION - PROVEN IMPROVEMENT REQUIRED
+# =============================================================================
+
+class ValidatedProposalRequest(BaseModel):
+    """
+    Request to create a proposal with full reasoning documentation.
+
+    This is the recommended way to create proposals as it enforces
+    the "proven improvement required" policy.
+    """
+    bot_name: str = Field(..., description="Bot name (ARES, ATHENA, ATLAS, PHOENIX)")
+    title: str = Field(..., description="Short title for the proposal")
+
+    # DETAILED REASONING (WHY)
+    problem_statement: str = Field(..., min_length=20, description="What problem are we solving? (min 20 chars)")
+    hypothesis: str = Field(..., min_length=20, description="What do we believe will happen? (min 20 chars)")
+    supporting_evidence: List[dict] = Field(..., min_items=1, description="Evidence supporting the change")
+    expected_improvement: dict = Field(..., description="Expected improvement metrics")
+
+    # Configuration
+    current_config: dict = Field(..., description="Current configuration")
+    proposed_config: dict = Field(..., description="Proposed new configuration")
+
+    # Risk
+    risk_level: str = Field("MEDIUM", description="Risk level (LOW, MEDIUM, HIGH)")
+    risk_assessment: str = Field("", description="Risk assessment details")
+    potential_downsides: List[str] = Field([], description="Potential downsides")
+
+    # Validation method
+    validation_method: str = Field("AB_TEST", description="Validation method (AB_TEST, BACKTEST, SHADOW_MODE)")
+
+
+@router.post("/validation/create-proposal")
+async def create_validated_proposal(request: ValidatedProposalRequest):
+    """
+    Create a proposal with complete reasoning and start validation.
+
+    KEY PRINCIPLE: Proposals will ONLY be applied after improvement is PROVEN.
+
+    This endpoint:
+    1. Validates the reasoning is complete
+    2. Creates the proposal with full documentation
+    3. Starts the validation process (A/B test, backtest, etc.)
+
+    The proposal cannot be applied until validation proves improvement.
+    """
+    if not ENHANCED_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Enhanced features not available")
+
+    try:
+        enhanced = get_solomon_enhanced()
+
+        result = enhanced.create_proposal_with_reasoning(
+            bot_name=request.bot_name.upper(),
+            title=request.title,
+            problem_statement=request.problem_statement,
+            hypothesis=request.hypothesis,
+            supporting_evidence=request.supporting_evidence,
+            expected_improvement=request.expected_improvement,
+            current_config=request.current_config,
+            proposed_config=request.proposed_config,
+            risk_level=request.risk_level,
+            risk_assessment=request.risk_assessment,
+            potential_downsides=request.potential_downsides,
+            validation_method=request.validation_method
+        )
+
+        return result
+    except Exception as e:
+        logger.error(f"Failed to create validated proposal: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/validation/status")
+async def get_all_validation_status():
+    """
+    Get status of all pending validations.
+
+    Shows which proposals are being validated and their current results.
+    """
+    if not ENHANCED_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Enhanced features not available")
+
+    try:
+        enhanced = get_solomon_enhanced()
+        status = enhanced.get_validation_status()
+
+        return {
+            "success": True,
+            **status
+        }
+    except Exception as e:
+        logger.error(f"Failed to get validation status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/validation/status/{proposal_id}")
+async def get_proposal_validation_status(proposal_id: str):
+    """
+    Get validation status for a specific proposal.
+
+    Shows:
+    - Current validation progress
+    - Whether improvement is proven
+    - Detailed metrics comparison
+    - Whether proposal can be applied
+    """
+    if not ENHANCED_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Enhanced features not available")
+
+    try:
+        enhanced = get_solomon_enhanced()
+        status = enhanced.get_validation_status(proposal_id)
+
+        return {
+            "success": True,
+            "proposal_id": proposal_id,
+            **status
+        }
+    except Exception as e:
+        logger.error(f"Failed to get proposal validation status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/validation/can-apply/{proposal_id}")
+async def can_apply_proposal(proposal_id: str):
+    """
+    Check if a proposal can be applied.
+
+    Returns detailed status on:
+    - Whether improvement is proven
+    - Why/why not the proposal can be applied
+    - What requirements are met/unmet
+    """
+    if not ENHANCED_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Enhanced features not available")
+
+    try:
+        enhanced = get_solomon_enhanced()
+        result = enhanced.can_apply_proposal(proposal_id)
+
+        return {
+            "success": True,
+            "proposal_id": proposal_id,
+            **result
+        }
+    except Exception as e:
+        logger.error(f"Failed to check if proposal can be applied: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class ApplyValidatedProposalRequest(BaseModel):
+    """Request to apply a validated proposal"""
+    reviewer: str = Field(..., description="Username of the reviewer")
+
+
+@router.post("/validation/apply/{proposal_id}")
+async def apply_validated_proposal(proposal_id: str, request: ApplyValidatedProposalRequest):
+    """
+    Apply a proposal ONLY if validation proves improvement.
+
+    This is the safe way to apply proposals - it enforces the
+    "proven improvement required" policy.
+
+    Will REJECT if:
+    - Validation is incomplete
+    - Improvement is not proven
+    - Minimum trade count not reached
+    - Minimum validation period not met
+    """
+    if not ENHANCED_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Enhanced features not available")
+
+    try:
+        enhanced = get_solomon_enhanced()
+        result = enhanced.apply_validated_proposal(
+            proposal_id=proposal_id,
+            reviewer=request.reviewer
+        )
+
+        if not result.get('success'):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": result.get('error', 'Failed to apply proposal'),
+                    "details": result.get('details', {})
+                }
+            )
+
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to apply validated proposal: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/validation/reasoning/{proposal_id}")
+async def get_proposal_reasoning(proposal_id: str):
+    """
+    Get detailed reasoning for a proposal.
+
+    Shows all the WHY information:
+    - Problem statement
+    - Hypothesis
+    - Supporting evidence
+    - Expected improvement
+    - Risk assessment
+    - Success criteria
+    - Rollback triggers
+    """
+    if not ENHANCED_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Enhanced features not available")
+
+    try:
+        enhanced = get_solomon_enhanced()
+        reasoning = enhanced.get_proposal_reasoning(proposal_id)
+
+        if not reasoning:
+            raise HTTPException(status_code=404, detail="Reasoning not found for proposal")
+
+        return {
+            "success": True,
+            "proposal_id": proposal_id,
+            "reasoning": reasoning
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get proposal reasoning: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/validation/transparency-report/{proposal_id}")
+async def get_transparency_report(proposal_id: str):
+    """
+    Get complete transparency report for a proposal.
+
+    This shows ALL the details - WHO, WHAT, WHY, WHEN:
+    - Who is making the change and who approves it
+    - What exactly is changing (before/after)
+    - Why the change is being made (detailed reasoning)
+    - When it will be applied (validation status)
+    - Risk assessment and rollback plan
+    """
+    if not ENHANCED_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Enhanced features not available")
+
+    try:
+        enhanced = get_solomon_enhanced()
+        report = enhanced.get_proposal_transparency_report(proposal_id)
+
+        return {
+            "success": True,
+            **report
+        }
+    except Exception as e:
+        logger.error(f"Failed to get transparency report: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class RecordValidationTradeRequest(BaseModel):
+    """Request to record a trade during validation"""
+    validation_id: str = Field(..., description="Validation ID")
+    is_proposed: bool = Field(..., description="Whether this trade used the proposed config")
+    pnl: float = Field(..., description="Trade P&L")
+
+
+@router.post("/validation/record-trade")
+async def record_validation_trade(request: RecordValidationTradeRequest):
+    """
+    Record a trade result during validation.
+
+    This is used to track performance during A/B testing or other validation methods.
+    """
+    if not ENHANCED_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Enhanced features not available")
+
+    try:
+        enhanced = get_solomon_enhanced()
+        enhanced.proposal_validator.record_validation_trade(
+            validation_id=request.validation_id,
+            is_proposed=request.is_proposed,
+            pnl=request.pnl
+        )
+
+        return {
+            "success": True,
+            "message": "Trade recorded for validation"
+        }
+    except Exception as e:
+        logger.error(f"Failed to record validation trade: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
