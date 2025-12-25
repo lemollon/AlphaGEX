@@ -1,11 +1,11 @@
 'use client'
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import {
-  Brain, Activity, Shield, AlertTriangle, CheckCircle, XCircle,
+  Brain, Activity, AlertTriangle, CheckCircle, XCircle,
   Clock, RefreshCw, ChevronDown, ChevronUp, ChevronRight,
-  RotateCcw, Play, Pause, FileText, TrendingUp, TrendingDown,
-  Settings, Eye, History, Zap, Target, Lock, Unlock,
+  RotateCcw, Play, Pause, FileText, TrendingDown,
+  History, Zap, Target, Lock, Unlock,
   BarChart2, Calendar, Sun, Moon, GitBranch, Layers
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
@@ -91,6 +91,7 @@ interface BotStatus {
     win_rate: number
     total_pnl: number
   }
+  performance_history?: number[] // For sparkline
   active_version: {
     version_id: string
     version_number: string
@@ -1003,6 +1004,7 @@ export default function SolomonPage() {
                     onKill={handleKillBot}
                     onResume={handleResumeBot}
                     onViewVersions={handleViewVersions}
+                    sparklineData={bot.performance_history}
                   />
                 ))}
               </div>

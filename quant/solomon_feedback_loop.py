@@ -2037,10 +2037,15 @@ class SolomonFeedbackLoop:
         # Get status for each bot
         for bot in BotName:
             bot_name = bot.value
+            # Get performance history for sparkline (last 10 data points)
+            perf_history = self.get_performance_history(bot_name, days=14)
+            sparkline_data = [h.get('total_pnl', 0) for h in perf_history[:10]][::-1] if perf_history else []
+
             summary['bots'][bot_name] = {
                 'name': bot_name,
                 'is_killed': self.is_bot_killed(bot_name),
                 'performance': self._get_current_performance(bot_name),
+                'performance_history': sparkline_data,  # For sparkline chart
                 'active_version': self._get_active_version_info(bot_name),
                 'versions_count': len(self.get_version_history(bot_name, limit=100)),
                 'last_action': self._get_last_action(bot_name)
