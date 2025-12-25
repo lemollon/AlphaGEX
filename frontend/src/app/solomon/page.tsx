@@ -951,9 +951,9 @@ export default function SolomonPage() {
   const fetchAnalytics = useCallback(async (bot: string) => {
     try {
       const [digestRes, corrRes, timeRes] = await Promise.all([
-        apiClient.get('/api/solomon/enhanced/digest'),
-        apiClient.get('/api/solomon/enhanced/correlations'),
-        apiClient.get(`/api/solomon/enhanced/time-analysis/${bot}`)
+        apiClient.getSolomonEnhancedDigest(),
+        apiClient.getSolomonEnhancedCorrelations(),
+        apiClient.getSolomonEnhancedTimeAnalysis(bot)
       ])
       setDailyDigest(digestRes.data)
       setCorrelations(corrRes.data)
@@ -965,7 +965,7 @@ export default function SolomonPage() {
 
   const fetchDashboard = useCallback(async () => {
     try {
-      const response = await apiClient.get('/api/solomon/dashboard')
+      const response = await apiClient.getSolomonDashboard()
       setDashboard(response.data)
       setLastRefresh(new Date())
       setError(null)
@@ -993,7 +993,7 @@ export default function SolomonPage() {
     if (!reason) return
 
     try {
-      await apiClient.post(`/api/solomon/killswitch/${botName}/activate`, {
+      await apiClient.activateSolomonKillswitch(botName, {
         reason,
         user: 'Dashboard User'
       })
@@ -1006,7 +1006,7 @@ export default function SolomonPage() {
 
   const handleResumeBot = async (botName: string) => {
     try {
-      await apiClient.post(`/api/solomon/killswitch/${botName}/deactivate`, {
+      await apiClient.deactivateSolomonKillswitch(botName, {
         user: 'Dashboard User'
       })
       fetchDashboard()
@@ -1018,7 +1018,7 @@ export default function SolomonPage() {
 
   const handleViewVersions = async (botName: string) => {
     try {
-      const response = await apiClient.get(`/api/solomon/versions/${botName}`)
+      const response = await apiClient.getSolomonVersions(botName)
       setVersions(response.data.versions || [])
       setVersionModalBot(botName)
     } catch (err) {
@@ -1029,7 +1029,7 @@ export default function SolomonPage() {
 
   const handleApproveProposal = async (proposalId: string, notes: string) => {
     try {
-      await apiClient.post(`/api/solomon/proposals/${proposalId}/approve`, {
+      await apiClient.approveSolomonProposal(proposalId, {
         reviewer: 'Dashboard User',
         notes
       })
@@ -1046,9 +1046,9 @@ export default function SolomonPage() {
       return
     }
     try {
-      await apiClient.post(`/api/solomon/proposals/${proposalId}/reject`, {
+      await apiClient.rejectSolomonProposal(proposalId, {
         reviewer: 'Dashboard User',
-        notes
+        reason: notes
       })
       fetchDashboard()
     } catch (err) {
@@ -1060,8 +1060,8 @@ export default function SolomonPage() {
   const handleRollback = async (versionId: string, reason: string) => {
     if (!versionModalBot) return
     try {
-      await apiClient.post(`/api/solomon/rollback/${versionModalBot}`, {
-        to_version_id: versionId,
+      await apiClient.rollbackSolomonBot(versionModalBot, {
+        version_id: versionId,
         reason,
         user: 'Dashboard User'
       })
@@ -1075,7 +1075,7 @@ export default function SolomonPage() {
 
   const handleActivateVersion = async (versionId: string) => {
     try {
-      await apiClient.post(`/api/solomon/versions/${versionId}/activate?user=Dashboard%20User`)
+      await apiClient.activateSolomonVersion(versionId, 'Dashboard User')
       handleViewVersions(versionModalBot!)
       fetchDashboard()
     } catch (err) {
@@ -1086,7 +1086,7 @@ export default function SolomonPage() {
 
   const handleTriggerFeedbackLoop = async () => {
     try {
-      const response = await apiClient.post('/api/solomon/feedback-loop/run')
+      const response = await apiClient.runSolomonFeedbackLoop()
       alert(`Feedback loop completed!\n\nRun ID: ${response.data.run_id}\nProposals created: ${response.data.proposals_created?.length || 0}`)
       fetchDashboard()
     } catch (err) {
@@ -1529,7 +1529,7 @@ export default function SolomonPage() {
                 </h4>
                 <div className="space-y-2">
                   <button
-                    onClick={() => apiClient.get('/api/solomon/enhanced/weekend-precheck').then(r => alert(JSON.stringify(r.data, null, 2)))}
+                    onClick={() => apiClient.getSolomonWeekendPrecheck().then(r => alert(JSON.stringify(r.data, null, 2)))}
                     className="w-full text-left px-3 py-2 bg-gray-900/50 rounded text-sm text-gray-300 hover:bg-gray-700 transition-colors"
                   >
                     Weekend Pre-Check Analysis
