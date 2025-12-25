@@ -57,3 +57,4 @@ data/prices/
 !frontend/src/app/logs/
 quant/.models/
 models/*.pkl
+.coverage
