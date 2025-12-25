@@ -106,6 +106,21 @@ except ImportError:
     ScanOutcome = None
     CheckResult = None
 
+# Circuit breaker for risk management - CRITICAL for production safety
+try:
+    from trading.circuit_breaker import (
+        get_circuit_breaker,
+        is_trading_enabled,
+        record_trade_pnl,
+        CircuitBreakerState
+    )
+    CIRCUIT_BREAKER_AVAILABLE = True
+except ImportError:
+    CIRCUIT_BREAKER_AVAILABLE = False
+    get_circuit_breaker = None
+    is_trading_enabled = None
+    record_trade_pnl = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -2090,6 +2105,39 @@ class ARESTrader:
                 "skip_date": self.skip_date.isoformat()
             }
 
+        # =========================================================================
+        # CIRCUIT BREAKER CHECK - FIRST LINE OF DEFENSE
+        # =========================================================================
+        if CIRCUIT_BREAKER_AVAILABLE and is_trading_enabled:
+            try:
+                can_trade, cb_reason = is_trading_enabled(
+                    current_positions=len(self.open_positions),
+                    margin_used=0  # ARES uses defined risk, not margin
+                )
+
+                if not can_trade:
+                    reason = f"Circuit breaker: {cb_reason}"
+                    logger.warning(f"ARES: {reason}")
+                    if SCAN_LOGGER_AVAILABLE and log_ares_scan:
+                        log_ares_scan(
+                            outcome=ScanOutcome.SKIP,
+                            decision_summary=f"CIRCUIT BREAKER ACTIVE: {cb_reason}",
+                            action_taken="No trade - circuit breaker prevented trading for risk management",
+                            full_reasoning=f"The circuit breaker system has blocked trading to protect capital. "
+                                          f"This typically occurs when daily loss limits are hit or when too many "
+                                          f"positions are open. Reason: {cb_reason}",
+                            checks=[
+                                CheckResult("circuit_breaker", False, "BLOCKED", "ENABLED", cb_reason)
+                            ]
+                        )
+                    return {
+                        "status": "blocked",
+                        "reason": reason,
+                        "circuit_breaker": True
+                    }
+            except Exception as e:
+                logger.warning(f"ARES: Circuit breaker check failed: {e} - continuing with trade")
+
         logger.info(f"=" * 60)
         logger.info(f"ARES Daily Cycle - {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
         logger.info(f"Mode: {self.mode.value.upper()}")
@@ -3102,6 +3150,14 @@ class ARESTrader:
                     # Update high water mark
                     if self.capital > self.high_water_mark:
                         self.high_water_mark = self.capital
+
+                    # Record P&L to circuit breaker for daily loss tracking
+                    if CIRCUIT_BREAKER_AVAILABLE and record_trade_pnl:
+                        try:
+                            record_trade_pnl(realized_pnl)
+                            logger.debug(f"ARES: Recorded P&L ${realized_pnl:.2f} to circuit breaker")
+                        except Exception as e:
+                            logger.warning(f"ARES: Failed to record P&L to circuit breaker: {e}")
 
                     # Save to database
                     self._update_position_in_db(position)
