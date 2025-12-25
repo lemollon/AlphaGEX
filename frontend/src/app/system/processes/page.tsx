@@ -1264,7 +1264,7 @@ export default function SystemProcessesPage() {
             {/* Controls */}
             <div className="flex items-center gap-2 flex-wrap">
               <LayoutSelector layout={layout} onLayoutChange={setLayout} theme={theme} />
-              <button onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} className={`px-3 py-2 rounded-lg text-sm ${theme === 'dark' ? 'bg-gray-700 text-white' : 'bg-white text-gray-900 border'}`}>
+              <button onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} className={`px-3 py-2 rounded-lg text-sm ${theme === 'dark' ? 'bg-gray-700 text-white' : 'bg-white text-gray-900 border'}`}>
                 {theme === 'dark' ? '☀️' : '🌙'}
               </button>
               <button onClick={() => setShowAnimations(!showAnimations)} className={`px-3 py-2 rounded-lg text-sm ${showAnimations ? 'bg-cyan-600 text-white' : theme === 'dark' ? 'bg-gray-700 text-white' : 'bg-white text-gray-900 border'}`}>
