@@ -34,8 +34,8 @@ class TestAthenaTraderInitialization:
         try:
             from trading.athena_directional_spreads import ATHENATrader
 
-            with patch('trading.athena_directional_spreads.get_connection'):
-                trader = ATHENATrader(capital=100000, mode='paper')
+            with patch('database_adapter.get_connection', return_value=MagicMock()):
+                trader = ATHENATrader(initial_capital=100000)
                 assert trader is not None
         except ImportError:
             pytest.skip("ATHENA directional spreads not available")
@@ -49,8 +49,8 @@ class TestDirectionalSpreadConstruction:
         try:
             from trading.athena_directional_spreads import ATHENATrader
 
-            with patch('trading.athena_directional_spreads.get_connection'):
-                trader = ATHENATrader(capital=100000, mode='paper')
+            with patch('database_adapter.get_connection', return_value=MagicMock()):
+                trader = ATHENATrader(initial_capital=100000)
                 if hasattr(trader, 'build_bull_call_spread'):
                     with patch.object(trader, 'build_bull_call_spread') as mock_build:
                         mock_build.return_value = {
@@ -68,8 +68,8 @@ class TestDirectionalSpreadConstruction:
         try:
             from trading.athena_directional_spreads import ATHENATrader
 
-            with patch('trading.athena_directional_spreads.get_connection'):
-                trader = ATHENATrader(capital=100000, mode='paper')
+            with patch('database_adapter.get_connection', return_value=MagicMock()):
+                trader = ATHENATrader(initial_capital=100000)
                 if hasattr(trader, 'build_bear_put_spread'):
                     with patch.object(trader, 'build_bear_put_spread') as mock_build:
                         mock_build.return_value = {
@@ -91,8 +91,8 @@ class TestDirectionalSignals:
         try:
             from trading.athena_directional_spreads import ATHENATrader
 
-            with patch('trading.athena_directional_spreads.get_connection'):
-                trader = ATHENATrader(capital=100000, mode='paper')
+            with patch('database_adapter.get_connection', return_value=MagicMock()):
+                trader = ATHENATrader(initial_capital=100000)
                 if hasattr(trader, 'get_directional_bias'):
                     with patch.object(trader, 'get_directional_bias') as mock_bias:
                         mock_bias.return_value = 'BULLISH'
@@ -110,8 +110,8 @@ class TestDirectionalEntryLogic:
         try:
             from trading.athena_directional_spreads import ATHENATrader
 
-            with patch('trading.athena_directional_spreads.get_connection'):
-                trader = ATHENATrader(capital=100000, mode='paper')
+            with patch('database_adapter.get_connection', return_value=MagicMock()):
+                trader = ATHENATrader(initial_capital=100000)
                 if hasattr(trader, 'should_enter'):
                     with patch.object(trader, 'should_enter') as mock_enter:
                         mock_enter.return_value = True

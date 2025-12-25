@@ -32,10 +32,13 @@ class TestAresTraderInitialization:
     def test_trader_initialization(self):
         """Test trader can be initialized"""
         try:
-            from trading.ares_iron_condor import ARESTrader
+            from trading.ares_iron_condor import ARESTrader, TradingMode
 
-            with patch('trading.ares_iron_condor.get_connection'):
-                trader = ARESTrader(capital=200000, mode='paper')
+            with patch('database_adapter.get_connection', return_value=MagicMock()):
+                trader = ARESTrader(
+                    initial_capital=200000,
+                    mode=TradingMode.PAPER
+                )
                 assert trader is not None
         except ImportError:
             pytest.skip("ARES iron condor not available")
@@ -47,10 +50,13 @@ class TestIronCondorConstruction:
     def test_build_iron_condor(self, mock_spx_option_chain):
         """Test IC construction"""
         try:
-            from trading.ares_iron_condor import ARESTrader
+            from trading.ares_iron_condor import ARESTrader, TradingMode
 
-            with patch('trading.ares_iron_condor.get_connection'):
-                trader = ARESTrader(capital=200000, mode='paper')
+            with patch('database_adapter.get_connection', return_value=MagicMock()):
+                trader = ARESTrader(
+                    initial_capital=200000,
+                    mode=TradingMode.PAPER
+                )
                 if hasattr(trader, 'build_iron_condor'):
                     with patch.object(trader, 'build_iron_condor') as mock_build:
                         mock_build.return_value = {
@@ -72,10 +78,13 @@ class TestIronCondorEntryLogic:
     def test_should_enter_trade(self, mock_market_data):
         """Test entry logic"""
         try:
-            from trading.ares_iron_condor import ARESTrader
+            from trading.ares_iron_condor import ARESTrader, TradingMode
 
-            with patch('trading.ares_iron_condor.get_connection'):
-                trader = ARESTrader(capital=200000, mode='paper')
+            with patch('database_adapter.get_connection', return_value=MagicMock()):
+                trader = ARESTrader(
+                    initial_capital=200000,
+                    mode=TradingMode.PAPER
+                )
                 if hasattr(trader, 'should_enter'):
                     with patch.object(trader, 'should_enter') as mock_enter:
                         mock_enter.return_value = True
@@ -91,10 +100,13 @@ class TestIronCondorExitLogic:
     def test_should_exit_trade(self, mock_iron_condor_position):
         """Test exit logic"""
         try:
-            from trading.ares_iron_condor import ARESTrader
+            from trading.ares_iron_condor import ARESTrader, TradingMode
 
-            with patch('trading.ares_iron_condor.get_connection'):
-                trader = ARESTrader(capital=200000, mode='paper')
+            with patch('database_adapter.get_connection', return_value=MagicMock()):
+                trader = ARESTrader(
+                    initial_capital=200000,
+                    mode=TradingMode.PAPER
+                )
                 if hasattr(trader, 'should_exit'):
                     with patch.object(trader, 'should_exit') as mock_exit:
                         mock_exit.return_value = {'exit': True, 'reason': 'profit_target'}
@@ -110,10 +122,13 @@ class TestIronCondorRiskManagement:
     def test_position_sizing(self):
         """Test position sizing"""
         try:
-            from trading.ares_iron_condor import ARESTrader
+            from trading.ares_iron_condor import ARESTrader, TradingMode
 
-            with patch('trading.ares_iron_condor.get_connection'):
-                trader = ARESTrader(capital=200000, mode='paper')
+            with patch('database_adapter.get_connection', return_value=MagicMock()):
+                trader = ARESTrader(
+                    initial_capital=200000,
+                    mode=TradingMode.PAPER
+                )
                 if hasattr(trader, 'calculate_position_size'):
                     with patch.object(trader, 'calculate_position_size') as mock_size:
                         mock_size.return_value = 10
