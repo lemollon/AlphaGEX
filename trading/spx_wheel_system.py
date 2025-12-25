@@ -66,6 +66,29 @@ try:
 except ImportError:
     ALERTS_AVAILABLE = False
 
+# Circuit breaker for risk management - NOW INTEGRATED!
+try:
+    from trading.circuit_breaker import (
+        get_circuit_breaker,
+        is_trading_enabled,
+        record_trade_pnl,
+        CircuitBreakerState
+    )
+    CIRCUIT_BREAKER_AVAILABLE = True
+except ImportError:
+    CIRCUIT_BREAKER_AVAILABLE = False
+
+# Risk management utilities - NOW INTEGRATED!
+try:
+    from trading.risk_management import (
+        calculate_spx_put_margin,
+        get_broker_margin_requirement,
+        reconcile_positions
+    )
+    RISK_MANAGEMENT_AVAILABLE = True
+except ImportError:
+    RISK_MANAGEMENT_AVAILABLE = False
+
 # Decision logging for transparency
 try:
     from trading.decision_logger import (
@@ -952,6 +975,7 @@ class SPXWheelTrader:
         Check if we should trade based on market conditions.
 
         NOW IMPLEMENTS ALL THE MISSING CHECKS:
+        - Circuit breaker check (NOW INTEGRATED!)
         - VIX filter (was working)
         - Market open check (was partial)
         - Earnings check (WAS NOT IMPLEMENTED!)
@@ -962,6 +986,33 @@ class SPXWheelTrader:
         """
         spot = self._get_spx_price() or 0
         vix = self._get_vix()
+
+        # =========================================================================
+        # CIRCUIT BREAKER CHECK - FIRST LINE OF DEFENSE
+        # =========================================================================
+        if CIRCUIT_BREAKER_AVAILABLE:
+            open_positions = self._get_open_positions()
+            balance = self._get_account_balance()
+            margin_used = balance.get('margin_used', 0)
+
+            can_trade, cb_reason = is_trading_enabled(
+                current_positions=len(open_positions),
+                margin_used=margin_used
+            )
+
+            if not can_trade:
+                reason = f"Circuit breaker: {cb_reason}"
+                print(f"  🛑 {reason}")
+                self._log_decision(
+                    decision_type="NO_TRADE",
+                    action="BLOCKED",
+                    what="NO TRADE - Circuit breaker active",
+                    why=f"Circuit breaker prevented trading. {cb_reason}",
+                    how="Checked circuit breaker status. Trading blocked for risk management.",
+                    spot_price=spot,
+                    vix=vix
+                )
+                return False, reason
 
         # Check market calendar (includes earnings & FOMC)
         if CALENDAR_AVAILABLE and self.params.avoid_earnings:
@@ -1352,10 +1403,23 @@ class SPXWheelTrader:
         Check if we can open a new position.
 
         Verifies:
-        1. Not at max position limit
-        2. Have enough buying power / margin
+        1. Circuit breaker allows trading
+        2. Not at max position limit
+        3. Have enough buying power / margin (using risk_management module)
         """
         open_positions = self._get_open_positions()
+
+        # Check circuit breaker first
+        if CIRCUIT_BREAKER_AVAILABLE:
+            cb = get_circuit_breaker(capital=self.initial_capital)
+            balance = self._get_account_balance()
+            can_trade, reason = cb.can_trade(
+                current_positions=len(open_positions),
+                margin_used=balance.get('margin_used', 0)
+            )
+            if not can_trade:
+                print(f"  Cannot open: Circuit breaker - {reason}")
+                return False
 
         # Check position limit
         if len(open_positions) >= self.params.max_open_positions:
@@ -1366,9 +1430,22 @@ class SPXWheelTrader:
         balance = self._get_account_balance()
         buying_power = balance.get('option_buying_power', 0)
 
-        # Estimate margin for new position (20% of notional for SPX)
+        # Use risk_management module for proper CBOE margin calculation
         estimated_strike = round((spot * (1 - 0.04 - self.params.put_delta * 0.15)) / 5) * 5
-        margin_required = estimated_strike * 100 * self.params.contracts_per_trade * 0.20
+        estimated_premium = spot * 0.02  # Estimate 2% premium
+
+        if RISK_MANAGEMENT_AVAILABLE:
+            margin_calc = calculate_spx_put_margin(
+                strike=estimated_strike,
+                spot_price=spot,
+                premium=estimated_premium,
+                contracts=self.params.contracts_per_trade
+            )
+            margin_required = margin_calc['total_margin']
+            print(f"  Margin calculation: ${margin_required:,.0f} ({margin_calc['method']} method)")
+        else:
+            # Fallback: Estimate margin for new position (20% of notional for SPX)
+            margin_required = estimated_strike * 100 * self.params.contracts_per_trade * 0.20
 
         if buying_power < margin_required:
             print(f"  Cannot open: Insufficient margin (need ${margin_required:,.0f}, have ${buying_power:,.0f})")
@@ -1416,7 +1493,7 @@ class SPXWheelTrader:
         order_id = None
         order_status = "PAPER"
 
-        # === LIVE MODE: PLACE REAL ORDER ===
+        # === LIVE MODE: PLACE REAL ORDER WITH RETRY LOGIC ===
         if self.mode == TradingMode.LIVE and self.broker:
             print(f"\n🔴 PLACING LIVE ORDER:")
             print(f"   Symbol: {tradier_symbol}")
@@ -1424,30 +1501,65 @@ class SPXWheelTrader:
             print(f"   Qty:    {self.params.contracts_per_trade}")
             print(f"   Price:  ${entry_price:.2f} (from {price_source})")
 
-            try:
-                result = self.broker.sell_put(
-                    symbol='SPX',
-                    expiration=expiration_str,
-                    strike=strike,
-                    quantity=self.params.contracts_per_trade,
-                    limit_price=entry_price
-                )
+            # Retry logic with exponential backoff
+            MAX_RETRIES = 3
+            RETRY_DELAYS = [2, 4, 8]  # seconds
 
-                order_info = result.get('order', {})
-                order_id = order_info.get('id')
-                order_status = order_info.get('status', 'UNKNOWN')
+            for attempt in range(MAX_RETRIES):
+                try:
+                    result = self.broker.sell_put(
+                        symbol='SPX',
+                        expiration=expiration_str,
+                        strike=strike,
+                        quantity=self.params.contracts_per_trade,
+                        limit_price=entry_price
+                    )
 
-                print(f"   Order ID: {order_id}")
-                print(f"   Status:   {order_status}")
+                    order_info = result.get('order', {})
+                    order_id = order_info.get('id')
+                    order_status = order_info.get('status', 'UNKNOWN')
 
-                if order_status not in ['pending', 'open', 'filled', 'partially_filled']:
-                    logger.error(f"Order failed: {result}")
-                    return False
+                    print(f"   Order ID: {order_id}")
+                    print(f"   Status:   {order_status}")
 
-            except Exception as e:
-                logger.error(f"LIVE order failed: {e}")
-                print(f"   ❌ ORDER FAILED: {e}")
-                return False
+                    if order_status in ['pending', 'open', 'filled', 'partially_filled']:
+                        # Success - break out of retry loop
+                        break
+                    else:
+                        logger.warning(f"Order attempt {attempt+1} returned status: {order_status}")
+                        if attempt < MAX_RETRIES - 1:
+                            import time
+                            print(f"   ⚠️ Retrying in {RETRY_DELAYS[attempt]}s...")
+                            time.sleep(RETRY_DELAYS[attempt])
+                        else:
+                            logger.error(f"Order failed after {MAX_RETRIES} attempts: {result}")
+                            return False
+
+                except Exception as e:
+                    logger.error(f"LIVE order attempt {attempt+1} failed: {e}")
+
+                    if attempt < MAX_RETRIES - 1:
+                        import time
+                        print(f"   ⚠️ Attempt {attempt+1} failed: {e}")
+                        print(f"   ⚠️ Retrying in {RETRY_DELAYS[attempt]}s...")
+                        time.sleep(RETRY_DELAYS[attempt])
+                    else:
+                        print(f"   ❌ ORDER FAILED after {MAX_RETRIES} attempts: {e}")
+                        # Alert on repeated failures
+                        if ALERTS_AVAILABLE:
+                            try:
+                                alerts = get_alerts()
+                                alerts.send_email(
+                                    subject="LIVE ORDER FAILED",
+                                    body=f"Order failed after {MAX_RETRIES} attempts.\n\n"
+                                         f"Symbol: {tradier_symbol}\n"
+                                         f"Strike: {strike}\n"
+                                         f"Error: {e}",
+                                    priority="CRITICAL"
+                                )
+                            except:
+                                pass
+                        return False
 
         # === LOG TO DATABASE ===
         try:
@@ -1583,6 +1695,11 @@ class SPXWheelTrader:
 
                     print(f"CLOSED: {pos['option_ticker']} | P&L: ${total_pnl:.2f}")
 
+                    # Record P&L to circuit breaker for daily loss tracking
+                    if CIRCUIT_BREAKER_AVAILABLE:
+                        record_trade_pnl(total_pnl)
+                        logger.info(f"Recorded P&L ${total_pnl:.2f} to circuit breaker")
+
                     # Log expiration decision with COMPLETE trade data
                     outcome = "WIN (OTM)" if settlement_pnl >= 0 else "LOSS (ITM)"
                     exp_date_str = pos['expiration'].strftime('%Y-%m-%d') if hasattr(pos['expiration'], 'strftime') else str(pos['expiration'])
@@ -1717,6 +1834,11 @@ class SPXWheelTrader:
 
             conn.commit()
             conn.close()
+
+            # Record P&L to circuit breaker for daily loss tracking
+            if CIRCUIT_BREAKER_AVAILABLE:
+                record_trade_pnl(pnl)
+                logger.info(f"Recorded P&L ${pnl:.2f} to circuit breaker (reason: {reason})")
 
             # Log decision with COMPLETE trade data
             spot = self._get_spx_price() or 0

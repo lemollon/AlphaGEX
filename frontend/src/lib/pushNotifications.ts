@@ -105,7 +105,8 @@ export class PushNotificationService {
 
         subscription = await registration.pushManager.subscribe({
           userVisibleOnly: true,
-          applicationServerKey: this.urlBase64ToUint8Array(vapidPublicKey)
+          // Type assertion needed for TypeScript compatibility with Uint8Array
+          applicationServerKey: this.urlBase64ToUint8Array(vapidPublicKey) as unknown as BufferSource
         })
 
         logger.info('Push subscription created')

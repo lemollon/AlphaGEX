@@ -464,7 +464,7 @@ function FavoritesSidebar({ favorites, onRemove, onSelect, isOpen, onClose, them
   const favoriteProcesses = ALL_PROCESSES.filter(p => favorites.includes(p.id));
 
   return (
-    <div className={`fixed left-0 top-16 bottom-0 w-64 z-40 border-r transform transition-transform ${
+    <div className={`fixed left-0 top-24 bottom-0 w-64 z-40 border-r transform transition-transform ${
       theme === 'dark' ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-300'
     }`}>
       <div className="p-4">
@@ -600,7 +600,7 @@ function DrillDownPanel({ processId, onClose, theme }: {
   };
 
   return (
-    <div className={`fixed right-0 top-16 bottom-0 w-96 z-40 border-l overflow-y-auto ${
+    <div className={`fixed right-0 top-24 bottom-0 w-96 z-40 border-l overflow-y-auto ${
       theme === 'dark' ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-300'
     }`}>
       <div className="p-4">
@@ -1240,7 +1240,7 @@ export default function SystemProcessesPage() {
         <AIAnalysisPanel processId={aiAnalysisProcess} onClose={() => setAiAnalysisProcess(null)} theme={theme} />
       )}
 
-      <main className={`max-w-7xl mx-auto px-4 py-8 ${showFavorites ? 'ml-64' : ''} ${drillDownProcess ? 'mr-96' : ''}`}>
+      <main className={`max-w-7xl mx-auto px-4 pt-24 pb-8 ${showFavorites ? 'ml-64' : ''} ${drillDownProcess ? 'mr-96' : ''}`}>
         {/* Header */}
         <div className="mb-8">
           <div className="flex items-center justify-between flex-wrap gap-4">
