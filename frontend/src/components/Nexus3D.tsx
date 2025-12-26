@@ -56,33 +56,100 @@ export interface BotStatus {
   gex?: 'active' | 'idle' | 'trading' | 'error'
 }
 
+export type ColorTheme = 'cyan' | 'purple' | 'green' | 'red'
+
 interface Nexus3DProps {
   botStatus?: BotStatus
   onNodeClick?: (nodeId: string) => void
   className?: string
-  // Data integration props
-  gexValue?: number        // -1 to 1 normalized GEX value
-  vixValue?: number        // VIX level (10-80 typical range)
-  spotPrice?: number       // SPY spot price
+  gexValue?: number
+  vixValue?: number
+  spotPrice?: number
+  pnlValue?: number
+  pnlPercent?: number
+  signalStrength?: number
+  onTrade?: (type: 'buy' | 'sell', success: boolean) => void
 }
 
 // =============================================================================
-// COLOR PALETTE
+// COLOR THEMES
 // =============================================================================
 
-const COLORS = {
-  coreCenter: '#0c1929',
-  coreRim: '#22d3ee',
-  fiberInner: '#38bdf8',
-  fiberOuter: '#1e40af',
-  particleBright: '#e0f2fe',
-  particleGlow: '#60a5fa',
-  background: '#030712',
-  nebula1: '#1e3a8a',
-  nebula2: '#312e81',
-  lightning: '#a5f3fc',
-  flare: '#67e8f9',
+interface ColorScheme {
+  coreCenter: string
+  coreRim: string
+  fiberInner: string
+  fiberOuter: string
+  particleBright: string
+  particleGlow: string
+  background: string
+  nebula1: string
+  nebula2: string
+  lightning: string
+  flare: string
+  accent: string
 }
+
+const COLOR_THEMES: Record<ColorTheme, ColorScheme> = {
+  cyan: {
+    coreCenter: '#0c1929',
+    coreRim: '#22d3ee',
+    fiberInner: '#38bdf8',
+    fiberOuter: '#1e40af',
+    particleBright: '#e0f2fe',
+    particleGlow: '#60a5fa',
+    background: '#030712',
+    nebula1: '#1e3a8a',
+    nebula2: '#312e81',
+    lightning: '#a5f3fc',
+    flare: '#67e8f9',
+    accent: '#06b6d4',
+  },
+  purple: {
+    coreCenter: '#1a0c29',
+    coreRim: '#c084fc',
+    fiberInner: '#a855f7',
+    fiberOuter: '#6b21a8',
+    particleBright: '#f3e8ff',
+    particleGlow: '#c084fc',
+    background: '#0a0514',
+    nebula1: '#581c87',
+    nebula2: '#4c1d95',
+    lightning: '#e9d5ff',
+    flare: '#d8b4fe',
+    accent: '#a855f7',
+  },
+  green: {
+    coreCenter: '#0c291a',
+    coreRim: '#4ade80',
+    fiberInner: '#22c55e',
+    fiberOuter: '#166534',
+    particleBright: '#dcfce7',
+    particleGlow: '#86efac',
+    background: '#030d07',
+    nebula1: '#14532d',
+    nebula2: '#064e3b',
+    lightning: '#bbf7d0',
+    flare: '#86efac',
+    accent: '#22c55e',
+  },
+  red: {
+    coreCenter: '#290c0c',
+    coreRim: '#f87171',
+    fiberInner: '#ef4444',
+    fiberOuter: '#991b1b',
+    particleBright: '#fee2e2',
+    particleGlow: '#fca5a5',
+    background: '#0d0303',
+    nebula1: '#7f1d1d',
+    nebula2: '#831843',
+    lightning: '#fecaca',
+    flare: '#fca5a5',
+    accent: '#ef4444',
+  },
+}
+
+let COLORS: ColorScheme = COLOR_THEMES.cyan
 
 const STATUS_COLORS = {
   active: '#10b981',
@@ -100,7 +167,29 @@ const BOT_NODES = [
 ]
 
 // =============================================================================
-// MOUSE TRACKER - Provides mouse position to scene
+// KONAMI CODE EASTER EGG
+// =============================================================================
+
+const KONAMI_CODE = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'KeyB', 'KeyA']
+
+function useKonamiCode(callback: () => void) {
+  const inputRef = useRef<string[]>([])
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      inputRef.current = [...inputRef.current, e.code].slice(-10)
+      if (inputRef.current.join(',') === KONAMI_CODE.join(',')) {
+        callback()
+        inputRef.current = []
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [callback])
+}
+
+// =============================================================================
+// MOUSE TRACKER
 // =============================================================================
 
 function useMousePosition() {
@@ -111,7 +200,6 @@ function useMousePosition() {
     const handleMouseMove = (e: MouseEvent) => {
       mouse.current.x = (e.clientX / window.innerWidth) * 2 - 1
       mouse.current.y = -(e.clientY / window.innerHeight) * 2 + 1
-      // Project to 3D space approximately
       mouse3D.current.set(mouse.current.x * 10, mouse.current.y * 10, 0)
     }
     window.addEventListener('mousemove', handleMouseMove)
@@ -122,21 +210,752 @@ function useMousePosition() {
 }
 
 // =============================================================================
+// KEYBOARD CONTROLS HOOK
+// =============================================================================
+
+function useKeyboardControls(
+  controlsRef: React.RefObject<any>,
+  setPaused: (paused: boolean) => void,
+  paused: boolean
+) {
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!controlsRef.current) return
+
+      const rotateSpeed = 0.1
+      switch (e.code) {
+        case 'ArrowLeft':
+          controlsRef.current.setAzimuthalAngle(
+            controlsRef.current.getAzimuthalAngle() - rotateSpeed
+          )
+          break
+        case 'ArrowRight':
+          controlsRef.current.setAzimuthalAngle(
+            controlsRef.current.getAzimuthalAngle() + rotateSpeed
+          )
+          break
+        case 'ArrowUp':
+          controlsRef.current.setPolarAngle(
+            Math.max(0.1, controlsRef.current.getPolarAngle() - rotateSpeed)
+          )
+          break
+        case 'ArrowDown':
+          controlsRef.current.setPolarAngle(
+            Math.min(Math.PI - 0.1, controlsRef.current.getPolarAngle() + rotateSpeed)
+          )
+          break
+        case 'Space':
+          e.preventDefault()
+          setPaused(!paused)
+          break
+        case 'KeyR':
+          controlsRef.current.reset()
+          break
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [controlsRef, setPaused, paused])
+}
+
+// =============================================================================
+// CAMERA CONTROLLER - For double-click zoom and keyboard
+// =============================================================================
+
+function CameraController({
+  controlsRef,
+  zoomTarget,
+  paused,
+  setPaused
+}: {
+  controlsRef: React.RefObject<any>
+  zoomTarget: THREE.Vector3 | null
+  paused: boolean
+  setPaused: (p: boolean) => void
+}) {
+  const { camera } = useThree()
+
+  useKeyboardControls(controlsRef, setPaused, paused)
+
+  useFrame(() => {
+    if (zoomTarget && controlsRef.current) {
+      const currentTarget = controlsRef.current.target
+      currentTarget.lerp(zoomTarget, 0.05)
+      const distance = camera.position.distanceTo(zoomTarget)
+      if (distance > 6) {
+        camera.position.lerp(
+          zoomTarget.clone().add(new THREE.Vector3(0, 2, 6)),
+          0.03
+        )
+      }
+    }
+  })
+
+  return null
+}
+
+// =============================================================================
+// GRAVITY WELL EFFECT
+// =============================================================================
+
+function GravityWell({ position, active }: { position: THREE.Vector3, active: boolean }) {
+  const meshRef = useRef<THREE.Mesh>(null)
+  const particlesRef = useRef<THREE.InstancedMesh>(null)
+  const count = 30
+
+  const particles = useMemo(() => {
+    return Array.from({ length: count }, () => ({
+      angle: Math.random() * Math.PI * 2,
+      radius: 1 + Math.random() * 2,
+      speed: 2 + Math.random() * 2,
+    }))
+  }, [])
+
+  const dummy = useMemo(() => new THREE.Object3D(), [])
+
+  useFrame((state) => {
+    if (!active) return
+    const t = state.clock.elapsedTime
+
+    if (meshRef.current) {
+      meshRef.current.scale.setScalar(1 + Math.sin(t * 3) * 0.1)
+    }
+
+    particles.forEach((p, i) => {
+      const angle = p.angle + t * p.speed
+      const radius = p.radius * (1 - (t % 1) * 0.5)
+      const x = position.x + Math.cos(angle) * radius
+      const z = position.z + Math.sin(angle) * radius
+      const y = position.y + (Math.random() - 0.5) * 0.2
+
+      dummy.position.set(x, y, z)
+      dummy.scale.setScalar(0.03)
+      dummy.updateMatrix()
+      particlesRef.current?.setMatrixAt(i, dummy.matrix)
+    })
+    if (particlesRef.current) {
+      particlesRef.current.instanceMatrix.needsUpdate = true
+    }
+  })
+
+  if (!active) return null
+
+  return (
+    <group>
+      <Sphere ref={meshRef} args={[0.3, 16, 16]} position={position}>
+        <meshBasicMaterial color={COLORS.accent} transparent opacity={0.3} />
+      </Sphere>
+      <instancedMesh ref={particlesRef} args={[undefined, undefined, count]} position={[0, 0, 0]}>
+        <sphereGeometry args={[1, 6, 6]} />
+        <meshBasicMaterial color={COLORS.particleBright} />
+      </instancedMesh>
+    </group>
+  )
+}
+
+// =============================================================================
+// TRADE EXPLOSION EFFECT
+// =============================================================================
+
+function TradeExplosion({
+  position,
+  type,
+  active,
+  onComplete
+}: {
+  position: THREE.Vector3
+  type: 'buy' | 'sell'
+  active: boolean
+  onComplete: () => void
+}) {
+  const meshRef = useRef<THREE.InstancedMesh>(null)
+  const count = 50
+  const startTime = useRef(0)
+  const [started, setStarted] = useState(false)
+
+  const particles = useMemo(() => {
+    return Array.from({ length: count }, () => ({
+      direction: new THREE.Vector3(
+        (Math.random() - 0.5) * 2,
+        (Math.random() - 0.5) * 2,
+        (Math.random() - 0.5) * 2
+      ).normalize(),
+      speed: 3 + Math.random() * 5,
+    }))
+  }, [])
+
+  const dummy = useMemo(() => new THREE.Object3D(), [])
+
+  useFrame((state) => {
+    if (!active) return
+
+    if (!started) {
+      startTime.current = state.clock.elapsedTime
+      setStarted(true)
+    }
+
+    const elapsed = state.clock.elapsedTime - startTime.current
+    if (elapsed > 1.5) {
+      onComplete()
+      setStarted(false)
+      return
+    }
+
+    const progress = elapsed / 1.5
+
+    particles.forEach((p, i) => {
+      const dist = p.speed * elapsed * (1 - progress * 0.5)
+      const pos = position.clone().add(p.direction.clone().multiplyScalar(dist))
+
+      dummy.position.copy(pos)
+      dummy.scale.setScalar(0.08 * (1 - progress))
+      dummy.updateMatrix()
+      meshRef.current?.setMatrixAt(i, dummy.matrix)
+    })
+    if (meshRef.current) {
+      meshRef.current.instanceMatrix.needsUpdate = true
+    }
+  })
+
+  if (!active) return null
+
+  const color = type === 'buy' ? '#22c55e' : '#ef4444'
+
+  return (
+    <instancedMesh ref={meshRef} args={[undefined, undefined, count]}>
+      <sphereGeometry args={[1, 8, 8]} />
+      <meshBasicMaterial color={color} transparent opacity={0.9} />
+    </instancedMesh>
+  )
+}
+
+// =============================================================================
+// ALERT PULSE EFFECT
+// =============================================================================
+
+function AlertPulse({ active, botStatus }: { active: boolean, botStatus: BotStatus }) {
+  const meshRef = useRef<THREE.Mesh>(null)
+  const hasError = Object.values(botStatus).some(s => s === 'error')
+
+  useFrame((state) => {
+    if (!meshRef.current || !hasError) return
+    const t = state.clock.elapsedTime
+    const pulse = Math.sin(t * 8) * 0.5 + 0.5
+    meshRef.current.scale.setScalar(12 + pulse * 3)
+    ;(meshRef.current.material as THREE.MeshBasicMaterial).opacity = 0.03 + pulse * 0.05
+  })
+
+  if (!hasError) return null
+
+  return (
+    <Sphere ref={meshRef} args={[1, 32, 32]}>
+      <meshBasicMaterial color="#ef4444" transparent opacity={0.05} side={THREE.BackSide} />
+    </Sphere>
+  )
+}
+
+// =============================================================================
+// SUCCESS CELEBRATION
+// =============================================================================
+
+function SuccessCelebration({ active, onComplete }: { active: boolean, onComplete: () => void }) {
+  const meshRef = useRef<THREE.InstancedMesh>(null)
+  const count = 100
+  const startTime = useRef(0)
+  const [started, setStarted] = useState(false)
+
+  const particles = useMemo(() => {
+    return Array.from({ length: count }, () => ({
+      position: new THREE.Vector3(
+        (Math.random() - 0.5) * 15,
+        -8,
+        (Math.random() - 0.5) * 15
+      ),
+      velocity: new THREE.Vector3(
+        (Math.random() - 0.5) * 2,
+        5 + Math.random() * 8,
+        (Math.random() - 0.5) * 2
+      ),
+      color: Math.random() > 0.5 ? '#fbbf24' : '#22c55e',
+    }))
+  }, [])
+
+  const dummy = useMemo(() => new THREE.Object3D(), [])
+
+  useFrame((state) => {
+    if (!active) return
+
+    if (!started) {
+      startTime.current = state.clock.elapsedTime
+      setStarted(true)
+    }
+
+    const elapsed = state.clock.elapsedTime - startTime.current
+    if (elapsed > 3) {
+      onComplete()
+      setStarted(false)
+      return
+    }
+
+    particles.forEach((p, i) => {
+      const y = p.position.y + p.velocity.y * elapsed - 4.9 * elapsed * elapsed
+      const x = p.position.x + p.velocity.x * elapsed
+      const z = p.position.z + p.velocity.z * elapsed
+
+      dummy.position.set(x, y, z)
+      dummy.scale.setScalar(0.08)
+      dummy.updateMatrix()
+      meshRef.current?.setMatrixAt(i, dummy.matrix)
+    })
+    if (meshRef.current) {
+      meshRef.current.instanceMatrix.needsUpdate = true
+    }
+  })
+
+  if (!active) return null
+
+  return (
+    <instancedMesh ref={meshRef} args={[undefined, undefined, count]}>
+      <sphereGeometry args={[1, 6, 6]} />
+      <meshBasicMaterial color="#fbbf24" transparent opacity={0.9} />
+    </instancedMesh>
+  )
+}
+
+// =============================================================================
+// ORBIT TRAILS
+// =============================================================================
+
+function OrbitTrails() {
+  const count = 8
+  const trailsRef = useRef<THREE.Group>(null)
+
+  const trails = useMemo(() => {
+    return Array.from({ length: count }, (_, i) => ({
+      radius: 6 + i * 0.8,
+      speed: 0.3 - i * 0.02,
+      offset: (i / count) * Math.PI * 2,
+      tilt: (Math.random() - 0.5) * 0.3,
+    }))
+  }, [])
+
+  useFrame((state) => {
+    const t = state.clock.elapsedTime
+    if (trailsRef.current) {
+      trailsRef.current.rotation.y = t * 0.02
+    }
+  })
+
+  return (
+    <group ref={trailsRef}>
+      {trails.map((trail, i) => (
+        <mesh key={i} rotation={[trail.tilt, 0, 0]}>
+          <torusGeometry args={[trail.radius, 0.008, 8, 100]} />
+          <meshBasicMaterial color={COLORS.fiberOuter} transparent opacity={0.15 - i * 0.015} />
+        </mesh>
+      ))}
+    </group>
+  )
+}
+
+// =============================================================================
+// PLASMA TENDRILS
+// =============================================================================
+
+function PlasmaTendrils() {
+  const count = 6
+  const groupRef = useRef<THREE.Group>(null)
+
+  const tendrils = useMemo(() => {
+    return Array.from({ length: count }, (_, i) => {
+      const baseAngle = (i / count) * Math.PI * 2
+      const points: [number, number, number][] = []
+      for (let j = 0; j <= 20; j++) {
+        const t = j / 20
+        const radius = 2 + t * 6
+        const angle = baseAngle + t * 0.5
+        const wobble = Math.sin(t * Math.PI * 3) * 0.5
+        points.push([
+          Math.cos(angle) * radius + wobble,
+          Math.sin(t * Math.PI) * 2 - 1,
+          Math.sin(angle) * radius + wobble
+        ])
+      }
+      return { points, phase: i }
+    })
+  }, [])
+
+  useFrame((state) => {
+    if (groupRef.current) {
+      groupRef.current.rotation.y = state.clock.elapsedTime * 0.1
+    }
+  })
+
+  return (
+    <group ref={groupRef}>
+      {tendrils.map((tendril, i) => (
+        <Line
+          key={i}
+          points={tendril.points}
+          color={COLORS.lightning}
+          lineWidth={1}
+          transparent
+          opacity={0.2}
+        />
+      ))}
+    </group>
+  )
+}
+
+// =============================================================================
+// MATRIX RAIN
+// =============================================================================
+
+function MatrixRain({ performanceMode }: { performanceMode: boolean }) {
+  const count = performanceMode ? 30 : 80
+  const meshRef = useRef<THREE.InstancedMesh>(null)
+
+  const drops = useMemo(() => {
+    return Array.from({ length: count }, () => ({
+      x: (Math.random() - 0.5) * 30,
+      z: (Math.random() - 0.5) * 30 - 15,
+      speed: 2 + Math.random() * 4,
+      offset: Math.random() * 20,
+    }))
+  }, [count])
+
+  const dummy = useMemo(() => new THREE.Object3D(), [])
+
+  useFrame((state) => {
+    const t = state.clock.elapsedTime
+    drops.forEach((drop, i) => {
+      const y = ((drop.offset + t * drop.speed) % 20) - 10
+
+      dummy.position.set(drop.x, y, drop.z)
+      dummy.scale.set(0.02, 0.15, 0.02)
+      dummy.updateMatrix()
+      meshRef.current?.setMatrixAt(i, dummy.matrix)
+    })
+    if (meshRef.current) {
+      meshRef.current.instanceMatrix.needsUpdate = true
+    }
+  })
+
+  return (
+    <instancedMesh ref={meshRef} args={[undefined, undefined, count]}>
+      <boxGeometry args={[1, 1, 1]} />
+      <meshBasicMaterial color={COLORS.accent} transparent opacity={0.3} />
+    </instancedMesh>
+  )
+}
+
+// =============================================================================
+// WAVEFORM RINGS
+// =============================================================================
+
+function WaveformRings({ vixValue = 15 }: { vixValue?: number }) {
+  const ringsRef = useRef<THREE.Group>(null)
+  const ringCount = 5
+
+  useFrame((state) => {
+    if (!ringsRef.current) return
+    const t = state.clock.elapsedTime
+    const speed = 1 + vixValue / 30
+
+    ringsRef.current.children.forEach((ring, i) => {
+      const mesh = ring as THREE.Mesh
+      const phase = (t * speed + i * 0.5) % 3
+      const scale = 2 + phase * 3
+      mesh.scale.setScalar(scale)
+      ;(mesh.material as THREE.MeshBasicMaterial).opacity = 0.15 * (1 - phase / 3)
+    })
+  })
+
+  return (
+    <group ref={ringsRef} rotation={[Math.PI / 2, 0, 0]}>
+      {Array.from({ length: ringCount }).map((_, i) => (
+        <mesh key={i}>
+          <ringGeometry args={[0.95, 1, 64]} />
+          <meshBasicMaterial color={COLORS.accent} transparent opacity={0.15} side={THREE.DoubleSide} />
+        </mesh>
+      ))}
+    </group>
+  )
+}
+
+// =============================================================================
+// CONSTELLATION LINES
+// =============================================================================
+
+function ConstellationLines() {
+  const lines = useMemo(() => {
+    const starPositions: THREE.Vector3[] = []
+    for (let i = 0; i < 20; i++) {
+      starPositions.push(new THREE.Vector3(
+        (Math.random() - 0.5) * 25,
+        (Math.random() - 0.5) * 25,
+        (Math.random() - 0.5) * 25 - 10
+      ))
+    }
+
+    const connections: { points: [number, number, number][], opacity: number }[] = []
+    for (let i = 0; i < starPositions.length; i++) {
+      for (let j = i + 1; j < starPositions.length; j++) {
+        const dist = starPositions[i].distanceTo(starPositions[j])
+        if (dist < 8) {
+          connections.push({
+            points: [
+              [starPositions[i].x, starPositions[i].y, starPositions[i].z],
+              [starPositions[j].x, starPositions[j].y, starPositions[j].z]
+            ],
+            opacity: 0.1 * (1 - dist / 8)
+          })
+        }
+      }
+    }
+    return { stars: starPositions, connections }
+  }, [])
+
+  return (
+    <group>
+      {lines.connections.map((line, i) => (
+        <Line
+          key={i}
+          points={line.points}
+          color={COLORS.fiberOuter}
+          lineWidth={0.5}
+          transparent
+          opacity={line.opacity}
+        />
+      ))}
+      {lines.stars.map((pos, i) => (
+        <Sphere key={`star-${i}`} args={[0.05, 8, 8]} position={pos}>
+          <meshBasicMaterial color={COLORS.particleBright} />
+        </Sphere>
+      ))}
+    </group>
+  )
+}
+
+// =============================================================================
+// FLOATING MARKET STATS
+// =============================================================================
+
+function FloatingMarketStats({
+  spotPrice,
+  gexValue,
+  vixValue
+}: {
+  spotPrice?: number
+  gexValue?: number
+  vixValue?: number
+}) {
+  const groupRef = useRef<THREE.Group>(null)
+
+  useFrame((state) => {
+    if (groupRef.current) {
+      groupRef.current.rotation.y = Math.sin(state.clock.elapsedTime * 0.3) * 0.1
+      groupRef.current.position.y = 4 + Math.sin(state.clock.elapsedTime * 0.5) * 0.2
+    }
+  })
+
+  return (
+    <group ref={groupRef} position={[0, 4, -3]}>
+      <Html center distanceFactor={10}>
+        <div className="flex gap-4 text-xs font-mono select-none">
+          {spotPrice !== undefined && (
+            <div className="bg-black/70 border border-cyan-500/30 rounded px-3 py-1.5 backdrop-blur">
+              <div className="text-gray-400">SPY</div>
+              <div className="text-cyan-400 text-lg font-bold">${spotPrice.toFixed(2)}</div>
+            </div>
+          )}
+          {gexValue !== undefined && (
+            <div className="bg-black/70 border border-cyan-500/30 rounded px-3 py-1.5 backdrop-blur">
+              <div className="text-gray-400">GEX</div>
+              <div className={`text-lg font-bold ${gexValue >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                {gexValue >= 0 ? '+' : ''}{(gexValue * 100).toFixed(1)}%
+              </div>
+            </div>
+          )}
+          {vixValue !== undefined && (
+            <div className="bg-black/70 border border-cyan-500/30 rounded px-3 py-1.5 backdrop-blur">
+              <div className="text-gray-400">VIX</div>
+              <div className={`text-lg font-bold ${vixValue < 20 ? 'text-green-400' : vixValue < 30 ? 'text-yellow-400' : 'text-red-400'}`}>
+                {vixValue.toFixed(1)}
+              </div>
+            </div>
+          )}
+        </div>
+      </Html>
+    </group>
+  )
+}
+
+// =============================================================================
+// P&L METER
+// =============================================================================
+
+function PnLMeter({ pnlValue = 0, pnlPercent = 0 }: { pnlValue?: number, pnlPercent?: number }) {
+  const groupRef = useRef<THREE.Group>(null)
+  const barRef = useRef<THREE.Mesh>(null)
+
+  useFrame((state) => {
+    if (groupRef.current) {
+      groupRef.current.position.y = -3 + Math.sin(state.clock.elapsedTime * 0.4) * 0.1
+    }
+    if (barRef.current) {
+      const targetScale = Math.min(Math.abs(pnlPercent) / 10, 1)
+      barRef.current.scale.x = THREE.MathUtils.lerp(barRef.current.scale.x, targetScale, 0.1)
+    }
+  })
+
+  const isPositive = pnlValue >= 0
+
+  return (
+    <group ref={groupRef} position={[0, -3, 3]}>
+      <Html center distanceFactor={10}>
+        <div className="bg-black/70 border border-cyan-500/30 rounded-lg px-4 py-2 backdrop-blur min-w-[120px]">
+          <div className="text-gray-400 text-xs text-center">P&L</div>
+          <div className={`text-xl font-bold text-center ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
+            {isPositive ? '+' : ''}{pnlPercent.toFixed(2)}%
+          </div>
+          <div className={`text-sm text-center ${isPositive ? 'text-green-300' : 'text-red-300'}`}>
+            {isPositive ? '+' : ''}${Math.abs(pnlValue).toLocaleString()}
+          </div>
+          <div className="mt-1 h-1 bg-gray-700 rounded-full overflow-hidden">
+            <div
+              className={`h-full transition-all ${isPositive ? 'bg-green-500' : 'bg-red-500'}`}
+              style={{ width: `${Math.min(Math.abs(pnlPercent) * 10, 100)}%` }}
+            />
+          </div>
+        </div>
+      </Html>
+    </group>
+  )
+}
+
+// =============================================================================
+// SIGNAL STRENGTH BARS
+// =============================================================================
+
+function SignalStrengthBars({ strength = 0.5 }: { strength?: number }) {
+  const groupRef = useRef<THREE.Group>(null)
+  const bars = 5
+
+  useFrame((state) => {
+    if (groupRef.current) {
+      groupRef.current.rotation.y = state.clock.elapsedTime * 0.2
+    }
+  })
+
+  return (
+    <group ref={groupRef} position={[6, 0, 0]}>
+      {Array.from({ length: bars }).map((_, i) => {
+        const isActive = (i + 1) / bars <= strength
+        const height = 0.3 + i * 0.2
+        return (
+          <mesh key={i} position={[i * 0.25, height / 2, 0]}>
+            <boxGeometry args={[0.15, height, 0.15]} />
+            <meshBasicMaterial
+              color={isActive ? COLORS.accent : '#333'}
+              transparent
+              opacity={isActive ? 0.9 : 0.3}
+            />
+          </mesh>
+        )
+      })}
+      <Html position={[0.5, -0.5, 0]} center>
+        <div className="text-xs text-gray-400 whitespace-nowrap">SIGNAL</div>
+      </Html>
+    </group>
+  )
+}
+
+// =============================================================================
+// MARKET MOOD RING
+// =============================================================================
+
+function MarketMoodRing({ gexValue = 0, vixValue = 15 }: { gexValue?: number, vixValue?: number }) {
+  const ringRef = useRef<THREE.Mesh>(null)
+  const glowRef = useRef<THREE.Mesh>(null)
+
+  // Calculate mood: positive GEX + low VIX = bullish, negative GEX + high VIX = bearish
+  const mood = (gexValue + 0.5) * (1 - Math.min(vixValue / 50, 1))
+  const moodColor = mood > 0.3 ? '#22c55e' : mood < -0.3 ? '#ef4444' : '#fbbf24'
+
+  useFrame((state) => {
+    const t = state.clock.elapsedTime
+    if (ringRef.current) {
+      ringRef.current.rotation.z = t * 0.5
+    }
+    if (glowRef.current) {
+      glowRef.current.scale.setScalar(1 + Math.sin(t * 2) * 0.1)
+    }
+  })
+
+  return (
+    <group position={[-6, 0, 0]}>
+      <mesh ref={glowRef}>
+        <torusGeometry args={[1, 0.3, 16, 32]} />
+        <meshBasicMaterial color={moodColor} transparent opacity={0.2} />
+      </mesh>
+      <mesh ref={ringRef}>
+        <torusGeometry args={[1, 0.1, 16, 32]} />
+        <meshBasicMaterial color={moodColor} transparent opacity={0.8} />
+      </mesh>
+      <Html position={[0, -1.8, 0]} center>
+        <div className="text-xs text-center">
+          <div className="text-gray-400">MOOD</div>
+          <div style={{ color: moodColor }} className="font-bold">
+            {mood > 0.3 ? 'BULLISH' : mood < -0.3 ? 'BEARISH' : 'NEUTRAL'}
+          </div>
+        </div>
+      </Html>
+    </group>
+  )
+}
+
+// =============================================================================
+// HIDDEN MESSAGE (Easter Egg)
+// =============================================================================
+
+function HiddenMessage({ visible }: { visible: boolean }) {
+  const groupRef = useRef<THREE.Group>(null)
+
+  useFrame((state) => {
+    if (groupRef.current && visible) {
+      groupRef.current.rotation.y = state.clock.elapsedTime
+      groupRef.current.position.y = Math.sin(state.clock.elapsedTime) * 0.5
+    }
+  })
+
+  if (!visible) return null
+
+  return (
+    <group ref={groupRef} position={[0, 0, 0]}>
+      <Html center>
+        <div className="text-2xl animate-pulse select-none">
+          🚀 ALPHA MODE ACTIVATED 🚀
+        </div>
+      </Html>
+    </group>
+  )
+}
+
+// =============================================================================
 // BREATHING CORE - GEX Reactive
 // =============================================================================
 
-function BreathingCore({ gexValue = 0, vixValue = 15 }: { gexValue?: number, vixValue?: number }) {
+function BreathingCore({ gexValue = 0, vixValue = 15, paused = false }: { gexValue?: number, vixValue?: number, paused?: boolean }) {
   const groupRef = useRef<THREE.Group>(null)
   const rimRef = useRef<THREE.Mesh>(null)
   const innerRef = useRef<THREE.Mesh>(null)
 
-  // GEX affects size (more positive = larger)
   const gexScale = 1 + gexValue * 0.3
-
-  // VIX affects pulse speed (higher VIX = faster heartbeat)
   const pulseSpeed = 0.5 + (vixValue / 30) * 1.5
 
   useFrame((state) => {
+    if (paused) return
     const t = state.clock.elapsedTime
     const breathe = gexScale * (1 + Math.sin(t * pulseSpeed) * 0.1)
 
@@ -153,23 +972,19 @@ function BreathingCore({ gexValue = 0, vixValue = 15 }: { gexValue?: number, vix
     }
   })
 
-  // Color shifts based on GEX (negative = more red tint, positive = more green tint)
   const coreColor = gexValue > 0 ? '#0c2919' : gexValue < 0 ? '#290c19' : COLORS.coreCenter
   const rimColor = gexValue > 0 ? '#22eeb8' : gexValue < 0 ? '#ee2268' : COLORS.coreRim
 
   return (
     <group ref={groupRef}>
-      {/* Outer rim glow */}
       <Sphere ref={rimRef} args={[1.8, 64, 64]}>
         <meshBasicMaterial color={rimColor} transparent opacity={0.2} />
       </Sphere>
 
-      {/* Secondary glow */}
       <Sphere args={[1.5, 48, 48]}>
         <meshBasicMaterial color="#38bdf8" transparent opacity={0.1} />
       </Sphere>
 
-      {/* Main core */}
       <Sphere ref={innerRef} args={[1, 64, 64]}>
         <MeshDistortMaterial
           color={coreColor}
@@ -178,22 +993,19 @@ function BreathingCore({ gexValue = 0, vixValue = 15 }: { gexValue?: number, vix
           roughness={0.1}
           metalness={0.9}
           distort={0.2 + (vixValue / 100) * 0.2}
-          speed={2 + vixValue / 20}
+          speed={paused ? 0 : 2 + vixValue / 20}
         />
       </Sphere>
 
-      {/* Inner bright core */}
       <Sphere args={[0.35, 32, 32]}>
         <meshBasicMaterial color={COLORS.particleBright} transparent opacity={0.95} />
       </Sphere>
 
-      {/* Rim ring */}
       <mesh rotation={[Math.PI / 2, 0, 0]}>
         <torusGeometry args={[1.3, 0.02, 16, 100]} />
         <meshBasicMaterial color={rimColor} transparent opacity={0.7} />
       </mesh>
 
-      {/* Core label */}
       <Html position={[0, -2.2, 0]} center distanceFactor={8}>
         <div className="text-cyan-300 text-sm font-bold whitespace-nowrap bg-black/60 px-3 py-1 rounded-full select-none border border-cyan-500/30">
           GEX CORE
@@ -204,10 +1016,10 @@ function BreathingCore({ gexValue = 0, vixValue = 15 }: { gexValue?: number, vix
 }
 
 // =============================================================================
-// CORE VORTEX - Swirling particles around core
+// CORE VORTEX
 // =============================================================================
 
-function CoreVortex() {
+function CoreVortex({ paused = false }: { paused?: boolean }) {
   const count = 80
   const meshRef = useRef<THREE.InstancedMesh>(null)
 
@@ -223,6 +1035,7 @@ function CoreVortex() {
   const dummy = useMemo(() => new THREE.Object3D(), [])
 
   useFrame((state) => {
+    if (paused) return
     const t = state.clock.elapsedTime
     particles.forEach((p, i) => {
       const angle = p.phase + t * p.speed
@@ -259,7 +1072,9 @@ function RadialFiber({
   length,
   speed,
   particleCount = 3,
-  mousePos
+  mousePos,
+  gravityWell,
+  paused = false
 }: {
   phi: number
   theta: number
@@ -268,6 +1083,8 @@ function RadialFiber({
   speed: number
   particleCount?: number
   mousePos: React.MutableRefObject<THREE.Vector3>
+  gravityWell: THREE.Vector3 | null
+  paused?: boolean
 }) {
   const groupRef = useRef<THREE.Group>(null)
 
@@ -298,9 +1115,9 @@ function RadialFiber({
   }, [endPoint, theta, phi])
 
   useFrame((state) => {
+    if (paused) return
     const t = state.clock.elapsedTime
     if (groupRef.current) {
-      // Base sway
       let swayX = Math.sin(t * speed + phi) * 0.02
       let swayY = Math.cos(t * speed * 0.7 + theta) * 0.02
 
@@ -312,6 +1129,17 @@ function RadialFiber({
         const dir = fiberEnd.clone().sub(mousePos.current).normalize()
         swayX += dir.x * repulsion
         swayY += dir.y * repulsion
+      }
+
+      // Gravity well attraction
+      if (gravityWell) {
+        const wellDist = fiberEnd.distanceTo(gravityWell)
+        if (wellDist < 8) {
+          const attraction = (8 - wellDist) / 8 * 0.15
+          const dir = gravityWell.clone().sub(fiberEnd).normalize()
+          swayX += dir.x * attraction
+          swayY += dir.y * attraction
+        }
       }
 
       groupRef.current.rotation.x = swayX
@@ -338,6 +1166,7 @@ function RadialFiber({
           offset={i / particleCount}
           speed={speed}
           phi={phi}
+          paused={paused}
         />
       ))}
     </group>
@@ -352,17 +1181,20 @@ function FiberParticle({
   curve,
   offset,
   speed,
-  phi
+  phi,
+  paused = false
 }: {
   curve: THREE.QuadraticBezierCurve3
   offset: number
   speed: number
   phi: number
+  paused?: boolean
 }) {
   const meshRef = useRef<THREE.Mesh>(null)
   const glowRef = useRef<THREE.Mesh>(null)
 
   useFrame((state) => {
+    if (paused) return
     const t = state.clock.elapsedTime
     const progress = ((t * speed * 0.3 + offset + phi) % 1)
     const point = curve.getPoint(progress)
@@ -396,10 +1228,20 @@ function FiberParticle({
 // RADIAL FIBER BURST
 // =============================================================================
 
-function RadialFiberBurst({ mousePos }: { mousePos: React.MutableRefObject<THREE.Vector3> }) {
+function RadialFiberBurst({
+  mousePos,
+  gravityWell,
+  performanceMode,
+  paused = false
+}: {
+  mousePos: React.MutableRefObject<THREE.Vector3>
+  gravityWell: THREE.Vector3 | null
+  performanceMode: boolean
+  paused?: boolean
+}) {
   const fibers = useMemo(() => {
     const result = []
-    const fiberCount = 60
+    const fiberCount = performanceMode ? 30 : 60
     const goldenAngle = Math.PI * (3 - Math.sqrt(5))
 
     for (let i = 0; i < fiberCount; i++) {
@@ -408,12 +1250,12 @@ function RadialFiberBurst({ mousePos }: { mousePos: React.MutableRefObject<THREE
       const phi = Math.acos(y)
       const length = 4 + Math.random() * 4
       const speed = 0.3 + Math.random() * 0.4
-      const particleCount = 2 + Math.floor(Math.random() * 3)
+      const particleCount = performanceMode ? 1 : 2 + Math.floor(Math.random() * 3)
 
       result.push({ phi, theta, length, speed, particleCount })
     }
     return result
-  }, [])
+  }, [performanceMode])
 
   return (
     <group>
@@ -427,6 +1269,8 @@ function RadialFiberBurst({ mousePos }: { mousePos: React.MutableRefObject<THREE
           speed={fiber.speed}
           particleCount={fiber.particleCount}
           mousePos={mousePos}
+          gravityWell={gravityWell}
+          paused={paused}
         />
       ))}
     </group>
@@ -434,13 +1278,23 @@ function RadialFiberBurst({ mousePos }: { mousePos: React.MutableRefObject<THREE
 }
 
 // =============================================================================
-// INNER DENSE SHELL - Extra fibers near core
+// INNER DENSE SHELL
 // =============================================================================
 
-function InnerDenseShell({ mousePos }: { mousePos: React.MutableRefObject<THREE.Vector3> }) {
+function InnerDenseShell({
+  mousePos,
+  gravityWell,
+  performanceMode,
+  paused = false
+}: {
+  mousePos: React.MutableRefObject<THREE.Vector3>
+  gravityWell: THREE.Vector3 | null
+  performanceMode: boolean
+  paused?: boolean
+}) {
   const fibers = useMemo(() => {
     const result = []
-    const fiberCount = 30
+    const fiberCount = performanceMode ? 15 : 30
     const goldenAngle = Math.PI * (3 - Math.sqrt(5))
 
     for (let i = 0; i < fiberCount; i++) {
@@ -453,7 +1307,7 @@ function InnerDenseShell({ mousePos }: { mousePos: React.MutableRefObject<THREE.
       result.push({ phi, theta, length, speed })
     }
     return result
-  }, [])
+  }, [performanceMode])
 
   return (
     <group>
@@ -467,6 +1321,8 @@ function InnerDenseShell({ mousePos }: { mousePos: React.MutableRefObject<THREE.
           speed={fiber.speed}
           particleCount={1}
           mousePos={mousePos}
+          gravityWell={gravityWell}
+          paused={paused}
         />
       ))}
     </group>
@@ -474,35 +1330,32 @@ function InnerDenseShell({ mousePos }: { mousePos: React.MutableRefObject<THREE.
 }
 
 // =============================================================================
-// MULTIPLE PULSE WAVES - VIX Reactive
+// MULTIPLE PULSE WAVES
 // =============================================================================
 
-function MultiplePulseWaves({ vixValue = 15 }: { vixValue?: number }) {
+function MultiplePulseWaves({ vixValue = 15, paused = false }: { vixValue?: number, paused?: boolean }) {
   const ring1Ref = useRef<THREE.Mesh>(null)
   const ring2Ref = useRef<THREE.Mesh>(null)
   const ring3Ref = useRef<THREE.Mesh>(null)
 
-  // VIX affects pulse frequency
   const pulseInterval = Math.max(1.5, 4 - vixValue / 15)
 
   useFrame((state) => {
+    if (paused) return
     const t = state.clock.elapsedTime
 
-    // Ring 1
     const pulse1 = (t % pulseInterval) / pulseInterval
     if (ring1Ref.current) {
       ring1Ref.current.scale.setScalar(1 + pulse1 * 10)
       ;(ring1Ref.current.material as THREE.MeshBasicMaterial).opacity = 0.5 * (1 - pulse1)
     }
 
-    // Ring 2 (offset)
     const pulse2 = ((t + pulseInterval / 3) % pulseInterval) / pulseInterval
     if (ring2Ref.current) {
       ring2Ref.current.scale.setScalar(1 + pulse2 * 10)
       ;(ring2Ref.current.material as THREE.MeshBasicMaterial).opacity = 0.4 * (1 - pulse2)
     }
 
-    // Ring 3 (offset)
     const pulse3 = ((t + pulseInterval * 2 / 3) % pulseInterval) / pulseInterval
     if (ring3Ref.current) {
       ring3Ref.current.scale.setScalar(1 + pulse3 * 10)
@@ -572,12 +1425,12 @@ function ClickShockwave({ shockwaveTime }: { shockwaveTime: number }) {
 // LIGHTNING ARCS
 // =============================================================================
 
-function LightningArcs() {
+function LightningArcs({ paused = false }: { paused?: boolean }) {
   const [arcs, setArcs] = useState<Array<{ start: THREE.Vector3, end: THREE.Vector3, id: number }>>([])
   const nextId = useRef(0)
 
-  useFrame((state) => {
-    // Randomly spawn lightning
+  useFrame(() => {
+    if (paused) return
     if (Math.random() < 0.01) {
       const node1 = BOT_NODES[Math.floor(Math.random() * BOT_NODES.length)]
       const node2 = BOT_NODES[Math.floor(Math.random() * BOT_NODES.length)]
@@ -601,14 +1454,13 @@ function LightningArcs() {
   return (
     <group>
       {arcs.map(arc => (
-        <LightningArc key={arc.id} start={arc.start} end={arc.end} />
+        <LightningArc key={arc.id} start={arc.start} end={arc.end} paused={paused} />
       ))}
     </group>
   )
 }
 
-function LightningArc({ start, end }: { start: THREE.Vector3, end: THREE.Vector3 }) {
-  const lineRef = useRef<THREE.Line>(null)
+function LightningArc({ start, end, paused = false }: { start: THREE.Vector3, end: THREE.Vector3, paused?: boolean }) {
   const [opacity, setOpacity] = useState(1)
   const birthTime = useRef(0)
 
@@ -618,7 +1470,6 @@ function LightningArc({ start, end }: { start: THREE.Vector3, end: THREE.Vector3
     for (let i = 0; i <= segments; i++) {
       const t = i / segments
       const p = start.clone().lerp(end, t)
-      // Add jagged offset
       if (i > 0 && i < segments) {
         p.x += (Math.random() - 0.5) * 0.5
         p.y += (Math.random() - 0.5) * 0.5
@@ -630,6 +1481,7 @@ function LightningArc({ start, end }: { start: THREE.Vector3, end: THREE.Vector3
   }, [start, end])
 
   useFrame((state) => {
+    if (paused) return
     if (birthTime.current === 0) birthTime.current = state.clock.elapsedTime
     const elapsed = state.clock.elapsedTime - birthTime.current
     setOpacity(Math.max(0, 1 - elapsed * 3))
@@ -652,11 +1504,12 @@ function LightningArc({ start, end }: { start: THREE.Vector3, end: THREE.Vector3
 // LENS FLARE
 // =============================================================================
 
-function LensFlare() {
+function LensFlare({ paused = false }: { paused?: boolean }) {
   const flare1Ref = useRef<THREE.Mesh>(null)
   const flare2Ref = useRef<THREE.Mesh>(null)
 
   useFrame((state) => {
+    if (paused) return
     const t = state.clock.elapsedTime
     if (flare1Ref.current) {
       flare1Ref.current.scale.setScalar(2 + Math.sin(t * 2) * 0.3)
@@ -684,12 +1537,12 @@ function LensFlare() {
 // HOLOGRAPHIC SCANLINES
 // =============================================================================
 
-function HolographicScanlines() {
-  const groupRef = useRef<THREE.Group>(null)
+function HolographicScanlines({ paused = false }: { paused?: boolean }) {
   const line1Ref = useRef<THREE.Mesh>(null)
   const line2Ref = useRef<THREE.Mesh>(null)
 
   useFrame((state) => {
+    if (paused) return
     const t = state.clock.elapsedTime
     if (line1Ref.current) {
       line1Ref.current.position.y = ((t * 2) % 20) - 10
@@ -700,12 +1553,12 @@ function HolographicScanlines() {
   })
 
   return (
-    <group ref={groupRef}>
-      <mesh ref={line1Ref} rotation={[0, 0, 0]}>
+    <group>
+      <mesh ref={line1Ref}>
         <planeGeometry args={[30, 0.02]} />
         <meshBasicMaterial color={COLORS.coreRim} transparent opacity={0.1} side={THREE.DoubleSide} />
       </mesh>
-      <mesh ref={line2Ref} rotation={[0, 0, 0]}>
+      <mesh ref={line2Ref}>
         <planeGeometry args={[30, 0.015]} />
         <meshBasicMaterial color={COLORS.fiberInner} transparent opacity={0.08} side={THREE.DoubleSide} />
       </mesh>
@@ -717,12 +1570,12 @@ function HolographicScanlines() {
 // GLITCH EFFECT
 // =============================================================================
 
-function GlitchEffect() {
+function GlitchEffect({ paused = false }: { paused?: boolean }) {
   const [glitching, setGlitching] = useState(false)
   const meshRef = useRef<THREE.Mesh>(null)
 
-  useFrame((state) => {
-    // Random glitch trigger
+  useFrame(() => {
+    if (paused) return
     if (!glitching && Math.random() < 0.002) {
       setGlitching(true)
       setTimeout(() => setGlitching(false), 100 + Math.random() * 150)
@@ -750,8 +1603,8 @@ function GlitchEffect() {
 // OUTER PARTICLE RING
 // =============================================================================
 
-function OuterParticleRing() {
-  const count = 150
+function OuterParticleRing({ performanceMode, paused = false }: { performanceMode: boolean, paused?: boolean }) {
+  const count = performanceMode ? 75 : 150
   const meshRef = useRef<THREE.InstancedMesh>(null)
   const groupRef = useRef<THREE.Group>(null)
 
@@ -762,11 +1615,12 @@ function OuterParticleRing() {
       yOffset: (Math.random() - 0.5) * 0.5,
       speed: 0.05 + Math.random() * 0.03,
     }))
-  }, [])
+  }, [count])
 
   const dummy = useMemo(() => new THREE.Object3D(), [])
 
   useFrame((state) => {
+    if (paused) return
     const t = state.clock.elapsedTime
 
     if (groupRef.current) {
@@ -823,7 +1677,7 @@ function ConnectingArcs() {
         Math.sin(node2.angle) * radius
       )
       const mid = start.clone().add(end).multiplyScalar(0.5)
-      mid.y = 1.5 // Arc upward
+      mid.y = 1.5
 
       const curve = new THREE.QuadraticBezierCurve3(start, mid, end)
       const points = curve.getPoints(30).map(p => [p.x, p.y, p.z] as [number, number, number])
@@ -857,13 +1711,17 @@ function BotNodeWithFlare({
   name,
   angle,
   status = 'idle',
-  onClick
+  onClick,
+  onDoubleClick,
+  paused = false
 }: {
   id: string
   name: string
   angle: number
   status?: string
   onClick?: () => void
+  onDoubleClick?: () => void
+  paused?: boolean
 }) {
   const groupRef = useRef<THREE.Group>(null)
   const flareRef = useRef<THREE.Mesh>(null)
@@ -877,12 +1735,12 @@ function BotNodeWithFlare({
   const isActive = status === 'trading' || status === 'active'
 
   useFrame((state) => {
+    if (paused) return
     const t = state.clock.elapsedTime
     if (groupRef.current) {
       groupRef.current.position.y = Math.sin(t * 1.2 + angle) * 0.2
     }
 
-    // Activity flare for active/trading bots
     if (flareRef.current && isActive) {
       const pulse = Math.sin(t * 4) * 0.5 + 0.5
       flareRef.current.scale.setScalar(0.5 + pulse * 0.3)
@@ -892,29 +1750,26 @@ function BotNodeWithFlare({
 
   return (
     <group ref={groupRef} position={[x, 0, z]}>
-      {/* Activity flare */}
       {isActive && (
         <Sphere ref={flareRef} args={[1, 16, 16]}>
           <meshBasicMaterial color={color} transparent opacity={0.4} />
         </Sphere>
       )}
 
-      {/* Outer glow */}
       <Sphere args={[0.35, 16, 16]}>
         <meshBasicMaterial color={color} transparent opacity={hovered ? 0.5 : 0.25} />
       </Sphere>
 
-      {/* Core */}
       <Sphere
         args={[0.2, 16, 16]}
         onClick={onClick}
+        onDoubleClick={onDoubleClick}
         onPointerOver={() => setHovered(true)}
         onPointerOut={() => setHovered(false)}
       >
         <meshBasicMaterial color={hovered ? COLORS.particleBright : color} />
       </Sphere>
 
-      {/* Trading ring */}
       {status === 'trading' && (
         <mesh rotation={[Math.PI / 2, 0, 0]}>
           <torusGeometry args={[0.4, 0.02, 16, 32]} />
@@ -922,10 +1777,9 @@ function BotNodeWithFlare({
         </mesh>
       )}
 
-      {/* Label */}
       <Html position={[0, 0.7, 0]} center distanceFactor={12}>
         <div
-          className="text-xs font-bold whitespace-nowrap select-none px-2 py-0.5 rounded bg-black/50"
+          className="text-xs font-bold whitespace-nowrap select-none px-2 py-0.5 rounded bg-black/50 cursor-pointer"
           style={{ color }}
         >
           {name}
@@ -939,8 +1793,8 @@ function BotNodeWithFlare({
 // SPARKLE FIELD
 // =============================================================================
 
-function SparkleField() {
-  const count = 120
+function SparkleField({ performanceMode, paused = false }: { performanceMode: boolean, paused?: boolean }) {
+  const count = performanceMode ? 60 : 120
   const meshRef = useRef<THREE.InstancedMesh>(null)
 
   const sparkles = useMemo(() => {
@@ -953,11 +1807,12 @@ function SparkleField() {
       phase: Math.random() * Math.PI * 2,
       speed: 2 + Math.random() * 4,
     }))
-  }, [])
+  }, [count])
 
   const dummy = useMemo(() => new THREE.Object3D(), [])
 
   useFrame((state) => {
+    if (paused) return
     const t = state.clock.elapsedTime
     sparkles.forEach((s, i) => {
       dummy.position.copy(s.position)
@@ -983,7 +1838,7 @@ function SparkleField() {
 // ENERGY ACCUMULATION
 // =============================================================================
 
-function EnergyAccumulation() {
+function EnergyAccumulation({ paused = false }: { paused?: boolean }) {
   const count = 40
   const meshRef = useRef<THREE.InstancedMesh>(null)
 
@@ -1002,6 +1857,7 @@ function EnergyAccumulation() {
   const dummy = useMemo(() => new THREE.Object3D(), [])
 
   useFrame((state) => {
+    if (paused) return
     const t = state.clock.elapsedTime
     const cycle = (t % 5) / 5
 
@@ -1040,12 +1896,13 @@ function EnergyAccumulation() {
 // NEBULA BACKDROP
 // =============================================================================
 
-function NebulaBackdrop() {
+function NebulaBackdrop({ paused = false }: { paused?: boolean }) {
   const mesh1Ref = useRef<THREE.Mesh>(null)
   const mesh2Ref = useRef<THREE.Mesh>(null)
   const mesh3Ref = useRef<THREE.Mesh>(null)
 
   useFrame((state) => {
+    if (paused) return
     const t = state.clock.elapsedTime
     if (mesh1Ref.current) {
       mesh1Ref.current.rotation.z = t * 0.01
@@ -1079,8 +1936,8 @@ function NebulaBackdrop() {
 // AMBIENT PARTICLES
 // =============================================================================
 
-function AmbientParticles() {
-  const count = 350
+function AmbientParticles({ performanceMode, paused = false }: { performanceMode: boolean, paused?: boolean }) {
+  const count = performanceMode ? 150 : 350
   const meshRef = useRef<THREE.InstancedMesh>(null)
 
   const particles = useMemo(() => {
@@ -1093,11 +1950,12 @@ function AmbientParticles() {
       speed: 0.1 + Math.random() * 0.3,
       phase: Math.random() * Math.PI * 2,
     }))
-  }, [])
+  }, [count])
 
   const dummy = useMemo(() => new THREE.Object3D(), [])
 
   useFrame((state) => {
+    if (paused) return
     const t = state.clock.elapsedTime
     particles.forEach((p, i) => {
       const x = p.position.x + Math.sin(t * p.speed + p.phase) * 0.015
@@ -1131,14 +1989,72 @@ interface SceneProps {
   onNodeClick?: (id: string) => void
   gexValue?: number
   vixValue?: number
+  spotPrice?: number
+  pnlValue?: number
+  pnlPercent?: number
+  signalStrength?: number
   shockwaveTime: number
+  performanceMode: boolean
+  paused: boolean
+  setPaused: (p: boolean) => void
+  gravityWell: THREE.Vector3 | null
+  tradeExplosion: { position: THREE.Vector3, type: 'buy' | 'sell' } | null
+  setTradeExplosion: (e: { position: THREE.Vector3, type: 'buy' | 'sell' } | null) => void
+  celebrationActive: boolean
+  setCelebrationActive: (a: boolean) => void
+  konamiActive: boolean
+  zoomTarget: THREE.Vector3 | null
+  setZoomTarget: (t: THREE.Vector3 | null) => void
 }
 
-function Scene({ botStatus, onNodeClick, gexValue = 0, vixValue = 15, shockwaveTime }: SceneProps) {
-  const { mouse2D, mouse3D } = useMousePosition()
+function Scene({
+  botStatus,
+  onNodeClick,
+  gexValue = 0,
+  vixValue = 15,
+  spotPrice,
+  pnlValue = 0,
+  pnlPercent = 0,
+  signalStrength = 0.5,
+  shockwaveTime,
+  performanceMode,
+  paused,
+  setPaused,
+  gravityWell,
+  tradeExplosion,
+  setTradeExplosion,
+  celebrationActive,
+  setCelebrationActive,
+  konamiActive,
+  zoomTarget,
+  setZoomTarget
+}: SceneProps) {
+  const { mouse3D } = useMousePosition()
+  const controlsRef = useRef<any>(null)
+
+  const handleNodeDoubleClick = useCallback((nodeId: string) => {
+    const node = BOT_NODES.find(n => n.id === nodeId)
+    if (node) {
+      const radius = 5
+      const target = new THREE.Vector3(
+        Math.cos(node.angle) * radius,
+        0,
+        Math.sin(node.angle) * radius
+      )
+      setZoomTarget(target)
+    }
+  }, [setZoomTarget])
 
   return (
     <>
+      {/* Camera Controller */}
+      <CameraController
+        controlsRef={controlsRef}
+        zoomTarget={zoomTarget}
+        paused={paused}
+        setPaused={setPaused}
+      />
+
       {/* Lighting */}
       <ambientLight intensity={0.1} />
       <pointLight position={[0, 0, 0]} intensity={5} color={COLORS.coreRim} />
@@ -1146,55 +2062,70 @@ function Scene({ botStatus, onNodeClick, gexValue = 0, vixValue = 15, shockwaveT
       <pointLight position={[-10, -10, -10]} intensity={0.6} color={COLORS.fiberInner} />
 
       {/* Background */}
-      <Stars radius={120} depth={120} count={10000} factor={4} saturation={0} fade speed={0.15} />
-      <NebulaBackdrop />
+      <Stars radius={120} depth={120} count={performanceMode ? 5000 : 10000} factor={4} saturation={0} fade speed={paused ? 0 : 0.15} />
+      <NebulaBackdrop paused={paused} />
+      <ConstellationLines />
+      <MatrixRain performanceMode={performanceMode} />
 
       {/* Lens flare */}
-      <LensFlare />
+      <LensFlare paused={paused} />
 
-      {/* Core - GEX reactive */}
-      <BreathingCore gexValue={gexValue} vixValue={vixValue} />
+      {/* Core */}
+      <BreathingCore gexValue={gexValue} vixValue={vixValue} paused={paused} />
+      <CoreVortex paused={paused} />
 
-      {/* Core vortex */}
-      <CoreVortex />
-
-      {/* Pulse waves - VIX reactive */}
-      <MultiplePulseWaves vixValue={vixValue} />
-
-      {/* Click shockwave */}
+      {/* Pulse effects */}
+      <MultiplePulseWaves vixValue={vixValue} paused={paused} />
+      <WaveformRings vixValue={vixValue} />
       <ClickShockwave shockwaveTime={shockwaveTime} />
 
-      {/* Radial fiber burst with mouse repulsion */}
-      <RadialFiberBurst mousePos={mouse3D} />
+      {/* Fibers */}
+      <RadialFiberBurst mousePos={mouse3D} gravityWell={gravityWell} performanceMode={performanceMode} paused={paused} />
+      <InnerDenseShell mousePos={mouse3D} gravityWell={gravityWell} performanceMode={performanceMode} paused={paused} />
+      <PlasmaTendrils />
+      <OrbitTrails />
 
-      {/* Inner dense shell */}
-      <InnerDenseShell mousePos={mouse3D} />
-
-      {/* Connecting arcs between bots */}
+      {/* Bot network */}
       <ConnectingArcs />
+      <LightningArcs paused={paused} />
 
-      {/* Lightning arcs */}
-      <LightningArcs />
+      {/* Particles */}
+      <EnergyAccumulation paused={paused} />
+      <SparkleField performanceMode={performanceMode} paused={paused} />
+      <OuterParticleRing performanceMode={performanceMode} paused={paused} />
+      <AmbientParticles performanceMode={performanceMode} paused={paused} />
 
-      {/* Energy accumulation */}
-      <EnergyAccumulation />
+      {/* Effects */}
+      <HolographicScanlines paused={paused} />
+      <GlitchEffect paused={paused} />
+      <AlertPulse active={true} botStatus={botStatus} />
 
-      {/* Sparkle field */}
-      <SparkleField />
+      {/* Gravity well */}
+      {gravityWell && <GravityWell position={gravityWell} active={true} />}
 
-      {/* Outer particle ring */}
-      <OuterParticleRing />
+      {/* Trade explosion */}
+      {tradeExplosion && (
+        <TradeExplosion
+          position={tradeExplosion.position}
+          type={tradeExplosion.type}
+          active={true}
+          onComplete={() => setTradeExplosion(null)}
+        />
+      )}
 
-      {/* Ambient particles */}
-      <AmbientParticles />
+      {/* Celebration */}
+      <SuccessCelebration active={celebrationActive} onComplete={() => setCelebrationActive(false)} />
 
-      {/* Holographic scanlines */}
-      <HolographicScanlines />
+      {/* Easter egg */}
+      <HiddenMessage visible={konamiActive} />
 
-      {/* Glitch effect */}
-      <GlitchEffect />
+      {/* Data displays */}
+      <FloatingMarketStats spotPrice={spotPrice} gexValue={gexValue} vixValue={vixValue} />
+      <PnLMeter pnlValue={pnlValue} pnlPercent={pnlPercent} />
+      <SignalStrengthBars strength={signalStrength} />
+      <MarketMoodRing gexValue={gexValue} vixValue={vixValue} />
 
-      {/* Bot nodes with activity flares */}
+      {/* Bot nodes */}
       {BOT_NODES.map((node) => (
         <BotNodeWithFlare
           key={node.id}
@@ -1203,16 +2134,19 @@ function Scene({ botStatus, onNodeClick, gexValue = 0, vixValue = 15, shockwaveT
           angle={node.angle}
           status={botStatus[node.id as keyof BotStatus] || 'idle'}
           onClick={() => onNodeClick?.(node.id)}
+          onDoubleClick={() => handleNodeDoubleClick(node.id)}
+          paused={paused}
         />
       ))}
 
       {/* Camera controls */}
       <OrbitControls
+        ref={controlsRef}
         enablePan={false}
         enableZoom={true}
         minDistance={4}
         maxDistance={30}
-        autoRotate
+        autoRotate={!paused}
         autoRotateSpeed={0.25}
         maxPolarAngle={Math.PI * 0.9}
         minPolarAngle={Math.PI * 0.1}
@@ -1262,6 +2196,137 @@ function LoadingFallback() {
 }
 
 // =============================================================================
+// CONTROL PANEL OVERLAY
+// =============================================================================
+
+function ControlPanel({
+  theme,
+  setTheme,
+  performanceMode,
+  setPerformanceMode,
+  paused,
+  setPaused,
+  onScreenshot,
+  onFullscreen,
+  isFullscreen
+}: {
+  theme: ColorTheme
+  setTheme: (t: ColorTheme) => void
+  performanceMode: boolean
+  setPerformanceMode: (p: boolean) => void
+  paused: boolean
+  setPaused: (p: boolean) => void
+  onScreenshot: () => void
+  onFullscreen: () => void
+  isFullscreen: boolean
+}) {
+  const [expanded, setExpanded] = useState(false)
+
+  return (
+    <div className="absolute top-4 right-4 z-10">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-10 h-10 bg-black/70 border border-cyan-500/30 rounded-lg flex items-center justify-center text-cyan-400 hover:bg-cyan-500/20 transition-colors backdrop-blur"
+      >
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+      </button>
+
+      {expanded && (
+        <div className="mt-2 bg-black/80 border border-cyan-500/30 rounded-lg p-4 backdrop-blur min-w-[200px]">
+          <h3 className="text-cyan-400 font-bold mb-3 text-sm">NEXUS Controls</h3>
+
+          {/* Theme selector */}
+          <div className="mb-3">
+            <div className="text-xs text-gray-400 mb-1">Theme</div>
+            <div className="flex gap-1">
+              {(['cyan', 'purple', 'green', 'red'] as ColorTheme[]).map(t => (
+                <button
+                  key={t}
+                  onClick={() => setTheme(t)}
+                  className={`w-6 h-6 rounded-full border-2 transition-all ${theme === t ? 'border-white scale-110' : 'border-transparent'}`}
+                  style={{ backgroundColor: COLOR_THEMES[t].accent }}
+                />
+              ))}
+            </div>
+          </div>
+
+          {/* Performance mode */}
+          <div className="mb-3">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={performanceMode}
+                onChange={(e) => setPerformanceMode(e.target.checked)}
+                className="w-4 h-4 rounded border-cyan-500/30 bg-black/50 text-cyan-500"
+              />
+              <span className="text-xs text-gray-300">Performance Mode</span>
+            </label>
+          </div>
+
+          {/* Pause */}
+          <div className="mb-3">
+            <button
+              onClick={() => setPaused(!paused)}
+              className={`w-full py-1.5 rounded text-xs font-medium transition-colors ${paused ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30' : 'bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30'}`}
+            >
+              {paused ? '▶ Resume' : '⏸ Pause'}
+            </button>
+          </div>
+
+          {/* Screenshot */}
+          <div className="mb-3">
+            <button
+              onClick={onScreenshot}
+              className="w-full py-1.5 rounded text-xs font-medium bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30 transition-colors"
+            >
+              📷 Screenshot
+            </button>
+          </div>
+
+          {/* Fullscreen */}
+          <div>
+            <button
+              onClick={onFullscreen}
+              className="w-full py-1.5 rounded text-xs font-medium bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30 transition-colors"
+            >
+              {isFullscreen ? '⊠ Exit Fullscreen' : '⛶ Fullscreen'}
+            </button>
+          </div>
+
+          {/* Keyboard shortcuts hint */}
+          <div className="mt-3 pt-3 border-t border-cyan-500/20">
+            <div className="text-xs text-gray-500">
+              <div>← → ↑ ↓ Rotate</div>
+              <div>Space: Pause</div>
+              <div>R: Reset view</div>
+              <div>Double-click: Zoom to node</div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// =============================================================================
+// PAUSE INDICATOR
+// =============================================================================
+
+function PauseIndicator({ paused }: { paused: boolean }) {
+  if (!paused) return null
+
+  return (
+    <div className="absolute top-4 left-4 z-10 bg-yellow-500/20 border border-yellow-500/50 rounded-lg px-3 py-1.5 flex items-center gap-2">
+      <span className="text-yellow-400 text-lg">⏸</span>
+      <span className="text-yellow-400 text-sm font-medium">PAUSED</span>
+    </div>
+  )
+}
+
+// =============================================================================
 // MAIN COMPONENT
 // =============================================================================
 
@@ -1271,12 +2336,42 @@ export default function Nexus3D({
   className = '',
   gexValue = 0,
   vixValue = 15,
-  spotPrice
+  spotPrice,
+  pnlValue = 0,
+  pnlPercent = 0,
+  signalStrength = 0.5,
+  onTrade
 }: Nexus3DProps) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
   const [mounted, setMounted] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [shockwaveTime, setShockwaveTime] = useState(0)
+  const [theme, setTheme] = useState<ColorTheme>('cyan')
+  const [performanceMode, setPerformanceMode] = useState(false)
+  const [paused, setPaused] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [gravityWell, setGravityWell] = useState<THREE.Vector3 | null>(null)
+  const [tradeExplosion, setTradeExplosion] = useState<{ position: THREE.Vector3, type: 'buy' | 'sell' } | null>(null)
+  const [celebrationActive, setCelebrationActive] = useState(false)
+  const [konamiActive, setKonamiActive] = useState(false)
+  const [shakeActive, setShakeActive] = useState(false)
+  const [zoomTarget, setZoomTarget] = useState<THREE.Vector3 | null>(null)
+  const holdTimer = useRef<NodeJS.Timeout | null>(null)
 
+  // Update global COLORS when theme changes
+  useEffect(() => {
+    COLORS = COLOR_THEMES[theme]
+  }, [theme])
+
+  // Konami code easter egg
+  useKonamiCode(() => {
+    setKonamiActive(true)
+    setCelebrationActive(true)
+    setTimeout(() => setKonamiActive(false), 5000)
+  })
+
+  // Check WebGL support
   useEffect(() => {
     try {
       const canvas = document.createElement('canvas')
@@ -1293,10 +2388,65 @@ export default function Nexus3D({
     setMounted(true)
   }, [])
 
+  // Fullscreen change listener
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement)
+    }
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange)
+  }, [])
+
   // Click handler for shockwave
   const handleClick = useCallback(() => {
     setShockwaveTime(Date.now() / 1000)
   }, [])
+
+  // Hold handler for gravity well
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    const x = (e.clientX / window.innerWidth) * 2 - 1
+    const y = -(e.clientY / window.innerHeight) * 2 + 1
+
+    holdTimer.current = setTimeout(() => {
+      setGravityWell(new THREE.Vector3(x * 8, y * 8, 0))
+    }, 500)
+  }, [])
+
+  const handleMouseUp = useCallback(() => {
+    if (holdTimer.current) {
+      clearTimeout(holdTimer.current)
+      holdTimer.current = null
+    }
+    setGravityWell(null)
+  }, [])
+
+  // Screenshot handler
+  const handleScreenshot = useCallback(() => {
+    const canvas = containerRef.current?.querySelector('canvas')
+    if (canvas) {
+      const link = document.createElement('a')
+      link.download = `nexus-${Date.now()}.png`
+      link.href = canvas.toDataURL('image/png')
+      link.click()
+    }
+  }, [])
+
+  // Fullscreen handler
+  const handleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      containerRef.current?.requestFullscreen()
+    } else {
+      document.exitFullscreen()
+    }
+  }, [])
+
+  // Trigger trade explosion (can be called from parent)
+  useEffect(() => {
+    if (onTrade) {
+      // This is just to show the effect can be triggered
+      // Parent can call these methods via ref if needed
+    }
+  }, [onTrade])
 
   if (error) {
     return <ErrorFallback message={error} />
@@ -1310,16 +2460,41 @@ export default function Nexus3D({
 
   return (
     <Canvas3DErrorBoundary fallback={errorFallbackElement}>
-      <div className={`w-full h-full bg-[#030712] ${className}`} onClick={handleClick}>
+      <div
+        ref={containerRef}
+        className={`w-full h-full bg-[#030712] relative ${className} ${shakeActive ? 'animate-shake' : ''}`}
+        onClick={handleClick}
+        onMouseDown={handleMouseDown}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
+      >
+        {/* Control Panel */}
+        <ControlPanel
+          theme={theme}
+          setTheme={setTheme}
+          performanceMode={performanceMode}
+          setPerformanceMode={setPerformanceMode}
+          paused={paused}
+          setPaused={setPaused}
+          onScreenshot={handleScreenshot}
+          onFullscreen={handleFullscreen}
+          isFullscreen={isFullscreen}
+        />
+
+        {/* Pause Indicator */}
+        <PauseIndicator paused={paused} />
+
+        {/* 3D Canvas */}
         <Canvas
           camera={{ position: [0, 2, 10], fov: 60 }}
           gl={{
-            antialias: true,
+            antialias: !performanceMode,
             alpha: false,
-            powerPreference: 'high-performance',
-            failIfMajorPerformanceCaveat: false
+            powerPreference: performanceMode ? 'low-power' : 'high-performance',
+            failIfMajorPerformanceCaveat: false,
+            preserveDrawingBuffer: true
           }}
-          dpr={[1, 2]}
+          dpr={performanceMode ? [1, 1] : [1, 2]}
           onCreated={({ gl }) => {
             gl.setClearColor(COLORS.background)
           }}
@@ -1333,10 +2508,37 @@ export default function Nexus3D({
               onNodeClick={onNodeClick}
               gexValue={gexValue}
               vixValue={vixValue}
+              spotPrice={spotPrice}
+              pnlValue={pnlValue}
+              pnlPercent={pnlPercent}
+              signalStrength={signalStrength}
               shockwaveTime={shockwaveTime}
+              performanceMode={performanceMode}
+              paused={paused}
+              setPaused={setPaused}
+              gravityWell={gravityWell}
+              tradeExplosion={tradeExplosion}
+              setTradeExplosion={setTradeExplosion}
+              celebrationActive={celebrationActive}
+              setCelebrationActive={setCelebrationActive}
+              konamiActive={konamiActive}
+              zoomTarget={zoomTarget}
+              setZoomTarget={setZoomTarget}
             />
           </Suspense>
         </Canvas>
+
+        {/* Bottom status bar */}
+        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 flex gap-2 text-xs">
+          <div className="bg-black/70 border border-cyan-500/20 rounded px-2 py-1 text-gray-400">
+            Theme: <span style={{ color: COLORS.accent }}>{theme.toUpperCase()}</span>
+          </div>
+          {performanceMode && (
+            <div className="bg-black/70 border border-yellow-500/20 rounded px-2 py-1 text-yellow-400">
+              ⚡ Performance Mode
+            </div>
+          )}
+        </div>
       </div>
     </Canvas3DErrorBoundary>
   )
