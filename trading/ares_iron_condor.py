@@ -2929,16 +2929,50 @@ class ARESTrader:
         Get current Tradier account status including positions and orders.
 
         Returns:
-            Dict with account info, positions, and recent orders
+            Dict with account info, positions, and recent orders.
+            In SPX paper trading mode (simulated), returns success with simulation info.
         """
+        # Check if we're in SPX paper trading mode (simulated, no sandbox)
+        is_spx_paper_mode = self.mode == TradingMode.PAPER and self.tradier_sandbox is None
+
         result = {
             'success': False,
             'mode': self.mode.value,
+            'paper_mode_type': 'simulated' if is_spx_paper_mode else 'sandbox' if self.mode == TradingMode.PAPER else 'live',
             'account': {},
             'positions': [],
             'orders': [],
             'errors': []
         }
+
+        # In SPX paper trading mode, we don't connect to Tradier sandbox
+        # Trades are simulated and recorded in AlphaGEX database only
+        if is_spx_paper_mode:
+            result['success'] = True
+            result['account'] = {
+                'account_number': 'SIMULATED',
+                'type': 'simulated',
+                'equity': self.capital,
+                'total_equity': self.capital,
+                'cash': self.capital,
+                'total_cash': self.capital,
+                'buying_power': self.capital * 0.25,  # Approximate buying power
+                'option_buying_power': self.capital * 0.25,
+                'pending_orders_count': 0,
+                'note': 'SPX paper trading mode - trades recorded in AlphaGEX DB only'
+            }
+            # Return in-memory positions from ARES
+            result['positions'] = [
+                {
+                    'symbol': f"{pos.ticker or 'SPX'} IC {pos.put_short_strike}/{pos.call_short_strike}",
+                    'quantity': pos.contracts,
+                    'cost_basis': pos.total_credit * 100 * pos.contracts,
+                    'date_acquired': pos.open_date,
+                    'status': pos.status
+                }
+                for pos in self.open_positions
+            ]
+            return result
 
         tradier_client = self.tradier_sandbox if self.mode == TradingMode.PAPER else self.tradier
 
