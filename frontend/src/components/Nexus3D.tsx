@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useMemo, useState, useEffect, Suspense, Component, ReactNode } from 'react'
+import { useRef, useMemo, useState, useEffect, Suspense, Component, ReactNode, useCallback } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import {
   OrbitControls,
@@ -13,7 +13,7 @@ import {
 import * as THREE from 'three'
 
 // =============================================================================
-// ERROR BOUNDARY - Catches runtime errors in 3D components
+// ERROR BOUNDARY
 // =============================================================================
 
 interface ErrorBoundaryState {
@@ -60,22 +60,28 @@ interface Nexus3DProps {
   botStatus?: BotStatus
   onNodeClick?: (nodeId: string) => void
   className?: string
+  // Data integration props
+  gexValue?: number        // -1 to 1 normalized GEX value
+  vixValue?: number        // VIX level (10-80 typical range)
+  spotPrice?: number       // SPY spot price
 }
 
 // =============================================================================
-// COLOR PALETTE - Updated for reference image aesthetic
+// COLOR PALETTE
 // =============================================================================
 
 const COLORS = {
-  coreCenter: '#0c1929',      // Dark blue center
-  coreRim: '#22d3ee',         // Electric cyan rim
-  fiberInner: '#38bdf8',      // Sky blue
-  fiberOuter: '#1e40af',      // Deep blue
-  particleBright: '#e0f2fe',  // Near white
-  particleGlow: '#60a5fa',    // Light blue
-  background: '#030712',      // Near black
-  nebula1: '#1e3a8a',         // Deep blue nebula
-  nebula2: '#312e81',         // Indigo nebula
+  coreCenter: '#0c1929',
+  coreRim: '#22d3ee',
+  fiberInner: '#38bdf8',
+  fiberOuter: '#1e40af',
+  particleBright: '#e0f2fe',
+  particleGlow: '#60a5fa',
+  background: '#030712',
+  nebula1: '#1e3a8a',
+  nebula2: '#312e81',
+  lightning: '#a5f3fc',
+  flare: '#67e8f9',
 }
 
 const STATUS_COLORS = {
@@ -94,71 +100,102 @@ const BOT_NODES = [
 ]
 
 // =============================================================================
-// BREATHING CORE - Pulsing central sphere with bright rim
+// MOUSE TRACKER - Provides mouse position to scene
 // =============================================================================
 
-function BreathingCore() {
+function useMousePosition() {
+  const mouse = useRef(new THREE.Vector2(0, 0))
+  const mouse3D = useRef(new THREE.Vector3(0, 0, 0))
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      mouse.current.x = (e.clientX / window.innerWidth) * 2 - 1
+      mouse.current.y = -(e.clientY / window.innerHeight) * 2 + 1
+      // Project to 3D space approximately
+      mouse3D.current.set(mouse.current.x * 10, mouse.current.y * 10, 0)
+    }
+    window.addEventListener('mousemove', handleMouseMove)
+    return () => window.removeEventListener('mousemove', handleMouseMove)
+  }, [])
+
+  return { mouse2D: mouse, mouse3D: mouse3D }
+}
+
+// =============================================================================
+// BREATHING CORE - GEX Reactive
+// =============================================================================
+
+function BreathingCore({ gexValue = 0, vixValue = 15 }: { gexValue?: number, vixValue?: number }) {
   const groupRef = useRef<THREE.Group>(null)
   const rimRef = useRef<THREE.Mesh>(null)
   const innerRef = useRef<THREE.Mesh>(null)
 
+  // GEX affects size (more positive = larger)
+  const gexScale = 1 + gexValue * 0.3
+
+  // VIX affects pulse speed (higher VIX = faster heartbeat)
+  const pulseSpeed = 0.5 + (vixValue / 30) * 1.5
+
   useFrame((state) => {
     const t = state.clock.elapsedTime
-    // Breathing effect
-    const breathe = 1 + Math.sin(t * 0.8) * 0.08
+    const breathe = gexScale * (1 + Math.sin(t * pulseSpeed) * 0.1)
 
     if (groupRef.current) {
       groupRef.current.scale.setScalar(breathe)
     }
     if (rimRef.current) {
-      // Pulsing rim glow
-      const rimPulse = 0.15 + Math.sin(t * 2) * 0.05
+      const rimPulse = 0.2 + Math.sin(t * pulseSpeed * 2) * 0.1
       ;(rimRef.current.material as THREE.MeshBasicMaterial).opacity = rimPulse
     }
     if (innerRef.current) {
-      innerRef.current.rotation.y = t * 0.1
+      innerRef.current.rotation.y = t * 0.15
+      innerRef.current.rotation.x = Math.sin(t * 0.3) * 0.1
     }
   })
 
+  // Color shifts based on GEX (negative = more red tint, positive = more green tint)
+  const coreColor = gexValue > 0 ? '#0c2919' : gexValue < 0 ? '#290c19' : COLORS.coreCenter
+  const rimColor = gexValue > 0 ? '#22eeb8' : gexValue < 0 ? '#ee2268' : COLORS.coreRim
+
   return (
     <group ref={groupRef}>
-      {/* Outer rim glow - bright edge */}
-      <Sphere ref={rimRef} args={[1.6, 64, 64]}>
-        <meshBasicMaterial color={COLORS.coreRim} transparent opacity={0.15} />
+      {/* Outer rim glow */}
+      <Sphere ref={rimRef} args={[1.8, 64, 64]}>
+        <meshBasicMaterial color={rimColor} transparent opacity={0.2} />
       </Sphere>
 
-      {/* Secondary glow layer */}
-      <Sphere args={[1.4, 48, 48]}>
+      {/* Secondary glow */}
+      <Sphere args={[1.5, 48, 48]}>
         <meshBasicMaterial color="#38bdf8" transparent opacity={0.1} />
       </Sphere>
 
-      {/* Main core with distort */}
+      {/* Main core */}
       <Sphere ref={innerRef} args={[1, 64, 64]}>
         <MeshDistortMaterial
-          color={COLORS.coreCenter}
-          emissive={COLORS.coreRim}
-          emissiveIntensity={2.5}
+          color={coreColor}
+          emissive={rimColor}
+          emissiveIntensity={2.5 + Math.abs(gexValue)}
           roughness={0.1}
           metalness={0.9}
-          distort={0.2}
-          speed={3}
+          distort={0.2 + (vixValue / 100) * 0.2}
+          speed={2 + vixValue / 20}
         />
       </Sphere>
 
       {/* Inner bright core */}
-      <Sphere args={[0.4, 32, 32]}>
+      <Sphere args={[0.35, 32, 32]}>
         <meshBasicMaterial color={COLORS.particleBright} transparent opacity={0.95} />
       </Sphere>
 
-      {/* Rim rings */}
+      {/* Rim ring */}
       <mesh rotation={[Math.PI / 2, 0, 0]}>
-        <torusGeometry args={[1.2, 0.015, 16, 100]} />
-        <meshBasicMaterial color={COLORS.coreRim} transparent opacity={0.6} />
+        <torusGeometry args={[1.3, 0.02, 16, 100]} />
+        <meshBasicMaterial color={rimColor} transparent opacity={0.7} />
       </mesh>
 
       {/* Core label */}
-      <Html position={[0, -2, 0]} center distanceFactor={8}>
-        <div className="text-cyan-300 text-sm font-bold whitespace-nowrap bg-black/50 px-3 py-1 rounded-full select-none border border-cyan-500/30">
+      <Html position={[0, -2.2, 0]} center distanceFactor={8}>
+        <div className="text-cyan-300 text-sm font-bold whitespace-nowrap bg-black/60 px-3 py-1 rounded-full select-none border border-cyan-500/30">
           GEX CORE
         </div>
       </Html>
@@ -167,7 +204,52 @@ function BreathingCore() {
 }
 
 // =============================================================================
-// RADIAL FIBER - Single fiber with organic curve and particles
+// CORE VORTEX - Swirling particles around core
+// =============================================================================
+
+function CoreVortex() {
+  const count = 80
+  const meshRef = useRef<THREE.InstancedMesh>(null)
+
+  const particles = useMemo(() => {
+    return Array.from({ length: count }, (_, i) => ({
+      radius: 1.2 + Math.random() * 0.8,
+      height: (Math.random() - 0.5) * 1.5,
+      speed: 1.5 + Math.random() * 1,
+      phase: (i / count) * Math.PI * 2,
+    }))
+  }, [])
+
+  const dummy = useMemo(() => new THREE.Object3D(), [])
+
+  useFrame((state) => {
+    const t = state.clock.elapsedTime
+    particles.forEach((p, i) => {
+      const angle = p.phase + t * p.speed
+      const x = Math.cos(angle) * p.radius
+      const z = Math.sin(angle) * p.radius
+      const y = p.height + Math.sin(t * 2 + p.phase) * 0.2
+
+      dummy.position.set(x, y, z)
+      dummy.scale.setScalar(0.03 + Math.sin(t * 3 + p.phase) * 0.01)
+      dummy.updateMatrix()
+      meshRef.current?.setMatrixAt(i, dummy.matrix)
+    })
+    if (meshRef.current) {
+      meshRef.current.instanceMatrix.needsUpdate = true
+    }
+  })
+
+  return (
+    <instancedMesh ref={meshRef} args={[undefined, undefined, count]}>
+      <sphereGeometry args={[1, 8, 8]} />
+      <meshBasicMaterial color={COLORS.coreRim} transparent opacity={0.8} />
+    </instancedMesh>
+  )
+}
+
+// =============================================================================
+// RADIAL FIBER WITH MOUSE REPULSION
 // =============================================================================
 
 function RadialFiber({
@@ -176,7 +258,8 @@ function RadialFiber({
   baseRadius,
   length,
   speed,
-  particleCount = 3
+  particleCount = 3,
+  mousePos
 }: {
   phi: number
   theta: number
@@ -184,11 +267,10 @@ function RadialFiber({
   length: number
   speed: number
   particleCount?: number
+  mousePos: React.MutableRefObject<THREE.Vector3>
 }) {
-  const lineRef = useRef<THREE.Line>(null)
   const groupRef = useRef<THREE.Group>(null)
 
-  // Calculate end point on sphere
   const endPoint = useMemo(() => {
     const r = baseRadius + length
     return new THREE.Vector3(
@@ -198,11 +280,9 @@ function RadialFiber({
     )
   }, [phi, theta, baseRadius, length])
 
-  // Create curved fiber path with organic wobble
   const { points, curve } = useMemo(() => {
     const start = new THREE.Vector3(0, 0, 0)
     const mid = endPoint.clone().multiplyScalar(0.5)
-    // Add some perpendicular offset for curve
     const perpOffset = new THREE.Vector3(
       Math.sin(theta + Math.PI/2) * 0.3,
       Math.cos(phi) * 0.3,
@@ -217,31 +297,40 @@ function RadialFiber({
     }
   }, [endPoint, theta, phi])
 
-  // Fiber sway animation
   useFrame((state) => {
     const t = state.clock.elapsedTime
     if (groupRef.current) {
-      // Gentle swaying motion
-      groupRef.current.rotation.x = Math.sin(t * speed + phi) * 0.02
-      groupRef.current.rotation.y = Math.cos(t * speed * 0.7 + theta) * 0.02
+      // Base sway
+      let swayX = Math.sin(t * speed + phi) * 0.02
+      let swayY = Math.cos(t * speed * 0.7 + theta) * 0.02
+
+      // Mouse repulsion
+      const fiberEnd = endPoint.clone()
+      const dist = fiberEnd.distanceTo(mousePos.current)
+      if (dist < 5) {
+        const repulsion = (5 - dist) / 5 * 0.1
+        const dir = fiberEnd.clone().sub(mousePos.current).normalize()
+        swayX += dir.x * repulsion
+        swayY += dir.y * repulsion
+      }
+
+      groupRef.current.rotation.x = swayX
+      groupRef.current.rotation.y = swayY
     }
   })
 
-  // Color gradient based on distance
-  const fiberOpacity = 0.3 + (length / 8) * 0.3
+  const fiberOpacity = 0.35 + (length / 8) * 0.3
 
   return (
     <group ref={groupRef}>
-      {/* Main fiber line */}
       <Line
         points={points}
         color={COLORS.fiberInner}
-        lineWidth={1}
+        lineWidth={1.2}
         transparent
         opacity={fiberOpacity}
       />
 
-      {/* Particles along fiber */}
       {Array.from({ length: particleCount }).map((_, i) => (
         <FiberParticle
           key={i}
@@ -256,7 +345,7 @@ function RadialFiber({
 }
 
 // =============================================================================
-// FIBER PARTICLE - Glowing particle traveling along fiber
+// FIBER PARTICLE
 // =============================================================================
 
 function FiberParticle({
@@ -275,19 +364,17 @@ function FiberParticle({
 
   useFrame((state) => {
     const t = state.clock.elapsedTime
-    // Outward traveling motion
     const progress = ((t * speed * 0.3 + offset + phi) % 1)
     const point = curve.getPoint(progress)
 
     if (meshRef.current) {
       meshRef.current.position.copy(point)
-      // Sparkle effect
-      const sparkle = 0.03 + Math.sin(t * 10 + offset * 20) * 0.015
+      const sparkle = 0.035 + Math.sin(t * 10 + offset * 20) * 0.015
       meshRef.current.scale.setScalar(sparkle)
     }
     if (glowRef.current) {
       glowRef.current.position.copy(point)
-      glowRef.current.scale.setScalar(0.08 + Math.sin(t * 5 + offset * 10) * 0.02)
+      glowRef.current.scale.setScalar(0.1 + Math.sin(t * 5 + offset * 10) * 0.03)
     }
   })
 
@@ -306,25 +393,19 @@ function FiberParticle({
 }
 
 // =============================================================================
-// RADIAL FIBER BURST - 60 fibers in 3D sphere arrangement
+// RADIAL FIBER BURST
 // =============================================================================
 
-function RadialFiberBurst() {
+function RadialFiberBurst({ mousePos }: { mousePos: React.MutableRefObject<THREE.Vector3> }) {
   const fibers = useMemo(() => {
     const result = []
     const fiberCount = 60
-
-    // Distribute fibers using golden angle for even sphere coverage
     const goldenAngle = Math.PI * (3 - Math.sqrt(5))
 
     for (let i = 0; i < fiberCount; i++) {
-      const y = 1 - (i / (fiberCount - 1)) * 2 // -1 to 1
-      const radius = Math.sqrt(1 - y * y)
+      const y = 1 - (i / (fiberCount - 1)) * 2
       const theta = goldenAngle * i
-
       const phi = Math.acos(y)
-
-      // Vary fiber length for depth
       const length = 4 + Math.random() * 4
       const speed = 0.3 + Math.random() * 0.4
       const particleCount = 2 + Math.floor(Math.random() * 3)
@@ -345,6 +426,7 @@ function RadialFiberBurst() {
           length={fiber.length}
           speed={fiber.speed}
           particleCount={fiber.particleCount}
+          mousePos={mousePos}
         />
       ))}
     </group>
@@ -352,47 +434,521 @@ function RadialFiberBurst() {
 }
 
 // =============================================================================
-// OUTWARD PULSE WAVE - Energy ripple from center
+// INNER DENSE SHELL - Extra fibers near core
 // =============================================================================
 
-function PulseWave() {
-  const ringRef = useRef<THREE.Mesh>(null)
-  const [scale, setScale] = useState(1)
+function InnerDenseShell({ mousePos }: { mousePos: React.MutableRefObject<THREE.Vector3> }) {
+  const fibers = useMemo(() => {
+    const result = []
+    const fiberCount = 30
+    const goldenAngle = Math.PI * (3 - Math.sqrt(5))
+
+    for (let i = 0; i < fiberCount; i++) {
+      const y = 1 - (i / (fiberCount - 1)) * 2
+      const theta = goldenAngle * i * 1.5
+      const phi = Math.acos(y)
+      const length = 1.5 + Math.random() * 1.5
+      const speed = 0.5 + Math.random() * 0.3
+
+      result.push({ phi, theta, length, speed })
+    }
+    return result
+  }, [])
+
+  return (
+    <group>
+      {fibers.map((fiber, i) => (
+        <RadialFiber
+          key={i}
+          phi={fiber.phi}
+          theta={fiber.theta}
+          baseRadius={1.2}
+          length={fiber.length}
+          speed={fiber.speed}
+          particleCount={1}
+          mousePos={mousePos}
+        />
+      ))}
+    </group>
+  )
+}
+
+// =============================================================================
+// MULTIPLE PULSE WAVES - VIX Reactive
+// =============================================================================
+
+function MultiplePulseWaves({ vixValue = 15 }: { vixValue?: number }) {
+  const ring1Ref = useRef<THREE.Mesh>(null)
+  const ring2Ref = useRef<THREE.Mesh>(null)
+  const ring3Ref = useRef<THREE.Mesh>(null)
+
+  // VIX affects pulse frequency
+  const pulseInterval = Math.max(1.5, 4 - vixValue / 15)
 
   useFrame((state) => {
     const t = state.clock.elapsedTime
-    // Pulse every 3 seconds
-    const pulse = (t % 3) / 3
-    const newScale = 1 + pulse * 8
 
-    if (ringRef.current) {
-      ringRef.current.scale.setScalar(newScale)
-      ;(ringRef.current.material as THREE.MeshBasicMaterial).opacity = 0.4 * (1 - pulse)
+    // Ring 1
+    const pulse1 = (t % pulseInterval) / pulseInterval
+    if (ring1Ref.current) {
+      ring1Ref.current.scale.setScalar(1 + pulse1 * 10)
+      ;(ring1Ref.current.material as THREE.MeshBasicMaterial).opacity = 0.5 * (1 - pulse1)
+    }
+
+    // Ring 2 (offset)
+    const pulse2 = ((t + pulseInterval / 3) % pulseInterval) / pulseInterval
+    if (ring2Ref.current) {
+      ring2Ref.current.scale.setScalar(1 + pulse2 * 10)
+      ;(ring2Ref.current.material as THREE.MeshBasicMaterial).opacity = 0.4 * (1 - pulse2)
+    }
+
+    // Ring 3 (offset)
+    const pulse3 = ((t + pulseInterval * 2 / 3) % pulseInterval) / pulseInterval
+    if (ring3Ref.current) {
+      ring3Ref.current.scale.setScalar(1 + pulse3 * 10)
+      ;(ring3Ref.current.material as THREE.MeshBasicMaterial).opacity = 0.3 * (1 - pulse3)
     }
   })
 
   return (
+    <group>
+      <mesh ref={ring1Ref} rotation={[Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.95, 1, 64]} />
+        <meshBasicMaterial color={COLORS.coreRim} transparent opacity={0.5} side={THREE.DoubleSide} />
+      </mesh>
+      <mesh ref={ring2Ref} rotation={[Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.9, 0.95, 64]} />
+        <meshBasicMaterial color={COLORS.fiberInner} transparent opacity={0.4} side={THREE.DoubleSide} />
+      </mesh>
+      <mesh ref={ring3Ref} rotation={[Math.PI / 2, 0, 0]}>
+        <ringGeometry args={[0.85, 0.9, 64]} />
+        <meshBasicMaterial color={COLORS.particleGlow} transparent opacity={0.3} side={THREE.DoubleSide} />
+      </mesh>
+    </group>
+  )
+}
+
+// =============================================================================
+// CLICK SHOCKWAVE
+// =============================================================================
+
+function ClickShockwave({ shockwaveTime }: { shockwaveTime: number }) {
+  const ringRef = useRef<THREE.Mesh>(null)
+  const [active, setActive] = useState(false)
+  const startTime = useRef(0)
+
+  useEffect(() => {
+    if (shockwaveTime > 0) {
+      setActive(true)
+      startTime.current = shockwaveTime
+    }
+  }, [shockwaveTime])
+
+  useFrame((state) => {
+    if (!active || !ringRef.current) return
+
+    const elapsed = state.clock.elapsedTime - startTime.current
+    if (elapsed > 1.5) {
+      setActive(false)
+      return
+    }
+
+    const progress = elapsed / 1.5
+    ringRef.current.scale.setScalar(1 + progress * 15)
+    ;(ringRef.current.material as THREE.MeshBasicMaterial).opacity = 0.8 * (1 - progress)
+  })
+
+  if (!active) return null
+
+  return (
     <mesh ref={ringRef} rotation={[Math.PI / 2, 0, 0]}>
-      <ringGeometry args={[0.95, 1, 64]} />
-      <meshBasicMaterial color={COLORS.coreRim} transparent opacity={0.4} side={THREE.DoubleSide} />
+      <ringGeometry args={[0.8, 1.2, 64]} />
+      <meshBasicMaterial color="#ffffff" transparent opacity={0.8} side={THREE.DoubleSide} />
     </mesh>
   )
 }
 
 // =============================================================================
-// SPARKLE FIELD - Random bright flashes
+// LIGHTNING ARCS
+// =============================================================================
+
+function LightningArcs() {
+  const [arcs, setArcs] = useState<Array<{ start: THREE.Vector3, end: THREE.Vector3, id: number }>>([])
+  const nextId = useRef(0)
+
+  useFrame((state) => {
+    // Randomly spawn lightning
+    if (Math.random() < 0.01) {
+      const node1 = BOT_NODES[Math.floor(Math.random() * BOT_NODES.length)]
+      const node2 = BOT_NODES[Math.floor(Math.random() * BOT_NODES.length)]
+      if (node1 !== node2) {
+        const radius = 5
+        const start = new THREE.Vector3(
+          Math.cos(node1.angle) * radius,
+          0,
+          Math.sin(node1.angle) * radius
+        )
+        const end = new THREE.Vector3(
+          Math.cos(node2.angle) * radius,
+          0,
+          Math.sin(node2.angle) * radius
+        )
+        setArcs(prev => [...prev.slice(-3), { start, end, id: nextId.current++ }])
+      }
+    }
+  })
+
+  return (
+    <group>
+      {arcs.map(arc => (
+        <LightningArc key={arc.id} start={arc.start} end={arc.end} />
+      ))}
+    </group>
+  )
+}
+
+function LightningArc({ start, end }: { start: THREE.Vector3, end: THREE.Vector3 }) {
+  const lineRef = useRef<THREE.Line>(null)
+  const [opacity, setOpacity] = useState(1)
+  const birthTime = useRef(0)
+
+  const points = useMemo(() => {
+    const pts: [number, number, number][] = []
+    const segments = 8
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments
+      const p = start.clone().lerp(end, t)
+      // Add jagged offset
+      if (i > 0 && i < segments) {
+        p.x += (Math.random() - 0.5) * 0.5
+        p.y += (Math.random() - 0.5) * 0.5
+        p.z += (Math.random() - 0.5) * 0.5
+      }
+      pts.push([p.x, p.y, p.z])
+    }
+    return pts
+  }, [start, end])
+
+  useFrame((state) => {
+    if (birthTime.current === 0) birthTime.current = state.clock.elapsedTime
+    const elapsed = state.clock.elapsedTime - birthTime.current
+    setOpacity(Math.max(0, 1 - elapsed * 3))
+  })
+
+  if (opacity <= 0) return null
+
+  return (
+    <Line
+      points={points}
+      color={COLORS.lightning}
+      lineWidth={2}
+      transparent
+      opacity={opacity}
+    />
+  )
+}
+
+// =============================================================================
+// LENS FLARE
+// =============================================================================
+
+function LensFlare() {
+  const flare1Ref = useRef<THREE.Mesh>(null)
+  const flare2Ref = useRef<THREE.Mesh>(null)
+
+  useFrame((state) => {
+    const t = state.clock.elapsedTime
+    if (flare1Ref.current) {
+      flare1Ref.current.scale.setScalar(2 + Math.sin(t * 2) * 0.3)
+      ;(flare1Ref.current.material as THREE.MeshBasicMaterial).opacity = 0.08 + Math.sin(t * 3) * 0.03
+    }
+    if (flare2Ref.current) {
+      flare2Ref.current.scale.setScalar(3 + Math.sin(t * 1.5) * 0.5)
+      ;(flare2Ref.current.material as THREE.MeshBasicMaterial).opacity = 0.04 + Math.sin(t * 2) * 0.02
+    }
+  })
+
+  return (
+    <group>
+      <Sphere ref={flare1Ref} args={[1, 32, 32]}>
+        <meshBasicMaterial color={COLORS.flare} transparent opacity={0.08} />
+      </Sphere>
+      <Sphere ref={flare2Ref} args={[1, 32, 32]}>
+        <meshBasicMaterial color={COLORS.particleBright} transparent opacity={0.04} />
+      </Sphere>
+    </group>
+  )
+}
+
+// =============================================================================
+// HOLOGRAPHIC SCANLINES
+// =============================================================================
+
+function HolographicScanlines() {
+  const groupRef = useRef<THREE.Group>(null)
+  const line1Ref = useRef<THREE.Mesh>(null)
+  const line2Ref = useRef<THREE.Mesh>(null)
+
+  useFrame((state) => {
+    const t = state.clock.elapsedTime
+    if (line1Ref.current) {
+      line1Ref.current.position.y = ((t * 2) % 20) - 10
+    }
+    if (line2Ref.current) {
+      line2Ref.current.position.y = ((t * 2 + 10) % 20) - 10
+    }
+  })
+
+  return (
+    <group ref={groupRef}>
+      <mesh ref={line1Ref} rotation={[0, 0, 0]}>
+        <planeGeometry args={[30, 0.02]} />
+        <meshBasicMaterial color={COLORS.coreRim} transparent opacity={0.1} side={THREE.DoubleSide} />
+      </mesh>
+      <mesh ref={line2Ref} rotation={[0, 0, 0]}>
+        <planeGeometry args={[30, 0.015]} />
+        <meshBasicMaterial color={COLORS.fiberInner} transparent opacity={0.08} side={THREE.DoubleSide} />
+      </mesh>
+    </group>
+  )
+}
+
+// =============================================================================
+// GLITCH EFFECT
+// =============================================================================
+
+function GlitchEffect() {
+  const [glitching, setGlitching] = useState(false)
+  const meshRef = useRef<THREE.Mesh>(null)
+
+  useFrame((state) => {
+    // Random glitch trigger
+    if (!glitching && Math.random() < 0.002) {
+      setGlitching(true)
+      setTimeout(() => setGlitching(false), 100 + Math.random() * 150)
+    }
+
+    if (meshRef.current && glitching) {
+      meshRef.current.position.x = (Math.random() - 0.5) * 0.3
+      meshRef.current.position.y = (Math.random() - 0.5) * 0.3
+    } else if (meshRef.current) {
+      meshRef.current.position.set(0, 0, 0)
+    }
+  })
+
+  if (!glitching) return null
+
+  return (
+    <mesh ref={meshRef}>
+      <planeGeometry args={[20, 20]} />
+      <meshBasicMaterial color={COLORS.coreRim} transparent opacity={0.05} side={THREE.DoubleSide} />
+    </mesh>
+  )
+}
+
+// =============================================================================
+// OUTER PARTICLE RING
+// =============================================================================
+
+function OuterParticleRing() {
+  const count = 150
+  const meshRef = useRef<THREE.InstancedMesh>(null)
+  const groupRef = useRef<THREE.Group>(null)
+
+  const particles = useMemo(() => {
+    return Array.from({ length: count }, (_, i) => ({
+      angle: (i / count) * Math.PI * 2,
+      radius: 9 + (Math.random() - 0.5) * 1,
+      yOffset: (Math.random() - 0.5) * 0.5,
+      speed: 0.05 + Math.random() * 0.03,
+    }))
+  }, [])
+
+  const dummy = useMemo(() => new THREE.Object3D(), [])
+
+  useFrame((state) => {
+    const t = state.clock.elapsedTime
+
+    if (groupRef.current) {
+      groupRef.current.rotation.y = t * 0.02
+    }
+
+    particles.forEach((p, i) => {
+      const angle = p.angle + t * p.speed
+      const x = Math.cos(angle) * p.radius
+      const z = Math.sin(angle) * p.radius
+      const y = p.yOffset + Math.sin(t + p.angle) * 0.1
+
+      dummy.position.set(x, y, z)
+      dummy.scale.setScalar(0.025 + Math.sin(t * 2 + p.angle) * 0.01)
+      dummy.updateMatrix()
+      meshRef.current?.setMatrixAt(i, dummy.matrix)
+    })
+    if (meshRef.current) {
+      meshRef.current.instanceMatrix.needsUpdate = true
+    }
+  })
+
+  return (
+    <group ref={groupRef}>
+      <instancedMesh ref={meshRef} args={[undefined, undefined, count]}>
+        <sphereGeometry args={[1, 6, 6]} />
+        <meshBasicMaterial color={COLORS.fiberOuter} transparent opacity={0.6} />
+      </instancedMesh>
+    </group>
+  )
+}
+
+// =============================================================================
+// CONNECTING ARCS BETWEEN BOT NODES
+// =============================================================================
+
+function ConnectingArcs() {
+  const arcs = useMemo(() => {
+    const result = []
+    for (let i = 0; i < BOT_NODES.length; i++) {
+      const next = (i + 1) % BOT_NODES.length
+      const node1 = BOT_NODES[i]
+      const node2 = BOT_NODES[next]
+      const radius = 5
+
+      const start = new THREE.Vector3(
+        Math.cos(node1.angle) * radius,
+        0,
+        Math.sin(node1.angle) * radius
+      )
+      const end = new THREE.Vector3(
+        Math.cos(node2.angle) * radius,
+        0,
+        Math.sin(node2.angle) * radius
+      )
+      const mid = start.clone().add(end).multiplyScalar(0.5)
+      mid.y = 1.5 // Arc upward
+
+      const curve = new THREE.QuadraticBezierCurve3(start, mid, end)
+      const points = curve.getPoints(30).map(p => [p.x, p.y, p.z] as [number, number, number])
+      result.push({ points, id: i })
+    }
+    return result
+  }, [])
+
+  return (
+    <group>
+      {arcs.map(arc => (
+        <Line
+          key={arc.id}
+          points={arc.points}
+          color={COLORS.fiberOuter}
+          lineWidth={0.5}
+          transparent
+          opacity={0.2}
+        />
+      ))}
+    </group>
+  )
+}
+
+// =============================================================================
+// BOT NODE WITH ACTIVITY FLARES
+// =============================================================================
+
+function BotNodeWithFlare({
+  id,
+  name,
+  angle,
+  status = 'idle',
+  onClick
+}: {
+  id: string
+  name: string
+  angle: number
+  status?: string
+  onClick?: () => void
+}) {
+  const groupRef = useRef<THREE.Group>(null)
+  const flareRef = useRef<THREE.Mesh>(null)
+  const [hovered, setHovered] = useState(false)
+
+  const radius = 5
+  const x = Math.cos(angle) * radius
+  const z = Math.sin(angle) * radius
+
+  const color = STATUS_COLORS[status as keyof typeof STATUS_COLORS] || COLORS.particleGlow
+  const isActive = status === 'trading' || status === 'active'
+
+  useFrame((state) => {
+    const t = state.clock.elapsedTime
+    if (groupRef.current) {
+      groupRef.current.position.y = Math.sin(t * 1.2 + angle) * 0.2
+    }
+
+    // Activity flare for active/trading bots
+    if (flareRef.current && isActive) {
+      const pulse = Math.sin(t * 4) * 0.5 + 0.5
+      flareRef.current.scale.setScalar(0.5 + pulse * 0.3)
+      ;(flareRef.current.material as THREE.MeshBasicMaterial).opacity = 0.3 + pulse * 0.2
+    }
+  })
+
+  return (
+    <group ref={groupRef} position={[x, 0, z]}>
+      {/* Activity flare */}
+      {isActive && (
+        <Sphere ref={flareRef} args={[1, 16, 16]}>
+          <meshBasicMaterial color={color} transparent opacity={0.4} />
+        </Sphere>
+      )}
+
+      {/* Outer glow */}
+      <Sphere args={[0.35, 16, 16]}>
+        <meshBasicMaterial color={color} transparent opacity={hovered ? 0.5 : 0.25} />
+      </Sphere>
+
+      {/* Core */}
+      <Sphere
+        args={[0.2, 16, 16]}
+        onClick={onClick}
+        onPointerOver={() => setHovered(true)}
+        onPointerOut={() => setHovered(false)}
+      >
+        <meshBasicMaterial color={hovered ? COLORS.particleBright : color} />
+      </Sphere>
+
+      {/* Trading ring */}
+      {status === 'trading' && (
+        <mesh rotation={[Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[0.4, 0.02, 16, 32]} />
+          <meshBasicMaterial color={color} transparent opacity={0.8} />
+        </mesh>
+      )}
+
+      {/* Label */}
+      <Html position={[0, 0.7, 0]} center distanceFactor={12}>
+        <div
+          className="text-xs font-bold whitespace-nowrap select-none px-2 py-0.5 rounded bg-black/50"
+          style={{ color }}
+        >
+          {name}
+        </div>
+      </Html>
+    </group>
+  )
+}
+
+// =============================================================================
+// SPARKLE FIELD
 // =============================================================================
 
 function SparkleField() {
-  const count = 100
+  const count = 120
   const meshRef = useRef<THREE.InstancedMesh>(null)
 
   const sparkles = useMemo(() => {
     return Array.from({ length: count }, () => ({
       position: new THREE.Vector3(
-        (Math.random() - 0.5) * 16,
-        (Math.random() - 0.5) * 16,
-        (Math.random() - 0.5) * 16
+        (Math.random() - 0.5) * 18,
+        (Math.random() - 0.5) * 18,
+        (Math.random() - 0.5) * 18
       ),
       phase: Math.random() * Math.PI * 2,
       speed: 2 + Math.random() * 4,
@@ -405,10 +961,8 @@ function SparkleField() {
     const t = state.clock.elapsedTime
     sparkles.forEach((s, i) => {
       dummy.position.copy(s.position)
-      // Twinkle effect
       const twinkle = Math.max(0, Math.sin(t * s.speed + s.phase))
-      const scale = twinkle * twinkle * 0.05
-      dummy.scale.setScalar(scale)
+      dummy.scale.setScalar(twinkle * twinkle * 0.06)
       dummy.updateMatrix()
       meshRef.current?.setMatrixAt(i, dummy.matrix)
     })
@@ -426,11 +980,11 @@ function SparkleField() {
 }
 
 // =============================================================================
-// ENERGY ACCUMULATION - Particles rushing to center periodically
+// ENERGY ACCUMULATION
 // =============================================================================
 
 function EnergyAccumulation() {
-  const count = 30
+  const count = 40
   const meshRef = useRef<THREE.InstancedMesh>(null)
 
   const particles = useMemo(() => {
@@ -438,10 +992,9 @@ function EnergyAccumulation() {
       const phi = Math.acos(-1 + (2 * i) / count)
       const theta = Math.sqrt(count * Math.PI) * phi
       return {
-        startRadius: 6 + Math.random() * 2,
+        startRadius: 7 + Math.random() * 2,
         phi,
         theta,
-        phase: Math.random(),
       }
     })
   }, [])
@@ -450,17 +1003,13 @@ function EnergyAccumulation() {
 
   useFrame((state) => {
     const t = state.clock.elapsedTime
-    // Accumulation cycle every 5 seconds
     const cycle = (t % 5) / 5
 
     particles.forEach((p, i) => {
-      // Rush toward center then burst out
       let radius
       if (cycle < 0.7) {
-        // Moving inward
         radius = p.startRadius * (1 - cycle / 0.7 * 0.9)
       } else {
-        // Burst outward
         const burstProgress = (cycle - 0.7) / 0.3
         radius = p.startRadius * 0.1 + burstProgress * p.startRadius
       }
@@ -470,8 +1019,7 @@ function EnergyAccumulation() {
       const z = radius * Math.cos(p.phi)
 
       dummy.position.set(x, y, z)
-      const scale = cycle < 0.7 ? 0.06 : 0.04
-      dummy.scale.setScalar(scale)
+      dummy.scale.setScalar(cycle < 0.7 ? 0.07 : 0.05)
       dummy.updateMatrix()
       meshRef.current?.setMatrixAt(i, dummy.matrix)
     })
@@ -489,12 +1037,13 @@ function EnergyAccumulation() {
 }
 
 // =============================================================================
-// NEBULA BACKDROP - Subtle colored clouds
+// NEBULA BACKDROP
 // =============================================================================
 
 function NebulaBackdrop() {
   const mesh1Ref = useRef<THREE.Mesh>(null)
   const mesh2Ref = useRef<THREE.Mesh>(null)
+  const mesh3Ref = useRef<THREE.Mesh>(null)
 
   useFrame((state) => {
     const t = state.clock.elapsedTime
@@ -506,108 +1055,40 @@ function NebulaBackdrop() {
       mesh2Ref.current.rotation.z = -t * 0.008
       mesh2Ref.current.rotation.x = t * 0.006
     }
-  })
-
-  return (
-    <group>
-      <Sphere ref={mesh1Ref} args={[30, 32, 32]} position={[10, 5, -20]}>
-        <meshBasicMaterial color={COLORS.nebula1} transparent opacity={0.03} />
-      </Sphere>
-      <Sphere ref={mesh2Ref} args={[25, 32, 32]} position={[-15, -8, -25]}>
-        <meshBasicMaterial color={COLORS.nebula2} transparent opacity={0.025} />
-      </Sphere>
-    </group>
-  )
-}
-
-// =============================================================================
-// INTEGRATED BOT NODE - Blended into fiber aesthetic
-// =============================================================================
-
-function IntegratedBotNode({
-  id,
-  name,
-  angle,
-  status = 'idle',
-  onClick
-}: {
-  id: string
-  name: string
-  angle: number
-  status?: string
-  onClick?: () => void
-}) {
-  const groupRef = useRef<THREE.Group>(null)
-  const [hovered, setHovered] = useState(false)
-
-  const radius = 5
-  const phi = Math.PI / 2 // On equator
-  const x = Math.cos(angle) * radius
-  const z = Math.sin(angle) * radius
-  const y = 0
-
-  const color = STATUS_COLORS[status as keyof typeof STATUS_COLORS] || COLORS.particleGlow
-
-  useFrame((state) => {
-    const t = state.clock.elapsedTime
-    if (groupRef.current) {
-      // Gentle floating
-      groupRef.current.position.y = y + Math.sin(t * 1.2 + angle) * 0.2
+    if (mesh3Ref.current) {
+      mesh3Ref.current.rotation.y = t * 0.007
     }
   })
 
   return (
-    <group ref={groupRef} position={[x, y, z]}>
-      {/* Outer glow */}
-      <Sphere args={[0.35, 16, 16]}>
-        <meshBasicMaterial color={color} transparent opacity={hovered ? 0.4 : 0.2} />
+    <group>
+      <Sphere ref={mesh1Ref} args={[35, 32, 32]} position={[12, 6, -25]}>
+        <meshBasicMaterial color={COLORS.nebula1} transparent opacity={0.035} />
       </Sphere>
-
-      {/* Core */}
-      <Sphere
-        args={[0.2, 16, 16]}
-        onClick={onClick}
-        onPointerOver={() => setHovered(true)}
-        onPointerOut={() => setHovered(false)}
-      >
-        <meshBasicMaterial color={hovered ? COLORS.particleBright : color} />
+      <Sphere ref={mesh2Ref} args={[30, 32, 32]} position={[-18, -10, -30]}>
+        <meshBasicMaterial color={COLORS.nebula2} transparent opacity={0.03} />
       </Sphere>
-
-      {/* Status ring */}
-      {status === 'trading' && (
-        <mesh rotation={[Math.PI / 2, 0, 0]}>
-          <torusGeometry args={[0.3, 0.015, 16, 32]} />
-          <meshBasicMaterial color={color} transparent opacity={0.8} />
-        </mesh>
-      )}
-
-      {/* Label */}
-      <Html position={[0, 0.6, 0]} center distanceFactor={12}>
-        <div
-          className="text-xs font-bold whitespace-nowrap select-none px-2 py-0.5 rounded bg-black/40"
-          style={{ color }}
-        >
-          {name}
-        </div>
-      </Html>
+      <Sphere ref={mesh3Ref} args={[25, 32, 32]} position={[0, 15, -35]}>
+        <meshBasicMaterial color="#1e1b4b" transparent opacity={0.025} />
+      </Sphere>
     </group>
   )
 }
 
 // =============================================================================
-// AMBIENT PARTICLE FIELD - Background depth particles
+// AMBIENT PARTICLES
 // =============================================================================
 
 function AmbientParticles() {
-  const count = 300
+  const count = 350
   const meshRef = useRef<THREE.InstancedMesh>(null)
 
   const particles = useMemo(() => {
     return Array.from({ length: count }, () => ({
       position: new THREE.Vector3(
-        (Math.random() - 0.5) * 20,
-        (Math.random() - 0.5) * 20,
-        (Math.random() - 0.5) * 20
+        (Math.random() - 0.5) * 24,
+        (Math.random() - 0.5) * 24,
+        (Math.random() - 0.5) * 24
       ),
       speed: 0.1 + Math.random() * 0.3,
       phase: Math.random() * Math.PI * 2,
@@ -619,13 +1100,12 @@ function AmbientParticles() {
   useFrame((state) => {
     const t = state.clock.elapsedTime
     particles.forEach((p, i) => {
-      // Slow drift
-      const x = p.position.x + Math.sin(t * p.speed + p.phase) * 0.01
-      const y = p.position.y + Math.cos(t * p.speed * 0.7 + p.phase) * 0.01
+      const x = p.position.x + Math.sin(t * p.speed + p.phase) * 0.015
+      const y = p.position.y + Math.cos(t * p.speed * 0.7 + p.phase) * 0.015
       const z = p.position.z
 
       dummy.position.set(x, y, z)
-      dummy.scale.setScalar(0.015)
+      dummy.scale.setScalar(0.018)
       dummy.updateMatrix()
       meshRef.current?.setMatrixAt(i, dummy.matrix)
     })
@@ -646,40 +1126,77 @@ function AmbientParticles() {
 // MAIN SCENE
 // =============================================================================
 
-function Scene({ botStatus, onNodeClick }: { botStatus: BotStatus, onNodeClick?: (id: string) => void }) {
+interface SceneProps {
+  botStatus: BotStatus
+  onNodeClick?: (id: string) => void
+  gexValue?: number
+  vixValue?: number
+  shockwaveTime: number
+}
+
+function Scene({ botStatus, onNodeClick, gexValue = 0, vixValue = 15, shockwaveTime }: SceneProps) {
+  const { mouse2D, mouse3D } = useMousePosition()
+
   return (
     <>
       {/* Lighting */}
       <ambientLight intensity={0.1} />
-      <pointLight position={[0, 0, 0]} intensity={4} color={COLORS.coreRim} />
-      <pointLight position={[10, 10, 10]} intensity={1} color="#ffffff" />
-      <pointLight position={[-10, -10, -10]} intensity={0.5} color={COLORS.fiberInner} />
+      <pointLight position={[0, 0, 0]} intensity={5} color={COLORS.coreRim} />
+      <pointLight position={[10, 10, 10]} intensity={1.2} color="#ffffff" />
+      <pointLight position={[-10, -10, -10]} intensity={0.6} color={COLORS.fiberInner} />
 
       {/* Background */}
-      <Stars radius={100} depth={100} count={8000} factor={4} saturation={0} fade speed={0.2} />
+      <Stars radius={120} depth={120} count={10000} factor={4} saturation={0} fade speed={0.15} />
       <NebulaBackdrop />
 
-      {/* Core with breathing animation */}
-      <BreathingCore />
+      {/* Lens flare */}
+      <LensFlare />
 
-      {/* Pulse wave effect */}
-      <PulseWave />
+      {/* Core - GEX reactive */}
+      <BreathingCore gexValue={gexValue} vixValue={vixValue} />
 
-      {/* Radial fiber burst - main visual element */}
-      <RadialFiberBurst />
+      {/* Core vortex */}
+      <CoreVortex />
 
-      {/* Energy accumulation effect */}
+      {/* Pulse waves - VIX reactive */}
+      <MultiplePulseWaves vixValue={vixValue} />
+
+      {/* Click shockwave */}
+      <ClickShockwave shockwaveTime={shockwaveTime} />
+
+      {/* Radial fiber burst with mouse repulsion */}
+      <RadialFiberBurst mousePos={mouse3D} />
+
+      {/* Inner dense shell */}
+      <InnerDenseShell mousePos={mouse3D} />
+
+      {/* Connecting arcs between bots */}
+      <ConnectingArcs />
+
+      {/* Lightning arcs */}
+      <LightningArcs />
+
+      {/* Energy accumulation */}
       <EnergyAccumulation />
 
       {/* Sparkle field */}
       <SparkleField />
 
-      {/* Ambient particles for depth */}
+      {/* Outer particle ring */}
+      <OuterParticleRing />
+
+      {/* Ambient particles */}
       <AmbientParticles />
 
-      {/* Bot nodes - integrated into aesthetic */}
+      {/* Holographic scanlines */}
+      <HolographicScanlines />
+
+      {/* Glitch effect */}
+      <GlitchEffect />
+
+      {/* Bot nodes with activity flares */}
       {BOT_NODES.map((node) => (
-        <IntegratedBotNode
+        <BotNodeWithFlare
           key={node.id}
           id={node.id}
           name={node.name}
@@ -694,9 +1211,9 @@ function Scene({ botStatus, onNodeClick }: { botStatus: BotStatus, onNodeClick?:
         enablePan={false}
         enableZoom={true}
         minDistance={4}
-        maxDistance={25}
+        maxDistance={30}
         autoRotate
-        autoRotateSpeed={0.3}
+        autoRotateSpeed={0.25}
         maxPolarAngle={Math.PI * 0.9}
         minPolarAngle={Math.PI * 0.1}
       />
@@ -718,7 +1235,7 @@ function ErrorFallback({ message }: { message?: string }) {
           </svg>
         </div>
         <h2 className="text-xl font-bold text-white mb-2">3D Visualization Error</h2>
-        <p className="text-gray-400 mb-4">WebGL may not be supported on this device</p>
+        <p className="text-gray-400 mb-4">WebGL may not be supported</p>
         {message && (
           <p className="text-xs text-gray-500 font-mono bg-gray-800/50 p-2 rounded max-w-md mx-auto">
             {message}
@@ -751,13 +1268,16 @@ function LoadingFallback() {
 export default function Nexus3D({
   botStatus = {},
   onNodeClick,
-  className = ''
+  className = '',
+  gexValue = 0,
+  vixValue = 15,
+  spotPrice
 }: Nexus3DProps) {
   const [mounted, setMounted] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [shockwaveTime, setShockwaveTime] = useState(0)
 
   useEffect(() => {
-    // Check for WebGL support
     try {
       const canvas = document.createElement('canvas')
       const gl = canvas.getContext('webgl2') || canvas.getContext('webgl') || canvas.getContext('experimental-webgl')
@@ -773,6 +1293,11 @@ export default function Nexus3D({
     setMounted(true)
   }, [])
 
+  // Click handler for shockwave
+  const handleClick = useCallback(() => {
+    setShockwaveTime(Date.now() / 1000)
+  }, [])
+
   if (error) {
     return <ErrorFallback message={error} />
   }
@@ -781,11 +1306,11 @@ export default function Nexus3D({
     return <LoadingFallback />
   }
 
-  const errorFallbackElement = <ErrorFallback message="A rendering error occurred. Please refresh the page." />
+  const errorFallbackElement = <ErrorFallback message="A rendering error occurred. Please refresh." />
 
   return (
     <Canvas3DErrorBoundary fallback={errorFallbackElement}>
-      <div className={`w-full h-full bg-[#030712] ${className}`}>
+      <div className={`w-full h-full bg-[#030712] ${className}`} onClick={handleClick}>
         <Canvas
           camera={{ position: [0, 2, 10], fov: 60 }}
           gl={{
@@ -798,15 +1323,18 @@ export default function Nexus3D({
           onCreated={({ gl }) => {
             gl.setClearColor(COLORS.background)
           }}
-          onError={(e) => {
-            console.error('Canvas error:', e)
-          }}
         >
           <color attach="background" args={[COLORS.background]} />
-          <fog attach="fog" args={[COLORS.background, 20, 50]} />
+          <fog attach="fog" args={[COLORS.background, 25, 60]} />
 
           <Suspense fallback={null}>
-            <Scene botStatus={botStatus} onNodeClick={onNodeClick} />
+            <Scene
+              botStatus={botStatus}
+              onNodeClick={onNodeClick}
+              gexValue={gexValue}
+              vixValue={vixValue}
+              shockwaveTime={shockwaveTime}
+            />
           </Suspense>
         </Canvas>
       </div>
