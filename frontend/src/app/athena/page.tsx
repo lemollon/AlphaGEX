@@ -30,6 +30,7 @@ import {
   PerformanceComparison,
   PositionDetailModal
 } from '@/components/trader'
+import EquityCurveChart from '@/components/charts/EquityCurveChart'
 
 interface Heartbeat {
   last_scan: string | null
@@ -1265,6 +1266,17 @@ export default function ATHENAPage() {
                     </div>
                   </div>
                 </div>
+              </div>
+
+              {/* Enhanced Equity Curve with Event Markers */}
+              <div className="mb-6">
+                <EquityCurveChart
+                  botFilter="ATHENA"
+                  title="ATHENA Performance"
+                  defaultDays={90}
+                  height={350}
+                  showDrawdown={true}
+                />
               </div>
 
               {/* Scan Activity Feed - Shows EVERY scan with reasoning */}

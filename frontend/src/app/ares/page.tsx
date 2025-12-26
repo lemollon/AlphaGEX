@@ -31,6 +31,7 @@ import {
   PerformanceComparison,
   PositionDetailModal
 } from '@/components/trader'
+import EquityCurveChart from '@/components/charts/EquityCurveChart'
 
 // ==================== INTERFACES ====================
 
@@ -1394,6 +1395,17 @@ export default function ARESPage() {
                   <p className="text-2xl font-bold text-white">{positions.length} open</p>
                   <p className="text-sm text-gray-500">{totalTrades} total trades</p>
                 </div>
+              </div>
+
+              {/* Enhanced Equity Curve with Event Markers */}
+              <div className="mb-6">
+                <EquityCurveChart
+                  botFilter="ARES"
+                  title="ARES Performance"
+                  defaultDays={90}
+                  height={350}
+                  showDrawdown={true}
+                />
               </div>
 
               {/* Scan Activity Feed - Shows EVERY scan with reasoning */}
