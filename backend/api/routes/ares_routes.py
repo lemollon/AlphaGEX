@@ -71,7 +71,6 @@ def _get_heartbeat(bot_name: str) -> dict:
             if last_heartbeat:
                 if last_heartbeat.tzinfo is None:
                     # Naive datetime from PostgreSQL - assume it's UTC
-                    from zoneinfo import ZoneInfo
                     last_heartbeat = last_heartbeat.replace(tzinfo=ZoneInfo("UTC"))
                 # Convert to Central Time
                 last_heartbeat_ct = last_heartbeat.astimezone(CENTRAL_TZ)
