@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useMemo, useState, useEffect, Suspense } from 'react'
-import { Canvas, useFrame } from '@react-three/fiber'
+import { Canvas, useFrame, extend } from '@react-three/fiber'
 import {
   OrbitControls,
   Sphere,
@@ -9,7 +9,8 @@ import {
   Stars,
   Html,
   MeshDistortMaterial,
-  Line
+  Line,
+  Trail
 } from '@react-three/drei'
 import { EffectComposer, Bloom } from '@react-three/postprocessing'
 import * as THREE from 'three'
@@ -325,6 +326,155 @@ function NeuralConnection({
 }
 
 // =============================================================================
+// ENERGY PULSE (traveling along connections)
+// =============================================================================
+
+function EnergyPulse({
+  start,
+  end,
+  color = '#60a5fa',
+  speed = 0.8,
+  delay = 0
+}: {
+  start: [number, number, number]
+  end: [number, number, number]
+  color?: string
+  speed?: number
+  delay?: number
+}) {
+  const meshRef = useRef<THREE.Mesh>(null)
+  const trailRef = useRef<THREE.Mesh>(null)
+
+  const curve = useMemo(() => {
+    return new THREE.QuadraticBezierCurve3(
+      new THREE.Vector3(...start),
+      new THREE.Vector3(
+        (start[0] + end[0]) / 2,
+        (start[1] + end[1]) / 2 + 1.5,
+        (start[2] + end[2]) / 2
+      ),
+      new THREE.Vector3(...end)
+    )
+  }, [start, end])
+
+  useFrame((state) => {
+    const t = state.clock.elapsedTime
+    const progress = ((t * speed + delay) % 2) / 2 // 0 to 1, then reset
+
+    if (meshRef.current) {
+      const point = curve.getPoint(progress)
+      meshRef.current.position.copy(point)
+
+      // Pulse size based on position
+      const pulseScale = 0.08 + Math.sin(progress * Math.PI) * 0.04
+      meshRef.current.scale.setScalar(pulseScale)
+    }
+  })
+
+  return (
+    <mesh ref={meshRef}>
+      <sphereGeometry args={[1, 12, 12]} />
+      <meshBasicMaterial color={color} transparent opacity={0.9} />
+    </mesh>
+  )
+}
+
+// =============================================================================
+// DATA STREAM (glowing particles with trails)
+// =============================================================================
+
+function DataStream({
+  angle,
+  radius = 4,
+  color = '#3b82f6'
+}: {
+  angle: number
+  radius?: number
+  color?: string
+}) {
+  const meshRef = useRef<THREE.Mesh>(null)
+
+  useFrame((state) => {
+    const t = state.clock.elapsedTime
+
+    if (meshRef.current) {
+      // Spiral motion toward center then back out
+      const progress = (Math.sin(t * 0.5 + angle * 2) + 1) / 2
+      const r = progress * radius
+      const x = Math.cos(angle + t * 0.3) * r
+      const z = Math.sin(angle + t * 0.3) * r
+      const y = Math.sin(t * 2 + angle) * 0.5
+
+      meshRef.current.position.set(x, y, z)
+      meshRef.current.scale.setScalar(0.04 + (1 - progress) * 0.02)
+    }
+  })
+
+  return (
+    <Trail
+      width={0.8}
+      length={8}
+      color={color}
+      attenuation={(t) => t * t}
+    >
+      <mesh ref={meshRef}>
+        <sphereGeometry args={[1, 8, 8]} />
+        <meshBasicMaterial color="#ffffff" />
+      </mesh>
+    </Trail>
+  )
+}
+
+// =============================================================================
+// HEXAGONAL GRID (background structure)
+// =============================================================================
+
+function HexGrid() {
+  const points = useMemo(() => {
+    const pts: Array<[number, number, number][]> = []
+    const size = 0.8
+    const rows = 12
+    const cols = 12
+
+    for (let row = -rows/2; row < rows/2; row++) {
+      for (let col = -cols/2; col < cols/2; col++) {
+        const x = col * size * 1.5
+        const z = row * size * Math.sqrt(3) + (col % 2) * size * Math.sqrt(3) / 2
+        const y = -4
+
+        // Create hexagon
+        const hexPoints: [number, number, number][] = []
+        for (let i = 0; i <= 6; i++) {
+          const angle = (i * Math.PI) / 3
+          hexPoints.push([
+            x + Math.cos(angle) * size * 0.5,
+            y,
+            z + Math.sin(angle) * size * 0.5
+          ])
+        }
+        pts.push(hexPoints)
+      }
+    }
+    return pts
+  }, [])
+
+  return (
+    <group>
+      {points.map((hex, i) => (
+        <Line
+          key={i}
+          points={hex}
+          color="#1e3a5f"
+          lineWidth={0.3}
+          transparent
+          opacity={0.15}
+        />
+      ))}
+    </group>
+  )
+}
+
+// =============================================================================
 // PARTICLE FLOW
 // =============================================================================
 
@@ -508,14 +658,16 @@ function NeuralWeb() {
 function Scene({ botStatus, onNodeClick }: { botStatus: BotStatus, onNodeClick?: (id: string) => void }) {
   return (
     <>
-      {/* Lighting */}
-      <ambientLight intensity={0.3} />
-      <pointLight position={[10, 10, 10]} intensity={1} color="#ffffff" />
-      <pointLight position={[-10, -10, -10]} intensity={0.5} color="#3b82f6" />
-      <pointLight position={[0, 0, 0]} intensity={2} color="#60a5fa" />
+      {/* Lighting - Enhanced for dramatic effect */}
+      <ambientLight intensity={0.15} />
+      <pointLight position={[10, 10, 10]} intensity={1.5} color="#ffffff" />
+      <pointLight position={[-10, -10, -10]} intensity={0.8} color="#3b82f6" />
+      <pointLight position={[0, 0, 0]} intensity={3} color="#60a5fa" />
+      <pointLight position={[0, 5, 0]} intensity={1} color="#93c5fd" />
+      <pointLight position={[0, -5, 0]} intensity={0.5} color="#1e40af" />
 
-      {/* Background stars */}
-      <Stars radius={50} depth={50} count={3000} factor={4} saturation={0} fade speed={0.5} />
+      {/* Background stars - More dense for immersive feel */}
+      <Stars radius={100} depth={80} count={5000} factor={5} saturation={0} fade speed={0.3} />
 
       {/* Core */}
       <CoreSphere />
@@ -544,21 +696,51 @@ function Scene({ botStatus, onNodeClick }: { botStatus: BotStatus, onNodeClick?:
         />
       ))}
 
+      {/* Hexagonal grid floor */}
+      <HexGrid />
+
       {/* Neural connections from core to bots */}
       {BOT_NODES.map((node) => {
         const radius = 4
         const x = Math.cos(node.angle) * radius
         const z = Math.sin(node.angle) * radius
         const y = Math.sin(node.angle * 2) * 0.5
+        const statusColor = STATUS_COLORS[botStatus[node.id as keyof BotStatus] as keyof typeof STATUS_COLORS] || '#3b82f6'
         return (
-          <NeuralConnection
-            key={node.id}
-            start={[0, 0, 0]}
-            end={[x, y, z]}
-            color={STATUS_COLORS[botStatus[node.id as keyof BotStatus] as keyof typeof STATUS_COLORS] || '#3b82f6'}
-          />
+          <group key={node.id}>
+            <NeuralConnection
+              start={[0, 0, 0]}
+              end={[x, y, z]}
+              color={statusColor}
+            />
+            {/* Energy pulses traveling along connections */}
+            <EnergyPulse
+              start={[0, 0, 0]}
+              end={[x, y, z]}
+              color={statusColor}
+              speed={0.6}
+              delay={node.angle}
+            />
+            <EnergyPulse
+              start={[x, y, z]}
+              end={[0, 0, 0]}
+              color="#ffffff"
+              speed={0.5}
+              delay={node.angle + 1}
+            />
+          </group>
         )
       })}
+
+      {/* Data streams with trails */}
+      {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
+        <DataStream
+          key={i}
+          angle={(i * Math.PI * 2) / 8}
+          radius={4.5}
+          color="#60a5fa"
+        />
+      ))}
 
       {/* Particle effects */}
       <ParticleFlow />
@@ -590,9 +772,10 @@ function Effects() {
   return (
     <EffectComposer>
       <Bloom
-        intensity={1.2}
-        luminanceThreshold={0.2}
-        luminanceSmoothing={0.9}
+        intensity={1.8}
+        luminanceThreshold={0.15}
+        luminanceSmoothing={0.95}
+        mipmapBlur
       />
     </EffectComposer>
   )
