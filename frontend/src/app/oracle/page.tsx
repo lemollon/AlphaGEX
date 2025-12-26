@@ -93,6 +93,23 @@ function safePercent(val: number | null | undefined, decimals: number = 1): stri
   return `${(val * 100).toFixed(decimals)}%`
 }
 
+// Safe object check helper - verifies value is a non-null object (not array)
+function isPlainObject(val: unknown): val is Record<string, unknown> {
+  return val !== null && typeof val === 'object' && !Array.isArray(val)
+}
+
+// Safe object entries helper - returns entries only for valid objects
+function safeObjectEntries<T>(obj: T | null | undefined): [string, T[keyof T & string]][] {
+  if (!isPlainObject(obj)) return []
+  return Object.entries(obj) as [string, T[keyof T & string]][]
+}
+
+// Safe object keys helper - returns keys only for valid objects
+function safeObjectKeys(obj: unknown): string[] {
+  if (!isPlainObject(obj)) return []
+  return Object.keys(obj)
+}
+
 interface BotHeartbeat {
   last_scan: string | null
   last_scan_iso: string | null
@@ -191,9 +208,11 @@ interface PerformanceData {
 }
 
 // Helper function to format timestamp in Texas Central Time
-function formatTexasCentralTime(isoTimestamp: string): string {
+function formatTexasCentralTime(isoTimestamp: string | null | undefined): string {
+  if (!isoTimestamp) return 'N/A'
   try {
     const date = new Date(isoTimestamp)
+    if (isNaN(date.getTime())) return 'Invalid'
     return date.toLocaleTimeString('en-US', {
       timeZone: 'America/Chicago',
       hour: '2-digit',
@@ -202,14 +221,16 @@ function formatTexasCentralTime(isoTimestamp: string): string {
       hour12: true
     })
   } catch {
-    return isoTimestamp
+    return String(isoTimestamp)
   }
 }
 
 // Helper function to format full date in Texas Central Time
-function formatTexasCentralDateTime(isoTimestamp: string): string {
+function formatTexasCentralDateTime(isoTimestamp: string | null | undefined): string {
+  if (!isoTimestamp) return 'N/A'
   try {
     const date = new Date(isoTimestamp)
+    if (isNaN(date.getTime())) return 'Invalid Date'
     return date.toLocaleString('en-US', {
       timeZone: 'America/Chicago',
       year: 'numeric',
@@ -221,7 +242,7 @@ function formatTexasCentralDateTime(isoTimestamp: string): string {
       hour12: true
     })
   } catch {
-    return isoTimestamp
+    return String(isoTimestamp)
   }
 }
 
@@ -837,11 +858,11 @@ export default function OraclePage() {
                           </span>
                           {interaction.actual_outcome && (
                             <span className={`px-2 py-1 rounded text-xs font-medium ${
-                              interaction.actual_outcome.includes('MAX_PROFIT') || interaction.actual_outcome === 'WIN'
+                              (typeof interaction.actual_outcome === 'string' && interaction.actual_outcome.includes('MAX_PROFIT')) || interaction.actual_outcome === 'WIN'
                                 ? 'bg-green-500/20 text-green-300'
                                 : 'bg-red-500/20 text-red-300'
                             }`}>
-                              {interaction.actual_outcome}
+                              {String(interaction.actual_outcome)}
                             </span>
                           )}
                           {interaction.model_version && (
@@ -979,13 +1000,13 @@ export default function OraclePage() {
                       )}
 
                       {/* Top Factors */}
-                      {interaction.top_factors && Object.keys(interaction.top_factors).length > 0 && (
+                      {isPlainObject(interaction.top_factors) && safeObjectKeys(interaction.top_factors).length > 0 && (
                         <div className="mb-3 p-3 bg-yellow-500/5 border border-yellow-500/20 rounded-lg">
                           <p className="text-yellow-400 text-xs font-medium mb-2">Top Decision Factors</p>
                           <div className="flex flex-wrap gap-2">
-                            {Object.entries(interaction.top_factors).slice(0, 5).map(([factor, weight]) => (
+                            {safeObjectEntries(interaction.top_factors).slice(0, 5).map(([factor, weight]) => (
                               <span key={factor} className="px-2 py-1 bg-yellow-500/10 rounded text-xs text-text-secondary">
-                                {factor}: <span className="text-yellow-400 font-medium">{typeof weight === 'number' ? weight.toFixed(2) : weight}</span>
+                                {factor}: <span className="text-yellow-400 font-medium">{typeof weight === 'number' ? weight.toFixed(2) : String(weight ?? '')}</span>
                               </span>
                             ))}
                           </div>
@@ -1056,7 +1077,7 @@ export default function OraclePage() {
                   </div>
 
                   {/* By Bot */}
-                  {performance.by_bot && Object.keys(performance.by_bot).length > 0 && (
+                  {isPlainObject(performance.by_bot) && safeObjectKeys(performance.by_bot).length > 0 && (
                     <div className="card">
                       <h4 className="text-lg font-semibold text-text-primary mb-4">Performance by Bot</h4>
                       <div className="overflow-x-auto">
@@ -1072,7 +1093,7 @@ export default function OraclePage() {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-border">
-                            {Object.entries(performance.by_bot).map(([bot, data]) => (
+                            {safeObjectEntries(performance.by_bot).map(([bot, data]) => (
                               <tr key={bot} className="hover:bg-background-hover">
                                 <td className="px-4 py-3">
                                   <span className={`px-2 py-1 rounded text-xs font-medium ${getBotColor(bot)}`}>
@@ -1354,7 +1375,7 @@ export default function OraclePage() {
                         {log.type}
                       </span>
                       <span className="text-text-secondary flex-1">{log.message}</span>
-                      {log.data && Object.keys(log.data).length > 0 && (
+                      {isPlainObject(log.data) && safeObjectKeys(log.data).length > 0 && (
                         <span className="text-text-muted" title={JSON.stringify(log.data, null, 2)}>
                           [data]
                         </span>
@@ -1546,12 +1567,22 @@ export default function OraclePage() {
                                 {(() => {
                                   try {
                                     const factors = exchange.ml_prediction?.top_factors
-                                    if (!Array.isArray(factors) || factors.length === 0) return 'N/A'
-                                    return factors.slice(0, 3).map((f: any) => {
-                                      if (typeof f === 'string') return f
-                                      if (typeof f === 'object' && f !== null) return f[0] || 'Unknown'
-                                      return String(f)
-                                    }).join(', ')
+                                    // Handle array format: [["factor1", 0.5], ["factor2", 0.3]]
+                                    if (Array.isArray(factors) && factors.length > 0) {
+                                      return factors.slice(0, 3).map((f: unknown) => {
+                                        if (typeof f === 'string') return f
+                                        if (Array.isArray(f) && f.length > 0) return String(f[0])
+                                        if (typeof f === 'object' && f !== null) return String((f as Record<string, unknown>)[0] || 'Unknown')
+                                        return String(f)
+                                      }).join(', ')
+                                    }
+                                    // Handle object format: { factor1: 0.5, factor2: 0.3 }
+                                    if (isPlainObject(factors)) {
+                                      const keys = safeObjectKeys(factors)
+                                      if (keys.length === 0) return 'N/A'
+                                      return keys.slice(0, 3).join(', ')
+                                    }
+                                    return 'N/A'
                                   } catch {
                                     return 'N/A'
                                   }
