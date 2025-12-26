@@ -2,8 +2,22 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import Nexus3D, { BotStatus } from '@/components/Nexus3D'
+import dynamic from 'next/dynamic'
 import { apiClient } from '@/lib/api'
+import type { BotStatus } from '@/components/Nexus3D'
+
+// Dynamically import Nexus3D with SSR disabled - Three.js requires browser APIs
+const Nexus3D = dynamic(() => import('@/components/Nexus3D'), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-full flex items-center justify-center bg-[#030712]">
+      <div className="text-center">
+        <div className="w-16 h-16 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin mx-auto mb-4" />
+        <p className="text-blue-400 text-sm">Initializing NEXUS...</p>
+      </div>
+    </div>
+  )
+})
 
 const TRADING_TIPS = [
   "GEX flips signal dealer gamma crossing zero - watch for explosive moves",
