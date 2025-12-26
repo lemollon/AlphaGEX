@@ -678,6 +678,200 @@ async def get_ares_equity_curve(days: int = 30):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/equity-curve/live")
+async def get_ares_live_equity_curve():
+    """
+    Get ARES equity curve with live intraday progress.
+
+    Returns historical equity curve plus today's current P&L including:
+    - Historical realized P&L from closed positions
+    - Today's realized P&L from positions closed today
+    - Today's unrealized P&L from open positions (if ARES worker running)
+
+    This gives a complete picture of intraday performance.
+    """
+    ares = get_ares_instance()
+    starting_capital = 200000
+    now = datetime.now(ZoneInfo("America/Chicago"))
+    today = now.strftime('%Y-%m-%d')
+    current_time = now.strftime('%H:%M:%S')
+
+    # Check if market is open (8:30 AM - 3:00 PM CT on weekdays)
+    is_market_hours = (
+        now.weekday() < 5 and
+        now.hour >= 8 and now.hour < 15 and
+        (now.hour > 8 or now.minute >= 30)
+    )
+
+    try:
+        from database_adapter import get_connection
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Get historical closed positions (excluding today for separate handling)
+        cursor.execute('''
+            SELECT close_date, realized_pnl, position_id
+            FROM ares_positions
+            WHERE status IN ('closed', 'expired')
+            AND close_date IS NOT NULL
+            AND close_date < %s
+            ORDER BY close_date ASC
+        ''', (today,))
+        historical_rows = cursor.fetchall()
+
+        # Get today's realized P&L
+        cursor.execute('''
+            SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
+            FROM ares_positions
+            WHERE status IN ('closed', 'expired')
+            AND close_date = %s
+        ''', (today,))
+        today_row = cursor.fetchone()
+        today_realized = float(today_row[0]) if today_row else 0
+        today_closed_count = today_row[1] if today_row else 0
+
+        # Get open positions count
+        cursor.execute('''
+            SELECT COUNT(*), COALESCE(SUM(total_credit * 100 * contracts), 0)
+            FROM ares_positions
+            WHERE status = 'open'
+        ''')
+        open_row = cursor.fetchone()
+        open_count = open_row[0] if open_row else 0
+        open_credit = float(open_row[1]) if open_row else 0
+        conn.close()
+
+        # Build historical equity curve
+        equity_curve = []
+        positions_by_date = {}
+        for row in historical_rows:
+            close_date, pnl, pos_id = row
+            date_key = str(close_date) if close_date else None
+            if date_key:
+                if date_key not in positions_by_date:
+                    positions_by_date[date_key] = []
+                positions_by_date[date_key].append(float(pnl or 0))
+
+        sorted_dates = sorted(positions_by_date.keys())
+        cumulative_pnl = 0
+
+        # Add starting point
+        if sorted_dates:
+            equity_curve.append({
+                "date": sorted_dates[0],
+                "time": "09:30:00",
+                "equity": starting_capital,
+                "pnl": 0,
+                "daily_pnl": 0,
+                "return_pct": 0,
+                "is_live": False
+            })
+
+        for date_str in sorted_dates:
+            daily_pnl = sum(positions_by_date[date_str])
+            cumulative_pnl += daily_pnl
+
+            equity_curve.append({
+                "date": date_str,
+                "time": "15:00:00",
+                "equity": round(starting_capital + cumulative_pnl, 2),
+                "pnl": round(cumulative_pnl, 2),
+                "daily_pnl": round(daily_pnl, 2),
+                "return_pct": round((cumulative_pnl / starting_capital) * 100, 2),
+                "is_live": False
+            })
+
+        # Get live unrealized P&L if ARES is running
+        unrealized_pnl = 0
+        has_live_data = False
+        if ares:
+            try:
+                live_pnl = ares.get_live_pnl()
+                unrealized_pnl = live_pnl.get('total_unrealized_pnl', 0) or 0
+                has_live_data = True
+            except Exception:
+                pass
+
+        # Add today's live point
+        today_total_pnl = today_realized + unrealized_pnl
+        current_cumulative = cumulative_pnl + today_total_pnl
+        current_equity = starting_capital + current_cumulative
+
+        # Add market open point for today if we have any activity
+        if is_market_hours or today_realized != 0 or unrealized_pnl != 0:
+            # Opening point
+            equity_curve.append({
+                "date": today,
+                "time": "08:30:00",
+                "equity": round(starting_capital + cumulative_pnl, 2),
+                "pnl": round(cumulative_pnl, 2),
+                "daily_pnl": 0,
+                "return_pct": round((cumulative_pnl / starting_capital) * 100, 2),
+                "is_live": False,
+                "label": "Market Open"
+            })
+
+            # Current live point
+            equity_curve.append({
+                "date": today,
+                "time": current_time,
+                "equity": round(current_equity, 2),
+                "pnl": round(current_cumulative, 2),
+                "daily_pnl": round(today_total_pnl, 2),
+                "daily_realized": round(today_realized, 2),
+                "daily_unrealized": round(unrealized_pnl, 2) if has_live_data else None,
+                "return_pct": round((current_cumulative / starting_capital) * 100, 2),
+                "is_live": True,
+                "label": "Current"
+            })
+
+        return {
+            "success": True,
+            "data": {
+                "equity_curve": equity_curve,
+                "starting_capital": starting_capital,
+                "current_equity": round(current_equity, 2),
+                "total_pnl": round(current_cumulative, 2),
+                "total_return_pct": round((current_cumulative / starting_capital) * 100, 2),
+                "today": {
+                    "date": today,
+                    "time": current_time,
+                    "realized_pnl": round(today_realized, 2),
+                    "unrealized_pnl": round(unrealized_pnl, 2) if has_live_data else None,
+                    "total_pnl": round(today_total_pnl, 2),
+                    "positions_closed": today_closed_count,
+                    "positions_open": open_count,
+                    "open_credit": round(open_credit, 2)
+                },
+                "is_market_open": is_market_hours,
+                "has_live_data": has_live_data,
+                "last_updated": now.isoformat()
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting live equity curve: {e}")
+        # Fallback
+        return {
+            "success": True,
+            "data": {
+                "equity_curve": [{
+                    "date": today,
+                    "time": current_time,
+                    "equity": starting_capital,
+                    "pnl": 0,
+                    "daily_pnl": 0,
+                    "return_pct": 0,
+                    "is_live": True
+                }],
+                "starting_capital": starting_capital,
+                "current_equity": starting_capital,
+                "total_pnl": 0,
+                "error": str(e)
+            }
+        }
+
+
 @router.get("/performance")
 async def get_ares_performance():
     """
@@ -1109,7 +1303,72 @@ async def get_ares_live_pnl():
     """
     ares = get_ares_instance()
 
+    today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
+
     if not ares:
+        # ARES not running - read from database
+        try:
+            from database_adapter import get_connection
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Get open positions
+            cursor.execute('''
+                SELECT
+                    position_id, open_date, expiration,
+                    put_short_strike, call_short_strike,
+                    total_credit, contracts, max_loss,
+                    underlying_price_at_entry, status
+                FROM ares_positions
+                WHERE status = 'open'
+            ''')
+            open_rows = cursor.fetchall()
+
+            # Get today's realized P&L from closed positions
+            cursor.execute('''
+                SELECT COALESCE(SUM(realized_pnl), 0)
+                FROM ares_positions
+                WHERE status IN ('closed', 'expired')
+                AND close_date = %s
+            ''', (today,))
+            realized_row = cursor.fetchone()
+            today_realized = float(realized_row[0]) if realized_row else 0
+            conn.close()
+
+            # Format open positions (without live valuation - requires market data)
+            positions = []
+            for row in open_rows:
+                pos_id, open_date, exp, put_short, call_short, credit, contracts, max_loss, entry_price, status = row
+                credit_received = float(credit or 0) * 100 * (contracts or 0)
+                positions.append({
+                    'position_id': pos_id,
+                    'open_date': str(open_date) if open_date else None,
+                    'expiration': str(exp) if exp else None,
+                    'put_short_strike': float(put_short) if put_short else 0,
+                    'call_short_strike': float(call_short) if call_short else 0,
+                    'credit_received': round(credit_received, 2),
+                    'contracts': contracts or 0,
+                    'max_loss': float(max_loss) if max_loss else 0,
+                    'underlying_at_entry': float(entry_price) if entry_price else 0,
+                    'unrealized_pnl': None,  # Need live market data
+                    'note': 'Live valuation requires ARES worker'
+                })
+
+            return {
+                "success": True,
+                "data": {
+                    "total_unrealized_pnl": None,
+                    "total_realized_pnl": round(today_realized, 2),
+                    "net_pnl": round(today_realized, 2),
+                    "positions": positions,
+                    "position_count": len(positions),
+                    "source": "database",
+                    "message": "Open positions loaded from DB - live valuation requires ARES worker"
+                }
+            }
+        except Exception as db_err:
+            logger.warning(f"Could not read live P&L from database: {db_err}")
+
         return {
             "success": True,
             "data": {

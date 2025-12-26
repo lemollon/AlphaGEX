@@ -1450,7 +1450,7 @@ class ARESTrader:
             # Build "how" description with methodology
             how_desc = (
                 f"ARES Aggressive IC Strategy evaluates daily: "
-                f"1) Check trading window (9:35 AM - 3:30 PM ET), "
+                f"1) Check trading window (9:35 AM - 3:30 PM CT), "
                 f"2) Verify no existing position for today, "
                 f"3) Get market data (price, VIX, expected move), "
                 f"4) Consult Oracle AI for trade/skip advice, "
@@ -2158,7 +2158,7 @@ class ARESTrader:
             logger.info("ARES: Outside trading window")
             result['actions'].append("Outside trading window")
             self._log_skip_decision(
-                reason="Outside trading window (9:35 AM - 3:30 PM ET)",
+                reason="Outside trading window (9:35 AM - 3:30 PM CT)",
                 market_data=None,
                 oracle_advice=None,
                 alternatives=["Wait for trading window to open"],
@@ -2168,11 +2168,11 @@ class ARESTrader:
             if SCAN_LOGGER_AVAILABLE and log_ares_scan:
                 log_ares_scan(
                     outcome=ScanOutcome.BEFORE_WINDOW,
-                    decision_summary="Outside trading window (9:35 AM - 3:30 PM ET)",
+                    decision_summary="Outside trading window (9:35 AM - 3:30 PM CT)",
                     action_taken="Scan skipped - waiting for trading window",
-                    full_reasoning="ARES only trades during market hours. Entry window is 9:35 AM - 3:30 PM ET to ensure good liquidity for 0DTE options.",
+                    full_reasoning="ARES only trades during market hours. Entry window is 9:35 AM - 3:30 PM CT to ensure good liquidity for 0DTE options.",
                     checks=[
-                        CheckResult("trading_window", False, now.strftime('%H:%M'), "09:35-15:30 ET", "Current time is outside trading window")
+                        CheckResult("trading_window", False, now.strftime('%H:%M'), "09:35-15:30 CT", "Current time is outside trading window")
                     ]
                 )
             return result
@@ -2196,7 +2196,7 @@ class ARESTrader:
                     full_reasoning="ARES is designed to trade ONE Iron Condor per day to avoid overexposure. A position was already opened earlier today.",
                     checks=[
                         CheckResult("daily_trade_limit", False, "1", "1 max", "Already executed daily trade"),
-                        CheckResult("trading_window", True, now.strftime('%H:%M'), "09:35-15:30 ET", "Within window")
+                        CheckResult("trading_window", True, now.strftime('%H:%M'), "09:35-15:30 CT", "Within window")
                     ]
                 )
             return result
