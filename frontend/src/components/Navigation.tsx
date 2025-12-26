@@ -68,7 +68,7 @@ const navItems = [
   { href: '/logs', label: 'Decision Logs', icon: FileText, category: 'System' },
   { href: '/data-transparency', label: 'Data Transparency', icon: Eye, category: 'System' },
   { href: '/system/processes', label: 'System Processes', icon: Activity, category: 'System' },
-  { href: '/nexus-demo', label: 'NEXUS (Neural Network)', icon: Sparkles, category: 'System' },
+  { href: '/nexus', label: 'NEXUS (Neural Network)', icon: Sparkles, category: 'Main' },
   { href: '/feature-docs', label: 'Feature Docs', icon: Calculator, category: 'System' },
 ]
 
