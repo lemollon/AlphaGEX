@@ -1181,8 +1181,8 @@ export default function ATHENAPage() {
                             <span className="text-gray-500 text-sm">{pos.contracts} contracts</span>
                           </div>
                           <div className="text-right">
-                            <div className={`font-bold ${pos.realized_pnl >= 0 ? 'text-[#00C805]' : 'text-[#FF5000]'}`}>
-                              {pos.realized_pnl >= 0 ? '+' : ''}${pos.realized_pnl.toFixed(2)}
+                            <div className={`font-bold ${(pos.realized_pnl ?? 0) >= 0 ? 'text-[#00C805]' : 'text-[#FF5000]'}`}>
+                              {(pos.realized_pnl ?? 0) >= 0 ? '+' : ''}${(pos.realized_pnl ?? 0).toFixed(2)}
                             </div>
                             <div className="text-gray-500 text-xs">
                               {pos.exit_time ? new Date(pos.exit_time).toLocaleTimeString() : ''}
@@ -1496,13 +1496,13 @@ export default function ATHENAPage() {
                       <div>
                         <p className="text-gray-400 text-sm mb-1">Confidence</p>
                         <p className="text-xl font-bold text-white">
-                          {(mlSignal.confidence * 100).toFixed(1)}%
+                          {((mlSignal.confidence ?? 0) * 100).toFixed(1)}%
                         </p>
                       </div>
                       <div>
                         <p className="text-gray-400 text-sm mb-1">Win Probability</p>
                         <p className="text-xl font-bold text-white">
-                          {(mlSignal.win_probability * 100).toFixed(1)}%
+                          {((mlSignal.win_probability ?? 0) * 100).toFixed(1)}%
                         </p>
                       </div>
                     </div>
@@ -1521,15 +1521,15 @@ export default function ATHENAPage() {
                           </div>
                           <div className="bg-gray-900 rounded p-2">
                             <p className="text-xs text-gray-500">Flip Gravity</p>
-                            <p className="text-sm font-medium text-white">{(mlSignal.model_predictions.flip_gravity * 100).toFixed(0)}%</p>
+                            <p className="text-sm font-medium text-white">{((mlSignal.model_predictions.flip_gravity ?? 0) * 100).toFixed(0)}%</p>
                           </div>
                           <div className="bg-gray-900 rounded p-2">
                             <p className="text-xs text-gray-500">Magnet Attraction</p>
-                            <p className="text-sm font-medium text-white">{(mlSignal.model_predictions.magnet_attraction * 100).toFixed(0)}%</p>
+                            <p className="text-sm font-medium text-white">{((mlSignal.model_predictions.magnet_attraction ?? 0) * 100).toFixed(0)}%</p>
                           </div>
                           <div className="bg-gray-900 rounded p-2">
                             <p className="text-xs text-gray-500">Pin Zone</p>
-                            <p className="text-sm font-medium text-white">{(mlSignal.model_predictions.pin_zone * 100).toFixed(0)}%</p>
+                            <p className="text-sm font-medium text-white">{((mlSignal.model_predictions.pin_zone ?? 0) * 100).toFixed(0)}%</p>
                           </div>
                           <div className="bg-gray-900 rounded p-2">
                             <p className="text-xs text-gray-500">Exp. Volatility</p>
@@ -1571,13 +1571,13 @@ export default function ATHENAPage() {
                     <div>
                       <p className="text-gray-400 text-sm mb-1">Win Probability</p>
                       <p className="text-xl font-bold text-white">
-                        {(oracleAdvice.win_probability * 100).toFixed(1)}%
+                        {((oracleAdvice.win_probability ?? 0) * 100).toFixed(1)}%
                       </p>
                     </div>
                     <div>
                       <p className="text-gray-400 text-sm mb-1">Confidence</p>
                       <p className="text-xl font-bold text-white">
-                        {oracleAdvice.confidence.toFixed(1)}%
+                        {(oracleAdvice.confidence ?? 0).toFixed(1)}%
                       </p>
                     </div>
                     <div className="md:col-span-3">
@@ -1615,14 +1615,14 @@ export default function ATHENAPage() {
                   <div className="grid grid-cols-3 gap-4 mt-4 pt-4 border-t border-gray-700">
                     <div>
                       <p className="text-gray-400 text-sm">Total P&L</p>
-                      <p className={`text-lg font-bold ${performance.summary.total_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        {formatCurrency(performance.summary.total_pnl)}
+                      <p className={`text-lg font-bold ${(performance.summary?.total_pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {formatCurrency(performance.summary?.total_pnl ?? 0)}
                       </p>
                     </div>
                     <div>
                       <p className="text-gray-400 text-sm">Win Rate</p>
                       <p className="text-lg font-bold text-white">
-                        {performance.summary.avg_win_rate.toFixed(1)}%
+                        {(performance.summary?.avg_win_rate ?? 0).toFixed(1)}%
                       </p>
                     </div>
                     <div>
@@ -1885,34 +1885,34 @@ export default function ATHENAPage() {
                                         decision.ml_predictions.direction === 'UP' ? 'text-green-400' :
                                         decision.ml_predictions.direction === 'DOWN' ? 'text-red-400' : 'text-gray-400'
                                       }`}>
-                                        {decision.ml_predictions.direction} ({(decision.ml_predictions.direction_probability * 100).toFixed(0)}%)
+                                        {decision.ml_predictions.direction} ({((decision.ml_predictions.direction_probability ?? 0) * 100).toFixed(0)}%)
                                       </span>
                                     </div>
                                     <div className="bg-gray-800/50 rounded p-1.5 text-center">
                                       <span className="text-gray-500 block">Flip Gravity</span>
-                                      <span className="text-purple-400 font-bold">{(decision.ml_predictions.flip_gravity * 100).toFixed(0)}%</span>
+                                      <span className="text-purple-400 font-bold">{((decision.ml_predictions.flip_gravity ?? 0) * 100).toFixed(0)}%</span>
                                     </div>
                                     <div className="bg-gray-800/50 rounded p-1.5 text-center">
                                       <span className="text-gray-500 block">Magnet</span>
-                                      <span className="text-blue-400 font-bold">{(decision.ml_predictions.magnet_attraction * 100).toFixed(0)}%</span>
+                                      <span className="text-blue-400 font-bold">{((decision.ml_predictions.magnet_attraction ?? 0) * 100).toFixed(0)}%</span>
                                     </div>
                                     <div className="bg-gray-800/50 rounded p-1.5 text-center">
                                       <span className="text-gray-500 block">Pin Zone</span>
-                                      <span className="text-cyan-400 font-bold">{(decision.ml_predictions.pin_zone_probability * 100).toFixed(0)}%</span>
+                                      <span className="text-cyan-400 font-bold">{((decision.ml_predictions.pin_zone_probability ?? 0) * 100).toFixed(0)}%</span>
                                     </div>
                                   </div>
                                   <div className="grid grid-cols-3 gap-2 text-xs">
                                     <div className="bg-gray-800/50 rounded p-1.5 text-center">
                                       <span className="text-gray-500 block">Exp Volatility</span>
-                                      <span className="text-yellow-400 font-bold">{(decision.ml_predictions.expected_volatility).toFixed(2)}%</span>
+                                      <span className="text-yellow-400 font-bold">{(decision.ml_predictions.expected_volatility ?? 0).toFixed(2)}%</span>
                                     </div>
                                     <div className="bg-gray-800/50 rounded p-1.5 text-center">
                                       <span className="text-gray-500 block">ML Confidence</span>
-                                      <span className="text-white font-bold">{(decision.ml_predictions.ml_confidence * 100).toFixed(0)}%</span>
+                                      <span className="text-white font-bold">{((decision.ml_predictions.ml_confidence ?? 0) * 100).toFixed(0)}%</span>
                                     </div>
                                     <div className="bg-gray-800/50 rounded p-1.5 text-center">
                                       <span className="text-gray-500 block">Win Prob</span>
-                                      <span className="text-green-400 font-bold">{(decision.ml_predictions.win_probability * 100).toFixed(0)}%</span>
+                                      <span className="text-green-400 font-bold">{((decision.ml_predictions.win_probability ?? 0) * 100).toFixed(0)}%</span>
                                     </div>
                                   </div>
                                   <div className="mt-2">
@@ -1987,15 +1987,15 @@ export default function ATHENAPage() {
                                   <div className="grid grid-cols-4 gap-2 text-xs">
                                     <div className="bg-gray-800/50 rounded p-1.5 text-center">
                                       <span className="text-gray-500 block">Win Rate</span>
-                                      <span className="text-green-400 font-bold">{decision.backtest_stats.win_rate.toFixed(0)}%</span>
+                                      <span className="text-green-400 font-bold">{(decision.backtest_stats.win_rate ?? 0).toFixed(0)}%</span>
                                     </div>
                                     <div className="bg-gray-800/50 rounded p-1.5 text-center">
                                       <span className="text-gray-500 block">Expectancy</span>
-                                      <span className="text-white font-bold">${decision.backtest_stats.expectancy.toFixed(0)}</span>
+                                      <span className="text-white font-bold">${(decision.backtest_stats.expectancy ?? 0).toFixed(0)}</span>
                                     </div>
                                     <div className="bg-gray-800/50 rounded p-1.5 text-center">
                                       <span className="text-gray-500 block">Sharpe</span>
-                                      <span className="text-cyan-400 font-bold">{decision.backtest_stats.sharpe_ratio.toFixed(2)}</span>
+                                      <span className="text-cyan-400 font-bold">{(decision.backtest_stats.sharpe_ratio ?? 0).toFixed(2)}</span>
                                     </div>
                                     <div className="bg-gray-800/50 rounded p-1.5 text-center">
                                       <span className="text-gray-500 block">Trades</span>
