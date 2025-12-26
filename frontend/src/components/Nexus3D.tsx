@@ -11,8 +11,6 @@ import {
   MeshDistortMaterial,
   Line
 } from '@react-three/drei'
-import { EffectComposer, Bloom, ChromaticAberration } from '@react-three/postprocessing'
-import { BlendFunction } from 'postprocessing'
 import * as THREE from 'three'
 
 // =============================================================================
@@ -109,8 +107,8 @@ function CoreSphere() {
       <Sphere ref={meshRef} args={[1, 64, 64]}>
         <MeshDistortMaterial
           color="#3b82f6"
-          emissive="#1e40af"
-          emissiveIntensity={0.5}
+          emissive="#60a5fa"
+          emissiveIntensity={1.2}
           roughness={0.2}
           metalness={0.8}
           distort={0.15}
@@ -202,7 +200,7 @@ function BotNode({
         <meshStandardMaterial
           color={color}
           emissive={color}
-          emissiveIntensity={hovered ? 0.8 : 0.4}
+          emissiveIntensity={hovered ? 1.5 : 0.8}
           roughness={0.3}
           metalness={0.7}
         />
@@ -282,8 +280,8 @@ function FeatureNode({
         <Sphere ref={meshRef} args={[0.15, 16, 16]}>
           <meshStandardMaterial
             color="#93c5fd"
-            emissive="#3b82f6"
-            emissiveIntensity={0.5}
+            emissive="#60a5fa"
+            emissiveIntensity={1.0}
             roughness={0.4}
             metalness={0.6}
           />
@@ -600,27 +598,6 @@ function Scene({ botStatus, onNodeClick }: { botStatus: BotStatus, onNodeClick?:
 }
 
 // =============================================================================
-// POST PROCESSING EFFECTS
-// =============================================================================
-
-function Effects() {
-  return (
-    <EffectComposer>
-      <Bloom
-        intensity={1.5}
-        luminanceThreshold={0.2}
-        luminanceSmoothing={0.9}
-        mipmapBlur
-      />
-      <ChromaticAberration
-        blendFunction={BlendFunction.NORMAL}
-        offset={new THREE.Vector2(0.0005, 0.0005)}
-      />
-    </EffectComposer>
-  )
-}
-
-// =============================================================================
 // ERROR FALLBACK
 // =============================================================================
 
@@ -717,7 +694,6 @@ export default function Nexus3D({
 
         <Suspense fallback={null}>
           <Scene botStatus={botStatus} onNodeClick={onNodeClick} />
-          <Effects />
         </Suspense>
       </Canvas>
     </div>
