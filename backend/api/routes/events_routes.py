@@ -86,211 +86,222 @@ def detect_events_from_trades(days: int = 90, bot_filter: str = None) -> List[di
     """
     conn = get_connection()
     cursor = conn.cursor()
-
-    start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
     events = []
 
-    # Get closed trades
-    bot_clause = f"AND strategy ILIKE '%{bot_filter}%'" if bot_filter else ""
-    cursor.execute(f'''
-        SELECT
-            exit_date,
-            exit_time,
-            realized_pnl,
-            strategy,
-            symbol,
-            entry_vix,
-            exit_vix,
-            gex_regime
-        FROM autonomous_closed_trades
-        WHERE exit_date >= %s {bot_clause}
-        ORDER BY exit_date ASC, exit_time ASC
-    ''', (start_date,))
-
-    trades = cursor.fetchall()
-
-    if not trades:
-        conn.close()
-        return events
-
-    # Track metrics for event detection
-    cumulative_pnl = 0
-    high_water_mark = 0
-    max_drawdown = 0
-    consecutive_wins = 0
-    consecutive_losses = 0
-    avg_pnl = 0
-    pnl_list = []
-
-    for i, trade in enumerate(trades):
-        exit_date, exit_time, pnl, strategy, symbol, entry_vix, exit_vix, gex_regime = trade
-        pnl = pnl or 0
-
-        cumulative_pnl += pnl
-        pnl_list.append(pnl)
-        avg_pnl = sum(pnl_list) / len(pnl_list) if pnl_list else 0
-
-        # New equity high
-        if cumulative_pnl > high_water_mark:
-            if high_water_mark > 0:  # Not the first trade
-                events.append({
-                    'date': exit_date,
-                    'type': 'new_high',
-                    'severity': 'success',
-                    'title': 'New Equity High',
-                    'description': f'Cumulative P&L reached ${cumulative_pnl:,.0f}',
-                    'value': cumulative_pnl,
-                    'bot': strategy
-                })
-            high_water_mark = cumulative_pnl
-            max_drawdown = 0
-
-        # Drawdown tracking
-        if high_water_mark > 0:
-            current_dd = (high_water_mark - cumulative_pnl) / high_water_mark * 100
-            if current_dd > max_drawdown and current_dd > 5:
-                max_drawdown = current_dd
-                events.append({
-                    'date': exit_date,
-                    'type': 'drawdown',
-                    'severity': 'warning',
-                    'title': 'Max Drawdown',
-                    'description': f'Drawdown reached {current_dd:.1f}%',
-                    'value': current_dd,
-                    'bot': strategy
-                })
-
-        # Streak tracking
-        if pnl > 0:
-            consecutive_wins += 1
-            consecutive_losses = 0
-            if consecutive_wins == 3:
-                events.append({
-                    'date': exit_date,
-                    'type': 'winning_streak',
-                    'severity': 'success',
-                    'title': 'Winning Streak',
-                    'description': f'{consecutive_wins} consecutive wins',
-                    'value': consecutive_wins,
-                    'bot': strategy
-                })
-        else:
-            consecutive_losses += 1
-            consecutive_wins = 0
-            if consecutive_losses == 3:
-                events.append({
-                    'date': exit_date,
-                    'type': 'losing_streak',
-                    'severity': 'danger',
-                    'title': 'Losing Streak',
-                    'description': f'{consecutive_losses} consecutive losses',
-                    'value': consecutive_losses,
-                    'bot': strategy
-                })
-
-        # Large trade detection (>2x average after we have enough data)
-        if len(pnl_list) > 5 and abs(pnl) > abs(avg_pnl) * 2:
-            if pnl > 0:
-                events.append({
-                    'date': exit_date,
-                    'type': 'big_win',
-                    'severity': 'success',
-                    'title': 'Large Win',
-                    'description': f'+${pnl:,.0f} ({abs(pnl/avg_pnl):.1f}x average)',
-                    'value': pnl,
-                    'bot': strategy
-                })
-            else:
-                events.append({
-                    'date': exit_date,
-                    'type': 'big_loss',
-                    'severity': 'danger',
-                    'title': 'Large Loss',
-                    'description': f'-${abs(pnl):,.0f} ({abs(pnl/avg_pnl):.1f}x average)',
-                    'value': pnl,
-                    'bot': strategy
-                })
-
-        # VIX spike detection
-        vix = exit_vix or entry_vix
-        if vix and vix > 25:
-            # Check if we already have a VIX event for this date
-            if not any(e['date'] == exit_date and e['type'] == 'vix_spike' for e in events):
-                events.append({
-                    'date': exit_date,
-                    'type': 'vix_spike',
-                    'severity': 'warning',
-                    'title': 'VIX Spike',
-                    'description': f'VIX at {vix:.1f}',
-                    'value': vix,
-                    'bot': None
-                })
-
-    # Check for model version changes from oracle_bot_interactions
     try:
-        cursor.execute('''
-            SELECT DISTINCT
-                DATE(timestamp) as event_date,
-                model_version,
-                bot_name
-            FROM oracle_bot_interactions
-            WHERE timestamp >= %s
-            AND model_version IS NOT NULL
-            ORDER BY event_date
-        ''', (start_date,))
+        start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
 
-        versions = cursor.fetchall()
-        last_version = {}
+        # Get closed trades - use parameterized query to prevent SQL injection
+        params = [start_date]
+        bot_clause = ""
+        if bot_filter:
+            bot_clause = "AND strategy ILIKE %s"
+            params.append(f'%{bot_filter}%')
 
-        for event_date, version, bot in versions:
-            key = bot or 'ORACLE'
-            if key in last_version and last_version[key] != version:
+        cursor.execute(f'''
+            SELECT
+                exit_date,
+                exit_time,
+                realized_pnl,
+                strategy,
+                symbol,
+                entry_vix,
+                exit_vix,
+                gex_regime
+            FROM autonomous_closed_trades
+            WHERE exit_date >= %s {bot_clause}
+            ORDER BY exit_date ASC, exit_time ASC
+        ''', params)
+
+        trades = cursor.fetchall()
+
+        if not trades:
+            return events
+
+        # Track metrics for event detection
+        cumulative_pnl = 0
+        high_water_mark = 0
+        max_drawdown = 0
+        consecutive_wins = 0
+        consecutive_losses = 0
+        avg_pnl = 0
+        pnl_list = []
+
+        for i, trade in enumerate(trades):
+            exit_date, exit_time, pnl, strategy, symbol, entry_vix, exit_vix, gex_regime = trade
+            pnl = pnl or 0
+
+            cumulative_pnl += pnl
+            pnl_list.append(pnl)
+            avg_pnl = sum(pnl_list) / len(pnl_list) if pnl_list else 0
+
+            # Ensure date is a string for consistent sorting
+            date_str = str(exit_date) if exit_date else None
+
+            # New equity high
+            if cumulative_pnl > high_water_mark:
+                if high_water_mark > 0:  # Not the first trade
+                    events.append({
+                        'date': date_str,
+                        'type': 'new_high',
+                        'severity': 'success',
+                        'title': 'New Equity High',
+                        'description': f'Cumulative P&L reached ${cumulative_pnl:,.0f}',
+                        'value': cumulative_pnl,
+                        'bot': strategy
+                    })
+                high_water_mark = cumulative_pnl
+                max_drawdown = 0
+
+            # Drawdown tracking
+            if high_water_mark > 0:
+                current_dd = (high_water_mark - cumulative_pnl) / high_water_mark * 100
+                if current_dd > max_drawdown and current_dd > 5:
+                    max_drawdown = current_dd
+                    events.append({
+                        'date': date_str,
+                        'type': 'drawdown',
+                        'severity': 'warning',
+                        'title': 'Max Drawdown',
+                        'description': f'Drawdown reached {current_dd:.1f}%',
+                        'value': current_dd,
+                        'bot': strategy
+                    })
+
+            # Streak tracking
+            if pnl > 0:
+                consecutive_wins += 1
+                consecutive_losses = 0
+                if consecutive_wins == 3:
+                    events.append({
+                        'date': date_str,
+                        'type': 'winning_streak',
+                        'severity': 'success',
+                        'title': 'Winning Streak',
+                        'description': f'{consecutive_wins} consecutive wins',
+                        'value': consecutive_wins,
+                        'bot': strategy
+                    })
+            else:
+                consecutive_losses += 1
+                consecutive_wins = 0
+                if consecutive_losses == 3:
+                    events.append({
+                        'date': date_str,
+                        'type': 'losing_streak',
+                        'severity': 'danger',
+                        'title': 'Losing Streak',
+                        'description': f'{consecutive_losses} consecutive losses',
+                        'value': consecutive_losses,
+                        'bot': strategy
+                    })
+
+            # Large trade detection (>2x average after we have enough data)
+            # Guard against division by zero when avg_pnl is 0
+            if len(pnl_list) > 5 and avg_pnl != 0 and abs(pnl) > abs(avg_pnl) * 2:
+                multiplier = abs(pnl / avg_pnl)
+                if pnl > 0:
+                    events.append({
+                        'date': date_str,
+                        'type': 'big_win',
+                        'severity': 'success',
+                        'title': 'Large Win',
+                        'description': f'+${pnl:,.0f} ({multiplier:.1f}x average)',
+                        'value': pnl,
+                        'bot': strategy
+                    })
+                else:
+                    events.append({
+                        'date': date_str,
+                        'type': 'big_loss',
+                        'severity': 'danger',
+                        'title': 'Large Loss',
+                        'description': f'-${abs(pnl):,.0f} ({multiplier:.1f}x average)',
+                        'value': pnl,
+                        'bot': strategy
+                    })
+
+            # VIX spike detection
+            vix = exit_vix or entry_vix
+            if vix and vix > 25:
+                # Check if we already have a VIX event for this date
+                if not any(e['date'] == date_str and e['type'] == 'vix_spike' for e in events):
+                    events.append({
+                        'date': date_str,
+                        'type': 'vix_spike',
+                        'severity': 'warning',
+                        'title': 'VIX Spike',
+                        'description': f'VIX at {vix:.1f}',
+                        'value': vix,
+                        'bot': None
+                    })
+
+        # Check for model version changes from oracle_bot_interactions
+        try:
+            cursor.execute('''
+                SELECT DISTINCT
+                    DATE(timestamp) as event_date,
+                    model_version,
+                    bot_name
+                FROM oracle_bot_interactions
+                WHERE timestamp >= %s
+                AND model_version IS NOT NULL
+                ORDER BY event_date
+            ''', (start_date,))
+
+            versions = cursor.fetchall()
+            last_version = {}
+
+            for event_date, version, bot in versions:
+                key = bot or 'ORACLE'
+                if key in last_version and last_version[key] != version:
+                    events.append({
+                        'date': str(event_date),
+                        'type': 'model_change',
+                        'severity': 'info',
+                        'title': 'Model Version Change',
+                        'description': f'{key}: v{last_version[key]} → v{version}',
+                        'value': None,
+                        'bot': bot
+                    })
+                last_version[key] = version
+        except Exception as e:
+            print(f"Could not check model versions: {e}")
+
+        # Check for circuit breaker events
+        try:
+            cursor.execute('''
+                SELECT
+                    DATE(timestamp) as event_date,
+                    trigger_event,
+                    change_type
+                FROM gex_change_log
+                WHERE timestamp >= %s
+                AND trigger_event ILIKE '%circuit%'
+                ORDER BY timestamp
+            ''', (start_date,))
+
+            circuits = cursor.fetchall()
+            for event_date, trigger, change_type in circuits:
                 events.append({
                     'date': str(event_date),
-                    'type': 'model_change',
-                    'severity': 'info',
-                    'title': 'Model Version Change',
-                    'description': f'{key}: v{last_version[key]} → v{version}',
+                    'type': 'circuit_breaker',
+                    'severity': 'warning',
+                    'title': 'Circuit Breaker',
+                    'description': trigger or 'Trading paused',
                     'value': None,
-                    'bot': bot
+                    'bot': None
                 })
-            last_version[key] = version
-    except Exception as e:
-        print(f"Could not check model versions: {e}")
+        except Exception as e:
+            print(f"Could not check circuit breakers: {e}")
 
-    # Check for circuit breaker events
-    try:
-        cursor.execute('''
-            SELECT
-                DATE(timestamp) as event_date,
-                trigger_event,
-                change_type
-            FROM gex_change_log
-            WHERE timestamp >= %s
-            AND trigger_event ILIKE '%circuit%'
-            ORDER BY timestamp
-        ''', (start_date,))
+        # Sort events by date
+        events.sort(key=lambda x: x['date'])
 
-        circuits = cursor.fetchall()
-        for event_date, trigger, change_type in circuits:
-            events.append({
-                'date': str(event_date),
-                'type': 'circuit_breaker',
-                'severity': 'warning',
-                'title': 'Circuit Breaker',
-                'description': trigger or 'Trading paused',
-                'value': None,
-                'bot': None
-            })
-    except Exception as e:
-        print(f"Could not check circuit breakers: {e}")
+        return events
 
-    conn.close()
-
-    # Sort events by date
-    events.sort(key=lambda x: x['date'])
-
-    return events
+    finally:
+        conn.close()
 
 
 def persist_events(events: List[dict]) -> dict:
@@ -310,44 +321,46 @@ def persist_events(events: List[dict]) -> dict:
     inserted = 0
     skipped = 0
 
-    for event in events:
-        try:
-            # Convert date to string if needed
-            event_date = event.get('date')
-            if hasattr(event_date, 'strftime'):
-                event_date = event_date.strftime('%Y-%m-%d')
+    try:
+        for event in events:
+            try:
+                # Convert date to string if needed
+                event_date = event.get('date')
+                if hasattr(event_date, 'strftime'):
+                    event_date = event_date.strftime('%Y-%m-%d')
 
-            cursor.execute('''
-                INSERT INTO trading_events (
-                    event_date, event_type, bot_name, severity,
-                    title, description, value, metadata
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (event_date, event_type, COALESCE(bot_name, ''), COALESCE(value::text, ''))
-                DO NOTHING
-            ''', (
-                event_date,
-                event.get('type'),
-                event.get('bot'),
-                event.get('severity', 'info'),
-                event.get('title'),
-                event.get('description'),
-                event.get('value'),
-                json.dumps(event.get('metadata')) if event.get('metadata') else None
-            ))
+                cursor.execute('''
+                    INSERT INTO trading_events (
+                        event_date, event_type, bot_name, severity,
+                        title, description, value, metadata
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (event_date, event_type, COALESCE(bot_name, ''), COALESCE(value::text, ''))
+                    DO NOTHING
+                ''', (
+                    event_date,
+                    event.get('type'),
+                    event.get('bot'),
+                    event.get('severity', 'info'),
+                    event.get('title'),
+                    event.get('description'),
+                    event.get('value'),
+                    json.dumps(event.get('metadata')) if event.get('metadata') else None
+                ))
 
-            if cursor.rowcount > 0:
-                inserted += 1
-            else:
+                if cursor.rowcount > 0:
+                    inserted += 1
+                else:
+                    skipped += 1
+
+            except Exception as e:
+                print(f"Error persisting event: {e}")
                 skipped += 1
 
-        except Exception as e:
-            print(f"Error persisting event: {e}")
-            skipped += 1
+        conn.commit()
+        return {'inserted': inserted, 'skipped': skipped}
 
-    conn.commit()
-    conn.close()
-
-    return {'inserted': inserted, 'skipped': skipped}
+    finally:
+        conn.close()
 
 
 def get_persisted_events(days: int = 90, bot_filter: str = None, event_type: str = None) -> List[dict]:
@@ -358,48 +371,51 @@ def get_persisted_events(days: int = 90, bot_filter: str = None, event_type: str
     conn = get_connection()
     cursor = conn.cursor()
 
-    start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+    try:
+        start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
 
-    query = '''
-        SELECT
-            id, event_date, event_type, bot_name, severity,
-            title, description, value, metadata, created_at
-        FROM trading_events
-        WHERE event_date >= %s
-    '''
-    params = [start_date]
+        query = '''
+            SELECT
+                id, event_date, event_type, bot_name, severity,
+                title, description, value, metadata, created_at
+            FROM trading_events
+            WHERE event_date >= %s
+        '''
+        params = [start_date]
 
-    if bot_filter:
-        query += " AND bot_name ILIKE %s"
-        params.append(f'%{bot_filter}%')
+        if bot_filter:
+            query += " AND bot_name ILIKE %s"
+            params.append(f'%{bot_filter}%')
 
-    if event_type:
-        query += " AND event_type = %s"
-        params.append(event_type)
+        if event_type:
+            query += " AND event_type = %s"
+            params.append(event_type)
 
-    query += " ORDER BY event_date ASC, created_at ASC"
+        query += " ORDER BY event_date ASC, created_at ASC"
 
-    cursor.execute(query, params)
-    rows = cursor.fetchall()
-    conn.close()
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
 
-    events = []
-    for row in rows:
-        events.append({
-            'id': row[0],
-            'date': str(row[1]),
-            'type': row[2],
-            'bot': row[3],
-            'severity': row[4],
-            'title': row[5],
-            'description': row[6],
-            'value': row[7],
-            'metadata': row[8],
-            'created_at': str(row[9]) if row[9] else None,
-            'persisted': True
-        })
+        events = []
+        for row in rows:
+            events.append({
+                'id': row[0],
+                'date': str(row[1]),
+                'type': row[2],
+                'bot': row[3],
+                'severity': row[4],
+                'title': row[5],
+                'description': row[6],
+                'value': row[7],
+                'metadata': row[8],
+                'created_at': str(row[9]) if row[9] else None,
+                'persisted': True
+            })
 
-    return events
+        return events
+
+    finally:
+        conn.close()
 
 
 def sync_events(days: int = 90, bot_filter: str = None) -> dict:
@@ -436,60 +452,69 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
     conn = get_connection()
     cursor = conn.cursor()
 
-    start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
-    bot_clause = f"AND strategy ILIKE '%{bot_filter}%'" if bot_filter else ""
+    try:
+        start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
 
-    # Get daily aggregated trades
-    if timeframe == 'daily':
-        date_format = "exit_date"
-    elif timeframe == 'weekly':
-        date_format = "DATE_TRUNC('week', exit_date::date)::date"
-    else:  # monthly
-        date_format = "DATE_TRUNC('month', exit_date::date)::date"
+        # Use parameterized query to prevent SQL injection
+        params = [start_date]
+        bot_clause = ""
+        if bot_filter:
+            bot_clause = "AND strategy ILIKE %s"
+            params.append(f'%{bot_filter}%')
 
-    cursor.execute(f'''
-        SELECT
-            {date_format} as period_date,
-            SUM(realized_pnl) as daily_pnl,
-            COUNT(*) as trade_count
-        FROM autonomous_closed_trades
-        WHERE exit_date >= %s {bot_clause}
-        GROUP BY {date_format}
-        ORDER BY period_date ASC
-    ''', (start_date,))
+        # Get daily aggregated trades
+        if timeframe == 'daily':
+            date_format = "exit_date"
+        elif timeframe == 'weekly':
+            date_format = "DATE_TRUNC('week', exit_date::date)::date"
+        else:  # monthly
+            date_format = "DATE_TRUNC('month', exit_date::date)::date"
 
-    rows = cursor.fetchall()
-    conn.close()
+        cursor.execute(f'''
+            SELECT
+                {date_format} as period_date,
+                SUM(realized_pnl) as daily_pnl,
+                COUNT(*) as trade_count
+            FROM autonomous_closed_trades
+            WHERE exit_date >= %s {bot_clause}
+            GROUP BY {date_format}
+            ORDER BY period_date ASC
+        ''', params)
 
-    if not rows:
-        return []
+        rows = cursor.fetchall()
 
-    # Build equity curve
-    equity_curve = []
-    cumulative_pnl = 0
-    high_water_mark = 0
-    starting_capital = 200000  # Default starting capital
+        if not rows:
+            return []
 
-    for period_date, daily_pnl, trade_count in rows:
-        daily_pnl = daily_pnl or 0
-        cumulative_pnl += daily_pnl
-        equity = starting_capital + cumulative_pnl
+        # Build equity curve
+        equity_curve = []
+        cumulative_pnl = 0
+        high_water_mark = 0
+        starting_capital = 200000  # Default starting capital
 
-        if equity > high_water_mark:
-            high_water_mark = equity
+        for period_date, daily_pnl, trade_count in rows:
+            daily_pnl = daily_pnl or 0
+            cumulative_pnl += daily_pnl
+            equity = starting_capital + cumulative_pnl
 
-        drawdown_pct = ((high_water_mark - equity) / high_water_mark * 100) if high_water_mark > 0 else 0
+            if equity > high_water_mark:
+                high_water_mark = equity
 
-        equity_curve.append({
-            'date': str(period_date),
-            'equity': equity,
-            'daily_pnl': daily_pnl,
-            'cumulative_pnl': cumulative_pnl,
-            'drawdown_pct': drawdown_pct,
-            'trade_count': trade_count
-        })
+            drawdown_pct = ((high_water_mark - equity) / high_water_mark * 100) if high_water_mark > 0 else 0
 
-    return equity_curve
+            equity_curve.append({
+                'date': str(period_date),
+                'equity': equity,
+                'daily_pnl': daily_pnl,
+                'cumulative_pnl': cumulative_pnl,
+                'drawdown_pct': drawdown_pct,
+                'trade_count': trade_count
+            })
+
+        return equity_curve
+
+    finally:
+        conn.close()
 
 
 # ============================================================================
@@ -665,10 +690,10 @@ async def clear_trading_events(
         days: Only clear events older than this many days (optional)
         bot: Only clear events for this bot (optional)
     """
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
+    conn = get_connection()
+    cursor = conn.cursor()
 
+    try:
         query = "DELETE FROM trading_events WHERE 1=1"
         params = []
 
@@ -684,7 +709,6 @@ async def clear_trading_events(
         cursor.execute(query, params)
         deleted = cursor.rowcount
         conn.commit()
-        conn.close()
 
         return {
             "success": True,
@@ -693,6 +717,8 @@ async def clear_trading_events(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
 
 
 @router.get("/types")

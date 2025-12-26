@@ -257,8 +257,9 @@ export default function EquityCurveChart({
       const Icon = config.icon
       const isHovered = hoveredEventDate === event.date
 
-      // Calculate position based on chart
-      const xPercent = (processedData.findIndex(p => p.date === event.date) / (processedData.length - 1)) * 100
+      // Calculate position based on chart (guard against single data point)
+      const dataLength = processedData.length > 1 ? processedData.length - 1 : 1
+      const xPercent = (processedData.findIndex(p => p.date === event.date) / dataLength) * 100
 
       return (
         <div
