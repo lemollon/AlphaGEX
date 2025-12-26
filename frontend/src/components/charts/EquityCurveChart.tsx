@@ -8,7 +8,7 @@ import {
 } from 'recharts'
 import {
   TrendingUp, TrendingDown, AlertTriangle, Award, Trophy, Flame,
-  Activity, Cpu, PauseCircle, X, Calendar
+  Activity, Cpu, PauseCircle, X, Calendar, LucideIcon
 } from 'lucide-react'
 
 // ============================================================================
@@ -74,7 +74,7 @@ const fetcher = async (url: string) => {
 // EVENT ICONS & COLORS
 // ============================================================================
 
-const eventConfig: Record<string, { icon: React.ElementType; color: string; bgColor: string }> = {
+const eventConfig: Record<string, { icon: LucideIcon; color: string; bgColor: string }> = {
   new_high: { icon: Trophy, color: 'text-green-400', bgColor: 'bg-green-500' },
   winning_streak: { icon: Flame, color: 'text-green-400', bgColor: 'bg-green-500' },
   losing_streak: { icon: AlertTriangle, color: 'text-red-400', bgColor: 'bg-red-500' },
