@@ -10,6 +10,11 @@ export { default as LiveEquityCurve } from './LiveEquityCurve'
 export { default as TradeStoryCard } from './TradeStoryCard'
 export type { TradeDecision } from './TradeStoryCard'
 
+// Transparency & Reasoning - NEW
+export { default as LastScanSummary } from './LastScanSummary'
+export { default as SignalConflictTracker } from './SignalConflictTracker'
+export { default as PositionEntryContext } from './PositionEntryContext'
+
 // Status & Information
 export { default as BotStatusBanner } from './BotStatusBanner'
 export { default as TodayReportCard } from './TodayReportCard'

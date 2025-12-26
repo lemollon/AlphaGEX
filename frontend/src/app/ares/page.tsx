@@ -30,7 +30,10 @@ import {
   PositionDetailModal,
   AllOpenPositions,
   LiveEquityCurve,
-  TradeStoryCard
+  TradeStoryCard,
+  LastScanSummary,
+  SignalConflictTracker,
+  PositionEntryContext
 } from '@/components/trader'
 import type { TradeDecision } from '@/components/trader'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
@@ -851,6 +854,83 @@ export default function ARESPage() {
       }))
   }, [decisions])
 
+  // Transform scan activity for LastScanSummary component
+  const lastScanData = useMemo(() => {
+    if (!scanActivity || scanActivity.length === 0) return null
+    const latest = scanActivity[0] as any
+    return {
+      scan_id: latest.scan_id,
+      timestamp: latest.timestamp || latest.time_ct,
+      outcome: latest.outcome || (latest.trade_executed ? 'TRADED' : 'NO_TRADE'),
+      decision_summary: latest.decision_summary,
+      ml_signal: latest.signal_source?.includes('ML') || latest.signal_direction ? {
+        direction: latest.signal_direction || 'NEUTRAL',
+        confidence: latest.signal_confidence || 0,
+        advice: latest.signal_source?.includes('ML') ? 'ML Signal' : latest.oracle_advice || ''
+      } : undefined,
+      oracle_signal: latest.oracle_advice || latest.signal_win_probability ? {
+        advice: latest.oracle_advice || 'No Oracle advice',
+        confidence: latest.signal_confidence || 0,
+        win_probability: latest.signal_win_probability || 0
+      } : undefined,
+      override_occurred: latest.signal_source?.includes('Override') || false,
+      override_details: latest.signal_source?.includes('Override') ? {
+        winner: latest.signal_source?.includes('ML') ? 'ML' : 'Oracle',
+        overridden_signal: latest.signal_direction || 'Unknown',
+        override_reason: latest.decision_summary || 'Override applied'
+      } : undefined,
+      checks: latest.checks_performed?.map((c: any) => ({
+        check: c.check_name,
+        passed: c.passed,
+        value: c.value,
+        reason: c.reason
+      })),
+      market_context: {
+        spot_price: latest.underlying_price || 0,
+        vix: latest.vix || 0,
+        gex_regime: latest.gex_regime || 'Unknown',
+        put_wall: latest.put_wall,
+        call_wall: latest.call_wall
+      },
+      what_would_trigger: latest.what_would_trigger
+    }
+  }, [scanActivity])
+
+  // Build signal conflict data from scan activity
+  const signalConflicts = useMemo(() => {
+    if (!scanActivity) return []
+    const today = new Date().toISOString().split('T')[0]
+    return scanActivity
+      .filter((s: any) => s.timestamp?.startsWith(today) && s.signal_source?.includes('Override'))
+      .map((s: any, idx: number) => ({
+        id: `conflict-${idx}`,
+        timestamp: s.timestamp,
+        mlSignal: s.signal_direction || 'NEUTRAL',
+        mlConfidence: s.signal_confidence || 0,
+        oracleSignal: s.oracle_advice || 'HOLD',
+        oracleConfidence: s.signal_win_probability || 0,
+        winner: s.signal_source?.includes('ML') ? 'ML' as const : 'Oracle' as const,
+        outcome: s.trade_executed ? 'TRADED' : 'NO_TRADE',
+        wasCorrect: undefined // To be determined later when position closes
+      }))
+  }, [scanActivity])
+
+  // Calculate ML vs Oracle stats from today's scans
+  const { mlWins, oracleWins, scansToday, tradesToday } = useMemo(() => {
+    if (!scanActivity) return { mlWins: 0, oracleWins: 0, scansToday: 0, tradesToday: 0 }
+    const today = new Date().toISOString().split('T')[0]
+    const todayScans = scanActivity.filter((s: any) => s.timestamp?.startsWith(today))
+    const trades = todayScans.filter((s: any) => s.trade_executed || s.outcome === 'TRADED')
+    const mlWon = signalConflicts.filter((c: { winner: string }) => c.winner === 'ML').length
+    const oracleWon = signalConflicts.filter((c: { winner: string }) => c.winner === 'Oracle').length
+    return {
+      mlWins: mlWon,
+      oracleWins: oracleWon,
+      scansToday: todayScans.length,
+      tradesToday: trades.length
+    }
+  }, [scanActivity, signalConflicts])
+
   // Strategy change handler
   const handleStrategyChange = async (presetId: string) => {
     if (changingStrategy) return
@@ -1236,6 +1316,30 @@ export default function ARESPage() {
                 todayPnl={(livePnL?.total_realized_pnl || 0) + (livePnL?.total_unrealized_pnl || 0)}
                 todayTrades={closedPositions.filter(p => p.close_date?.startsWith(new Date().toISOString().split('T')[0])).length}
               />
+
+              {/* ===== TRANSPARENCY SECTION - What Just Happened ===== */}
+              {/* Last Scan Summary - THE MOST IMPORTANT: Shows what happened on last scan with full reasoning */}
+              <LastScanSummary
+                botName="ARES"
+                lastScan={lastScanData}
+                isLoading={scanActivityLoading}
+                nextScanIn={undefined} // Could calculate from heartbeat
+                scansToday={scansToday}
+                tradesToday={tradesToday}
+                onRefresh={() => mutateScanActivity()}
+              />
+
+              {/* Signal Conflict Tracker - Shows ML vs Oracle disagreements and who won */}
+              {signalConflicts.length > 0 && (
+                <SignalConflictTracker
+                  botName="ARES"
+                  conflicts={signalConflicts}
+                  totalScansToday={scansToday}
+                  mlWins={mlWins}
+                  oracleWins={oracleWins}
+                  isLoading={scanActivityLoading}
+                />
+              )}
 
               {/* Live Equity Curve with Intraday Tracking */}
               <LiveEquityCurve
