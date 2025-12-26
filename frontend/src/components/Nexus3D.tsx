@@ -2,7 +2,17 @@
 
 import { useRef, useMemo, useState, useEffect, Suspense } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
-import { OrbitControls, Sphere, Float, Stars, Html } from '@react-three/drei'
+import {
+  OrbitControls,
+  Sphere,
+  Float,
+  Stars,
+  Text,
+  MeshDistortMaterial,
+  Line
+} from '@react-three/drei'
+import { EffectComposer, Bloom, ChromaticAberration } from '@react-three/postprocessing'
+import { BlendFunction } from 'postprocessing'
 import * as THREE from 'three'
 
 // =============================================================================
@@ -55,7 +65,7 @@ const FEATURE_NODES = [
 ]
 
 // =============================================================================
-// CORE SPHERE - Simplified without MeshDistortMaterial
+// CORE SPHERE WITH DISTORT MATERIAL
 // =============================================================================
 
 function CoreSphere() {
@@ -95,14 +105,16 @@ function CoreSphere() {
         <meshBasicMaterial color="#60a5fa" transparent opacity={0.15} />
       </Sphere>
 
-      {/* Main core sphere - using standard material instead of distort */}
+      {/* Main core sphere with distort effect */}
       <Sphere ref={meshRef} args={[1, 64, 64]}>
-        <meshStandardMaterial
+        <MeshDistortMaterial
           color="#3b82f6"
           emissive="#1e40af"
           emissiveIntensity={0.5}
           roughness={0.2}
           metalness={0.8}
+          distort={0.15}
+          speed={2}
         />
       </Sphere>
 
@@ -123,12 +135,16 @@ function CoreSphere() {
         <meshBasicMaterial color="#93c5fd" transparent opacity={0.6} />
       </mesh>
 
-      {/* Core label using Html instead of Text */}
-      <Html position={[0, 0, 1.5]} center>
-        <div className="text-white text-xs font-bold whitespace-nowrap bg-black/50 px-2 py-1 rounded">
-          GEX CORE
-        </div>
-      </Html>
+      {/* Core label - using default font */}
+      <Text
+        position={[0, 0, 1.2]}
+        fontSize={0.25}
+        color="#ffffff"
+        anchorX="center"
+        anchorY="middle"
+      >
+        GEX CORE
+      </Text>
     </group>
   )
 }
@@ -200,15 +216,27 @@ function BotNode({
         </mesh>
       )}
 
-      {/* Labels using Html instead of Text */}
-      <Html position={[0, 0.9, 0]} center>
-        <div className="text-white text-[10px] font-bold whitespace-nowrap">{name}</div>
-      </Html>
-      <Html position={[0, -0.75, 0]} center>
-        <div className="text-[8px] font-medium whitespace-nowrap" style={{ color }}>
-          {status.toUpperCase()}
-        </div>
-      </Html>
+      {/* Label */}
+      <Text
+        position={[0, 0.9, 0]}
+        fontSize={0.18}
+        color="#ffffff"
+        anchorX="center"
+        anchorY="middle"
+      >
+        {name}
+      </Text>
+
+      {/* Status indicator */}
+      <Text
+        position={[0, -0.75, 0]}
+        fontSize={0.1}
+        color={color}
+        anchorX="center"
+        anchorY="middle"
+      >
+        {status.toUpperCase()}
+      </Text>
     </group>
   )
 }
@@ -218,11 +246,13 @@ function BotNode({
 // =============================================================================
 
 function FeatureNode({
+  id,
   name,
   angle,
   radius,
   y
 }: {
+  id: string
   name: string
   angle: number
   radius: number
@@ -260,16 +290,22 @@ function FeatureNode({
         </Sphere>
 
         {/* Tiny label */}
-        <Html position={[0, 0.35, 0]} center>
-          <div className="text-blue-300 text-[8px] font-medium whitespace-nowrap">{name}</div>
-        </Html>
+        <Text
+          position={[0, 0.35, 0]}
+          fontSize={0.08}
+          color="#93c5fd"
+          anchorX="center"
+          anchorY="middle"
+        >
+          {name}
+        </Text>
       </group>
     </Float>
   )
 }
 
 // =============================================================================
-// NEURAL CONNECTIONS - Using simple lines
+// NEURAL CONNECTIONS
 // =============================================================================
 
 function NeuralConnection({
@@ -277,32 +313,31 @@ function NeuralConnection({
   end,
   color = '#3b82f6'
 }: {
-  start: THREE.Vector3
-  end: THREE.Vector3
+  start: [number, number, number]
+  end: [number, number, number]
   color?: string
 }) {
-  const lineRef = useRef<THREE.Line>(null)
-
-  const geometry = useMemo(() => {
-    const mid = new THREE.Vector3(
-      (start.x + end.x) / 2,
-      (start.y + end.y) / 2 + 1,
-      (start.z + end.z) / 2
+  const points = useMemo(() => {
+    const curve = new THREE.QuadraticBezierCurve3(
+      new THREE.Vector3(...start),
+      new THREE.Vector3(
+        (start[0] + end[0]) / 2,
+        (start[1] + end[1]) / 2 + 1,
+        (start[2] + end[2]) / 2
+      ),
+      new THREE.Vector3(...end)
     )
-    const curve = new THREE.QuadraticBezierCurve3(start, mid, end)
-    const points = curve.getPoints(30)
-    return new THREE.BufferGeometry().setFromPoints(points)
+    return curve.getPoints(50).map(p => [p.x, p.y, p.z] as [number, number, number])
   }, [start, end])
 
-  useFrame((state) => {
-    if (lineRef.current) {
-      const material = lineRef.current.material as THREE.LineBasicMaterial
-      material.opacity = 0.3 + Math.sin(state.clock.elapsedTime * 2) * 0.1
-    }
-  })
-
   return (
-    <primitive object={new THREE.Line(geometry, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.4 }))} />
+    <Line
+      points={points}
+      color={color}
+      lineWidth={1.5}
+      transparent
+      opacity={0.5}
+    />
   )
 }
 
@@ -311,7 +346,7 @@ function NeuralConnection({
 // =============================================================================
 
 function ParticleFlow() {
-  const count = 150
+  const count = 200
   const meshRef = useRef<THREE.InstancedMesh>(null)
 
   const particles = useMemo(() => {
@@ -354,15 +389,70 @@ function ParticleFlow() {
 }
 
 // =============================================================================
-// OUTER NEURAL WEB - Simplified
+// SIGNAL PARTICLES (flowing between nodes)
+// =============================================================================
+
+function SignalParticles() {
+  const count = 50
+  const meshRef = useRef<THREE.InstancedMesh>(null)
+
+  const signals = useMemo(() => {
+    return BOT_NODES.flatMap((node, nodeIdx) =>
+      Array.from({ length: 10 }, () => ({
+        nodeIdx,
+        progress: Math.random(),
+        speed: 0.3 + Math.random() * 0.4,
+        toCore: Math.random() > 0.5,
+      }))
+    )
+  }, [])
+
+  const dummy = useMemo(() => new THREE.Object3D(), [])
+
+  useFrame((state) => {
+    signals.forEach((s, i) => {
+      const node = BOT_NODES[s.nodeIdx]
+      const radius = 4
+      const nodeX = Math.cos(node.angle) * radius
+      const nodeZ = Math.sin(node.angle) * radius
+      const nodeY = Math.sin(node.angle * 2) * 0.5
+
+      s.progress = (s.progress + state.clock.getDelta() * s.speed) % 1
+
+      const p = s.toCore ? s.progress : 1 - s.progress
+      const x = nodeX * (1 - p)
+      const z = nodeZ * (1 - p)
+      const y = nodeY * (1 - p) + Math.sin(p * Math.PI) * 0.5
+
+      dummy.position.set(x, y, z)
+      const scale = 0.04 * Math.sin(p * Math.PI)
+      dummy.scale.setScalar(Math.max(0.01, scale))
+      dummy.updateMatrix()
+      meshRef.current?.setMatrixAt(i, dummy.matrix)
+    })
+    if (meshRef.current) {
+      meshRef.current.instanceMatrix.needsUpdate = true
+    }
+  })
+
+  return (
+    <instancedMesh ref={meshRef} args={[undefined, undefined, count]}>
+      <sphereGeometry args={[1, 8, 8]} />
+      <meshBasicMaterial color="#ffffff" transparent opacity={0.9} />
+    </instancedMesh>
+  )
+}
+
+// =============================================================================
+// OUTER NEURAL WEB
 // =============================================================================
 
 function NeuralWeb() {
   const groupRef = useRef<THREE.Group>(null)
-  const webCount = 40
+  const webCount = 60
 
-  const webNodes = useMemo(() => {
-    return Array.from({ length: webCount }, (_, i) => {
+  const { webNodes, connections } = useMemo(() => {
+    const nodes = Array.from({ length: webCount }, (_, i) => {
       const phi = Math.acos(-1 + (2 * i) / webCount)
       const theta = Math.sqrt(webCount * Math.PI) * phi
       const radius = 7 + Math.random() * 2
@@ -372,6 +462,25 @@ function NeuralWeb() {
         z: radius * Math.cos(phi),
       }
     })
+
+    // Create connections between nearby nodes
+    const conns: Array<{ from: number; to: number }> = []
+    nodes.forEach((node, i) => {
+      nodes.forEach((other, j) => {
+        if (i < j) {
+          const dist = Math.sqrt(
+            Math.pow(node.x - other.x, 2) +
+            Math.pow(node.y - other.y, 2) +
+            Math.pow(node.z - other.z, 2)
+          )
+          if (dist < 4 && conns.filter(c => c.from === i).length < 3) {
+            conns.push({ from: i, to: j })
+          }
+        }
+      })
+    })
+
+    return { webNodes: nodes, connections: conns }
   }, [])
 
   useFrame((state) => {
@@ -383,11 +492,28 @@ function NeuralWeb() {
 
   return (
     <group ref={groupRef}>
+      {/* Web nodes */}
       {webNodes.map((node, i) => (
         <Sphere key={i} args={[0.06, 8, 8]} position={[node.x, node.y, node.z]}>
           <meshBasicMaterial color="#3b82f6" transparent opacity={0.6} />
         </Sphere>
       ))}
+
+      {/* Connections */}
+      {connections.map((conn, i) => {
+        const from = webNodes[conn.from]
+        const to = webNodes[conn.to]
+        return (
+          <Line
+            key={i}
+            points={[[from.x, from.y, from.z], [to.x, to.y, to.z]]}
+            color="#1e40af"
+            lineWidth={0.5}
+            transparent
+            opacity={0.3}
+          />
+        )
+      })}
     </group>
   )
 }
@@ -400,13 +526,13 @@ function Scene({ botStatus, onNodeClick }: { botStatus: BotStatus, onNodeClick?:
   return (
     <>
       {/* Lighting */}
-      <ambientLight intensity={0.4} />
+      <ambientLight intensity={0.3} />
       <pointLight position={[10, 10, 10]} intensity={1} color="#ffffff" />
       <pointLight position={[-10, -10, -10]} intensity={0.5} color="#3b82f6" />
       <pointLight position={[0, 0, 0]} intensity={2} color="#60a5fa" />
 
       {/* Background stars */}
-      <Stars radius={50} depth={50} count={2000} factor={4} saturation={0} fade speed={0.5} />
+      <Stars radius={50} depth={50} count={3000} factor={4} saturation={0} fade speed={0.5} />
 
       {/* Core */}
       <CoreSphere />
@@ -427,6 +553,7 @@ function Scene({ botStatus, onNodeClick }: { botStatus: BotStatus, onNodeClick?:
       {FEATURE_NODES.map((node) => (
         <FeatureNode
           key={node.id}
+          id={node.id}
           name={node.name}
           angle={node.angle}
           radius={node.radius}
@@ -443,8 +570,8 @@ function Scene({ botStatus, onNodeClick }: { botStatus: BotStatus, onNodeClick?:
         return (
           <NeuralConnection
             key={node.id}
-            start={new THREE.Vector3(0, 0, 0)}
-            end={new THREE.Vector3(x, y, z)}
+            start={[0, 0, 0]}
+            end={[x, y, z]}
             color={STATUS_COLORS[botStatus[node.id as keyof BotStatus] as keyof typeof STATUS_COLORS] || '#3b82f6'}
           />
         )
@@ -452,6 +579,7 @@ function Scene({ botStatus, onNodeClick }: { botStatus: BotStatus, onNodeClick?:
 
       {/* Particle effects */}
       <ParticleFlow />
+      <SignalParticles />
 
       {/* Outer neural web */}
       <NeuralWeb />
@@ -472,10 +600,31 @@ function Scene({ botStatus, onNodeClick }: { botStatus: BotStatus, onNodeClick?:
 }
 
 // =============================================================================
+// POST PROCESSING EFFECTS
+// =============================================================================
+
+function Effects() {
+  return (
+    <EffectComposer>
+      <Bloom
+        intensity={1.5}
+        luminanceThreshold={0.2}
+        luminanceSmoothing={0.9}
+        mipmapBlur
+      />
+      <ChromaticAberration
+        blendFunction={BlendFunction.NORMAL}
+        offset={new THREE.Vector2(0.0005, 0.0005)}
+      />
+    </EffectComposer>
+  )
+}
+
+// =============================================================================
 // ERROR FALLBACK
 // =============================================================================
 
-function ErrorFallback() {
+function ErrorFallback({ message }: { message?: string }) {
   return (
     <div className="w-full h-full bg-[#030712] flex items-center justify-center">
       <div className="text-center p-8">
@@ -486,6 +635,11 @@ function ErrorFallback() {
         </div>
         <h2 className="text-xl font-bold text-white mb-2">3D Visualization Error</h2>
         <p className="text-gray-400 mb-4">WebGL may not be supported on this device</p>
+        {message && (
+          <p className="text-xs text-gray-500 font-mono bg-gray-800/50 p-2 rounded max-w-md mx-auto">
+            {message}
+          </p>
+        )}
       </div>
     </div>
   )
@@ -516,29 +670,31 @@ export default function Nexus3D({
   className = ''
 }: Nexus3DProps) {
   const [mounted, setMounted] = useState(false)
-  const [hasError, setHasError] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    setMounted(true)
-
     // Check for WebGL support
     try {
       const canvas = document.createElement('canvas')
-      const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl')
+      const gl = canvas.getContext('webgl2') || canvas.getContext('webgl') || canvas.getContext('experimental-webgl')
       if (!gl) {
-        setHasError(true)
+        setError('WebGL is not supported on this device')
+        return
       }
-    } catch {
-      setHasError(true)
+    } catch (e) {
+      setError('Failed to initialize WebGL')
+      return
     }
+
+    setMounted(true)
   }, [])
+
+  if (error) {
+    return <ErrorFallback message={error} />
+  }
 
   if (!mounted) {
     return <LoadingFallback />
-  }
-
-  if (hasError) {
-    return <ErrorFallback />
   }
 
   return (
@@ -548,20 +704,20 @@ export default function Nexus3D({
         gl={{
           antialias: true,
           alpha: false,
-          failIfMajorPerformanceCaveat: false,
-          powerPreference: 'default'
+          powerPreference: 'high-performance',
+          failIfMajorPerformanceCaveat: false
         }}
-        dpr={[1, 1.5]}
+        dpr={[1, 2]}
         onCreated={({ gl }) => {
           gl.setClearColor('#030712')
         }}
-        onError={() => setHasError(true)}
       >
         <color attach="background" args={['#030712']} />
         <fog attach="fog" args={['#030712', 15, 35]} />
 
         <Suspense fallback={null}>
           <Scene botStatus={botStatus} onNodeClick={onNodeClick} />
+          <Effects />
         </Suspense>
       </Canvas>
     </div>
