@@ -2750,17 +2750,31 @@ async def get_oracle_predictions_full(
         for row in rows:
             pred = dict(row)
 
-            # Parse JSONB fields
-            if pred.get('top_factors') and isinstance(pred['top_factors'], str):
-                import json
-                pred['top_factors'] = json.loads(pred['top_factors'])
+            # Parse JSONB fields - ensure top_factors is always a dict or None
+            top_factors = pred.get('top_factors')
+            if top_factors is not None:
+                if isinstance(top_factors, str):
+                    try:
+                        parsed = json.loads(top_factors)
+                        pred['top_factors'] = parsed if isinstance(parsed, dict) else {}
+                    except (json.JSONDecodeError, TypeError):
+                        pred['top_factors'] = {}
+                elif not isinstance(top_factors, dict):
+                    pred['top_factors'] = {}
 
             # Include or exclude Claude analysis
-            if include_claude and pred.get('claude_analysis'):
-                if isinstance(pred['claude_analysis'], str):
-                    import json
-                    pred['claude_analysis'] = json.loads(pred['claude_analysis'])
-            elif not include_claude:
+            if include_claude:
+                claude_analysis = pred.get('claude_analysis')
+                if claude_analysis is not None:
+                    if isinstance(claude_analysis, str):
+                        try:
+                            parsed = json.loads(claude_analysis)
+                            pred['claude_analysis'] = parsed if isinstance(parsed, dict) else None
+                        except (json.JSONDecodeError, TypeError):
+                            pred['claude_analysis'] = None
+                    elif not isinstance(claude_analysis, dict):
+                        pred['claude_analysis'] = None
+            else:
                 pred.pop('claude_analysis', None)
 
             predictions.append(pred)
@@ -2881,16 +2895,30 @@ async def get_oracle_bot_interactions(
 
         # Parse JSON fields (same as /oracle/predictions endpoint)
         for interaction in interactions:
-            if interaction.get('top_factors') and isinstance(interaction['top_factors'], str):
-                try:
-                    interaction['top_factors'] = json.loads(interaction['top_factors'])
-                except json.JSONDecodeError:
+            # Parse top_factors - ensure it's always a dict or None
+            top_factors = interaction.get('top_factors')
+            if top_factors is not None:
+                if isinstance(top_factors, str):
+                    try:
+                        parsed = json.loads(top_factors)
+                        # Ensure parsed result is a dict, not None or other types
+                        interaction['top_factors'] = parsed if isinstance(parsed, dict) else {}
+                    except (json.JSONDecodeError, TypeError):
+                        interaction['top_factors'] = {}
+                elif not isinstance(top_factors, dict):
+                    # Handle unexpected types
                     interaction['top_factors'] = {}
 
-            if interaction.get('claude_analysis') and isinstance(interaction['claude_analysis'], str):
-                try:
-                    interaction['claude_analysis'] = json.loads(interaction['claude_analysis'])
-                except json.JSONDecodeError:
+            # Parse claude_analysis - ensure it's always a dict or None
+            claude_analysis = interaction.get('claude_analysis')
+            if claude_analysis is not None:
+                if isinstance(claude_analysis, str):
+                    try:
+                        parsed = json.loads(claude_analysis)
+                        interaction['claude_analysis'] = parsed if isinstance(parsed, dict) else None
+                    except (json.JSONDecodeError, TypeError):
+                        interaction['claude_analysis'] = None
+                elif not isinstance(claude_analysis, dict):
                     interaction['claude_analysis'] = None
 
         # Sort by timestamp
