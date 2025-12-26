@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
-import NexusCanvas, { BotStatus } from '@/components/NexusCanvas'
+import Nexus3D, { BotStatus } from '@/components/Nexus3D'
 import { apiClient } from '@/lib/api'
 
 const TRADING_TIPS = [
@@ -124,11 +124,10 @@ export default function NexusPage() {
 
   return (
     <div className="fixed inset-0 bg-[#050810]">
-      {/* Full-screen NEXUS Canvas */}
-      <NexusCanvas
+      {/* Full-screen 3D NEXUS Visualization */}
+      <Nexus3D
         botStatus={botStatus}
         onNodeClick={handleNodeClick}
-        showLabels={true}
       />
 
       {/* Top Overlay - Header */}
