@@ -22,13 +22,18 @@ interface BotNode {
 interface Particle {
   x: number
   y: number
+  startX: number
+  startY: number
   targetX: number
   targetY: number
+  controlX: number
+  controlY: number
   progress: number
   speed: number
   size: number
   opacity: number
   color: string
+  type: 'signal' | 'entry' | 'exit' | 'profit' | 'loss'
   fromNode: string
   toNode: string
 }
@@ -42,6 +47,23 @@ interface NeuralFiber {
   controlY: number
   opacity: number
   width: number
+  pulseOffset: number
+}
+
+interface PulseWave {
+  radius: number
+  maxRadius: number
+  opacity: number
+  speed: number
+  color: string
+}
+
+interface TradeSignal {
+  type: 'entry' | 'exit'
+  bot: string
+  direction: 'long' | 'short'
+  profit?: number
+  timestamp: number
 }
 
 export interface BotStatus {
@@ -59,6 +81,8 @@ interface NexusCanvasProps {
   onNodeHover?: (nodeId: string | null) => void
   showLabels?: boolean
   className?: string
+  tradeSignals?: TradeSignal[]
+  marketSentiment?: 'bullish' | 'bearish' | 'neutral'
 }
 
 // =============================================================================
@@ -66,9 +90,10 @@ interface NexusCanvasProps {
 // =============================================================================
 
 const COLORS = {
-  background: '#0a0e1a',
+  background: '#050810',
   core: '#3b82f6',
   coreGlow: '#60a5fa',
+  coreInner: '#93c5fd',
   fiber: '#1e40af',
   fiberGlow: '#3b82f6',
   particle: '#60a5fa',
@@ -78,11 +103,15 @@ const COLORS = {
   nodeError: '#ef4444',
   text: '#f3f4f6',
   textSecondary: '#9ca3af',
+  profit: '#10b981',
+  loss: '#ef4444',
+  entry: '#3b82f6',
+  exit: '#f59e0b',
 }
 
 const STATUS_COLORS = {
   active: { fill: '#10b981', glow: '#34d399' },
-  idle: { fill: '#6b7280', glow: '#9ca3af' },
+  idle: { fill: '#4b5563', glow: '#6b7280' },
   trading: { fill: '#f59e0b', glow: '#fbbf24' },
   error: { fill: '#ef4444', glow: '#f87171' },
 }
@@ -97,6 +126,8 @@ export default function NexusCanvas({
   onNodeHover,
   showLabels = true,
   className = '',
+  tradeSignals = [],
+  marketSentiment = 'neutral',
 }: NexusCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -104,20 +135,20 @@ export default function NexusCanvas({
   const particlesRef = useRef<Particle[]>([])
   const fibersRef = useRef<NeuralFiber[]>([])
   const nodesRef = useRef<BotNode[]>([])
+  const pulseWavesRef = useRef<PulseWave[]>([])
   const hoveredNodeRef = useRef<string | null>(null)
   const timeRef = useRef<number>(0)
-  const dimensionsRef = useRef({ width: 0, height: 0, centerX: 0, centerY: 0 })
+  const dimensionsRef = useRef({ width: 0, height: 0, centerX: 0, centerY: 0, scale: 1 })
 
   const [hoveredNode, setHoveredNode] = useState<string | null>(null)
 
   // Initialize nodes with positions relative to center
   const initializeNodes = useCallback((centerX: number, centerY: number, scale: number) => {
-    const coreRadius = 60 * scale
-    const orbitRadius = 180 * scale
-    const nodeRadius = 35 * scale
+    const coreRadius = 70 * scale
+    const orbitRadius = 200 * scale
+    const nodeRadius = 40 * scale
 
     const nodes: BotNode[] = [
-      // Central GEX Core
       {
         id: 'gex-core',
         name: 'GEX',
@@ -130,7 +161,6 @@ export default function NexusCanvas({
         status: botStatus.gex || 'active',
         description: 'Gamma Exposure Analysis Engine',
       },
-      // ORACLE - Top
       {
         id: 'oracle',
         name: 'ORACLE',
@@ -143,52 +173,48 @@ export default function NexusCanvas({
         status: botStatus.oracle || 'active',
         description: 'ML Prediction Engine',
       },
-      // ARES - Top Right
       {
         id: 'ares',
         name: 'ARES',
         label: 'ARES',
-        x: centerX + orbitRadius * 0.87,
-        y: centerY - orbitRadius * 0.5,
+        x: centerX + orbitRadius * 0.95,
+        y: centerY - orbitRadius * 0.31,
         radius: nodeRadius,
         color: '#ef4444',
         glowColor: '#f87171',
         status: botStatus.ares || 'idle',
         description: 'Iron Condor Strategy',
       },
-      // ATHENA - Bottom Right
       {
         id: 'athena',
         name: 'ATHENA',
         label: 'ATHENA',
-        x: centerX + orbitRadius * 0.87,
-        y: centerY + orbitRadius * 0.5,
+        x: centerX + orbitRadius * 0.59,
+        y: centerY + orbitRadius * 0.81,
         radius: nodeRadius,
         color: '#3b82f6',
         glowColor: '#60a5fa',
         status: botStatus.athena || 'idle',
         description: 'Directional Spreads',
       },
-      // ATLAS - Bottom Left
       {
         id: 'atlas',
         name: 'ATLAS',
         label: 'ATLAS',
-        x: centerX - orbitRadius * 0.87,
-        y: centerY + orbitRadius * 0.5,
+        x: centerX - orbitRadius * 0.59,
+        y: centerY + orbitRadius * 0.81,
         radius: nodeRadius,
         color: '#10b981',
         glowColor: '#34d399',
         status: botStatus.atlas || 'idle',
         description: 'SPX Wheel Strategy',
       },
-      // PHOENIX - Bottom Left
       {
         id: 'phoenix',
         name: 'PHOENIX',
         label: 'PHOENIX',
-        x: centerX - orbitRadius * 0.87,
-        y: centerY - orbitRadius * 0.5,
+        x: centerX - orbitRadius * 0.95,
+        y: centerY - orbitRadius * 0.31,
         radius: nodeRadius,
         color: '#f59e0b',
         glowColor: '#fbbf24',
@@ -201,57 +227,88 @@ export default function NexusCanvas({
     return nodes
   }, [botStatus])
 
-  // Initialize neural fibers (connections from core to nodes)
-  const initializeFibers = useCallback((nodes: BotNode[], centerX: number, centerY: number) => {
+  // Initialize neural fibers with enhanced density
+  const initializeFibers = useCallback((nodes: BotNode[], centerX: number, centerY: number, scale: number) => {
     const fibers: NeuralFiber[] = []
     const coreNode = nodes.find(n => n.id === 'gex-core')
     if (!coreNode) return fibers
 
-    // Create multiple fibers per connection for the neural effect
+    // Create multiple fibers per connection to bot nodes
     nodes.forEach(node => {
       if (node.id === 'gex-core') return
 
-      // Create 3-5 fibers per connection with slight variations
-      const fiberCount = 3 + Math.floor(Math.random() * 3)
+      const fiberCount = 5 + Math.floor(Math.random() * 4)
       for (let i = 0; i < fiberCount; i++) {
         const angle = Math.atan2(node.y - centerY, node.x - centerX)
-        const spread = (Math.random() - 0.5) * 0.3
+        const spread = (Math.random() - 0.5) * 0.4
         const adjustedAngle = angle + spread
 
-        // Control point for bezier curve
         const dist = Math.sqrt(Math.pow(node.x - centerX, 2) + Math.pow(node.y - centerY, 2))
-        const controlDist = dist * (0.4 + Math.random() * 0.2)
-        const controlAngle = adjustedAngle + (Math.random() - 0.5) * 0.5
+        const controlDist = dist * (0.3 + Math.random() * 0.4)
+        const controlAngle = adjustedAngle + (Math.random() - 0.5) * 0.6
 
         fibers.push({
-          fromX: centerX + Math.cos(adjustedAngle) * coreNode.radius * 0.8,
-          fromY: centerY + Math.sin(adjustedAngle) * coreNode.radius * 0.8,
-          toX: node.x - Math.cos(angle) * node.radius,
-          toY: node.y - Math.sin(angle) * node.radius,
+          fromX: centerX + Math.cos(adjustedAngle) * coreNode.radius * 0.9,
+          fromY: centerY + Math.sin(adjustedAngle) * coreNode.radius * 0.9,
+          toX: node.x - Math.cos(angle) * node.radius * 0.9,
+          toY: node.y - Math.sin(angle) * node.radius * 0.9,
           controlX: centerX + Math.cos(controlAngle) * controlDist,
           controlY: centerY + Math.sin(controlAngle) * controlDist,
-          opacity: 0.2 + Math.random() * 0.3,
-          width: 1 + Math.random() * 1.5,
+          opacity: 0.15 + Math.random() * 0.25,
+          width: 1 + Math.random() * 2,
+          pulseOffset: Math.random() * Math.PI * 2,
         })
       }
     })
 
-    // Add ambient fibers radiating outward
-    for (let i = 0; i < 40; i++) {
-      const angle = (Math.PI * 2 * i) / 40 + Math.random() * 0.1
-      const length = 250 + Math.random() * 150
-      const controlDist = length * (0.3 + Math.random() * 0.4)
-      const controlAngle = angle + (Math.random() - 0.5) * 0.8
+    // Add MANY ambient fibers radiating outward (like Image 1)
+    const ambientFiberCount = 120
+    for (let i = 0; i < ambientFiberCount; i++) {
+      const baseAngle = (Math.PI * 2 * i) / ambientFiberCount
+      const angleVariation = (Math.random() - 0.5) * 0.15
+      const angle = baseAngle + angleVariation
+
+      const minLength = 300 * scale
+      const maxLength = Math.max(dimensionsRef.current.width, dimensionsRef.current.height) * 0.7
+      const length = minLength + Math.random() * (maxLength - minLength)
+
+      const controlDist = length * (0.2 + Math.random() * 0.5)
+      const controlAngle = angle + (Math.random() - 0.5) * 0.6
 
       fibers.push({
-        fromX: centerX + Math.cos(angle) * 60,
-        fromY: centerY + Math.sin(angle) * 60,
+        fromX: centerX + Math.cos(angle) * coreNode.radius * 0.95,
+        fromY: centerY + Math.sin(angle) * coreNode.radius * 0.95,
         toX: centerX + Math.cos(angle) * length,
         toY: centerY + Math.sin(angle) * length,
         controlX: centerX + Math.cos(controlAngle) * controlDist,
         controlY: centerY + Math.sin(controlAngle) * controlDist,
-        opacity: 0.1 + Math.random() * 0.15,
-        width: 0.5 + Math.random() * 1,
+        opacity: 0.08 + Math.random() * 0.15,
+        width: 0.5 + Math.random() * 1.5,
+        pulseOffset: Math.random() * Math.PI * 2,
+      })
+    }
+
+    // Inter-node connections
+    const outerNodes = nodes.filter(n => n.id !== 'gex-core')
+    for (let i = 0; i < outerNodes.length; i++) {
+      const nextIdx = (i + 1) % outerNodes.length
+      const nodeA = outerNodes[i]
+      const nodeB = outerNodes[nextIdx]
+
+      const midX = (nodeA.x + nodeB.x) / 2
+      const midY = (nodeA.y + nodeB.y) / 2
+      const ctrlOffset = 30 * scale * (Math.random() - 0.5)
+
+      fibers.push({
+        fromX: nodeA.x,
+        fromY: nodeA.y,
+        toX: nodeB.x,
+        toY: nodeB.y,
+        controlX: midX + ctrlOffset,
+        controlY: midY + ctrlOffset,
+        opacity: 0.1 + Math.random() * 0.1,
+        width: 0.8 + Math.random() * 0.8,
+        pulseOffset: Math.random() * Math.PI * 2,
       })
     }
 
@@ -259,22 +316,71 @@ export default function NexusCanvas({
     return fibers
   }, [])
 
-  // Create a new particle
-  const createParticle = useCallback((fromNode: BotNode, toNode: BotNode): Particle => {
+  // Create particle with bezier path
+  const createParticle = useCallback((
+    fromNode: BotNode,
+    toNode: BotNode,
+    type: Particle['type'] = 'signal'
+  ): Particle => {
     const angle = Math.atan2(toNode.y - fromNode.y, toNode.x - fromNode.x)
+    const startX = fromNode.x + Math.cos(angle) * fromNode.radius
+    const startY = fromNode.y + Math.sin(angle) * fromNode.radius
+    const targetX = toNode.x - Math.cos(angle) * toNode.radius
+    const targetY = toNode.y - Math.sin(angle) * toNode.radius
+
+    // Random control point for curved path
+    const midX = (startX + targetX) / 2
+    const midY = (startY + targetY) / 2
+    const perpAngle = angle + Math.PI / 2
+    const curvature = (Math.random() - 0.5) * 80
+
+    let color = COLORS.particle
+    let size = 3 + Math.random() * 3
+
+    if (type === 'entry') {
+      color = COLORS.entry
+      size = 5 + Math.random() * 3
+    } else if (type === 'exit') {
+      color = COLORS.exit
+      size = 5 + Math.random() * 3
+    } else if (type === 'profit') {
+      color = COLORS.profit
+      size = 6 + Math.random() * 4
+    } else if (type === 'loss') {
+      color = COLORS.loss
+      size = 6 + Math.random() * 4
+    }
+
     return {
-      x: fromNode.x + Math.cos(angle) * fromNode.radius,
-      y: fromNode.y + Math.sin(angle) * fromNode.radius,
-      targetX: toNode.x - Math.cos(angle) * toNode.radius,
-      targetY: toNode.y - Math.sin(angle) * toNode.radius,
+      x: startX,
+      y: startY,
+      startX,
+      startY,
+      targetX,
+      targetY,
+      controlX: midX + Math.cos(perpAngle) * curvature,
+      controlY: midY + Math.sin(perpAngle) * curvature,
       progress: 0,
-      speed: 0.005 + Math.random() * 0.01,
-      size: 2 + Math.random() * 3,
-      opacity: 0.6 + Math.random() * 0.4,
-      color: fromNode.id === 'gex-core' ? toNode.glowColor : fromNode.glowColor,
+      speed: 0.008 + Math.random() * 0.012,
+      size,
+      opacity: 0.8 + Math.random() * 0.2,
+      color,
+      type,
       fromNode: fromNode.id,
       toNode: toNode.id,
     }
+  }, [])
+
+  // Create pulse wave from center
+  const createPulseWave = useCallback((color?: string) => {
+    const { scale } = dimensionsRef.current
+    pulseWavesRef.current.push({
+      radius: 70 * scale,
+      maxRadius: Math.max(dimensionsRef.current.width, dimensionsRef.current.height) * 0.8,
+      opacity: 0.4,
+      speed: 3 + Math.random() * 2,
+      color: color || COLORS.coreGlow,
+    })
   }, [])
 
   // Spawn particles periodically
@@ -283,233 +389,367 @@ export default function NexusCanvas({
     const coreNode = nodes.find(n => n.id === 'gex-core')
     if (!coreNode) return
 
-    // Spawn particles from core to outer nodes
+    // Regular signal particles from core
     nodes.forEach(node => {
       if (node.id === 'gex-core') return
-      if (Math.random() < 0.02) { // 2% chance per frame
-        particlesRef.current.push(createParticle(coreNode, node))
+
+      // More frequent particles for active/trading nodes
+      const spawnRate = node.status === 'trading' ? 0.04 : node.status === 'active' ? 0.025 : 0.01
+
+      if (Math.random() < spawnRate) {
+        particlesRef.current.push(createParticle(coreNode, node, 'signal'))
       }
-      // Occasionally send signals back to core
-      if (node.status === 'trading' && Math.random() < 0.03) {
-        particlesRef.current.push(createParticle(node, coreNode))
+
+      // Signals back to core from trading bots
+      if (node.status === 'trading' && Math.random() < 0.05) {
+        const type = Math.random() > 0.5 ? 'profit' : 'signal'
+        particlesRef.current.push(createParticle(node, coreNode, type))
       }
     })
 
-    // Also spawn particles between adjacent bot nodes occasionally
+    // Inter-node communication
     const outerNodes = nodes.filter(n => n.id !== 'gex-core')
-    if (Math.random() < 0.01) {
+    if (Math.random() < 0.015) {
       const idx = Math.floor(Math.random() * outerNodes.length)
-      const nextIdx = (idx + 1) % outerNodes.length
-      particlesRef.current.push(createParticle(outerNodes[idx], outerNodes[nextIdx]))
+      const nextIdx = (idx + 1 + Math.floor(Math.random() * 2)) % outerNodes.length
+      particlesRef.current.push(createParticle(outerNodes[idx], outerNodes[nextIdx], 'signal'))
     }
-  }, [createParticle])
 
-  // Update particles
+    // Periodic pulse waves
+    if (Math.random() < 0.005) {
+      createPulseWave()
+    }
+  }, [createParticle, createPulseWave])
+
+  // Update particles with bezier interpolation
   const updateParticles = useCallback(() => {
     particlesRef.current = particlesRef.current.filter(p => {
       p.progress += p.speed
 
-      // Bezier curve interpolation for smooth movement
+      // Quadratic bezier interpolation
       const t = p.progress
       const mt = 1 - t
 
-      // Simple quadratic bezier
-      const midX = (p.x + p.targetX) / 2 + (Math.random() - 0.5) * 20
-      const midY = (p.y + p.targetY) / 2 + (Math.random() - 0.5) * 20
+      p.x = mt * mt * p.startX + 2 * mt * t * p.controlX + t * t * p.targetX
+      p.y = mt * mt * p.startY + 2 * mt * t * p.controlY + t * t * p.targetY
 
-      p.x = mt * mt * p.x + 2 * mt * t * midX + t * t * p.targetX
-      p.y = mt * mt * p.y + 2 * mt * t * midY + t * t * p.targetY
-
-      // Fade out as particle nears destination
-      if (p.progress > 0.7) {
-        p.opacity = (1 - p.progress) / 0.3 * 0.8
+      // Fade out near end
+      if (p.progress > 0.75) {
+        p.opacity = (1 - p.progress) / 0.25 * 0.8
       }
 
       return p.progress < 1
     })
+
+    // Update pulse waves
+    pulseWavesRef.current = pulseWavesRef.current.filter(wave => {
+      wave.radius += wave.speed
+      wave.opacity = 0.4 * (1 - wave.radius / wave.maxRadius)
+      return wave.radius < wave.maxRadius && wave.opacity > 0.01
+    })
   }, [])
 
-  // Draw the canvas
+  // Main draw function
   const draw = useCallback((ctx: CanvasRenderingContext2D, time: number) => {
-    const { width, height, centerX, centerY } = dimensionsRef.current
+    const { width, height, centerX, centerY, scale } = dimensionsRef.current
 
-    // Clear canvas
+    // Clear with dark background
     ctx.fillStyle = COLORS.background
     ctx.fillRect(0, 0, width, height)
 
-    // Draw radial gradient background
-    const bgGradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, Math.max(width, height) * 0.6)
-    bgGradient.addColorStop(0, 'rgba(30, 64, 175, 0.15)')
-    bgGradient.addColorStop(0.5, 'rgba(30, 64, 175, 0.05)')
-    bgGradient.addColorStop(1, 'transparent')
-    ctx.fillStyle = bgGradient
+    // Deep space gradient
+    const spaceGradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, Math.max(width, height) * 0.8)
+    spaceGradient.addColorStop(0, 'rgba(30, 58, 138, 0.25)')
+    spaceGradient.addColorStop(0.3, 'rgba(30, 58, 138, 0.1)')
+    spaceGradient.addColorStop(0.6, 'rgba(15, 23, 42, 0.05)')
+    spaceGradient.addColorStop(1, 'transparent')
+    ctx.fillStyle = spaceGradient
     ctx.fillRect(0, 0, width, height)
 
-    // Draw neural fibers
-    fibersRef.current.forEach(fiber => {
-      ctx.beginPath()
-      ctx.moveTo(fiber.fromX, fiber.fromY)
-      ctx.quadraticCurveTo(fiber.controlX, fiber.controlY, fiber.toX, fiber.toY)
+    // Ambient star field
+    for (let i = 0; i < 150; i++) {
+      const x = (Math.sin(i * 1234.5 + time * 0.00005) * 0.5 + 0.5) * width
+      const y = (Math.cos(i * 5678.9 + time * 0.00008) * 0.5 + 0.5) * height
+      const twinkle = Math.sin(time * 0.002 + i * 0.5) * 0.5 + 0.5
+      const size = 0.5 + twinkle * 1.5
 
-      // Pulsing opacity
-      const pulse = Math.sin(time * 0.001 + fiber.fromX * 0.01) * 0.1 + 0.9
-      ctx.strokeStyle = `rgba(59, 130, 246, ${fiber.opacity * pulse})`
-      ctx.lineWidth = fiber.width
+      ctx.beginPath()
+      ctx.arc(x, y, size, 0, Math.PI * 2)
+      ctx.fillStyle = `rgba(147, 197, 253, ${0.1 + twinkle * 0.3})`
+      ctx.fill()
+    }
+
+    // Draw pulse waves
+    pulseWavesRef.current.forEach(wave => {
+      ctx.beginPath()
+      ctx.arc(centerX, centerY, wave.radius, 0, Math.PI * 2)
+      ctx.strokeStyle = `${wave.color}${Math.floor(wave.opacity * 255).toString(16).padStart(2, '0')}`
+      ctx.lineWidth = 2
       ctx.stroke()
     })
 
-    // Draw particles
+    // Draw neural fibers with glow
+    fibersRef.current.forEach((fiber, idx) => {
+      const pulse = Math.sin(time * 0.002 + fiber.pulseOffset) * 0.3 + 0.7
+      const opacity = fiber.opacity * pulse
+
+      // Glow layer
+      ctx.beginPath()
+      ctx.moveTo(fiber.fromX, fiber.fromY)
+      ctx.quadraticCurveTo(fiber.controlX, fiber.controlY, fiber.toX, fiber.toY)
+      ctx.strokeStyle = `rgba(59, 130, 246, ${opacity * 0.3})`
+      ctx.lineWidth = fiber.width + 3
+      ctx.lineCap = 'round'
+      ctx.stroke()
+
+      // Core fiber
+      ctx.beginPath()
+      ctx.moveTo(fiber.fromX, fiber.fromY)
+      ctx.quadraticCurveTo(fiber.controlX, fiber.controlY, fiber.toX, fiber.toY)
+      ctx.strokeStyle = `rgba(96, 165, 250, ${opacity})`
+      ctx.lineWidth = fiber.width
+      ctx.stroke()
+
+      // Bright tip particles along fibers
+      if (idx % 3 === 0) {
+        const fiberPulse = (time * 0.001 + fiber.pulseOffset) % 1
+        const t = fiberPulse
+        const mt = 1 - t
+        const px = mt * mt * fiber.fromX + 2 * mt * t * fiber.controlX + t * t * fiber.toX
+        const py = mt * mt * fiber.fromY + 2 * mt * t * fiber.controlY + t * t * fiber.toY
+
+        const particleOpacity = Math.sin(fiberPulse * Math.PI) * 0.6
+        if (particleOpacity > 0.1) {
+          ctx.beginPath()
+          ctx.arc(px, py, 2, 0, Math.PI * 2)
+          ctx.fillStyle = `rgba(147, 197, 253, ${particleOpacity})`
+          ctx.fill()
+        }
+      }
+    })
+
+    // Draw traveling particles with trails
     particlesRef.current.forEach(particle => {
+      // Trail
+      const trailLength = 5
+      for (let i = 0; i < trailLength; i++) {
+        const trailProgress = Math.max(0, particle.progress - i * 0.02)
+        const tt = trailProgress
+        const mtt = 1 - tt
+        const tx = mtt * mtt * particle.startX + 2 * mtt * tt * particle.controlX + tt * tt * particle.targetX
+        const ty = mtt * mtt * particle.startY + 2 * mtt * tt * particle.controlY + tt * tt * particle.targetY
+
+        const trailOpacity = particle.opacity * (1 - i / trailLength) * 0.5
+        const trailSize = particle.size * (1 - i / trailLength * 0.5)
+
+        ctx.beginPath()
+        ctx.arc(tx, ty, trailSize, 0, Math.PI * 2)
+        ctx.fillStyle = `${particle.color}${Math.floor(trailOpacity * 255).toString(16).padStart(2, '0')}`
+        ctx.fill()
+      }
+
+      // Main particle with glow
+      const glowGradient = ctx.createRadialGradient(
+        particle.x, particle.y, 0,
+        particle.x, particle.y, particle.size * 4
+      )
+      glowGradient.addColorStop(0, particle.color)
+      glowGradient.addColorStop(0.3, `${particle.color}80`)
+      glowGradient.addColorStop(1, 'transparent')
+
+      ctx.beginPath()
+      ctx.arc(particle.x, particle.y, particle.size * 4, 0, Math.PI * 2)
+      ctx.fillStyle = glowGradient
+      ctx.globalAlpha = particle.opacity
+      ctx.fill()
+      ctx.globalAlpha = 1
+
+      // Bright core
       ctx.beginPath()
       ctx.arc(particle.x, particle.y, particle.size, 0, Math.PI * 2)
-
-      // Glow effect
-      const gradient = ctx.createRadialGradient(
-        particle.x, particle.y, 0,
-        particle.x, particle.y, particle.size * 3
-      )
-      gradient.addColorStop(0, particle.color)
-      gradient.addColorStop(0.5, `${particle.color}80`)
-      gradient.addColorStop(1, 'transparent')
-
-      ctx.fillStyle = gradient
-      ctx.globalAlpha = particle.opacity
+      ctx.fillStyle = '#ffffff'
+      ctx.globalAlpha = particle.opacity * 0.9
       ctx.fill()
       ctx.globalAlpha = 1
     })
 
-    // Draw nodes
+    // Draw bot nodes
     nodesRef.current.forEach(node => {
       const isHovered = hoveredNodeRef.current === node.id
       const isCore = node.id === 'gex-core'
       const statusColor = STATUS_COLORS[node.status] || STATUS_COLORS.idle
 
-      // Outer glow
-      const glowSize = isHovered ? node.radius * 2.5 : node.radius * 2
-      const glowGradient = ctx.createRadialGradient(
-        node.x, node.y, node.radius * 0.5,
-        node.x, node.y, glowSize
-      )
-
       if (isCore) {
-        // Pulsing core glow
-        const pulse = Math.sin(time * 0.002) * 0.3 + 0.7
-        glowGradient.addColorStop(0, `${node.glowColor}${Math.floor(pulse * 80).toString(16).padStart(2, '0')}`)
-        glowGradient.addColorStop(0.5, `${node.glowColor}40`)
-        glowGradient.addColorStop(1, 'transparent')
-      } else {
-        glowGradient.addColorStop(0, `${statusColor.glow}60`)
-        glowGradient.addColorStop(0.5, `${statusColor.glow}20`)
-        glowGradient.addColorStop(1, 'transparent')
-      }
+        // === CORE NODE - Enhanced ===
 
-      ctx.beginPath()
-      ctx.arc(node.x, node.y, glowSize, 0, Math.PI * 2)
-      ctx.fillStyle = glowGradient
-      ctx.fill()
+        // Outer glow rings
+        for (let ring = 3; ring >= 0; ring--) {
+          const ringRadius = node.radius * (1.5 + ring * 0.4)
+          const ringOpacity = 0.1 - ring * 0.02
+          const pulse = Math.sin(time * 0.002 + ring * 0.5) * 0.3 + 0.7
 
-      // Node circle
-      ctx.beginPath()
-      ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2)
-
-      if (isCore) {
-        // Core has special gradient
-        const coreGradient = ctx.createRadialGradient(
-          node.x - node.radius * 0.3, node.y - node.radius * 0.3, 0,
-          node.x, node.y, node.radius
-        )
-        coreGradient.addColorStop(0, '#60a5fa')
-        coreGradient.addColorStop(0.5, '#3b82f6')
-        coreGradient.addColorStop(1, '#1e40af')
-        ctx.fillStyle = coreGradient
-      } else {
-        // Outer nodes
-        const nodeGradient = ctx.createRadialGradient(
-          node.x - node.radius * 0.3, node.y - node.radius * 0.3, 0,
-          node.x, node.y, node.radius
-        )
-        nodeGradient.addColorStop(0, statusColor.glow)
-        nodeGradient.addColorStop(0.7, statusColor.fill)
-        nodeGradient.addColorStop(1, `${statusColor.fill}cc`)
-        ctx.fillStyle = nodeGradient
-      }
-
-      ctx.fill()
-
-      // Node border
-      ctx.strokeStyle = isHovered ? '#ffffff' : `${node.glowColor}aa`
-      ctx.lineWidth = isHovered ? 3 : 2
-      ctx.stroke()
-
-      // Inner ring for core
-      if (isCore) {
-        const ringPulse = Math.sin(time * 0.003) * 0.2 + 0.8
-        ctx.beginPath()
-        ctx.arc(node.x, node.y, node.radius * 0.6, 0, Math.PI * 2)
-        ctx.strokeStyle = `rgba(255, 255, 255, ${ringPulse * 0.3})`
-        ctx.lineWidth = 2
-        ctx.stroke()
-
-        // Rotating arc
-        const rotationAngle = time * 0.001
-        ctx.beginPath()
-        ctx.arc(node.x, node.y, node.radius * 0.75, rotationAngle, rotationAngle + Math.PI * 0.5)
-        ctx.strokeStyle = `rgba(255, 255, 255, 0.5)`
-        ctx.lineWidth = 3
-        ctx.stroke()
-      }
-
-      // Node label
-      if (showLabels) {
-        ctx.font = isCore ? 'bold 14px Inter, sans-serif' : 'bold 11px Inter, sans-serif'
-        ctx.textAlign = 'center'
-        ctx.textBaseline = 'middle'
-        ctx.fillStyle = COLORS.text
-
-        if (isCore) {
-          ctx.fillText('GEX', node.x, node.y - 8)
-          ctx.font = '10px Inter, sans-serif'
-          ctx.fillStyle = COLORS.textSecondary
-          ctx.fillText('CORE', node.x, node.y + 10)
-        } else {
-          ctx.fillText(node.name, node.x, node.y)
+          ctx.beginPath()
+          ctx.arc(node.x, node.y, ringRadius, 0, Math.PI * 2)
+          ctx.strokeStyle = `rgba(96, 165, 250, ${ringOpacity * pulse})`
+          ctx.lineWidth = 1
+          ctx.stroke()
         }
 
-        // Status indicator dot
-        if (!isCore) {
-          const dotY = node.y + node.radius + 12
+        // Intense center glow
+        const coreGlow = ctx.createRadialGradient(
+          node.x, node.y, 0,
+          node.x, node.y, node.radius * 2.5
+        )
+        const glowPulse = Math.sin(time * 0.003) * 0.2 + 0.8
+        coreGlow.addColorStop(0, `rgba(147, 197, 253, ${0.6 * glowPulse})`)
+        coreGlow.addColorStop(0.3, `rgba(96, 165, 250, ${0.3 * glowPulse})`)
+        coreGlow.addColorStop(0.6, `rgba(59, 130, 246, ${0.1 * glowPulse})`)
+        coreGlow.addColorStop(1, 'transparent')
+
+        ctx.beginPath()
+        ctx.arc(node.x, node.y, node.radius * 2.5, 0, Math.PI * 2)
+        ctx.fillStyle = coreGlow
+        ctx.fill()
+
+        // Main orb gradient
+        const orbGradient = ctx.createRadialGradient(
+          node.x - node.radius * 0.3, node.y - node.radius * 0.3, 0,
+          node.x, node.y, node.radius
+        )
+        orbGradient.addColorStop(0, '#93c5fd')
+        orbGradient.addColorStop(0.4, '#3b82f6')
+        orbGradient.addColorStop(0.8, '#1e40af')
+        orbGradient.addColorStop(1, '#1e3a8a')
+
+        ctx.beginPath()
+        ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2)
+        ctx.fillStyle = orbGradient
+        ctx.fill()
+
+        // Border glow
+        ctx.strokeStyle = `rgba(147, 197, 253, ${0.8 + Math.sin(time * 0.004) * 0.2})`
+        ctx.lineWidth = 3
+        ctx.stroke()
+
+        // Inner concentric rings
+        const innerRings = [0.8, 0.6, 0.4]
+        innerRings.forEach((ratio, idx) => {
+          const ringPulse = Math.sin(time * 0.004 + idx) * 0.3 + 0.7
           ctx.beginPath()
-          ctx.arc(node.x, dotY, 4, 0, Math.PI * 2)
+          ctx.arc(node.x, node.y, node.radius * ratio, 0, Math.PI * 2)
+          ctx.strokeStyle = `rgba(255, 255, 255, ${0.15 * ringPulse})`
+          ctx.lineWidth = 1.5
+          ctx.stroke()
+        })
+
+        // Rotating energy arcs
+        const arcCount = 3
+        for (let i = 0; i < arcCount; i++) {
+          const arcAngle = time * 0.001 * (i % 2 === 0 ? 1 : -1) + (i * Math.PI * 2 / arcCount)
+          const arcLength = Math.PI * 0.3
+
+          ctx.beginPath()
+          ctx.arc(node.x, node.y, node.radius * 0.85, arcAngle, arcAngle + arcLength)
+          ctx.strokeStyle = `rgba(255, 255, 255, ${0.5 + Math.sin(time * 0.003 + i) * 0.2})`
+          ctx.lineWidth = 3
+          ctx.lineCap = 'round'
+          ctx.stroke()
+        }
+
+        // Center bright point
+        const centerGlow = ctx.createRadialGradient(
+          node.x, node.y, 0,
+          node.x, node.y, node.radius * 0.3
+        )
+        centerGlow.addColorStop(0, 'rgba(255, 255, 255, 0.9)')
+        centerGlow.addColorStop(0.5, 'rgba(147, 197, 253, 0.5)')
+        centerGlow.addColorStop(1, 'transparent')
+
+        ctx.beginPath()
+        ctx.arc(node.x, node.y, node.radius * 0.3, 0, Math.PI * 2)
+        ctx.fillStyle = centerGlow
+        ctx.fill()
+
+      } else {
+        // === OUTER BOT NODES ===
+
+        // Glow
+        const glowSize = isHovered ? node.radius * 2.5 : node.radius * 2
+        const nodeGlow = ctx.createRadialGradient(
+          node.x, node.y, node.radius * 0.5,
+          node.x, node.y, glowSize
+        )
+        nodeGlow.addColorStop(0, `${statusColor.glow}50`)
+        nodeGlow.addColorStop(0.5, `${statusColor.glow}20`)
+        nodeGlow.addColorStop(1, 'transparent')
+
+        ctx.beginPath()
+        ctx.arc(node.x, node.y, glowSize, 0, Math.PI * 2)
+        ctx.fillStyle = nodeGlow
+        ctx.fill()
+
+        // Node body
+        const bodyGradient = ctx.createRadialGradient(
+          node.x - node.radius * 0.3, node.y - node.radius * 0.3, 0,
+          node.x, node.y, node.radius
+        )
+        bodyGradient.addColorStop(0, statusColor.glow)
+        bodyGradient.addColorStop(0.6, statusColor.fill)
+        bodyGradient.addColorStop(1, `${statusColor.fill}dd`)
+
+        ctx.beginPath()
+        ctx.arc(node.x, node.y, node.radius, 0, Math.PI * 2)
+        ctx.fillStyle = bodyGradient
+        ctx.fill()
+
+        // Border
+        ctx.strokeStyle = isHovered ? '#ffffff' : `${statusColor.glow}cc`
+        ctx.lineWidth = isHovered ? 3 : 2
+        ctx.stroke()
+
+        // Activity indicator for trading
+        if (node.status === 'trading') {
+          const pulseRadius = node.radius * (1.2 + Math.sin(time * 0.008) * 0.15)
+          ctx.beginPath()
+          ctx.arc(node.x, node.y, pulseRadius, 0, Math.PI * 2)
+          ctx.strokeStyle = `${statusColor.glow}60`
+          ctx.lineWidth = 2
+          ctx.stroke()
+        }
+      }
+
+      // Labels
+      if (showLabels) {
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+
+        if (isCore) {
+          ctx.font = `bold ${16 * scale}px Inter, system-ui, sans-serif`
+          ctx.fillStyle = COLORS.text
+          ctx.fillText('GEX', node.x, node.y - 10 * scale)
+
+          ctx.font = `${12 * scale}px Inter, system-ui, sans-serif`
+          ctx.fillStyle = COLORS.textSecondary
+          ctx.fillText('CORE', node.x, node.y + 12 * scale)
+        } else {
+          ctx.font = `bold ${12 * scale}px Inter, system-ui, sans-serif`
+          ctx.fillStyle = COLORS.text
+          ctx.fillText(node.name, node.x, node.y)
+
+          // Status below node
+          const statusY = node.y + node.radius + 16 * scale
+          ctx.beginPath()
+          ctx.arc(node.x, statusY, 5 * scale, 0, Math.PI * 2)
           ctx.fillStyle = statusColor.fill
           ctx.fill()
 
-          // Status text
-          ctx.font = '9px Inter, sans-serif'
+          ctx.font = `${10 * scale}px Inter, system-ui, sans-serif`
           ctx.fillStyle = COLORS.textSecondary
-          ctx.fillText(node.status.toUpperCase(), node.x, dotY + 14)
+          ctx.fillText(node.status.toUpperCase(), node.x, statusY + 16 * scale)
         }
-      }
-
-      // Hover tooltip
-      if (isHovered && !isCore) {
-        const tooltipY = node.y - node.radius - 30
-        ctx.font = '11px Inter, sans-serif'
-        ctx.fillStyle = COLORS.textSecondary
-        ctx.fillText(node.description, node.x, tooltipY)
       }
     })
 
-    // Draw ambient particles (star field effect)
-    for (let i = 0; i < 50; i++) {
-      const x = (Math.sin(i * 1234.5 + time * 0.0001) * 0.5 + 0.5) * width
-      const y = (Math.cos(i * 5678.9 + time * 0.00015) * 0.5 + 0.5) * height
-      const twinkle = Math.sin(time * 0.003 + i) * 0.5 + 0.5
-
-      ctx.beginPath()
-      ctx.arc(x, y, 1 + twinkle, 0, Math.PI * 2)
-      ctx.fillStyle = `rgba(96, 165, 250, ${0.1 + twinkle * 0.2})`
-      ctx.fill()
-    }
   }, [showLabels])
 
   // Animation loop
@@ -517,7 +757,6 @@ export default function NexusCanvas({
     timeRef.current = time
     const canvas = canvasRef.current
     const ctx = canvas?.getContext('2d')
-
     if (!ctx) return
 
     spawnParticles()
@@ -542,23 +781,21 @@ export default function NexusCanvas({
     canvas.style.height = `${rect.height}px`
 
     const ctx = canvas.getContext('2d')
-    if (ctx) {
-      ctx.scale(dpr, dpr)
-    }
+    if (ctx) ctx.scale(dpr, dpr)
 
     const width = rect.width
     const height = rect.height
     const centerX = width / 2
     const centerY = height / 2
-    const scale = Math.min(width, height) / 500
+    const scale = Math.min(width, height) / 600
 
-    dimensionsRef.current = { width, height, centerX, centerY }
+    dimensionsRef.current = { width, height, centerX, centerY, scale }
 
     const nodes = initializeNodes(centerX, centerY, scale)
-    initializeFibers(nodes, centerX, centerY)
+    initializeFibers(nodes, centerX, centerY, scale)
   }, [initializeNodes, initializeFibers])
 
-  // Handle mouse move for hover detection
+  // Mouse handlers
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current
     if (!canvas) return
@@ -583,29 +820,32 @@ export default function NexusCanvas({
     }
   }, [onNodeHover])
 
-  // Handle click
-  const handleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handleClick = useCallback(() => {
     if (hoveredNodeRef.current) {
       onNodeClick?.(hoveredNodeRef.current)
+      // Trigger pulse wave on click
+      createPulseWave(nodesRef.current.find(n => n.id === hoveredNodeRef.current)?.glowColor)
     }
-  }, [onNodeClick])
+  }, [onNodeClick, createPulseWave])
 
-  // Initialize and cleanup
+  // Initialize
   useEffect(() => {
     handleResize()
     window.addEventListener('resize', handleResize)
     animationRef.current = requestAnimationFrame(animate)
 
+    // Initial pulse wave
+    setTimeout(() => createPulseWave(), 500)
+
     return () => {
       window.removeEventListener('resize', handleResize)
       cancelAnimationFrame(animationRef.current)
     }
-  }, [handleResize, animate])
+  }, [handleResize, animate, createPulseWave])
 
-  // Update nodes when bot status changes
+  // Update on bot status change
   useEffect(() => {
-    const { centerX, centerY } = dimensionsRef.current
-    const scale = Math.min(dimensionsRef.current.width, dimensionsRef.current.height) / 500
+    const { centerX, centerY, scale } = dimensionsRef.current
     if (centerX && centerY) {
       initializeNodes(centerX, centerY, scale)
     }
