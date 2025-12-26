@@ -51,6 +51,12 @@ def ensure_events_table():
         ON trading_events(event_type)
     ''')
 
+    # Create unique constraint for deduplication
+    cursor.execute('''
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_trading_events_unique
+        ON trading_events(event_date, event_type, COALESCE(bot_name, ''), COALESCE(value::text, ''))
+    ''')
+
     conn.commit()
     conn.close()
 
@@ -287,6 +293,137 @@ def detect_events_from_trades(days: int = 90, bot_filter: str = None) -> List[di
     return events
 
 
+def persist_events(events: List[dict]) -> dict:
+    """
+    Persist detected events to the database with deduplication.
+    Uses INSERT ... ON CONFLICT DO NOTHING for idempotent upserts.
+
+    Returns:
+        dict with 'inserted' and 'skipped' counts
+    """
+    if not events:
+        return {'inserted': 0, 'skipped': 0}
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    inserted = 0
+    skipped = 0
+
+    for event in events:
+        try:
+            # Convert date to string if needed
+            event_date = event.get('date')
+            if hasattr(event_date, 'strftime'):
+                event_date = event_date.strftime('%Y-%m-%d')
+
+            cursor.execute('''
+                INSERT INTO trading_events (
+                    event_date, event_type, bot_name, severity,
+                    title, description, value, metadata
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (event_date, event_type, COALESCE(bot_name, ''), COALESCE(value::text, ''))
+                DO NOTHING
+            ''', (
+                event_date,
+                event.get('type'),
+                event.get('bot'),
+                event.get('severity', 'info'),
+                event.get('title'),
+                event.get('description'),
+                event.get('value'),
+                json.dumps(event.get('metadata')) if event.get('metadata') else None
+            ))
+
+            if cursor.rowcount > 0:
+                inserted += 1
+            else:
+                skipped += 1
+
+        except Exception as e:
+            print(f"Error persisting event: {e}")
+            skipped += 1
+
+    conn.commit()
+    conn.close()
+
+    return {'inserted': inserted, 'skipped': skipped}
+
+
+def get_persisted_events(days: int = 90, bot_filter: str = None, event_type: str = None) -> List[dict]:
+    """
+    Get events from the database (persisted events).
+    Falls back to dynamic detection if no persisted events found.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+
+    query = '''
+        SELECT
+            id, event_date, event_type, bot_name, severity,
+            title, description, value, metadata, created_at
+        FROM trading_events
+        WHERE event_date >= %s
+    '''
+    params = [start_date]
+
+    if bot_filter:
+        query += " AND bot_name ILIKE %s"
+        params.append(f'%{bot_filter}%')
+
+    if event_type:
+        query += " AND event_type = %s"
+        params.append(event_type)
+
+    query += " ORDER BY event_date ASC, created_at ASC"
+
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+
+    events = []
+    for row in rows:
+        events.append({
+            'id': row[0],
+            'date': str(row[1]),
+            'type': row[2],
+            'bot': row[3],
+            'severity': row[4],
+            'title': row[5],
+            'description': row[6],
+            'value': row[7],
+            'metadata': row[8],
+            'created_at': str(row[9]) if row[9] else None,
+            'persisted': True
+        })
+
+    return events
+
+
+def sync_events(days: int = 90, bot_filter: str = None) -> dict:
+    """
+    Detect and persist events from trade data.
+    This is the main sync function that should be called after trade closes.
+
+    Returns:
+        dict with sync results
+    """
+    # Detect events from trade data
+    detected = detect_events_from_trades(days=days, bot_filter=bot_filter)
+
+    # Persist to database
+    result = persist_events(detected)
+
+    return {
+        'detected': len(detected),
+        'inserted': result['inserted'],
+        'skipped': result['skipped'],
+        'timestamp': datetime.now().isoformat()
+    }
+
+
 def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str = 'daily') -> List[dict]:
     """
     Get equity curve data from trades, aggregated by timeframe.
@@ -392,7 +529,8 @@ async def get_trading_events(
 async def get_equity_curve(
     days: int = 90,
     bot: Optional[str] = None,
-    timeframe: str = 'daily'
+    timeframe: str = 'daily',
+    auto_sync: bool = True
 ):
     """
     Get equity curve data with optional bot filter and timeframe.
@@ -401,6 +539,7 @@ async def get_equity_curve(
         days: Number of days of history (default 90)
         bot: Filter by bot name (ARES, ATHENA, etc.)
         timeframe: 'daily', 'weekly', or 'monthly'
+        auto_sync: Automatically sync events to database (default True)
     """
     try:
         if timeframe not in ['daily', 'weekly', 'monthly']:
@@ -408,6 +547,14 @@ async def get_equity_curve(
 
         equity_curve = get_equity_curve_data(days=days, bot_filter=bot, timeframe=timeframe)
         events = detect_events_from_trades(days=days, bot_filter=bot)
+
+        # Auto-persist events when chart is loaded (lazy sync)
+        sync_result = None
+        if auto_sync and events:
+            try:
+                sync_result = persist_events(events)
+            except Exception as e:
+                print(f"Event sync failed (non-critical): {e}")
 
         # Calculate summary stats
         if equity_curve:
@@ -431,12 +578,118 @@ async def get_equity_curve(
                 'starting_capital': 200000
             }
 
-        return {
+        response = {
             "success": True,
             "timeframe": timeframe,
             "equity_curve": equity_curve,
             "events": events,
             "summary": summary
+        }
+
+        # Include sync info if sync was performed
+        if sync_result:
+            response["sync"] = {
+                "persisted": sync_result.get('inserted', 0),
+                "skipped": sync_result.get('skipped', 0)
+            }
+
+        return response
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/sync")
+async def sync_trading_events(
+    days: int = 90,
+    bot: Optional[str] = None
+):
+    """
+    Sync events by detecting from trade data and persisting to database.
+    This endpoint should be called:
+    - After trades close
+    - Periodically (e.g., end of day)
+    - Manually when needed
+
+    Args:
+        days: Number of days of history to scan (default 90)
+        bot: Optional bot name filter (ARES, ATHENA, etc.)
+    """
+    try:
+        result = sync_events(days=days, bot_filter=bot)
+        return {
+            "success": True,
+            "message": f"Synced {result['inserted']} new events ({result['skipped']} already existed)",
+            **result
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/persisted")
+async def get_persisted_trading_events(
+    days: int = 90,
+    bot: Optional[str] = None,
+    event_type: Optional[str] = None
+):
+    """
+    Get events that have been persisted to the database.
+    Unlike the main / endpoint, this only returns events that were saved.
+
+    Args:
+        days: Number of days of history (default 90)
+        bot: Filter by bot name (ARES, ATHENA, etc.)
+        event_type: Filter by event type
+    """
+    try:
+        events = get_persisted_events(days=days, bot_filter=bot, event_type=event_type)
+        return {
+            "success": True,
+            "count": len(events),
+            "events": events,
+            "source": "database"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/clear")
+async def clear_trading_events(
+    days: Optional[int] = None,
+    bot: Optional[str] = None
+):
+    """
+    Clear persisted events from the database.
+    Use with caution - this deletes data.
+
+    Args:
+        days: Only clear events older than this many days (optional)
+        bot: Only clear events for this bot (optional)
+    """
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        query = "DELETE FROM trading_events WHERE 1=1"
+        params = []
+
+        if days:
+            cutoff_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+            query += " AND event_date < %s"
+            params.append(cutoff_date)
+
+        if bot:
+            query += " AND bot_name ILIKE %s"
+            params.append(f'%{bot}%')
+
+        cursor.execute(query, params)
+        deleted = cursor.rowcount
+        conn.commit()
+        conn.close()
+
+        return {
+            "success": True,
+            "deleted": deleted,
+            "message": f"Deleted {deleted} events"
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
