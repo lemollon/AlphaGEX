@@ -1653,53 +1653,15 @@ export default function ARESPage() {
                   </div>
                 </div>
 
-                {/* Equity Chart - Robinhood Style */}
-                <div className="h-64 mb-4">
-                  {filteredSpxEquity.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={filteredSpxEquity} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
-                        <defs>
-                          <linearGradient id="spxGradient" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor={spxChartColor} stopOpacity={0.3} />
-                            <stop offset="100%" stopColor={spxChartColor} stopOpacity={0} />
-                          </linearGradient>
-                        </defs>
-                        <XAxis dataKey="date" hide axisLine={false} tickLine={false} />
-                        <YAxis hide domain={['dataMin - 1000', 'dataMax + 1000']} />
-                        <Tooltip
-                          contentStyle={{ backgroundColor: '#1a1a1a', border: '1px solid #333', borderRadius: '8px', color: '#fff' }}
-                          formatter={(value: number) => [`$${value.toLocaleString('en-US', { minimumFractionDigits: 2 })}`, 'Equity']}
-                          labelFormatter={(label) => label}
-                        />
-                        <ReferenceLine y={spxStats.capital} stroke="#333" strokeDasharray="3 3" />
-                        <Line type="monotone" dataKey="equity" stroke={spxChartColor} strokeWidth={2} dot={false} activeDot={{ r: 4, fill: spxChartColor }} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  ) : (
-                    <div className="flex items-center justify-center h-full text-gray-500">
-                      <div className="text-center">
-                        <p>No equity data available</p>
-                        <p className="text-xs text-gray-600 mt-1">Chart will populate as trades are closed</p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Period Toggles - Robinhood Style */}
-                <div className="flex justify-center gap-2">
-                  {periods.map((period) => (
-                    <button
-                      key={period}
-                      onClick={() => setSpxPeriod(period)}
-                      className={`px-4 py-2 text-sm font-medium rounded-full transition-all ${
-                        spxPeriod === period
-                          ? 'bg-[#A855F7] text-black'
-                          : 'text-gray-400 hover:text-white hover:bg-gray-800'
-                      }`}
-                    >
-                      {period}
-                    </button>
-                  ))}
+                {/* Enhanced Equity Chart with Event Markers */}
+                <div className="mb-4">
+                  <EquityCurveChart
+                    botFilter="ARES"
+                    title="SPX Iron Condor Performance"
+                    defaultDays={90}
+                    height={280}
+                    showDrawdown={true}
+                  />
                 </div>
               </div>
 
@@ -1966,53 +1928,15 @@ export default function ARESPage() {
                   </div>
                 </div>
 
-                {/* Equity Chart - Robinhood Style */}
-                <div className="h-64 mb-4">
-                  {filteredSpyEquity.length > 0 ? (
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart data={filteredSpyEquity} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
-                        <defs>
-                          <linearGradient id="spyGradient" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor={spyChartColor} stopOpacity={0.3} />
-                            <stop offset="100%" stopColor={spyChartColor} stopOpacity={0} />
-                          </linearGradient>
-                        </defs>
-                        <XAxis dataKey="date" hide axisLine={false} tickLine={false} />
-                        <YAxis hide domain={['dataMin - 1000', 'dataMax + 1000']} />
-                        <Tooltip
-                          contentStyle={{ backgroundColor: '#1a1a1a', border: '1px solid #333', borderRadius: '8px', color: '#fff' }}
-                          formatter={(value: number) => [`$${value.toLocaleString('en-US', { minimumFractionDigits: 2 })}`, 'Equity']}
-                          labelFormatter={(label) => label}
-                        />
-                        <ReferenceLine y={spyStats.capital} stroke="#333" strokeDasharray="3 3" />
-                        <Line type="monotone" dataKey="equity" stroke={spyChartColor} strokeWidth={2} dot={false} activeDot={{ r: 4, fill: spyChartColor }} />
-                      </LineChart>
-                    </ResponsiveContainer>
-                  ) : (
-                    <div className="flex items-center justify-center h-full text-gray-500">
-                      <div className="text-center">
-                        <p>No equity data available</p>
-                        <p className="text-xs text-gray-600 mt-1">Chart will populate as trades are closed</p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Period Toggles - Robinhood Style */}
-                <div className="flex justify-center gap-2">
-                  {periods.map((period) => (
-                    <button
-                      key={period}
-                      onClick={() => setSpyPeriod(period)}
-                      className={`px-4 py-2 text-sm font-medium rounded-full transition-all ${
-                        spyPeriod === period
-                          ? 'bg-[#3B82F6] text-white'
-                          : 'text-gray-400 hover:text-white hover:bg-gray-800'
-                      }`}
-                    >
-                      {period}
-                    </button>
-                  ))}
+                {/* Enhanced Equity Chart with Event Markers */}
+                <div className="mb-4">
+                  <EquityCurveChart
+                    botFilter="ARES"
+                    title="SPY Iron Condor Performance"
+                    defaultDays={90}
+                    height={280}
+                    showDrawdown={true}
+                  />
                 </div>
               </div>
 
