@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, Component, ErrorInfo, ReactNode } fro
 import { Eye, Brain, Activity, RefreshCw, Trash2, CheckCircle, XCircle, AlertCircle, AlertTriangle, ShieldAlert, Sparkles, FileText, History, TrendingUp, BarChart3, Download, Zap, Bot, MessageSquare, Settings, Play, Clock, Target, ChevronDown, ChevronUp } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import DecisionLogViewer from '@/components/trader/DecisionLogViewer'
+import EquityCurveChart from '@/components/charts/EquityCurveChart'
 import { apiClient } from '@/lib/api'
 import { useOracleStatus, useOracleLogs, useOracleFullTransparency } from '@/lib/hooks/useMarketData'
 
@@ -1045,6 +1046,14 @@ export default function OraclePage() {
                   Refresh
                 </button>
               </div>
+
+              {/* Enhanced Equity Curve with Event Markers */}
+              <EquityCurveChart
+                title="Combined Bot Performance"
+                defaultDays={90}
+                height={400}
+                showDrawdown={true}
+              />
 
               {performance?.overall ? (
                 <>
