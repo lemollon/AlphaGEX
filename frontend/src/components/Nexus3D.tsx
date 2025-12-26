@@ -1,7 +1,7 @@
 'use client'
 
-import { useRef, useMemo, useState, useEffect, Suspense } from 'react'
-import { Canvas, useFrame, extend } from '@react-three/fiber'
+import { useRef, useMemo, useState, useEffect, Suspense, Component, ReactNode } from 'react'
+import { Canvas, useFrame } from '@react-three/fiber'
 import {
   OrbitControls,
   Sphere,
@@ -9,11 +9,40 @@ import {
   Stars,
   Html,
   MeshDistortMaterial,
-  Line,
-  Trail
+  Line
 } from '@react-three/drei'
-import { EffectComposer, Bloom } from '@react-three/postprocessing'
 import * as THREE from 'three'
+
+// =============================================================================
+// ERROR BOUNDARY - Catches runtime errors in 3D components
+// =============================================================================
+
+interface ErrorBoundaryState {
+  hasError: boolean
+  error: Error | null
+}
+
+class Canvas3DErrorBoundary extends Component<{ children: ReactNode, fallback: ReactNode }, ErrorBoundaryState> {
+  constructor(props: { children: ReactNode, fallback: ReactNode }) {
+    super(props)
+    this.state = { hasError: false, error: null }
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error }
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('Nexus3D Error:', error, errorInfo)
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback
+    }
+    return this.props.children
+  }
+}
 
 // =============================================================================
 // TYPES
@@ -109,8 +138,8 @@ function CoreSphere() {
       <Sphere ref={meshRef} args={[1, 64, 64]}>
         <MeshDistortMaterial
           color="#3b82f6"
-          emissive="#60a5fa"
-          emissiveIntensity={1.2}
+          emissive="#93c5fd"
+          emissiveIntensity={2.0}
           roughness={0.2}
           metalness={0.8}
           distort={0.15}
@@ -380,7 +409,7 @@ function EnergyPulse({
 }
 
 // =============================================================================
-// DATA STREAM (glowing particles with trails)
+// DATA STREAM (glowing particles - simplified without Trail for stability)
 // =============================================================================
 
 function DataStream({
@@ -393,35 +422,41 @@ function DataStream({
   color?: string
 }) {
   const meshRef = useRef<THREE.Mesh>(null)
+  const glowRef = useRef<THREE.Mesh>(null)
 
   useFrame((state) => {
     const t = state.clock.elapsedTime
 
-    if (meshRef.current) {
-      // Spiral motion toward center then back out
-      const progress = (Math.sin(t * 0.5 + angle * 2) + 1) / 2
-      const r = progress * radius
-      const x = Math.cos(angle + t * 0.3) * r
-      const z = Math.sin(angle + t * 0.3) * r
-      const y = Math.sin(t * 2 + angle) * 0.5
+    // Spiral motion toward center then back out
+    const progress = (Math.sin(t * 0.5 + angle * 2) + 1) / 2
+    const r = progress * radius
+    const x = Math.cos(angle + t * 0.3) * r
+    const z = Math.sin(angle + t * 0.3) * r
+    const y = Math.sin(t * 2 + angle) * 0.5
 
+    if (meshRef.current) {
       meshRef.current.position.set(x, y, z)
-      meshRef.current.scale.setScalar(0.04 + (1 - progress) * 0.02)
+      meshRef.current.scale.setScalar(0.06 + (1 - progress) * 0.03)
+    }
+    if (glowRef.current) {
+      glowRef.current.position.set(x, y, z)
+      glowRef.current.scale.setScalar(0.15 + (1 - progress) * 0.05)
     }
   })
 
   return (
-    <Trail
-      width={0.8}
-      length={8}
-      color={color}
-      attenuation={(t) => t * t}
-    >
+    <group>
+      {/* Glow effect */}
+      <mesh ref={glowRef}>
+        <sphereGeometry args={[1, 12, 12]} />
+        <meshBasicMaterial color={color} transparent opacity={0.3} />
+      </mesh>
+      {/* Core particle */}
       <mesh ref={meshRef}>
-        <sphereGeometry args={[1, 8, 8]} />
+        <sphereGeometry args={[1, 12, 12]} />
         <meshBasicMaterial color="#ffffff" />
       </mesh>
-    </Trail>
+    </group>
   )
 }
 
@@ -765,21 +800,9 @@ function Scene({ botStatus, onNodeClick }: { botStatus: BotStatus, onNodeClick?:
 }
 
 // =============================================================================
-// POST PROCESSING EFFECTS
+// POST PROCESSING REMOVED - Using emissive materials for glow instead
+// The postprocessing library has compatibility issues with certain Three.js versions
 // =============================================================================
-
-function Effects() {
-  return (
-    <EffectComposer>
-      <Bloom
-        intensity={1.8}
-        luminanceThreshold={0.15}
-        luminanceSmoothing={0.95}
-        mipmapBlur
-      />
-    </EffectComposer>
-  )
-}
 
 // =============================================================================
 // ERROR FALLBACK
@@ -858,29 +881,35 @@ export default function Nexus3D({
     return <LoadingFallback />
   }
 
-  return (
-    <div className={`w-full h-full bg-[#030712] ${className}`}>
-      <Canvas
-        camera={{ position: [0, 3, 12], fov: 60 }}
-        gl={{
-          antialias: true,
-          alpha: false,
-          powerPreference: 'high-performance',
-          failIfMajorPerformanceCaveat: false
-        }}
-        dpr={[1, 2]}
-        onCreated={({ gl }) => {
-          gl.setClearColor('#030712')
-        }}
-      >
-        <color attach="background" args={['#030712']} />
-        <fog attach="fog" args={['#030712', 15, 35]} />
+  const errorFallbackElement = <ErrorFallback message="A rendering error occurred. Please refresh the page." />
 
-        <Suspense fallback={null}>
-          <Scene botStatus={botStatus} onNodeClick={onNodeClick} />
-          <Effects />
-        </Suspense>
-      </Canvas>
-    </div>
+  return (
+    <Canvas3DErrorBoundary fallback={errorFallbackElement}>
+      <div className={`w-full h-full bg-[#030712] ${className}`}>
+        <Canvas
+          camera={{ position: [0, 3, 12], fov: 60 }}
+          gl={{
+            antialias: true,
+            alpha: false,
+            powerPreference: 'high-performance',
+            failIfMajorPerformanceCaveat: false
+          }}
+          dpr={[1, 2]}
+          onCreated={({ gl }) => {
+            gl.setClearColor('#030712')
+          }}
+          onError={(e) => {
+            console.error('Canvas error:', e)
+          }}
+        >
+          <color attach="background" args={['#030712']} />
+          <fog attach="fog" args={['#030712', 15, 35]} />
+
+          <Suspense fallback={null}>
+            <Scene botStatus={botStatus} onNodeClick={onNodeClick} />
+          </Suspense>
+        </Canvas>
+      </div>
+    </Canvas3DErrorBoundary>
   )
 }
