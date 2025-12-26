@@ -156,10 +156,31 @@ async def get_ares_status():
 
         win_rate = round((win_count / closed_count) * 100, 1) if closed_count > 0 else 0
 
+        # Try to get stored mode and ticker from config table
+        stored_mode = "paper"
+        stored_ticker = "SPX"
+        try:
+            from database_adapter import get_connection
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM autonomous_config WHERE key = 'ares_mode'")
+            row = cursor.fetchone()
+            if row:
+                stored_mode = row[0]
+            cursor.execute("SELECT value FROM autonomous_config WHERE key = 'ares_ticker'")
+            row = cursor.fetchone()
+            if row:
+                stored_ticker = row[0]
+            conn.close()
+        except:
+            pass
+
         return {
             "success": True,
             "data": {
-                "mode": "paper",
+                "mode": stored_mode,
+                "ticker": stored_ticker,
+                "is_spy_sandbox": stored_ticker == "SPY",
                 "capital": round(starting_capital + total_pnl, 2),
                 "total_pnl": round(total_pnl, 2),
                 "trade_count": trade_count,
@@ -177,7 +198,7 @@ async def get_ares_status():
                     "risk_per_trade": 10.0,
                     "spread_width": 10.0,
                     "sd_multiplier": 1.0,
-                    "ticker": "SPX",
+                    "ticker": stored_ticker,
                     "target_return": "10% monthly"
                 },
                 "source": "database",

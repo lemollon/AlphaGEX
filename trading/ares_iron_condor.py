@@ -485,6 +485,28 @@ class ARESTrader:
             except Exception as e:
                 logger.warning(f"ARES: Could not load positions from database: {e}")
 
+            # Store mode and ticker in config for API status endpoint
+            try:
+                from database_adapter import get_connection
+                conn = get_connection()
+                c = conn.cursor()
+                trading_ticker = self.get_trading_ticker()
+                # Upsert ares_mode
+                c.execute('''
+                    INSERT INTO autonomous_config (key, value) VALUES ('ares_mode', %s)
+                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+                ''', (mode.value,))
+                # Upsert ares_ticker
+                c.execute('''
+                    INSERT INTO autonomous_config (key, value) VALUES ('ares_ticker', %s)
+                    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+                ''', (trading_ticker,))
+                conn.commit()
+                conn.close()
+                logger.info(f"ARES: Stored config - mode={mode.value}, ticker={trading_ticker}")
+            except Exception as e:
+                logger.debug(f"ARES: Could not store config: {e}")
+
     def _generate_position_id(self) -> str:
         """Generate unique position ID"""
         self._position_counter += 1
