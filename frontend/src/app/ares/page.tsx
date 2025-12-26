@@ -137,14 +137,16 @@ interface MarketData {
 interface TradierStatus {
   mode: string
   success?: boolean
+  paper_mode_type?: 'simulated' | 'sandbox' | 'live'
   account: {
     account_number?: string
     type?: string
     cash?: number
     equity?: number
     buying_power?: number
+    note?: string
   }
-  positions: Array<{ symbol: string; quantity: number; cost_basis: number; date_acquired?: string }>
+  positions: Array<{ symbol: string; quantity: number; cost_basis: number; date_acquired?: string; status?: string }>
   orders: Array<{ id: string; symbol: string; side: string; quantity: number; status: string; type?: string; price?: number; created_date?: string }>
   errors: string[]
 }
@@ -1091,7 +1093,28 @@ export default function ARESPage() {
 
   const formatCurrency = (v: number) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(v)
   const formatPercent = (v: number) => `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`
+
+  // Determine connection status and mode
+  // paper_mode_type: 'simulated' (SPX paper - no Tradier), 'sandbox' (SPY paper - Tradier sandbox), 'live' (production)
+  const paperModeType = tradierStatus?.paper_mode_type || status?.paper_mode_type || 'unknown'
   const tradierConnected = tradierStatus?.success && tradierStatus?.account?.account_number
+  const isSimulatedMode = paperModeType === 'simulated' || tradierStatus?.account?.type === 'simulated'
+
+  // Connection badge configuration
+  const getConnectionBadge = () => {
+    if (isSimulatedMode) {
+      return { bg: 'bg-purple-900', text: 'text-purple-300', label: 'SIMULATED' }
+    }
+    if (tradierConnected) {
+      const accountType = tradierStatus?.account?.type
+      if (accountType === 'sandbox') {
+        return { bg: 'bg-blue-900', text: 'text-blue-300', label: 'SANDBOX' }
+      }
+      return { bg: 'bg-green-900', text: 'text-green-300', label: 'TRADIER' }
+    }
+    return { bg: 'bg-yellow-900', text: 'text-yellow-300', label: 'DISCONNECTED' }
+  }
+  const connectionBadge = getConnectionBadge()
 
   // Combined stats
   const totalPnl = spxStats.totalPnl + spyStats.totalPnl
@@ -1519,8 +1542,8 @@ export default function ARESPage() {
                     <h3 className="text-lg font-bold text-blue-300 flex items-center gap-2">
                       <Server className="w-5 h-5" /> SPY Performance
                     </h3>
-                    <span className={`px-2 py-1 rounded text-xs ${tradierConnected ? 'bg-green-900 text-green-300' : 'bg-yellow-900 text-yellow-300'}`}>
-                      {tradierConnected ? 'TRADIER' : 'DISCONNECTED'}
+                    <span className={`px-2 py-1 rounded text-xs ${connectionBadge.bg} ${connectionBadge.text}`}>
+                      {connectionBadge.label}
                     </span>
                   </div>
                   <div className="grid grid-cols-4 gap-2 text-center">
@@ -1881,8 +1904,8 @@ export default function ARESPage() {
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
                       <span className="text-gray-400 text-sm">SPY Iron Condors</span>
-                      <span className={`px-2 py-1 rounded text-xs ${tradierConnected ? 'bg-green-900 text-green-300' : 'bg-yellow-900 text-yellow-300'}`}>
-                        {tradierConnected ? 'TRADIER' : 'DISCONNECTED'}
+                      <span className={`px-2 py-1 rounded text-xs ${connectionBadge.bg} ${connectionBadge.text}`}>
+                        {connectionBadge.label}
                       </span>
                     </div>
                   </div>
@@ -1985,16 +2008,16 @@ export default function ARESPage() {
                 )}
               </div>
 
-              {/* Tradier Account Info */}
-              {tradierConnected && (
-                <div className="bg-gray-800 rounded-xl p-4 border border-blue-700/30">
-                  <h3 className="text-lg font-semibold text-blue-300 mb-3 flex items-center gap-2">
-                    <Server className="w-5 h-5" /> Tradier Account
+              {/* Account Info - Shows for both Tradier connected and Simulated modes */}
+              {(tradierConnected || isSimulatedMode) && (
+                <div className={`bg-gray-800 rounded-xl p-4 border ${isSimulatedMode ? 'border-purple-700/30' : 'border-blue-700/30'}`}>
+                  <h3 className={`text-lg font-semibold mb-3 flex items-center gap-2 ${isSimulatedMode ? 'text-purple-300' : 'text-blue-300'}`}>
+                    <Server className="w-5 h-5" /> {isSimulatedMode ? 'Simulated Account' : 'Tradier Account'}
                   </h3>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div className="bg-gray-900/50 rounded-lg p-3 text-center">
                       <span className="text-gray-400 text-xs block">Account</span>
-                      <span className="text-white font-mono">{tradierStatus?.account?.account_number || '--'}</span>
+                      <span className={`font-mono ${isSimulatedMode ? 'text-purple-300' : 'text-white'}`}>{tradierStatus?.account?.account_number || '--'}</span>
                     </div>
                     <div className="bg-gray-900/50 rounded-lg p-3 text-center">
                       <span className="text-gray-400 text-xs block">Equity</span>
@@ -2010,8 +2033,8 @@ export default function ARESPage() {
                     </div>
                   </div>
 
-                  {/* Recent Tradier Orders */}
-                  {tradierStatus?.orders && tradierStatus.orders.length > 0 && (
+                  {/* Recent Tradier Orders - Only for real Tradier connections */}
+                  {!isSimulatedMode && tradierStatus?.orders && tradierStatus.orders.length > 0 && (
                     <div className="mt-4">
                       <h4 className="text-gray-400 text-sm mb-2">Recent Orders</h4>
                       <div className="space-y-2 max-h-32 overflow-y-auto">
@@ -2028,8 +2051,21 @@ export default function ARESPage() {
                 </div>
               )}
 
-              {/* Tradier Not Connected Warning */}
-              {!tradierConnected && (
+              {/* Connection Status Info */}
+              {isSimulatedMode ? (
+                <div className="bg-purple-900/20 border border-purple-700/50 rounded-lg p-4">
+                  <div className="flex items-start gap-3">
+                    <Server className="w-5 h-5 text-purple-400 flex-shrink-0 mt-0.5" />
+                    <div>
+                      <h4 className="text-purple-400 font-medium">Simulated Mode (SPX Paper Trading)</h4>
+                      <p className="text-gray-400 text-sm mt-1">
+                        Running in SPX paper trading mode. Trades are simulated and recorded in AlphaGEX database.
+                        {tradierStatus?.account?.note && <span className="block mt-1 text-gray-500">{tradierStatus.account.note}</span>}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : !tradierConnected && (
                 <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-lg p-4">
                   <div className="flex items-start gap-3">
                     <AlertTriangle className="w-5 h-5 text-yellow-500 flex-shrink-0 mt-0.5" />
