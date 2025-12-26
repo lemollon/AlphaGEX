@@ -1,11 +1,35 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import {
   TrendingUp, TrendingDown, AlertTriangle, Clock, Timer, Eye, X,
-  ChevronRight, Zap, Shield, Target, DollarSign
+  ChevronRight, Zap, Shield, Target, DollarSign, Activity, Gauge,
+  Info, Flame, Hourglass, ChevronDown, ChevronUp, BarChart3, Brain
 } from 'lucide-react'
 import { LivePosition } from './LivePortfolio'
+
+// Extended position interface with all available data
+interface EnhancedPosition extends LivePosition {
+  // Greeks at entry (from DB)
+  entry_delta?: number
+  entry_gamma?: number
+  entry_theta?: number
+  entry_vega?: number
+  // Risk metrics
+  max_profit?: number
+  max_loss?: number
+  probability_of_profit?: number
+  // 0DTE flag
+  is_0dte?: boolean
+  // Context at entry
+  ml_direction?: string
+  ml_confidence?: number
+  oracle_confidence?: number
+  gex_regime?: string
+  vix_at_entry?: number
+  put_wall_at_entry?: number
+  call_wall_at_entry?: number
+}
 
 interface AllOpenPositionsProps {
   botName: 'ATHENA' | 'ARES'
@@ -14,7 +38,7 @@ interface AllOpenPositionsProps {
   isLoading?: boolean
   lastUpdated?: string
   onPositionClick?: (position: LivePosition) => void
-  onClosePosition?: (position: LivePosition) => void  // For manual close
+  onClosePosition?: (position: LivePosition) => void
 }
 
 // Format currency
@@ -29,7 +53,51 @@ const formatPct = (value: number) => {
   return `${prefix}${value.toFixed(2)}%`
 }
 
-// Calculate time since entry with full timestamp
+// Calculate time to expiration
+function getExpirationInfo(expiration?: string): {
+  timeLeft: string
+  is0DTE: boolean
+  urgency: 'low' | 'medium' | 'high' | 'critical'
+  hoursLeft: number
+} {
+  if (!expiration) return { timeLeft: '', is0DTE: false, urgency: 'low', hoursLeft: 999 }
+
+  const now = new Date()
+  const exp = new Date(expiration + 'T16:00:00') // Market close
+  const diffMs = exp.getTime() - now.getTime()
+  const hoursLeft = diffMs / (1000 * 60 * 60)
+  const daysLeft = Math.floor(hoursLeft / 24)
+
+  let timeLeft: string
+  let urgency: 'low' | 'medium' | 'high' | 'critical'
+
+  if (hoursLeft <= 0) {
+    timeLeft = 'EXPIRED'
+    urgency = 'critical'
+  } else if (hoursLeft <= 1) {
+    const minsLeft = Math.floor((hoursLeft * 60))
+    timeLeft = `${minsLeft}m left`
+    urgency = 'critical'
+  } else if (hoursLeft <= 4) {
+    timeLeft = `${hoursLeft.toFixed(1)}h left`
+    urgency = 'high'
+  } else if (daysLeft === 0) {
+    timeLeft = `${Math.floor(hoursLeft)}h left`
+    urgency = 'medium'
+  } else if (daysLeft === 1) {
+    timeLeft = '1 day left'
+    urgency = 'low'
+  } else {
+    timeLeft = `${daysLeft} days left`
+    urgency = 'low'
+  }
+
+  const is0DTE = daysLeft === 0 && hoursLeft > 0
+
+  return { timeLeft, is0DTE, urgency, hoursLeft }
+}
+
+// Calculate time since entry
 function getPositionAge(entryTime?: string): { age: string; timestamp: string } {
   if (!entryTime) return { age: '', timestamp: '' }
 
@@ -59,6 +127,25 @@ function getPositionAge(entryTime?: string): { age: string; timestamp: string } 
   return { age, timestamp }
 }
 
+// Estimate current delta based on price movement
+function estimateCurrentDelta(
+  entryDelta: number,
+  spotAtEntry: number,
+  spotNow: number,
+  longStrike: number,
+  shortStrike: number,
+  isBullish: boolean
+): number {
+  if (!entryDelta || !spotAtEntry || !spotNow) return entryDelta || 0
+
+  // Simplified delta drift estimation
+  const pricePctMove = (spotNow - spotAtEntry) / spotAtEntry
+  const deltaShift = pricePctMove * 0.5 // Approximate gamma effect
+
+  let newDelta = entryDelta + (isBullish ? deltaShift : -deltaShift)
+  return Math.max(-1, Math.min(1, newDelta))
+}
+
 // Hook to track P&L changes and trigger animations
 function usePnLAnimation(pnl: number) {
   const [isFlashing, setIsFlashing] = useState(false)
@@ -84,6 +171,215 @@ function usePnLAnimation(pnl: number) {
   return { isFlashing, flashDirection }
 }
 
+// Greeks Display Component
+function GreeksDisplay({
+  entryDelta,
+  entryGamma,
+  entryTheta,
+  currentDelta,
+  compact = false
+}: {
+  entryDelta?: number
+  entryGamma?: number
+  entryTheta?: number
+  currentDelta?: number
+  compact?: boolean
+}) {
+  const hasDrift = entryDelta && currentDelta && Math.abs(currentDelta - entryDelta) > 0.05
+
+  if (compact) {
+    return (
+      <div className="flex items-center gap-2 text-xs">
+        <span className="text-gray-500">Δ</span>
+        <span className={`font-mono ${hasDrift ? 'text-yellow-400' : 'text-gray-400'}`}>
+          {currentDelta?.toFixed(2) || entryDelta?.toFixed(2) || '--'}
+        </span>
+        {hasDrift && (
+          <span className="text-yellow-500 text-[10px]">
+            (was {entryDelta?.toFixed(2)})
+          </span>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="bg-gray-900/50 rounded-lg p-2">
+      <div className="flex items-center gap-1 text-xs text-gray-500 mb-2">
+        <Activity className="w-3 h-3" />
+        <span>Greeks</span>
+        {hasDrift && (
+          <span className="ml-auto px-1.5 py-0.5 bg-yellow-500/20 text-yellow-400 rounded text-[10px] flex items-center gap-1">
+            <AlertTriangle className="w-2.5 h-2.5" />
+            DRIFT
+          </span>
+        )}
+      </div>
+      <div className="grid grid-cols-3 gap-2 text-xs">
+        <div>
+          <span className="text-gray-500 block">Delta</span>
+          <div className="flex flex-col">
+            <span className={`font-mono ${hasDrift ? 'text-yellow-400' : 'text-white'}`}>
+              {currentDelta?.toFixed(3) || entryDelta?.toFixed(3) || '--'}
+            </span>
+            {hasDrift && (
+              <span className="text-gray-600 text-[10px]">entry: {entryDelta?.toFixed(3)}</span>
+            )}
+          </div>
+        </div>
+        <div>
+          <span className="text-gray-500 block">Gamma</span>
+          <span className="text-white font-mono">{entryGamma?.toFixed(3) || '--'}</span>
+        </div>
+        <div>
+          <span className="text-gray-500 block">Theta</span>
+          <span className="text-red-400 font-mono">{entryTheta?.toFixed(2) || '--'}</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Max Profit Progress Bar
+function ProfitProgress({
+  currentPnl,
+  maxProfit,
+  maxLoss
+}: {
+  currentPnl: number
+  maxProfit?: number
+  maxLoss?: number
+}) {
+  if (!maxProfit) return null
+
+  const progressPct = Math.min(100, Math.max(0, (currentPnl / maxProfit) * 100))
+  const isProfit = currentPnl >= 0
+
+  // Calculate how close to max loss if losing
+  const lossProgress = maxLoss && currentPnl < 0
+    ? Math.min(100, (Math.abs(currentPnl) / Math.abs(maxLoss)) * 100)
+    : 0
+
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between text-xs">
+        <span className="text-gray-500">Profit Progress</span>
+        <span className={`font-medium ${isProfit ? 'text-green-400' : 'text-red-400'}`}>
+          {progressPct.toFixed(0)}% of max
+        </span>
+      </div>
+      <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
+        {isProfit ? (
+          <div
+            className="h-full bg-gradient-to-r from-green-600 to-green-400 transition-all duration-500"
+            style={{ width: `${progressPct}%` }}
+          />
+        ) : (
+          <div
+            className="h-full bg-gradient-to-r from-red-600 to-red-400 transition-all duration-500"
+            style={{ width: `${lossProgress}%` }}
+          />
+        )}
+      </div>
+      <div className="flex justify-between text-[10px] text-gray-600">
+        <span>Max Loss: ${maxLoss?.toFixed(0)}</span>
+        <span>Max Profit: ${maxProfit?.toFixed(0)}</span>
+      </div>
+    </div>
+  )
+}
+
+// 0DTE Badge Component
+function ZeroDTEBadge({
+  timeLeft,
+  urgency
+}: {
+  timeLeft: string
+  urgency: 'low' | 'medium' | 'high' | 'critical'
+}) {
+  const colors = {
+    low: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+    medium: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30',
+    high: 'bg-orange-500/20 text-orange-400 border-orange-500/30',
+    critical: 'bg-red-500/20 text-red-400 border-red-500/30 animate-pulse'
+  }
+
+  return (
+    <div className={`flex items-center gap-1 px-2 py-1 rounded border text-xs font-medium ${colors[urgency]}`}>
+      <Flame className="w-3 h-3" />
+      <span>0DTE</span>
+      <span className="opacity-75">• {timeLeft}</span>
+    </div>
+  )
+}
+
+// Entry Context Summary
+function EntryContext({
+  mlDirection,
+  mlConfidence,
+  oracleConfidence,
+  gexRegime,
+  vixAtEntry
+}: {
+  mlDirection?: string
+  mlConfidence?: number
+  oracleConfidence?: number
+  gexRegime?: string
+  vixAtEntry?: number
+}) {
+  const [expanded, setExpanded] = useState(false)
+
+  if (!mlDirection && !gexRegime && !vixAtEntry) return null
+
+  return (
+    <div className="border-t border-gray-800 pt-2 mt-2">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-400 w-full"
+      >
+        <Brain className="w-3 h-3" />
+        <span>Entry Context</span>
+        {expanded ? <ChevronUp className="w-3 h-3 ml-auto" /> : <ChevronDown className="w-3 h-3 ml-auto" />}
+      </button>
+
+      {expanded && (
+        <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+          {mlDirection && (
+            <div>
+              <span className="text-gray-600 block">ML Signal</span>
+              <span className={`font-medium ${mlDirection === 'BULLISH' ? 'text-green-400' : 'text-red-400'}`}>
+                {mlDirection} {mlConfidence ? `(${(mlConfidence * 100).toFixed(0)}%)` : ''}
+              </span>
+            </div>
+          )}
+          {oracleConfidence && (
+            <div>
+              <span className="text-gray-600 block">Oracle</span>
+              <span className="text-purple-400 font-medium">
+                {(oracleConfidence * 100).toFixed(0)}% conf
+              </span>
+            </div>
+          )}
+          {gexRegime && (
+            <div>
+              <span className="text-gray-600 block">GEX Regime</span>
+              <span className={`font-medium ${gexRegime === 'POSITIVE' ? 'text-green-400' : 'text-red-400'}`}>
+                {gexRegime}
+              </span>
+            </div>
+          )}
+          {vixAtEntry && (
+            <div>
+              <span className="text-gray-600 block">VIX at Entry</span>
+              <span className="text-yellow-400 font-medium">{vixAtEntry.toFixed(1)}</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // Single Position Card - ATHENA style (spreads)
 function AthenaPositionCard({
   position,
@@ -91,16 +387,37 @@ function AthenaPositionCard({
   onClick,
   onClose
 }: {
-  position: LivePosition
+  position: EnhancedPosition
   underlyingPrice?: number
   onClick?: () => void
   onClose?: () => void
 }) {
   const isPositive = position.unrealized_pnl >= 0
-  const spreadType = position.spread_type?.includes('BULL') ? 'Bull Call Spread' :
-    position.spread_type?.includes('BEAR') ? 'Bear Put Spread' : 'Spread'
+  const isBullish = position.spread_type?.includes('BULL')
+  const spreadType = isBullish ? 'Bull Call Spread' : 'Bear Put Spread'
   const { isFlashing, flashDirection } = usePnLAnimation(position.unrealized_pnl)
   const { age, timestamp } = getPositionAge(position.entry_time || position.created_at)
+  const expInfo = getExpirationInfo(position.expiration)
+
+  // Estimate current delta
+  const currentDelta = useMemo(() => {
+    if (!position.entry_delta || !position.underlying_at_entry || !underlyingPrice) {
+      return position.entry_delta
+    }
+    return estimateCurrentDelta(
+      position.entry_delta,
+      position.underlying_at_entry,
+      underlyingPrice,
+      position.long_strike || 0,
+      position.short_strike || 0,
+      !!isBullish
+    )
+  }, [position, underlyingPrice, isBullish])
+
+  // Calculate max profit (spread width - entry debit for debit spreads)
+  const spreadWidth = Math.abs((position.long_strike || 0) - (position.short_strike || 0))
+  const maxProfit = position.max_profit || (spreadWidth * 100 * (position.contracts || 1) - (position.entry_debit || 0) * 100 * (position.contracts || 1))
+  const maxLoss = position.max_loss || ((position.entry_debit || 0) * 100 * (position.contracts || 1))
 
   return (
     <div
@@ -114,12 +431,15 @@ function AthenaPositionCard({
     >
       {/* Header Row */}
       <div className="flex justify-between items-start mb-3">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <div className={`w-2 h-2 rounded-full animate-pulse ${isPositive ? 'bg-[#00C805]' : 'bg-[#FF5000]'}`} />
           <span className="text-white font-medium">{spreadType}</span>
-          <span className="text-xs px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded">
-            {position.spread_type?.includes('BULL') ? 'BULLISH' : 'BEARISH'}
+          <span className={`text-xs px-2 py-0.5 rounded ${isBullish ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+            {isBullish ? 'BULLISH' : 'BEARISH'}
           </span>
+          {expInfo.is0DTE && (
+            <ZeroDTEBadge timeLeft={expInfo.timeLeft} urgency={expInfo.urgency} />
+          )}
         </div>
         <div className="text-right">
           <div className={`text-xl font-bold transition-colors duration-200 ${
@@ -146,15 +466,45 @@ function AthenaPositionCard({
           </span>
         </div>
         <div className="flex items-center justify-between text-sm">
-          <span className="text-gray-400">Exp: {position.expiration}</span>
+          <div className="flex items-center gap-2">
+            <span className="text-gray-400">Exp: {position.expiration}</span>
+            {!expInfo.is0DTE && (
+              <span className={`text-xs ${
+                expInfo.urgency === 'critical' ? 'text-red-400' :
+                expInfo.urgency === 'high' ? 'text-orange-400' :
+                expInfo.urgency === 'medium' ? 'text-yellow-400' : 'text-gray-500'
+              }`}>
+                ({expInfo.timeLeft})
+              </span>
+            )}
+          </div>
           {position.entry_debit && (
             <span className="text-gray-500">Entry: ${position.entry_debit?.toFixed(2)}</span>
           )}
         </div>
       </div>
 
-      {/* Timestamps - PROMINENT */}
-      <div className="bg-gray-900/50 rounded-lg p-2 mb-3 flex items-center justify-between text-xs">
+      {/* Greeks Display */}
+      {(position.entry_delta || position.entry_gamma) && (
+        <GreeksDisplay
+          entryDelta={position.entry_delta}
+          entryGamma={position.entry_gamma}
+          entryTheta={position.entry_theta}
+          currentDelta={currentDelta}
+        />
+      )}
+
+      {/* Max Profit Progress */}
+      <div className="mt-3">
+        <ProfitProgress
+          currentPnl={position.unrealized_pnl}
+          maxProfit={maxProfit}
+          maxLoss={maxLoss}
+        />
+      </div>
+
+      {/* Timestamps */}
+      <div className="bg-gray-900/50 rounded-lg p-2 my-3 flex items-center justify-between text-xs">
         <div className="flex items-center gap-1 text-gray-400">
           <Clock className="w-3 h-3" />
           <span>Opened: {timestamp}</span>
@@ -166,7 +516,7 @@ function AthenaPositionCard({
       </div>
 
       {/* Current Values */}
-      <div className="border-t border-gray-800 pt-3 grid grid-cols-2 gap-3 text-sm">
+      <div className="grid grid-cols-2 gap-3 text-sm">
         <div>
           <span className="text-gray-500 block text-xs">Entry</span>
           <span className="text-white font-medium">${position.entry_debit?.toFixed(2)}</span>
@@ -194,6 +544,15 @@ function AthenaPositionCard({
         )}
       </div>
 
+      {/* Entry Context (collapsed by default) */}
+      <EntryContext
+        mlDirection={position.ml_direction}
+        mlConfidence={position.ml_confidence}
+        oracleConfidence={position.oracle_confidence}
+        gexRegime={position.gex_regime}
+        vixAtEntry={position.vix_at_entry}
+      />
+
       {/* Actions */}
       <div className="flex gap-2 mt-3 pt-3 border-t border-gray-800">
         <button
@@ -201,7 +560,7 @@ function AthenaPositionCard({
           className="flex-1 flex items-center justify-center gap-1 px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm text-white transition-colors"
         >
           <Eye className="w-4 h-4" />
-          Details
+          Full Details
         </button>
         {onClose && (
           <button
@@ -224,7 +583,7 @@ function AresPositionCard({
   onClick,
   onClose
 }: {
-  position: LivePosition
+  position: EnhancedPosition
   underlyingPrice?: number
   onClick?: () => void
   onClose?: () => void
@@ -233,6 +592,7 @@ function AresPositionCard({
   const isAtRisk = position.risk_status === 'AT_RISK'
   const { isFlashing, flashDirection } = usePnLAnimation(position.unrealized_pnl)
   const { age, timestamp } = getPositionAge(position.entry_time || position.created_at)
+  const expInfo = getExpirationInfo(position.expiration)
 
   // Price position visualization
   const putShort = position.put_short_strike || 0
@@ -240,6 +600,11 @@ function AresPositionCard({
   const price = underlyingPrice || position.current_underlying || 0
   const range = callShort - putShort
   const pricePosition = range > 0 ? ((price - putShort) / range) * 100 : 50
+
+  // Max profit/loss for IC
+  const maxProfit = position.max_profit || (position.credit_received || 0) * 100 * (position.contracts || 1)
+  const spreadWidth = (position.call_long_strike || 0) - (position.call_short_strike || 0)
+  const maxLoss = position.max_loss || (spreadWidth - (position.credit_received || 0)) * 100 * (position.contracts || 1)
 
   return (
     <div
@@ -255,7 +620,7 @@ function AresPositionCard({
     >
       {/* Header Row */}
       <div className="flex justify-between items-start mb-3">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <div className={`w-2 h-2 rounded-full animate-pulse ${isPositive ? 'bg-[#00C805]' : 'bg-[#FF5000]'}`} />
           <span className="text-white font-medium">Iron Condor</span>
           {isAtRisk && (
@@ -263,6 +628,9 @@ function AresPositionCard({
               <AlertTriangle className="w-3 h-3" />
               AT RISK
             </span>
+          )}
+          {expInfo.is0DTE && (
+            <ZeroDTEBadge timeLeft={expInfo.timeLeft} urgency={expInfo.urgency} />
           )}
         </div>
         <div className="text-right">
@@ -279,15 +647,24 @@ function AresPositionCard({
         </div>
       </div>
 
-      {/* Timestamps - PROMINENT */}
+      {/* Timestamps */}
       <div className="bg-gray-900/50 rounded-lg p-2 mb-3 flex items-center justify-between text-xs">
         <div className="flex items-center gap-1 text-gray-400">
           <Clock className="w-3 h-3" />
           <span>Opened: {timestamp}</span>
         </div>
-        <div className="flex items-center gap-1 text-gray-500">
-          <Timer className="w-3 h-3" />
-          <span>{age} ago</span>
+        <div className="flex items-center gap-1">
+          <Timer className="w-3 h-3 text-gray-500" />
+          <span className="text-gray-500">{age} ago</span>
+          {!expInfo.is0DTE && (
+            <span className={`ml-2 ${
+              expInfo.urgency === 'critical' ? 'text-red-400' :
+              expInfo.urgency === 'high' ? 'text-orange-400' :
+              expInfo.urgency === 'medium' ? 'text-yellow-400' : 'text-gray-500'
+            }`}>
+              • {expInfo.timeLeft}
+            </span>
+          )}
         </div>
       </div>
 
@@ -295,6 +672,7 @@ function AresPositionCard({
       <div className="bg-[#0a0a0a] rounded-lg p-3 mb-3">
         <div className="flex justify-between text-xs text-gray-500 mb-2">
           <span>PUT SIDE</span>
+          <span className="text-white font-medium">${price.toFixed(2)}</span>
           <span>CALL SIDE</span>
         </div>
 
@@ -309,7 +687,7 @@ function AresPositionCard({
 
           {/* Price indicator */}
           <div
-            className="absolute top-0 bottom-0 w-0.5 bg-white"
+            className="absolute top-0 bottom-0 w-0.5 bg-white z-10"
             style={{ left: `${Math.max(0, Math.min(100, pricePosition))}%` }}
           >
             <div className="absolute -top-1 -left-1.5 w-3 h-3 rounded-full bg-white shadow-lg" />
@@ -319,7 +697,6 @@ function AresPositionCard({
         {/* Strike labels */}
         <div className="flex justify-between text-xs">
           <span className="text-gray-500">{position.put_long_strike}/{position.put_short_strike}P</span>
-          <span className="text-white font-medium">${price.toFixed(2)}</span>
           <span className="text-gray-500">{position.call_short_strike}/{position.call_long_strike}C</span>
         </div>
 
@@ -334,8 +711,15 @@ function AresPositionCard({
         </div>
       </div>
 
+      {/* Max Profit Progress */}
+      <ProfitProgress
+        currentPnl={position.unrealized_pnl}
+        maxProfit={maxProfit}
+        maxLoss={maxLoss}
+      />
+
       {/* Position Details */}
-      <div className="grid grid-cols-2 gap-3 text-sm mb-3">
+      <div className="grid grid-cols-2 gap-3 text-sm mt-3">
         <div>
           <span className="text-gray-500 block text-xs">Expiration</span>
           <span className="text-white font-medium">{position.expiration}</span>
@@ -354,14 +738,23 @@ function AresPositionCard({
         </div>
       </div>
 
+      {/* Entry Context (collapsed by default) */}
+      <EntryContext
+        mlDirection={position.ml_direction}
+        mlConfidence={position.ml_confidence}
+        oracleConfidence={position.oracle_confidence}
+        gexRegime={position.gex_regime}
+        vixAtEntry={position.vix_at_entry}
+      />
+
       {/* Actions */}
-      <div className="flex gap-2 pt-3 border-t border-gray-800">
+      <div className="flex gap-2 mt-3 pt-3 border-t border-gray-800">
         <button
           onClick={onClick}
           className="flex-1 flex items-center justify-center gap-1 px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm text-white transition-colors"
         >
           <Eye className="w-4 h-4" />
-          Details
+          Full Details
         </button>
         {onClose && (
           <button
@@ -402,11 +795,17 @@ export default function AllOpenPositions({
   const totalUnrealized = positions?.reduce((sum, p) => sum + (p.unrealized_pnl || 0), 0) || 0
   const isPositiveTotal = totalUnrealized >= 0
 
+  // Count 0DTE positions
+  const zeroDteCount = positions?.filter(p => {
+    const expInfo = getExpirationInfo(p.expiration)
+    return expInfo.is0DTE
+  }).length || 0
+
   return (
     <div className="bg-[#0a0a0a] rounded-lg p-6 border border-gray-800">
       {/* Header */}
       <div className="flex justify-between items-center mb-4">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <h3 className="text-lg font-semibold text-white">
             Open Positions
           </h3>
@@ -419,6 +818,12 @@ export default function AllOpenPositions({
             <div className="flex items-center gap-1 text-xs text-green-400">
               <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
               LIVE
+            </div>
+          )}
+          {zeroDteCount > 0 && (
+            <div className="flex items-center gap-1 px-2 py-0.5 bg-orange-500/20 text-orange-400 rounded text-xs">
+              <Flame className="w-3 h-3" />
+              {zeroDteCount} 0DTE
             </div>
           )}
         </div>
@@ -448,7 +853,7 @@ export default function AllOpenPositions({
             botName === 'ATHENA' ? (
               <AthenaPositionCard
                 key={position.position_id}
-                position={position}
+                position={position as EnhancedPosition}
                 underlyingPrice={underlyingPrice}
                 onClick={() => onPositionClick?.(position)}
                 onClose={onClosePosition ? () => onClosePosition(position) : undefined}
@@ -456,7 +861,7 @@ export default function AllOpenPositions({
             ) : (
               <AresPositionCard
                 key={position.position_id}
-                position={position}
+                position={position as EnhancedPosition}
                 underlyingPrice={underlyingPrice}
                 onClick={() => onPositionClick?.(position)}
                 onClose={onClosePosition ? () => onClosePosition(position) : undefined}
