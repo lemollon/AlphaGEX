@@ -1,0 +1,84 @@
+# Coverage.py configuration file
+# Run: pytest --cov=core --cov=trading --cov=backend/api/routes --cov-report=html --cov-report=term-missing
+
+[run]
+# Measure branch coverage in addition to statement coverage
+branch = True
+
+# Source directories to measure
+source =
+    core
+    trading
+    ai
+    quant
+    data
+    gamma
+    backtest
+    monitoring
+    scheduler
+    backend/api/routes
+
+# Files/directories to omit from coverage
+omit =
+    */tests/*
+    */__pycache__/*
+    */migrations/*
+    */venv/*
+    */.venv/*
+    */scripts/*
+    setup.py
+    conftest.py
+
+# Don't complain about missing source files
+ignore_errors = True
+
+[report]
+# Minimum acceptable coverage percentage
+fail_under = 40
+
+# Exclude lines from coverage (patterns)
+exclude_lines =
+    # Have to re-enable the standard pragma
+    pragma: no cover
+
+    # Don't complain about missing debug-only code
+    def __repr__
+    def __str__
+
+    # Don't complain if tests don't hit defensive assertions
+    raise AssertionError
+    raise NotImplementedError
+
+    # Don't complain if non-runnable code isn't run
+    if __name__ == .__main__.:
+    if TYPE_CHECKING:
+
+    # Don't complain about abstract methods
+    @abstractmethod
+
+    # Don't complain about import errors (optional dependencies)
+    except ImportError
+
+    # Don't complain about pass statements
+    pass
+
+# Show line numbers of statements that weren't executed
+show_missing = True
+
+# Precision for coverage percentages
+precision = 2
+
+[html]
+# Directory for HTML report
+directory = htmlcov
+
+# Title for the HTML report
+title = AlphaGEX Test Coverage Report
+
+[xml]
+# Output file for XML report (for CI integration)
+output = coverage.xml
+
+[json]
+# Output file for JSON report
+output = coverage.json
