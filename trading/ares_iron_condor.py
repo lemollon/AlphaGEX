@@ -3719,6 +3719,24 @@ class ARESTrader:
                     put_distance = current_price - position.put_short_strike
                     call_distance = position.call_short_strike - current_price
 
+                    # Calculate DTE (days to expiration)
+                    try:
+                        exp_date = datetime.strptime(position.expiration, '%Y-%m-%d').date()
+                        today_date = datetime.now(self.tz).date()
+                        dte = (exp_date - today_date).days
+                        is_0dte = dte == 0
+                    except:
+                        dte = None
+                        is_0dte = False
+
+                    # Max profit = credit received, calculate progress
+                    max_profit = credit_received
+                    profit_progress = (unrealized / max_profit * 100) if max_profit > 0 else 0
+
+                    # Get VIX at entry if available
+                    vix_at_entry = getattr(position, 'vix_at_entry', None) or 0
+                    expected_move = getattr(position, 'expected_move', None) or 0
+
                     pos_data = {
                         'position_id': position.position_id,
                         'expiration': position.expiration,
@@ -3735,7 +3753,21 @@ class ARESTrader:
                         'current_underlying': current_price,
                         'put_distance': round(put_distance, 2),
                         'call_distance': round(call_distance, 2),
-                        'risk_status': 'SAFE' if put_distance > 0 and call_distance > 0 else 'AT_RISK'
+                        'risk_status': 'SAFE' if put_distance > 0 and call_distance > 0 else 'AT_RISK',
+                        # === Entry Context for Transparency ===
+                        'dte': dte,
+                        'is_0dte': is_0dte,
+                        'max_profit': round(max_profit, 2),
+                        'profit_progress_pct': round(profit_progress, 1),
+                        # Market context at entry
+                        'vix_at_entry': vix_at_entry,
+                        'expected_move': expected_move,
+                        # Iron Condor specifics
+                        'spread_width': position.spread_width,
+                        'max_loss': round(position.max_loss * 100 * position.contracts, 2),
+                        # Strategy type
+                        'strategy': 'IRON_CONDOR',
+                        'direction': 'NEUTRAL'  # Iron Condors are neutral/range-bound
                     }
 
                     result['positions'].append(pos_data)
