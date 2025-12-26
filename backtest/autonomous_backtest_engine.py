@@ -21,6 +21,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 import pandas as pd
 import numpy as np
+import logging
 
 # Import strategy stats for feedback loop
 try:
@@ -61,8 +62,25 @@ PATTERN_TO_STRATEGY_MAP = {
 class PatternBacktester:
     """Backtest psychology trap patterns against historical data"""
 
-    def __init__(self):
-        pass
+    def __init__(self, default_lookback_days: int = 90):
+        """
+        Initialize the PatternBacktester.
+
+        Args:
+            default_lookback_days: Default number of days to look back for backtesting.
+                                   Can be overridden in individual method calls.
+        """
+        self.logger = logging.getLogger(__name__)
+        self.default_lookback_days = default_lookback_days
+        self.pattern_to_strategy_map = PATTERN_TO_STRATEGY_MAP.copy()
+        self.strategy_stats_available = STRATEGY_STATS_AVAILABLE
+
+        self.logger.info(
+            f"PatternBacktester initialized: "
+            f"default_lookback={default_lookback_days} days, "
+            f"patterns={len(self.pattern_to_strategy_map)}, "
+            f"strategy_stats={'available' if self.strategy_stats_available else 'unavailable'}"
+        )
 
     def backtest_pattern(self, pattern_name: str, lookback_days: int = 90) -> Dict:
         """
@@ -287,7 +305,7 @@ class PatternBacktester:
 
             conn.commit()
         except Exception as e:
-            print(f"Error saving backtest result for {results.get('pattern', 'unknown')}: {e}")
+            self.logger.error(f"Error saving backtest result for {results.get('pattern', 'unknown')}: {e}")
             conn.rollback()
         finally:
             conn.close()
@@ -331,14 +349,14 @@ class PatternBacktester:
                 saved_count += 1
 
                 # CRITICAL: Also update strategy_stats.json for Kelly sizing!
-                if STRATEGY_STATS_AVAILABLE and result['total_signals'] >= 10:
+                if self.strategy_stats_available and result['total_signals'] >= 10:
                     self._update_strategy_stats_from_backtest(result)
 
         # Sort by expectancy (best to worst)
         results.sort(key=lambda x: x['expectancy'], reverse=True)
 
         if save_to_db:
-            print(f"✅ Saved {saved_count} backtest results to database")
+            self.logger.info(f"Saved {saved_count} backtest results to database")
 
         return results
 
@@ -351,7 +369,7 @@ class PatternBacktester:
         1. The detected pattern itself (for pattern-level tracking)
         2. The mapped strategy (for Kelly sizing)
         """
-        if not STRATEGY_STATS_AVAILABLE:
+        if not self.strategy_stats_available:
             return
 
         try:
@@ -375,20 +393,22 @@ class PatternBacktester:
 
             # 1. Update stats for the pattern itself
             update_strategy_stats(pattern_name, backtest_results)
-            print(f"📊 Updated pattern stats for {pattern_name}: "
-                  f"WR={result['win_rate']:.1f}%, E={result['expectancy']:.2f}%")
+            self.logger.info(
+                f"Updated pattern stats for {pattern_name}: "
+                f"WR={result['win_rate']:.1f}%, E={result['expectancy']:.2f}%"
+            )
 
             # 2. Also update the mapped strategy (for Kelly sizing)
-            mapped_strategy = PATTERN_TO_STRATEGY_MAP.get(pattern_name)
+            mapped_strategy = self.pattern_to_strategy_map.get(pattern_name)
             if mapped_strategy:
                 # Copy results with mapped strategy name
                 strategy_results = backtest_results.copy()
                 strategy_results['strategy_name'] = mapped_strategy
                 update_strategy_stats(mapped_strategy, strategy_results)
-                print(f"📊 Updated strategy stats for {mapped_strategy} (from {pattern_name})")
+                self.logger.info(f"Updated strategy stats for {mapped_strategy} (from {pattern_name})")
 
         except Exception as e:
-            print(f"⚠️ Failed to update strategy stats for {result.get('pattern')}: {e}")
+            self.logger.warning(f"Failed to update strategy stats for {result.get('pattern')}: {e}")
 
     # Helper methods
     def _calculate_sharpe(self, returns: List[float]) -> float:
