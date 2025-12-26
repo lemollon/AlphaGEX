@@ -326,7 +326,7 @@ export default function LiveEquityCurve({
                       />
                     )
                   }
-                  return null
+                  return <circle cx={cx} cy={cy} r={0} fill="transparent" />
                 }}
                 activeDot={{ r: 4, fill: chartColor }}
               />

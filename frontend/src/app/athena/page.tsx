@@ -25,7 +25,6 @@ import {
   WhyNotTrading,
   TodayReportCard,
   ActivityTimeline,
-  ExitNotificationContainer,
   RiskMetrics,
   PositionDetailModal,
   AllOpenPositions,
@@ -709,7 +708,6 @@ export default function ATHENAPage() {
   const [expandedDecision, setExpandedDecision] = useState<string | null>(null)
   const [expandedPosition, setExpandedPosition] = useState<string | null>(null)
   const [selectedPosition, setSelectedPosition] = useState<any | null>(null)
-  const [exitNotifications, setExitNotifications] = useState<any[]>([])
 
   // Build skip reasons from decisions
   const skipReasons = useMemo(() => {
@@ -755,6 +753,26 @@ export default function ATHENAPage() {
         signalSource: d.signal_source
       }))
   }, [decisions])
+
+  // Robust "Traded Today" detection
+  // Uses multiple sources: backend daily_trades count, position creation dates, open positions
+  const didTradeToday = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0]
+
+    // Primary check: backend tracks daily trades
+    if ((status?.daily_trades || 0) > 0) return true
+
+    // Secondary: any open position exists (could be from earlier today)
+    if (positions.some(p => p.status === 'open')) return true
+
+    // Tertiary: any position created today
+    if (positions.some(p => p.created_at?.startsWith(today))) return true
+
+    // Quaternary: any position closed today
+    if (positions.some(p => (p.status === 'closed' || p.status === 'expired') && p.exit_time?.startsWith(today))) return true
+
+    return false
+  }, [status?.daily_trades, positions])
 
   // Manual refresh function
   const fetchData = () => {
@@ -1127,7 +1145,7 @@ export default function ATHENAPage() {
 
               {/* Today's Status Summary - Shows ALL open positions now */}
               <ATHENATodaySummaryCard
-                tradedToday={positions.some(p => p.created_at?.startsWith(new Date().toISOString().split('T')[0]))}
+                tradedToday={didTradeToday}
                 openPosition={positions.find(p => p.status === 'open') || null}
                 lastDecision={decisions[0] || null}
                 oracleAdvice={oracleAdvice}
@@ -1140,7 +1158,7 @@ export default function ATHENAPage() {
               <ATHENADecisionPathCard
                 mlSignal={mlSignal}
                 oracleAdvice={oracleAdvice}
-                isTraded={positions.some(p => p.created_at?.startsWith(new Date().toISOString().split('T')[0]))}
+                isTraded={didTradeToday}
                 gexRegime={mlSignal?.gex_context?.regime || status?.heartbeat?.details?.gex_context?.regime || 'UNKNOWN'}
               />
 
@@ -2576,11 +2594,6 @@ export default function ATHENAPage() {
         botType="ATHENA"
       />
 
-      {/* Exit Notifications */}
-      <ExitNotificationContainer
-        notifications={exitNotifications}
-        onDismiss={(id) => setExitNotifications(prev => prev.filter(n => n.id !== id))}
-      />
     </div>
   )
 }
