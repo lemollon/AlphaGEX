@@ -115,20 +115,60 @@ async def get_ares_status():
     heartbeat = _get_heartbeat('ARES')
 
     if not ares:
-        # Return default status when ARES not initialized
+        # ARES not running in this process - read stats from database
+        starting_capital = 200000
+        total_pnl = 0
+        trade_count = 0
+        win_count = 0
+        open_count = 0
+        closed_count = 0
+        traded_today = False
+        today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
+
+        try:
+            from database_adapter import get_connection
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Get summary stats
+            cursor.execute('''
+                SELECT
+                    COUNT(*) as total,
+                    SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_count,
+                    SUM(CASE WHEN status IN ('closed', 'expired') THEN 1 ELSE 0 END) as closed_count,
+                    SUM(CASE WHEN status IN ('closed', 'expired') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                    COALESCE(SUM(CASE WHEN status IN ('closed', 'expired') THEN realized_pnl ELSE 0 END), 0) as total_pnl,
+                    SUM(CASE WHEN open_date = %s THEN 1 ELSE 0 END) as traded_today
+                FROM ares_positions
+            ''', (today,))
+            row = cursor.fetchone()
+            conn.close()
+
+            if row:
+                trade_count = row[0] or 0
+                open_count = row[1] or 0
+                closed_count = row[2] or 0
+                win_count = row[3] or 0
+                total_pnl = float(row[4] or 0)
+                traded_today = (row[5] or 0) > 0
+        except Exception as db_err:
+            logger.debug(f"Could not read ARES stats from database: {db_err}")
+
+        win_rate = round((win_count / closed_count) * 100, 1) if closed_count > 0 else 0
+
         return {
             "success": True,
             "data": {
                 "mode": "paper",
-                "capital": 200000,
-                "total_pnl": 0,
-                "trade_count": 0,
-                "win_rate": 0,
-                "open_positions": 0,
-                "closed_positions": 0,
-                "traded_today": False,
+                "capital": round(starting_capital + total_pnl, 2),
+                "total_pnl": round(total_pnl, 2),
+                "trade_count": trade_count,
+                "win_rate": win_rate,
+                "open_positions": open_count,
+                "closed_positions": closed_count,
+                "traded_today": traded_today,
                 "in_trading_window": False,
-                "high_water_mark": 200000,
+                "high_water_mark": round(max(starting_capital, starting_capital + total_pnl), 2),
                 "current_time": datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d %H:%M:%S CT'),
                 "is_active": False,
                 "scan_interval_minutes": 5,
@@ -140,7 +180,8 @@ async def get_ares_status():
                     "ticker": "SPX",
                     "target_return": "10% monthly"
                 },
-                "message": "ARES not yet initialized - will start on next scheduled run"
+                "source": "database",
+                "message": "Stats loaded from database - ARES worker running separately"
             }
         }
 
@@ -169,12 +210,141 @@ async def get_ares_positions():
     ares = get_ares_instance()
 
     if not ares:
+        # ARES not running in this process - read from database directly
+        try:
+            from database_adapter import get_connection
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Get open positions
+            cursor.execute('''
+                SELECT
+                    position_id, open_date, expiration,
+                    put_long_strike, put_short_strike, call_short_strike, call_long_strike,
+                    put_credit, call_credit, total_credit,
+                    contracts, spread_width, max_loss,
+                    underlying_price_at_entry, vix_at_entry, status
+                FROM ares_positions
+                WHERE status = 'open'
+                ORDER BY open_date DESC
+            ''')
+            open_rows = cursor.fetchall()
+
+            # Get closed positions (last 100)
+            cursor.execute('''
+                SELECT
+                    position_id, open_date, close_date, expiration,
+                    put_long_strike, put_short_strike, call_short_strike, call_long_strike,
+                    put_credit, call_credit, total_credit,
+                    contracts, spread_width, max_loss, close_price, realized_pnl,
+                    underlying_price_at_entry, vix_at_entry, status
+                FROM ares_positions
+                WHERE status IN ('closed', 'expired')
+                ORDER BY close_date DESC
+                LIMIT 100
+            ''')
+            closed_rows = cursor.fetchall()
+            conn.close()
+
+            # Format open positions
+            open_positions = []
+            for row in open_rows:
+                pos_id, open_date, exp, put_long, put_short, call_short, call_long, \
+                    put_cr, call_cr, total_cr, contracts, spread_w, max_loss, \
+                    underlying, vix, status = row
+
+                # Calculate DTE
+                dte = 0
+                if exp:
+                    try:
+                        exp_date = datetime.strptime(str(exp), "%Y-%m-%d").date()
+                        today = datetime.now(ZoneInfo("America/Chicago")).date()
+                        dte = (exp_date - today).days
+                    except:
+                        pass
+
+                ticker = "SPY" if spread_w and spread_w <= 5 else "SPX"
+                open_positions.append({
+                    "position_id": pos_id,
+                    "ticker": ticker,
+                    "open_date": str(open_date) if open_date else None,
+                    "expiration": str(exp) if exp else None,
+                    "dte": dte,
+                    "is_0dte": dte == 0,
+                    "put_long_strike": float(put_long) if put_long else 0,
+                    "put_short_strike": float(put_short) if put_short else 0,
+                    "call_short_strike": float(call_short) if call_short else 0,
+                    "call_long_strike": float(call_long) if call_long else 0,
+                    "put_spread": f"{put_long}/{put_short}P",
+                    "call_spread": f"{call_short}/{call_long}C",
+                    "put_credit": float(put_cr) if put_cr else 0,
+                    "call_credit": float(call_cr) if call_cr else 0,
+                    "total_credit": float(total_cr) if total_cr else 0,
+                    "contracts": contracts or 0,
+                    "spread_width": float(spread_w) if spread_w else 0,
+                    "max_loss": float(max_loss) if max_loss else 0,
+                    "premium_collected": float(total_cr or 0) * 100 * (contracts or 0),
+                    "underlying_at_entry": float(underlying) if underlying else 0,
+                    "vix_at_entry": float(vix) if vix else 0,
+                    "status": status
+                })
+
+            # Format closed positions
+            closed_positions = []
+            for row in closed_rows:
+                pos_id, open_date, close_date, exp, put_long, put_short, call_short, call_long, \
+                    put_cr, call_cr, total_cr, contracts, spread_w, max_loss, close_price, realized_pnl, \
+                    underlying, vix, status = row
+
+                max_profit = float(total_cr or 0) * 100 * (contracts or 0)
+                return_pct = round((float(realized_pnl or 0) / max_profit) * 100, 1) if max_profit else 0
+                ticker = "SPY" if spread_w and spread_w <= 5 else "SPX"
+
+                closed_positions.append({
+                    "position_id": pos_id,
+                    "ticker": ticker,
+                    "open_date": str(open_date) if open_date else None,
+                    "close_date": str(close_date) if close_date else None,
+                    "expiration": str(exp) if exp else None,
+                    "put_long_strike": float(put_long) if put_long else 0,
+                    "put_short_strike": float(put_short) if put_short else 0,
+                    "call_short_strike": float(call_short) if call_short else 0,
+                    "call_long_strike": float(call_long) if call_long else 0,
+                    "put_spread": f"{put_long}/{put_short}P",
+                    "call_spread": f"{call_short}/{call_long}C",
+                    "contracts": contracts or 0,
+                    "spread_width": float(spread_w) if spread_w else 0,
+                    "total_credit": float(total_cr) if total_cr else 0,
+                    "max_profit": max_profit,
+                    "max_loss": float(max_loss) if max_loss else 0,
+                    "close_price": float(close_price) if close_price else 0,
+                    "realized_pnl": float(realized_pnl) if realized_pnl else 0,
+                    "return_pct": return_pct,
+                    "underlying_at_entry": float(underlying) if underlying else 0,
+                    "vix_at_entry": float(vix) if vix else 0,
+                    "status": status
+                })
+
+            return {
+                "success": True,
+                "data": {
+                    "open_positions": open_positions,
+                    "closed_positions": closed_positions,
+                    "open_count": len(open_positions),
+                    "closed_count": len(closed_positions),
+                    "source": "database"
+                }
+            }
+        except Exception as db_err:
+            logger.warning(f"Could not read positions from database: {db_err}")
+
+        # Fallback
         return {
             "success": True,
             "data": {
                 "open_positions": [],
                 "closed_positions": [],
-                "message": "ARES not yet initialized"
+                "message": "No positions found"
             }
         }
 
@@ -309,7 +479,88 @@ async def get_ares_equity_curve(days: int = 30):
     today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
 
     if not ares:
-        # Return starting equity point
+        # ARES not running in this process - read from database directly
+        try:
+            from database_adapter import get_connection
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Get closed positions from database
+            cursor.execute('''
+                SELECT close_date, realized_pnl, position_id
+                FROM ares_positions
+                WHERE status IN ('closed', 'expired')
+                AND close_date IS NOT NULL
+                ORDER BY close_date ASC
+            ''')
+            rows = cursor.fetchall()
+            conn.close()
+
+            if rows:
+                # Build equity curve from database positions
+                equity_curve = []
+                positions_by_date = {}
+                for row in rows:
+                    close_date, pnl, pos_id = row
+                    date_key = str(close_date) if close_date else None
+                    if date_key:
+                        if date_key not in positions_by_date:
+                            positions_by_date[date_key] = []
+                        positions_by_date[date_key].append({'pnl': float(pnl or 0), 'id': pos_id})
+
+                sorted_dates = sorted(positions_by_date.keys())
+                cumulative_pnl = 0
+
+                # Add starting point
+                if sorted_dates:
+                    equity_curve.append({
+                        "date": sorted_dates[0],
+                        "equity": starting_capital,
+                        "pnl": 0,
+                        "daily_pnl": 0,
+                        "return_pct": 0
+                    })
+
+                for date_str in sorted_dates:
+                    daily_pnl = sum(p['pnl'] for p in positions_by_date[date_str])
+                    cumulative_pnl += daily_pnl
+                    current_equity = starting_capital + cumulative_pnl
+
+                    equity_curve.append({
+                        "date": date_str,
+                        "equity": round(current_equity, 2),
+                        "pnl": round(cumulative_pnl, 2),
+                        "daily_pnl": round(daily_pnl, 2),
+                        "return_pct": round((cumulative_pnl / starting_capital) * 100, 2),
+                        "trades_closed": len(positions_by_date[date_str])
+                    })
+
+                # Add today's point if needed
+                if equity_curve and equity_curve[-1]["date"] != today:
+                    equity_curve.append({
+                        "date": today,
+                        "equity": round(starting_capital + cumulative_pnl, 2),
+                        "pnl": round(cumulative_pnl, 2),
+                        "daily_pnl": 0,
+                        "return_pct": round((cumulative_pnl / starting_capital) * 100, 2)
+                    })
+
+                return {
+                    "success": True,
+                    "data": {
+                        "equity_curve": equity_curve,
+                        "starting_capital": starting_capital,
+                        "current_equity": round(starting_capital + cumulative_pnl, 2),
+                        "total_pnl": round(cumulative_pnl, 2),
+                        "total_return_pct": round((cumulative_pnl / starting_capital) * 100, 2),
+                        "closed_positions_count": len(rows),
+                        "source": "database"
+                    }
+                }
+        except Exception as db_err:
+            logger.warning(f"Could not read equity curve from database: {db_err}")
+
+        # Fallback: return starting equity point
         return {
             "success": True,
             "data": {
@@ -323,7 +574,7 @@ async def get_ares_equity_curve(days: int = 30):
                 "starting_capital": starting_capital,
                 "current_equity": starting_capital,
                 "total_pnl": 0,
-                "message": "ARES not yet initialized"
+                "message": "No closed positions found"
             }
         }
 
