@@ -2019,9 +2019,72 @@ class SolomonEnhanced:
 
     def get_proposal_reasoning(self, proposal_id: str) -> Optional[Dict]:
         """Get detailed reasoning for a proposal"""
+        # First check in-memory cache
         if proposal_id in self._proposal_reasoning:
             return self._proposal_reasoning[proposal_id].to_dict()
-        return None
+
+        # Fallback: Reconstruct reasoning from database proposal
+        proposals = self.solomon.get_pending_proposals()
+        proposal = next((p for p in proposals if p.get('proposal_id') == proposal_id), None)
+
+        if not proposal:
+            # Also check non-pending proposals
+            try:
+                from database_adapter import get_connection
+                conn = get_connection()
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT reason, supporting_metrics, expected_improvement, risk_factors, description "
+                    "FROM solomon_proposals WHERE proposal_id = %s",
+                    (proposal_id,)
+                )
+                row = cursor.fetchone()
+                conn.close()
+
+                if row:
+                    reason, supporting_metrics, expected_improvement, risk_factors, description = row
+                    # Parse JSONB fields
+                    import json
+                    if isinstance(supporting_metrics, str):
+                        supporting_metrics = json.loads(supporting_metrics) if supporting_metrics else {}
+                    if isinstance(expected_improvement, str):
+                        expected_improvement = json.loads(expected_improvement) if expected_improvement else {}
+                    if isinstance(risk_factors, str):
+                        risk_factors = json.loads(risk_factors) if risk_factors else []
+
+                    proposal = {
+                        'reason': reason,
+                        'supporting_metrics': supporting_metrics or {},
+                        'expected_improvement': expected_improvement or {},
+                        'risk_factors': risk_factors or [],
+                        'description': description
+                    }
+            except Exception as e:
+                logger.debug(f"Could not fetch proposal from DB: {e}")
+                return None
+
+        if not proposal:
+            return None
+
+        # Reconstruct reasoning from proposal data
+        supporting_metrics = proposal.get('supporting_metrics', {})
+        return {
+            'proposal_id': proposal_id,
+            'problem_statement': proposal.get('description', ''),
+            'hypothesis': proposal.get('reason', ''),
+            'supporting_evidence': supporting_metrics.get('evidence', []),
+            'expected_improvement': proposal.get('expected_improvement', {}),
+            'confidence_level': supporting_metrics.get('confidence_level', 0.7),
+            'success_criteria': supporting_metrics.get('success_criteria', {
+                'min_improvement_pct': 5.0,
+                'min_trades': 20,
+                'min_days': 7
+            }),
+            'rollback_trigger': supporting_metrics.get('rollback_trigger', {
+                'max_drawdown_pct': 15.0
+            }),
+            'risk_factors': proposal.get('risk_factors', [])
+        }
 
     def can_apply_proposal(self, proposal_id: str) -> Dict:
         """
