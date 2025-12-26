@@ -7,10 +7,11 @@ import {
   Sphere,
   Float,
   Stars,
-  Text,
+  Html,
   MeshDistortMaterial,
   Line
 } from '@react-three/drei'
+import { EffectComposer, Bloom } from '@react-three/postprocessing'
 import * as THREE from 'three'
 
 // =============================================================================
@@ -133,16 +134,12 @@ function CoreSphere() {
         <meshBasicMaterial color="#93c5fd" transparent opacity={0.6} />
       </mesh>
 
-      {/* Core label - using default font */}
-      <Text
-        position={[0, 0, 1.2]}
-        fontSize={0.25}
-        color="#ffffff"
-        anchorX="center"
-        anchorY="middle"
-      >
-        GEX CORE
-      </Text>
+      {/* Core label */}
+      <Html position={[0, 0, 1.5]} center distanceFactor={8}>
+        <div className="text-white text-sm font-bold whitespace-nowrap bg-black/40 px-2 py-1 rounded select-none">
+          GEX CORE
+        </div>
+      </Html>
     </group>
   )
 }
@@ -215,26 +212,18 @@ function BotNode({
       )}
 
       {/* Label */}
-      <Text
-        position={[0, 0.9, 0]}
-        fontSize={0.18}
-        color="#ffffff"
-        anchorX="center"
-        anchorY="middle"
-      >
-        {name}
-      </Text>
+      <Html position={[0, 1.0, 0]} center distanceFactor={10}>
+        <div className="text-white text-xs font-bold whitespace-nowrap select-none">
+          {name}
+        </div>
+      </Html>
 
       {/* Status indicator */}
-      <Text
-        position={[0, -0.75, 0]}
-        fontSize={0.1}
-        color={color}
-        anchorX="center"
-        anchorY="middle"
-      >
-        {status.toUpperCase()}
-      </Text>
+      <Html position={[0, -0.8, 0]} center distanceFactor={10}>
+        <div className="text-[10px] font-semibold whitespace-nowrap select-none" style={{ color }}>
+          {status.toUpperCase()}
+        </div>
+      </Html>
     </group>
   )
 }
@@ -288,15 +277,11 @@ function FeatureNode({
         </Sphere>
 
         {/* Tiny label */}
-        <Text
-          position={[0, 0.35, 0]}
-          fontSize={0.08}
-          color="#93c5fd"
-          anchorX="center"
-          anchorY="middle"
-        >
-          {name}
-        </Text>
+        <Html position={[0, 0.4, 0]} center distanceFactor={12}>
+          <div className="text-blue-300 text-[10px] font-medium whitespace-nowrap select-none">
+            {name}
+          </div>
+        </Html>
       </group>
     </Float>
   )
@@ -598,6 +583,22 @@ function Scene({ botStatus, onNodeClick }: { botStatus: BotStatus, onNodeClick?:
 }
 
 // =============================================================================
+// POST PROCESSING EFFECTS
+// =============================================================================
+
+function Effects() {
+  return (
+    <EffectComposer>
+      <Bloom
+        intensity={1.2}
+        luminanceThreshold={0.2}
+        luminanceSmoothing={0.9}
+      />
+    </EffectComposer>
+  )
+}
+
+// =============================================================================
 // ERROR FALLBACK
 // =============================================================================
 
@@ -694,6 +695,7 @@ export default function Nexus3D({
 
         <Suspense fallback={null}>
           <Scene botStatus={botStatus} onNodeClick={onNodeClick} />
+          <Effects />
         </Suspense>
       </Canvas>
     </div>
