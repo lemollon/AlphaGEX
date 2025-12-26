@@ -5,6 +5,7 @@ import { Sword, TrendingUp, TrendingDown, Activity, DollarSign, Target, RefreshC
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, ReferenceLine } from 'recharts'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
+import { useToast } from '@/components/ui/Toast'
 import {
   useARESStatus,
   useARESPerformance,
@@ -19,18 +20,19 @@ import {
   useARESStrategyPresets
 } from '@/lib/hooks/useMarketData'
 import ScanActivityFeed from '@/components/ScanActivityFeed'
-import LivePortfolio, { EquityDataPoint, LivePnLData } from '@/components/trader/LivePortfolio'
-import OpenPositionsLive from '@/components/trader/OpenPositionsLive'
+import { EquityDataPoint, LivePnLData } from '@/components/trader/LivePortfolio'
 import {
   BotStatusBanner,
   WhyNotTrading,
   TodayReportCard,
   ActivityTimeline,
-  ExitNotificationContainer,
   RiskMetrics,
-  PerformanceComparison,
-  PositionDetailModal
+  PositionDetailModal,
+  AllOpenPositions,
+  LiveEquityCurve,
+  TradeStoryCard
 } from '@/components/trader'
+import type { TradeDecision } from '@/components/trader'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
 
 // ==================== INTERFACES ====================
@@ -252,7 +254,7 @@ function TodaySummaryCard({ tradedToday, openPosition, todayDecision, marketData
     const oracleConf = todayDecision?.oracle_advice?.confidence || todayDecision?.oracle_advice?.win_probability || 0
 
     return (
-      <div className="bg-gradient-to-r from-green-900/30 to-gray-800 rounded-xl p-5 border border-green-700/50">
+      <div className="bg-gradient-to-r from-green-900/30 to-[#0a0a0a] rounded-xl p-5 border border-green-700/50">
         <div className="flex items-start justify-between mb-4">
           <div className="flex items-center gap-3">
             <div className="w-3 h-3 rounded-full bg-green-500 animate-pulse" />
@@ -322,7 +324,7 @@ function TodaySummaryCard({ tradedToday, openPosition, todayDecision, marketData
   const oracleConf = todayDecision?.oracle_advice?.win_probability || 0
 
   return (
-    <div className="bg-gradient-to-r from-yellow-900/20 to-gray-800 rounded-xl p-5 border border-yellow-700/30">
+    <div className="bg-gradient-to-r from-yellow-900/20 to-[#0a0a0a] rounded-xl p-5 border border-yellow-700/30">
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center gap-3">
           <div className="w-3 h-3 rounded-full bg-yellow-500" />
@@ -674,108 +676,77 @@ function DecisionTreeDisplay({ decision }: DecisionTreeProps) {
 interface QuickActionsProps {
   onSkipToday: () => void
   onAdjustRisk: (newRisk: number) => void
+  onForceScan: () => void
   currentRisk: number
   isTrading: boolean
   hasOpenPosition: boolean
+  isScanning?: boolean
 }
 
-function QuickActionsPanel({ onSkipToday, onAdjustRisk, currentRisk, isTrading, hasOpenPosition }: QuickActionsProps) {
+function QuickActionsPanel({ onSkipToday, onAdjustRisk, onForceScan, currentRisk, isTrading, hasOpenPosition, isScanning }: QuickActionsProps) {
   const [riskValue, setRiskValue] = useState(currentRisk)
   const [showConfirm, setShowConfirm] = useState<'skip' | 'risk' | null>(null)
 
   return (
-    <div className="bg-gray-800/50 rounded-xl p-5 border border-gray-700">
+    <div className="bg-[#0a0a0a] rounded-xl p-5 border border-gray-700">
       <div className="flex items-center gap-2 mb-4">
-        <Zap className="w-5 h-5 text-yellow-400" />
+        <Zap className="w-5 h-5 text-purple-400" />
         <h3 className="text-lg font-semibold text-white">Quick Actions</h3>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {/* Skip Today */}
-        <div className="relative">
-          {showConfirm === 'skip' ? (
-            <div className="flex flex-col gap-2">
-              <span className="text-xs text-gray-400">Skip trading today?</span>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => { onSkipToday(); setShowConfirm(null) }}
-                  className="flex-1 px-2 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-500"
-                >
-                  Yes
-                </button>
-                <button
-                  onClick={() => setShowConfirm(null)}
-                  className="flex-1 px-2 py-1 bg-gray-600 text-white text-xs rounded hover:bg-gray-500"
-                >
-                  No
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button
-              onClick={() => setShowConfirm('skip')}
-              disabled={hasOpenPosition}
-              className="w-full px-4 py-3 bg-yellow-900/30 text-yellow-400 rounded-lg hover:bg-yellow-900/50 disabled:opacity-50 disabled:cursor-not-allowed flex flex-col items-center gap-1"
-            >
-              <AlertTriangle className="w-5 h-5" />
-              <span className="text-xs">Skip Today</span>
-            </button>
-          )}
-        </div>
+        <button
+          onClick={() => showConfirm === 'skip' ? (onSkipToday(), setShowConfirm(null)) : setShowConfirm('skip')}
+          disabled={hasOpenPosition}
+          className={`p-3 rounded-lg border transition flex flex-col items-center gap-2 ${
+            showConfirm === 'skip'
+              ? 'bg-yellow-900/30 border-yellow-600 text-yellow-400'
+              : hasOpenPosition
+                ? 'bg-gray-900/50 border-gray-800 text-gray-600 cursor-not-allowed'
+                : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:bg-gray-700'
+          }`}
+        >
+          <Clock className="w-5 h-5" />
+          <span className="text-xs">{showConfirm === 'skip' ? 'Confirm?' : 'Skip Today'}</span>
+        </button>
 
         {/* Adjust Risk */}
-        <div className="relative">
-          {showConfirm === 'risk' ? (
-            <div className="flex flex-col gap-2">
-              <input
-                type="range"
-                min="1"
-                max="15"
-                value={riskValue}
-                onChange={(e) => setRiskValue(Number(e.target.value))}
-                className="w-full"
-              />
-              <div className="flex justify-between text-xs text-gray-400">
-                <span>{riskValue}%</span>
-                <button
-                  onClick={() => { onAdjustRisk(riskValue); setShowConfirm(null) }}
-                  className="px-2 py-0.5 bg-blue-600 text-white rounded"
-                >
-                  Apply
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button
-              onClick={() => setShowConfirm('risk')}
-              className="w-full px-4 py-3 bg-blue-900/30 text-blue-400 rounded-lg hover:bg-blue-900/50 flex flex-col items-center gap-1"
-            >
-              <Target className="w-5 h-5" />
-              <span className="text-xs">Risk: {currentRisk}%</span>
-            </button>
-          )}
+        <div className="p-3 rounded-lg border bg-gray-800/50 border-gray-700 flex flex-col items-center gap-2">
+          <Settings className="w-5 h-5 text-blue-400" />
+          <span className="text-xs text-gray-400">Risk: {currentRisk}%</span>
         </div>
 
-        {/* Force Run */}
+        {/* Force Scan */}
         <button
-          disabled={isTrading}
-          className="px-4 py-3 bg-green-900/30 text-green-400 rounded-lg hover:bg-green-900/50 disabled:opacity-50 flex flex-col items-center gap-1"
+          onClick={onForceScan}
+          disabled={isScanning || hasOpenPosition}
+          className={`p-3 rounded-lg border transition flex flex-col items-center gap-2 ${
+            isScanning
+              ? 'bg-green-900/30 border-green-600 text-green-400 animate-pulse'
+              : hasOpenPosition
+                ? 'bg-gray-900/50 border-gray-800 text-gray-600 cursor-not-allowed'
+                : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:bg-gray-700'
+          }`}
         >
-          <Play className="w-5 h-5" />
-          <span className="text-xs">Force Scan</span>
+          <Play className={`w-5 h-5 ${isScanning ? 'animate-pulse' : ''}`} />
+          <span className="text-xs">{isScanning ? 'Scanning...' : 'Force Scan'}</span>
         </button>
 
         {/* Status */}
-        <div className="px-4 py-3 bg-gray-900/50 rounded-lg flex flex-col items-center gap-1">
-          <div className={`w-5 h-5 rounded-full ${isTrading ? 'bg-green-500 animate-pulse' : 'bg-gray-500'}`} />
-          <span className="text-xs text-gray-400">{isTrading ? 'Active' : 'Idle'}</span>
+        <div className={`p-3 rounded-lg border flex flex-col items-center gap-2 ${
+          isTrading ? 'bg-green-900/30 border-green-700' : 'bg-gray-800/50 border-gray-700'
+        }`}>
+          <div className={`w-3 h-3 rounded-full ${isTrading ? 'bg-green-500 animate-pulse' : 'bg-gray-600'}`} />
+          <span className={`text-xs ${isTrading ? 'text-green-400' : 'text-gray-400'}`}>
+            {isTrading ? 'Active' : 'Inactive'}
+          </span>
         </div>
       </div>
 
-      {/* Current Config Summary */}
+      {/* Config Summary */}
       <div className="mt-4 pt-3 border-t border-gray-700 flex flex-wrap gap-4 text-xs text-gray-500">
         <span>Risk: <span className="text-white">{currentRisk}%</span></span>
-        <span>SD: <span className="text-white">Oracle Dynamic</span></span>
         <span>Target: <span className="text-green-400">50% profit</span></span>
         <span>Window: <span className="text-cyan-400">9:35-15:55 CT</span></span>
       </div>
@@ -820,6 +791,9 @@ export default function ARESPage() {
   const error = statusError?.message || null
   const isRefreshing = statusValidating || perfValidating || equityValidating || posValidating || marketValidating || tradierValidating || configValidating || decisionsValidating
 
+  // Toast notifications for user feedback
+  const toast = useToast()
+
   // UI State - default to portfolio for Robinhood-style view
   const [activeTab, setActiveTab] = useState<'portfolio' | 'overview' | 'spx' | 'spy' | 'decisions' | 'config'>('portfolio')
   const [expandedDecision, setExpandedDecision] = useState<number | null>(null)
@@ -832,7 +806,6 @@ export default function ARESPage() {
   const [expandedSpyPosition, setExpandedSpyPosition] = useState<string | null>(null)
   const [changingStrategy, setChangingStrategy] = useState(false)
   const [selectedPosition, setSelectedPosition] = useState<any | null>(null)
-  const [exitNotifications, setExitNotifications] = useState<any[]>([])
 
   // Build skip reasons from decisions
   const skipReasons = useMemo(() => {
@@ -891,6 +864,40 @@ export default function ARESPage() {
       console.error('Failed to change strategy:', err)
     } finally {
       setChangingStrategy(false)
+    }
+  }
+
+  // Manual refresh function
+  const fetchData = () => {
+    mutateStatus()
+    mutatePerf()
+    mutateEquity()
+    mutatePositions()
+    mutateMarket()
+    mutateTradier()
+    mutateConfig()
+    mutateDecisions()
+    mutateLivePnL()
+    mutateScanActivity()
+  }
+
+  // Force scan cycle
+  const runCycle = async () => {
+    setRunningCycle(true)
+    try {
+      const res = await apiClient.runARESCycle()
+      if (res.data?.success) {
+        toast.success('Scan Complete', 'ARES cycle completed successfully')
+        fetchData()
+      } else {
+        toast.warning('Scan Complete', res.data?.message || 'ARES cycle completed')
+        fetchData()
+      }
+    } catch (err) {
+      console.error('Failed to run ARES cycle:', err)
+      toast.error('Scan Failed', 'Failed to run ARES cycle')
+    } finally {
+      setRunningCycle(false)
     }
   }
 
@@ -1057,20 +1064,6 @@ export default function ARESPage() {
 
   const periods: TimePeriod[] = ['1D', '1W', '1M', '3M', 'YTD', '1Y', 'ALL']
 
-  const fetchData = () => { mutateStatus(); mutatePerf(); mutateEquity(); mutatePositions(); mutateMarket(); mutateTradier(); mutateConfig(); mutateDecisions() }
-
-  const runCycle = async () => {
-    setRunningCycle(true)
-    try {
-      await apiClient.runARESCycle()
-      fetchData()
-    } catch (err) {
-      console.error('Failed to run cycle:', err)
-    } finally {
-      setRunningCycle(false)
-    }
-  }
-
   const getActionColor = (action: string) => {
     if (action?.includes('BUY') || action?.includes('OPEN') || action?.includes('ENTRY')) return 'text-green-400'
     if (action?.includes('SELL') || action?.includes('CLOSE') || action?.includes('EXIT')) return 'text-red-400'
@@ -1233,25 +1226,48 @@ export default function ARESPage() {
           {/* ==================== PORTFOLIO TAB - Robinhood-style ==================== */}
           {activeTab === 'portfolio' && (
             <div className="space-y-6">
-              {/* Live Portfolio Component */}
-              <LivePortfolio
+              {/* Bot Status Banner - Shows active/paused/error status with countdown */}
+              <BotStatusBanner
                 botName="ARES"
-                totalValue={(status?.capital || 200000) + (livePnL?.net_pnl || status?.total_pnl || 0)}
+                isActive={status?.is_active || false}
+                lastScan={status?.heartbeat?.last_scan_iso}
+                scanInterval={status?.scan_interval_minutes || 30}
+                openPositions={positions.length}
+                todayPnl={(livePnL?.total_realized_pnl || 0) + (livePnL?.total_unrealized_pnl || 0)}
+                todayTrades={closedPositions.filter(p => p.close_date?.startsWith(new Date().toISOString().split('T')[0])).length}
+              />
+
+              {/* Live Equity Curve with Intraday Tracking */}
+              <LiveEquityCurve
+                botName="ARES"
                 startingCapital={status?.capital || 200000}
-                livePnL={livePnL}
-                equityData={equityDataWithLive as EquityDataPoint[]}
+                historicalData={equityDataWithLive as EquityDataPoint[]}
+                livePnL={livePnL as any}
                 isLoading={livePnLLoading}
                 onRefresh={() => mutateLivePnL()}
                 lastUpdated={livePnL?.last_updated}
               />
 
-              {/* Open Positions with Live P&L */}
-              <OpenPositionsLive
+              {/* ALL Open Positions with Timestamps */}
+              <AllOpenPositions
                 botName="ARES"
                 positions={livePnL?.positions || []}
                 underlyingPrice={livePnL?.underlying_price || marketData?.underlying_price}
                 isLoading={livePnLLoading}
+                lastUpdated={livePnL?.last_updated}
                 onPositionClick={(pos) => setSelectedPosition(pos)}
+              />
+
+              {/* Risk Metrics Panel */}
+              <RiskMetrics
+                capitalTotal={status?.capital || 200000}
+                capitalAtRisk={positions.reduce((sum, p) => sum + (p.max_loss || 0), 0)}
+                openPositions={positions.length}
+                maxPositionsAllowed={2}
+                currentDrawdown={0}
+                maxDrawdownToday={0}
+                currentVix={marketData?.vix}
+                vixRange={{ min: 15, max: 25 }}
               />
 
               {/* Why Not Trading - Shows skip reasons */}
@@ -1294,19 +1310,25 @@ export default function ARESPage() {
                 onSkipToday={async () => {
                   try {
                     await apiClient.skipARESToday()
+                    toast.success('Skipped Today', 'ARES will not trade for the rest of today')
                     fetchData()
                   } catch (err) {
                     console.error('Failed to skip today:', err)
+                    toast.error('Skip Failed', 'Failed to skip trading for today')
                   }
                 }}
                 onAdjustRisk={async (newRisk: number) => {
                   try {
                     await apiClient.updateARESConfig({ risk_per_trade_pct: newRisk })
+                    toast.success('Risk Adjusted', `Risk per trade set to ${newRisk}%`)
                     mutateConfig()
                   } catch (err) {
                     console.error('Failed to adjust risk:', err)
+                    toast.error('Adjustment Failed', 'Failed to adjust risk setting')
                   }
                 }}
+                onForceScan={runCycle}
+                isScanning={runningCycle}
                 currentRisk={config?.risk_per_trade_pct || 5}
                 isTrading={status?.in_trading_window || false}
                 hasOpenPosition={positions.length > 0}
@@ -2262,6 +2284,12 @@ export default function ARESPage() {
                               <span className={`px-2 py-0.5 rounded text-xs font-medium ${badge.bg} ${badge.text}`}>{decision.decision_type?.replace(/_/g, ' ')}</span>
                               <span className={`text-sm font-medium ${getActionColor(decision.action)}`}>{decision.action}</span>
                               {decision.symbol && <span className="text-xs text-gray-400 font-mono">{decision.symbol}</span>}
+                              {/* OVERRIDE INDICATOR - Very prominent */}
+                              {decision.override_occurred && (
+                                <span className="px-2 py-0.5 rounded text-xs font-bold bg-amber-500/30 text-amber-400 border border-amber-500/50 animate-pulse">
+                                  OVERRIDE
+                                </span>
+                              )}
                               {/* SIGNAL SOURCE BADGE */}
                               {decision.signal_source && (
                                 <span className={`px-2 py-0.5 rounded text-xs ${
@@ -2291,6 +2319,27 @@ export default function ARESPage() {
 
                       {isExpanded && (
                         <div className="px-3 pb-3 space-y-3 border-t border-gray-700/50 pt-3">
+                          {/* OVERRIDE DETAILS - Most prominent when present */}
+                          {decision.override_occurred && decision.override_details && (
+                            <div className="bg-amber-900/20 border-2 border-amber-500/50 rounded-lg p-3">
+                              <div className="flex items-center gap-2 mb-2">
+                                <span className="text-amber-400 text-sm font-bold">SIGNAL OVERRIDE</span>
+                                <span className="px-2 py-0.5 rounded text-xs bg-amber-500/30 text-amber-300">
+                                  {decision.override_details.override_by} overrode {decision.override_details.overridden_signal}
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2 text-xs">
+                                <div>
+                                  <span className="text-gray-400">Original signal:</span>
+                                  <span className="ml-2 text-red-400 font-medium">{decision.override_details.overridden_advice}</span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-400">Override reason:</span>
+                                  <span className="ml-2 text-green-400 font-medium">{decision.override_details.override_reason || 'Oracle recommendation'}</span>
+                                </div>
+                              </div>
+                            </div>
+                          )}
                           <div className="bg-yellow-900/10 border-l-2 border-yellow-500 pl-3 py-2">
                             <span className="text-yellow-400 text-xs font-bold">WHY:</span>
                             <p className="text-sm text-gray-300 mt-1">{decision.why || 'Not specified'}</p>
@@ -2503,11 +2552,6 @@ export default function ARESPage() {
         botType="ARES"
       />
 
-      {/* Exit Notifications */}
-      <ExitNotificationContainer
-        notifications={exitNotifications}
-        onDismiss={(id) => setExitNotifications(prev => prev.filter(n => n.id !== id))}
-      />
     </div>
   )
 }

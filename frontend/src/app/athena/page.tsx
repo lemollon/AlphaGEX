@@ -5,6 +5,7 @@ import { Target, TrendingUp, TrendingDown, Activity, DollarSign, CheckCircle, Cl
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
+import { useToast } from '@/components/ui/Toast'
 import {
   useATHENAStatus,
   useATHENAPositions,
@@ -18,18 +19,19 @@ import {
   useATHENALivePnL
 } from '@/lib/hooks/useMarketData'
 import ScanActivityFeed from '@/components/ScanActivityFeed'
-import LivePortfolio, { EquityDataPoint, LivePnLData } from '@/components/trader/LivePortfolio'
-import OpenPositionsLive from '@/components/trader/OpenPositionsLive'
+import { EquityDataPoint, LivePnLData } from '@/components/trader/LivePortfolio'
 import {
   BotStatusBanner,
   WhyNotTrading,
   TodayReportCard,
   ActivityTimeline,
-  ExitNotificationContainer,
   RiskMetrics,
-  PerformanceComparison,
-  PositionDetailModal
+  PositionDetailModal,
+  AllOpenPositions,
+  LiveEquityCurve,
+  TradeStoryCard
 } from '@/components/trader'
+import type { TradeDecision } from '@/components/trader'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
 
 interface Heartbeat {
@@ -696,6 +698,9 @@ export default function ATHENAPage() {
   const error = statusError?.message || null
   const isRefreshing = statusValidating || posValidating || signalsValidating || perfValidating || adviceValidating || mlValidating || logsValidating || decisionsValidating
 
+  // Toast notifications for user feedback
+  const toast = useToast()
+
   // UI State - default to portfolio for better visibility
   const [activeTab, setActiveTab] = useState<'portfolio' | 'overview' | 'positions' | 'signals' | 'logs'>('portfolio')
   const [showClosedPositions, setShowClosedPositions] = useState(true)
@@ -703,7 +708,6 @@ export default function ATHENAPage() {
   const [expandedDecision, setExpandedDecision] = useState<string | null>(null)
   const [expandedPosition, setExpandedPosition] = useState<string | null>(null)
   const [selectedPosition, setSelectedPosition] = useState<any | null>(null)
-  const [exitNotifications, setExitNotifications] = useState<any[]>([])
 
   // Build skip reasons from decisions
   const skipReasons = useMemo(() => {
@@ -749,6 +753,26 @@ export default function ATHENAPage() {
         signalSource: d.signal_source
       }))
   }, [decisions])
+
+  // Robust "Traded Today" detection
+  // Uses multiple sources: backend daily_trades count, position creation dates, open positions
+  const didTradeToday = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0]
+
+    // Primary check: backend tracks daily trades
+    if ((status?.daily_trades || 0) > 0) return true
+
+    // Secondary: any open position exists (could be from earlier today)
+    if (positions.some(p => p.status === 'open')) return true
+
+    // Tertiary: any position created today
+    if (positions.some(p => p.created_at?.startsWith(today))) return true
+
+    // Quaternary: any position closed today
+    if (positions.some(p => (p.status === 'closed' || p.status === 'expired') && p.exit_time?.startsWith(today))) return true
+
+    return false
+  }, [status?.daily_trades, positions])
 
   // Manual refresh function
   const fetchData = () => {
@@ -854,10 +878,12 @@ export default function ATHENAPage() {
     try {
       const res = await apiClient.runATHENACycle()
       if (res.data?.success) {
+        toast.success('Scan Complete', 'ATHENA cycle completed successfully')
         fetchData()
       }
     } catch (err) {
       console.error('Failed to run cycle:', err)
+      toast.error('Scan Failed', 'Failed to run ATHENA cycle')
     } finally {
       setRunningCycle(false)
     }
@@ -1067,25 +1093,47 @@ export default function ATHENAPage() {
           {/* Portfolio Tab - Robinhood-style live P&L */}
           {activeTab === 'portfolio' && (
             <div className="space-y-6">
-              {/* Live Portfolio Component */}
-              <LivePortfolio
+              {/* Bot Status Banner - Shows active/paused/error status with countdown */}
+              <BotStatusBanner
                 botName="ATHENA"
-                totalValue={(status?.capital || 100000) + (livePnL?.net_pnl || 0)}
+                isActive={status?.is_active || false}
+                lastScan={status?.heartbeat?.last_scan_iso}
+                scanInterval={status?.scan_interval_minutes || 5}
+                openPositions={positions.filter(p => p.status === 'open').length}
+                todayPnl={(livePnL?.total_realized_pnl || 0) + (livePnL?.total_unrealized_pnl || 0)}
+                todayTrades={status?.daily_trades || 0}
+              />
+
+              {/* Live Equity Curve with Intraday Tracking */}
+              <LiveEquityCurve
+                botName="ATHENA"
                 startingCapital={status?.capital || 100000}
-                livePnL={livePnL}
-                equityData={equityChartData}
+                historicalData={equityChartData}
+                livePnL={livePnL as any}
                 isLoading={livePnLLoading}
                 onRefresh={() => mutateLivePnL()}
                 lastUpdated={livePnL?.last_updated}
               />
 
-              {/* Open Positions with Live P&L */}
-              <OpenPositionsLive
+              {/* ALL Open Positions with Timestamps */}
+              <AllOpenPositions
                 botName="ATHENA"
                 positions={livePnL?.positions || []}
                 underlyingPrice={livePnL?.underlying_price}
                 isLoading={livePnLLoading}
+                lastUpdated={livePnL?.last_updated}
                 onPositionClick={(pos) => setSelectedPosition(pos)}
+              />
+
+              {/* Risk Metrics Panel */}
+              <RiskMetrics
+                capitalTotal={status?.capital || 100000}
+                capitalAtRisk={positions.filter(p => p.status === 'open').reduce((sum, p) => sum + (p.max_loss || 0), 0)}
+                openPositions={positions.filter(p => p.status === 'open').length}
+                maxPositionsAllowed={status?.config?.max_daily_trades || 5}
+                currentDrawdown={0}
+                maxDrawdownToday={0}
+                currentVix={mlSignal?.gex_context?.spot_price ? undefined : undefined}
               />
 
               {/* Why Not Trading - Shows skip reasons */}
@@ -1095,9 +1143,9 @@ export default function ATHENAPage() {
                 maxDisplay={5}
               />
 
-              {/* Today's Status Summary */}
+              {/* Today's Status Summary - Shows ALL open positions now */}
               <ATHENATodaySummaryCard
-                tradedToday={positions.some(p => p.created_at?.startsWith(new Date().toISOString().split('T')[0]))}
+                tradedToday={didTradeToday}
                 openPosition={positions.find(p => p.status === 'open') || null}
                 lastDecision={decisions[0] || null}
                 oracleAdvice={oracleAdvice}
@@ -1110,16 +1158,34 @@ export default function ATHENAPage() {
               <ATHENADecisionPathCard
                 mlSignal={mlSignal}
                 oracleAdvice={oracleAdvice}
-                isTraded={positions.some(p => p.created_at?.startsWith(new Date().toISOString().split('T')[0]))}
+                isTraded={didTradeToday}
                 gexRegime={mlSignal?.gex_context?.regime || status?.heartbeat?.details?.gex_context?.regime || 'UNKNOWN'}
               />
 
               {/* Quick Actions Panel */}
               <ATHENAQuickActionsPanel
-                onSkipToday={() => console.log('Skip today not yet implemented')}
-                onAdjustRisk={(newRisk) => console.log('Adjust risk to:', newRisk)}
+                onSkipToday={async () => {
+                  try {
+                    await apiClient.skipATHENAToday()
+                    toast.success('Skipped Today', 'ATHENA will not trade for the rest of today')
+                    fetchData()
+                  } catch (err) {
+                    console.error('Failed to skip today:', err)
+                    toast.error('Skip Failed', 'Failed to skip trading for today')
+                  }
+                }}
+                onAdjustRisk={async (newRisk: number) => {
+                  try {
+                    await apiClient.updateATHENAConfig('risk_per_trade_pct', String(newRisk))
+                    toast.success('Risk Adjusted', `Risk per trade set to ${(newRisk * 100).toFixed(0)}%`)
+                    fetchData()
+                  } catch (err) {
+                    console.error('Failed to adjust risk:', err)
+                    toast.error('Adjustment Failed', 'Failed to adjust risk setting')
+                  }
+                }}
                 onForceScan={() => runCycle()}
-                currentRisk={2}
+                currentRisk={status?.config?.risk_per_trade || 0.02}
                 isActive={status?.is_active || false}
                 hasOpenPosition={positions.some(p => p.status === 'open')}
               />
@@ -2528,11 +2594,6 @@ export default function ATHENAPage() {
         botType="ATHENA"
       />
 
-      {/* Exit Notifications */}
-      <ExitNotificationContainer
-        notifications={exitNotifications}
-        onDismiss={(id) => setExitNotifications(prev => prev.filter(n => n.id !== id))}
-      />
     </div>
   )
 }

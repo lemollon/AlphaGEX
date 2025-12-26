@@ -3,6 +3,7 @@
 import { useEffect } from 'react'
 import { SWRConfig } from 'swr'
 import FloatingChatbot from './FloatingChatbot'
+import { ToastProvider } from './ui/Toast'
 import { swrConfig, prefetchMarketData } from '@/lib/hooks/useMarketData'
 
 interface ClientProvidersProps {
@@ -22,8 +23,10 @@ export default function ClientProviders({ children }: ClientProvidersProps) {
 
   return (
     <SWRConfig value={swrConfig}>
-      {children}
-      <FloatingChatbot />
+      <ToastProvider>
+        {children}
+        <FloatingChatbot />
+      </ToastProvider>
     </SWRConfig>
   )
 }
