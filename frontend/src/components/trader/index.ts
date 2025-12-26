@@ -3,6 +3,12 @@
 // Core Portfolio Components
 export { default as LivePortfolio } from './LivePortfolio'
 export { default as OpenPositionsLive } from './OpenPositionsLive'
+export { default as AllOpenPositions } from './AllOpenPositions'
+export { default as LiveEquityCurve } from './LiveEquityCurve'
+
+// Trade Story & Decisions
+export { default as TradeStoryCard } from './TradeStoryCard'
+export type { TradeDecision } from './TradeStoryCard'
 
 // Status & Information
 export { default as BotStatusBanner } from './BotStatusBanner'
@@ -35,5 +41,8 @@ export { default as PerformanceCards } from './PerformanceCards'
 export { default as ExportButtons } from './ExportButtons'
 export { default as WheelDashboard } from './WheelDashboard'
 
-// Re-export types
+// Re-export types from LivePortfolio
 export type { LivePnLData, LivePosition, EquityDataPoint, TimePeriod } from './LivePortfolio'
+
+// Re-export types from LiveEquityCurve (with alias to avoid conflict)
+export type { EquityPoint } from './LiveEquityCurve'

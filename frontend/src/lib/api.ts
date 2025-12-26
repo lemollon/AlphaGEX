@@ -346,6 +346,7 @@ export const apiClient = {
   getATHENAMLSignal: () => api.get('/api/athena/ml-signal'),
   getATHENALivePnL: () => api.get('/api/athena/live-pnl'),
   processATHENAExpired: () => api.post('/api/athena/process-expired'),
+  skipATHENAToday: () => api.post('/api/athena/skip-today'),
 
   // ARES - Live P&L
   getARESLivePnL: () => api.get('/api/ares/live-pnl'),

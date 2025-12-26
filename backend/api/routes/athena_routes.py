@@ -698,6 +698,40 @@ async def run_athena_cycle():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/skip-today")
+async def skip_athena_today():
+    """
+    Skip trading for the rest of today.
+
+    This will prevent ATHENA from opening any new positions until tomorrow.
+    Existing positions will still be managed.
+    """
+    athena = get_athena_instance()
+
+    if not athena:
+        raise HTTPException(
+            status_code=503,
+            detail="ATHENA not initialized. Wait for scheduled startup."
+        )
+
+    try:
+        # Set the skip flag for today
+        CENTRAL_TZ = ZoneInfo("America/Chicago")
+        today = datetime.now(CENTRAL_TZ).date()
+        athena.skip_date = today
+
+        return {
+            "success": True,
+            "message": f"ATHENA will skip trading for {today.isoformat()}",
+            "data": {
+                "skip_date": today.isoformat()
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error setting skip date: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/oracle-advice")
 async def get_current_oracle_advice():
     """

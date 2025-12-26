@@ -5,6 +5,7 @@ import { Sword, TrendingUp, TrendingDown, Activity, DollarSign, Target, RefreshC
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, ReferenceLine } from 'recharts'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
+import { useToast } from '@/components/ui/Toast'
 import {
   useARESStatus,
   useARESPerformance,
@@ -19,8 +20,7 @@ import {
   useARESStrategyPresets
 } from '@/lib/hooks/useMarketData'
 import ScanActivityFeed from '@/components/ScanActivityFeed'
-import LivePortfolio, { EquityDataPoint, LivePnLData } from '@/components/trader/LivePortfolio'
-import OpenPositionsLive from '@/components/trader/OpenPositionsLive'
+import { EquityDataPoint, LivePnLData } from '@/components/trader/LivePortfolio'
 import {
   BotStatusBanner,
   WhyNotTrading,
@@ -28,9 +28,12 @@ import {
   ActivityTimeline,
   ExitNotificationContainer,
   RiskMetrics,
-  PerformanceComparison,
-  PositionDetailModal
+  PositionDetailModal,
+  AllOpenPositions,
+  LiveEquityCurve,
+  TradeStoryCard
 } from '@/components/trader'
+import type { TradeDecision } from '@/components/trader'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
 
 // ==================== INTERFACES ====================
@@ -820,6 +823,9 @@ export default function ARESPage() {
   const error = statusError?.message || null
   const isRefreshing = statusValidating || perfValidating || equityValidating || posValidating || marketValidating || tradierValidating || configValidating || decisionsValidating
 
+  // Toast notifications for user feedback
+  const toast = useToast()
+
   // UI State - default to portfolio for Robinhood-style view
   const [activeTab, setActiveTab] = useState<'portfolio' | 'overview' | 'spx' | 'spy' | 'decisions' | 'config'>('portfolio')
   const [expandedDecision, setExpandedDecision] = useState<number | null>(null)
@@ -1233,25 +1239,48 @@ export default function ARESPage() {
           {/* ==================== PORTFOLIO TAB - Robinhood-style ==================== */}
           {activeTab === 'portfolio' && (
             <div className="space-y-6">
-              {/* Live Portfolio Component */}
-              <LivePortfolio
+              {/* Bot Status Banner - Shows active/paused/error status with countdown */}
+              <BotStatusBanner
                 botName="ARES"
-                totalValue={(status?.capital || 200000) + (livePnL?.net_pnl || status?.total_pnl || 0)}
+                isActive={status?.is_active || false}
+                lastScan={status?.heartbeat?.last_scan_iso}
+                scanInterval={status?.scan_interval_minutes || 30}
+                openPositions={positions.length}
+                todayPnl={(livePnL?.total_realized_pnl || 0) + (livePnL?.total_unrealized_pnl || 0)}
+                todayTrades={closedPositions.filter(p => p.close_date?.startsWith(new Date().toISOString().split('T')[0])).length}
+              />
+
+              {/* Live Equity Curve with Intraday Tracking */}
+              <LiveEquityCurve
+                botName="ARES"
                 startingCapital={status?.capital || 200000}
-                livePnL={livePnL}
-                equityData={equityDataWithLive as EquityDataPoint[]}
+                historicalData={equityDataWithLive as EquityDataPoint[]}
+                livePnL={livePnL as any}
                 isLoading={livePnLLoading}
                 onRefresh={() => mutateLivePnL()}
                 lastUpdated={livePnL?.last_updated}
               />
 
-              {/* Open Positions with Live P&L */}
-              <OpenPositionsLive
+              {/* ALL Open Positions with Timestamps */}
+              <AllOpenPositions
                 botName="ARES"
                 positions={livePnL?.positions || []}
                 underlyingPrice={livePnL?.underlying_price || marketData?.underlying_price}
                 isLoading={livePnLLoading}
+                lastUpdated={livePnL?.last_updated}
                 onPositionClick={(pos) => setSelectedPosition(pos)}
+              />
+
+              {/* Risk Metrics Panel */}
+              <RiskMetrics
+                capitalTotal={status?.capital || 200000}
+                capitalAtRisk={positions.reduce((sum, p) => sum + (p.max_loss || 0), 0)}
+                openPositions={positions.length}
+                maxPositionsAllowed={2}
+                currentDrawdown={0}
+                maxDrawdownToday={0}
+                currentVix={marketData?.vix}
+                vixRange={{ min: 15, max: 25 }}
               />
 
               {/* Why Not Trading - Shows skip reasons */}
@@ -1294,17 +1323,21 @@ export default function ARESPage() {
                 onSkipToday={async () => {
                   try {
                     await apiClient.skipARESToday()
+                    toast.success('Skipped Today', 'ARES will not trade for the rest of today')
                     fetchData()
                   } catch (err) {
                     console.error('Failed to skip today:', err)
+                    toast.error('Skip Failed', 'Failed to skip trading for today')
                   }
                 }}
                 onAdjustRisk={async (newRisk: number) => {
                   try {
                     await apiClient.updateARESConfig({ risk_per_trade_pct: newRisk })
+                    toast.success('Risk Adjusted', `Risk per trade set to ${newRisk}%`)
                     mutateConfig()
                   } catch (err) {
                     console.error('Failed to adjust risk:', err)
+                    toast.error('Adjustment Failed', 'Failed to adjust risk setting')
                   }
                 }}
                 currentRisk={config?.risk_per_trade_pct || 5}
