@@ -1,21 +1,19 @@
 'use client'
 
-import { useRef, useMemo, useState, useEffect } from 'react'
-import { Canvas, useFrame, useThree } from '@react-three/fiber'
+import { useRef, useMemo, useState, useEffect, Suspense } from 'react'
+import { Canvas, useFrame } from '@react-three/fiber'
 import {
   OrbitControls,
   Sphere,
-  Trail,
   Float,
   Stars,
   Text,
-  Environment,
   MeshDistortMaterial,
-  useTexture,
   Line
 } from '@react-three/drei'
-import { EffectComposer, Bloom, ChromaticAberration } from '@react-three/postprocessing'
+import { EffectComposer, Bloom } from '@react-three/postprocessing'
 import * as THREE from 'three'
+import { ErrorBoundary } from 'react-error-boundary'
 
 // =============================================================================
 // TYPES
@@ -144,7 +142,6 @@ function CoreSphere() {
         color="#ffffff"
         anchorX="center"
         anchorY="middle"
-        font="/fonts/inter-bold.woff"
       >
         GEX CORE
       </Text>
@@ -605,6 +602,44 @@ function Scene({ botStatus, onNodeClick }: { botStatus: BotStatus, onNodeClick?:
 }
 
 // =============================================================================
+// ERROR FALLBACK
+// =============================================================================
+
+function ErrorFallback({ error }: { error: Error }) {
+  return (
+    <div className="w-full h-full bg-[#030712] flex items-center justify-center">
+      <div className="text-center p-8">
+        <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-red-500/20 flex items-center justify-center">
+          <svg className="w-10 h-10 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+        </div>
+        <h2 className="text-xl font-bold text-white mb-2">3D Visualization Error</h2>
+        <p className="text-gray-400 mb-4">WebGL may not be supported on this device</p>
+        <p className="text-xs text-gray-500 font-mono bg-gray-800/50 p-2 rounded max-w-md mx-auto">
+          {error.message}
+        </p>
+      </div>
+    </div>
+  )
+}
+
+// =============================================================================
+// LOADING FALLBACK
+// =============================================================================
+
+function LoadingFallback() {
+  return (
+    <div className="w-full h-full bg-[#030712] flex items-center justify-center">
+      <div className="text-center">
+        <div className="w-16 h-16 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin mx-auto mb-4" />
+        <p className="text-blue-400">Loading NEXUS...</p>
+      </div>
+    </div>
+  )
+}
+
+// =============================================================================
 // MAIN COMPONENT
 // =============================================================================
 
@@ -613,29 +648,45 @@ export default function Nexus3D({
   onNodeClick,
   className = ''
 }: Nexus3DProps) {
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
+
+  if (!mounted) {
+    return <LoadingFallback />
+  }
+
   return (
     <div className={`w-full h-full bg-[#030712] ${className}`}>
-      <Canvas
-        camera={{ position: [0, 3, 12], fov: 60 }}
-        gl={{ antialias: true, alpha: false }}
-        dpr={[1, 2]}
-      >
-        <color attach="background" args={['#030712']} />
-        <fog attach="fog" args={['#030712', 15, 35]} />
+      <ErrorBoundary FallbackComponent={ErrorFallback}>
+        <Canvas
+          camera={{ position: [0, 3, 12], fov: 60 }}
+          gl={{ antialias: true, alpha: false, failIfMajorPerformanceCaveat: false }}
+          dpr={[1, 2]}
+          onCreated={({ gl }) => {
+            gl.setClearColor('#030712')
+          }}
+        >
+          <color attach="background" args={['#030712']} />
+          <fog attach="fog" args={['#030712', 15, 35]} />
 
-        <Scene botStatus={botStatus} onNodeClick={onNodeClick} />
+          <Suspense fallback={null}>
+            <Scene botStatus={botStatus} onNodeClick={onNodeClick} />
+          </Suspense>
 
-        {/* Post-processing effects */}
-        <EffectComposer>
-          <Bloom
-            intensity={1.5}
-            luminanceThreshold={0.2}
-            luminanceSmoothing={0.9}
-            mipmapBlur
-          />
-          <ChromaticAberration offset={[0.0005, 0.0005]} />
-        </EffectComposer>
-      </Canvas>
+          {/* Post-processing effects */}
+          <EffectComposer>
+            <Bloom
+              intensity={1.5}
+              luminanceThreshold={0.2}
+              luminanceSmoothing={0.9}
+              mipmapBlur
+            />
+          </EffectComposer>
+        </Canvas>
+      </ErrorBoundary>
     </div>
   )
 }
