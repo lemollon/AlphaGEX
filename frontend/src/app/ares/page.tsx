@@ -299,9 +299,9 @@ function TodaySummaryCard({ tradedToday, openPosition, todayDecision, marketData
                   <span className="text-white">GEX: <span className={gexContext.regime === 'POSITIVE' ? 'text-blue-400' : 'text-orange-400'}>{gexContext.regime}</span></span>
                 </div>
               )}
-              {gexContext && (
+              {gexContext && gexContext.put_wall != null && (
                 <div className="text-xs text-gray-400">
-                  Put wall ${gexContext.put_wall?.toFixed(0)} ({((marketData?.underlying_price || 0) - gexContext.put_wall).toFixed(0)} pts buffer)
+                  Put wall ${gexContext.put_wall.toFixed(0)} ({((marketData?.underlying_price || 0) - gexContext.put_wall).toFixed(0)} pts buffer)
                 </div>
               )}
             </div>
@@ -2336,7 +2336,7 @@ export default function ARESPage() {
                                 <div><span className="text-gray-500">Put Wall:</span><span className="text-green-400 ml-1">${decision.gex_context.put_wall}</span></div>
                                 <div><span className="text-gray-500">Call Wall:</span><span className="text-red-400 ml-1">${decision.gex_context.call_wall}</span></div>
                                 <div><span className="text-gray-500">Regime:</span><span className="text-white ml-1">{decision.gex_context.regime}</span></div>
-                                <div><span className="text-gray-500">Net GEX:</span><span className="text-white ml-1">{(decision.gex_context.net_gex / 1e9).toFixed(2)}B</span></div>
+                                <div><span className="text-gray-500">Net GEX:</span><span className="text-white ml-1">{decision.gex_context.net_gex != null ? (decision.gex_context.net_gex / 1e9).toFixed(2) : '0.00'}B</span></div>
                               </div>
                             </div>
                           )}
