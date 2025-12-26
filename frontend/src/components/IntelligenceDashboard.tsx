@@ -23,7 +23,8 @@ import {
   Calendar,
   Thermometer,
   MapPin,
-  AlertCircle
+  AlertCircle,
+  LucideIcon
 } from 'lucide-react'
 import { useIntelligenceFeed, useDailyTradingPlan, useMarketCommentary } from '@/lib/hooks/useMarketData'
 
@@ -124,7 +125,7 @@ function IntelCard({
   summary
 }: {
   title: string
-  icon: React.ElementType
+  icon: LucideIcon
   color: string
   refreshInterval: string
   updatedAt: string | null
