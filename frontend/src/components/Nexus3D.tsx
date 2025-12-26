@@ -916,6 +916,1268 @@ function MarketMoodRing({ gexValue = 0, vixValue = 15 }: { gexValue?: number, vi
 }
 
 // =============================================================================
+// STOCK TICKERS DATA
+// =============================================================================
+
+const STOCK_TICKERS = [
+  { symbol: 'SPY', basePrice: 585 },
+  { symbol: 'QQQ', basePrice: 505 },
+  { symbol: 'AAPL', basePrice: 248 },
+  { symbol: 'NVDA', basePrice: 138 },
+  { symbol: 'TSLA', basePrice: 425 },
+  { symbol: 'AMZN', basePrice: 225 },
+  { symbol: 'META', basePrice: 612 },
+  { symbol: 'GOOGL', basePrice: 192 },
+  { symbol: 'MSFT', basePrice: 435 },
+  { symbol: 'AMD', basePrice: 125 },
+]
+
+// =============================================================================
+// ASTEROIDS WITH TICKERS
+// =============================================================================
+
+function AsteroidWithTicker({
+  initialPosition,
+  velocity,
+  ticker,
+  onComplete
+}: {
+  initialPosition: THREE.Vector3
+  velocity: THREE.Vector3
+  ticker: { symbol: string, price: number, change: number }
+  onComplete: () => void
+}) {
+  const groupRef = useRef<THREE.Group>(null)
+  const meshRef = useRef<THREE.Mesh>(null)
+  const startTime = useRef(0)
+  const [started, setStarted] = useState(false)
+
+  useFrame((state) => {
+    if (!started) {
+      startTime.current = state.clock.elapsedTime
+      setStarted(true)
+    }
+
+    const elapsed = state.clock.elapsedTime - startTime.current
+    if (elapsed > 8) {
+      onComplete()
+      return
+    }
+
+    if (groupRef.current) {
+      groupRef.current.position.set(
+        initialPosition.x + velocity.x * elapsed,
+        initialPosition.y + velocity.y * elapsed,
+        initialPosition.z + velocity.z * elapsed
+      )
+    }
+    if (meshRef.current) {
+      meshRef.current.rotation.x += 0.02
+      meshRef.current.rotation.y += 0.03
+    }
+  })
+
+  const isPositive = ticker.change >= 0
+
+  return (
+    <group ref={groupRef} position={initialPosition}>
+      {/* Asteroid rock */}
+      <mesh ref={meshRef}>
+        <dodecahedronGeometry args={[0.4, 0]} />
+        <meshBasicMaterial color="#6b7280" />
+      </mesh>
+      {/* Fire trail */}
+      <mesh position={[-0.5, 0, 0]}>
+        <coneGeometry args={[0.2, 0.8, 8]} />
+        <meshBasicMaterial color="#f97316" transparent opacity={0.6} />
+      </mesh>
+      {/* Ticker label */}
+      <Html position={[0, 0.8, 0]} center>
+        <div className="bg-black/80 border border-cyan-500/50 rounded px-2 py-1 whitespace-nowrap">
+          <span className="text-cyan-400 font-bold">{ticker.symbol}</span>
+          <span className="text-white ml-2">${ticker.price.toFixed(2)}</span>
+          <span className={`ml-1 ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
+            {isPositive ? '+' : ''}{ticker.change.toFixed(2)}%
+          </span>
+        </div>
+      </Html>
+    </group>
+  )
+}
+
+function AsteroidField({ paused }: { paused: boolean }) {
+  const [asteroids, setAsteroids] = useState<Array<{
+    id: number
+    position: THREE.Vector3
+    velocity: THREE.Vector3
+    ticker: { symbol: string, price: number, change: number }
+  }>>([])
+  const nextId = useRef(0)
+  const lastSpawn = useRef(0)
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    // Spawn asteroid every 45-90 seconds
+    if (t - lastSpawn.current > 45 + Math.random() * 45) {
+      lastSpawn.current = t
+      const stockData = STOCK_TICKERS[Math.floor(Math.random() * STOCK_TICKERS.length)]
+      const side = Math.random() > 0.5 ? 1 : -1
+
+      setAsteroids(prev => [...prev, {
+        id: nextId.current++,
+        position: new THREE.Vector3(side * 20, (Math.random() - 0.5) * 10, -5 + Math.random() * 10),
+        velocity: new THREE.Vector3(-side * 3, (Math.random() - 0.5) * 0.5, 0),
+        ticker: {
+          symbol: stockData.symbol,
+          price: stockData.basePrice * (0.98 + Math.random() * 0.04),
+          change: (Math.random() - 0.5) * 6
+        }
+      }])
+    }
+  })
+
+  return (
+    <group>
+      {asteroids.map(asteroid => (
+        <AsteroidWithTicker
+          key={asteroid.id}
+          initialPosition={asteroid.position}
+          velocity={asteroid.velocity}
+          ticker={asteroid.ticker}
+          onComplete={() => setAsteroids(prev => prev.filter(a => a.id !== asteroid.id))}
+        />
+      ))}
+    </group>
+  )
+}
+
+// =============================================================================
+// COMET WITH TRAIL
+// =============================================================================
+
+function CometWithTrail({ paused }: { paused: boolean }) {
+  const [comets, setComets] = useState<Array<{
+    id: number
+    startPos: THREE.Vector3
+    endPos: THREE.Vector3
+    startTime: number
+  }>>([])
+  const nextId = useRef(0)
+  const lastSpawn = useRef(0)
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    // Spawn comet every 60-120 seconds
+    if (t - lastSpawn.current > 60 + Math.random() * 60) {
+      lastSpawn.current = t
+      setComets(prev => [...prev, {
+        id: nextId.current++,
+        startPos: new THREE.Vector3(
+          (Math.random() - 0.5) * 30,
+          10 + Math.random() * 5,
+          -10 - Math.random() * 10
+        ),
+        endPos: new THREE.Vector3(
+          (Math.random() - 0.5) * 30,
+          -15,
+          5
+        ),
+        startTime: t
+      }])
+    }
+
+    // Clean up old comets
+    setComets(prev => prev.filter(c => t - c.startTime < 5))
+  })
+
+  return (
+    <group>
+      {comets.map(comet => (
+        <Comet key={comet.id} startPos={comet.startPos} endPos={comet.endPos} startTime={comet.startTime} />
+      ))}
+    </group>
+  )
+}
+
+function Comet({ startPos, endPos, startTime }: { startPos: THREE.Vector3, endPos: THREE.Vector3, startTime: number }) {
+  const meshRef = useRef<THREE.Mesh>(null)
+  const trailRef = useRef<THREE.Mesh>(null)
+
+  useFrame((state) => {
+    const elapsed = state.clock.elapsedTime - startTime
+    const progress = Math.min(elapsed / 4, 1)
+    const pos = startPos.clone().lerp(endPos, progress)
+
+    if (meshRef.current) {
+      meshRef.current.position.copy(pos)
+    }
+    if (trailRef.current) {
+      trailRef.current.position.copy(pos)
+      trailRef.current.scale.x = 2 + progress * 3
+      const mat = trailRef.current.material as THREE.MeshBasicMaterial
+      mat.opacity = 0.6 * (1 - progress)
+    }
+  })
+
+  return (
+    <group>
+      {/* Comet head */}
+      <Sphere ref={meshRef} args={[0.15, 16, 16]}>
+        <meshBasicMaterial color="#a5f3fc" />
+      </Sphere>
+      {/* Comet tail */}
+      <mesh ref={trailRef} rotation={[0, 0, Math.PI / 4]}>
+        <coneGeometry args={[0.1, 2, 8]} />
+        <meshBasicMaterial color="#67e8f9" transparent opacity={0.6} />
+      </mesh>
+    </group>
+  )
+}
+
+// =============================================================================
+// ASTEROID BELT
+// =============================================================================
+
+function AsteroidBelt({ performanceMode }: { performanceMode: boolean }) {
+  const count = performanceMode ? 40 : 100
+  const meshRef = useRef<THREE.InstancedMesh>(null)
+  const groupRef = useRef<THREE.Group>(null)
+
+  const asteroids = useMemo(() => {
+    return Array.from({ length: count }, (_, i) => ({
+      angle: (i / count) * Math.PI * 2,
+      radius: 11 + (Math.random() - 0.5) * 1.5,
+      yOffset: (Math.random() - 0.5) * 0.8,
+      speed: 0.02 + Math.random() * 0.02,
+      rotSpeed: Math.random() * 0.1,
+      scale: 0.03 + Math.random() * 0.04,
+    }))
+  }, [count])
+
+  const dummy = useMemo(() => new THREE.Object3D(), [])
+
+  useFrame((state) => {
+    const t = state.clock.elapsedTime
+
+    if (groupRef.current) {
+      groupRef.current.rotation.y = t * 0.01
+    }
+
+    asteroids.forEach((a, i) => {
+      const angle = a.angle + t * a.speed
+      const x = Math.cos(angle) * a.radius
+      const z = Math.sin(angle) * a.radius
+      const y = a.yOffset + Math.sin(t + a.angle) * 0.1
+
+      dummy.position.set(x, y, z)
+      dummy.rotation.set(t * a.rotSpeed, t * a.rotSpeed * 0.7, 0)
+      dummy.scale.setScalar(a.scale)
+      dummy.updateMatrix()
+      meshRef.current?.setMatrixAt(i, dummy.matrix)
+    })
+    if (meshRef.current) {
+      meshRef.current.instanceMatrix.needsUpdate = true
+    }
+  })
+
+  return (
+    <group ref={groupRef}>
+      <instancedMesh ref={meshRef} args={[undefined, undefined, count]}>
+        <dodecahedronGeometry args={[1, 0]} />
+        <meshBasicMaterial color="#4b5563" />
+      </instancedMesh>
+    </group>
+  )
+}
+
+// =============================================================================
+// SHOOTING STARS
+// =============================================================================
+
+function ShootingStars({ paused }: { paused: boolean }) {
+  const [stars, setStars] = useState<Array<{
+    id: number
+    start: THREE.Vector3
+    end: THREE.Vector3
+    startTime: number
+  }>>([])
+  const nextId = useRef(0)
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    // Random shooting star
+    if (Math.random() < 0.003) {
+      const startX = (Math.random() - 0.5) * 40
+      setStars(prev => [...prev, {
+        id: nextId.current++,
+        start: new THREE.Vector3(startX, 15 + Math.random() * 5, -15),
+        end: new THREE.Vector3(startX + (Math.random() - 0.5) * 10, -10, -10),
+        startTime: t
+      }])
+    }
+
+    // Clean up
+    setStars(prev => prev.filter(s => t - s.startTime < 1))
+  })
+
+  return (
+    <group>
+      {stars.map(star => (
+        <ShootingStar key={star.id} start={star.start} end={star.end} startTime={star.startTime} />
+      ))}
+    </group>
+  )
+}
+
+function ShootingStar({ start, end, startTime }: { start: THREE.Vector3, end: THREE.Vector3, startTime: number }) {
+  const lineRef = useRef<any>(null)
+
+  const points = useMemo(() => {
+    const pts: [number, number, number][] = []
+    for (let i = 0; i <= 10; i++) {
+      const t = i / 10
+      const p = start.clone().lerp(end, t)
+      pts.push([p.x, p.y, p.z])
+    }
+    return pts
+  }, [start, end])
+
+  useFrame((state) => {
+    const elapsed = state.clock.elapsedTime - startTime
+    if (lineRef.current) {
+      const mat = lineRef.current.material
+      mat.opacity = Math.max(0, 1 - elapsed)
+    }
+  })
+
+  return (
+    <Line
+      ref={lineRef}
+      points={points}
+      color="#ffffff"
+      lineWidth={2}
+      transparent
+      opacity={1}
+    />
+  )
+}
+
+// =============================================================================
+// SOLAR FLARES
+// =============================================================================
+
+function SolarFlares({ vixValue = 15, paused }: { vixValue?: number, paused: boolean }) {
+  const [flares, setFlares] = useState<Array<{
+    id: number
+    angle: number
+    startTime: number
+    intensity: number
+  }>>([])
+  const nextId = useRef(0)
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    // Higher VIX = more flares
+    const flareChance = 0.002 + (vixValue / 100) * 0.01
+    if (Math.random() < flareChance) {
+      setFlares(prev => [...prev, {
+        id: nextId.current++,
+        angle: Math.random() * Math.PI * 2,
+        startTime: t,
+        intensity: 0.5 + Math.random() * 0.5
+      }])
+    }
+
+    // Clean up
+    setFlares(prev => prev.filter(f => t - f.startTime < 2))
+  })
+
+  return (
+    <group>
+      {flares.map(flare => (
+        <SolarFlare key={flare.id} angle={flare.angle} startTime={flare.startTime} intensity={flare.intensity} />
+      ))}
+    </group>
+  )
+}
+
+function SolarFlare({ angle, startTime, intensity }: { angle: number, startTime: number, intensity: number }) {
+  const meshRef = useRef<THREE.Mesh>(null)
+
+  useFrame((state) => {
+    const elapsed = state.clock.elapsedTime - startTime
+    const progress = elapsed / 2
+
+    if (meshRef.current) {
+      const scale = intensity * (1 + progress * 3) * (1 - progress)
+      meshRef.current.scale.set(0.3, scale * 3, 0.3)
+      meshRef.current.position.set(
+        Math.cos(angle) * (1.5 + progress * 2),
+        Math.sin(angle) * (1.5 + progress * 2),
+        0
+      )
+      meshRef.current.rotation.z = angle - Math.PI / 2
+      const mat = meshRef.current.material as THREE.MeshBasicMaterial
+      mat.opacity = 0.8 * (1 - progress)
+    }
+  })
+
+  return (
+    <mesh ref={meshRef}>
+      <coneGeometry args={[1, 1, 8]} />
+      <meshBasicMaterial color="#fbbf24" transparent opacity={0.8} />
+    </mesh>
+  )
+}
+
+// =============================================================================
+// AURORA BOREALIS
+// =============================================================================
+
+function AuroraBorealis({ paused }: { paused: boolean }) {
+  const groupRef = useRef<THREE.Group>(null)
+  const ribbonCount = 5
+
+  const ribbons = useMemo(() => {
+    return Array.from({ length: ribbonCount }, (_, i) => ({
+      yOffset: 8 + i * 1.5,
+      zOffset: -20 - i * 3,
+      phase: i * 0.5,
+      color: i % 2 === 0 ? '#22d3ee' : '#a855f7'
+    }))
+  }, [])
+
+  useFrame((state) => {
+    if (paused || !groupRef.current) return
+    const t = state.clock.elapsedTime
+    groupRef.current.children.forEach((child, i) => {
+      const mesh = child as THREE.Mesh
+      mesh.position.x = Math.sin(t * 0.2 + ribbons[i].phase) * 5
+      const mat = mesh.material as THREE.MeshBasicMaterial
+      mat.opacity = 0.1 + Math.sin(t + ribbons[i].phase) * 0.05
+    })
+  })
+
+  return (
+    <group ref={groupRef}>
+      {ribbons.map((ribbon, i) => (
+        <mesh key={i} position={[0, ribbon.yOffset, ribbon.zOffset]} rotation={[0.2, 0, 0]}>
+          <planeGeometry args={[30, 2, 20, 1]} />
+          <meshBasicMaterial color={ribbon.color} transparent opacity={0.1} side={THREE.DoubleSide} />
+        </mesh>
+      ))}
+    </group>
+  )
+}
+
+// =============================================================================
+// BLACK HOLE WARP
+// =============================================================================
+
+function BlackHoleWarp({ paused }: { paused: boolean }) {
+  const meshRef = useRef<THREE.Mesh>(null)
+  const ringRef = useRef<THREE.Mesh>(null)
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    if (meshRef.current) {
+      meshRef.current.rotation.z = t * 0.3
+    }
+    if (ringRef.current) {
+      ringRef.current.rotation.z = -t * 0.5
+      ringRef.current.scale.setScalar(1 + Math.sin(t * 2) * 0.1)
+    }
+  })
+
+  return (
+    <group position={[15, 5, -25]}>
+      {/* Event horizon */}
+      <Sphere ref={meshRef} args={[1.5, 32, 32]}>
+        <meshBasicMaterial color="#000000" />
+      </Sphere>
+      {/* Accretion disk */}
+      <mesh ref={ringRef} rotation={[Math.PI / 3, 0, 0]}>
+        <torusGeometry args={[2.5, 0.3, 16, 64]} />
+        <meshBasicMaterial color="#f97316" transparent opacity={0.5} />
+      </mesh>
+      {/* Gravitational lensing ring */}
+      <mesh rotation={[Math.PI / 3, 0, 0]}>
+        <torusGeometry args={[3, 0.05, 8, 64]} />
+        <meshBasicMaterial color="#a855f7" transparent opacity={0.3} />
+      </mesh>
+    </group>
+  )
+}
+
+// =============================================================================
+// SUPERNOVA BURST
+// =============================================================================
+
+function SupernovaBurst({ active, onComplete }: { active: boolean, onComplete: () => void }) {
+  const meshRef = useRef<THREE.InstancedMesh>(null)
+  const coreRef = useRef<THREE.Mesh>(null)
+  const count = 200
+  const startTime = useRef(0)
+  const [started, setStarted] = useState(false)
+
+  const particles = useMemo(() => {
+    return Array.from({ length: count }, () => ({
+      direction: new THREE.Vector3(
+        (Math.random() - 0.5) * 2,
+        (Math.random() - 0.5) * 2,
+        (Math.random() - 0.5) * 2
+      ).normalize(),
+      speed: 5 + Math.random() * 15,
+      color: Math.random() > 0.5 ? '#fbbf24' : '#ef4444'
+    }))
+  }, [])
+
+  const dummy = useMemo(() => new THREE.Object3D(), [])
+
+  useFrame((state) => {
+    if (!active) return
+
+    if (!started) {
+      startTime.current = state.clock.elapsedTime
+      setStarted(true)
+    }
+
+    const elapsed = state.clock.elapsedTime - startTime.current
+    if (elapsed > 3) {
+      onComplete()
+      setStarted(false)
+      return
+    }
+
+    const progress = elapsed / 3
+
+    // Core flash
+    if (coreRef.current) {
+      coreRef.current.scale.setScalar(3 * (1 - progress))
+      const mat = coreRef.current.material as THREE.MeshBasicMaterial
+      mat.opacity = 1 - progress
+    }
+
+    // Expanding particles
+    particles.forEach((p, i) => {
+      const dist = p.speed * elapsed
+      const pos = p.direction.clone().multiplyScalar(dist)
+
+      dummy.position.copy(pos)
+      dummy.scale.setScalar(0.1 * (1 - progress * 0.5))
+      dummy.updateMatrix()
+      meshRef.current?.setMatrixAt(i, dummy.matrix)
+    })
+    if (meshRef.current) {
+      meshRef.current.instanceMatrix.needsUpdate = true
+    }
+  })
+
+  if (!active) return null
+
+  return (
+    <group>
+      <Sphere ref={coreRef} args={[1, 32, 32]}>
+        <meshBasicMaterial color="#ffffff" transparent opacity={1} />
+      </Sphere>
+      <instancedMesh ref={meshRef} args={[undefined, undefined, count]}>
+        <sphereGeometry args={[1, 6, 6]} />
+        <meshBasicMaterial color="#fbbf24" transparent opacity={0.9} />
+      </instancedMesh>
+    </group>
+  )
+}
+
+// =============================================================================
+// HOLOGRAPHIC TICKER TAPE
+// =============================================================================
+
+function HolographicTickerTape({ spotPrice = 585 }: { spotPrice?: number }) {
+  const groupRef = useRef<THREE.Group>(null)
+
+  const tickers = useMemo(() => {
+    return STOCK_TICKERS.map((stock, i) => ({
+      ...stock,
+      angle: (i / STOCK_TICKERS.length) * Math.PI * 2,
+      price: stock.basePrice * (0.98 + Math.random() * 0.04),
+      change: (Math.random() - 0.5) * 4
+    }))
+  }, [])
+
+  useFrame((state) => {
+    if (groupRef.current) {
+      groupRef.current.rotation.y = state.clock.elapsedTime * 0.1
+    }
+  })
+
+  return (
+    <group ref={groupRef} position={[0, 2, 0]}>
+      {tickers.map((ticker, i) => {
+        const angle = ticker.angle
+        const radius = 7
+        const x = Math.cos(angle) * radius
+        const z = Math.sin(angle) * radius
+        const isPositive = ticker.change >= 0
+
+        return (
+          <group key={i} position={[x, 0, z]} rotation={[0, -angle + Math.PI / 2, 0]}>
+            <Html center>
+              <div className="bg-black/60 border border-cyan-500/30 rounded px-2 py-0.5 whitespace-nowrap text-xs">
+                <span className="text-cyan-400 font-bold">{ticker.symbol}</span>
+                <span className="text-white ml-1">${ticker.price.toFixed(2)}</span>
+                <span className={`ml-1 ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
+                  {isPositive ? '▲' : '▼'}
+                </span>
+              </div>
+            </Html>
+          </group>
+        )
+      })}
+    </group>
+  )
+}
+
+// =============================================================================
+// FLOATING P&L ORB (Replaces bottom P&L)
+// =============================================================================
+
+function FloatingPnLOrb({ pnlValue = 0, pnlPercent = 0 }: { pnlValue?: number, pnlPercent?: number }) {
+  const groupRef = useRef<THREE.Group>(null)
+  const orbRef = useRef<THREE.Mesh>(null)
+  const glowRef = useRef<THREE.Mesh>(null)
+
+  const isPositive = pnlValue >= 0
+  const orbColor = isPositive ? '#22c55e' : '#ef4444'
+  const orbScale = 0.4 + Math.min(Math.abs(pnlPercent) / 20, 0.6)
+
+  useFrame((state) => {
+    const t = state.clock.elapsedTime
+
+    if (groupRef.current) {
+      groupRef.current.position.y = -2 + Math.sin(t * 0.5) * 0.3
+      groupRef.current.position.x = -5 + Math.sin(t * 0.3) * 0.5
+    }
+    if (orbRef.current) {
+      orbRef.current.rotation.y = t * 0.5
+    }
+    if (glowRef.current) {
+      glowRef.current.scale.setScalar(orbScale * (1.5 + Math.sin(t * 2) * 0.2))
+      const mat = glowRef.current.material as THREE.MeshBasicMaterial
+      mat.opacity = 0.2 + Math.sin(t * 3) * 0.1
+    }
+  })
+
+  return (
+    <group ref={groupRef} position={[-5, -2, 2]}>
+      {/* Glow */}
+      <Sphere ref={glowRef} args={[1, 16, 16]}>
+        <meshBasicMaterial color={orbColor} transparent opacity={0.3} />
+      </Sphere>
+      {/* Core orb */}
+      <Sphere ref={orbRef} args={[orbScale, 32, 32]}>
+        <MeshDistortMaterial
+          color={orbColor}
+          emissive={orbColor}
+          emissiveIntensity={1}
+          distort={0.3}
+          speed={2}
+        />
+      </Sphere>
+      {/* Label */}
+      <Html position={[0, orbScale + 0.8, 0]} center>
+        <div className="text-center select-none">
+          <div className="text-gray-400 text-xs">P&L</div>
+          <div className={`text-lg font-bold ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
+            {isPositive ? '+' : ''}{pnlPercent.toFixed(2)}%
+          </div>
+          <div className={`text-sm ${isPositive ? 'text-green-300' : 'text-red-300'}`}>
+            {isPositive ? '+' : ''}${Math.abs(pnlValue).toLocaleString()}
+          </div>
+        </div>
+      </Html>
+    </group>
+  )
+}
+
+// =============================================================================
+// ROCKET LAUNCHES
+// =============================================================================
+
+function RocketLaunches({ botStatus }: { botStatus: BotStatus }) {
+  const [rockets, setRockets] = useState<Array<{
+    id: number
+    startPos: THREE.Vector3
+    startTime: number
+  }>>([])
+  const nextId = useRef(0)
+  const prevStatus = useRef<BotStatus>({})
+
+  useFrame((state) => {
+    const t = state.clock.elapsedTime
+
+    // Check for status changes to 'trading'
+    BOT_NODES.forEach(node => {
+      const currentStatus = botStatus[node.id as keyof BotStatus]
+      const prevNodeStatus = prevStatus.current[node.id as keyof BotStatus]
+
+      if (currentStatus === 'trading' && prevNodeStatus !== 'trading') {
+        const radius = 5
+        setRockets(prev => [...prev, {
+          id: nextId.current++,
+          startPos: new THREE.Vector3(
+            Math.cos(node.angle) * radius,
+            0,
+            Math.sin(node.angle) * radius
+          ),
+          startTime: t
+        }])
+      }
+    })
+    prevStatus.current = { ...botStatus }
+
+    // Clean up old rockets
+    setRockets(prev => prev.filter(r => t - r.startTime < 3))
+  })
+
+  return (
+    <group>
+      {rockets.map(rocket => (
+        <Rocket key={rocket.id} startPos={rocket.startPos} startTime={rocket.startTime} />
+      ))}
+    </group>
+  )
+}
+
+function Rocket({ startPos, startTime }: { startPos: THREE.Vector3, startTime: number }) {
+  const groupRef = useRef<THREE.Group>(null)
+  const flameRef = useRef<THREE.Mesh>(null)
+
+  useFrame((state) => {
+    const elapsed = state.clock.elapsedTime - startTime
+    const y = startPos.y + elapsed * 5
+
+    if (groupRef.current) {
+      groupRef.current.position.set(startPos.x, y, startPos.z)
+    }
+    if (flameRef.current) {
+      flameRef.current.scale.y = 0.5 + Math.sin(elapsed * 20) * 0.2
+    }
+  })
+
+  return (
+    <group ref={groupRef}>
+      {/* Rocket body */}
+      <mesh>
+        <cylinderGeometry args={[0.05, 0.08, 0.3, 8]} />
+        <meshBasicMaterial color="#e5e7eb" />
+      </mesh>
+      {/* Rocket nose */}
+      <mesh position={[0, 0.2, 0]}>
+        <coneGeometry args={[0.05, 0.1, 8]} />
+        <meshBasicMaterial color="#ef4444" />
+      </mesh>
+      {/* Flame */}
+      <mesh ref={flameRef} position={[0, -0.25, 0]} rotation={[Math.PI, 0, 0]}>
+        <coneGeometry args={[0.06, 0.3, 8]} />
+        <meshBasicMaterial color="#f97316" transparent opacity={0.8} />
+      </mesh>
+    </group>
+  )
+}
+
+// =============================================================================
+// SATELLITE ORBITERS
+// =============================================================================
+
+function SatelliteOrbiters() {
+  const count = 3
+  const groupRef = useRef<THREE.Group>(null)
+
+  const satellites = useMemo(() => {
+    return Array.from({ length: count }, (_, i) => ({
+      radius: 8 + i * 2,
+      speed: 0.15 - i * 0.03,
+      inclination: (i * 30) * (Math.PI / 180),
+      phase: (i / count) * Math.PI * 2
+    }))
+  }, [])
+
+  useFrame((state) => {
+    const t = state.clock.elapsedTime
+    if (groupRef.current) {
+      groupRef.current.children.forEach((sat, i) => {
+        const s = satellites[i]
+        const angle = s.phase + t * s.speed
+        sat.position.set(
+          Math.cos(angle) * s.radius,
+          Math.sin(s.inclination) * Math.sin(angle) * 2,
+          Math.sin(angle) * s.radius
+        )
+        sat.rotation.y = angle
+      })
+    }
+  })
+
+  return (
+    <group ref={groupRef}>
+      {satellites.map((_, i) => (
+        <group key={i}>
+          {/* Satellite body */}
+          <mesh>
+            <boxGeometry args={[0.15, 0.1, 0.1]} />
+            <meshBasicMaterial color="#9ca3af" />
+          </mesh>
+          {/* Solar panels */}
+          <mesh position={[0.2, 0, 0]}>
+            <boxGeometry args={[0.2, 0.01, 0.15]} />
+            <meshBasicMaterial color="#3b82f6" />
+          </mesh>
+          <mesh position={[-0.2, 0, 0]}>
+            <boxGeometry args={[0.2, 0.01, 0.15]} />
+            <meshBasicMaterial color="#3b82f6" />
+          </mesh>
+          {/* Antenna */}
+          <mesh position={[0, 0.1, 0]}>
+            <cylinderGeometry args={[0.01, 0.01, 0.1, 8]} />
+            <meshBasicMaterial color="#d1d5db" />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  )
+}
+
+// =============================================================================
+// ENERGY SHIELDS
+// =============================================================================
+
+function EnergyShields({ paused }: { paused: boolean }) {
+  const shield1Ref = useRef<THREE.Mesh>(null)
+  const shield2Ref = useRef<THREE.Mesh>(null)
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    if (shield1Ref.current) {
+      shield1Ref.current.rotation.y = t * 0.2
+      shield1Ref.current.rotation.x = Math.sin(t * 0.5) * 0.1
+      const mat = shield1Ref.current.material as THREE.MeshBasicMaterial
+      mat.opacity = 0.05 + Math.sin(t * 2) * 0.02
+    }
+    if (shield2Ref.current) {
+      shield2Ref.current.rotation.y = -t * 0.15
+      shield2Ref.current.rotation.z = Math.cos(t * 0.3) * 0.1
+      const mat = shield2Ref.current.material as THREE.MeshBasicMaterial
+      mat.opacity = 0.03 + Math.sin(t * 3 + 1) * 0.02
+    }
+  })
+
+  return (
+    <group>
+      <mesh ref={shield1Ref}>
+        <icosahedronGeometry args={[4, 1]} />
+        <meshBasicMaterial color={COLORS.accent} transparent opacity={0.05} wireframe />
+      </mesh>
+      <mesh ref={shield2Ref}>
+        <icosahedronGeometry args={[4.5, 1]} />
+        <meshBasicMaterial color={COLORS.fiberInner} transparent opacity={0.03} wireframe />
+      </mesh>
+    </group>
+  )
+}
+
+// =============================================================================
+// WORMHOLE PORTALS
+// =============================================================================
+
+function WormholePortals({ botStatus }: { botStatus: BotStatus }) {
+  const activeCount = Object.values(botStatus).filter(s => s === 'active' || s === 'trading').length
+
+  if (activeCount < 2) return null
+
+  return (
+    <group>
+      <WormholePortal position={new THREE.Vector3(-8, 0, -5)} />
+      {activeCount > 2 && <WormholePortal position={new THREE.Vector3(8, 0, -5)} />}
+    </group>
+  )
+}
+
+function WormholePortal({ position }: { position: THREE.Vector3 }) {
+  const groupRef = useRef<THREE.Group>(null)
+  const ring1Ref = useRef<THREE.Mesh>(null)
+  const ring2Ref = useRef<THREE.Mesh>(null)
+  const ring3Ref = useRef<THREE.Mesh>(null)
+
+  useFrame((state) => {
+    const t = state.clock.elapsedTime
+
+    if (groupRef.current) {
+      groupRef.current.rotation.z = t * 0.5
+    }
+    if (ring1Ref.current) {
+      ring1Ref.current.rotation.z = t * 2
+      ring1Ref.current.scale.setScalar(1 + Math.sin(t * 3) * 0.1)
+    }
+    if (ring2Ref.current) {
+      ring2Ref.current.rotation.z = -t * 1.5
+    }
+    if (ring3Ref.current) {
+      ring3Ref.current.rotation.z = t
+    }
+  })
+
+  return (
+    <group ref={groupRef} position={position}>
+      {/* Outer ring */}
+      <mesh ref={ring1Ref}>
+        <torusGeometry args={[1.2, 0.05, 8, 32]} />
+        <meshBasicMaterial color="#a855f7" transparent opacity={0.6} />
+      </mesh>
+      {/* Middle ring */}
+      <mesh ref={ring2Ref}>
+        <torusGeometry args={[0.9, 0.03, 8, 32]} />
+        <meshBasicMaterial color="#c084fc" transparent opacity={0.5} />
+      </mesh>
+      {/* Inner ring */}
+      <mesh ref={ring3Ref}>
+        <torusGeometry args={[0.6, 0.02, 8, 32]} />
+        <meshBasicMaterial color="#e9d5ff" transparent opacity={0.4} />
+      </mesh>
+      {/* Center void */}
+      <Sphere args={[0.4, 16, 16]}>
+        <meshBasicMaterial color="#1e1b4b" />
+      </Sphere>
+    </group>
+  )
+}
+
+// =============================================================================
+// QUANTUM ENTANGLEMENT
+// =============================================================================
+
+function QuantumEntanglement({ botStatus, paused }: { botStatus: BotStatus, paused: boolean }) {
+  const groupRef = useRef<THREE.Group>(null)
+
+  const activeNodes = BOT_NODES.filter(
+    node => botStatus[node.id as keyof BotStatus] === 'active' ||
+            botStatus[node.id as keyof BotStatus] === 'trading'
+  )
+
+  const pairs = useMemo(() => {
+    const result: Array<{ node1: typeof BOT_NODES[0], node2: typeof BOT_NODES[0] }> = []
+    for (let i = 0; i < activeNodes.length; i++) {
+      for (let j = i + 1; j < activeNodes.length; j++) {
+        result.push({ node1: activeNodes[i], node2: activeNodes[j] })
+      }
+    }
+    return result
+  }, [activeNodes])
+
+  useFrame((state) => {
+    if (paused || !groupRef.current) return
+    // Animation handled by children
+  })
+
+  return (
+    <group ref={groupRef}>
+      {pairs.map((pair, i) => (
+        <QuantumPair key={i} node1={pair.node1} node2={pair.node2} paused={paused} />
+      ))}
+    </group>
+  )
+}
+
+function QuantumPair({ node1, node2, paused }: { node1: typeof BOT_NODES[0], node2: typeof BOT_NODES[0], paused: boolean }) {
+  const particle1Ref = useRef<THREE.Mesh>(null)
+  const particle2Ref = useRef<THREE.Mesh>(null)
+
+  const radius = 5
+  const pos1 = new THREE.Vector3(Math.cos(node1.angle) * radius, 0, Math.sin(node1.angle) * radius)
+  const pos2 = new THREE.Vector3(Math.cos(node2.angle) * radius, 0, Math.sin(node2.angle) * radius)
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    const progress = (Math.sin(t * 2) + 1) / 2
+
+    if (particle1Ref.current) {
+      const p = pos1.clone().lerp(pos2, progress)
+      particle1Ref.current.position.copy(p)
+      particle1Ref.current.position.y = Math.sin(t * 5) * 0.3
+    }
+    if (particle2Ref.current) {
+      const p = pos2.clone().lerp(pos1, progress)
+      particle2Ref.current.position.copy(p)
+      particle2Ref.current.position.y = -Math.sin(t * 5) * 0.3
+    }
+  })
+
+  return (
+    <group>
+      <Sphere ref={particle1Ref} args={[0.08, 8, 8]}>
+        <meshBasicMaterial color="#22d3ee" />
+      </Sphere>
+      <Sphere ref={particle2Ref} args={[0.08, 8, 8]}>
+        <meshBasicMaterial color="#a855f7" />
+      </Sphere>
+    </group>
+  )
+}
+
+// =============================================================================
+// BINARY STAR (SPX Core)
+// =============================================================================
+
+function BinaryStar({ paused }: { paused: boolean }) {
+  const groupRef = useRef<THREE.Group>(null)
+  const star1Ref = useRef<THREE.Group>(null)
+  const star2Ref = useRef<THREE.Mesh>(null)
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    if (groupRef.current) {
+      groupRef.current.rotation.y = t * 0.1
+    }
+
+    const orbitRadius = 3
+    if (star1Ref.current) {
+      star1Ref.current.position.x = Math.cos(t * 0.3) * orbitRadius
+      star1Ref.current.position.z = Math.sin(t * 0.3) * orbitRadius
+      star1Ref.current.rotation.y = t * 0.5
+    }
+    if (star2Ref.current) {
+      star2Ref.current.position.x = Math.cos(t * 0.3 + Math.PI) * orbitRadius
+      star2Ref.current.position.z = Math.sin(t * 0.3 + Math.PI) * orbitRadius
+      star2Ref.current.rotation.y = -t * 0.4
+    }
+  })
+
+  return (
+    <group ref={groupRef} position={[-12, 3, -8]}>
+      {/* SPX Star (smaller, purple) */}
+      <group ref={star1Ref}>
+        <Sphere args={[0.5, 32, 32]}>
+          <MeshDistortMaterial
+            color="#6b21a8"
+            emissive="#a855f7"
+            emissiveIntensity={1.5}
+            distort={0.2}
+            speed={2}
+          />
+        </Sphere>
+        <Html position={[0, 0.8, 0]} center>
+          <div className="text-purple-400 text-xs font-bold bg-black/50 px-1 rounded">SPX</div>
+        </Html>
+      </group>
+      {/* SPY Star (reference from main core) */}
+      <Sphere ref={star2Ref} args={[0.3, 16, 16]}>
+        <meshBasicMaterial color="#22d3ee" transparent opacity={0.6} />
+      </Sphere>
+      {/* Connection line */}
+      <Line
+        points={[[0, 0, 0], [0, 0, 0]]}
+        color="#a855f7"
+        lineWidth={0.5}
+        transparent
+        opacity={0.3}
+      />
+    </group>
+  )
+}
+
+// =============================================================================
+// SPACE STATION
+// =============================================================================
+
+function SpaceStation({ spotPrice, gexValue, vixValue }: { spotPrice?: number, gexValue?: number, vixValue?: number }) {
+  const groupRef = useRef<THREE.Group>(null)
+
+  useFrame((state) => {
+    if (groupRef.current) {
+      groupRef.current.rotation.y = state.clock.elapsedTime * 0.05
+      groupRef.current.position.y = 6 + Math.sin(state.clock.elapsedTime * 0.2) * 0.3
+    }
+  })
+
+  return (
+    <group ref={groupRef} position={[10, 6, -5]}>
+      {/* Central hub */}
+      <mesh>
+        <cylinderGeometry args={[0.3, 0.3, 0.8, 16]} />
+        <meshBasicMaterial color="#6b7280" />
+      </mesh>
+      {/* Solar array 1 */}
+      <mesh position={[0.8, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+        <boxGeometry args={[0.05, 1, 0.4]} />
+        <meshBasicMaterial color="#3b82f6" />
+      </mesh>
+      {/* Solar array 2 */}
+      <mesh position={[-0.8, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+        <boxGeometry args={[0.05, 1, 0.4]} />
+        <meshBasicMaterial color="#3b82f6" />
+      </mesh>
+      {/* Modules */}
+      <mesh position={[0, 0.5, 0]}>
+        <boxGeometry args={[0.2, 0.3, 0.2]} />
+        <meshBasicMaterial color="#9ca3af" />
+      </mesh>
+      {/* Info panel */}
+      <Html position={[0, 1.2, 0]} center>
+        <div className="bg-black/80 border border-cyan-500/40 rounded-lg px-3 py-2 text-xs">
+          <div className="text-cyan-400 font-bold mb-1">ALPHAGEX STATION</div>
+          <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+            <span className="text-gray-400">Status:</span>
+            <span className="text-green-400">ONLINE</span>
+            <span className="text-gray-400">Orbit:</span>
+            <span className="text-white">LEO</span>
+          </div>
+        </div>
+      </Html>
+    </group>
+  )
+}
+
+// =============================================================================
+// MOON PHASES
+// =============================================================================
+
+function MoonPhases({ paused }: { paused: boolean }) {
+  const groupRef = useRef<THREE.Group>(null)
+  const moonRef = useRef<THREE.Mesh>(null)
+  const shadowRef = useRef<THREE.Mesh>(null)
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    if (groupRef.current) {
+      // Orbit around scene
+      groupRef.current.position.x = Math.cos(t * 0.02) * 18
+      groupRef.current.position.z = Math.sin(t * 0.02) * 18
+      groupRef.current.position.y = 8 + Math.sin(t * 0.05) * 2
+    }
+
+    if (moonRef.current) {
+      moonRef.current.rotation.y = t * 0.05
+    }
+
+    if (shadowRef.current) {
+      // Simulate moon phase with shadow position
+      const phase = (t * 0.02) % (Math.PI * 2)
+      shadowRef.current.position.x = Math.cos(phase) * 0.5
+      shadowRef.current.rotation.y = phase
+    }
+  })
+
+  return (
+    <group ref={groupRef}>
+      {/* Moon surface */}
+      <Sphere ref={moonRef} args={[1, 32, 32]}>
+        <meshBasicMaterial color="#d1d5db" />
+      </Sphere>
+      {/* Shadow for phase effect */}
+      <Sphere ref={shadowRef} args={[1.01, 32, 32]}>
+        <meshBasicMaterial color="#1f2937" transparent opacity={0.7} side={THREE.BackSide} />
+      </Sphere>
+      {/* Craters (simplified) */}
+      <Sphere args={[0.15, 8, 8]} position={[0.3, 0.5, 0.7]}>
+        <meshBasicMaterial color="#9ca3af" />
+      </Sphere>
+      <Sphere args={[0.1, 8, 8]} position={[-0.4, 0.2, 0.8]}>
+        <meshBasicMaterial color="#9ca3af" />
+      </Sphere>
+      {/* Label */}
+      <Html position={[0, 1.5, 0]} center>
+        <div className="text-gray-400 text-xs bg-black/50 px-2 py-0.5 rounded">
+          MARKET MOON
+        </div>
+      </Html>
+    </group>
+  )
+}
+
+// =============================================================================
+// NEBULA STORM
+// =============================================================================
+
+function NebulaStorm({ vixValue = 15, paused }: { vixValue?: number, paused: boolean }) {
+  const cloud1Ref = useRef<THREE.Mesh>(null)
+  const cloud2Ref = useRef<THREE.Mesh>(null)
+  const cloud3Ref = useRef<THREE.Mesh>(null)
+
+  // Higher VIX = more turbulent nebula
+  const turbulence = 0.5 + (vixValue / 50)
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    if (cloud1Ref.current) {
+      cloud1Ref.current.rotation.x = t * 0.02 * turbulence
+      cloud1Ref.current.rotation.y = t * 0.015 * turbulence
+      cloud1Ref.current.scale.setScalar(1 + Math.sin(t * turbulence) * 0.1)
+    }
+    if (cloud2Ref.current) {
+      cloud2Ref.current.rotation.x = -t * 0.018 * turbulence
+      cloud2Ref.current.rotation.z = t * 0.012 * turbulence
+    }
+    if (cloud3Ref.current) {
+      cloud3Ref.current.rotation.y = t * 0.01 * turbulence
+      cloud3Ref.current.rotation.z = -t * 0.02 * turbulence
+    }
+  })
+
+  const stormColor = vixValue > 30 ? '#7f1d1d' : vixValue > 20 ? '#713f12' : '#1e3a8a'
+
+  return (
+    <group>
+      <Sphere ref={cloud1Ref} args={[40, 16, 16]} position={[20, 10, -35]}>
+        <MeshDistortMaterial
+          color={stormColor}
+          transparent
+          opacity={0.04}
+          distort={0.4 * turbulence}
+          speed={turbulence}
+        />
+      </Sphere>
+      <Sphere ref={cloud2Ref} args={[35, 16, 16]} position={[-25, -5, -40]}>
+        <MeshDistortMaterial
+          color={COLORS.nebula2}
+          transparent
+          opacity={0.03}
+          distort={0.3 * turbulence}
+          speed={turbulence * 0.8}
+        />
+      </Sphere>
+      <Sphere ref={cloud3Ref} args={[30, 16, 16]} position={[0, -15, -45]}>
+        <MeshDistortMaterial
+          color={COLORS.nebula1}
+          transparent
+          opacity={0.025}
+          distort={0.35 * turbulence}
+          speed={turbulence * 0.6}
+        />
+      </Sphere>
+    </group>
+  )
+}
+
+// =============================================================================
 // HIDDEN MESSAGE (Easter Egg)
 // =============================================================================
 
@@ -2121,9 +3383,28 @@ function Scene({
 
       {/* Data displays */}
       <FloatingMarketStats spotPrice={spotPrice} gexValue={gexValue} vixValue={vixValue} />
-      <PnLMeter pnlValue={pnlValue} pnlPercent={pnlPercent} />
+      <FloatingPnLOrb pnlValue={pnlValue} pnlPercent={pnlPercent} />
       <SignalStrengthBars strength={signalStrength} />
       <MarketMoodRing gexValue={gexValue} vixValue={vixValue} />
+
+      {/* Cosmic features */}
+      <AsteroidField paused={paused} />
+      <CometWithTrail paused={paused} />
+      <AsteroidBelt performanceMode={performanceMode} />
+      <ShootingStars paused={paused} />
+      <SolarFlares vixValue={vixValue} paused={paused} />
+      <AuroraBorealis paused={paused} />
+      <BlackHoleWarp paused={paused} />
+      <HolographicTickerTape spotPrice={spotPrice || 585} />
+      <RocketLaunches botStatus={botStatus} />
+      <SatelliteOrbiters />
+      <EnergyShields paused={paused} />
+      <WormholePortals botStatus={botStatus} />
+      <QuantumEntanglement botStatus={botStatus} paused={paused} />
+      <BinaryStar paused={paused} />
+      <SpaceStation spotPrice={spotPrice || 585} gexValue={gexValue} vixValue={vixValue} />
+      <MoonPhases paused={paused} />
+      <NebulaStorm vixValue={vixValue} paused={paused} />
 
       {/* Bot nodes */}
       {BOT_NODES.map((node) => (
