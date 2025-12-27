@@ -354,10 +354,9 @@ export default function FloatingChatbot() {
             image_data: currentImage
           })
         } else {
-          // Use analysis with context endpoint for conversation memory
-          response = await apiClient.gexisAnalyzeWithContext({
+          // Use agentic chat endpoint with tool use capabilities
+          response = await apiClient.gexisAgenticChat({
             query: currentInput,
-            symbol: detectedSymbol,
             session_id: sessionId,
             market_data: {}
           })
@@ -365,6 +364,10 @@ export default function FloatingChatbot() {
 
           if (data.success && data.data) {
             analysisText = data.data.analysis || ''
+            // Log tools used for debugging
+            if (data.data.tools_used && data.data.tools_used.length > 0) {
+              console.log('GEXIS used tools:', data.data.tools_used)
+            }
           } else if (data.error) {
             throw new Error(data.error)
           }

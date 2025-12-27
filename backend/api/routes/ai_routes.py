@@ -1840,6 +1840,334 @@ Address the user as "{USER_NAME}". Be helpful, witty, and professional."""
 
 
 # =============================================================================
+# GEXIS AGENTIC CHAT - Tool Use Enabled
+# =============================================================================
+
+# Define tools in Claude's format
+GEXIS_CLAUDE_TOOLS = [
+    {
+        "name": "get_gex_data",
+        "description": "Fetch current GEX (Gamma Exposure) data for a symbol including net GEX, flip point, call wall, put wall, and market maker state. Use this when the user asks about GEX levels, gamma, or market structure.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "symbol": {
+                    "type": "string",
+                    "description": "The stock symbol to get GEX data for (e.g., SPY, QQQ, SPX)"
+                }
+            },
+            "required": ["symbol"]
+        }
+    },
+    {
+        "name": "get_market_data",
+        "description": "Fetch current market data including SPX, SPY, VIX prices and expected moves. Use this when the user asks about current market conditions or prices.",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "get_vix_data",
+        "description": "Fetch current VIX data including spot price, term structure, and volatility regime. Use this when the user asks about volatility or VIX.",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "get_bot_status",
+        "description": "Get the current status of a trading bot including mode, capital, open positions, and P&L. Use this when the user asks about bot status or trading performance.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "bot_name": {
+                    "type": "string",
+                    "description": "The bot name: ares, athena, or atlas",
+                    "enum": ["ares", "athena", "atlas"]
+                }
+            },
+            "required": ["bot_name"]
+        }
+    },
+    {
+        "name": "get_positions",
+        "description": "Get all open and recent closed positions with P&L summary. Use this when the user asks about positions, trades, or P&L.",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "get_upcoming_events",
+        "description": "Get upcoming economic events like FOMC, CPI, NFP, etc. Use this when the user asks about economic calendar or upcoming events.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days_ahead": {
+                    "type": "integer",
+                    "description": "Number of days ahead to look (default 7)",
+                    "default": 7
+                }
+            }
+        }
+    },
+    {
+        "name": "get_system_status",
+        "description": "Get comprehensive system status including all bots, connections, and market data. Use this when the user asks for a full status report or system health.",
+        "input_schema": {
+            "type": "object",
+            "properties": {}
+        }
+    },
+    {
+        "name": "get_trading_stats",
+        "description": "Get trading statistics including win rate, total P&L, and trade counts. Use this when the user asks about performance or statistics.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "days": {
+                    "type": "integer",
+                    "description": "Number of days to analyze (default 30)",
+                    "default": 30
+                }
+            }
+        }
+    },
+    {
+        "name": "analyze_trade_opportunity",
+        "description": "Analyze current trade opportunity for a symbol based on GEX and market conditions. Use this when the user asks for trade analysis or recommendations.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "symbol": {
+                    "type": "string",
+                    "description": "The symbol to analyze (default SPY)"
+                }
+            }
+        }
+    },
+    {
+        "name": "request_bot_action",
+        "description": "Request a bot control action (start, stop, pause). This requires confirmation. Use when user explicitly asks to start or stop a bot.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "description": "The action to perform",
+                    "enum": ["start", "stop", "pause"]
+                },
+                "bot_name": {
+                    "type": "string",
+                    "description": "The bot to control",
+                    "enum": ["ares", "athena", "atlas"]
+                }
+            },
+            "required": ["action", "bot_name"]
+        }
+    }
+]
+
+
+def execute_gexis_tool(tool_name: str, tool_input: dict) -> str:
+    """Execute a GEXIS tool and return the result as a string."""
+    try:
+        if tool_name == "get_gex_data":
+            from ai.gexis_tools import fetch_market_data
+            result = fetch_market_data(tool_input.get("symbol", "SPY"))
+        elif tool_name == "get_market_data":
+            from ai.gexis_tools import fetch_ares_market_data
+            result = fetch_ares_market_data()
+        elif tool_name == "get_vix_data":
+            from ai.gexis_tools import fetch_vix_data
+            result = fetch_vix_data()
+        elif tool_name == "get_bot_status":
+            from ai.gexis_tools import get_bot_status
+            result = get_bot_status(tool_input.get("bot_name", "ares"))
+        elif tool_name == "get_positions":
+            from ai.gexis_tools import get_ares_positions
+            result = get_ares_positions()
+        elif tool_name == "get_upcoming_events":
+            from ai.gexis_tools import get_upcoming_events
+            result = get_upcoming_events(tool_input.get("days_ahead", 7))
+        elif tool_name == "get_system_status":
+            from ai.gexis_tools import get_system_status
+            result = get_system_status()
+        elif tool_name == "get_trading_stats":
+            from ai.gexis_tools import get_trading_stats
+            result = get_trading_stats(tool_input.get("days", 30))
+        elif tool_name == "analyze_trade_opportunity":
+            from ai.gexis_tools import analyze_trade_opportunity
+            result = analyze_trade_opportunity(tool_input.get("symbol", "SPY"))
+        elif tool_name == "request_bot_action":
+            from ai.gexis_tools import request_bot_action
+            result = request_bot_action(
+                action=tool_input.get("action"),
+                bot_name=tool_input.get("bot_name"),
+                session_id=tool_input.get("session_id", "default")
+            )
+        else:
+            result = {"error": f"Unknown tool: {tool_name}"}
+
+        return json.dumps(result, default=str)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@router.post("/gexis/agentic-chat")
+async def gexis_agentic_chat(request: dict):
+    """
+    GEXIS Agentic Chat - AI assistant with tool use capabilities.
+
+    GEXIS can now:
+    - Fetch real-time GEX data
+    - Get market prices and VIX
+    - Check bot status and positions
+    - View upcoming economic events
+    - Analyze trade opportunities
+    - Control trading bots (with confirmation)
+
+    Request:
+    {
+        "query": "What's the current GEX for SPY?",
+        "session_id": "optional-session-id",
+        "market_data": {} // optional pre-fetched data
+    }
+    """
+    try:
+        import anthropic
+
+        query = request.get('query', '')
+        session_id = request.get('session_id', str(uuid.uuid4())[:8])
+
+        if not query:
+            raise HTTPException(status_code=400, detail="Query is required")
+
+        # Get conversation context
+        context_result = await get_conversation_context(session_id, limit=5)
+        conversation_history = context_result.get("messages", [])
+
+        # Build system prompt with agentic instructions
+        if GEXIS_AVAILABLE:
+            base_prompt = build_gexis_system_prompt()
+        else:
+            base_prompt = f"You are GEXIS, the AI assistant for AlphaGEX. Address the user as '{USER_NAME}'."
+
+        agentic_instructions = """
+
+=== AGENTIC CAPABILITIES ===
+You have access to real-time tools. When the user asks about market data, positions, or system status, USE THE TOOLS to fetch current information. Do not make up data.
+
+IMPORTANT RULES:
+1. Always use tools when asked about current data (GEX, prices, positions, etc.)
+2. Present tool results in a clear, formatted way using markdown
+3. If a tool returns an error, acknowledge it and suggest alternatives
+4. For bot control actions, always explain what will happen before executing
+5. Combine multiple tool results when needed for comprehensive answers
+"""
+
+        system_prompt = base_prompt + agentic_instructions
+
+        # Build message history
+        messages = []
+        for msg in conversation_history:
+            if msg.get("user"):
+                messages.append({"role": "user", "content": msg["user"]})
+            if msg.get("assistant"):
+                messages.append({"role": "assistant", "content": msg["assistant"]})
+
+        # Add current query
+        messages.append({"role": "user", "content": query})
+
+        # Get API key
+        api_key = os.getenv("CLAUDE_API_KEY") or os.getenv("claude_api_key", "")
+        if not api_key:
+            raise HTTPException(status_code=503, detail="Claude API key not configured")
+
+        client = anthropic.Anthropic(api_key=api_key)
+
+        # Tool execution loop
+        max_iterations = 5
+        iteration = 0
+        tools_used = []
+
+        while iteration < max_iterations:
+            iteration += 1
+
+            # Call Claude with tools
+            response = client.messages.create(
+                model="claude-sonnet-4-5-20250929",
+                max_tokens=2000,
+                system=system_prompt,
+                tools=GEXIS_CLAUDE_TOOLS,
+                messages=messages
+            )
+
+            # Check if Claude wants to use tools
+            tool_use_blocks = [block for block in response.content if block.type == "tool_use"]
+
+            if not tool_use_blocks:
+                # No more tools to use, extract final response
+                text_blocks = [block for block in response.content if block.type == "text"]
+                final_response = text_blocks[0].text if text_blocks else "No response generated."
+                break
+
+            # Execute each tool
+            tool_results = []
+            for tool_use in tool_use_blocks:
+                tool_name = tool_use.name
+                tool_input = tool_use.input
+
+                # Add session_id for bot actions
+                if tool_name == "request_bot_action":
+                    tool_input["session_id"] = session_id
+
+                # Execute the tool
+                result = execute_gexis_tool(tool_name, tool_input)
+                tools_used.append({"tool": tool_name, "input": tool_input})
+
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": tool_use.id,
+                    "content": result
+                })
+
+            # Add assistant response and tool results to messages
+            messages.append({"role": "assistant", "content": response.content})
+            messages.append({"role": "user", "content": tool_results})
+
+        else:
+            # Max iterations reached
+            final_response = "I apologize, but I've reached the maximum number of tool calls. Please try a simpler query."
+
+        # Save to conversation history
+        await save_conversation({
+            "session_id": session_id,
+            "user_message": query,
+            "ai_response": final_response,
+            "context": {"tools_used": tools_used, "agentic": True}
+        })
+
+        return {
+            "success": True,
+            "data": {
+                "analysis": final_response,
+                "query": query,
+                "session_id": session_id,
+                "tools_used": tools_used,
+                "agentic": True
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except anthropic.APIError as e:
+        raise HTTPException(status_code=500, detail=f"Claude API error: {str(e)}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
 # GEXIS TRADE EXECUTION ASSISTANT
 # =============================================================================
 
