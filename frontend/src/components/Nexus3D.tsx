@@ -280,13 +280,18 @@ function CameraController({
   useFrame(() => {
     if (zoomTarget && controlsRef.current) {
       const currentTarget = controlsRef.current.target
-      currentTarget.lerp(zoomTarget, 0.05)
+      currentTarget.lerp(zoomTarget, 0.03)
+
+      // Calculate desired camera position - offset from target for good viewing angle
       const distance = camera.position.distanceTo(zoomTarget)
-      if (distance > 6) {
-        camera.position.lerp(
-          zoomTarget.clone().add(new THREE.Vector3(0, 2, 6)),
-          0.03
-        )
+      const targetDistance = 8 // How close to get to the target
+
+      if (distance > targetDistance) {
+        // Calculate offset direction from target to camera
+        const cameraOffset = new THREE.Vector3(3, 4, 8)
+        const desiredPosition = zoomTarget.clone().add(cameraOffset)
+
+        camera.position.lerp(desiredPosition, 0.025)
       }
     }
   })
@@ -2338,7 +2343,7 @@ function SunFlareEffect({ flareType, color, paused }: { flareType: FlareType, co
           const angle = (i / rayCount) * Math.PI * 2
           return (
             <mesh key={i} rotation={[0, 0, angle]} position={[0, 0, 0]}>
-              <planeGeometry args={[0.08, 1.5]} />
+              <planeGeometry args={[0.15, 3]} />
               <meshBasicMaterial color={color} transparent opacity={0.4} side={THREE.DoubleSide} />
             </mesh>
           )
@@ -2369,7 +2374,7 @@ function SunFlareEffect({ flareType, color, paused }: { flareType: FlareType, co
       <group ref={ringsRef}>
         {rings.map((_, i) => (
           <mesh key={i} rotation={[Math.PI / 2, 0, 0]}>
-            <torusGeometry args={[0.8, 0.02, 8, 32]} />
+            <torusGeometry args={[1.5, 0.04, 8, 32]} />
             <meshBasicMaterial color={color} transparent opacity={0.5} />
           </mesh>
         ))}
@@ -2392,8 +2397,8 @@ function SunFlareEffect({ flareType, color, paused }: { flareType: FlareType, co
       const points: [number, number, number][] = []
       for (let i = 0; i < 50; i++) {
         const angle = (i / 50) * Math.PI * 4
-        const r = 0.5 + (i / 50) * 0.8
-        const y = (i / 50) * 0.5 - 0.25
+        const r = 0.8 + (i / 50) * 1.5
+        const y = (i / 50) * 1 - 0.5
         points.push([Math.cos(angle) * r, y, Math.sin(angle) * r])
       }
       return points
@@ -2413,7 +2418,7 @@ function SunFlareEffect({ flareType, color, paused }: { flareType: FlareType, co
         {[0, 1, 2].map(i => {
           const angle = (i / 3) * Math.PI * 2
           return (
-            <Sphere key={i} args={[0.08, 8, 8]} position={[Math.cos(angle) * 0.8, 0, Math.sin(angle) * 0.8]}>
+            <Sphere key={i} args={[0.15, 8, 8]} position={[Math.cos(angle) * 1.5, 0, Math.sin(angle) * 1.5]}>
               <meshBasicMaterial color="#ffffff" />
             </Sphere>
           )
@@ -2459,10 +2464,10 @@ function SunFlareEffect({ flareType, color, paused }: { flareType: FlareType, co
           return (
             <group key={i} rotation={[0, 0, angle - Math.PI / 2]}>
               <mesh>
-                <coneGeometry args={[0.15, 0.6, 6]} />
+                <coneGeometry args={[0.3, 1.2, 6]} />
                 <meshBasicMaterial color={color} transparent opacity={0.7} />
               </mesh>
-              <Sphere args={[0.1, 8, 8]} position={[0, 0.4, 0]}>
+              <Sphere args={[0.18, 8, 8]} position={[0, 0.8, 0]}>
                 <meshBasicMaterial color="#ffffff" transparent opacity={0.8} />
               </Sphere>
             </group>
@@ -2479,8 +2484,8 @@ function SunFlareEffect({ flareType, color, paused }: { flareType: FlareType, co
       const n: [number, number, number][] = []
       for (let i = 0; i < 8; i++) {
         const angle = (i / 8) * Math.PI * 2
-        const r = 0.8 + Math.random() * 0.4
-        n.push([Math.cos(angle) * r, (Math.random() - 0.5) * 0.6, Math.sin(angle) * r])
+        const r = 1.5 + Math.random() * 0.8
+        n.push([Math.cos(angle) * r, (Math.random() - 0.5) * 1.2, Math.sin(angle) * r])
       }
       return n
     }, [])
@@ -2523,10 +2528,10 @@ function SunFlareEffect({ flareType, color, paused }: { flareType: FlareType, co
         {/* Network nodes */}
         {nodes.map((pos, i) => (
           <group key={i} position={pos}>
-            <Sphere args={[0.06, 8, 8]}>
+            <Sphere args={[0.12, 8, 8]}>
               <meshBasicMaterial color={color} />
             </Sphere>
-            <Sphere args={[0.1, 8, 8]}>
+            <Sphere args={[0.2, 8, 8]}>
               <meshBasicMaterial color={color} transparent opacity={0.3} />
             </Sphere>
           </group>
@@ -2806,11 +2811,13 @@ function PlanetEffectComponent({ effect, color, size, paused }: { effect: Planet
 function SolarSystem({
   system,
   paused = false,
-  onPulseToSystem
+  onPulseToSystem,
+  onSystemClick
 }: {
   system: typeof SOLAR_SYSTEMS[0]
   paused?: boolean
   onPulseToSystem?: (targetId: string) => void
+  onSystemClick?: (systemId: string, position: [number, number, number]) => void
 }) {
   const groupRef = useRef<THREE.Group>(null)
   const sunRef = useRef<THREE.Mesh>(null)
@@ -2818,6 +2825,13 @@ function SolarSystem({
   const ringsRef = useRef<THREE.Group>(null)
   const [isHovered, setIsHovered] = useState(false)
   const [pulseIntensity, setPulseIntensity] = useState(0)
+
+  // Handle click to navigate to this system
+  const handleClick = useCallback(() => {
+    if (onSystemClick) {
+      onSystemClick(system.id, system.position)
+    }
+  }, [onSystemClick, system.id, system.position])
 
   // Pulse effect when receiving signal
   const triggerPulse = useCallback(() => {
@@ -2877,25 +2891,31 @@ function SolarSystem({
       position={system.position}
       onPointerOver={() => setIsHovered(true)}
       onPointerOut={() => setIsHovered(false)}
+      onClick={handleClick}
     >
       {/* Outer glow halo */}
-      <Sphere ref={glowRef} args={[0.8, 32, 32]}>
-        <meshBasicMaterial color={system.glowColor} transparent opacity={0.3} />
+      <Sphere ref={glowRef} args={[1.8, 32, 32]}>
+        <meshBasicMaterial color={system.glowColor} transparent opacity={0.25} />
+      </Sphere>
+
+      {/* Secondary glow */}
+      <Sphere args={[1.2, 32, 32]}>
+        <meshBasicMaterial color={system.glowColor} transparent opacity={0.15} />
       </Sphere>
 
       {/* Central sun with distortion */}
-      <Sphere ref={sunRef} args={[0.35, 32, 32]}>
+      <Sphere ref={sunRef} args={[0.7, 32, 32]}>
         <MeshDistortMaterial
           color={system.sunColor}
           emissive={system.sunColor}
-          emissiveIntensity={isHovered ? 2 : 1.2}
-          distort={0.3}
+          emissiveIntensity={isHovered ? 2.5 : 1.5}
+          distort={0.35}
           speed={3}
         />
       </Sphere>
 
       {/* Sun core (bright center) */}
-      <Sphere args={[0.15, 16, 16]}>
+      <Sphere args={[0.3, 16, 16]}>
         <meshBasicMaterial color="#ffffff" />
       </Sphere>
 
@@ -3259,7 +3279,13 @@ function SynapsePulse({ pulse }: {
 // ALL SOLAR SYSTEMS CONTAINER
 // =============================================================================
 
-function SolarSystemsContainer({ paused }: { paused: boolean }) {
+function SolarSystemsContainer({
+  paused,
+  onSystemClick
+}: {
+  paused: boolean
+  onSystemClick?: (systemId: string, position: [number, number, number]) => void
+}) {
   const handlePulseToSystem = useCallback((targetId: string) => {
     // This could trigger effects on the target system
     // For now, the neural synapse pulses handle the visual effect
@@ -3273,6 +3299,7 @@ function SolarSystemsContainer({ paused }: { paused: boolean }) {
           system={system}
           paused={paused}
           onPulseToSystem={handlePulseToSystem}
+          onSystemClick={onSystemClick}
         />
       ))}
       <NeuralSynapsePulses paused={paused} />
@@ -5242,6 +5269,12 @@ function Scene({
     }
   }, [setZoomTarget])
 
+  // Handler for clicking on solar systems - fly camera to that system
+  const handleSolarSystemClick = useCallback((systemId: string, position: [number, number, number]) => {
+    const target = new THREE.Vector3(position[0], position[1], position[2])
+    setZoomTarget(target)
+  }, [setZoomTarget])
+
   return (
     <>
       {/* Camera Controller */}
@@ -5342,7 +5375,7 @@ function Scene({
       <NebulaStorm vixValue={vixValue} paused={paused} />
 
       {/* Solar Systems with Neural Synapse Connections */}
-      <SolarSystemsContainer paused={paused} />
+      <SolarSystemsContainer paused={paused} onSystemClick={handleSolarSystemClick} />
 
       {/* WOW FACTOR FEATURES */}
       {/* VIX Storm Mode - chaos when VIX > 25 */}
@@ -5377,14 +5410,14 @@ function Scene({
       {/* Camera controls */}
       <OrbitControls
         ref={controlsRef}
-        enablePan={false}
+        enablePan={true}
         enableZoom={true}
-        minDistance={4}
-        maxDistance={30}
+        minDistance={2}
+        maxDistance={80}
         autoRotate={!paused}
         autoRotateSpeed={0.25}
-        maxPolarAngle={Math.PI * 0.9}
-        minPolarAngle={Math.PI * 0.1}
+        maxPolarAngle={Math.PI * 0.95}
+        minPolarAngle={Math.PI * 0.05}
       />
     </>
   )
@@ -5547,6 +5580,76 @@ function ControlPanel({
 }
 
 // =============================================================================
+// SOLAR SYSTEM NAVIGATOR - Quick travel buttons to each solar system
+// =============================================================================
+
+function SolarSystemNavigator({
+  onNavigate,
+  currentSystem
+}: {
+  onNavigate: (systemId: string, position: [number, number, number]) => void
+  currentSystem: string | null
+}) {
+  const [expanded, setExpanded] = useState(true)
+
+  return (
+    <div className="absolute bottom-4 left-4 z-10">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-10 h-10 bg-black/70 border border-purple-500/30 rounded-lg flex items-center justify-center text-purple-400 hover:bg-purple-500/20 transition-colors backdrop-blur mb-2"
+        title="Solar System Navigator"
+      >
+        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      </button>
+
+      {expanded && (
+        <div className="bg-black/80 border border-purple-500/30 rounded-lg p-3 backdrop-blur min-w-[180px]">
+          <h3 className="text-purple-400 font-bold mb-3 text-xs tracking-wider flex items-center gap-2">
+            <span className="text-lg">🚀</span> SOLAR SYSTEMS
+          </h3>
+
+          <div className="space-y-1.5">
+            {SOLAR_SYSTEMS.map(system => (
+              <button
+                key={system.id}
+                onClick={() => onNavigate(system.id, system.position)}
+                className={`w-full py-2 px-3 rounded text-xs font-medium transition-all flex items-center gap-2 ${
+                  currentSystem === system.id
+                    ? 'bg-gradient-to-r from-purple-500/40 to-cyan-500/40 text-white border border-purple-500/50'
+                    : 'bg-gray-800/50 text-gray-300 hover:bg-gray-700/50 border border-transparent'
+                }`}
+              >
+                <span
+                  className="w-3 h-3 rounded-full"
+                  style={{ backgroundColor: system.sunColor, boxShadow: `0 0 8px ${system.glowColor}` }}
+                />
+                <span className="flex-1 text-left">{system.name}</span>
+                <span className="text-gray-500 text-[10px]">{system.subtitle}</span>
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-3 pt-2 border-t border-purple-500/20">
+            <button
+              onClick={() => onNavigate('home', [0, 0, 0])}
+              className="w-full py-1.5 rounded text-xs font-medium bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30 transition-colors"
+            >
+              🏠 Return to Center
+            </button>
+          </div>
+
+          <div className="mt-2 text-[10px] text-gray-500">
+            Click on any solar system to fly there
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// =============================================================================
 // PAUSE INDICATOR
 // =============================================================================
 
@@ -5592,7 +5695,15 @@ export default function Nexus3D({
   const [konamiActive, setKonamiActive] = useState(false)
   const [shakeActive, setShakeActive] = useState(false)
   const [zoomTarget, setZoomTarget] = useState<THREE.Vector3 | null>(null)
+  const [currentSystem, setCurrentSystem] = useState<string | null>(null)
   const holdTimer = useRef<NodeJS.Timeout | null>(null)
+
+  // Handler to navigate to a solar system
+  const handleNavigateToSystem = useCallback((systemId: string, position: [number, number, number]) => {
+    const target = new THREE.Vector3(position[0], position[1], position[2])
+    setZoomTarget(target)
+    setCurrentSystem(systemId === 'home' ? null : systemId)
+  }, [])
 
   // Fetch real-time stock prices
   const { prices: stockPrices, isLive: stockPricesLive } = useStockPrices()
@@ -5721,6 +5832,12 @@ export default function Nexus3D({
 
         {/* Pause Indicator */}
         <PauseIndicator paused={paused} />
+
+        {/* Solar System Navigator */}
+        <SolarSystemNavigator
+          onNavigate={handleNavigateToSystem}
+          currentSystem={currentSystem}
+        />
 
         {/* 3D Canvas */}
         <Canvas
