@@ -1040,6 +1040,11 @@ export default function FloatingChatbot() {
             autoCorrect="off"
             autoCapitalize="sentences"
             spellCheck="true"
+            inputMode="text"
+            enterKeyHint="send"
+            data-gramm="false"
+            data-gramm_editor="false"
+            data-enable-grammarly="false"
           />
           <button
             onClick={handleSend}
