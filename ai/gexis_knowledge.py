@@ -274,20 +274,58 @@ Key Files:
 
 === FRONTEND ARCHITECTURE ===
 
-Pages:
-- /dashboard - Main dashboard
-- /ares - ARES trading dashboard (SPX/SPY split view)
-- /athena - ATHENA directional trading
-- /gex-analysis - GEX analysis page
-- /gamma - Gamma intelligence
-- /ai-copilot - GEXIS chat interface
-- /scanner - Options scanner
-- /psychology - Psychology traps
+Pages by Category:
+
+MAIN:
+- /dashboard - Main dashboard with system overview
+- /daily-manna - Daily market insights and trading guidance
+- /nexus - NEXUS Neural Network visualization (3D interactive)
+
+ANALYSIS:
+- /gex - GEX Analysis multi-ticker view
+- /gex/history - Historical GEX data and trends
+- /argus - ARGUS 0DTE Gamma real-time visualization
+
+TRADING:
+- /apollo - APOLLO ML-powered options scanner
+
+AI & TESTING:
+- /zero-dte-backtest - KRONOS 0DTE Condor backtester
+- /oracle - ORACLE AI Trading Advisor
+- /solomon - SOLOMON Feedback Loop and learning system
+
+LIVE TRADING:
+- /ares - ARES Iron Condor dashboard (SPX live/SPY sandbox)
+- /athena - ATHENA Directional Spreads dashboard
+
+VOLATILITY:
+- /vix - VIX Dashboard with term structure
+- /volatility-comparison - IV vs HV comparison
+- /alerts - Trading alerts management
+
+BETA FEATURES:
+- /prometheus - PROMETHEUS ML prediction system
+- /trader - PHOENIX SPY 0DTE trading
+- /wheel - HERMES Manual Wheel strategy
+- /spx-wheel - ATLAS SPX Wheel automation
+- /spx - SPX Institutional flow analysis
+
+SYSTEM:
+- /gexis-commands - GEXIS command reference
+- /settings/system - System configuration
+- /settings/notifications - Alert preferences
+- /database - Database admin panel
+- /logs - Decision logs and audit trail
+- /data-transparency - Data source transparency
+- /system/processes - Background process monitoring
+- /feature-docs - Feature documentation
 
 Components:
-- FloatingChatbot.tsx - GEXIS chat widget (always visible)
-- Navigation.tsx - Sidebar navigation
+- FloatingChatbot.tsx - GEXIS chat widget (always visible, supports markdown)
+- Nexus3D.tsx - 3D neural network visualization
+- Navigation.tsx - Sidebar navigation with market status
 - DecisionLogViewer.tsx - Trade decision audit trail
+- EquityCurveChart.tsx - Live equity tracking
 """
 
 # =============================================================================
