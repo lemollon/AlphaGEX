@@ -230,6 +230,22 @@ export const apiClient = {
     market_data?: any
   }) => api.post('/api/ai/gexis/analyze-with-context', data),
 
+  // GEXIS Agentic Chat - AI with tool use capabilities
+  gexisAgenticChat: (data: {
+    query: string
+    session_id: string
+    market_data?: any
+  }) => api.post('/api/ai/gexis/agentic-chat', data),
+
+  // GEXIS Bot Action Confirmation
+  gexisConfirmAction: (data: {
+    session_id: string
+    confirm: boolean
+  }) => api.post('/api/ai/gexis/confirm-action', data),
+
+  // GEXIS Streaming Agentic Chat - Returns EventSource URL
+  getGexisStreamUrl: () => `${API_URL}/api/ai/gexis/agentic-chat/stream`,
+
   gexisCommand: (command: string) =>
     api.post('/api/ai/gexis/command', { command }),
 
