@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useMemo, useState, useEffect, Suspense, Component, ReactNode, useCallback } from 'react'
+import { useRef, useMemo, useState, useEffect, Suspense, Component, ReactNode, useCallback, createContext } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import {
   OrbitControls,
@@ -2759,6 +2759,836 @@ function SolarSystemsContainer({ paused }: { paused: boolean }) {
 }
 
 // =============================================================================
+// VIX STORM MODE - Chaos when VIX > 25
+// =============================================================================
+
+function VixStormMode({ vixValue = 15, paused }: { vixValue: number, paused: boolean }) {
+  const isStormActive = vixValue > 25
+  const stormIntensity = Math.min((vixValue - 25) / 25, 1) // 0-1 scale above 25
+
+  if (!isStormActive) return null
+
+  return (
+    <group>
+      <StormLightning intensity={stormIntensity} paused={paused} />
+      <StormClouds intensity={stormIntensity} paused={paused} />
+      <WarningPulse intensity={stormIntensity} />
+    </group>
+  )
+}
+
+function StormLightning({ intensity, paused }: { intensity: number, paused: boolean }) {
+  const [bolts, setBolts] = useState<Array<{
+    id: number
+    start: THREE.Vector3
+    end: THREE.Vector3
+    startTime: number
+  }>>([])
+  const nextId = useRef(0)
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    // More frequent lightning with higher intensity
+    if (Math.random() < 0.02 * (1 + intensity * 3)) {
+      const systems = SOLAR_SYSTEMS
+      const s1 = systems[Math.floor(Math.random() * systems.length)]
+      const s2 = systems[Math.floor(Math.random() * systems.length)]
+
+      if (s1.id !== s2.id) {
+        setBolts(prev => [...prev, {
+          id: nextId.current++,
+          start: new THREE.Vector3(...s1.position),
+          end: new THREE.Vector3(...s2.position),
+          startTime: t
+        }])
+      }
+    }
+
+    // Clean up old bolts
+    setBolts(prev => prev.filter(b => t - b.startTime < 0.3))
+  })
+
+  return (
+    <group>
+      {bolts.map(bolt => (
+        <LightningBolt key={bolt.id} start={bolt.start} end={bolt.end} color="#ef4444" />
+      ))}
+    </group>
+  )
+}
+
+function LightningBolt({ start, end, color }: { start: THREE.Vector3, end: THREE.Vector3, color: string }) {
+  const points = useMemo(() => {
+    const pts: [number, number, number][] = [[start.x, start.y, start.z]]
+    const segments = 8
+    for (let i = 1; i < segments; i++) {
+      const t = i / segments
+      const p = start.clone().lerp(end, t)
+      // Add jagged offsets
+      p.x += (Math.random() - 0.5) * 2
+      p.y += (Math.random() - 0.5) * 2
+      p.z += (Math.random() - 0.5) * 2
+      pts.push([p.x, p.y, p.z])
+    }
+    pts.push([end.x, end.y, end.z])
+    return pts
+  }, [start, end])
+
+  return (
+    <>
+      <Line points={points} color={color} lineWidth={3} transparent opacity={0.9} />
+      <Line points={points} color="#ffffff" lineWidth={1} transparent opacity={1} />
+    </>
+  )
+}
+
+function StormClouds({ intensity, paused }: { intensity: number, paused: boolean }) {
+  const cloud1Ref = useRef<THREE.Mesh>(null)
+  const cloud2Ref = useRef<THREE.Mesh>(null)
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+    const speed = 1 + intensity * 2
+
+    if (cloud1Ref.current) {
+      cloud1Ref.current.rotation.y = t * 0.1 * speed
+      cloud1Ref.current.rotation.x = Math.sin(t * 0.5) * 0.2
+    }
+    if (cloud2Ref.current) {
+      cloud2Ref.current.rotation.y = -t * 0.08 * speed
+      cloud2Ref.current.rotation.z = Math.cos(t * 0.4) * 0.15
+    }
+  })
+
+  return (
+    <group>
+      <Sphere ref={cloud1Ref} args={[25, 16, 16]} position={[0, 10, -20]}>
+        <MeshDistortMaterial
+          color="#7f1d1d"
+          transparent
+          opacity={0.15 * intensity}
+          distort={0.5}
+          speed={3}
+        />
+      </Sphere>
+      <Sphere ref={cloud2Ref} args={[30, 16, 16]} position={[0, -8, -25]}>
+        <MeshDistortMaterial
+          color="#991b1b"
+          transparent
+          opacity={0.12 * intensity}
+          distort={0.4}
+          speed={2.5}
+        />
+      </Sphere>
+    </group>
+  )
+}
+
+function WarningPulse({ intensity }: { intensity: number }) {
+  const meshRef = useRef<THREE.Mesh>(null)
+
+  useFrame((state) => {
+    if (meshRef.current) {
+      const pulse = Math.sin(state.clock.elapsedTime * 4) * 0.5 + 0.5
+      ;(meshRef.current.material as THREE.MeshBasicMaterial).opacity = 0.05 + pulse * 0.1 * intensity
+    }
+  })
+
+  return (
+    <mesh ref={meshRef}>
+      <sphereGeometry args={[50, 16, 16]} />
+      <meshBasicMaterial color="#ef4444" transparent opacity={0.1} side={THREE.BackSide} />
+    </mesh>
+  )
+}
+
+// =============================================================================
+// MARKET HOURS LIGHTING - Different ambiance based on market state
+// =============================================================================
+
+function MarketHoursLighting({ paused }: { paused?: boolean }) {
+  const [marketState, setMarketState] = useState<'premarket' | 'open' | 'afterhours' | 'closed'>('open')
+  const lightRef = useRef<THREE.PointLight>(null)
+
+  useEffect(() => {
+    const checkMarketHours = () => {
+      const now = new Date()
+      const hour = now.getUTCHours() - 5 // EST
+      const day = now.getUTCDay()
+
+      if (day === 0 || day === 6) {
+        setMarketState('closed')
+      } else if (hour >= 4 && hour < 9.5) {
+        setMarketState('premarket')
+      } else if (hour >= 9.5 && hour < 16) {
+        setMarketState('open')
+      } else if (hour >= 16 && hour < 20) {
+        setMarketState('afterhours')
+      } else {
+        setMarketState('closed')
+      }
+    }
+
+    checkMarketHours()
+    const interval = setInterval(checkMarketHours, 60000)
+    return () => clearInterval(interval)
+  }, [])
+
+  const lightConfig = {
+    premarket: { color: '#f97316', intensity: 0.5, ambient: 0.08 },  // Orange dawn
+    open: { color: '#22d3ee', intensity: 1.2, ambient: 0.12 },       // Bright cyan
+    afterhours: { color: '#a855f7', intensity: 0.7, ambient: 0.1 },  // Purple twilight
+    closed: { color: '#1e3a8a', intensity: 0.3, ambient: 0.05 },     // Dark blue night
+  }
+
+  const config = lightConfig[marketState]
+
+  useFrame((state) => {
+    if (paused || !lightRef.current) return
+    // Gentle flicker
+    lightRef.current.intensity = config.intensity + Math.sin(state.clock.elapsedTime * 2) * 0.1
+  })
+
+  return (
+    <>
+      <ambientLight intensity={config.ambient} />
+      <pointLight ref={lightRef} position={[0, 15, 0]} color={config.color} intensity={config.intensity} />
+      {marketState !== 'open' && (
+        <Html position={[0, 8, 0]} center>
+          <div className={`px-2 py-1 rounded text-xs font-bold ${
+            marketState === 'premarket' ? 'bg-orange-500/20 text-orange-400' :
+            marketState === 'afterhours' ? 'bg-purple-500/20 text-purple-400' :
+            'bg-blue-900/40 text-blue-400'
+          }`}>
+            {marketState === 'premarket' ? '🌅 PRE-MARKET' :
+             marketState === 'afterhours' ? '🌆 AFTER-HOURS' :
+             '🌙 MARKET CLOSED'}
+          </div>
+        </Html>
+      )}
+    </>
+  )
+}
+
+// =============================================================================
+// 3D FLOATING CHARTS - Holographic candlestick display
+// =============================================================================
+
+function FloatingCandleChart({ paused }: { paused?: boolean }) {
+  const groupRef = useRef<THREE.Group>(null)
+
+  // Generate random candle data
+  const candles = useMemo(() => {
+    const data = []
+    let price = 585
+    for (let i = 0; i < 20; i++) {
+      const open = price
+      const change = (Math.random() - 0.5) * 5
+      const close = open + change
+      const high = Math.max(open, close) + Math.random() * 2
+      const low = Math.min(open, close) - Math.random() * 2
+      data.push({ open, close, high, low, isGreen: close > open })
+      price = close
+    }
+    return data
+  }, [])
+
+  useFrame((state) => {
+    if (paused || !groupRef.current) return
+    groupRef.current.rotation.y = Math.sin(state.clock.elapsedTime * 0.2) * 0.3
+    groupRef.current.position.y = 5 + Math.sin(state.clock.elapsedTime * 0.5) * 0.5
+  })
+
+  const baseY = 580 // Base price for positioning
+
+  return (
+    <group ref={groupRef} position={[-8, 5, -6]}>
+      {/* Chart background */}
+      <mesh position={[2, 0, -0.1]}>
+        <planeGeometry args={[6, 3]} />
+        <meshBasicMaterial color="#0f172a" transparent opacity={0.7} />
+      </mesh>
+
+      {/* Candles */}
+      {candles.map((candle, i) => {
+        const x = i * 0.25 - 2
+        const bodyHeight = Math.abs(candle.close - candle.open) * 0.3
+        const bodyY = ((candle.open + candle.close) / 2 - baseY) * 0.3
+        const wickHeight = (candle.high - candle.low) * 0.3
+        const wickY = ((candle.high + candle.low) / 2 - baseY) * 0.3
+
+        return (
+          <group key={i} position={[x, 0, 0]}>
+            {/* Wick */}
+            <mesh position={[0, wickY, 0]}>
+              <boxGeometry args={[0.02, wickHeight, 0.02]} />
+              <meshBasicMaterial color={candle.isGreen ? '#22c55e' : '#ef4444'} />
+            </mesh>
+            {/* Body */}
+            <mesh position={[0, bodyY, 0]}>
+              <boxGeometry args={[0.12, Math.max(bodyHeight, 0.05), 0.08]} />
+              <meshBasicMaterial color={candle.isGreen ? '#22c55e' : '#ef4444'} />
+            </mesh>
+          </group>
+        )
+      })}
+
+      {/* Chart label */}
+      <Html position={[2, 1.8, 0]} center>
+        <div className="text-cyan-400 text-xs font-bold bg-black/50 px-2 py-0.5 rounded">
+          SPY 1-MIN
+        </div>
+      </Html>
+    </group>
+  )
+}
+
+// =============================================================================
+// METEOR SHOWER EVENT - Intense asteroid bombardment
+// =============================================================================
+
+function MeteorShower({ active, intensity = 1 }: { active: boolean, intensity?: number }) {
+  const [meteors, setMeteors] = useState<Array<{
+    id: number
+    position: THREE.Vector3
+    velocity: THREE.Vector3
+    size: number
+    startTime: number
+  }>>([])
+  const nextId = useRef(0)
+
+  useFrame((state) => {
+    if (!active) return
+    const t = state.clock.elapsedTime
+
+    // Spawn meteors rapidly
+    if (Math.random() < 0.15 * intensity) {
+      const angle = Math.random() * Math.PI * 2
+      const radius = 25
+      setMeteors(prev => [...prev, {
+        id: nextId.current++,
+        position: new THREE.Vector3(
+          Math.cos(angle) * radius,
+          10 + Math.random() * 10,
+          Math.sin(angle) * radius
+        ),
+        velocity: new THREE.Vector3(
+          -Math.cos(angle) * 8,
+          -3 - Math.random() * 2,
+          -Math.sin(angle) * 8
+        ),
+        size: 0.1 + Math.random() * 0.3,
+        startTime: t
+      }])
+    }
+
+    // Clean up old meteors
+    setMeteors(prev => prev.filter(m => t - m.startTime < 3))
+  })
+
+  if (!active) return null
+
+  return (
+    <group>
+      {meteors.map(meteor => (
+        <Meteor key={meteor.id} meteor={meteor} />
+      ))}
+    </group>
+  )
+}
+
+function Meteor({ meteor }: { meteor: { position: THREE.Vector3, velocity: THREE.Vector3, size: number, startTime: number } }) {
+  const groupRef = useRef<THREE.Group>(null)
+  const trailRef = useRef<any>(null)
+
+  useFrame((state) => {
+    if (!groupRef.current) return
+    const elapsed = state.clock.elapsedTime - meteor.startTime
+
+    groupRef.current.position.set(
+      meteor.position.x + meteor.velocity.x * elapsed,
+      meteor.position.y + meteor.velocity.y * elapsed,
+      meteor.position.z + meteor.velocity.z * elapsed
+    )
+
+    if (trailRef.current) {
+      trailRef.current.material.opacity = Math.max(0, 1 - elapsed / 3)
+    }
+  })
+
+  return (
+    <group ref={groupRef}>
+      <mesh>
+        <dodecahedronGeometry args={[meteor.size, 0]} />
+        <meshBasicMaterial color="#f97316" />
+      </mesh>
+      {/* Trail */}
+      <mesh ref={trailRef} position={[meteor.size * 2, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+        <coneGeometry args={[meteor.size * 0.5, meteor.size * 4, 8]} />
+        <meshBasicMaterial color="#fbbf24" transparent opacity={0.6} />
+      </mesh>
+    </group>
+  )
+}
+
+// =============================================================================
+// GRAVITATIONAL LENSING - Black hole warps nearby objects
+// =============================================================================
+
+function GravitationalLensing({ position, strength = 1, paused }: { position: [number, number, number], strength?: number, paused: boolean }) {
+  const lensRef = useRef<THREE.Mesh>(null)
+  const distortRef = useRef<THREE.Mesh>(null)
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    if (lensRef.current) {
+      lensRef.current.rotation.z = t * 0.5
+      const pulse = 1 + Math.sin(t * 2) * 0.1
+      lensRef.current.scale.setScalar(pulse)
+    }
+
+    if (distortRef.current) {
+      distortRef.current.rotation.y = t * 0.3
+      distortRef.current.rotation.x = t * 0.2
+    }
+  })
+
+  return (
+    <group position={position}>
+      {/* Accretion disk */}
+      <mesh ref={lensRef} rotation={[Math.PI / 2.5, 0, 0]}>
+        <torusGeometry args={[2, 0.5, 16, 64]} />
+        <meshBasicMaterial color="#a855f7" transparent opacity={0.4} />
+      </mesh>
+
+      {/* Distortion sphere */}
+      <Sphere ref={distortRef} args={[1.5, 32, 32]}>
+        <MeshDistortMaterial
+          color="#1e1b4b"
+          emissive="#4c1d95"
+          emissiveIntensity={0.5}
+          distort={0.6}
+          speed={4}
+          transparent
+          opacity={0.8}
+        />
+      </Sphere>
+
+      {/* Event horizon */}
+      <Sphere args={[0.8, 32, 32]}>
+        <meshBasicMaterial color="#000000" />
+      </Sphere>
+
+      {/* Light bending ring */}
+      <mesh rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[1.2, 0.05, 16, 64]} />
+        <meshBasicMaterial color="#f59e0b" transparent opacity={0.8} />
+      </mesh>
+    </group>
+  )
+}
+
+// =============================================================================
+// TIME WARP CONTROLS - Speed up/slow down animations
+// =============================================================================
+
+const TimeWarpContext = createContext<{ timeScale: number, setTimeScale: (s: number) => void }>({
+  timeScale: 1,
+  setTimeScale: () => {}
+})
+
+function TimeWarpController({ children, timeScale }: { children: React.ReactNode, timeScale: number }) {
+  // This wraps the scene and affects animation speeds
+  return <>{children}</>
+}
+
+// =============================================================================
+// ACHIEVEMENT SYSTEM - Floating trophies and badges
+// =============================================================================
+
+const ACHIEVEMENTS = [
+  { id: 'first_trade', name: 'First Trade', icon: '🎯', color: '#22c55e' },
+  { id: 'win_streak_5', name: '5 Win Streak', icon: '🔥', color: '#f97316' },
+  { id: 'profit_1k', name: '$1K Profit', icon: '💰', color: '#fbbf24' },
+  { id: 'profit_10k', name: '$10K Profit', icon: '💎', color: '#06b6d4' },
+  { id: 'iron_hands', name: 'Iron Hands', icon: '🦾', color: '#a855f7' },
+]
+
+function AchievementDisplay({ achievements = [] }: { achievements?: string[] }) {
+  const groupRef = useRef<THREE.Group>(null)
+
+  useFrame((state) => {
+    if (groupRef.current) {
+      groupRef.current.rotation.y = state.clock.elapsedTime * 0.1
+    }
+  })
+
+  const earnedAchievements = ACHIEVEMENTS.filter(a => achievements.includes(a.id))
+
+  if (earnedAchievements.length === 0) return null
+
+  return (
+    <group ref={groupRef} position={[0, -5, 0]}>
+      {earnedAchievements.map((achievement, i) => {
+        const angle = (i / earnedAchievements.length) * Math.PI * 2
+        const radius = 6
+        const x = Math.cos(angle) * radius
+        const z = Math.sin(angle) * radius
+
+        return (
+          <group key={achievement.id} position={[x, 0, z]}>
+            <Html center>
+              <div
+                className="text-2xl p-2 rounded-full animate-bounce"
+                style={{ backgroundColor: `${achievement.color}33`, boxShadow: `0 0 20px ${achievement.color}` }}
+              >
+                {achievement.icon}
+              </div>
+            </Html>
+          </group>
+        )
+      })}
+    </group>
+  )
+}
+
+// =============================================================================
+// TRADE SUPERNOVA - Massive explosion on trade execution
+// =============================================================================
+
+function TradeSupernova({ active, position, type, onComplete }: {
+  active: boolean
+  position: THREE.Vector3
+  type: 'profit' | 'loss'
+  onComplete: () => void
+}) {
+  const groupRef = useRef<THREE.Group>(null)
+  const sphereRef = useRef<THREE.Mesh>(null)
+  const startTime = useRef(0)
+  const [started, setStarted] = useState(false)
+
+  const color = type === 'profit' ? '#22c55e' : '#ef4444'
+  const particleColor = type === 'profit' ? '#fbbf24' : '#7f1d1d'
+
+  useFrame((state) => {
+    if (!active) return
+
+    if (!started) {
+      startTime.current = state.clock.elapsedTime
+      setStarted(true)
+    }
+
+    const elapsed = state.clock.elapsedTime - startTime.current
+
+    if (elapsed > 3) {
+      onComplete()
+      setStarted(false)
+      return
+    }
+
+    if (groupRef.current) {
+      groupRef.current.position.copy(position)
+    }
+
+    if (sphereRef.current) {
+      // Rapid expansion then fade
+      const scale = elapsed < 0.5 ? elapsed * 20 : 10 + (elapsed - 0.5) * 5
+      sphereRef.current.scale.setScalar(scale)
+      ;(sphereRef.current.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 1 - elapsed / 2)
+    }
+  })
+
+  if (!active) return null
+
+  return (
+    <group ref={groupRef}>
+      {/* Expanding sphere */}
+      <Sphere ref={sphereRef} args={[1, 32, 32]}>
+        <meshBasicMaterial color={color} transparent opacity={0.8} />
+      </Sphere>
+
+      {/* Core flash */}
+      <Sphere args={[0.5, 16, 16]}>
+        <meshBasicMaterial color="#ffffff" />
+      </Sphere>
+
+      {/* Particle burst */}
+      <SupernovaParticles color={particleColor} />
+    </group>
+  )
+}
+
+function SupernovaParticles({ color }: { color: string }) {
+  const count = 100
+  const meshRef = useRef<THREE.InstancedMesh>(null)
+  const startTime = useRef(0)
+  const [started, setStarted] = useState(false)
+
+  const particles = useMemo(() => {
+    return Array.from({ length: count }, () => {
+      const theta = Math.random() * Math.PI * 2
+      const phi = Math.acos(2 * Math.random() - 1)
+      const speed = 5 + Math.random() * 10
+      return {
+        direction: new THREE.Vector3(
+          Math.sin(phi) * Math.cos(theta),
+          Math.sin(phi) * Math.sin(theta),
+          Math.cos(phi)
+        ),
+        speed,
+        size: 0.05 + Math.random() * 0.1
+      }
+    })
+  }, [])
+
+  const dummy = useMemo(() => new THREE.Object3D(), [])
+
+  useFrame((state) => {
+    if (!meshRef.current) return
+
+    if (!started) {
+      startTime.current = state.clock.elapsedTime
+      setStarted(true)
+    }
+
+    const elapsed = state.clock.elapsedTime - startTime.current
+
+    particles.forEach((p, i) => {
+      const dist = p.speed * elapsed
+      dummy.position.copy(p.direction).multiplyScalar(dist)
+      dummy.scale.setScalar(p.size * Math.max(0, 1 - elapsed / 3))
+      dummy.updateMatrix()
+      meshRef.current?.setMatrixAt(i, dummy.matrix)
+    })
+    meshRef.current.instanceMatrix.needsUpdate = true
+  })
+
+  return (
+    <instancedMesh ref={meshRef} args={[undefined, undefined, count]}>
+      <sphereGeometry args={[1, 6, 6]} />
+      <meshBasicMaterial color={color} />
+    </instancedMesh>
+  )
+}
+
+// =============================================================================
+// FLY-THROUGH MODE - First person camera flying through scene
+// =============================================================================
+
+function FlyThroughCamera({ active, paused }: { active: boolean, paused: boolean }) {
+  const { camera } = useThree()
+
+  useFrame((state) => {
+    if (!active || paused) return
+
+    // Auto-fly path through the scene
+    const t = state.clock.elapsedTime * 0.2
+    const radius = 12 + Math.sin(t * 0.5) * 5
+    const height = Math.sin(t * 0.3) * 5
+
+    const x = Math.cos(t) * radius
+    const y = height
+    const z = Math.sin(t) * radius
+
+    camera.position.set(x, y, z)
+    camera.lookAt(0, 0, 0)
+  })
+
+  return null
+}
+
+// =============================================================================
+// WORMHOLE TELEPORTER - Click to teleport camera
+// =============================================================================
+
+function WormholeTeleporter({
+  position,
+  targetPosition,
+  onTeleport,
+  label
+}: {
+  position: [number, number, number]
+  targetPosition: [number, number, number]
+  onTeleport: (target: THREE.Vector3) => void
+  label: string
+}) {
+  const groupRef = useRef<THREE.Group>(null)
+  const ringRef = useRef<THREE.Mesh>(null)
+  const [hovered, setHovered] = useState(false)
+
+  useFrame((state) => {
+    if (groupRef.current) {
+      groupRef.current.rotation.z = state.clock.elapsedTime
+    }
+    if (ringRef.current) {
+      ringRef.current.rotation.x = state.clock.elapsedTime * 0.5
+      const scale = hovered ? 1.3 : 1
+      ringRef.current.scale.setScalar(scale)
+    }
+  })
+
+  return (
+    <group
+      ref={groupRef}
+      position={position}
+      onClick={() => onTeleport(new THREE.Vector3(...targetPosition))}
+      onPointerOver={() => setHovered(true)}
+      onPointerOut={() => setHovered(false)}
+    >
+      {/* Outer ring */}
+      <mesh ref={ringRef} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[1, 0.1, 16, 32]} />
+        <meshBasicMaterial color={hovered ? '#22d3ee' : '#6366f1'} />
+      </mesh>
+
+      {/* Inner vortex */}
+      <Sphere args={[0.7, 32, 32]}>
+        <MeshDistortMaterial
+          color="#1e1b4b"
+          emissive="#4f46e5"
+          emissiveIntensity={hovered ? 1.5 : 0.8}
+          distort={0.5}
+          speed={5}
+        />
+      </Sphere>
+
+      {/* Label */}
+      <Html position={[0, 1.5, 0]} center>
+        <div className={`px-2 py-1 rounded text-xs font-bold transition-all ${
+          hovered ? 'bg-cyan-500/40 text-white scale-110' : 'bg-black/50 text-cyan-400'
+        }`}>
+          {label}
+        </div>
+      </Html>
+    </group>
+  )
+}
+
+// =============================================================================
+// SCREEN SHAKE EFFECT - Shakes on impacts
+// =============================================================================
+
+function ScreenShake({ active, intensity = 1 }: { active: boolean, intensity?: number }) {
+  useFrame((state) => {
+    if (!active) {
+      state.camera.position.x = 0
+      state.camera.position.y = 0
+      return
+    }
+
+    const shake = intensity * 0.1
+    state.camera.position.x += (Math.random() - 0.5) * shake
+    state.camera.position.y += (Math.random() - 0.5) * shake
+  })
+
+  return null
+}
+
+// =============================================================================
+// NEWS COMET STREAM - Headlines flying by as comets
+// =============================================================================
+
+const SAMPLE_HEADLINES = [
+  { text: 'Fed Holds Rates Steady', sentiment: 'neutral' },
+  { text: 'NVDA Beats Earnings!', sentiment: 'bullish' },
+  { text: 'Market Rally Continues', sentiment: 'bullish' },
+  { text: 'VIX Spikes on Uncertainty', sentiment: 'bearish' },
+  { text: 'SPY Hits All-Time High', sentiment: 'bullish' },
+  { text: 'Tech Sector Pullback', sentiment: 'bearish' },
+  { text: 'Jobs Report Exceeds', sentiment: 'bullish' },
+  { text: 'Oil Prices Surge', sentiment: 'neutral' },
+]
+
+function NewsCometStream({ paused }: { paused: boolean }) {
+  const [comets, setComets] = useState<Array<{
+    id: number
+    headline: typeof SAMPLE_HEADLINES[0]
+    position: THREE.Vector3
+    startTime: number
+  }>>([])
+  const nextId = useRef(0)
+  const lastSpawn = useRef(0)
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    // Spawn news comet every 20-40 seconds
+    if (t - lastSpawn.current > 20 + Math.random() * 20) {
+      lastSpawn.current = t
+      const headline = SAMPLE_HEADLINES[Math.floor(Math.random() * SAMPLE_HEADLINES.length)]
+
+      setComets(prev => [...prev, {
+        id: nextId.current++,
+        headline,
+        position: new THREE.Vector3(25, 5 + Math.random() * 5, -10 + Math.random() * 5),
+        startTime: t
+      }])
+    }
+
+    // Clean up
+    setComets(prev => prev.filter(c => t - c.startTime < 10))
+  })
+
+  return (
+    <group>
+      {comets.map(comet => (
+        <NewsComet key={comet.id} comet={comet} />
+      ))}
+    </group>
+  )
+}
+
+function NewsComet({ comet }: { comet: { headline: typeof SAMPLE_HEADLINES[0], position: THREE.Vector3, startTime: number } }) {
+  const groupRef = useRef<THREE.Group>(null)
+
+  const color = comet.headline.sentiment === 'bullish' ? '#22c55e' :
+                comet.headline.sentiment === 'bearish' ? '#ef4444' : '#fbbf24'
+
+  useFrame((state) => {
+    if (!groupRef.current) return
+    const elapsed = state.clock.elapsedTime - comet.startTime
+
+    groupRef.current.position.set(
+      comet.position.x - elapsed * 4,
+      comet.position.y + Math.sin(elapsed * 2) * 0.5,
+      comet.position.z
+    )
+  })
+
+  return (
+    <group ref={groupRef}>
+      <Html center>
+        <div
+          className="px-3 py-1.5 rounded-full text-sm font-bold whitespace-nowrap animate-pulse"
+          style={{
+            backgroundColor: `${color}22`,
+            color,
+            boxShadow: `0 0 20px ${color}66`,
+            border: `1px solid ${color}44`
+          }}
+        >
+          {comet.headline.sentiment === 'bullish' ? '📈 ' :
+           comet.headline.sentiment === 'bearish' ? '📉 ' : '📊 '}
+          {comet.headline.text}
+        </div>
+      </Html>
+
+      {/* Trail */}
+      <mesh position={[2, 0, 0]}>
+        <planeGeometry args={[3, 0.1]} />
+        <meshBasicMaterial color={color} transparent opacity={0.3} />
+      </mesh>
+    </group>
+  )
+}
+
+// =============================================================================
 // HIDDEN MESSAGE (Easter Egg)
 // =============================================================================
 
@@ -3991,6 +4821,22 @@ function Scene({
 
       {/* Solar Systems with Neural Synapse Connections */}
       <SolarSystemsContainer paused={paused} />
+
+      {/* WOW FACTOR FEATURES */}
+      {/* VIX Storm Mode - chaos when VIX > 25 */}
+      <VixStormMode vixValue={vixValue} paused={paused} />
+
+      {/* Market Hours Lighting - ambient changes based on market state */}
+      <MarketHoursLighting paused={paused} />
+
+      {/* 3D Floating Charts - holographic candlesticks */}
+      <FloatingCandleChart paused={paused} />
+
+      {/* News Comet Stream - headlines flying by */}
+      <NewsCometStream paused={paused} />
+
+      {/* Gravitational Lensing Black Hole */}
+      <GravitationalLensing position={[15, -5, -18]} paused={paused} />
 
       {/* Bot nodes */}
       {BOT_NODES.map((node) => (
