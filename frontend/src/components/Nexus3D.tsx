@@ -916,45 +916,60 @@ function MarketMoodRing({ gexValue = 0, vixValue = 15 }: { gexValue?: number, vi
 }
 
 // =============================================================================
-// STOCK TICKERS DATA
+// STOCK TICKERS DATA - Real-time prices from market API
 // =============================================================================
 
-// Dynamic stock price simulation - prices fluctuate in real-time
+// Fallback prices when API is unavailable
+const FALLBACK_PRICES = [
+  { symbol: 'SPY', price: 585, change: 0 },
+  { symbol: 'QQQ', price: 505, change: 0 },
+  { symbol: 'AAPL', price: 248, change: 0 },
+  { symbol: 'NVDA', price: 138, change: 0 },
+  { symbol: 'TSLA', price: 425, change: 0 },
+  { symbol: 'AMZN', price: 225, change: 0 },
+  { symbol: 'META', price: 612, change: 0 },
+  { symbol: 'GOOGL', price: 192, change: 0 },
+  { symbol: 'MSFT', price: 435, change: 0 },
+  { symbol: 'AMD', price: 125, change: 0 },
+]
+
+// Real-time stock prices fetched from Tradier via backend API
 const useStockPrices = () => {
-  const [prices, setPrices] = useState(() => [
-    { symbol: 'SPY', price: 585, change: 0 },
-    { symbol: 'QQQ', price: 505, change: 0 },
-    { symbol: 'AAPL', price: 248, change: 0 },
-    { symbol: 'NVDA', price: 138, change: 0 },
-    { symbol: 'TSLA', price: 425, change: 0 },
-    { symbol: 'AMZN', price: 225, change: 0 },
-    { symbol: 'META', price: 612, change: 0 },
-    { symbol: 'GOOGL', price: 192, change: 0 },
-    { symbol: 'MSFT', price: 435, change: 0 },
-    { symbol: 'AMD', price: 125, change: 0 },
-  ])
+  const [prices, setPrices] = useState(FALLBACK_PRICES)
+  const [isLive, setIsLive] = useState(false)
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setPrices(prev => prev.map(stock => {
-        // Random walk with mean reversion
-        const volatility = stock.symbol === 'TSLA' || stock.symbol === 'NVDA' ? 0.003 : 0.001
-        const drift = (Math.random() - 0.5) * 2 * volatility
-        const newPrice = stock.price * (1 + drift)
-        const basePrice = stock.symbol === 'SPY' ? 585 : stock.symbol === 'QQQ' ? 505 :
-          stock.symbol === 'AAPL' ? 248 : stock.symbol === 'NVDA' ? 138 :
-          stock.symbol === 'TSLA' ? 425 : stock.symbol === 'AMZN' ? 225 :
-          stock.symbol === 'META' ? 612 : stock.symbol === 'GOOGL' ? 192 :
-          stock.symbol === 'MSFT' ? 435 : 125
-        const change = ((newPrice - basePrice) / basePrice) * 100
-        return { ...stock, price: newPrice, change }
-      }))
-    }, 2000) // Update every 2 seconds
+    const API_URL = process.env.NEXT_PUBLIC_API_URL || ''
+
+    const fetchPrices = async () => {
+      try {
+        const response = await fetch(`${API_URL}/api/apollo/batch-quotes`)
+        const result = await response.json()
+
+        if (result.success && result.data && result.data.length > 0) {
+          setPrices(result.data.map((q: any) => ({
+            symbol: q.symbol,
+            price: q.price || 0,
+            change: q.change_pct || 0
+          })))
+          setIsLive(true)
+        }
+      } catch (error) {
+        // Keep using fallback/last known prices on error
+        console.log('Stock prices: using fallback data')
+      }
+    }
+
+    // Fetch immediately
+    fetchPrices()
+
+    // Then refresh every 30 seconds (reasonable for visualization, avoids rate limits)
+    const interval = setInterval(fetchPrices, 30000)
 
     return () => clearInterval(interval)
   }, [])
 
-  return prices
+  return { prices, isLive }
 }
 
 const STOCK_TICKERS = [
@@ -1115,7 +1130,7 @@ function AsteroidWithTicker({
   )
 }
 
-function AsteroidField({ paused }: { paused: boolean }) {
+function AsteroidField({ paused, stockPrices }: { paused: boolean, stockPrices: Array<{ symbol: string, price: number, change: number }> }) {
   const [asteroids, setAsteroids] = useState<Array<{
     id: number
     position: THREE.Vector3
@@ -1132,7 +1147,8 @@ function AsteroidField({ paused }: { paused: boolean }) {
     // Spawn asteroid every 45-90 seconds
     if (t - lastSpawn.current > 45 + Math.random() * 45) {
       lastSpawn.current = t
-      const stockData = STOCK_TICKERS[Math.floor(Math.random() * STOCK_TICKERS.length)]
+      // Use real-time stock prices if available
+      const stockData = stockPrices[Math.floor(Math.random() * stockPrices.length)]
       const side = Math.random() > 0.5 ? 1 : -1
 
       setAsteroids(prev => [...prev, {
@@ -1141,8 +1157,8 @@ function AsteroidField({ paused }: { paused: boolean }) {
         velocity: new THREE.Vector3(-side * 3, (Math.random() - 0.5) * 0.5, 0),
         ticker: {
           symbol: stockData.symbol,
-          price: stockData.basePrice * (0.98 + Math.random() * 0.04),
-          change: (Math.random() - 0.5) * 6
+          price: stockData.price,
+          change: stockData.change
         }
       }])
     }
@@ -1612,17 +1628,15 @@ function SupernovaBurst({ active, onComplete }: { active: boolean, onComplete: (
 // HOLOGRAPHIC TICKER TAPE
 // =============================================================================
 
-function HolographicTickerTape({ spotPrice = 585 }: { spotPrice?: number }) {
+function HolographicTickerTape({ stockPrices }: { stockPrices: Array<{ symbol: string, price: number, change: number }> }) {
   const groupRef = useRef<THREE.Group>(null)
 
   const tickers = useMemo(() => {
-    return STOCK_TICKERS.map((stock, i) => ({
+    return stockPrices.map((stock, i) => ({
       ...stock,
-      angle: (i / STOCK_TICKERS.length) * Math.PI * 2,
-      price: stock.basePrice * (0.98 + Math.random() * 0.04),
-      change: (Math.random() - 0.5) * 4
+      angle: (i / stockPrices.length) * Math.PI * 2,
     }))
-  }, [])
+  }, [stockPrices])
 
   useFrame((state) => {
     if (groupRef.current) {
@@ -3834,6 +3848,7 @@ interface SceneProps {
   konamiActive: boolean
   zoomTarget: THREE.Vector3 | null
   setZoomTarget: (t: THREE.Vector3 | null) => void
+  stockPrices: Array<{ symbol: string, price: number, change: number }>
 }
 
 function Scene({
@@ -3856,7 +3871,8 @@ function Scene({
   setCelebrationActive,
   konamiActive,
   zoomTarget,
-  setZoomTarget
+  setZoomTarget,
+  stockPrices
 }: SceneProps) {
   const { mouse3D } = useMousePosition()
   const controlsRef = useRef<any>(null)
@@ -3955,14 +3971,14 @@ function Scene({
       <MarketMoodRing gexValue={gexValue} vixValue={vixValue} />
 
       {/* Cosmic features */}
-      <AsteroidField paused={paused} />
+      <AsteroidField paused={paused} stockPrices={stockPrices} />
       <CometWithTrail paused={paused} />
       <AsteroidBelt performanceMode={performanceMode} />
       <ShootingStars paused={paused} />
       <SolarFlares vixValue={vixValue} paused={paused} />
       <AuroraBorealis paused={paused} />
       <BlackHoleWarp paused={paused} />
-      <HolographicTickerTape spotPrice={spotPrice || 585} />
+      <HolographicTickerTape stockPrices={stockPrices} />
       <RocketLaunches botStatus={botStatus} />
       <SatelliteOrbiters />
       <EnergyShields paused={paused} />
@@ -4210,6 +4226,9 @@ export default function Nexus3D({
   const [zoomTarget, setZoomTarget] = useState<THREE.Vector3 | null>(null)
   const holdTimer = useRef<NodeJS.Timeout | null>(null)
 
+  // Fetch real-time stock prices
+  const { prices: stockPrices, isLive: stockPricesLive } = useStockPrices()
+
   // Update global COLORS when theme changes
   useEffect(() => {
     COLORS = COLOR_THEMES[theme]
@@ -4375,6 +4394,7 @@ export default function Nexus3D({
               konamiActive={konamiActive}
               zoomTarget={zoomTarget}
               setZoomTarget={setZoomTarget}
+              stockPrices={stockPrices}
             />
           </Suspense>
         </Canvas>
@@ -4384,6 +4404,12 @@ export default function Nexus3D({
           <div className="bg-black/70 border border-cyan-500/20 rounded px-2 py-1 text-gray-400">
             Theme: <span style={{ color: COLORS.accent }}>{theme.toUpperCase()}</span>
           </div>
+          {stockPricesLive && (
+            <div className="bg-black/70 border border-green-500/40 rounded px-2 py-1 text-green-400 flex items-center gap-1">
+              <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+              LIVE PRICES
+            </div>
+          )}
           {performanceMode && (
             <div className="bg-black/70 border border-yellow-500/20 rounded px-2 py-1 text-yellow-400">
               ⚡ Performance Mode
