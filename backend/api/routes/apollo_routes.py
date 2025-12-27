@@ -648,6 +648,67 @@ async def get_live_quote(symbol: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/batch-quotes")
+async def get_batch_quotes(symbols: str = "SPY,QQQ,AAPL,NVDA,TSLA,AMZN,META,GOOGL,MSFT,AMD"):
+    """
+    Get live quotes for multiple symbols in a single request.
+
+    Args:
+        symbols: Comma-separated list of stock symbols
+
+    Returns:
+        List of quotes with price and change data
+    """
+    try:
+        from data.tradier_data_fetcher import TradierDataFetcher
+
+        tradier = TradierDataFetcher()
+
+        # Make single API call with all symbols
+        response = tradier._make_request('GET', 'markets/quotes', params={'symbols': symbols.upper()})
+        quotes_data = response.get('quotes', {})
+
+        quotes = []
+        quote_list = quotes_data.get('quote', [])
+
+        # Handle single quote vs multiple
+        if isinstance(quote_list, dict):
+            quote_list = [quote_list]
+
+        for quote in quote_list:
+            if quote:
+                quotes.append({
+                    "symbol": quote.get('symbol'),
+                    "price": quote.get('last') or quote.get('close'),
+                    "change": quote.get('change', 0),
+                    "change_pct": quote.get('change_percentage', 0),
+                    "bid": quote.get('bid'),
+                    "ask": quote.get('ask'),
+                    "volume": quote.get('volume'),
+                    "open": quote.get('open'),
+                    "high": quote.get('high'),
+                    "low": quote.get('low'),
+                })
+
+        return {
+            "success": True,
+            "data": quotes,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get batch quotes: {e}")
+        # Return fallback data if API fails
+        symbol_list = symbols.upper().split(',')
+        fallback = [{"symbol": s.strip(), "price": 0, "change": 0, "change_pct": 0} for s in symbol_list]
+        return {
+            "success": False,
+            "data": fallback,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+
 @router.get("/options-chain/{symbol}")
 async def get_options_chain(
     symbol: str,

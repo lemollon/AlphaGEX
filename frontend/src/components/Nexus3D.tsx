@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useMemo, useState, useEffect, Suspense, Component, ReactNode, useCallback } from 'react'
+import { useRef, useMemo, useState, useEffect, Suspense, Component, ReactNode, useCallback, createContext } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import {
   OrbitControls,
@@ -916,8 +916,61 @@ function MarketMoodRing({ gexValue = 0, vixValue = 15 }: { gexValue?: number, vi
 }
 
 // =============================================================================
-// STOCK TICKERS DATA
+// STOCK TICKERS DATA - Real-time prices from market API
 // =============================================================================
+
+// Fallback prices when API is unavailable
+const FALLBACK_PRICES = [
+  { symbol: 'SPY', price: 585, change: 0 },
+  { symbol: 'QQQ', price: 505, change: 0 },
+  { symbol: 'AAPL', price: 248, change: 0 },
+  { symbol: 'NVDA', price: 138, change: 0 },
+  { symbol: 'TSLA', price: 425, change: 0 },
+  { symbol: 'AMZN', price: 225, change: 0 },
+  { symbol: 'META', price: 612, change: 0 },
+  { symbol: 'GOOGL', price: 192, change: 0 },
+  { symbol: 'MSFT', price: 435, change: 0 },
+  { symbol: 'AMD', price: 125, change: 0 },
+]
+
+// Real-time stock prices fetched from Tradier via backend API
+const useStockPrices = () => {
+  const [prices, setPrices] = useState(FALLBACK_PRICES)
+  const [isLive, setIsLive] = useState(false)
+
+  useEffect(() => {
+    const API_URL = process.env.NEXT_PUBLIC_API_URL || ''
+
+    const fetchPrices = async () => {
+      try {
+        const response = await fetch(`${API_URL}/api/apollo/batch-quotes`)
+        const result = await response.json()
+
+        if (result.success && result.data && result.data.length > 0) {
+          setPrices(result.data.map((q: any) => ({
+            symbol: q.symbol,
+            price: q.price || 0,
+            change: q.change_pct || 0
+          })))
+          setIsLive(true)
+        }
+      } catch (error) {
+        // Keep using fallback/last known prices on error
+        console.log('Stock prices: using fallback data')
+      }
+    }
+
+    // Fetch immediately
+    fetchPrices()
+
+    // Then refresh every 30 seconds (reasonable for visualization, avoids rate limits)
+    const interval = setInterval(fetchPrices, 30000)
+
+    return () => clearInterval(interval)
+  }, [])
+
+  return { prices, isLive }
+}
 
 const STOCK_TICKERS = [
   { symbol: 'SPY', basePrice: 585 },
@@ -930,6 +983,78 @@ const STOCK_TICKERS = [
   { symbol: 'GOOGL', basePrice: 192 },
   { symbol: 'MSFT', basePrice: 435 },
   { symbol: 'AMD', basePrice: 125 },
+]
+
+// =============================================================================
+// SOLAR SYSTEM DEFINITIONS
+// =============================================================================
+
+const SOLAR_SYSTEMS = [
+  {
+    id: 'solomon',
+    name: 'SOLOMON',
+    subtitle: 'AI Wisdom',
+    position: [-14, 5, -12] as [number, number, number],
+    sunColor: '#f59e0b',
+    glowColor: '#fbbf24',
+    planets: [
+      { name: 'Analysis', color: '#22d3ee', size: 0.15, orbit: 1.2, speed: 0.8 },
+      { name: 'Strategy', color: '#a855f7', size: 0.12, orbit: 1.8, speed: 0.5 },
+      { name: 'Insight', color: '#10b981', size: 0.1, orbit: 2.3, speed: 0.3 },
+    ]
+  },
+  {
+    id: 'argus',
+    name: 'ARGUS',
+    subtitle: 'All-Seeing Eye',
+    position: [14, 3, -10] as [number, number, number],
+    sunColor: '#06b6d4',
+    glowColor: '#22d3ee',
+    planets: [
+      { name: 'Gamma', color: '#f97316', size: 0.18, orbit: 1.4, speed: 1.0 },
+      { name: 'Delta', color: '#ef4444', size: 0.12, orbit: 2.0, speed: 0.6 },
+      { name: 'Theta', color: '#8b5cf6', size: 0.1, orbit: 2.5, speed: 0.4 },
+    ]
+  },
+  {
+    id: 'oracle',
+    name: 'ORACLE',
+    subtitle: 'Future Sight',
+    position: [0, 8, -15] as [number, number, number],
+    sunColor: '#8b5cf6',
+    glowColor: '#a855f7',
+    planets: [
+      { name: 'Prediction', color: '#22d3ee', size: 0.16, orbit: 1.3, speed: 0.9 },
+      { name: 'Probability', color: '#10b981', size: 0.14, orbit: 1.9, speed: 0.55 },
+      { name: 'Confidence', color: '#f59e0b', size: 0.11, orbit: 2.4, speed: 0.35 },
+    ]
+  },
+  {
+    id: 'kronos',
+    name: 'KRONOS',
+    subtitle: 'Time Master',
+    position: [-10, -4, -14] as [number, number, number],
+    sunColor: '#ef4444',
+    glowColor: '#f87171',
+    planets: [
+      { name: 'History', color: '#6b7280', size: 0.15, orbit: 1.5, speed: 0.7 },
+      { name: 'Backtest', color: '#3b82f6', size: 0.13, orbit: 2.1, speed: 0.45 },
+      { name: 'Patterns', color: '#fbbf24', size: 0.1, orbit: 2.6, speed: 0.3 },
+    ]
+  },
+  {
+    id: 'systems',
+    name: 'SYSTEMS',
+    subtitle: 'Core Hub',
+    position: [12, -3, -13] as [number, number, number],
+    sunColor: '#10b981',
+    glowColor: '#34d399',
+    planets: [
+      { name: 'Health', color: '#22c55e', size: 0.14, orbit: 1.3, speed: 0.85 },
+      { name: 'Data', color: '#3b82f6', size: 0.12, orbit: 1.8, speed: 0.5 },
+      { name: 'Network', color: '#ec4899', size: 0.1, orbit: 2.2, speed: 0.35 },
+    ]
+  },
 ]
 
 // =============================================================================
@@ -1005,7 +1130,7 @@ function AsteroidWithTicker({
   )
 }
 
-function AsteroidField({ paused }: { paused: boolean }) {
+function AsteroidField({ paused, stockPrices }: { paused: boolean, stockPrices: Array<{ symbol: string, price: number, change: number }> }) {
   const [asteroids, setAsteroids] = useState<Array<{
     id: number
     position: THREE.Vector3
@@ -1022,7 +1147,8 @@ function AsteroidField({ paused }: { paused: boolean }) {
     // Spawn asteroid every 45-90 seconds
     if (t - lastSpawn.current > 45 + Math.random() * 45) {
       lastSpawn.current = t
-      const stockData = STOCK_TICKERS[Math.floor(Math.random() * STOCK_TICKERS.length)]
+      // Use real-time stock prices if available
+      const stockData = stockPrices[Math.floor(Math.random() * stockPrices.length)]
       const side = Math.random() > 0.5 ? 1 : -1
 
       setAsteroids(prev => [...prev, {
@@ -1031,8 +1157,8 @@ function AsteroidField({ paused }: { paused: boolean }) {
         velocity: new THREE.Vector3(-side * 3, (Math.random() - 0.5) * 0.5, 0),
         ticker: {
           symbol: stockData.symbol,
-          price: stockData.basePrice * (0.98 + Math.random() * 0.04),
-          change: (Math.random() - 0.5) * 6
+          price: stockData.price,
+          change: stockData.change
         }
       }])
     }
@@ -1502,17 +1628,15 @@ function SupernovaBurst({ active, onComplete }: { active: boolean, onComplete: (
 // HOLOGRAPHIC TICKER TAPE
 // =============================================================================
 
-function HolographicTickerTape({ spotPrice = 585 }: { spotPrice?: number }) {
+function HolographicTickerTape({ stockPrices }: { stockPrices: Array<{ symbol: string, price: number, change: number }> }) {
   const groupRef = useRef<THREE.Group>(null)
 
   const tickers = useMemo(() => {
-    return STOCK_TICKERS.map((stock, i) => ({
+    return stockPrices.map((stock, i) => ({
       ...stock,
-      angle: (i / STOCK_TICKERS.length) * Math.PI * 2,
-      price: stock.basePrice * (0.98 + Math.random() * 0.04),
-      change: (Math.random() - 0.5) * 4
+      angle: (i / stockPrices.length) * Math.PI * 2,
     }))
-  }, [])
+  }, [stockPrices])
 
   useFrame((state) => {
     if (groupRef.current) {
@@ -2173,6 +2297,1293 @@ function NebulaStorm({ vixValue = 15, paused }: { vixValue?: number, paused: boo
           speed={turbulence * 0.6}
         />
       </Sphere>
+    </group>
+  )
+}
+
+// =============================================================================
+// SOLAR SYSTEM - Beautiful Mini Solar System with Orbiting Planets
+// =============================================================================
+
+function SolarSystem({
+  system,
+  paused = false,
+  onPulseToSystem
+}: {
+  system: typeof SOLAR_SYSTEMS[0]
+  paused?: boolean
+  onPulseToSystem?: (targetId: string) => void
+}) {
+  const groupRef = useRef<THREE.Group>(null)
+  const sunRef = useRef<THREE.Mesh>(null)
+  const glowRef = useRef<THREE.Mesh>(null)
+  const ringsRef = useRef<THREE.Group>(null)
+  const [isHovered, setIsHovered] = useState(false)
+  const [pulseIntensity, setPulseIntensity] = useState(0)
+
+  // Pulse effect when receiving signal
+  const triggerPulse = useCallback(() => {
+    setPulseIntensity(1)
+  }, [])
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    // Gentle floating motion
+    if (groupRef.current) {
+      groupRef.current.position.y = system.position[1] + Math.sin(t * 0.3 + system.position[0]) * 0.3
+    }
+
+    // Sun pulsing glow
+    if (sunRef.current) {
+      const pulse = 1 + Math.sin(t * 2) * 0.1
+      sunRef.current.scale.setScalar(pulse)
+    }
+
+    // Glow breathing
+    if (glowRef.current) {
+      const glowPulse = 0.4 + Math.sin(t * 1.5) * 0.15 + pulseIntensity * 0.5
+      ;(glowRef.current.material as THREE.MeshBasicMaterial).opacity = glowPulse
+      glowRef.current.scale.setScalar(1.5 + pulseIntensity * 0.5)
+    }
+
+    // Orbital rings rotation
+    if (ringsRef.current) {
+      ringsRef.current.rotation.x = Math.PI / 2 + Math.sin(t * 0.2) * 0.1
+      ringsRef.current.rotation.z = t * 0.05
+    }
+
+    // Decay pulse intensity
+    if (pulseIntensity > 0) {
+      setPulseIntensity(prev => Math.max(0, prev - 0.02))
+    }
+  })
+
+  // Random pulse to other systems
+  useEffect(() => {
+    if (paused || !onPulseToSystem) return
+    const interval = setInterval(() => {
+      if (Math.random() < 0.15) { // 15% chance every interval
+        const otherSystems = SOLAR_SYSTEMS.filter(s => s.id !== system.id)
+        const target = otherSystems[Math.floor(Math.random() * otherSystems.length)]
+        onPulseToSystem(target.id)
+      }
+    }, 3000)
+    return () => clearInterval(interval)
+  }, [paused, system.id, onPulseToSystem])
+
+  return (
+    <group
+      ref={groupRef}
+      position={system.position}
+      onPointerOver={() => setIsHovered(true)}
+      onPointerOut={() => setIsHovered(false)}
+    >
+      {/* Outer glow halo */}
+      <Sphere ref={glowRef} args={[0.8, 32, 32]}>
+        <meshBasicMaterial color={system.glowColor} transparent opacity={0.3} />
+      </Sphere>
+
+      {/* Central sun with distortion */}
+      <Sphere ref={sunRef} args={[0.35, 32, 32]}>
+        <MeshDistortMaterial
+          color={system.sunColor}
+          emissive={system.sunColor}
+          emissiveIntensity={isHovered ? 2 : 1.2}
+          distort={0.3}
+          speed={3}
+        />
+      </Sphere>
+
+      {/* Sun core (bright center) */}
+      <Sphere args={[0.15, 16, 16]}>
+        <meshBasicMaterial color="#ffffff" />
+      </Sphere>
+
+      {/* Orbital rings */}
+      <group ref={ringsRef}>
+        {system.planets.map((planet, i) => (
+          <mesh key={i} rotation={[Math.PI / 2, 0, 0]}>
+            <torusGeometry args={[planet.orbit, 0.008, 8, 64]} />
+            <meshBasicMaterial color={planet.color} transparent opacity={0.3} />
+          </mesh>
+        ))}
+      </group>
+
+      {/* Orbiting planets */}
+      {system.planets.map((planet, i) => (
+        <OrbitingPlanet
+          key={i}
+          planet={planet}
+          systemId={system.id}
+          paused={paused}
+          phaseOffset={i * Math.PI * 0.7}
+        />
+      ))}
+
+      {/* Particle corona around sun */}
+      <SunCorona color={system.glowColor} paused={paused} />
+
+      {/* System label */}
+      <Html position={[0, 1.5, 0]} center>
+        <div
+          className={`text-center transition-all duration-300 ${isHovered ? 'scale-110' : 'scale-100'}`}
+          style={{ opacity: isHovered ? 1 : 0.7 }}
+        >
+          <div
+            className="text-sm font-bold tracking-wider"
+            style={{ color: system.sunColor, textShadow: `0 0 10px ${system.glowColor}` }}
+          >
+            {system.name}
+          </div>
+          <div className="text-xs text-gray-400">{system.subtitle}</div>
+        </div>
+      </Html>
+
+      {/* Activation ring when hovered */}
+      {isHovered && (
+        <mesh rotation={[Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[1.2, 0.02, 16, 64]} />
+          <meshBasicMaterial color={system.glowColor} transparent opacity={0.8} />
+        </mesh>
+      )}
+    </group>
+  )
+}
+
+// =============================================================================
+// ORBITING PLANET with Trail
+// =============================================================================
+
+function OrbitingPlanet({
+  planet,
+  systemId,
+  paused,
+  phaseOffset
+}: {
+  planet: { name: string, color: string, size: number, orbit: number, speed: number }
+  systemId: string
+  paused: boolean
+  phaseOffset: number
+}) {
+  const meshRef = useRef<THREE.Mesh>(null)
+  const trailRef = useRef<THREE.Points>(null)
+  const [isHovered, setIsHovered] = useState(false)
+
+  // Trail positions
+  const trailPositions = useMemo(() => new Float32Array(30 * 3), [])
+  const trailIndex = useRef(0)
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    const angle = t * planet.speed + phaseOffset
+    const x = Math.cos(angle) * planet.orbit
+    const z = Math.sin(angle) * planet.orbit
+    const y = Math.sin(angle * 2) * 0.1 // Slight vertical wobble
+
+    if (meshRef.current) {
+      meshRef.current.position.set(x, y, z)
+      meshRef.current.rotation.y = t * 2
+    }
+
+    // Update trail
+    if (trailRef.current) {
+      const idx = (trailIndex.current % 30) * 3
+      trailPositions[idx] = x
+      trailPositions[idx + 1] = y
+      trailPositions[idx + 2] = z
+      trailIndex.current++
+      trailRef.current.geometry.attributes.position.needsUpdate = true
+    }
+  })
+
+  return (
+    <group>
+      {/* Planet trail */}
+      <points ref={trailRef}>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            count={30}
+            array={trailPositions}
+            itemSize={3}
+          />
+        </bufferGeometry>
+        <pointsMaterial color={planet.color} size={0.03} transparent opacity={0.4} />
+      </points>
+
+      {/* Planet */}
+      <Sphere
+        ref={meshRef}
+        args={[planet.size, 16, 16]}
+        onPointerOver={() => setIsHovered(true)}
+        onPointerOut={() => setIsHovered(false)}
+      >
+        <meshBasicMaterial color={planet.color} />
+      </Sphere>
+
+      {/* Planet glow when hovered */}
+      {isHovered && meshRef.current && (
+        <Sphere args={[planet.size * 1.8, 8, 8]} position={meshRef.current.position}>
+          <meshBasicMaterial color={planet.color} transparent opacity={0.3} />
+        </Sphere>
+      )}
+    </group>
+  )
+}
+
+// =============================================================================
+// SUN CORONA - Particle effect around suns
+// =============================================================================
+
+function SunCorona({ color, paused }: { color: string, paused: boolean }) {
+  const particlesRef = useRef<THREE.Points>(null)
+  const count = 50
+
+  const positions = useMemo(() => {
+    const pos = new Float32Array(count * 3)
+    for (let i = 0; i < count; i++) {
+      const theta = Math.random() * Math.PI * 2
+      const phi = Math.acos(2 * Math.random() - 1)
+      const r = 0.4 + Math.random() * 0.3
+      pos[i * 3] = r * Math.sin(phi) * Math.cos(theta)
+      pos[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta)
+      pos[i * 3 + 2] = r * Math.cos(phi)
+    }
+    return pos
+  }, [])
+
+  useFrame((state) => {
+    if (paused || !particlesRef.current) return
+    const t = state.clock.elapsedTime
+    particlesRef.current.rotation.y = t * 0.2
+    particlesRef.current.rotation.x = t * 0.15
+  })
+
+  return (
+    <points ref={particlesRef}>
+      <bufferGeometry>
+        <bufferAttribute
+          attach="attributes-position"
+          count={count}
+          array={positions}
+          itemSize={3}
+        />
+      </bufferGeometry>
+      <pointsMaterial color={color} size={0.04} transparent opacity={0.6} />
+    </points>
+  )
+}
+
+// =============================================================================
+// NEURAL SYNAPSE PULSES - Light traveling between solar systems
+// =============================================================================
+
+function NeuralSynapsePulses({ paused }: { paused: boolean }) {
+  const [pulses, setPulses] = useState<Array<{
+    id: number
+    sourceId: string
+    targetId: string
+    startTime: number
+    color: string
+  }>>([])
+  const nextId = useRef(0)
+  const lastPulse = useRef(0)
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    // Spawn new pulse every 2-5 seconds
+    if (t - lastPulse.current > 2 + Math.random() * 3) {
+      lastPulse.current = t
+
+      // Pick random source and target
+      const sourceIdx = Math.floor(Math.random() * SOLAR_SYSTEMS.length)
+      let targetIdx = Math.floor(Math.random() * SOLAR_SYSTEMS.length)
+      while (targetIdx === sourceIdx) {
+        targetIdx = Math.floor(Math.random() * SOLAR_SYSTEMS.length)
+      }
+
+      const source = SOLAR_SYSTEMS[sourceIdx]
+      const target = SOLAR_SYSTEMS[targetIdx]
+
+      // Create pulse with beautiful color gradient
+      const colors = ['#22d3ee', '#a855f7', '#f59e0b', '#10b981', '#ef4444', '#ec4899']
+      const color = colors[Math.floor(Math.random() * colors.length)]
+
+      setPulses(prev => [...prev, {
+        id: nextId.current++,
+        sourceId: source.id,
+        targetId: target.id,
+        startTime: t,
+        color
+      }])
+    }
+
+    // Clean up old pulses
+    setPulses(prev => prev.filter(p => t - p.startTime < 1.5))
+  })
+
+  return (
+    <group>
+      {pulses.map(pulse => (
+        <SynapsePulse key={pulse.id} pulse={pulse} />
+      ))}
+    </group>
+  )
+}
+
+// =============================================================================
+// SYNAPSE PULSE - Individual light pulse traveling between systems
+// =============================================================================
+
+function SynapsePulse({ pulse }: {
+  pulse: { id: number, sourceId: string, targetId: string, startTime: number, color: string }
+}) {
+  const groupRef = useRef<THREE.Group>(null)
+  const glowRef = useRef<THREE.Mesh>(null)
+  const trailRef = useRef<any>(null)
+
+  const source = SOLAR_SYSTEMS.find(s => s.id === pulse.sourceId)
+  const target = SOLAR_SYSTEMS.find(s => s.id === pulse.targetId)
+
+  // Calculate curved path using quadratic bezier
+  const curve = useMemo(() => {
+    if (!source || !target) return null
+
+    const start = new THREE.Vector3(...source.position)
+    const end = new THREE.Vector3(...target.position)
+    const mid = start.clone().add(end).multiplyScalar(0.5)
+    // Curve outward from center
+    const centerDir = mid.clone().normalize()
+    mid.add(centerDir.clone().multiplyScalar(3 + Math.random() * 2))
+    mid.y += 2 + Math.random() * 3
+
+    return new THREE.QuadraticBezierCurve3(start, mid, end)
+  }, [source, target])
+
+  const trailPoints = useMemo(() => {
+    if (!curve) return []
+    return curve.getPoints(40).map(p => [p.x, p.y, p.z] as [number, number, number])
+  }, [curve])
+
+  useFrame((state) => {
+    if (!curve || !groupRef.current) return
+
+    const elapsed = state.clock.elapsedTime - pulse.startTime
+    const progress = Math.min(elapsed / 1.2, 1) // 1.2 second travel time
+
+    // Get position along curve
+    const point = curve.getPoint(progress)
+    groupRef.current.position.copy(point)
+
+    // Pulse glow effect
+    if (glowRef.current) {
+      const glowPulse = 1 + Math.sin(elapsed * 15) * 0.3
+      glowRef.current.scale.setScalar(glowPulse)
+
+      // Fade out at end
+      const fadeOut = progress > 0.8 ? (1 - progress) / 0.2 : 1
+      ;(glowRef.current.material as THREE.MeshBasicMaterial).opacity = 0.8 * fadeOut
+    }
+
+    // Update trail opacity
+    if (trailRef.current) {
+      trailRef.current.material.opacity = 0.4 * (1 - progress * 0.5)
+    }
+  })
+
+  if (!source || !target || !curve) return null
+
+  return (
+    <>
+      {/* Trail line */}
+      <Line
+        ref={trailRef}
+        points={trailPoints}
+        color={pulse.color}
+        lineWidth={2}
+        transparent
+        opacity={0.4}
+      />
+
+      {/* Moving pulse */}
+      <group ref={groupRef}>
+        {/* Core bright point */}
+        <Sphere args={[0.08, 8, 8]}>
+          <meshBasicMaterial color="#ffffff" />
+        </Sphere>
+
+        {/* Outer glow */}
+        <Sphere ref={glowRef} args={[0.2, 16, 16]}>
+          <meshBasicMaterial color={pulse.color} transparent opacity={0.8} />
+        </Sphere>
+
+        {/* Sparkle ring */}
+        <mesh rotation={[Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[0.15, 0.02, 8, 16]} />
+          <meshBasicMaterial color={pulse.color} transparent opacity={0.6} />
+        </mesh>
+      </group>
+    </>
+  )
+}
+
+// =============================================================================
+// ALL SOLAR SYSTEMS CONTAINER
+// =============================================================================
+
+function SolarSystemsContainer({ paused }: { paused: boolean }) {
+  const handlePulseToSystem = useCallback((targetId: string) => {
+    // This could trigger effects on the target system
+    // For now, the neural synapse pulses handle the visual effect
+  }, [])
+
+  return (
+    <group>
+      {SOLAR_SYSTEMS.map(system => (
+        <SolarSystem
+          key={system.id}
+          system={system}
+          paused={paused}
+          onPulseToSystem={handlePulseToSystem}
+        />
+      ))}
+      <NeuralSynapsePulses paused={paused} />
+    </group>
+  )
+}
+
+// =============================================================================
+// VIX STORM MODE - Chaos when VIX > 25
+// =============================================================================
+
+function VixStormMode({ vixValue = 15, paused }: { vixValue: number, paused: boolean }) {
+  const isStormActive = vixValue > 25
+  const stormIntensity = Math.min((vixValue - 25) / 25, 1) // 0-1 scale above 25
+
+  if (!isStormActive) return null
+
+  return (
+    <group>
+      <StormLightning intensity={stormIntensity} paused={paused} />
+      <StormClouds intensity={stormIntensity} paused={paused} />
+      <WarningPulse intensity={stormIntensity} />
+    </group>
+  )
+}
+
+function StormLightning({ intensity, paused }: { intensity: number, paused: boolean }) {
+  const [bolts, setBolts] = useState<Array<{
+    id: number
+    start: THREE.Vector3
+    end: THREE.Vector3
+    startTime: number
+  }>>([])
+  const nextId = useRef(0)
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    // More frequent lightning with higher intensity
+    if (Math.random() < 0.02 * (1 + intensity * 3)) {
+      const systems = SOLAR_SYSTEMS
+      const s1 = systems[Math.floor(Math.random() * systems.length)]
+      const s2 = systems[Math.floor(Math.random() * systems.length)]
+
+      if (s1.id !== s2.id) {
+        setBolts(prev => [...prev, {
+          id: nextId.current++,
+          start: new THREE.Vector3(...s1.position),
+          end: new THREE.Vector3(...s2.position),
+          startTime: t
+        }])
+      }
+    }
+
+    // Clean up old bolts
+    setBolts(prev => prev.filter(b => t - b.startTime < 0.3))
+  })
+
+  return (
+    <group>
+      {bolts.map(bolt => (
+        <LightningBolt key={bolt.id} start={bolt.start} end={bolt.end} color="#ef4444" />
+      ))}
+    </group>
+  )
+}
+
+function LightningBolt({ start, end, color }: { start: THREE.Vector3, end: THREE.Vector3, color: string }) {
+  const points = useMemo(() => {
+    const pts: [number, number, number][] = [[start.x, start.y, start.z]]
+    const segments = 8
+    for (let i = 1; i < segments; i++) {
+      const t = i / segments
+      const p = start.clone().lerp(end, t)
+      // Add jagged offsets
+      p.x += (Math.random() - 0.5) * 2
+      p.y += (Math.random() - 0.5) * 2
+      p.z += (Math.random() - 0.5) * 2
+      pts.push([p.x, p.y, p.z])
+    }
+    pts.push([end.x, end.y, end.z])
+    return pts
+  }, [start, end])
+
+  return (
+    <>
+      <Line points={points} color={color} lineWidth={3} transparent opacity={0.9} />
+      <Line points={points} color="#ffffff" lineWidth={1} transparent opacity={1} />
+    </>
+  )
+}
+
+function StormClouds({ intensity, paused }: { intensity: number, paused: boolean }) {
+  const cloud1Ref = useRef<THREE.Mesh>(null)
+  const cloud2Ref = useRef<THREE.Mesh>(null)
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+    const speed = 1 + intensity * 2
+
+    if (cloud1Ref.current) {
+      cloud1Ref.current.rotation.y = t * 0.1 * speed
+      cloud1Ref.current.rotation.x = Math.sin(t * 0.5) * 0.2
+    }
+    if (cloud2Ref.current) {
+      cloud2Ref.current.rotation.y = -t * 0.08 * speed
+      cloud2Ref.current.rotation.z = Math.cos(t * 0.4) * 0.15
+    }
+  })
+
+  return (
+    <group>
+      <Sphere ref={cloud1Ref} args={[25, 16, 16]} position={[0, 10, -20]}>
+        <MeshDistortMaterial
+          color="#7f1d1d"
+          transparent
+          opacity={0.15 * intensity}
+          distort={0.5}
+          speed={3}
+        />
+      </Sphere>
+      <Sphere ref={cloud2Ref} args={[30, 16, 16]} position={[0, -8, -25]}>
+        <MeshDistortMaterial
+          color="#991b1b"
+          transparent
+          opacity={0.12 * intensity}
+          distort={0.4}
+          speed={2.5}
+        />
+      </Sphere>
+    </group>
+  )
+}
+
+function WarningPulse({ intensity }: { intensity: number }) {
+  const meshRef = useRef<THREE.Mesh>(null)
+
+  useFrame((state) => {
+    if (meshRef.current) {
+      const pulse = Math.sin(state.clock.elapsedTime * 4) * 0.5 + 0.5
+      ;(meshRef.current.material as THREE.MeshBasicMaterial).opacity = 0.05 + pulse * 0.1 * intensity
+    }
+  })
+
+  return (
+    <mesh ref={meshRef}>
+      <sphereGeometry args={[50, 16, 16]} />
+      <meshBasicMaterial color="#ef4444" transparent opacity={0.1} side={THREE.BackSide} />
+    </mesh>
+  )
+}
+
+// =============================================================================
+// MARKET HOURS LIGHTING - Different ambiance based on market state
+// =============================================================================
+
+function MarketHoursLighting({ paused }: { paused?: boolean }) {
+  const [marketState, setMarketState] = useState<'premarket' | 'open' | 'afterhours' | 'closed'>('open')
+  const lightRef = useRef<THREE.PointLight>(null)
+
+  useEffect(() => {
+    const checkMarketHours = () => {
+      const now = new Date()
+      const hour = now.getUTCHours() - 5 // EST
+      const day = now.getUTCDay()
+
+      if (day === 0 || day === 6) {
+        setMarketState('closed')
+      } else if (hour >= 4 && hour < 9.5) {
+        setMarketState('premarket')
+      } else if (hour >= 9.5 && hour < 16) {
+        setMarketState('open')
+      } else if (hour >= 16 && hour < 20) {
+        setMarketState('afterhours')
+      } else {
+        setMarketState('closed')
+      }
+    }
+
+    checkMarketHours()
+    const interval = setInterval(checkMarketHours, 60000)
+    return () => clearInterval(interval)
+  }, [])
+
+  const lightConfig = {
+    premarket: { color: '#f97316', intensity: 0.5, ambient: 0.08 },  // Orange dawn
+    open: { color: '#22d3ee', intensity: 1.2, ambient: 0.12 },       // Bright cyan
+    afterhours: { color: '#a855f7', intensity: 0.7, ambient: 0.1 },  // Purple twilight
+    closed: { color: '#1e3a8a', intensity: 0.3, ambient: 0.05 },     // Dark blue night
+  }
+
+  const config = lightConfig[marketState]
+
+  useFrame((state) => {
+    if (paused || !lightRef.current) return
+    // Gentle flicker
+    lightRef.current.intensity = config.intensity + Math.sin(state.clock.elapsedTime * 2) * 0.1
+  })
+
+  return (
+    <>
+      <ambientLight intensity={config.ambient} />
+      <pointLight ref={lightRef} position={[0, 15, 0]} color={config.color} intensity={config.intensity} />
+      {marketState !== 'open' && (
+        <Html position={[0, 8, 0]} center>
+          <div className={`px-2 py-1 rounded text-xs font-bold ${
+            marketState === 'premarket' ? 'bg-orange-500/20 text-orange-400' :
+            marketState === 'afterhours' ? 'bg-purple-500/20 text-purple-400' :
+            'bg-blue-900/40 text-blue-400'
+          }`}>
+            {marketState === 'premarket' ? '🌅 PRE-MARKET' :
+             marketState === 'afterhours' ? '🌆 AFTER-HOURS' :
+             '🌙 MARKET CLOSED'}
+          </div>
+        </Html>
+      )}
+    </>
+  )
+}
+
+// =============================================================================
+// 3D FLOATING CHARTS - Holographic candlestick display
+// =============================================================================
+
+function FloatingCandleChart({ paused }: { paused?: boolean }) {
+  const groupRef = useRef<THREE.Group>(null)
+
+  // Generate random candle data
+  const candles = useMemo(() => {
+    const data = []
+    let price = 585
+    for (let i = 0; i < 20; i++) {
+      const open = price
+      const change = (Math.random() - 0.5) * 5
+      const close = open + change
+      const high = Math.max(open, close) + Math.random() * 2
+      const low = Math.min(open, close) - Math.random() * 2
+      data.push({ open, close, high, low, isGreen: close > open })
+      price = close
+    }
+    return data
+  }, [])
+
+  useFrame((state) => {
+    if (paused || !groupRef.current) return
+    groupRef.current.rotation.y = Math.sin(state.clock.elapsedTime * 0.2) * 0.3
+    groupRef.current.position.y = 5 + Math.sin(state.clock.elapsedTime * 0.5) * 0.5
+  })
+
+  const baseY = 580 // Base price for positioning
+
+  return (
+    <group ref={groupRef} position={[-8, 5, -6]}>
+      {/* Chart background */}
+      <mesh position={[2, 0, -0.1]}>
+        <planeGeometry args={[6, 3]} />
+        <meshBasicMaterial color="#0f172a" transparent opacity={0.7} />
+      </mesh>
+
+      {/* Candles */}
+      {candles.map((candle, i) => {
+        const x = i * 0.25 - 2
+        const bodyHeight = Math.abs(candle.close - candle.open) * 0.3
+        const bodyY = ((candle.open + candle.close) / 2 - baseY) * 0.3
+        const wickHeight = (candle.high - candle.low) * 0.3
+        const wickY = ((candle.high + candle.low) / 2 - baseY) * 0.3
+
+        return (
+          <group key={i} position={[x, 0, 0]}>
+            {/* Wick */}
+            <mesh position={[0, wickY, 0]}>
+              <boxGeometry args={[0.02, wickHeight, 0.02]} />
+              <meshBasicMaterial color={candle.isGreen ? '#22c55e' : '#ef4444'} />
+            </mesh>
+            {/* Body */}
+            <mesh position={[0, bodyY, 0]}>
+              <boxGeometry args={[0.12, Math.max(bodyHeight, 0.05), 0.08]} />
+              <meshBasicMaterial color={candle.isGreen ? '#22c55e' : '#ef4444'} />
+            </mesh>
+          </group>
+        )
+      })}
+
+      {/* Chart label */}
+      <Html position={[2, 1.8, 0]} center>
+        <div className="text-cyan-400 text-xs font-bold bg-black/50 px-2 py-0.5 rounded">
+          SPY 1-MIN
+        </div>
+      </Html>
+    </group>
+  )
+}
+
+// =============================================================================
+// METEOR SHOWER EVENT - Intense asteroid bombardment
+// =============================================================================
+
+function MeteorShower({ active, intensity = 1 }: { active: boolean, intensity?: number }) {
+  const [meteors, setMeteors] = useState<Array<{
+    id: number
+    position: THREE.Vector3
+    velocity: THREE.Vector3
+    size: number
+    startTime: number
+  }>>([])
+  const nextId = useRef(0)
+
+  useFrame((state) => {
+    if (!active) return
+    const t = state.clock.elapsedTime
+
+    // Spawn meteors rapidly
+    if (Math.random() < 0.15 * intensity) {
+      const angle = Math.random() * Math.PI * 2
+      const radius = 25
+      setMeteors(prev => [...prev, {
+        id: nextId.current++,
+        position: new THREE.Vector3(
+          Math.cos(angle) * radius,
+          10 + Math.random() * 10,
+          Math.sin(angle) * radius
+        ),
+        velocity: new THREE.Vector3(
+          -Math.cos(angle) * 8,
+          -3 - Math.random() * 2,
+          -Math.sin(angle) * 8
+        ),
+        size: 0.1 + Math.random() * 0.3,
+        startTime: t
+      }])
+    }
+
+    // Clean up old meteors
+    setMeteors(prev => prev.filter(m => t - m.startTime < 3))
+  })
+
+  if (!active) return null
+
+  return (
+    <group>
+      {meteors.map(meteor => (
+        <Meteor key={meteor.id} meteor={meteor} />
+      ))}
+    </group>
+  )
+}
+
+function Meteor({ meteor }: { meteor: { position: THREE.Vector3, velocity: THREE.Vector3, size: number, startTime: number } }) {
+  const groupRef = useRef<THREE.Group>(null)
+  const trailRef = useRef<any>(null)
+
+  useFrame((state) => {
+    if (!groupRef.current) return
+    const elapsed = state.clock.elapsedTime - meteor.startTime
+
+    groupRef.current.position.set(
+      meteor.position.x + meteor.velocity.x * elapsed,
+      meteor.position.y + meteor.velocity.y * elapsed,
+      meteor.position.z + meteor.velocity.z * elapsed
+    )
+
+    if (trailRef.current) {
+      trailRef.current.material.opacity = Math.max(0, 1 - elapsed / 3)
+    }
+  })
+
+  return (
+    <group ref={groupRef}>
+      <mesh>
+        <dodecahedronGeometry args={[meteor.size, 0]} />
+        <meshBasicMaterial color="#f97316" />
+      </mesh>
+      {/* Trail */}
+      <mesh ref={trailRef} position={[meteor.size * 2, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+        <coneGeometry args={[meteor.size * 0.5, meteor.size * 4, 8]} />
+        <meshBasicMaterial color="#fbbf24" transparent opacity={0.6} />
+      </mesh>
+    </group>
+  )
+}
+
+// =============================================================================
+// GRAVITATIONAL LENSING - Black hole warps nearby objects
+// =============================================================================
+
+function GravitationalLensing({ position, strength = 1, paused }: { position: [number, number, number], strength?: number, paused: boolean }) {
+  const lensRef = useRef<THREE.Mesh>(null)
+  const distortRef = useRef<THREE.Mesh>(null)
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    if (lensRef.current) {
+      lensRef.current.rotation.z = t * 0.5
+      const pulse = 1 + Math.sin(t * 2) * 0.1
+      lensRef.current.scale.setScalar(pulse)
+    }
+
+    if (distortRef.current) {
+      distortRef.current.rotation.y = t * 0.3
+      distortRef.current.rotation.x = t * 0.2
+    }
+  })
+
+  return (
+    <group position={position}>
+      {/* Accretion disk */}
+      <mesh ref={lensRef} rotation={[Math.PI / 2.5, 0, 0]}>
+        <torusGeometry args={[2, 0.5, 16, 64]} />
+        <meshBasicMaterial color="#a855f7" transparent opacity={0.4} />
+      </mesh>
+
+      {/* Distortion sphere */}
+      <Sphere ref={distortRef} args={[1.5, 32, 32]}>
+        <MeshDistortMaterial
+          color="#1e1b4b"
+          emissive="#4c1d95"
+          emissiveIntensity={0.5}
+          distort={0.6}
+          speed={4}
+          transparent
+          opacity={0.8}
+        />
+      </Sphere>
+
+      {/* Event horizon */}
+      <Sphere args={[0.8, 32, 32]}>
+        <meshBasicMaterial color="#000000" />
+      </Sphere>
+
+      {/* Light bending ring */}
+      <mesh rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[1.2, 0.05, 16, 64]} />
+        <meshBasicMaterial color="#f59e0b" transparent opacity={0.8} />
+      </mesh>
+    </group>
+  )
+}
+
+// =============================================================================
+// TIME WARP CONTROLS - Speed up/slow down animations
+// =============================================================================
+
+const TimeWarpContext = createContext<{ timeScale: number, setTimeScale: (s: number) => void }>({
+  timeScale: 1,
+  setTimeScale: () => {}
+})
+
+function TimeWarpController({ children, timeScale }: { children: React.ReactNode, timeScale: number }) {
+  // This wraps the scene and affects animation speeds
+  return <>{children}</>
+}
+
+// =============================================================================
+// ACHIEVEMENT SYSTEM - Floating trophies and badges
+// =============================================================================
+
+const ACHIEVEMENTS = [
+  { id: 'first_trade', name: 'First Trade', icon: '🎯', color: '#22c55e' },
+  { id: 'win_streak_5', name: '5 Win Streak', icon: '🔥', color: '#f97316' },
+  { id: 'profit_1k', name: '$1K Profit', icon: '💰', color: '#fbbf24' },
+  { id: 'profit_10k', name: '$10K Profit', icon: '💎', color: '#06b6d4' },
+  { id: 'iron_hands', name: 'Iron Hands', icon: '🦾', color: '#a855f7' },
+]
+
+function AchievementDisplay({ achievements = [] }: { achievements?: string[] }) {
+  const groupRef = useRef<THREE.Group>(null)
+
+  useFrame((state) => {
+    if (groupRef.current) {
+      groupRef.current.rotation.y = state.clock.elapsedTime * 0.1
+    }
+  })
+
+  const earnedAchievements = ACHIEVEMENTS.filter(a => achievements.includes(a.id))
+
+  if (earnedAchievements.length === 0) return null
+
+  return (
+    <group ref={groupRef} position={[0, -5, 0]}>
+      {earnedAchievements.map((achievement, i) => {
+        const angle = (i / earnedAchievements.length) * Math.PI * 2
+        const radius = 6
+        const x = Math.cos(angle) * radius
+        const z = Math.sin(angle) * radius
+
+        return (
+          <group key={achievement.id} position={[x, 0, z]}>
+            <Html center>
+              <div
+                className="text-2xl p-2 rounded-full animate-bounce"
+                style={{ backgroundColor: `${achievement.color}33`, boxShadow: `0 0 20px ${achievement.color}` }}
+              >
+                {achievement.icon}
+              </div>
+            </Html>
+          </group>
+        )
+      })}
+    </group>
+  )
+}
+
+// =============================================================================
+// TRADE SUPERNOVA - Massive explosion on trade execution
+// =============================================================================
+
+function TradeSupernova({ active, position, type, onComplete }: {
+  active: boolean
+  position: THREE.Vector3
+  type: 'profit' | 'loss'
+  onComplete: () => void
+}) {
+  const groupRef = useRef<THREE.Group>(null)
+  const sphereRef = useRef<THREE.Mesh>(null)
+  const startTime = useRef(0)
+  const [started, setStarted] = useState(false)
+
+  const color = type === 'profit' ? '#22c55e' : '#ef4444'
+  const particleColor = type === 'profit' ? '#fbbf24' : '#7f1d1d'
+
+  useFrame((state) => {
+    if (!active) return
+
+    if (!started) {
+      startTime.current = state.clock.elapsedTime
+      setStarted(true)
+    }
+
+    const elapsed = state.clock.elapsedTime - startTime.current
+
+    if (elapsed > 3) {
+      onComplete()
+      setStarted(false)
+      return
+    }
+
+    if (groupRef.current) {
+      groupRef.current.position.copy(position)
+    }
+
+    if (sphereRef.current) {
+      // Rapid expansion then fade
+      const scale = elapsed < 0.5 ? elapsed * 20 : 10 + (elapsed - 0.5) * 5
+      sphereRef.current.scale.setScalar(scale)
+      ;(sphereRef.current.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 1 - elapsed / 2)
+    }
+  })
+
+  if (!active) return null
+
+  return (
+    <group ref={groupRef}>
+      {/* Expanding sphere */}
+      <Sphere ref={sphereRef} args={[1, 32, 32]}>
+        <meshBasicMaterial color={color} transparent opacity={0.8} />
+      </Sphere>
+
+      {/* Core flash */}
+      <Sphere args={[0.5, 16, 16]}>
+        <meshBasicMaterial color="#ffffff" />
+      </Sphere>
+
+      {/* Particle burst */}
+      <SupernovaParticles color={particleColor} />
+    </group>
+  )
+}
+
+function SupernovaParticles({ color }: { color: string }) {
+  const count = 100
+  const meshRef = useRef<THREE.InstancedMesh>(null)
+  const startTime = useRef(0)
+  const [started, setStarted] = useState(false)
+
+  const particles = useMemo(() => {
+    return Array.from({ length: count }, () => {
+      const theta = Math.random() * Math.PI * 2
+      const phi = Math.acos(2 * Math.random() - 1)
+      const speed = 5 + Math.random() * 10
+      return {
+        direction: new THREE.Vector3(
+          Math.sin(phi) * Math.cos(theta),
+          Math.sin(phi) * Math.sin(theta),
+          Math.cos(phi)
+        ),
+        speed,
+        size: 0.05 + Math.random() * 0.1
+      }
+    })
+  }, [])
+
+  const dummy = useMemo(() => new THREE.Object3D(), [])
+
+  useFrame((state) => {
+    if (!meshRef.current) return
+
+    if (!started) {
+      startTime.current = state.clock.elapsedTime
+      setStarted(true)
+    }
+
+    const elapsed = state.clock.elapsedTime - startTime.current
+
+    particles.forEach((p, i) => {
+      const dist = p.speed * elapsed
+      dummy.position.copy(p.direction).multiplyScalar(dist)
+      dummy.scale.setScalar(p.size * Math.max(0, 1 - elapsed / 3))
+      dummy.updateMatrix()
+      meshRef.current?.setMatrixAt(i, dummy.matrix)
+    })
+    meshRef.current.instanceMatrix.needsUpdate = true
+  })
+
+  return (
+    <instancedMesh ref={meshRef} args={[undefined, undefined, count]}>
+      <sphereGeometry args={[1, 6, 6]} />
+      <meshBasicMaterial color={color} />
+    </instancedMesh>
+  )
+}
+
+// =============================================================================
+// FLY-THROUGH MODE - First person camera flying through scene
+// =============================================================================
+
+function FlyThroughCamera({ active, paused }: { active: boolean, paused: boolean }) {
+  const { camera } = useThree()
+
+  useFrame((state) => {
+    if (!active || paused) return
+
+    // Auto-fly path through the scene
+    const t = state.clock.elapsedTime * 0.2
+    const radius = 12 + Math.sin(t * 0.5) * 5
+    const height = Math.sin(t * 0.3) * 5
+
+    const x = Math.cos(t) * radius
+    const y = height
+    const z = Math.sin(t) * radius
+
+    camera.position.set(x, y, z)
+    camera.lookAt(0, 0, 0)
+  })
+
+  return null
+}
+
+// =============================================================================
+// WORMHOLE TELEPORTER - Click to teleport camera
+// =============================================================================
+
+function WormholeTeleporter({
+  position,
+  targetPosition,
+  onTeleport,
+  label
+}: {
+  position: [number, number, number]
+  targetPosition: [number, number, number]
+  onTeleport: (target: THREE.Vector3) => void
+  label: string
+}) {
+  const groupRef = useRef<THREE.Group>(null)
+  const ringRef = useRef<THREE.Mesh>(null)
+  const [hovered, setHovered] = useState(false)
+
+  useFrame((state) => {
+    if (groupRef.current) {
+      groupRef.current.rotation.z = state.clock.elapsedTime
+    }
+    if (ringRef.current) {
+      ringRef.current.rotation.x = state.clock.elapsedTime * 0.5
+      const scale = hovered ? 1.3 : 1
+      ringRef.current.scale.setScalar(scale)
+    }
+  })
+
+  return (
+    <group
+      ref={groupRef}
+      position={position}
+      onClick={() => onTeleport(new THREE.Vector3(...targetPosition))}
+      onPointerOver={() => setHovered(true)}
+      onPointerOut={() => setHovered(false)}
+    >
+      {/* Outer ring */}
+      <mesh ref={ringRef} rotation={[Math.PI / 2, 0, 0]}>
+        <torusGeometry args={[1, 0.1, 16, 32]} />
+        <meshBasicMaterial color={hovered ? '#22d3ee' : '#6366f1'} />
+      </mesh>
+
+      {/* Inner vortex */}
+      <Sphere args={[0.7, 32, 32]}>
+        <MeshDistortMaterial
+          color="#1e1b4b"
+          emissive="#4f46e5"
+          emissiveIntensity={hovered ? 1.5 : 0.8}
+          distort={0.5}
+          speed={5}
+        />
+      </Sphere>
+
+      {/* Label */}
+      <Html position={[0, 1.5, 0]} center>
+        <div className={`px-2 py-1 rounded text-xs font-bold transition-all ${
+          hovered ? 'bg-cyan-500/40 text-white scale-110' : 'bg-black/50 text-cyan-400'
+        }`}>
+          {label}
+        </div>
+      </Html>
+    </group>
+  )
+}
+
+// =============================================================================
+// SCREEN SHAKE EFFECT - Shakes on impacts
+// =============================================================================
+
+function ScreenShake({ active, intensity = 1 }: { active: boolean, intensity?: number }) {
+  useFrame((state) => {
+    if (!active) {
+      state.camera.position.x = 0
+      state.camera.position.y = 0
+      return
+    }
+
+    const shake = intensity * 0.1
+    state.camera.position.x += (Math.random() - 0.5) * shake
+    state.camera.position.y += (Math.random() - 0.5) * shake
+  })
+
+  return null
+}
+
+// =============================================================================
+// NEWS COMET STREAM - Headlines flying by as comets
+// =============================================================================
+
+const SAMPLE_HEADLINES = [
+  { text: 'Fed Holds Rates Steady', sentiment: 'neutral' },
+  { text: 'NVDA Beats Earnings!', sentiment: 'bullish' },
+  { text: 'Market Rally Continues', sentiment: 'bullish' },
+  { text: 'VIX Spikes on Uncertainty', sentiment: 'bearish' },
+  { text: 'SPY Hits All-Time High', sentiment: 'bullish' },
+  { text: 'Tech Sector Pullback', sentiment: 'bearish' },
+  { text: 'Jobs Report Exceeds', sentiment: 'bullish' },
+  { text: 'Oil Prices Surge', sentiment: 'neutral' },
+]
+
+function NewsCometStream({ paused }: { paused: boolean }) {
+  const [comets, setComets] = useState<Array<{
+    id: number
+    headline: typeof SAMPLE_HEADLINES[0]
+    position: THREE.Vector3
+    startTime: number
+  }>>([])
+  const nextId = useRef(0)
+  const lastSpawn = useRef(0)
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    // Spawn news comet every 20-40 seconds
+    if (t - lastSpawn.current > 20 + Math.random() * 20) {
+      lastSpawn.current = t
+      const headline = SAMPLE_HEADLINES[Math.floor(Math.random() * SAMPLE_HEADLINES.length)]
+
+      setComets(prev => [...prev, {
+        id: nextId.current++,
+        headline,
+        position: new THREE.Vector3(25, 5 + Math.random() * 5, -10 + Math.random() * 5),
+        startTime: t
+      }])
+    }
+
+    // Clean up
+    setComets(prev => prev.filter(c => t - c.startTime < 10))
+  })
+
+  return (
+    <group>
+      {comets.map(comet => (
+        <NewsComet key={comet.id} comet={comet} />
+      ))}
+    </group>
+  )
+}
+
+function NewsComet({ comet }: { comet: { headline: typeof SAMPLE_HEADLINES[0], position: THREE.Vector3, startTime: number } }) {
+  const groupRef = useRef<THREE.Group>(null)
+
+  const color = comet.headline.sentiment === 'bullish' ? '#22c55e' :
+                comet.headline.sentiment === 'bearish' ? '#ef4444' : '#fbbf24'
+
+  useFrame((state) => {
+    if (!groupRef.current) return
+    const elapsed = state.clock.elapsedTime - comet.startTime
+
+    groupRef.current.position.set(
+      comet.position.x - elapsed * 4,
+      comet.position.y + Math.sin(elapsed * 2) * 0.5,
+      comet.position.z
+    )
+  })
+
+  return (
+    <group ref={groupRef}>
+      <Html center>
+        <div
+          className="px-3 py-1.5 rounded-full text-sm font-bold whitespace-nowrap animate-pulse"
+          style={{
+            backgroundColor: `${color}22`,
+            color,
+            boxShadow: `0 0 20px ${color}66`,
+            border: `1px solid ${color}44`
+          }}
+        >
+          {comet.headline.sentiment === 'bullish' ? '📈 ' :
+           comet.headline.sentiment === 'bearish' ? '📉 ' : '📊 '}
+          {comet.headline.text}
+        </div>
+      </Html>
+
+      {/* Trail */}
+      <mesh position={[2, 0, 0]}>
+        <planeGeometry args={[3, 0.1]} />
+        <meshBasicMaterial color={color} transparent opacity={0.3} />
+      </mesh>
     </group>
   )
 }
@@ -3267,6 +4678,7 @@ interface SceneProps {
   konamiActive: boolean
   zoomTarget: THREE.Vector3 | null
   setZoomTarget: (t: THREE.Vector3 | null) => void
+  stockPrices: Array<{ symbol: string, price: number, change: number }>
 }
 
 function Scene({
@@ -3289,7 +4701,8 @@ function Scene({
   setCelebrationActive,
   konamiActive,
   zoomTarget,
-  setZoomTarget
+  setZoomTarget,
+  stockPrices
 }: SceneProps) {
   const { mouse3D } = useMousePosition()
   const controlsRef = useRef<any>(null)
@@ -3388,14 +4801,14 @@ function Scene({
       <MarketMoodRing gexValue={gexValue} vixValue={vixValue} />
 
       {/* Cosmic features */}
-      <AsteroidField paused={paused} />
+      <AsteroidField paused={paused} stockPrices={stockPrices} />
       <CometWithTrail paused={paused} />
       <AsteroidBelt performanceMode={performanceMode} />
       <ShootingStars paused={paused} />
       <SolarFlares vixValue={vixValue} paused={paused} />
       <AuroraBorealis paused={paused} />
       <BlackHoleWarp paused={paused} />
-      <HolographicTickerTape spotPrice={spotPrice || 585} />
+      <HolographicTickerTape stockPrices={stockPrices} />
       <RocketLaunches botStatus={botStatus} />
       <SatelliteOrbiters />
       <EnergyShields paused={paused} />
@@ -3405,6 +4818,25 @@ function Scene({
       <SpaceStation spotPrice={spotPrice || 585} gexValue={gexValue} vixValue={vixValue} />
       <MoonPhases paused={paused} />
       <NebulaStorm vixValue={vixValue} paused={paused} />
+
+      {/* Solar Systems with Neural Synapse Connections */}
+      <SolarSystemsContainer paused={paused} />
+
+      {/* WOW FACTOR FEATURES */}
+      {/* VIX Storm Mode - chaos when VIX > 25 */}
+      <VixStormMode vixValue={vixValue} paused={paused} />
+
+      {/* Market Hours Lighting - ambient changes based on market state */}
+      <MarketHoursLighting paused={paused} />
+
+      {/* 3D Floating Charts - holographic candlesticks */}
+      <FloatingCandleChart paused={paused} />
+
+      {/* News Comet Stream - headlines flying by */}
+      <NewsCometStream paused={paused} />
+
+      {/* Gravitational Lensing Black Hole */}
+      <GravitationalLensing position={[15, -5, -18]} paused={paused} />
 
       {/* Bot nodes */}
       {BOT_NODES.map((node) => (
@@ -3640,6 +5072,9 @@ export default function Nexus3D({
   const [zoomTarget, setZoomTarget] = useState<THREE.Vector3 | null>(null)
   const holdTimer = useRef<NodeJS.Timeout | null>(null)
 
+  // Fetch real-time stock prices
+  const { prices: stockPrices, isLive: stockPricesLive } = useStockPrices()
+
   // Update global COLORS when theme changes
   useEffect(() => {
     COLORS = COLOR_THEMES[theme]
@@ -3805,6 +5240,7 @@ export default function Nexus3D({
               konamiActive={konamiActive}
               zoomTarget={zoomTarget}
               setZoomTarget={setZoomTarget}
+              stockPrices={stockPrices}
             />
           </Suspense>
         </Canvas>
@@ -3814,6 +5250,12 @@ export default function Nexus3D({
           <div className="bg-black/70 border border-cyan-500/20 rounded px-2 py-1 text-gray-400">
             Theme: <span style={{ color: COLORS.accent }}>{theme.toUpperCase()}</span>
           </div>
+          {stockPricesLive && (
+            <div className="bg-black/70 border border-green-500/40 rounded px-2 py-1 text-green-400 flex items-center gap-1">
+              <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+              LIVE PRICES
+            </div>
+          )}
           {performanceMode && (
             <div className="bg-black/70 border border-yellow-500/20 rounded px-2 py-1 text-yellow-400">
               ⚡ Performance Mode
