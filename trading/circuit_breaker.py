@@ -67,6 +67,10 @@ class CircuitBreakerConfig:
     # Max total margin usage (as percentage of equity)
     max_margin_pct: float = 50.0  # 50% max margin
 
+    # Consecutive loss protection
+    max_consecutive_losses: int = 3  # Stop trading after 3 consecutive losses
+    consecutive_loss_cooldown_hours: float = 24.0  # Hours to wait after hitting limit
+
     # Trading hours (24h format)
     trading_start_hour: int = 9
     trading_start_minute: int = 30
@@ -102,6 +106,11 @@ class CircuitBreaker:
         self.daily_pnl: float = 0.0
         self.daily_trades: int = 0
         self.current_date: date = datetime.now().date()
+
+        # Consecutive loss tracking
+        self.consecutive_losses: int = 0
+        self.consecutive_loss_cooldown_until: Optional[datetime] = None
+        self.last_trade_result: Optional[bool] = None  # True = win, False = loss
 
         # Trip history
         self.trip_history: list = []
@@ -270,6 +279,16 @@ class CircuitBreaker:
             self._trip_breaker(loss_msg)
             return False, loss_msg
 
+        # Consecutive loss cooldown check
+        if self.consecutive_loss_cooldown_until:
+            if datetime.now() < self.consecutive_loss_cooldown_until:
+                remaining = self.consecutive_loss_cooldown_until - datetime.now()
+                return False, f"Consecutive loss cooldown ({self.consecutive_losses} losses). {remaining.seconds // 60} min remaining"
+            else:
+                # Cooldown expired, clear it
+                self.consecutive_loss_cooldown_until = None
+                logger.info("Consecutive loss cooldown expired")
+
         # Position count check
         within_positions, pos_msg = self.check_position_count(current_positions)
         if not within_positions:
@@ -353,8 +372,8 @@ class CircuitBreaker:
                 f"To resume trading, manually reset the circuit breaker.",
                 "CRITICAL"
             )
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"Could not send circuit breaker alert: {e}")
 
     def reset(self, confirm: bool = False):
         """
@@ -376,17 +395,43 @@ class CircuitBreaker:
         print(f"✓ Circuit breaker reset to ACTIVE")
         return True
 
-    def record_pnl(self, pnl: float):
-        """Record P&L for a trade"""
+    def record_pnl(self, pnl: float, trade_id: Optional[str] = None):
+        """
+        Record P&L for a trade.
+
+        Tracks consecutive losses and triggers cooldown if limit exceeded.
+        """
         self._check_daily_reset()
         self.daily_pnl += pnl
         self.daily_trades += 1
+
+        # Track consecutive losses
+        is_loss = pnl < 0
+        if is_loss:
+            self.consecutive_losses += 1
+            self.last_trade_result = False
+            logger.info(f"Consecutive losses: {self.consecutive_losses}/{self.config.max_consecutive_losses}")
+        else:
+            # Reset streak on win
+            self.consecutive_losses = 0
+            self.last_trade_result = True
+            self.consecutive_loss_cooldown_until = None  # Clear any cooldown
+
         self._save_state()
 
-        # Check if we should trip
+        # Check if we should trip due to daily loss
         within_limits, msg = self.check_daily_loss_limit()
         if not within_limits:
             self._trip_breaker(msg)
+            return
+
+        # Check if we should enter cooldown due to consecutive losses
+        if self.consecutive_losses >= self.config.max_consecutive_losses:
+            cooldown_until = datetime.now() + timedelta(hours=self.config.consecutive_loss_cooldown_hours)
+            self.consecutive_loss_cooldown_until = cooldown_until
+            reason = f"Consecutive loss limit hit ({self.consecutive_losses} losses). Cooldown until {cooldown_until.strftime('%H:%M')}"
+            self._trip_breaker(reason)
+            logger.warning(f"Circuit breaker: {reason}")
 
     def get_status(self) -> Dict:
         """Get current circuit breaker status"""
@@ -405,12 +450,16 @@ class CircuitBreaker:
             'daily_trades': self.daily_trades,
             'loss_limit_remaining_pct': margin_remaining,
             'loss_limit_remaining_dollars': self.config.max_daily_loss_dollars - abs(min(0, self.daily_pnl)),
+            'consecutive_losses': self.consecutive_losses,
+            'max_consecutive_losses': self.config.max_consecutive_losses,
+            'consecutive_loss_cooldown_until': self.consecutive_loss_cooldown_until.isoformat() if self.consecutive_loss_cooldown_until else None,
             'limits': {
                 'max_daily_loss_pct': self.config.max_daily_loss_pct,
                 'max_daily_loss_dollars': self.config.max_daily_loss_dollars,
                 'max_position_loss_pct': self.config.max_position_loss_pct,
                 'max_open_positions': self.config.max_open_positions,
-                'max_margin_pct': self.config.max_margin_pct
+                'max_margin_pct': self.config.max_margin_pct,
+                'max_consecutive_losses': self.config.max_consecutive_losses
             },
             'last_reset': self.last_reset.isoformat(),
             'trip_count_today': sum(1 for t in self.trip_history if t.get('timestamp', '').startswith(str(self.current_date)))

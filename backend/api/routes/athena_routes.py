@@ -12,10 +12,19 @@ based on GEX signals from KRONOS and ML advice from ORACLE.
 import logging
 from datetime import datetime, timedelta
 from typing import Optional, List
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends, Request
 from zoneinfo import ZoneInfo
 
 from database_adapter import get_connection
+
+# Authentication middleware
+try:
+    from backend.api.auth_middleware import require_api_key, require_admin, optional_auth, AuthInfo
+    AUTH_AVAILABLE = True
+except ImportError:
+    AUTH_AVAILABLE = False
+    require_api_key = None
+    require_admin = None
 
 # Import decision logger for ATHENA decisions
 try:
@@ -641,9 +650,16 @@ async def get_athena_config():
 
 
 @router.post("/config/{setting_name}")
-async def update_athena_config(setting_name: str, value: str):
+async def update_athena_config(
+    setting_name: str,
+    value: str,
+    request: Request,
+    auth: AuthInfo = Depends(require_admin) if AUTH_AVAILABLE and require_admin else None
+):
     """
     Update an ATHENA configuration setting.
+
+    PROTECTED: Requires admin authentication.
     """
     try:
         conn = get_connection()
@@ -676,11 +692,16 @@ async def update_athena_config(setting_name: str, value: str):
 
 
 @router.post("/run")
-async def run_athena_cycle():
+async def run_athena_cycle(
+    request: Request,
+    auth: AuthInfo = Depends(require_admin) if AUTH_AVAILABLE and require_admin else None
+):
     """
     Manually trigger an ATHENA trading cycle.
 
     Use for testing or forcing a trade check outside the scheduler.
+
+    PROTECTED: Requires admin authentication.
     """
     athena = get_athena_instance()
 
@@ -699,12 +720,17 @@ async def run_athena_cycle():
 
 
 @router.post("/skip-today")
-async def skip_athena_today():
+async def skip_athena_today(
+    request: Request,
+    auth: AuthInfo = Depends(require_api_key) if AUTH_AVAILABLE and require_api_key else None
+):
     """
     Skip trading for the rest of today.
 
     This will prevent ATHENA from opening any new positions until tomorrow.
     Existing positions will still be managed.
+
+    PROTECTED: Requires API key authentication.
     """
     athena = get_athena_instance()
 
@@ -1153,13 +1179,17 @@ async def get_athena_live_pnl():
 
 
 @router.post("/process-expired")
-async def process_athena_expired_positions():
+async def process_athena_expired_positions(
+    request: Request,
+    auth: AuthInfo = Depends(require_api_key) if AUTH_AVAILABLE and require_api_key else None
+):
     """
     Manually trigger processing of all expired ATHENA positions.
 
     This will process any positions that have expired but weren't processed
     due to service downtime or errors. Useful for catching up after outages.
 
+    PROTECTED: Requires API key authentication.
     Processes positions where expiration <= today and status = 'open'.
     """
     athena = get_athena_instance()
