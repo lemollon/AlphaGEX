@@ -994,75 +994,104 @@ const STOCK_TICKERS = [
 // SOLAR SYSTEM DEFINITIONS - Each with unique flares and planet effects
 // =============================================================================
 
+// Planet routes for navigation
+const PLANET_ROUTES: Record<string, string> = {
+  // SOLOMON planets
+  'Analysis': '/ai-copilot',
+  'Strategy': '/strategies',
+  'Insight': '/psychology',
+  // ARGUS planets
+  'Gamma': '/gamma',
+  'Delta': '/gex',
+  'Theta': '/vix',
+  // ORACLE planets
+  'Prediction': '/oracle',
+  'Probability': '/probability',
+  'Confidence': '/ml',
+  // KRONOS planets
+  'History': '/backtesting',
+  'Backtest': '/zero-dte-backtest',
+  'Patterns': '/setups',
+  // SYSTEMS planets
+  'Health': '/system/processes',
+  'Data': '/database',
+  'Network': '/data-transparency',
+}
+
 const SOLAR_SYSTEMS = [
   {
     id: 'solomon',
     name: 'SOLOMON',
     subtitle: 'AI Wisdom',
+    route: '/solomon',
     position: [-22, 8, -20] as [number, number, number],  // Far upper left
     sunColor: '#f59e0b',
     glowColor: '#fbbf24',
     flareType: 'wisdom' as const,  // Golden rays of wisdom
     planets: [
-      { name: 'Analysis', color: '#22d3ee', size: 0.18, orbit: 1.8, speed: 0.6, effect: 'rings' as const },
-      { name: 'Strategy', color: '#a855f7', size: 0.15, orbit: 2.8, speed: 0.4, effect: 'crystals' as const },
-      { name: 'Insight', color: '#10b981', size: 0.12, orbit: 3.6, speed: 0.25, effect: 'aura' as const },
+      { name: 'Analysis', color: '#22d3ee', size: 0.18, orbit: 1.8, speed: 0.6, effect: 'rings' as const, moons: 1 },
+      { name: 'Strategy', color: '#a855f7', size: 0.15, orbit: 2.8, speed: 0.4, effect: 'crystals' as const, moons: 2 },
+      { name: 'Insight', color: '#10b981', size: 0.12, orbit: 3.6, speed: 0.25, effect: 'aura' as const, moons: 0 },
     ]
   },
   {
     id: 'argus',
     name: 'ARGUS',
     subtitle: 'All-Seeing Eye',
+    route: '/argus',
     position: [24, 5, -18] as [number, number, number],  // Far right
     sunColor: '#06b6d4',
     glowColor: '#22d3ee',
     flareType: 'pulse' as const,  // Scanning pulse waves
     planets: [
-      { name: 'Gamma', color: '#f97316', size: 0.22, orbit: 2.0, speed: 0.8, effect: 'fire' as const },
-      { name: 'Delta', color: '#ef4444', size: 0.16, orbit: 3.0, speed: 0.5, effect: 'electric' as const },
-      { name: 'Theta', color: '#8b5cf6', size: 0.13, orbit: 3.8, speed: 0.35, effect: 'spiral' as const },
+      { name: 'Gamma', color: '#f97316', size: 0.22, orbit: 2.0, speed: 0.8, effect: 'fire' as const, moons: 2 },
+      { name: 'Delta', color: '#ef4444', size: 0.16, orbit: 3.0, speed: 0.5, effect: 'electric' as const, moons: 1 },
+      { name: 'Theta', color: '#8b5cf6', size: 0.13, orbit: 3.8, speed: 0.35, effect: 'spiral' as const, moons: 3 },
     ]
   },
   {
     id: 'oracle',
     name: 'ORACLE',
     subtitle: 'Future Sight',
+    route: '/oracle',
     position: [0, 15, -25] as [number, number, number],  // High above center
     sunColor: '#8b5cf6',
     glowColor: '#a855f7',
     flareType: 'mystic' as const,  // Mystical swirling energy
     planets: [
-      { name: 'Prediction', color: '#22d3ee', size: 0.20, orbit: 2.2, speed: 0.7, effect: 'glow' as const },
-      { name: 'Probability', color: '#10b981', size: 0.17, orbit: 3.2, speed: 0.45, effect: 'orbit_rings' as const },
-      { name: 'Confidence', color: '#f59e0b', size: 0.14, orbit: 4.0, speed: 0.3, effect: 'pulse' as const },
+      { name: 'Prediction', color: '#22d3ee', size: 0.20, orbit: 2.2, speed: 0.7, effect: 'glow' as const, moons: 1 },
+      { name: 'Probability', color: '#10b981', size: 0.17, orbit: 3.2, speed: 0.45, effect: 'orbit_rings' as const, moons: 2 },
+      { name: 'Confidence', color: '#f59e0b', size: 0.14, orbit: 4.0, speed: 0.3, effect: 'pulse' as const, moons: 0 },
     ]
   },
   {
     id: 'kronos',
     name: 'KRONOS',
     subtitle: 'Time Master',
+    route: '/backtesting',
     position: [-18, -8, -22] as [number, number, number],  // Lower left
     sunColor: '#ef4444',
     glowColor: '#f87171',
     flareType: 'eruption' as const,  // Violent solar eruptions
     planets: [
-      { name: 'History', color: '#6b7280', size: 0.19, orbit: 2.4, speed: 0.55, effect: 'dust' as const },
-      { name: 'Backtest', color: '#3b82f6', size: 0.16, orbit: 3.4, speed: 0.38, effect: 'data_stream' as const },
-      { name: 'Patterns', color: '#fbbf24', size: 0.13, orbit: 4.2, speed: 0.25, effect: 'hexagon' as const },
+      { name: 'History', color: '#6b7280', size: 0.19, orbit: 2.4, speed: 0.55, effect: 'dust' as const, moons: 1 },
+      { name: 'Backtest', color: '#3b82f6', size: 0.16, orbit: 3.4, speed: 0.38, effect: 'data_stream' as const, moons: 2 },
+      { name: 'Patterns', color: '#fbbf24', size: 0.13, orbit: 4.2, speed: 0.25, effect: 'hexagon' as const, moons: 1 },
     ]
   },
   {
     id: 'systems',
     name: 'SYSTEMS',
     subtitle: 'Core Hub',
+    route: '/system/processes',
     position: [20, -6, -20] as [number, number, number],  // Lower right
     sunColor: '#10b981',
     glowColor: '#34d399',
     flareType: 'network' as const,  // Network connection beams
     planets: [
-      { name: 'Health', color: '#22c55e', size: 0.18, orbit: 2.0, speed: 0.7, effect: 'heartbeat' as const },
-      { name: 'Data', color: '#3b82f6', size: 0.15, orbit: 3.0, speed: 0.45, effect: 'binary' as const },
-      { name: 'Network', color: '#ec4899', size: 0.12, orbit: 3.8, speed: 0.3, effect: 'connections' as const },
+      { name: 'Health', color: '#22c55e', size: 0.18, orbit: 2.0, speed: 0.7, effect: 'heartbeat' as const, moons: 0 },
+      { name: 'Data', color: '#3b82f6', size: 0.15, orbit: 3.0, speed: 0.45, effect: 'binary' as const, moons: 1 },
+      { name: 'Network', color: '#ec4899', size: 0.12, orbit: 3.8, speed: 0.3, effect: 'connections' as const, moons: 2 },
     ]
   },
 ]
@@ -3508,12 +3537,14 @@ function SolarSystem({
   system,
   paused = false,
   onPulseToSystem,
-  onSystemClick
+  onSystemClick,
+  onPlanetClick
 }: {
   system: typeof SOLAR_SYSTEMS[0]
   paused?: boolean
   onPulseToSystem?: (targetId: string) => void
   onSystemClick?: (systemId: string, position: [number, number, number]) => void
+  onPlanetClick?: (planetName: string) => void
 }) {
   const groupRef = useRef<THREE.Group>(null)
   const sunRef = useRef<THREE.Mesh>(null)
@@ -3633,6 +3664,7 @@ function SolarSystem({
           systemId={system.id}
           paused={paused}
           phaseOffset={i * Math.PI * 0.7}
+          onPlanetClick={onPlanetClick}
         />
       ))}
 
@@ -3673,29 +3705,41 @@ function SolarSystem({
 }
 
 // =============================================================================
-// ORBITING PLANET with Trail
+// ORBITING PLANET with Trail, Moons, Atmosphere, and Click Navigation
 // =============================================================================
 
 function OrbitingPlanet({
   planet,
   systemId,
   paused,
-  phaseOffset
+  phaseOffset,
+  onPlanetClick
 }: {
-  planet: { name: string, color: string, size: number, orbit: number, speed: number, effect?: PlanetEffect }
+  planet: { name: string, color: string, size: number, orbit: number, speed: number, effect?: PlanetEffect, moons?: number }
   systemId: string
   paused: boolean
   phaseOffset: number
+  onPlanetClick?: (planetName: string) => void
 }) {
   const groupRef = useRef<THREE.Group>(null)
   const meshRef = useRef<THREE.Mesh>(null)
   const trailRef = useRef<THREE.Points>(null)
+  const atmosphereRef = useRef<THREE.Mesh>(null)
   const [isHovered, setIsHovered] = useState(false)
-  const [currentPosition, setCurrentPosition] = useState<[number, number, number]>([0, 0, 0])
+  const [clickPulse, setClickPulse] = useState(0)
 
   // Trail positions
   const trailPositions = useMemo(() => new Float32Array(30 * 3), [])
   const trailIndex = useRef(0)
+
+  // Handle planet click
+  const handleClick = useCallback((e: { stopPropagation: () => void }) => {
+    e.stopPropagation()
+    setClickPulse(1)
+    if (onPlanetClick) {
+      onPlanetClick(planet.name)
+    }
+  }, [onPlanetClick, planet.name])
 
   useFrame((state) => {
     if (paused) return
@@ -3714,8 +3758,11 @@ function OrbitingPlanet({
       meshRef.current.rotation.y = t * 2
     }
 
-    // Update position for effects
-    setCurrentPosition([x, y, z])
+    // Atmosphere pulse
+    if (atmosphereRef.current) {
+      const pulse = 1 + Math.sin(t * 3) * 0.05
+      atmosphereRef.current.scale.setScalar(pulse)
+    }
 
     // Update trail
     if (trailRef.current) {
@@ -3726,7 +3773,25 @@ function OrbitingPlanet({
       trailIndex.current++
       trailRef.current.geometry.attributes.position.needsUpdate = true
     }
+
+    // Decay click pulse
+    if (clickPulse > 0) {
+      setClickPulse(prev => Math.max(0, prev - 0.03))
+    }
   })
+
+  // Generate moon orbital data
+  const moons = useMemo(() => {
+    const moonCount = planet.moons || 0
+    if (moonCount === 0) return []
+    return Array.from({ length: moonCount }, (_, i) => ({
+      id: i,
+      orbit: planet.size * (2 + i * 0.8),
+      speed: 2 + i * 0.5,
+      size: planet.size * 0.2,
+      phase: (i * Math.PI * 2) / moonCount
+    }))
+  }, [planet.moons, planet.size])
 
   return (
     <group>
@@ -3745,15 +3810,45 @@ function OrbitingPlanet({
 
       {/* Planet with effects */}
       <group ref={groupRef}>
-        {/* Planet sphere */}
+        {/* Click pulse ring effect */}
+        {clickPulse > 0 && (
+          <mesh rotation={[Math.PI / 2, 0, 0]}>
+            <ringGeometry args={[planet.size * (2 + (1 - clickPulse) * 3), planet.size * (2.1 + (1 - clickPulse) * 3.2), 32]} />
+            <meshBasicMaterial color="#ffffff" transparent opacity={clickPulse * 0.8} />
+          </mesh>
+        )}
+
+        {/* Planet atmosphere glow */}
+        <Sphere ref={atmosphereRef} args={[planet.size * 1.3, 16, 16]}>
+          <meshBasicMaterial color={planet.color} transparent opacity={isHovered ? 0.35 : 0.15} />
+        </Sphere>
+
+        {/* Planet sphere - CLICKABLE */}
         <Sphere
           ref={meshRef}
           args={[planet.size, 16, 16]}
           onPointerOver={() => setIsHovered(true)}
           onPointerOut={() => setIsHovered(false)}
+          onClick={handleClick}
         >
-          <meshBasicMaterial color={planet.color} />
+          <MeshDistortMaterial
+            color={planet.color}
+            emissive={planet.color}
+            emissiveIntensity={isHovered ? 0.5 : 0.2}
+            distort={isHovered ? 0.15 : 0.05}
+            speed={2}
+          />
         </Sphere>
+
+        {/* Inner core glow */}
+        <Sphere args={[planet.size * 0.5, 8, 8]}>
+          <meshBasicMaterial color="#ffffff" transparent opacity={0.4} />
+        </Sphere>
+
+        {/* Orbiting moons */}
+        {moons.map(moon => (
+          <OrbitingMoon key={moon.id} moon={moon} planetColor={planet.color} paused={paused} />
+        ))}
 
         {/* Planet unique effect */}
         {planet.effect && (
@@ -3765,14 +3860,65 @@ function OrbitingPlanet({
           />
         )}
 
-        {/* Planet glow when hovered */}
+        {/* Hover tooltip */}
         {isHovered && (
-          <Sphere args={[planet.size * 1.8, 8, 8]}>
-            <meshBasicMaterial color={planet.color} transparent opacity={0.3} />
-          </Sphere>
+          <Html position={[0, planet.size + 0.3, 0]} center>
+            <div className="bg-gray-900/90 border border-gray-700 rounded-lg px-3 py-2 text-center backdrop-blur-sm min-w-[100px]">
+              <div className="text-xs font-bold" style={{ color: planet.color }}>
+                {planet.name}
+              </div>
+              <div className="text-[10px] text-gray-400 mt-1">Click to navigate</div>
+              <div className="text-[10px] text-gray-500">{PLANET_ROUTES[planet.name] || '/'}</div>
+            </div>
+          </Html>
+        )}
+
+        {/* Enhanced glow when hovered */}
+        {isHovered && (
+          <>
+            <Sphere args={[planet.size * 2, 8, 8]}>
+              <meshBasicMaterial color={planet.color} transparent opacity={0.2} />
+            </Sphere>
+            {/* Pulsing ring */}
+            <mesh rotation={[Math.PI / 2, 0, 0]}>
+              <torusGeometry args={[planet.size * 1.5, 0.01, 8, 32]} />
+              <meshBasicMaterial color="#ffffff" transparent opacity={0.8} />
+            </mesh>
+          </>
         )}
       </group>
     </group>
+  )
+}
+
+// =============================================================================
+// ORBITING MOON - Mini moons around planets
+// =============================================================================
+
+function OrbitingMoon({
+  moon,
+  planetColor,
+  paused
+}: {
+  moon: { id: number, orbit: number, speed: number, size: number, phase: number }
+  planetColor: string
+  paused: boolean
+}) {
+  const meshRef = useRef<THREE.Mesh>(null)
+
+  useFrame((state) => {
+    if (paused || !meshRef.current) return
+    const t = state.clock.elapsedTime
+    const angle = t * moon.speed + moon.phase
+    meshRef.current.position.x = Math.cos(angle) * moon.orbit
+    meshRef.current.position.z = Math.sin(angle) * moon.orbit
+    meshRef.current.rotation.y = t * 3
+  })
+
+  return (
+    <Sphere ref={meshRef} args={[moon.size, 8, 8]} position={[moon.orbit, 0, 0]}>
+      <meshBasicMaterial color={planetColor} transparent opacity={0.7} />
+    </Sphere>
   )
 }
 
@@ -4736,10 +4882,12 @@ function SolarBurstEffect({ position, active, color }: { position: [number, numb
 
 function SolarSystemsContainer({
   paused,
-  onSystemClick
+  onSystemClick,
+  onPlanetClick
 }: {
   paused: boolean
   onSystemClick?: (systemId: string, position: [number, number, number]) => void
+  onPlanetClick?: (planetName: string) => void
 }) {
   const handlePulseToSystem = useCallback((targetId: string) => {
     // This could trigger effects on the target system
@@ -4756,6 +4904,7 @@ function SolarSystemsContainer({
           paused={paused}
           onPulseToSystem={handlePulseToSystem}
           onSystemClick={onSystemClick}
+          onPlanetClick={onPlanetClick}
         />
       ))}
 
@@ -4839,6 +4988,291 @@ function SolarSystemsContainer({
         color="#10b981"
         paused={paused}
       />
+    </group>
+  )
+}
+
+// =============================================================================
+// NEURAL NETWORK VISUAL COMPONENTS
+// =============================================================================
+
+// Neural Brain Structure - 3D brain mesh connecting all systems
+function NeuralBrainStructure({ paused }: { paused: boolean }) {
+  const meshRef = useRef<THREE.Group>(null)
+  const nodesRef = useRef<THREE.Points>(null)
+
+  // Generate brain-like nodes
+  const nodePositions = useMemo(() => {
+    const positions = new Float32Array(200 * 3)
+    for (let i = 0; i < 200; i++) {
+      // Create brain-like distribution (ellipsoid)
+      const theta = Math.random() * Math.PI * 2
+      const phi = Math.acos(2 * Math.random() - 1)
+      const r = 12 + Math.random() * 8
+      positions[i * 3] = r * Math.sin(phi) * Math.cos(theta) * 1.3 // wider
+      positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta) * 0.8 - 5 // flatter, lower
+      positions[i * 3 + 2] = r * Math.cos(phi) - 15 // depth
+    }
+    return positions
+  }, [])
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+    if (meshRef.current) {
+      meshRef.current.rotation.y = Math.sin(t * 0.1) * 0.1
+    }
+    if (nodesRef.current) {
+      nodesRef.current.rotation.y = t * 0.02
+    }
+  })
+
+  return (
+    <group ref={meshRef} position={[0, 5, -20]}>
+      {/* Neural nodes */}
+      <points ref={nodesRef}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" count={200} array={nodePositions} itemSize={3} />
+        </bufferGeometry>
+        <pointsMaterial color="#22d3ee" size={0.15} transparent opacity={0.5} />
+      </points>
+    </group>
+  )
+}
+
+// Neural Neurons - Individual neurons with dendrites
+function NeuralNeurons({ paused }: { paused: boolean }) {
+  const neurons = useMemo(() => {
+    return Array.from({ length: 8 }, (_, i) => ({
+      id: i,
+      position: [
+        (Math.random() - 0.5) * 40,
+        (Math.random() - 0.5) * 20,
+        -10 - Math.random() * 20
+      ] as [number, number, number],
+      color: ['#22d3ee', '#a855f7', '#f59e0b', '#10b981', '#ef4444'][i % 5],
+      scale: 0.8 + Math.random() * 0.4
+    }))
+  }, [])
+
+  return (
+    <group>
+      {neurons.map(neuron => (
+        <NeuronCell key={neuron.id} {...neuron} paused={paused} />
+      ))}
+    </group>
+  )
+}
+
+function NeuronCell({ position, color, scale, paused }: {
+  position: [number, number, number]
+  color: string
+  scale: number
+  paused: boolean
+}) {
+  const groupRef = useRef<THREE.Group>(null)
+  const [firing, setFiring] = useState(false)
+
+  // Random firing
+  useEffect(() => {
+    if (paused) return
+    const interval = setInterval(() => {
+      if (Math.random() < 0.1) {
+        setFiring(true)
+        setTimeout(() => setFiring(false), 300)
+      }
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [paused])
+
+  useFrame((state) => {
+    if (paused || !groupRef.current) return
+    const t = state.clock.elapsedTime
+    groupRef.current.rotation.y = t * 0.2
+    groupRef.current.position.y = position[1] + Math.sin(t + position[0]) * 0.3
+  })
+
+  // Generate dendrite directions
+  const dendrites = useMemo(() => {
+    return Array.from({ length: 6 }, (_, i) => {
+      const theta = (i / 6) * Math.PI * 2
+      const phi = Math.random() * Math.PI
+      return {
+        direction: [
+          Math.sin(phi) * Math.cos(theta),
+          Math.sin(phi) * Math.sin(theta),
+          Math.cos(phi)
+        ] as [number, number, number],
+        length: 0.8 + Math.random() * 0.6
+      }
+    })
+  }, [])
+
+  return (
+    <group ref={groupRef} position={position} scale={scale}>
+      {/* Cell body (soma) */}
+      <Sphere args={[0.3, 16, 16]}>
+        <meshBasicMaterial color={firing ? '#ffffff' : color} transparent opacity={firing ? 1 : 0.8} />
+      </Sphere>
+
+      {/* Firing glow */}
+      {firing && (
+        <Sphere args={[0.6, 16, 16]}>
+          <meshBasicMaterial color={color} transparent opacity={0.5} />
+        </Sphere>
+      )}
+
+      {/* Dendrites */}
+      {dendrites.map((d, i) => (
+        <Line
+          key={i}
+          points={[
+            [0, 0, 0],
+            [d.direction[0] * d.length, d.direction[1] * d.length, d.direction[2] * d.length]
+          ]}
+          color={color}
+          lineWidth={1}
+          transparent
+          opacity={0.5}
+        />
+      ))}
+    </group>
+  )
+}
+
+// Synaptic Firing - Electrical impulses traveling between neurons
+function SynapticFiring({ paused }: { paused: boolean }) {
+  const [impulses, setImpulses] = useState<Array<{
+    id: number
+    start: [number, number, number]
+    end: [number, number, number]
+    startTime: number
+    color: string
+  }>>([])
+  const nextId = useRef(0)
+  const lastFire = useRef(0)
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    // Spawn new impulse every 0.5-1.5 seconds
+    if (t - lastFire.current > 0.5 + Math.random()) {
+      lastFire.current = t
+      const systems = SOLAR_SYSTEMS
+      const s1 = systems[Math.floor(Math.random() * systems.length)]
+      const s2 = systems[Math.floor(Math.random() * systems.length)]
+
+      if (s1.id !== s2.id) {
+        setImpulses(prev => [...prev, {
+          id: nextId.current++,
+          start: s1.position,
+          end: s2.position,
+          startTime: t,
+          color: s1.glowColor
+        }])
+      }
+    }
+
+    // Clean up old impulses
+    setImpulses(prev => prev.filter(imp => t - imp.startTime < 2))
+  })
+
+  return (
+    <group>
+      {impulses.map(imp => (
+        <SynapticImpulse key={imp.id} impulse={imp} />
+      ))}
+    </group>
+  )
+}
+
+function SynapticImpulse({ impulse }: { impulse: {
+  start: [number, number, number]
+  end: [number, number, number]
+  startTime: number
+  color: string
+}}) {
+  const meshRef = useRef<THREE.Mesh>(null)
+
+  useFrame((state) => {
+    if (!meshRef.current) return
+    const t = state.clock.elapsedTime
+    const progress = Math.min((t - impulse.startTime) / 1.5, 1)
+
+    const x = impulse.start[0] + (impulse.end[0] - impulse.start[0]) * progress
+    const y = impulse.start[1] + (impulse.end[1] - impulse.start[1]) * progress + Math.sin(progress * Math.PI) * 2
+    const z = impulse.start[2] + (impulse.end[2] - impulse.start[2]) * progress
+
+    meshRef.current.position.set(x, y, z)
+    meshRef.current.scale.setScalar(1 - progress * 0.5)
+  })
+
+  return (
+    <group>
+      <Sphere ref={meshRef} args={[0.15, 8, 8]} position={impulse.start}>
+        <meshBasicMaterial color={impulse.color} />
+      </Sphere>
+    </group>
+  )
+}
+
+// Neural Pathways - Glowing pathways representing neural connections
+function NeuralPathways({ paused }: { paused: boolean }) {
+  const pathwaysRef = useRef<THREE.Group>(null)
+
+  // Generate pathway points between solar systems
+  const pathways = useMemo(() => {
+    const paths: Array<{
+      points: [number, number, number][]
+      color: string
+    }> = []
+
+    // Create curved paths between all solar systems
+    for (let i = 0; i < SOLAR_SYSTEMS.length; i++) {
+      for (let j = i + 1; j < SOLAR_SYSTEMS.length; j++) {
+        const s1 = SOLAR_SYSTEMS[i]
+        const s2 = SOLAR_SYSTEMS[j]
+
+        // Create curved pathway with control points
+        const midPoint: [number, number, number] = [
+          (s1.position[0] + s2.position[0]) / 2 + (Math.random() - 0.5) * 5,
+          (s1.position[1] + s2.position[1]) / 2 + Math.random() * 3,
+          (s1.position[2] + s2.position[2]) / 2
+        ]
+
+        paths.push({
+          points: [s1.position, midPoint, s2.position],
+          color: s1.glowColor
+        })
+      }
+    }
+    return paths
+  }, [])
+
+  useFrame((state) => {
+    if (paused || !pathwaysRef.current) return
+    const t = state.clock.elapsedTime
+    pathwaysRef.current.children.forEach((child, i) => {
+      if (child instanceof THREE.Line) {
+        const material = child.material as THREE.LineBasicMaterial
+        material.opacity = 0.1 + Math.sin(t * 2 + i) * 0.05
+      }
+    })
+  })
+
+  return (
+    <group ref={pathwaysRef}>
+      {pathways.map((path, i) => (
+        <Line
+          key={i}
+          points={path.points}
+          color={path.color}
+          lineWidth={0.5}
+          transparent
+          opacity={0.15}
+        />
+      ))}
     </group>
   )
 }
@@ -6745,6 +7179,7 @@ function AmbientParticles({ performanceMode, paused = false }: { performanceMode
 interface SceneProps {
   botStatus: BotStatus
   onNodeClick?: (id: string) => void
+  onPlanetClick?: (planetName: string) => void
   gexValue?: number
   vixValue?: number
   spotPrice?: number
@@ -6769,6 +7204,7 @@ interface SceneProps {
 function Scene({
   botStatus,
   onNodeClick,
+  onPlanetClick,
   gexValue = 0,
   vixValue = 15,
   spotPrice,
@@ -6910,8 +7346,14 @@ function Scene({
       <MoonPhases paused={paused} />
       <NebulaStorm vixValue={vixValue} paused={paused} />
 
+      {/* Neural Network Visual Layer */}
+      <NeuralBrainStructure paused={paused} />
+      <NeuralNeurons paused={paused} />
+      <SynapticFiring paused={paused} />
+      <NeuralPathways paused={paused} />
+
       {/* Solar Systems with Neural Synapse Connections */}
-      <SolarSystemsContainer paused={paused} onSystemClick={handleSolarSystemClick} />
+      <SolarSystemsContainer paused={paused} onSystemClick={handleSolarSystemClick} onPlanetClick={onPlanetClick} />
 
       {/* WOW FACTOR FEATURES */}
       {/* VIX Storm Mode - chaos when VIX > 25 */}
@@ -7241,6 +7683,15 @@ export default function Nexus3D({
     setCurrentSystem(systemId === 'home' ? null : systemId)
   }, [])
 
+  // Handler to navigate when clicking a planet
+  const handlePlanetClick = useCallback((planetName: string) => {
+    const route = PLANET_ROUTES[planetName]
+    if (route && onNodeClick) {
+      // Use the route path (strip the leading /)
+      onNodeClick(route)
+    }
+  }, [onNodeClick])
+
   // Fetch real-time stock prices
   const { prices: stockPrices, isLive: stockPricesLive } = useStockPrices()
 
@@ -7366,6 +7817,25 @@ export default function Nexus3D({
           isFullscreen={isFullscreen}
         />
 
+        {/* Back to Dashboard Button */}
+        <div className="absolute top-4 left-4 z-20">
+          <button
+            onClick={() => onNodeClick?.('/')}
+            className="group flex items-center gap-2 bg-gray-900/80 hover:bg-gray-800 border border-cyan-500/30 hover:border-cyan-400/60 rounded-lg px-4 py-2 text-sm transition-all duration-300 backdrop-blur-sm"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              className="w-4 h-4 text-cyan-400 group-hover:text-cyan-300 transition-colors"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+            </svg>
+            <span className="text-gray-300 group-hover:text-white transition-colors">Dashboard</span>
+          </button>
+        </div>
+
         {/* Pause Indicator */}
         <PauseIndicator paused={paused} />
 
@@ -7397,6 +7867,7 @@ export default function Nexus3D({
             <Scene
               botStatus={botStatus}
               onNodeClick={onNodeClick}
+              onPlanetClick={handlePlanetClick}
               gexValue={gexValue}
               vixValue={vixValue}
               spotPrice={spotPrice}
