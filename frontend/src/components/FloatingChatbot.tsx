@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Send, X, Minimize2, Maximize2, Image, Trash2, User, Loader2, Bot, Download, Volume2, VolumeX, Sparkles, Terminal, AlertTriangle } from 'lucide-react'
 import { apiClient } from '@/lib/api'
+import ReactMarkdown from 'react-markdown'
 
 interface Message {
   id: string
@@ -674,7 +675,13 @@ export default function FloatingChatbot() {
                     : `bg-background-hover text-text-primary rounded-bl-md ${getMessageStyle(message.type)}`
                 }`}
               >
-                <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">{message.content}</p>
+                {message.role === 'assistant' ? (
+                  <div className="text-sm prose prose-sm prose-invert max-w-none break-words leading-relaxed [&>p]:m-0 [&>p]:mb-2 [&>p:last-child]:mb-0 [&>ul]:my-1 [&>ol]:my-1 [&>li]:my-0.5 [&>h1]:text-base [&>h2]:text-sm [&>h3]:text-sm [&>h1]:font-bold [&>h2]:font-semibold [&>h3]:font-medium [&>strong]:text-primary [&>h1]:mb-2 [&>h2]:mb-1.5 [&>h3]:mb-1">
+                    <ReactMarkdown>{message.content}</ReactMarkdown>
+                  </div>
+                ) : (
+                  <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">{message.content}</p>
+                )}
                 <p className={`text-xs mt-1.5 ${message.role === 'user' ? 'text-white/60' : 'text-text-muted'}`}>
                   {formatTime(message.timestamp)}
                 </p>
