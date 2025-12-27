@@ -986,7 +986,7 @@ const STOCK_TICKERS = [
 ]
 
 // =============================================================================
-// SOLAR SYSTEM DEFINITIONS
+// SOLAR SYSTEM DEFINITIONS - Each with unique flares and planet effects
 // =============================================================================
 
 const SOLAR_SYSTEMS = [
@@ -994,65 +994,70 @@ const SOLAR_SYSTEMS = [
     id: 'solomon',
     name: 'SOLOMON',
     subtitle: 'AI Wisdom',
-    position: [-14, 5, -12] as [number, number, number],
+    position: [-22, 8, -20] as [number, number, number],  // Far upper left
     sunColor: '#f59e0b',
     glowColor: '#fbbf24',
+    flareType: 'wisdom' as const,  // Golden rays of wisdom
     planets: [
-      { name: 'Analysis', color: '#22d3ee', size: 0.15, orbit: 1.2, speed: 0.8 },
-      { name: 'Strategy', color: '#a855f7', size: 0.12, orbit: 1.8, speed: 0.5 },
-      { name: 'Insight', color: '#10b981', size: 0.1, orbit: 2.3, speed: 0.3 },
+      { name: 'Analysis', color: '#22d3ee', size: 0.18, orbit: 1.8, speed: 0.6, effect: 'rings' as const },
+      { name: 'Strategy', color: '#a855f7', size: 0.15, orbit: 2.8, speed: 0.4, effect: 'crystals' as const },
+      { name: 'Insight', color: '#10b981', size: 0.12, orbit: 3.6, speed: 0.25, effect: 'aura' as const },
     ]
   },
   {
     id: 'argus',
     name: 'ARGUS',
     subtitle: 'All-Seeing Eye',
-    position: [14, 3, -10] as [number, number, number],
+    position: [24, 5, -18] as [number, number, number],  // Far right
     sunColor: '#06b6d4',
     glowColor: '#22d3ee',
+    flareType: 'pulse' as const,  // Scanning pulse waves
     planets: [
-      { name: 'Gamma', color: '#f97316', size: 0.18, orbit: 1.4, speed: 1.0 },
-      { name: 'Delta', color: '#ef4444', size: 0.12, orbit: 2.0, speed: 0.6 },
-      { name: 'Theta', color: '#8b5cf6', size: 0.1, orbit: 2.5, speed: 0.4 },
+      { name: 'Gamma', color: '#f97316', size: 0.22, orbit: 2.0, speed: 0.8, effect: 'fire' as const },
+      { name: 'Delta', color: '#ef4444', size: 0.16, orbit: 3.0, speed: 0.5, effect: 'electric' as const },
+      { name: 'Theta', color: '#8b5cf6', size: 0.13, orbit: 3.8, speed: 0.35, effect: 'spiral' as const },
     ]
   },
   {
     id: 'oracle',
     name: 'ORACLE',
     subtitle: 'Future Sight',
-    position: [0, 8, -15] as [number, number, number],
+    position: [0, 15, -25] as [number, number, number],  // High above center
     sunColor: '#8b5cf6',
     glowColor: '#a855f7',
+    flareType: 'mystic' as const,  // Mystical swirling energy
     planets: [
-      { name: 'Prediction', color: '#22d3ee', size: 0.16, orbit: 1.3, speed: 0.9 },
-      { name: 'Probability', color: '#10b981', size: 0.14, orbit: 1.9, speed: 0.55 },
-      { name: 'Confidence', color: '#f59e0b', size: 0.11, orbit: 2.4, speed: 0.35 },
+      { name: 'Prediction', color: '#22d3ee', size: 0.20, orbit: 2.2, speed: 0.7, effect: 'glow' as const },
+      { name: 'Probability', color: '#10b981', size: 0.17, orbit: 3.2, speed: 0.45, effect: 'orbit_rings' as const },
+      { name: 'Confidence', color: '#f59e0b', size: 0.14, orbit: 4.0, speed: 0.3, effect: 'pulse' as const },
     ]
   },
   {
     id: 'kronos',
     name: 'KRONOS',
     subtitle: 'Time Master',
-    position: [-10, -4, -14] as [number, number, number],
+    position: [-18, -8, -22] as [number, number, number],  // Lower left
     sunColor: '#ef4444',
     glowColor: '#f87171',
+    flareType: 'eruption' as const,  // Violent solar eruptions
     planets: [
-      { name: 'History', color: '#6b7280', size: 0.15, orbit: 1.5, speed: 0.7 },
-      { name: 'Backtest', color: '#3b82f6', size: 0.13, orbit: 2.1, speed: 0.45 },
-      { name: 'Patterns', color: '#fbbf24', size: 0.1, orbit: 2.6, speed: 0.3 },
+      { name: 'History', color: '#6b7280', size: 0.19, orbit: 2.4, speed: 0.55, effect: 'dust' as const },
+      { name: 'Backtest', color: '#3b82f6', size: 0.16, orbit: 3.4, speed: 0.38, effect: 'data_stream' as const },
+      { name: 'Patterns', color: '#fbbf24', size: 0.13, orbit: 4.2, speed: 0.25, effect: 'hexagon' as const },
     ]
   },
   {
     id: 'systems',
     name: 'SYSTEMS',
     subtitle: 'Core Hub',
-    position: [12, -3, -13] as [number, number, number],
+    position: [20, -6, -20] as [number, number, number],  // Lower right
     sunColor: '#10b981',
     glowColor: '#34d399',
+    flareType: 'network' as const,  // Network connection beams
     planets: [
-      { name: 'Health', color: '#22c55e', size: 0.14, orbit: 1.3, speed: 0.85 },
-      { name: 'Data', color: '#3b82f6', size: 0.12, orbit: 1.8, speed: 0.5 },
-      { name: 'Network', color: '#ec4899', size: 0.1, orbit: 2.2, speed: 0.35 },
+      { name: 'Health', color: '#22c55e', size: 0.18, orbit: 2.0, speed: 0.7, effect: 'heartbeat' as const },
+      { name: 'Data', color: '#3b82f6', size: 0.15, orbit: 3.0, speed: 0.45, effect: 'binary' as const },
+      { name: 'Network', color: '#ec4899', size: 0.12, orbit: 3.8, speed: 0.3, effect: 'connections' as const },
     ]
   },
 ]
@@ -2302,6 +2307,499 @@ function NebulaStorm({ vixValue = 15, paused }: { vixValue?: number, paused: boo
 }
 
 // =============================================================================
+// SUN FLARE EFFECTS - Unique flare types for each solar system
+// =============================================================================
+
+type FlareType = 'wisdom' | 'pulse' | 'mystic' | 'eruption' | 'network'
+
+function SunFlareEffect({ flareType, color, paused }: { flareType: FlareType, color: string, paused: boolean }) {
+  const groupRef = useRef<THREE.Group>(null)
+
+  // Wisdom: Golden radiating light rays
+  const WisdomFlare = () => {
+    const raysRef = useRef<THREE.Group>(null)
+    const rayCount = 12
+
+    useFrame((state) => {
+      if (paused || !raysRef.current) return
+      const t = state.clock.elapsedTime
+      raysRef.current.rotation.z = t * 0.1
+      raysRef.current.children.forEach((ray, i) => {
+        const mesh = ray as THREE.Mesh
+        const scale = 1 + Math.sin(t * 2 + i * 0.5) * 0.3
+        mesh.scale.y = scale
+        ;(mesh.material as THREE.MeshBasicMaterial).opacity = 0.3 + Math.sin(t * 3 + i) * 0.2
+      })
+    })
+
+    return (
+      <group ref={raysRef}>
+        {Array.from({ length: rayCount }).map((_, i) => {
+          const angle = (i / rayCount) * Math.PI * 2
+          return (
+            <mesh key={i} rotation={[0, 0, angle]} position={[0, 0, 0]}>
+              <planeGeometry args={[0.08, 1.5]} />
+              <meshBasicMaterial color={color} transparent opacity={0.4} side={THREE.DoubleSide} />
+            </mesh>
+          )
+        })}
+      </group>
+    )
+  }
+
+  // Pulse: Expanding scanner rings
+  const PulseFlare = () => {
+    const ringsRef = useRef<THREE.Group>(null)
+    const [rings] = useState<number[]>([0, 0.33, 0.66])
+
+    useFrame((state) => {
+      if (paused || !ringsRef.current) return
+      const t = state.clock.elapsedTime
+
+      ringsRef.current.children.forEach((ring, i) => {
+        const mesh = ring as THREE.Mesh
+        const phase = (t * 0.5 + i * 0.33) % 1
+        const scale = 0.5 + phase * 2
+        mesh.scale.setScalar(scale)
+        ;(mesh.material as THREE.MeshBasicMaterial).opacity = 0.6 * (1 - phase)
+      })
+    })
+
+    return (
+      <group ref={ringsRef}>
+        {rings.map((_, i) => (
+          <mesh key={i} rotation={[Math.PI / 2, 0, 0]}>
+            <torusGeometry args={[0.8, 0.02, 8, 32]} />
+            <meshBasicMaterial color={color} transparent opacity={0.5} />
+          </mesh>
+        ))}
+      </group>
+    )
+  }
+
+  // Mystic: Swirling energy spirals
+  const MysticFlare = () => {
+    const spiralsRef = useRef<THREE.Group>(null)
+
+    useFrame((state) => {
+      if (paused || !spiralsRef.current) return
+      const t = state.clock.elapsedTime
+      spiralsRef.current.rotation.y = t * 0.5
+      spiralsRef.current.rotation.x = Math.sin(t * 0.3) * 0.2
+    })
+
+    const spiralPoints = useMemo(() => {
+      const points: [number, number, number][] = []
+      for (let i = 0; i < 50; i++) {
+        const angle = (i / 50) * Math.PI * 4
+        const r = 0.5 + (i / 50) * 0.8
+        const y = (i / 50) * 0.5 - 0.25
+        points.push([Math.cos(angle) * r, y, Math.sin(angle) * r])
+      }
+      return points
+    }, [])
+
+    return (
+      <group ref={spiralsRef}>
+        <Line points={spiralPoints} color={color} lineWidth={3} transparent opacity={0.6} />
+        <Line
+          points={spiralPoints.map(([x, y, z]) => [-x, -y, -z])}
+          color={color}
+          lineWidth={3}
+          transparent
+          opacity={0.6}
+        />
+        {/* Floating mystical orbs */}
+        {[0, 1, 2].map(i => {
+          const angle = (i / 3) * Math.PI * 2
+          return (
+            <Sphere key={i} args={[0.08, 8, 8]} position={[Math.cos(angle) * 0.8, 0, Math.sin(angle) * 0.8]}>
+              <meshBasicMaterial color="#ffffff" />
+            </Sphere>
+          )
+        })}
+      </group>
+    )
+  }
+
+  // Eruption: Explosive solar flares shooting outward
+  const EruptionFlare = () => {
+    const flaresRef = useRef<THREE.Group>(null)
+    const flareCount = 6
+
+    useFrame((state) => {
+      if (paused || !flaresRef.current) return
+      const t = state.clock.elapsedTime
+
+      flaresRef.current.children.forEach((flare, i) => {
+        const group = flare as THREE.Group
+        const phase = (t * 0.8 + i * 0.3) % 2
+
+        if (phase < 1) {
+          // Erupting outward
+          const scale = phase
+          group.scale.setScalar(scale)
+          group.position.y = phase * 1.2
+          group.children.forEach(child => {
+            const mesh = child as THREE.Mesh
+            if (mesh.material) {
+              ;(mesh.material as THREE.MeshBasicMaterial).opacity = 0.8 * (1 - phase)
+            }
+          })
+        } else {
+          group.scale.setScalar(0)
+        }
+      })
+    })
+
+    return (
+      <group ref={flaresRef}>
+        {Array.from({ length: flareCount }).map((_, i) => {
+          const angle = (i / flareCount) * Math.PI * 2
+          return (
+            <group key={i} rotation={[0, 0, angle - Math.PI / 2]}>
+              <mesh>
+                <coneGeometry args={[0.15, 0.6, 6]} />
+                <meshBasicMaterial color={color} transparent opacity={0.7} />
+              </mesh>
+              <Sphere args={[0.1, 8, 8]} position={[0, 0.4, 0]}>
+                <meshBasicMaterial color="#ffffff" transparent opacity={0.8} />
+              </Sphere>
+            </group>
+          )
+        })}
+      </group>
+    )
+  }
+
+  // Network: Grid-like connection beams
+  const NetworkFlare = () => {
+    const nodesRef = useRef<THREE.Group>(null)
+    const nodes = useMemo(() => {
+      const n: [number, number, number][] = []
+      for (let i = 0; i < 8; i++) {
+        const angle = (i / 8) * Math.PI * 2
+        const r = 0.8 + Math.random() * 0.4
+        n.push([Math.cos(angle) * r, (Math.random() - 0.5) * 0.6, Math.sin(angle) * r])
+      }
+      return n
+    }, [])
+
+    useFrame((state) => {
+      if (paused || !nodesRef.current) return
+      const t = state.clock.elapsedTime
+      nodesRef.current.rotation.y = t * 0.2
+
+      // Pulse the connection lines
+      nodesRef.current.children.forEach((child, i) => {
+        if (child.type === 'Line2') {
+          const line = child as any
+          if (line.material) {
+            line.material.opacity = 0.3 + Math.sin(t * 3 + i) * 0.2
+          }
+        }
+      })
+    })
+
+    // Generate connections between nodes
+    const connections = useMemo(() => {
+      const conns: [[number, number, number], [number, number, number]][] = []
+      for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+          if ((i + j) % 2 === 0) { // Deterministic instead of random
+            conns.push([nodes[i], nodes[j]])
+          }
+        }
+      }
+      return conns
+    }, [nodes])
+
+    return (
+      <group ref={nodesRef}>
+        {/* Connection lines */}
+        {connections.map((conn, i) => (
+          <Line key={`conn-${i}`} points={conn} color={color} lineWidth={1} transparent opacity={0.4} />
+        ))}
+        {/* Network nodes */}
+        {nodes.map((pos, i) => (
+          <group key={i} position={pos}>
+            <Sphere args={[0.06, 8, 8]}>
+              <meshBasicMaterial color={color} />
+            </Sphere>
+            <Sphere args={[0.1, 8, 8]}>
+              <meshBasicMaterial color={color} transparent opacity={0.3} />
+            </Sphere>
+          </group>
+        ))}
+      </group>
+    )
+  }
+
+  return (
+    <group ref={groupRef}>
+      {flareType === 'wisdom' && <WisdomFlare />}
+      {flareType === 'pulse' && <PulseFlare />}
+      {flareType === 'mystic' && <MysticFlare />}
+      {flareType === 'eruption' && <EruptionFlare />}
+      {flareType === 'network' && <NetworkFlare />}
+    </group>
+  )
+}
+
+// =============================================================================
+// PLANET EFFECTS - Unique orbiting effects for each planet
+// =============================================================================
+
+type PlanetEffect = 'rings' | 'crystals' | 'aura' | 'fire' | 'electric' | 'spiral' | 'glow' | 'orbit_rings' | 'pulse' | 'dust' | 'data_stream' | 'hexagon' | 'heartbeat' | 'binary' | 'connections'
+
+function PlanetEffectComponent({ effect, color, size, paused }: { effect: PlanetEffect, color: string, size: number, paused: boolean }) {
+  const groupRef = useRef<THREE.Group>(null)
+
+  useFrame((state) => {
+    if (paused || !groupRef.current) return
+    const t = state.clock.elapsedTime
+
+    // Apply effects based on type
+    switch (effect) {
+      case 'pulse':
+      case 'heartbeat':
+        const pulseScale = 1 + Math.sin(t * (effect === 'heartbeat' ? 6 : 3)) * 0.15
+        groupRef.current.scale.setScalar(pulseScale)
+        break
+      case 'spiral':
+        groupRef.current.rotation.y = t * 2
+        break
+    }
+  })
+
+  const renderEffect = () => {
+    switch (effect) {
+      case 'rings':
+        // Saturn-like rings
+        return (
+          <>
+            <mesh rotation={[Math.PI / 3, 0, 0]}>
+              <torusGeometry args={[size * 2.2, size * 0.15, 2, 32]} />
+              <meshBasicMaterial color={color} transparent opacity={0.5} />
+            </mesh>
+            <mesh rotation={[Math.PI / 3, 0, 0]}>
+              <torusGeometry args={[size * 2.8, size * 0.1, 2, 32]} />
+              <meshBasicMaterial color={color} transparent opacity={0.3} />
+            </mesh>
+          </>
+        )
+
+      case 'crystals':
+        // Floating crystal shards
+        return (
+          <>
+            {[0, 1, 2, 3, 4].map(i => {
+              const angle = (i / 5) * Math.PI * 2
+              const dist = size * 2
+              return (
+                <mesh
+                  key={i}
+                  position={[Math.cos(angle) * dist, Math.sin(i) * size * 0.5, Math.sin(angle) * dist]}
+                  rotation={[i * 0.5, i * 0.3, i * 0.7]}
+                >
+                  <octahedronGeometry args={[size * 0.3]} />
+                  <meshBasicMaterial color={color} transparent opacity={0.7} />
+                </mesh>
+              )
+            })}
+          </>
+        )
+
+      case 'aura':
+        // Glowing energy aura
+        return (
+          <>
+            <Sphere args={[size * 1.8, 16, 16]}>
+              <meshBasicMaterial color={color} transparent opacity={0.15} />
+            </Sphere>
+            <Sphere args={[size * 2.5, 16, 16]}>
+              <meshBasicMaterial color={color} transparent opacity={0.08} />
+            </Sphere>
+          </>
+        )
+
+      case 'fire':
+        // Fire/plasma particles
+        return (
+          <>
+            {[0, 1, 2, 3, 4, 5].map(i => (
+              <Sphere
+                key={i}
+                args={[size * 0.25, 8, 8]}
+                position={[
+                  Math.sin(i * 1.1) * size * 1.5,
+                  Math.cos(i * 0.9) * size * 1.2,
+                  Math.sin(i * 1.3) * size * 1.4
+                ]}
+              >
+                <meshBasicMaterial color="#ff6b35" transparent opacity={0.6} />
+              </Sphere>
+            ))}
+            <Sphere args={[size * 1.5, 8, 8]}>
+              <meshBasicMaterial color="#ff4500" transparent opacity={0.2} />
+            </Sphere>
+          </>
+        )
+
+      case 'electric':
+        // Electric sparks
+        return (
+          <>
+            {[0, 1, 2].map(i => {
+              const angle = (i / 3) * Math.PI * 2
+              const points: [number, number, number][] = [
+                [0, 0, 0],
+                [Math.cos(angle) * size * 1.5, Math.sin(i) * size * 0.5, Math.sin(angle) * size * 1.5],
+                [Math.cos(angle + 0.3) * size * 2.5, Math.sin(i + 1) * size * 0.3, Math.sin(angle + 0.3) * size * 2.5]
+              ]
+              return <Line key={i} points={points} color="#00ffff" lineWidth={2} transparent opacity={0.7} />
+            })}
+          </>
+        )
+
+      case 'spiral':
+        // Spiral trail
+        const spiralPts: [number, number, number][] = []
+        for (let i = 0; i < 30; i++) {
+          const angle = (i / 30) * Math.PI * 3
+          const r = size * (1.2 + (i / 30) * 0.8)
+          spiralPts.push([Math.cos(angle) * r, (i / 30) * size * 0.5, Math.sin(angle) * r])
+        }
+        return <Line points={spiralPts} color={color} lineWidth={2} transparent opacity={0.5} />
+
+      case 'glow':
+        // Enhanced glow
+        return (
+          <Sphere args={[size * 2, 16, 16]}>
+            <meshBasicMaterial color={color} transparent opacity={0.25} />
+          </Sphere>
+        )
+
+      case 'orbit_rings':
+        // Multiple small orbit rings
+        return (
+          <>
+            <mesh rotation={[Math.PI / 2, 0, 0]}>
+              <torusGeometry args={[size * 1.8, 0.02, 8, 32]} />
+              <meshBasicMaterial color={color} transparent opacity={0.4} />
+            </mesh>
+            <mesh rotation={[Math.PI / 3, Math.PI / 4, 0]}>
+              <torusGeometry args={[size * 2.2, 0.02, 8, 32]} />
+              <meshBasicMaterial color={color} transparent opacity={0.3} />
+            </mesh>
+            <mesh rotation={[Math.PI / 4, -Math.PI / 3, 0]}>
+              <torusGeometry args={[size * 2.6, 0.02, 8, 32]} />
+              <meshBasicMaterial color={color} transparent opacity={0.2} />
+            </mesh>
+          </>
+        )
+
+      case 'dust':
+        // Dust cloud
+        return (
+          <>
+            {Array.from({ length: 20 }).map((_, i) => {
+              const angle = (i / 20) * Math.PI * 2
+              const r = size * (1.5 + (i % 3) * 0.5)
+              return (
+                <Sphere
+                  key={i}
+                  args={[size * 0.08, 4, 4]}
+                  position={[Math.cos(angle) * r, (i % 5 - 2) * size * 0.2, Math.sin(angle) * r]}
+                >
+                  <meshBasicMaterial color="#9ca3af" transparent opacity={0.4} />
+                </Sphere>
+              )
+            })}
+          </>
+        )
+
+      case 'data_stream':
+        // Digital data particles flowing
+        return (
+          <>
+            <Line
+              points={[[0, -size * 2, 0], [0, size * 2, 0]]}
+              color="#3b82f6"
+              lineWidth={1}
+              transparent
+              opacity={0.5}
+            />
+            <Sphere args={[size * 0.15, 8, 8]} position={[0, size * 1.5, 0]}>
+              <meshBasicMaterial color="#60a5fa" />
+            </Sphere>
+            <Sphere args={[size * 0.12, 8, 8]} position={[0, -size * 1.2, 0]}>
+              <meshBasicMaterial color="#3b82f6" />
+            </Sphere>
+          </>
+        )
+
+      case 'hexagon':
+        // Hexagonal shield pattern
+        return (
+          <mesh rotation={[0, 0, 0]}>
+            <torusGeometry args={[size * 2, size * 0.08, 6, 6]} />
+            <meshBasicMaterial color={color} transparent opacity={0.4} wireframe />
+          </mesh>
+        )
+
+      case 'binary':
+        // Binary data particles
+        return (
+          <>
+            {Array.from({ length: 12 }).map((_, i) => {
+              const angle = (i / 12) * Math.PI * 2
+              const r = size * 2
+              return (
+                <Sphere
+                  key={i}
+                  args={[size * 0.08, 4, 4]}
+                  position={[Math.cos(angle) * r, (i % 3 - 1) * size * 0.3, Math.sin(angle) * r]}
+                >
+                  <meshBasicMaterial color={i % 2 === 0 ? '#22c55e' : '#3b82f6'} />
+                </Sphere>
+              )
+            })}
+          </>
+        )
+
+      case 'connections':
+        // Network connections
+        return (
+          <>
+            {[0, 1, 2].map(i => {
+              const angle = (i / 3) * Math.PI * 2
+              const dist = size * 3
+              return (
+                <Line
+                  key={i}
+                  points={[[0, 0, 0], [Math.cos(angle) * dist, 0, Math.sin(angle) * dist]]}
+                  color={color}
+                  lineWidth={1}
+                  transparent
+                  opacity={0.4}
+                />
+              )
+            })}
+          </>
+        )
+
+      case 'heartbeat':
+      case 'pulse':
+      default:
+        return null
+    }
+  }
+
+  return <group ref={groupRef}>{renderEffect()}</group>
+}
+
+// =============================================================================
 // SOLAR SYSTEM - Beautiful Mini Solar System with Orbiting Planets
 // =============================================================================
 
@@ -2425,6 +2923,9 @@ function SolarSystem({
       {/* Particle corona around sun */}
       <SunCorona color={system.glowColor} paused={paused} />
 
+      {/* Unique sun flare effect */}
+      <SunFlareEffect flareType={system.flareType as FlareType} color={system.glowColor} paused={paused} />
+
       {/* System label */}
       <Html position={[0, 1.5, 0]} center>
         <div
@@ -2462,14 +2963,16 @@ function OrbitingPlanet({
   paused,
   phaseOffset
 }: {
-  planet: { name: string, color: string, size: number, orbit: number, speed: number }
+  planet: { name: string, color: string, size: number, orbit: number, speed: number, effect?: PlanetEffect }
   systemId: string
   paused: boolean
   phaseOffset: number
 }) {
+  const groupRef = useRef<THREE.Group>(null)
   const meshRef = useRef<THREE.Mesh>(null)
   const trailRef = useRef<THREE.Points>(null)
   const [isHovered, setIsHovered] = useState(false)
+  const [currentPosition, setCurrentPosition] = useState<[number, number, number]>([0, 0, 0])
 
   // Trail positions
   const trailPositions = useMemo(() => new Float32Array(30 * 3), [])
@@ -2484,10 +2987,16 @@ function OrbitingPlanet({
     const z = Math.sin(angle) * planet.orbit
     const y = Math.sin(angle * 2) * 0.1 // Slight vertical wobble
 
+    if (groupRef.current) {
+      groupRef.current.position.set(x, y, z)
+    }
+
     if (meshRef.current) {
-      meshRef.current.position.set(x, y, z)
       meshRef.current.rotation.y = t * 2
     }
+
+    // Update position for effects
+    setCurrentPosition([x, y, z])
 
     // Update trail
     if (trailRef.current) {
@@ -2515,22 +3024,35 @@ function OrbitingPlanet({
         <pointsMaterial color={planet.color} size={0.03} transparent opacity={0.4} />
       </points>
 
-      {/* Planet */}
-      <Sphere
-        ref={meshRef}
-        args={[planet.size, 16, 16]}
-        onPointerOver={() => setIsHovered(true)}
-        onPointerOut={() => setIsHovered(false)}
-      >
-        <meshBasicMaterial color={planet.color} />
-      </Sphere>
-
-      {/* Planet glow when hovered */}
-      {isHovered && meshRef.current && (
-        <Sphere args={[planet.size * 1.8, 8, 8]} position={meshRef.current.position}>
-          <meshBasicMaterial color={planet.color} transparent opacity={0.3} />
+      {/* Planet with effects */}
+      <group ref={groupRef}>
+        {/* Planet sphere */}
+        <Sphere
+          ref={meshRef}
+          args={[planet.size, 16, 16]}
+          onPointerOver={() => setIsHovered(true)}
+          onPointerOut={() => setIsHovered(false)}
+        >
+          <meshBasicMaterial color={planet.color} />
         </Sphere>
-      )}
+
+        {/* Planet unique effect */}
+        {planet.effect && (
+          <PlanetEffectComponent
+            effect={planet.effect}
+            color={planet.color}
+            size={planet.size}
+            paused={paused}
+          />
+        )}
+
+        {/* Planet glow when hovered */}
+        {isHovered && (
+          <Sphere args={[planet.size * 1.8, 8, 8]}>
+            <meshBasicMaterial color={planet.color} transparent opacity={0.3} />
+          </Sphere>
+        )}
+      </group>
     </group>
   )
 }
