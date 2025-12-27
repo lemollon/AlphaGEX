@@ -97,6 +97,26 @@ function getExpirationInfo(expiration?: string): {
   return { timeLeft, is0DTE, urgency, hoursLeft }
 }
 
+// Format expiration date for display (e.g., "Jan 17" or "Jan 17, 2025")
+function formatExpiration(expiration?: string): string {
+  if (!expiration) return '--'
+
+  try {
+    const date = new Date(expiration + 'T12:00:00') // Noon to avoid timezone issues
+    const now = new Date()
+    const sameYear = date.getFullYear() === now.getFullYear()
+
+    // Format: "Jan 17" for current year, "Jan 17, 2025" for different year
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      ...(sameYear ? {} : { year: 'numeric' })
+    })
+  } catch {
+    return expiration // Fallback to raw string if parsing fails
+  }
+}
+
 // Calculate time since entry
 function getPositionAge(entryTime?: string): { age: string; timestamp: string } {
   if (!entryTime) return { age: '', timestamp: '' }
@@ -467,7 +487,7 @@ function AthenaPositionCard({
         </div>
         <div className="flex items-center justify-between text-sm">
           <div className="flex items-center gap-2">
-            <span className="text-gray-400">Exp: {position.expiration}</span>
+            <span className="text-gray-400">Exp: {formatExpiration(position.expiration)}</span>
             {!expInfo.is0DTE && (
               <span className={`text-xs ${
                 expInfo.urgency === 'critical' ? 'text-red-400' :
@@ -722,7 +742,7 @@ function AresPositionCard({
       <div className="grid grid-cols-2 gap-3 text-sm mt-3">
         <div>
           <span className="text-gray-500 block text-xs">Expiration</span>
-          <span className="text-white font-medium">{position.expiration}</span>
+          <span className="text-white font-medium">{formatExpiration(position.expiration)}</span>
         </div>
         <div>
           <span className="text-gray-500 block text-xs">Contracts</span>
