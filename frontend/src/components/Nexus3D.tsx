@@ -2805,6 +2805,702 @@ function PlanetEffectComponent({ effect, color, size, paused }: { effect: Planet
 }
 
 // =============================================================================
+// SYSTEM AMBIENT EFFECTS - Unique ambient actions for each solar system
+// =============================================================================
+
+function SystemAmbientEffects({
+  systemId,
+  color,
+  sunColor,
+  paused
+}: {
+  systemId: string
+  color: string
+  sunColor: string
+  paused: boolean
+}) {
+  switch (systemId) {
+    case 'solomon':
+      return <SolomonEffects color={color} sunColor={sunColor} paused={paused} />
+    case 'argus':
+      return <ArgusEffects color={color} sunColor={sunColor} paused={paused} />
+    case 'oracle':
+      return <OracleEffects color={color} sunColor={sunColor} paused={paused} />
+    case 'kronos':
+      return <KronosEffects color={color} sunColor={sunColor} paused={paused} />
+    case 'systems':
+      return <SystemsEffects color={color} sunColor={sunColor} paused={paused} />
+    default:
+      return null
+  }
+}
+
+// SOLOMON - Wisdom scrolls, knowledge particles, ancient symbols
+function SolomonEffects({ color, sunColor, paused }: { color: string, sunColor: string, paused: boolean }) {
+  const groupRef = useRef<THREE.Group>(null)
+  const scrollsRef = useRef<THREE.Group>(null)
+  const symbolsRef = useRef<THREE.Group>(null)
+
+  // Floating wisdom symbols (ancient runes)
+  const symbols = useMemo(() => ['◈', '◇', '△', '○', '☆', '⬡'], [])
+
+  // Knowledge particles flowing upward
+  const particleCount = 30
+  const particlePositions = useMemo(() => {
+    const positions = new Float32Array(particleCount * 3)
+    for (let i = 0; i < particleCount; i++) {
+      const angle = (i / particleCount) * Math.PI * 2
+      const r = 3 + Math.random() * 2
+      positions[i * 3] = Math.cos(angle) * r
+      positions[i * 3 + 1] = (Math.random() - 0.5) * 4
+      positions[i * 3 + 2] = Math.sin(angle) * r
+    }
+    return positions
+  }, [])
+
+  const particleRef = useRef<THREE.Points>(null)
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    // Rotate scrolls slowly
+    if (scrollsRef.current) {
+      scrollsRef.current.rotation.y = t * 0.15
+    }
+
+    // Orbit symbols
+    if (symbolsRef.current) {
+      symbolsRef.current.rotation.y = -t * 0.2
+      symbolsRef.current.children.forEach((child, i) => {
+        child.position.y = Math.sin(t * 0.5 + i) * 0.5
+      })
+    }
+
+    // Animate particles rising
+    if (particleRef.current) {
+      const positions = particleRef.current.geometry.attributes.position.array as Float32Array
+      for (let i = 0; i < particleCount; i++) {
+        positions[i * 3 + 1] += 0.02
+        if (positions[i * 3 + 1] > 4) {
+          positions[i * 3 + 1] = -4
+        }
+      }
+      particleRef.current.geometry.attributes.position.needsUpdate = true
+    }
+  })
+
+  return (
+    <group ref={groupRef}>
+      {/* Floating ancient scrolls */}
+      <group ref={scrollsRef}>
+        {[0, 1, 2].map((i) => {
+          const angle = (i / 3) * Math.PI * 2
+          const r = 5
+          return (
+            <group key={i} position={[Math.cos(angle) * r, Math.sin(i * 2) * 0.5, Math.sin(angle) * r]}>
+              <mesh rotation={[0, angle + Math.PI / 2, Math.PI / 6]}>
+                <cylinderGeometry args={[0.15, 0.15, 1.2, 8]} />
+                <meshBasicMaterial color={sunColor} transparent opacity={0.8} />
+              </mesh>
+              {/* Scroll paper unfurling */}
+              <mesh position={[0.3, 0, 0]} rotation={[0, 0, 0]}>
+                <planeGeometry args={[0.8, 1]} />
+                <meshBasicMaterial color="#fef3c7" transparent opacity={0.6} side={THREE.DoubleSide} />
+              </mesh>
+            </group>
+          )
+        })}
+      </group>
+
+      {/* Orbiting wisdom symbols */}
+      <group ref={symbolsRef}>
+        {symbols.map((symbol, i) => {
+          const angle = (i / symbols.length) * Math.PI * 2
+          const r = 6.5
+          return (
+            <Html
+              key={i}
+              position={[Math.cos(angle) * r, 0, Math.sin(angle) * r]}
+              center
+            >
+              <div
+                className="text-2xl font-bold animate-pulse"
+                style={{ color: sunColor, textShadow: `0 0 10px ${color}` }}
+              >
+                {symbol}
+              </div>
+            </Html>
+          )
+        })}
+      </group>
+
+      {/* Rising knowledge particles */}
+      <points ref={particleRef}>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            count={particleCount}
+            array={particlePositions}
+            itemSize={3}
+          />
+        </bufferGeometry>
+        <pointsMaterial color={sunColor} size={0.08} transparent opacity={0.6} />
+      </points>
+
+      {/* Wisdom aura rings */}
+      {[0, 1, 2].map((i) => (
+        <mesh key={i} rotation={[Math.PI / 2, 0, 0]} position={[0, -1 + i * 1, 0]}>
+          <torusGeometry args={[4 + i * 0.5, 0.02, 8, 64]} />
+          <meshBasicMaterial color={color} transparent opacity={0.2 - i * 0.05} />
+        </mesh>
+      ))}
+    </group>
+  )
+}
+
+// ARGUS - Scanning beams, surveillance drones, all-seeing eyes
+function ArgusEffects({ color, sunColor, paused }: { color: string, sunColor: string, paused: boolean }) {
+  const groupRef = useRef<THREE.Group>(null)
+  const scannerRef = useRef<THREE.Group>(null)
+  const dronesRef = useRef<THREE.Group>(null)
+  const [scanAngle, setScanAngle] = useState(0)
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    // Rotate scanner beam
+    if (scannerRef.current) {
+      scannerRef.current.rotation.y = t * 0.8
+    }
+
+    // Orbit drones
+    if (dronesRef.current) {
+      dronesRef.current.rotation.y = t * 0.3
+      dronesRef.current.children.forEach((drone, i) => {
+        const group = drone as THREE.Group
+        group.rotation.y = -t * 2
+        // Bob up and down
+        group.position.y = Math.sin(t * 2 + i * 2) * 0.3
+      })
+    }
+
+    setScanAngle(t * 0.8)
+  })
+
+  return (
+    <group ref={groupRef}>
+      {/* Scanning laser beams */}
+      <group ref={scannerRef}>
+        {[0, 1].map((i) => {
+          const angle = i * Math.PI
+          return (
+            <group key={i} rotation={[0, angle, 0]}>
+              {/* Main beam */}
+              <mesh position={[4, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+                <coneGeometry args={[0.05, 8, 8]} />
+                <meshBasicMaterial color={color} transparent opacity={0.4} />
+              </mesh>
+              {/* Beam glow */}
+              <mesh position={[4, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+                <coneGeometry args={[0.15, 8, 8]} />
+                <meshBasicMaterial color={color} transparent opacity={0.1} />
+              </mesh>
+            </group>
+          )
+        })}
+      </group>
+
+      {/* Surveillance drones orbiting */}
+      <group ref={dronesRef}>
+        {[0, 1, 2, 3].map((i) => {
+          const angle = (i / 4) * Math.PI * 2
+          const r = 6
+          return (
+            <group key={i} position={[Math.cos(angle) * r, 0, Math.sin(angle) * r]}>
+              {/* Drone body */}
+              <mesh>
+                <octahedronGeometry args={[0.25]} />
+                <meshBasicMaterial color={sunColor} />
+              </mesh>
+              {/* Drone eye */}
+              <Sphere args={[0.12, 8, 8]} position={[0, 0, 0.2]}>
+                <meshBasicMaterial color="#ef4444" />
+              </Sphere>
+              {/* Drone ring */}
+              <mesh rotation={[Math.PI / 2, 0, 0]}>
+                <torusGeometry args={[0.4, 0.03, 8, 16]} />
+                <meshBasicMaterial color={color} transparent opacity={0.5} />
+              </mesh>
+            </group>
+          )
+        })}
+      </group>
+
+      {/* All-seeing eye projections */}
+      {[0, 1, 2].map((i) => {
+        const angle = (i / 3) * Math.PI * 2 + Math.PI / 6
+        const r = 5
+        return (
+          <group key={i} position={[Math.cos(angle) * r, 1.5, Math.sin(angle) * r]}>
+            {/* Eye shape */}
+            <mesh rotation={[0, -angle, 0]}>
+              <sphereGeometry args={[0.3, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2]} />
+              <meshBasicMaterial color={color} transparent opacity={0.4} side={THREE.DoubleSide} />
+            </mesh>
+            {/* Pupil */}
+            <Sphere args={[0.1, 8, 8]}>
+              <meshBasicMaterial color="#1e3a5f" />
+            </Sphere>
+          </group>
+        )
+      })}
+
+      {/* Radar sweep effect */}
+      <mesh rotation={[Math.PI / 2, 0, scanAngle]}>
+        <ringGeometry args={[0.5, 7, 32, 1, 0, Math.PI / 4]} />
+        <meshBasicMaterial color={color} transparent opacity={0.15} side={THREE.DoubleSide} />
+      </mesh>
+    </group>
+  )
+}
+
+// ORACLE - Time portals, prophecy crystals, vision echoes
+function OracleEffects({ color, sunColor, paused }: { color: string, sunColor: string, paused: boolean }) {
+  const groupRef = useRef<THREE.Group>(null)
+  const portalsRef = useRef<THREE.Group>(null)
+  const crystalsRef = useRef<THREE.Group>(null)
+  const echoesRef = useRef<THREE.Group>(null)
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    // Spin portals
+    if (portalsRef.current) {
+      portalsRef.current.children.forEach((portal, i) => {
+        const mesh = portal as THREE.Mesh
+        mesh.rotation.z = t * (0.5 + i * 0.2)
+        mesh.rotation.x = Math.sin(t * 0.3 + i) * 0.2
+        // Pulse scale
+        const scale = 1 + Math.sin(t * 2 + i * 2) * 0.1
+        mesh.scale.setScalar(scale)
+      })
+    }
+
+    // Levitate crystals
+    if (crystalsRef.current) {
+      crystalsRef.current.rotation.y = t * 0.1
+      crystalsRef.current.children.forEach((crystal, i) => {
+        const group = crystal as THREE.Group
+        group.position.y = Math.sin(t + i * 1.5) * 0.5
+        group.rotation.y = t * 0.5
+      })
+    }
+
+    // Fade vision echoes
+    if (echoesRef.current) {
+      echoesRef.current.rotation.y = t * 0.05
+      echoesRef.current.children.forEach((echo, i) => {
+        const mesh = echo as THREE.Mesh
+        const phase = (t * 0.5 + i * 0.5) % 3
+        const opacity = phase < 1 ? phase * 0.3 : phase < 2 ? 0.3 : (3 - phase) * 0.3
+        ;(mesh.material as THREE.MeshBasicMaterial).opacity = opacity
+        mesh.scale.setScalar(0.5 + phase * 0.3)
+      })
+    }
+  })
+
+  return (
+    <group ref={groupRef}>
+      {/* Mystical portals */}
+      <group ref={portalsRef}>
+        {[0, 1, 2].map((i) => {
+          const angle = (i / 3) * Math.PI * 2
+          const r = 5.5
+          return (
+            <mesh
+              key={i}
+              position={[Math.cos(angle) * r, 0.5, Math.sin(angle) * r]}
+              rotation={[Math.PI / 2, 0, 0]}
+            >
+              <torusGeometry args={[0.8, 0.08, 8, 32]} />
+              <meshBasicMaterial color={sunColor} transparent opacity={0.7} />
+            </mesh>
+          )
+        })}
+      </group>
+
+      {/* Prophecy crystals */}
+      <group ref={crystalsRef}>
+        {[0, 1, 2, 3, 4].map((i) => {
+          const angle = (i / 5) * Math.PI * 2
+          const r = 4.5
+          return (
+            <group key={i} position={[Math.cos(angle) * r, 0, Math.sin(angle) * r]}>
+              <mesh rotation={[0, angle, Math.PI / 6]}>
+                <octahedronGeometry args={[0.35]} />
+                <meshBasicMaterial color={color} transparent opacity={0.7} />
+              </mesh>
+              {/* Crystal glow */}
+              <Sphere args={[0.5, 8, 8]}>
+                <meshBasicMaterial color={sunColor} transparent opacity={0.15} />
+              </Sphere>
+              {/* Inner light */}
+              <Sphere args={[0.15, 8, 8]}>
+                <meshBasicMaterial color="#ffffff" />
+              </Sphere>
+            </group>
+          )
+        })}
+      </group>
+
+      {/* Vision echo spheres */}
+      <group ref={echoesRef}>
+        {[0, 1, 2, 3, 4, 5].map((i) => {
+          const angle = (i / 6) * Math.PI * 2
+          const r = 7
+          return (
+            <Sphere
+              key={i}
+              args={[0.4, 16, 16]}
+              position={[Math.cos(angle) * r, Math.sin(i) * 0.5, Math.sin(angle) * r]}
+            >
+              <meshBasicMaterial color={sunColor} transparent opacity={0.2} />
+            </Sphere>
+          )
+        })}
+      </group>
+
+      {/* Mystical mist effect */}
+      <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, -0.5, 0]}>
+        <ringGeometry args={[3, 8, 32]} />
+        <meshBasicMaterial color={color} transparent opacity={0.08} side={THREE.DoubleSide} />
+      </mesh>
+
+      {/* Floating tarot-like cards */}
+      {[0, 1, 2].map((i) => {
+        const angle = (i / 3) * Math.PI * 2 + Math.PI / 3
+        const r = 6
+        return (
+          <mesh
+            key={i}
+            position={[Math.cos(angle) * r, 1, Math.sin(angle) * r]}
+            rotation={[0.2, -angle, 0]}
+          >
+            <planeGeometry args={[0.5, 0.8]} />
+            <meshBasicMaterial color={sunColor} transparent opacity={0.6} side={THREE.DoubleSide} />
+          </mesh>
+        )
+      })}
+    </group>
+  )
+}
+
+// KRONOS - Clock gears, time distortion waves, hourglass particles
+function KronosEffects({ color, sunColor, paused }: { color: string, sunColor: string, paused: boolean }) {
+  const groupRef = useRef<THREE.Group>(null)
+  const gearsRef = useRef<THREE.Group>(null)
+  const hourglassRef = useRef<THREE.Group>(null)
+  const distortionRef = useRef<THREE.Group>(null)
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    // Rotate gears at different speeds
+    if (gearsRef.current) {
+      gearsRef.current.children.forEach((gear, i) => {
+        const mesh = gear as THREE.Mesh
+        mesh.rotation.z = t * (i % 2 === 0 ? 0.5 : -0.3) * (1 + i * 0.2)
+      })
+    }
+
+    // Animate hourglass
+    if (hourglassRef.current) {
+      hourglassRef.current.rotation.y = t * 0.2
+      hourglassRef.current.position.y = Math.sin(t * 0.5) * 0.3
+    }
+
+    // Pulse distortion waves outward
+    if (distortionRef.current) {
+      distortionRef.current.children.forEach((wave, i) => {
+        const mesh = wave as THREE.Mesh
+        const phase = (t * 0.3 + i * 0.5) % 2
+        mesh.scale.setScalar(1 + phase * 2)
+        ;(mesh.material as THREE.MeshBasicMaterial).opacity = 0.3 * (1 - phase / 2)
+      })
+    }
+  })
+
+  // Generate gear teeth
+  const GearMesh = ({ radius, teeth, thickness }: { radius: number, teeth: number, thickness: number }) => {
+    return (
+      <group>
+        {/* Gear body */}
+        <mesh>
+          <torusGeometry args={[radius, thickness, 8, 32]} />
+          <meshBasicMaterial color={sunColor} transparent opacity={0.7} />
+        </mesh>
+        {/* Gear teeth */}
+        {Array.from({ length: teeth }).map((_, i) => {
+          const angle = (i / teeth) * Math.PI * 2
+          return (
+            <mesh
+              key={i}
+              position={[Math.cos(angle) * (radius + thickness * 1.5), Math.sin(angle) * (radius + thickness * 1.5), 0]}
+              rotation={[0, 0, angle]}
+            >
+              <boxGeometry args={[thickness * 2, thickness * 3, thickness]} />
+              <meshBasicMaterial color={sunColor} transparent opacity={0.7} />
+            </mesh>
+          )
+        })}
+        {/* Center hub */}
+        <mesh>
+          <cylinderGeometry args={[radius * 0.3, radius * 0.3, thickness * 2, 8]} />
+          <meshBasicMaterial color={color} />
+        </mesh>
+      </group>
+    )
+  }
+
+  return (
+    <group ref={groupRef}>
+      {/* Rotating clock gears */}
+      <group ref={gearsRef}>
+        {[
+          { pos: [5, 0.5, 0], radius: 0.8, teeth: 12 },
+          { pos: [-4, -0.3, 3], radius: 0.6, teeth: 8 },
+          { pos: [2, 0.2, -5], radius: 1, teeth: 16 },
+          { pos: [-3, 0.8, -4], radius: 0.5, teeth: 6 },
+        ].map((gear, i) => (
+          <group key={i} position={gear.pos as [number, number, number]} rotation={[Math.PI / 2, 0, 0]}>
+            <GearMesh radius={gear.radius} teeth={gear.teeth} thickness={0.08} />
+          </group>
+        ))}
+      </group>
+
+      {/* Central hourglass */}
+      <group ref={hourglassRef} position={[0, 2, 0]}>
+        {/* Top cone */}
+        <mesh position={[0, 0.4, 0]}>
+          <coneGeometry args={[0.4, 0.8, 8]} />
+          <meshBasicMaterial color={color} transparent opacity={0.5} />
+        </mesh>
+        {/* Bottom cone (inverted) */}
+        <mesh position={[0, -0.4, 0]} rotation={[Math.PI, 0, 0]}>
+          <coneGeometry args={[0.4, 0.8, 8]} />
+          <meshBasicMaterial color={color} transparent opacity={0.5} />
+        </mesh>
+        {/* Sand particles */}
+        <Sphere args={[0.08, 8, 8]} position={[0, 0, 0]}>
+          <meshBasicMaterial color={sunColor} />
+        </Sphere>
+      </group>
+
+      {/* Time distortion waves */}
+      <group ref={distortionRef}>
+        {[0, 1, 2].map((i) => (
+          <mesh key={i} rotation={[Math.PI / 2, 0, 0]}>
+            <torusGeometry args={[2, 0.05, 8, 64]} />
+            <meshBasicMaterial color={sunColor} transparent opacity={0.2} />
+          </mesh>
+        ))}
+      </group>
+
+      {/* Clock hands effect */}
+      <group position={[0, 0, 4.5]}>
+        <Line
+          points={[[0, 0, 0], [0.8, 0, 0]]}
+          color={sunColor}
+          lineWidth={3}
+        />
+        <Line
+          points={[[0, 0, 0], [0, 0.5, 0]]}
+          color={color}
+          lineWidth={2}
+        />
+      </group>
+
+      {/* Time particles flowing backward */}
+      {Array.from({ length: 8 }).map((_, i) => {
+        const angle = (i / 8) * Math.PI * 2
+        const r = 6
+        return (
+          <Sphere
+            key={i}
+            args={[0.1, 8, 8]}
+            position={[Math.cos(angle) * r, Math.sin(i * 0.5) * 0.5, Math.sin(angle) * r]}
+          >
+            <meshBasicMaterial color={color} transparent opacity={0.5} />
+          </Sphere>
+        )
+      })}
+    </group>
+  )
+}
+
+// SYSTEMS - Server racks, network traffic, health pulses
+function SystemsEffects({ color, sunColor, paused }: { color: string, sunColor: string, paused: boolean }) {
+  const groupRef = useRef<THREE.Group>(null)
+  const serversRef = useRef<THREE.Group>(null)
+  const trafficRef = useRef<THREE.Group>(null)
+  const [dataPackets, setDataPackets] = useState<Array<{ id: number, start: number, pathIndex: number }>>([])
+  const nextPacketId = useRef(0)
+
+  // Network paths between servers
+  const networkPaths = useMemo(() => {
+    const paths: [number, number, number][][] = []
+    const serverPositions = [
+      [5, 0, 0], [-4, 0, 3], [2, 0, -5], [-3, 0, -3], [4, 0, 4]
+    ]
+    for (let i = 0; i < serverPositions.length; i++) {
+      for (let j = i + 1; j < serverPositions.length; j++) {
+        paths.push([
+          serverPositions[i] as [number, number, number],
+          serverPositions[j] as [number, number, number]
+        ])
+      }
+    }
+    return paths
+  }, [])
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    // Animate server lights
+    if (serversRef.current) {
+      serversRef.current.children.forEach((server, i) => {
+        const group = server as THREE.Group
+        // Blink activity lights
+        group.children.forEach((child, j) => {
+          if (child.type === 'Mesh' && j > 0) {
+            const mesh = child as THREE.Mesh
+            const blink = Math.sin(t * 10 + i + j * 2) > 0.5
+            ;(mesh.material as THREE.MeshBasicMaterial).opacity = blink ? 0.9 : 0.3
+          }
+        })
+      })
+    }
+
+    // Spawn new data packets
+    if (Math.random() < 0.05) {
+      setDataPackets(prev => [...prev.slice(-20), {
+        id: nextPacketId.current++,
+        start: t,
+        pathIndex: Math.floor(Math.random() * networkPaths.length)
+      }])
+    }
+
+    // Clean old packets
+    setDataPackets(prev => prev.filter(p => t - p.start < 2))
+  })
+
+  return (
+    <group ref={groupRef}>
+      {/* Server rack towers */}
+      <group ref={serversRef}>
+        {[
+          [5, 0, 0], [-4, 0, 3], [2, 0, -5], [-3, 0, -3], [4, 0, 4]
+        ].map((pos, i) => (
+          <group key={i} position={pos as [number, number, number]}>
+            {/* Server tower */}
+            <mesh>
+              <boxGeometry args={[0.5, 1.5, 0.3]} />
+              <meshBasicMaterial color="#1f2937" />
+            </mesh>
+            {/* Server slots/lights */}
+            {[0, 1, 2, 3, 4].map((j) => (
+              <mesh key={j} position={[0, -0.5 + j * 0.25, 0.16]}>
+                <boxGeometry args={[0.4, 0.08, 0.02]} />
+                <meshBasicMaterial color={j % 2 === 0 ? color : sunColor} transparent opacity={0.6} />
+              </mesh>
+            ))}
+            {/* Status LED */}
+            <Sphere args={[0.08, 8, 8]} position={[0.15, 0.6, 0.16]}>
+              <meshBasicMaterial color="#22c55e" />
+            </Sphere>
+          </group>
+        ))}
+      </group>
+
+      {/* Network connection lines */}
+      {networkPaths.map((path, i) => (
+        <Line
+          key={i}
+          points={path}
+          color={color}
+          lineWidth={1}
+          transparent
+          opacity={0.2}
+        />
+      ))}
+
+      {/* Traveling data packets */}
+      {dataPackets.map((packet) => {
+        const path = networkPaths[packet.pathIndex]
+        if (!path) return null
+        const progress = ((Date.now() / 1000 - packet.start) / 2) % 1
+        const pos = [
+          path[0][0] + (path[1][0] - path[0][0]) * progress,
+          path[0][1] + (path[1][1] - path[0][1]) * progress + Math.sin(progress * Math.PI) * 0.3,
+          path[0][2] + (path[1][2] - path[0][2]) * progress
+        ] as [number, number, number]
+        return (
+          <Sphere key={packet.id} args={[0.08, 8, 8]} position={pos}>
+            <meshBasicMaterial color={sunColor} />
+          </Sphere>
+        )
+      })}
+
+      {/* Health pulse rings */}
+      {[0, 1, 2].map((i) => (
+        <mesh key={i} rotation={[Math.PI / 2, 0, 0]} position={[0, -0.5, 0]}>
+          <torusGeometry args={[3 + i * 1.5, 0.03, 8, 64]} />
+          <meshBasicMaterial color={color} transparent opacity={0.15 - i * 0.04} />
+        </mesh>
+      ))}
+
+      {/* Central hub */}
+      <group position={[0, 0, 0]}>
+        <mesh rotation={[Math.PI / 2, 0, 0]}>
+          <cylinderGeometry args={[0.8, 0.8, 0.3, 8]} />
+          <meshBasicMaterial color={sunColor} transparent opacity={0.5} />
+        </mesh>
+        {/* Hub lights */}
+        {[0, 1, 2, 3].map((i) => {
+          const angle = (i / 4) * Math.PI * 2
+          return (
+            <Sphere
+              key={i}
+              args={[0.1, 8, 8]}
+              position={[Math.cos(angle) * 0.5, 0.2, Math.sin(angle) * 0.5]}
+            >
+              <meshBasicMaterial color={i % 2 === 0 ? '#22c55e' : '#3b82f6'} />
+            </Sphere>
+          )
+        })}
+      </group>
+
+      {/* Binary stream effect */}
+      <Html position={[6, 1.5, 0]} center>
+        <div className="text-[10px] font-mono text-green-400 opacity-50">
+          {'01001010'}
+        </div>
+      </Html>
+      <Html position={[-5, 1.2, 2]} center>
+        <div className="text-[10px] font-mono text-blue-400 opacity-50">
+          {'11010110'}
+        </div>
+      </Html>
+    </group>
+  )
+}
+
+// =============================================================================
 // SOLAR SYSTEM - Beautiful Mini Solar System with Orbiting Planets
 // =============================================================================
 
@@ -2945,6 +3641,9 @@ function SolarSystem({
 
       {/* Unique sun flare effect */}
       <SunFlareEffect flareType={system.flareType as FlareType} color={system.glowColor} paused={paused} />
+
+      {/* Unique system ambient effects */}
+      <SystemAmbientEffects systemId={system.id} color={system.glowColor} sunColor={system.sunColor} paused={paused} />
 
       {/* System label */}
       <Html position={[0, 1.5, 0]} center>
