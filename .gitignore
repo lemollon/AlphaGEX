@@ -58,3 +58,6 @@ data/prices/
 quant/.models/
 models/*.pkl
 .coverage
+
+# Runtime state files
+data/circuit_breaker_state.json
