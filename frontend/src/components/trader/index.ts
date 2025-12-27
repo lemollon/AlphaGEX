@@ -21,6 +21,7 @@ export { default as TodayReportCard } from './TodayReportCard'
 export { default as WhyNotTrading } from './WhyNotTrading'
 export { default as RiskMetrics } from './RiskMetrics'
 export { default as PerformanceComparison } from './PerformanceComparison'
+export { default as PresetPerformanceChart } from './PresetPerformanceChart'
 
 // Activity & Timeline
 export { default as ActivityTimeline } from './ActivityTimeline'
