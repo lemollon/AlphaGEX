@@ -4084,6 +4084,62 @@ class ARESTrader:
     # LIVE P&L TRACKING
     # =========================================================================
 
+    def _sync_open_positions_from_db(self) -> None:
+        """
+        CRITICAL: Sync open_positions list with database to prevent stale data.
+
+        This method:
+        1. Queries the DB for currently open positions
+        2. Removes any positions from memory that are no longer open in DB
+        3. Ensures data freshness on every live P&L request
+
+        Called before get_live_pnl to ensure data freshness.
+        """
+        try:
+            from database_adapter import get_connection
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            today = datetime.now(self.tz).strftime('%Y-%m-%d')
+
+            # Get all position IDs that are truly open in the database
+            cursor.execute('''
+                SELECT position_id, status, expiration
+                FROM ares_positions
+                WHERE mode = %s AND (
+                    status = 'open'
+                    OR position_id = ANY(%s)
+                )
+            ''', (self.mode.value, [p.position_id for p in self.open_positions] if self.open_positions else []))
+
+            db_positions = {row[0]: {'status': row[1], 'expiration': str(row[2]) if row[2] else ''} for row in cursor.fetchall()}
+            conn.close()
+
+            # Remove stale positions from memory (closed/expired in DB but still in memory)
+            positions_to_remove = []
+            for pos in self.open_positions:
+                if pos.position_id not in db_positions:
+                    # Position was deleted from DB
+                    positions_to_remove.append(pos)
+                    logger.info(f"ARES: Removing stale position {pos.position_id} (not in DB)")
+                elif db_positions[pos.position_id]['status'] != 'open':
+                    # Position was closed/expired in DB
+                    positions_to_remove.append(pos)
+                    logger.info(f"ARES: Removing stale position {pos.position_id} (status={db_positions[pos.position_id]['status']})")
+                elif db_positions[pos.position_id]['expiration'] < today:
+                    # Position has expired
+                    positions_to_remove.append(pos)
+                    logger.info(f"ARES: Removing expired position {pos.position_id} (exp={db_positions[pos.position_id]['expiration']})")
+
+            for pos in positions_to_remove:
+                self.open_positions.remove(pos)
+
+            if positions_to_remove:
+                logger.info(f"ARES: Synced positions - removed {len(positions_to_remove)} stale positions, {len(self.open_positions)} remaining")
+
+        except Exception as e:
+            logger.error(f"ARES: Error syncing open positions from DB: {e}")
+
     def get_live_pnl(self) -> Dict[str, Any]:
         """
         Get real-time unrealized P&L for all open Iron Condor positions.
@@ -4099,6 +4155,9 @@ class ARESTrader:
             - positions: List of position details with current P&L
             - last_updated: Timestamp of the calculation
         """
+        # CRITICAL: Sync with database first to remove stale positions
+        self._sync_open_positions_from_db()
+
         result = {
             'total_unrealized_pnl': 0.0,
             'total_realized_pnl': 0.0,

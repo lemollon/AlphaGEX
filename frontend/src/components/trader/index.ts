@@ -1,5 +1,21 @@
 // Trader Components - Unified export for all trading UI components
 
+// Unified Branding System - NEW
+export {
+  BOT_BRANDS,
+  UNIFIED_TABS,
+  DataFreshnessIndicator,
+  BotCard,
+  EmptyState,
+  LoadingState,
+  StatCard,
+  StatusBadge,
+  DirectionIndicator,
+  PnLDisplay,
+  BotPageHeader,
+} from './BotBranding'
+export type { BotName, BotBrand, TabId } from './BotBranding'
+
 // Core Portfolio Components
 export { default as LivePortfolio } from './LivePortfolio'
 export { default as OpenPositionsLive } from './OpenPositionsLive'
