@@ -26,6 +26,19 @@ except ImportError:
     require_api_key = None
     require_admin = None
 
+# Pydantic request/response models
+try:
+    from backend.api.models import (
+        ATHENAConfigUpdate,
+        ATHENATradeRequest,
+        APIResponse,
+        PositionResponse,
+        PerformanceMetrics
+    )
+    MODELS_AVAILABLE = True
+except ImportError:
+    MODELS_AVAILABLE = False
+
 # Import decision logger for ATHENA decisions
 try:
     from trading.decision_logger import export_decisions_json

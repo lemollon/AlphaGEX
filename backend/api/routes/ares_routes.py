@@ -25,6 +25,20 @@ except ImportError:
     require_api_key = None
     require_admin = None
 
+# Pydantic request/response models
+try:
+    from backend.api.models import (
+        ARESConfigUpdate,
+        StrategyPresetRequest,
+        APIResponse,
+        StrategyPresetEnum
+    )
+    MODELS_AVAILABLE = True
+except ImportError:
+    MODELS_AVAILABLE = False
+    ARESConfigUpdate = dict
+    StrategyPresetRequest = dict
+
 router = APIRouter(prefix="/api/ares", tags=["ARES"])
 logger = logging.getLogger(__name__)
 
@@ -1537,16 +1551,22 @@ async def skip_ares_today(
 
 @router.post("/config")
 async def update_ares_config(
-    updates: dict,
+    updates: ARESConfigUpdate,
     request: Request,
     auth: AuthInfo = Depends(require_admin) if AUTH_AVAILABLE and require_admin else None
 ):
     """
     Update ARES configuration parameters.
 
-    Supports updating:
+    Supports updating (all validated by Pydantic):
     - risk_per_trade_pct: Risk per trade percentage (1-15)
     - sd_multiplier: Standard deviation multiplier (0.3-1.5)
+    - spread_width: Spread width in dollars (5-50)
+    - min_credit_per_spread: Minimum credit ($0.10-$10)
+    - max_contracts: Maximum contracts per trade (1-1000)
+    - use_stop_loss: Enable per-position stop loss
+    - stop_loss_premium_multiple: Stop loss multiplier (1-5x)
+    - profit_target_pct: Profit target percentage (10-90%)
 
     PROTECTED: Requires admin authentication.
     """
@@ -1559,27 +1579,15 @@ async def update_ares_config(
         )
 
     try:
+        # Get only the fields that were provided (Pydantic already validated ranges)
+        update_data = updates.model_dump(exclude_none=True) if MODELS_AVAILABLE else updates
         updated = {}
 
-        if 'risk_per_trade_pct' in updates:
-            new_risk = updates['risk_per_trade_pct']
-            if not (1 <= new_risk <= 15):
-                raise HTTPException(
-                    status_code=400,
-                    detail="risk_per_trade_pct must be between 1 and 15"
-                )
-            ares.config.risk_per_trade_pct = new_risk
-            updated['risk_per_trade_pct'] = new_risk
-
-        if 'sd_multiplier' in updates:
-            new_sd = updates['sd_multiplier']
-            if not (0.3 <= new_sd <= 1.5):
-                raise HTTPException(
-                    status_code=400,
-                    detail="sd_multiplier must be between 0.3 and 1.5"
-                )
-            ares.config.sd_multiplier = new_sd
-            updated['sd_multiplier'] = new_sd
+        # Apply each provided setting
+        for field, value in update_data.items():
+            if hasattr(ares.config, field):
+                setattr(ares.config, field, value)
+                updated[field] = value
 
         return {
             "success": True,
@@ -1588,7 +1596,12 @@ async def update_ares_config(
                 "updated": updated,
                 "current_config": {
                     "risk_per_trade_pct": ares.config.risk_per_trade_pct,
-                    "sd_multiplier": ares.config.sd_multiplier
+                    "sd_multiplier": ares.config.sd_multiplier,
+                    "spread_width": ares.config.spread_width,
+                    "min_credit_per_spread": ares.config.min_credit_per_spread,
+                    "max_contracts": ares.config.max_contracts,
+                    "use_stop_loss": ares.config.use_stop_loss,
+                    "profit_target_pct": ares.config.profit_target_pct
                 }
             }
         }
@@ -1650,14 +1663,14 @@ async def get_strategy_presets():
 
 @router.post("/strategy/preset")
 async def set_strategy_preset(
-    preset_request: dict,
+    preset_request: StrategyPresetRequest,
     request: Request,
     auth: AuthInfo = Depends(require_admin) if AUTH_AVAILABLE and require_admin else None
 ):
     """
     Set the active strategy preset.
 
-    Body:
+    Body (validated by Pydantic):
     - preset: Strategy preset ID (baseline, conservative, moderate, aggressive, wide_strikes)
 
     PROTECTED: Requires admin authentication.
@@ -1670,15 +1683,8 @@ async def set_strategy_preset(
             detail="ARES not initialized. Wait for scheduled startup."
         )
 
-    preset_id = preset_request.get("preset", "").lower()
-
-    # Validate preset
-    valid_presets = ["baseline", "conservative", "moderate", "aggressive", "wide_strikes"]
-    if preset_id not in valid_presets:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid preset. Must be one of: {', '.join(valid_presets)}"
-        )
+    # Pydantic already validated the preset value
+    preset_id = preset_request.preset.value if MODELS_AVAILABLE else preset_request.get("preset", "").lower()
 
     try:
         # Apply the strategy preset
