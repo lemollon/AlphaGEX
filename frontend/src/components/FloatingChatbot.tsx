@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Send, X, Minimize2, Maximize2, Image, Trash2, User, Loader2, Bot, Download, Volume2, VolumeX, Sparkles, Terminal, AlertTriangle } from 'lucide-react'
+import { Send, X, Minimize2, Maximize2, Image, Trash2, User, Loader2, Bot, Download, Volume2, VolumeX, Sparkles, Terminal, AlertTriangle, Wrench, CheckCircle, XCircle } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 import ReactMarkdown from 'react-markdown'
 
@@ -12,6 +12,12 @@ interface Message {
   timestamp: Date
   imageUrl?: string // Base64 image data URL
   type?: 'normal' | 'command' | 'briefing' | 'alert' // Message type for styling
+  toolsUsed?: Array<{ tool: string; input: any }> // Tools used by GEXIS
+  pendingConfirmation?: { // For bot control confirmations
+    action: string
+    bot: string
+    confirmationId: string
+  }
 }
 
 // GEXIS Configuration
@@ -23,6 +29,8 @@ const STORAGE_KEY = 'alphagex_chat_history'
 const SESSION_KEY = 'alphagex_session_id'
 const SOUND_PREF_KEY = 'alphagex_sound_enabled'
 const MAX_STORED_MESSAGES = 50
+const STREAMING_ENABLED = true // Enable streaming responses
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://alphagex-api.onrender.com'
 
 // Quick commands
 const QUICK_COMMANDS = [
@@ -138,6 +146,14 @@ export default function FloatingChatbot() {
   const [soundEnabled, setSoundEnabled] = useState(true)
   const [showCommands, setShowCommands] = useState(false)
   const [alertCount, setAlertCount] = useState(0)
+  const [pendingConfirmation, setPendingConfirmation] = useState<{
+    action: string
+    bot: string
+    confirmationId: string
+    message: string
+  } | null>(null)
+  const [streamingMessage, setStreamingMessage] = useState<string>('')
+  const [streamingTools, setStreamingTools] = useState<string[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -334,6 +350,7 @@ export default function FloatingChatbot() {
     try {
       let response
       let analysisText = ''
+      let toolsUsed: Array<{ tool: string; input: any }> = []
       let messageType: 'normal' | 'command' | 'briefing' | 'alert' = 'normal'
 
       // Check if it's a quick command
@@ -353,8 +370,36 @@ export default function FloatingChatbot() {
             query: currentInput || 'Please analyze this image and provide trading insights.',
             image_data: currentImage
           })
+        } else if (STREAMING_ENABLED) {
+          // Use streaming agentic chat for better UX
+          try {
+            const streamResult = await handleStreamingChat(currentInput)
+            analysisText = streamResult.text
+            toolsUsed = streamResult.toolsUsed
+            if (streamResult.pendingConfirmation) {
+              setPendingConfirmation(streamResult.pendingConfirmation)
+            }
+          } catch (streamError) {
+            console.warn('Streaming failed, falling back to regular endpoint:', streamError)
+            // Fallback to non-streaming
+            response = await apiClient.gexisAgenticChat({
+              query: currentInput,
+              session_id: sessionId,
+              market_data: {}
+            })
+            const data = response.data
+            if (data.success && data.data) {
+              analysisText = data.data.analysis || ''
+              if (data.data.tools_used?.length > 0) {
+                toolsUsed = data.data.tools_used
+              }
+              if (data.data.pending_confirmation) {
+                setPendingConfirmation(data.data.pending_confirmation)
+              }
+            }
+          }
         } else {
-          // Use agentic chat endpoint with tool use capabilities
+          // Use regular agentic chat endpoint
           response = await apiClient.gexisAgenticChat({
             query: currentInput,
             session_id: sessionId,
@@ -364,20 +409,32 @@ export default function FloatingChatbot() {
 
           if (data.success && data.data) {
             analysisText = data.data.analysis || ''
-            // Log tools used for debugging
+            // Capture tools used for display
             if (data.data.tools_used && data.data.tools_used.length > 0) {
-              console.log('GEXIS used tools:', data.data.tools_used)
+              toolsUsed = data.data.tools_used
+            }
+            // Check for pending bot confirmation
+            if (data.data.pending_confirmation) {
+              setPendingConfirmation(data.data.pending_confirmation)
             }
           } else if (data.error) {
             throw new Error(data.error)
           }
         }
 
-        // Handle API client response format
+        // Handle API client response format (for non-streaming)
         if (response && 'data' in response) {
           const responseData = response.data
           if (responseData?.success && responseData?.data) {
             analysisText = responseData.data.analysis || responseData.data.response || ''
+            // Also capture tools from this path
+            if (responseData.data.tools_used && responseData.data.tools_used.length > 0) {
+              toolsUsed = responseData.data.tools_used
+            }
+            // Also check for pending confirmation from this path
+            if (responseData.data.pending_confirmation) {
+              setPendingConfirmation(responseData.data.pending_confirmation)
+            }
           } else if (responseData?.response) {
             analysisText = responseData.response
           } else if (responseData?.analysis) {
@@ -392,7 +449,8 @@ export default function FloatingChatbot() {
           role: 'assistant',
           content: analysisText,
           timestamp: new Date(),
-          type: messageType
+          type: messageType,
+          toolsUsed: toolsUsed.length > 0 ? toolsUsed : undefined
         }
         setMessages(prev => [...prev, aiMessage])
 
@@ -430,6 +488,116 @@ export default function FloatingChatbot() {
     setInput(cmd + ' ')
     setShowCommands(false)
     textareaRef.current?.focus()
+  }
+
+  // Handle bot action confirmation
+  const handleConfirmation = async (confirm: boolean) => {
+    if (!pendingConfirmation) return
+
+    setLoading(true)
+    try {
+      const response = await apiClient.gexisConfirmAction({
+        session_id: sessionId,
+        confirm
+      })
+
+      const resultMessage: Message = {
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: confirm
+          ? `**${pendingConfirmation.bot.toUpperCase()} ${pendingConfirmation.action.toUpperCase()}** command executed successfully.`
+          : `**${pendingConfirmation.bot.toUpperCase()} ${pendingConfirmation.action.toUpperCase()}** action cancelled.`,
+        timestamp: new Date(),
+        type: confirm ? 'command' : 'normal'
+      }
+      setMessages(prev => [...prev, resultMessage])
+
+      if (soundEnabled) {
+        playNotificationSound()
+      }
+    } catch (error: any) {
+      const errorMessage: Message = {
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: `Failed to ${confirm ? 'confirm' : 'cancel'} the action. ${error?.message || 'Please try again.'}`,
+        timestamp: new Date()
+      }
+      setMessages(prev => [...prev, errorMessage])
+    } finally {
+      setPendingConfirmation(null)
+      setLoading(false)
+    }
+  }
+
+  // Handle streaming chat response
+  const handleStreamingChat = async (query: string): Promise<{ text: string; toolsUsed: any[]; pendingConfirmation: any }> => {
+    return new Promise(async (resolve, reject) => {
+      let fullText = ''
+      let toolsUsed: any[] = []
+      let pendingConf = null
+
+      try {
+        const response = await fetch(`${API_URL}/api/ai/gexis/agentic-chat/stream`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            query,
+            session_id: sessionId
+          })
+        })
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`)
+        }
+
+        const reader = response.body?.getReader()
+        if (!reader) {
+          throw new Error('No reader available')
+        }
+
+        const decoder = new TextDecoder()
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+
+          const chunk = decoder.decode(value, { stream: true })
+          const lines = chunk.split('\n')
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.slice(6))
+
+                if (data.type === 'text') {
+                  fullText += data.content
+                  setStreamingMessage(fullText)
+                } else if (data.type === 'tool') {
+                  if (data.status === 'executing') {
+                    setStreamingTools(prev => [...prev, data.name])
+                  }
+                } else if (data.type === 'done') {
+                  toolsUsed = data.tools_used || []
+                } else if (data.type === 'error') {
+                  throw new Error(data.message)
+                }
+              } catch (parseError) {
+                // Ignore parse errors for incomplete chunks
+              }
+            }
+          }
+        }
+
+        resolve({ text: fullText, toolsUsed, pendingConfirmation: pendingConf })
+      } catch (error) {
+        reject(error)
+      } finally {
+        setStreamingMessage('')
+        setStreamingTools([])
+      }
+    })
   }
 
   const clearHistory = () => {
@@ -685,6 +853,21 @@ export default function FloatingChatbot() {
                 ) : (
                   <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">{message.content}</p>
                 )}
+                {/* Tools used indicator */}
+                {message.toolsUsed && message.toolsUsed.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-2 pt-2 border-t border-border/30">
+                    <Wrench className="w-3 h-3 text-text-muted mr-1" />
+                    {message.toolsUsed.map((tool, idx) => (
+                      <span
+                        key={idx}
+                        className="text-xs px-1.5 py-0.5 rounded bg-primary/20 text-primary-light"
+                        title={JSON.stringify(tool.input, null, 2)}
+                      >
+                        {tool.tool.replace('get_', '').replace(/_/g, ' ')}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <p className={`text-xs mt-1.5 ${message.role === 'user' ? 'text-white/60' : 'text-text-muted'}`}>
                   {formatTime(message.timestamp)}
                 </p>
@@ -704,14 +887,78 @@ export default function FloatingChatbot() {
             <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' }}>
               <Bot className="w-4 h-4 text-white animate-pulse" />
             </div>
-            <div className="bg-background-hover rounded-2xl rounded-bl-md px-4 py-3">
-              <div className="flex items-center gap-2">
-                <div className="flex gap-1">
-                  <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                  <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                  <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+            <div className="bg-background-hover rounded-2xl rounded-bl-md px-4 py-3 max-w-[85%]">
+              {/* Show streaming message if available */}
+              {streamingMessage ? (
+                <div>
+                  <div className="text-sm prose prose-sm prose-invert max-w-none break-words leading-relaxed">
+                    <ReactMarkdown>{streamingMessage}</ReactMarkdown>
+                    <span className="animate-pulse">▊</span>
+                  </div>
+                  {streamingTools.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-2 pt-2 border-t border-border/30">
+                      <Wrench className="w-3 h-3 text-text-muted mr-1 animate-spin" />
+                      {streamingTools.map((tool, idx) => (
+                        <span key={idx} className="text-xs px-1.5 py-0.5 rounded bg-primary/20 text-primary-light">
+                          {tool.replace('get_', '').replace(/_/g, ' ')}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                <span className="text-sm text-text-muted">GEXIS is thinking...</span>
+              ) : (
+                <div className="flex items-center gap-2">
+                  {streamingTools.length > 0 ? (
+                    <>
+                      <Loader2 className="w-4 h-4 text-primary animate-spin" />
+                      <span className="text-sm text-text-muted">
+                        Fetching {streamingTools[streamingTools.length - 1]?.replace('get_', '').replace(/_/g, ' ')}...
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex gap-1">
+                        <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                        <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                        <div className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                      </div>
+                      <span className="text-sm text-text-muted">GEXIS is thinking...</span>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Bot Action Confirmation UI */}
+        {pendingConfirmation && !loading && (
+          <div className="flex gap-2.5">
+            <div className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center bg-amber-500/20">
+              <AlertTriangle className="w-4 h-4 text-amber-400" />
+            </div>
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl rounded-bl-md px-4 py-3 max-w-[85%]">
+              <p className="text-sm font-medium text-amber-300 mb-2">
+                {pendingConfirmation.message}
+              </p>
+              <p className="text-xs text-text-muted mb-3">
+                This will affect live trading operations for <span className="text-amber-400 font-semibold">{pendingConfirmation.bot.toUpperCase()}</span>
+              </p>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleConfirmation(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-green-600 hover:bg-green-500 text-white rounded-lg transition-colors"
+                >
+                  <CheckCircle className="w-4 h-4" />
+                  Confirm
+                </button>
+                <button
+                  onClick={() => handleConfirmation(false)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-red-600 hover:bg-red-500 text-white rounded-lg transition-colors"
+                >
+                  <XCircle className="w-4 h-4" />
+                  Cancel
+                </button>
               </div>
             </div>
           </div>
