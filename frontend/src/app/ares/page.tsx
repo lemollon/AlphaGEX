@@ -34,9 +34,31 @@ import {
   LastScanSummary,
   SignalConflictTracker,
   PositionEntryContext,
-  PresetPerformanceChart
+  PresetPerformanceChart,
+  // Unified Branding Components
+  BOT_BRANDS,
+  BotPageHeader,
+  BotCard,
+  DataFreshnessIndicator,
+  EmptyState,
+  LoadingState,
+  StatCard,
+  StatusBadge,
+  DirectionIndicator,
+  PnLDisplay,
 } from '@/components/trader'
-import type { TradeDecision } from '@/components/trader'
+import type { TradeDecision, TabId } from '@/components/trader'
+import { History, LayoutDashboard } from 'lucide-react'
+
+// Unified tab configuration for ARES
+const ARES_TABS = [
+  { id: 'portfolio' as const, label: 'Portfolio', icon: Wallet, description: 'Live P&L and positions' },
+  { id: 'overview' as const, label: 'Overview', icon: LayoutDashboard, description: 'Bot status and metrics' },
+  { id: 'activity' as const, label: 'Activity', icon: Activity, description: 'Scans and decisions' },
+  { id: 'history' as const, label: 'History', icon: History, description: 'Closed positions' },
+  { id: 'config' as const, label: 'Config', icon: Settings, description: 'Settings and controls' },
+]
+type AresTabId = typeof ARES_TABS[number]['id']
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
 
 // ==================== INTERFACES ====================
@@ -799,7 +821,7 @@ export default function ARESPage() {
   const toast = useToast()
 
   // UI State - default to portfolio for Robinhood-style view
-  const [activeTab, setActiveTab] = useState<'portfolio' | 'overview' | 'spx' | 'spy' | 'decisions' | 'config'>('portfolio')
+  const [activeTab, setActiveTab] = useState<AresTabId>('portfolio')
   const [expandedDecision, setExpandedDecision] = useState<number | null>(null)
   const [runningCycle, setRunningCycle] = useState(false)
   const [spxPeriod, setSpxPeriod] = useState<TimePeriod>('1M')
@@ -1203,30 +1225,36 @@ export default function ARESPage() {
       <Navigation />
       <main className="lg:pl-16 pt-24">
         <div className="p-6">
-          {/* Header */}
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-3">
-              <Sword className="w-8 h-8 text-red-500" />
-              <div>
-                <h1 className="text-2xl font-bold text-white">ARES</h1>
-                <p className="text-gray-400 text-sm">0DTE Iron Condor Strategy</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className={`px-3 py-1 rounded-full text-sm font-medium ${status?.in_trading_window ? 'bg-green-900 text-green-300' : 'bg-gray-700 text-gray-300'}`}>
+          {/* Unified Header */}
+          <BotPageHeader
+            botName="ARES"
+            isActive={status?.is_active || false}
+            lastHeartbeat={status?.heartbeat?.last_scan_iso || undefined}
+            onRefresh={fetchData}
+            isRefreshing={isRefreshing}
+          />
+
+          {/* Action Bar */}
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3 text-sm">
+              <span className={`px-3 py-1 rounded-full font-medium ${status?.in_trading_window ? 'bg-green-900 text-green-300' : 'bg-gray-700 text-gray-300'}`}>
                 {status?.in_trading_window ? 'MARKET OPEN' : 'MARKET CLOSED'}
               </span>
-              <button onClick={fetchData} disabled={isRefreshing} className="p-2 bg-gray-800 rounded-lg hover:bg-gray-700 disabled:opacity-50">
-                <RefreshCw className={`w-5 h-5 text-gray-400 ${isRefreshing ? 'animate-spin' : ''}`} />
-              </button>
-              <button onClick={runCycle} disabled={runningCycle} className="flex items-center gap-2 px-4 py-2 bg-red-600 rounded-lg hover:bg-red-500 disabled:opacity-50">
-                <Play className={`w-4 h-4 ${runningCycle ? 'animate-pulse' : ''}`} />
-                <span className="text-white text-sm">Run Cycle</span>
-              </button>
+              <span className={`px-2 py-1 rounded ${connectionBadge.bg} ${connectionBadge.text} text-xs font-medium`}>
+                {connectionBadge.label}
+              </span>
+              <span className="text-gray-500">
+                <Clock className="w-4 h-4 inline mr-1" />
+                {status?.heartbeat?.scan_count_today || 0} scans today
+              </span>
             </div>
+            <button onClick={runCycle} disabled={runningCycle} className="flex items-center gap-2 px-4 py-2 bg-red-600 rounded-lg hover:bg-red-500 disabled:opacity-50">
+              <Play className={`w-4 h-4 ${runningCycle ? 'animate-pulse' : ''}`} />
+              <span className="text-white text-sm">Run Cycle</span>
+            </button>
           </div>
 
-          {error && <div className="mb-6 p-4 bg-red-900/50 border border-red-500 rounded-lg text-red-300">{error}</div>}
+          {error && <div className="mb-4 p-4 bg-red-900/50 border border-red-500 rounded-lg text-red-300">{error}</div>}
 
           {/* Heartbeat Status Bar */}
           <div className="mb-4 bg-gray-800/50 rounded-lg p-3 border border-gray-700">
@@ -1290,18 +1318,26 @@ export default function ARESPage() {
             </div>
           </div>
 
-          {/* Tabs */}
-          <div className="flex gap-2 mb-6 flex-wrap">
-            {(['portfolio', 'overview', 'spx', 'spy', 'decisions', 'config'] as const).map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`px-4 py-2 rounded-lg capitalize transition flex items-center gap-2 ${activeTab === tab ? 'bg-red-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}
-              >
-                {tab === 'portfolio' && <Wallet className="w-4 h-4" />}
-                {tab === 'spx' ? 'SPX' : tab === 'spy' ? 'SPY' : tab}
-              </button>
-            ))}
+          {/* Unified Tabs */}
+          <div className="flex gap-1 mb-6 bg-gray-800/50 p-1 rounded-xl">
+            {ARES_TABS.map((tab) => {
+              const Icon = tab.icon
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex-1 px-4 py-2.5 rounded-lg transition flex items-center justify-center gap-2 ${
+                    activeTab === tab.id
+                      ? 'bg-red-600 text-white shadow-lg'
+                      : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+                  }`}
+                  title={tab.description}
+                >
+                  <Icon className="w-4 h-4" />
+                  <span className="text-sm font-medium">{tab.label}</span>
+                </button>
+              )
+            })}
           </div>
 
           {/* ==================== PORTFOLIO TAB - Robinhood-style ==================== */}
@@ -2366,8 +2402,184 @@ export default function ARESPage() {
             </div>
           )}
 
-          {/* ==================== DECISIONS TAB ==================== */}
-          {activeTab === 'decisions' && (
+          {/* ==================== ACTIVITY TAB - Unified scan activity and decisions ==================== */}
+          {activeTab === 'activity' && (
+            <div className="space-y-6">
+              {/* Scan Activity Feed */}
+              <BotCard
+                title="Scan Activity"
+                subtitle="Real-time scan results and trading decisions"
+                icon={<Activity className="w-5 h-5" />}
+                botName="ARES"
+                freshness={{
+                  lastUpdated: status?.heartbeat?.last_scan_iso || null,
+                  onRefresh: () => mutateScanActivity(),
+                  isRefreshing: scanActivityLoading
+                }}
+              >
+                <ScanActivityFeed
+                  scans={scanActivity}
+                  botName="ARES"
+                  isLoading={scanActivityLoading}
+                />
+              </BotCard>
+
+              {/* Decision Log */}
+              <BotCard
+                title="Decision Log"
+                subtitle="Full audit trail: What, Why, How for every decision"
+                icon={<FileText className="w-5 h-5" />}
+                botName="ARES"
+              >
+                <div className="space-y-3 max-h-[600px] overflow-y-auto">
+                  {decisions.length > 0 ? (
+                    decisions.slice(0, 20).map((decision) => {
+                      const badge = getDecisionTypeBadge(decision.decision_type)
+                      return (
+                        <div
+                          key={decision.id}
+                          className="bg-gray-900/50 rounded-lg border border-gray-700 p-3"
+                        >
+                          <div className="flex items-start justify-between gap-3 mb-2">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className={`px-2 py-0.5 rounded text-xs font-medium ${badge.bg} ${badge.text}`}>
+                                {decision.decision_type?.replace(/_/g, ' ')}
+                              </span>
+                              <span className={`text-sm font-medium ${getActionColor(decision.action)}`}>
+                                {decision.action}
+                              </span>
+                              {decision.override_occurred && (
+                                <span className="px-2 py-0.5 rounded text-xs font-bold bg-amber-500/30 text-amber-400 border border-amber-500/50">
+                                  OVERRIDE
+                                </span>
+                              )}
+                              {decision.actual_pnl !== undefined && decision.actual_pnl !== 0 && (
+                                <PnLDisplay value={decision.actual_pnl} size="sm" />
+                              )}
+                            </div>
+                            <span className="text-xs text-gray-500 whitespace-nowrap">
+                              {new Date(decision.timestamp).toLocaleString('en-US', {
+                                month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                              })}
+                            </span>
+                          </div>
+                          <p className="text-sm text-white mb-1">
+                            <span className="text-gray-500">WHAT: </span>{decision.what}
+                          </p>
+                          <p className="text-sm text-gray-400">
+                            <span className="text-yellow-500">WHY: </span>{decision.why || 'Not specified'}
+                          </p>
+                        </div>
+                      )
+                    })
+                  ) : (
+                    <EmptyState
+                      icon={<FileText className="w-8 h-8" />}
+                      title="No Decisions Yet"
+                      description="Decision log will populate when ARES runs scans during market hours."
+                    />
+                  )}
+                </div>
+              </BotCard>
+            </div>
+          )}
+
+          {/* ==================== HISTORY TAB - Closed positions ==================== */}
+          {activeTab === 'history' && (
+            <BotCard
+              title="Trade History"
+              subtitle="All closed Iron Condor positions"
+              icon={<History className="w-5 h-5" />}
+              botName="ARES"
+            >
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-900">
+                    <tr>
+                      <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Date</th>
+                      <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Ticker</th>
+                      <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Strikes</th>
+                      <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Credit</th>
+                      <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Close</th>
+                      <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Underlying</th>
+                      <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">VIX</th>
+                      <th className="px-3 py-3 text-right text-xs text-gray-400 uppercase">P&L</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-700">
+                    {closedPositions
+                      .sort((a, b) => new Date(b.close_date || 0).getTime() - new Date(a.close_date || 0).getTime())
+                      .map((pos) => (
+                        <tr key={pos.position_id} className="hover:bg-gray-700/50">
+                          <td className="px-3 py-3 text-sm text-gray-300">
+                            {pos.close_date ? new Date(pos.close_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '--'}
+                          </td>
+                          <td className="px-3 py-3">
+                            <span className={`px-2 py-1 rounded text-xs font-medium ${
+                              pos.ticker === 'SPX' ? 'bg-purple-900/50 text-purple-400' : 'bg-blue-900/50 text-blue-400'
+                            }`}>
+                              {pos.ticker || 'SPX'}
+                            </span>
+                          </td>
+                          <td className="px-3 py-3 text-xs text-gray-300 font-mono">
+                            <span className="text-green-400">{pos.put_long_strike}/{pos.put_short_strike}</span>
+                            <span className="text-gray-500"> | </span>
+                            <span className="text-red-400">{pos.call_short_strike}/{pos.call_long_strike}</span>
+                          </td>
+                          <td className="px-3 py-3 text-sm text-green-400">${pos.total_credit?.toFixed(2) || '0.00'}</td>
+                          <td className="px-3 py-3 text-sm text-gray-300">${pos.close_price?.toFixed(2) || '0.00'}</td>
+                          <td className="px-3 py-3 text-sm text-gray-300">${pos.underlying_at_entry?.toLocaleString() || '--'}</td>
+                          <td className="px-3 py-3 text-sm text-yellow-400">{pos.vix_at_entry?.toFixed(1) || '--'}</td>
+                          <td className="px-3 py-3 text-right">
+                            <PnLDisplay value={pos.realized_pnl || 0} size="sm" />
+                          </td>
+                        </tr>
+                      ))}
+                    {closedPositions.length === 0 && (
+                      <tr>
+                        <td colSpan={8} className="px-4 py-8">
+                          <EmptyState
+                            icon={<History className="w-8 h-8" />}
+                            title="No Trade History"
+                            description="Closed trades will appear here after ARES completes Iron Condor positions."
+                          />
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Summary Stats */}
+              {closedPositions.length > 0 && (
+                <div className="mt-4 pt-4 border-t border-gray-700 grid grid-cols-4 gap-4">
+                  <StatCard
+                    label="Total Trades"
+                    value={closedPositions.length}
+                    color="gray"
+                  />
+                  <StatCard
+                    label="Win Rate"
+                    value={`${((closedPositions.filter(p => (p.realized_pnl || 0) > 0).length / closedPositions.length) * 100).toFixed(0)}%`}
+                    color={closedPositions.filter(p => (p.realized_pnl || 0) > 0).length / closedPositions.length >= 0.5 ? 'green' : 'red'}
+                  />
+                  <StatCard
+                    label="Total P&L"
+                    value={formatCurrency(closedPositions.reduce((sum, p) => sum + (p.realized_pnl || 0), 0))}
+                    color={closedPositions.reduce((sum, p) => sum + (p.realized_pnl || 0), 0) >= 0 ? 'green' : 'red'}
+                  />
+                  <StatCard
+                    label="Avg Trade"
+                    value={formatCurrency(closedPositions.reduce((sum, p) => sum + (p.realized_pnl || 0), 0) / closedPositions.length)}
+                    color={closedPositions.reduce((sum, p) => sum + (p.realized_pnl || 0), 0) >= 0 ? 'green' : 'red'}
+                  />
+                </div>
+              )}
+            </BotCard>
+          )}
+
+          {/* ==================== LEGACY DECISIONS TAB (hidden) ==================== */}
+          {false && activeTab === 'decisions' && (
             <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
               <div className="p-4 border-b border-gray-700">
                 <h2 className="text-lg font-semibold text-white flex items-center gap-2">

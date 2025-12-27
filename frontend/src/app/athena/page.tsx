@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useState, useMemo } from 'react'
-import { Target, TrendingUp, TrendingDown, Activity, DollarSign, CheckCircle, Clock, RefreshCw, BarChart3, ChevronDown, ChevronUp, ChevronRight, Play, Settings, FileText, Zap, Brain, Crosshair, ScrollText, Wallet } from 'lucide-react'
+import { Target, TrendingUp, TrendingDown, Activity, DollarSign, CheckCircle, Clock, RefreshCw, BarChart3, ChevronDown, ChevronUp, ChevronRight, Play, Settings, FileText, Zap, Brain, Crosshair, ScrollText, Wallet, History, LayoutDashboard } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
@@ -32,10 +32,31 @@ import {
   TradeStoryCard,
   LastScanSummary,
   SignalConflictTracker,
-  PositionEntryContext
+  PositionEntryContext,
+  // NEW: Unified Branding Components
+  BOT_BRANDS,
+  BotPageHeader,
+  BotCard,
+  DataFreshnessIndicator,
+  EmptyState,
+  LoadingState,
+  StatCard,
+  StatusBadge,
+  DirectionIndicator,
+  PnLDisplay,
 } from '@/components/trader'
-import type { TradeDecision } from '@/components/trader'
+import type { TradeDecision, TabId } from '@/components/trader'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
+
+// Unified tab configuration for ATHENA
+const ATHENA_TABS = [
+  { id: 'portfolio' as const, label: 'Portfolio', icon: Wallet, description: 'Live P&L and positions' },
+  { id: 'overview' as const, label: 'Overview', icon: LayoutDashboard, description: 'Bot status and metrics' },
+  { id: 'activity' as const, label: 'Activity', icon: Activity, description: 'Scans and decisions' },
+  { id: 'history' as const, label: 'History', icon: History, description: 'Closed positions' },
+  { id: 'config' as const, label: 'Config', icon: Settings, description: 'Settings and controls' },
+]
+type AthenaTabId = typeof ATHENA_TABS[number]['id']
 
 interface Heartbeat {
   last_scan: string | null
@@ -949,7 +970,7 @@ export default function ATHENAPage() {
   const toast = useToast()
 
   // UI State - default to portfolio for better visibility
-  const [activeTab, setActiveTab] = useState<'portfolio' | 'overview' | 'positions' | 'signals' | 'logs'>('portfolio')
+  const [activeTab, setActiveTab] = useState<AthenaTabId>('portfolio')
   const [showClosedPositions, setShowClosedPositions] = useState(true)
   const [runningCycle, setRunningCycle] = useState(false)
   const [expandedDecision, setExpandedDecision] = useState<string | null>(null)
@@ -1268,53 +1289,53 @@ export default function ATHENAPage() {
       <Navigation />
       <main className="lg:pl-16 pt-24">
         <div className="p-6">
-          {/* Header */}
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-3">
-              <Target className="w-8 h-8 text-orange-500" />
-              <div>
-                <h1 className="text-2xl font-bold text-white">ATHENA</h1>
-                <p className="text-gray-400 text-sm">Directional Spread Trading Bot</p>
-              </div>
+          {/* Unified Header */}
+          <BotPageHeader
+            botName="ATHENA"
+            isActive={status?.is_active || false}
+            lastHeartbeat={status?.heartbeat?.last_scan_iso || undefined}
+            onRefresh={fetchData}
+            isRefreshing={isRefreshing}
+          />
+
+          {/* Action Bar */}
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2 text-sm text-gray-500">
+              <Clock className="w-4 h-4" />
+              <span>Scans every {status?.scan_interval_minutes || 5} min</span>
+              <span className="text-gray-600">•</span>
+              <span>{status?.heartbeat?.scan_count_today || 0} scans today</span>
             </div>
-            <div className="flex items-center gap-3">
-              <span className="text-gray-500 text-sm">
-                Auto-refresh 30s • Cached
-              </span>
-              <button
-                onClick={fetchData}
-                disabled={isRefreshing}
-                className="p-2 bg-gray-800 rounded-lg hover:bg-gray-700 transition disabled:opacity-50"
-              >
-                <RefreshCw className={`w-5 h-5 text-gray-400 ${isRefreshing ? 'animate-spin' : ''}`} />
-              </button>
-              <button
-                onClick={runCycle}
-                disabled={runningCycle}
-                className="flex items-center gap-2 px-4 py-2 bg-orange-600 rounded-lg hover:bg-orange-500 transition disabled:opacity-50"
-              >
-                <Play className={`w-4 h-4 ${runningCycle ? 'animate-pulse' : ''}`} />
-                <span className="text-white text-sm">Run Cycle</span>
-              </button>
-            </div>
+            <button
+              onClick={runCycle}
+              disabled={runningCycle}
+              className="flex items-center gap-2 px-4 py-2 bg-orange-600 rounded-lg hover:bg-orange-500 transition disabled:opacity-50"
+            >
+              <Play className={`w-4 h-4 ${runningCycle ? 'animate-pulse' : ''}`} />
+              <span className="text-white text-sm">Run Cycle</span>
+            </button>
           </div>
 
-          {/* Tabs */}
-          <div className="flex gap-2 mb-6">
-            {(['portfolio', 'overview', 'positions', 'signals', 'logs'] as const).map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`px-4 py-2 rounded-lg capitalize transition flex items-center gap-2 ${
-                  activeTab === tab
-                    ? 'bg-orange-600 text-white'
-                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-                }`}
-              >
-                {tab === 'portfolio' && <Wallet className="w-4 h-4" />}
-                {tab}
-              </button>
-            ))}
+          {/* Unified Tabs */}
+          <div className="flex gap-1 mb-6 bg-gray-800/50 p-1 rounded-xl">
+            {ATHENA_TABS.map((tab) => {
+              const Icon = tab.icon
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex-1 px-4 py-2.5 rounded-lg transition flex items-center justify-center gap-2 ${
+                    activeTab === tab.id
+                      ? 'bg-orange-600 text-white shadow-lg'
+                      : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+                  }`}
+                  title={tab.description}
+                >
+                  <Icon className="w-4 h-4" />
+                  <span className="text-sm font-medium">{tab.label}</span>
+                </button>
+              )
+            })}
           </div>
 
           {/* Heartbeat Status Bar */}
@@ -2581,7 +2602,223 @@ export default function ATHENAPage() {
             </>
           )}
 
-          {activeTab === 'positions' && (
+          {activeTab === 'activity' && (
+            <div className="space-y-6">
+              {/* Scan Activity Feed - Primary focus of Activity tab */}
+              <BotCard
+                title="Scan Activity"
+                subtitle="Real-time scan results and trading decisions"
+                icon={<Activity className="w-5 h-5" />}
+                botName="ATHENA"
+                freshness={{
+                  lastUpdated: status?.heartbeat?.last_scan_iso || null,
+                  onRefresh: () => mutateScanActivity(),
+                  isRefreshing: scanActivityLoading
+                }}
+              >
+                <ScanActivityFeed
+                  scans={scanActivity}
+                  botName="ATHENA"
+                  isLoading={scanActivityLoading}
+                />
+              </BotCard>
+
+              {/* Decision Log */}
+              <BotCard
+                title="Decision Log"
+                subtitle="Full audit trail: What, Why, How for every decision"
+                icon={<ScrollText className="w-5 h-5" />}
+                botName="ATHENA"
+              >
+                <div className="space-y-3 max-h-[600px] overflow-y-auto">
+                  {decisions.length > 0 ? (
+                    decisions.slice(0, 20).map((decision) => {
+                      const badge = getDecisionTypeBadge(decision.decision_type)
+                      return (
+                        <div
+                          key={decision.decision_id}
+                          className="bg-gray-900/50 rounded-lg border border-gray-700 p-3"
+                        >
+                          <div className="flex items-start justify-between gap-3 mb-2">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className={`px-2 py-0.5 rounded text-xs font-medium ${badge.bg} ${badge.text}`}>
+                                {decision.decision_type?.replace(/_/g, ' ')}
+                              </span>
+                              <span className={`text-sm font-medium ${getActionColor(decision.action)}`}>
+                                {decision.action}
+                              </span>
+                              {decision.override_occurred && (
+                                <span className="px-2 py-0.5 rounded text-xs font-bold bg-amber-500/30 text-amber-400 border border-amber-500/50">
+                                  OVERRIDE
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-xs text-gray-500 whitespace-nowrap">
+                              {new Date(decision.timestamp).toLocaleString('en-US', {
+                                month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                              })}
+                            </span>
+                          </div>
+                          <p className="text-sm text-white mb-1">
+                            <span className="text-gray-500">WHAT: </span>{decision.what}
+                          </p>
+                          <p className="text-sm text-gray-400">
+                            <span className="text-yellow-500">WHY: </span>{decision.why || 'Not specified'}
+                          </p>
+                        </div>
+                      )
+                    })
+                  ) : (
+                    <EmptyState
+                      icon={<ScrollText className="w-8 h-8" />}
+                      title="No Decisions Yet"
+                      description="Decision log will populate when ATHENA runs scans during market hours."
+                    />
+                  )}
+                </div>
+              </BotCard>
+
+              {/* Recent Signals */}
+              <BotCard
+                title="Recent Signals"
+                subtitle="ML and Oracle signal history"
+                icon={<Brain className="w-5 h-5" />}
+                botName="ATHENA"
+              >
+                <div className="divide-y divide-gray-700">
+                  {signals.slice(0, 10).map((signal) => (
+                    <div key={signal.id} className="py-3 first:pt-0 last:pb-0">
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-3">
+                          <DirectionIndicator direction={signal.direction} size="sm" />
+                          <span className="text-gray-400 text-xs">
+                            {new Date(signal.created_at).toLocaleString('en-US', {
+                              month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                            })}
+                          </span>
+                        </div>
+                        <StatusBadge status={signal.oracle_advice === 'TRADE_FULL' ? 'open' : signal.oracle_advice === 'TRADE_REDUCED' ? 'pending' : 'closed'} />
+                      </div>
+                      <div className="grid grid-cols-4 gap-2 text-xs">
+                        <div><span className="text-gray-500">Confidence:</span> <span className="text-white">{signal.confidence.toFixed(0)}%</span></div>
+                        <div><span className="text-gray-500">Spot:</span> <span className="text-white">${signal.spot_price.toFixed(2)}</span></div>
+                        <div><span className="text-gray-500">Put Wall:</span> <span className="text-green-400">${signal.put_wall.toFixed(0)}</span></div>
+                        <div><span className="text-gray-500">Call Wall:</span> <span className="text-red-400">${signal.call_wall.toFixed(0)}</span></div>
+                      </div>
+                    </div>
+                  ))}
+                  {signals.length === 0 && (
+                    <EmptyState
+                      icon={<Brain className="w-8 h-8" />}
+                      title="No Signals Yet"
+                      description="Signals appear when ATHENA generates trading recommendations."
+                    />
+                  )}
+                </div>
+              </BotCard>
+            </div>
+          )}
+
+          {activeTab === 'history' && (
+            <BotCard
+              title="Trade History"
+              subtitle="All closed and expired positions"
+              icon={<History className="w-5 h-5" />}
+              botName="ATHENA"
+            >
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead className="bg-gray-900">
+                    <tr>
+                      <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Date</th>
+                      <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Type</th>
+                      <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Strikes</th>
+                      <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Entry</th>
+                      <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Exit</th>
+                      <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Status</th>
+                      <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Reason</th>
+                      <th className="px-3 py-3 text-right text-xs text-gray-400 uppercase">P&L</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-700">
+                    {positions
+                      .filter(p => p.status === 'closed' || p.status === 'expired')
+                      .sort((a, b) => new Date(b.exit_time || 0).getTime() - new Date(a.exit_time || 0).getTime())
+                      .map((pos) => (
+                        <tr key={pos.position_id} className="hover:bg-gray-700/50">
+                          <td className="px-3 py-3 text-sm text-gray-300">
+                            {pos.exit_time ? new Date(pos.exit_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '--'}
+                          </td>
+                          <td className="px-3 py-3">
+                            <span className={`px-2 py-1 rounded text-xs font-medium ${
+                              pos.spread_type === 'BULL_CALL_SPREAD'
+                                ? 'bg-green-900/50 text-green-400'
+                                : 'bg-red-900/50 text-red-400'
+                            }`}>
+                              {pos.spread_type === 'BULL_CALL_SPREAD' ? 'BULL' : 'BEAR'}
+                            </span>
+                          </td>
+                          <td className="px-3 py-3 text-sm text-gray-300">
+                            ${pos.long_strike} / ${pos.short_strike}
+                          </td>
+                          <td className="px-3 py-3 text-sm text-gray-300">${pos.entry_price?.toFixed(2) || '0.00'}</td>
+                          <td className="px-3 py-3 text-sm text-gray-300">${pos.exit_price?.toFixed(2) || '0.00'}</td>
+                          <td className="px-3 py-3">
+                            <StatusBadge status={pos.status} />
+                          </td>
+                          <td className="px-3 py-3 text-sm text-gray-400 max-w-[150px] truncate" title={pos.exit_reason}>
+                            {pos.exit_reason || '--'}
+                          </td>
+                          <td className="px-3 py-3 text-right">
+                            <PnLDisplay value={pos.realized_pnl || 0} size="sm" />
+                          </td>
+                        </tr>
+                      ))}
+                    {positions.filter(p => p.status === 'closed' || p.status === 'expired').length === 0 && (
+                      <tr>
+                        <td colSpan={8} className="px-4 py-8">
+                          <EmptyState
+                            icon={<History className="w-8 h-8" />}
+                            title="No Trade History"
+                            description="Closed trades will appear here after ATHENA completes positions."
+                          />
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Summary Stats */}
+              {closedPositions.length > 0 && (
+                <div className="mt-4 pt-4 border-t border-gray-700 grid grid-cols-4 gap-4">
+                  <StatCard
+                    label="Total Trades"
+                    value={closedPositions.length}
+                    color="gray"
+                  />
+                  <StatCard
+                    label="Win Rate"
+                    value={`${((closedPositions.filter(p => (p.realized_pnl || 0) > 0).length / closedPositions.length) * 100).toFixed(0)}%`}
+                    color={closedPositions.filter(p => (p.realized_pnl || 0) > 0).length / closedPositions.length >= 0.5 ? 'green' : 'red'}
+                  />
+                  <StatCard
+                    label="Total P&L"
+                    value={formatCurrency(totalPnl)}
+                    color={totalPnl >= 0 ? 'green' : 'red'}
+                  />
+                  <StatCard
+                    label="Avg Trade"
+                    value={formatCurrency(totalPnl / closedPositions.length)}
+                    color={totalPnl >= 0 ? 'green' : 'red'}
+                  />
+                </div>
+              )}
+            </BotCard>
+          )}
+
+          {/* Keep old positions tab hidden but functional for backward compat */}
+          {false && activeTab === 'positions' && (
             <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
               <div className="p-4 border-b border-gray-700 flex justify-between items-center">
                 <h2 className="text-lg font-semibold text-white">Positions</h2>
@@ -2791,114 +3028,183 @@ export default function ATHENAPage() {
             </div>
           )}
 
-          {activeTab === 'signals' && (
-            <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
-              <div className="p-4 border-b border-gray-700">
-                <h2 className="text-lg font-semibold text-white">Recent Signals</h2>
-              </div>
-              <div className="divide-y divide-gray-700">
-                {signals.map((signal) => (
-                  <div key={signal.id} className="p-4 hover:bg-gray-700/50">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-3">
-                        <span className={`px-2 py-1 rounded text-xs font-medium ${
-                          signal.direction === 'BULLISH'
-                            ? 'bg-green-900/50 text-green-400'
-                            : signal.direction === 'BEARISH'
-                            ? 'bg-red-900/50 text-red-400'
-                            : 'bg-gray-700 text-gray-400'
+          {activeTab === 'config' && (
+            <div className="space-y-6">
+              {/* Bot Configuration */}
+              <BotCard
+                title="Bot Configuration"
+                subtitle="ATHENA trading parameters and controls"
+                icon={<Settings className="w-5 h-5" />}
+                botName="ATHENA"
+              >
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Trading Settings */}
+                  <div className="space-y-4">
+                    <h3 className="text-sm font-medium text-gray-300 uppercase tracking-wide">Trading Settings</h3>
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between p-3 bg-gray-900/50 rounded-lg">
+                        <div>
+                          <p className="text-sm text-white">Trading Mode</p>
+                          <p className="text-xs text-gray-500">Paper or Live trading</p>
+                        </div>
+                        <span className={`px-3 py-1 rounded text-sm font-medium ${
+                          status?.mode === 'live' ? 'bg-green-900/50 text-green-400' : 'bg-yellow-900/50 text-yellow-400'
                         }`}>
-                          {signal.direction}
-                        </span>
-                        <span className="text-gray-400 text-sm">
-                          {new Date(signal.created_at).toLocaleString()}
+                          {status?.mode?.toUpperCase() || 'PAPER'}
                         </span>
                       </div>
-                      <span className={`px-2 py-1 rounded text-xs ${
-                        signal.oracle_advice === 'TRADE_FULL'
-                          ? 'bg-green-900/50 text-green-400'
-                          : signal.oracle_advice === 'TRADE_REDUCED'
-                          ? 'bg-yellow-900/50 text-yellow-400'
-                          : 'bg-red-900/50 text-red-400'
-                      }`}>
-                        {signal.oracle_advice}
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-4 gap-4 text-sm mb-2">
-                      <div>
-                        <span className="text-gray-500">Confidence:</span>
-                        <span className="text-white ml-2">{signal.confidence.toFixed(1)}%</span>
+                      <div className="flex items-center justify-between p-3 bg-gray-900/50 rounded-lg">
+                        <div>
+                          <p className="text-sm text-white">Risk Per Trade</p>
+                          <p className="text-xs text-gray-500">Maximum risk exposure</p>
+                        </div>
+                        <span className="text-orange-400 font-mono">
+                          {((status?.config?.risk_per_trade || 0.02) * 100).toFixed(1)}%
+                        </span>
                       </div>
-                      <div>
-                        <span className="text-gray-500">Spot:</span>
-                        <span className="text-white ml-2">${signal.spot_price.toFixed(2)}</span>
+                      <div className="flex items-center justify-between p-3 bg-gray-900/50 rounded-lg">
+                        <div>
+                          <p className="text-sm text-white">Spread Width</p>
+                          <p className="text-xs text-gray-500">Default spread size</p>
+                        </div>
+                        <span className="text-white font-mono">${status?.config?.spread_width || 5}</span>
                       </div>
-                      <div>
-                        <span className="text-gray-500">Call Wall:</span>
-                        <span className="text-white ml-2">${signal.call_wall.toFixed(0)}</span>
-                      </div>
-                      <div>
-                        <span className="text-gray-500">Put Wall:</span>
-                        <span className="text-white ml-2">${signal.put_wall.toFixed(0)}</span>
+                      <div className="flex items-center justify-between p-3 bg-gray-900/50 rounded-lg">
+                        <div>
+                          <p className="text-sm text-white">Max Daily Trades</p>
+                          <p className="text-xs text-gray-500">Trade limit per day</p>
+                        </div>
+                        <span className="text-white font-mono">{status?.config?.max_daily_trades || 5}</span>
                       </div>
                     </div>
-                    <p className="text-gray-400 text-sm">{signal.reasoning}</p>
                   </div>
-                ))}
-                {signals.length === 0 && (
-                  <div className="p-8 text-center text-gray-500">
-                    No signals found
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
 
-          {activeTab === 'logs' && (
-            <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
-              <div className="p-4 border-b border-gray-700 flex justify-between items-center">
-                <h2 className="text-lg font-semibold text-white">Recent Activity Logs</h2>
-                <a href="/athena/logs" className="text-sm text-orange-400 hover:underline">View all logs →</a>
-              </div>
-              <div className="divide-y divide-gray-700 max-h-[600px] overflow-y-auto">
-                {logs.map((log) => (
-                  <div key={log.id} className={`p-3 ${
-                    log.level === 'ERROR' ? 'bg-red-900/20' :
-                    log.level === 'WARNING' ? 'bg-yellow-900/20' :
-                    ''
-                  }`}>
-                    <div className="flex items-center gap-3 mb-1">
-                      <span className={`text-xs font-medium px-2 py-0.5 rounded ${
-                        log.level === 'ERROR' ? 'bg-red-900 text-red-300' :
-                        log.level === 'WARNING' ? 'bg-yellow-900 text-yellow-300' :
-                        log.level === 'INFO' ? 'bg-blue-900 text-blue-300' :
-                        'bg-gray-700 text-gray-300'
-                      }`}>
-                        {log.level}
-                      </span>
-                      <span className="text-xs text-gray-500">
-                        {new Date(log.created_at).toLocaleString()}
-                      </span>
+                  {/* System Status */}
+                  <div className="space-y-4">
+                    <h3 className="text-sm font-medium text-gray-300 uppercase tracking-wide">System Status</h3>
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between p-3 bg-gray-900/50 rounded-lg">
+                        <div className="flex items-center gap-2">
+                          <span className={`w-2 h-2 rounded-full ${status?.gex_ml_available ? 'bg-green-500' : 'bg-red-500'}`} />
+                          <p className="text-sm text-white">GEX ML Model</p>
+                        </div>
+                        <span className={status?.gex_ml_available ? 'text-green-400' : 'text-red-400'}>
+                          {status?.gex_ml_available ? 'Online' : 'Offline'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between p-3 bg-gray-900/50 rounded-lg">
+                        <div className="flex items-center gap-2">
+                          <span className={`w-2 h-2 rounded-full ${status?.oracle_available ? 'bg-green-500' : 'bg-red-500'}`} />
+                          <p className="text-sm text-white">Oracle Advisor</p>
+                        </div>
+                        <span className={status?.oracle_available ? 'text-green-400' : 'text-red-400'}>
+                          {status?.oracle_available ? 'Online' : 'Offline'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between p-3 bg-gray-900/50 rounded-lg">
+                        <div className="flex items-center gap-2">
+                          <span className={`w-2 h-2 rounded-full ${status?.kronos_available ? 'bg-green-500' : 'bg-red-500'}`} />
+                          <p className="text-sm text-white">Kronos Backtester</p>
+                        </div>
+                        <span className={status?.kronos_available ? 'text-green-400' : 'text-red-400'}>
+                          {status?.kronos_available ? 'Online' : 'Offline'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between p-3 bg-gray-900/50 rounded-lg">
+                        <div className="flex items-center gap-2">
+                          <span className={`w-2 h-2 rounded-full ${status?.tradier_available ? 'bg-green-500' : 'bg-red-500'}`} />
+                          <p className="text-sm text-white">Tradier Broker</p>
+                        </div>
+                        <span className={status?.tradier_available ? 'text-green-400' : 'text-red-400'}>
+                          {status?.tradier_available ? 'Connected' : 'Disconnected'}
+                        </span>
+                      </div>
                     </div>
-                    <p className="text-gray-200 text-sm">{log.message}</p>
-                    {log.details && (
-                      <details className="mt-2">
-                        <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-400">
-                          View details
-                        </summary>
-                        <pre className="mt-2 text-xs text-gray-400 bg-gray-900 rounded p-2 overflow-x-auto">
-                          {JSON.stringify(log.details, null, 2)}
-                        </pre>
-                      </details>
-                    )}
                   </div>
-                ))}
-                {logs.length === 0 && (
-                  <div className="p-8 text-center text-gray-500">
-                    No logs found
+                </div>
+
+                {/* Quick Actions */}
+                <div className="mt-6 pt-6 border-t border-gray-700">
+                  <h3 className="text-sm font-medium text-gray-300 uppercase tracking-wide mb-4">Quick Actions</h3>
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      onClick={() => runCycle()}
+                      disabled={runningCycle}
+                      className="flex items-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-500 rounded-lg transition disabled:opacity-50"
+                    >
+                      <Play className="w-4 h-4" />
+                      <span>Run Scan Cycle</span>
+                    </button>
+                    <button
+                      onClick={async () => {
+                        try {
+                          await apiClient.skipATHENAToday()
+                          toast.success('Skipped Today', 'ATHENA will not trade for the rest of today')
+                          fetchData()
+                        } catch (err) {
+                          toast.error('Skip Failed', 'Failed to skip trading for today')
+                        }
+                      }}
+                      className="flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition"
+                    >
+                      <Clock className="w-4 h-4" />
+                      <span>Skip Today</span>
+                    </button>
+                    <button
+                      onClick={fetchData}
+                      disabled={isRefreshing}
+                      className="flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition disabled:opacity-50"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+                      <span>Refresh Data</span>
+                    </button>
                   </div>
-                )}
-              </div>
+                </div>
+              </BotCard>
+
+              {/* Activity Logs */}
+              <BotCard
+                title="Activity Logs"
+                subtitle="Recent system activity and errors"
+                icon={<FileText className="w-5 h-5" />}
+                botName="ATHENA"
+                headerRight={
+                  <a href="/athena/logs" className="text-sm text-orange-400 hover:underline">View all →</a>
+                }
+              >
+                <div className="divide-y divide-gray-700 max-h-[400px] overflow-y-auto">
+                  {logs.slice(0, 20).map((log) => (
+                    <div key={log.id} className={`py-3 first:pt-0 last:pb-0 ${
+                      log.level === 'ERROR' ? 'bg-red-900/10' :
+                      log.level === 'WARNING' ? 'bg-yellow-900/10' : ''
+                    }`}>
+                      <div className="flex items-center gap-3 mb-1">
+                        <span className={`text-xs font-medium px-2 py-0.5 rounded ${
+                          log.level === 'ERROR' ? 'bg-red-900 text-red-300' :
+                          log.level === 'WARNING' ? 'bg-yellow-900 text-yellow-300' :
+                          log.level === 'INFO' ? 'bg-blue-900 text-blue-300' :
+                          'bg-gray-700 text-gray-300'
+                        }`}>
+                          {log.level}
+                        </span>
+                        <span className="text-xs text-gray-500">
+                          {new Date(log.created_at).toLocaleString('en-US', {
+                            month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                          })}
+                        </span>
+                      </div>
+                      <p className="text-gray-200 text-sm">{log.message}</p>
+                    </div>
+                  ))}
+                  {logs.length === 0 && (
+                    <EmptyState
+                      icon={<FileText className="w-8 h-8" />}
+                      title="No Logs"
+                      description="Activity logs will appear here when ATHENA runs."
+                    />
+                  )}
+                </div>
+              </BotCard>
             </div>
           )}
         </div>
