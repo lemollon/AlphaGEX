@@ -41,6 +41,165 @@ function FactorDisplay({ factors, title }: { factors: DecisionFactor[]; title: s
   )
 }
 
+// Skip Reason Display - Shows WHY a trade was skipped with detailed explanation
+function SkipReasonDisplay({
+  outcome,
+  skipReason,
+  skipExplanation,
+  failedChecks,
+  checks
+}: {
+  outcome: string
+  skipReason?: string
+  skipExplanation?: string
+  failedChecks?: Array<{ check_name: string; expected: string; actual: string; severity: 'blocking' | 'warning' }>
+  checks?: ScanCheck[]
+}) {
+  if (outcome === 'TRADED') return null
+
+  // Derive skip reason from checks if not provided
+  const derivedReason = skipReason || deriveSkipReason(outcome, checks)
+  const derivedExplanation = skipExplanation || deriveSkipExplanation(outcome, derivedReason, checks)
+
+  // Get blocking checks from either failedChecks or derive from checks
+  const blockingChecks = failedChecks?.filter(c => c.severity === 'blocking') ||
+    checks?.filter(c => !c.passed).map(c => ({
+      check_name: c.check,
+      expected: c.threshold || 'Pass',
+      actual: c.value || 'Fail',
+      severity: 'blocking' as const
+    })) || []
+
+  const getReasonIcon = (reason: string) => {
+    switch (reason) {
+      case 'MARKET_CLOSED': return '🌙'
+      case 'BEFORE_WINDOW': return '⏰'
+      case 'AFTER_WINDOW': return '🔚'
+      case 'VIX_TOO_HIGH': return '📈'
+      case 'VIX_TOO_LOW': return '📉'
+      case 'MAX_TRADES_REACHED': return '🛑'
+      case 'NO_SIGNAL': return '📡'
+      case 'LOW_CONFIDENCE': return '🎯'
+      case 'RISK_CHECK_FAILED': return '⚠️'
+      case 'ORACLE_SAYS_NO': return '🔮'
+      case 'CONFLICTING_SIGNALS': return '⚔️'
+      default: return '❌'
+    }
+  }
+
+  const getReasonColor = (reason: string) => {
+    switch (reason) {
+      case 'MARKET_CLOSED':
+      case 'BEFORE_WINDOW':
+      case 'AFTER_WINDOW':
+        return 'bg-gray-800 border-gray-600 text-gray-300'
+      case 'MAX_TRADES_REACHED':
+        return 'bg-blue-900/30 border-blue-500/50 text-blue-300'
+      case 'VIX_TOO_HIGH':
+      case 'RISK_CHECK_FAILED':
+        return 'bg-red-900/30 border-red-500/50 text-red-300'
+      case 'LOW_CONFIDENCE':
+      case 'NO_SIGNAL':
+        return 'bg-yellow-900/30 border-yellow-500/50 text-yellow-300'
+      default:
+        return 'bg-orange-900/30 border-orange-500/50 text-orange-300'
+    }
+  }
+
+  return (
+    <div className={`rounded-lg p-4 border-2 mb-4 ${getReasonColor(derivedReason)}`}>
+      <div className="flex items-start gap-3">
+        <span className="text-2xl">{getReasonIcon(derivedReason)}</span>
+        <div className="flex-1">
+          <div className="flex items-center gap-2 mb-1">
+            <span className="font-bold text-lg">WHY {outcome === 'SKIP' ? 'SKIPPED' : 'NO TRADE'}</span>
+            <span className="px-2 py-0.5 rounded text-xs font-mono bg-black/30">
+              {derivedReason.replace(/_/g, ' ')}
+            </span>
+          </div>
+          <p className="text-sm opacity-90">{derivedExplanation}</p>
+
+          {/* Show blocking checks that prevented the trade */}
+          {blockingChecks.length > 0 && (
+            <div className="mt-3 space-y-1">
+              <span className="text-xs font-bold opacity-70">BLOCKING CHECKS:</span>
+              {blockingChecks.slice(0, 3).map((check, i) => (
+                <div key={i} className="flex items-center gap-2 text-xs bg-black/20 rounded px-2 py-1">
+                  <XCircle className="w-3 h-3 text-red-400 flex-shrink-0" />
+                  <span className="font-medium">{check.check_name}:</span>
+                  <span className="text-red-300">{check.actual}</span>
+                  <span className="text-gray-500">→ need</span>
+                  <span className="text-green-300">{check.expected}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Helper to derive skip reason from outcome and checks
+function deriveSkipReason(outcome: string, checks?: ScanCheck[]): string {
+  if (outcome === 'MARKET_CLOSED') return 'MARKET_CLOSED'
+  if (outcome === 'BEFORE_WINDOW') return 'BEFORE_WINDOW'
+  if (outcome === 'ERROR') return 'ERROR'
+
+  if (!checks || checks.length === 0) return 'UNKNOWN'
+
+  const failedChecks = checks.filter(c => !c.passed)
+  if (failedChecks.length === 0) return 'NO_SIGNAL'
+
+  // Check for specific failure patterns
+  for (const check of failedChecks) {
+    const checkLower = check.check.toLowerCase()
+    if (checkLower.includes('vix') && checkLower.includes('high')) return 'VIX_TOO_HIGH'
+    if (checkLower.includes('vix') && checkLower.includes('low')) return 'VIX_TOO_LOW'
+    if (checkLower.includes('max') && checkLower.includes('trade')) return 'MAX_TRADES_REACHED'
+    if (checkLower.includes('confidence')) return 'LOW_CONFIDENCE'
+    if (checkLower.includes('oracle')) return 'ORACLE_SAYS_NO'
+    if (checkLower.includes('market') && checkLower.includes('hour')) return 'BEFORE_WINDOW'
+    if (checkLower.includes('conflict')) return 'CONFLICTING_SIGNALS'
+  }
+
+  return 'RISK_CHECK_FAILED'
+}
+
+// Helper to derive human-readable explanation
+function deriveSkipExplanation(outcome: string, reason: string, checks?: ScanCheck[]): string {
+  const failedCheck = checks?.find(c => !c.passed)
+
+  switch (reason) {
+    case 'MARKET_CLOSED':
+      return 'The market is currently closed. Trading resumes during regular market hours (9:30 AM - 4:00 PM ET).'
+    case 'BEFORE_WINDOW':
+      return 'Outside the bot\'s trading window. The bot only scans during its configured active hours.'
+    case 'AFTER_WINDOW':
+      return 'Past the bot\'s trading cutoff time. No new positions will be opened this late in the session.'
+    case 'VIX_TOO_HIGH':
+      return `Volatility is too elevated for safe entry. ${failedCheck?.value ? `VIX at ${failedCheck.value}` : ''} exceeds the maximum threshold.`
+    case 'VIX_TOO_LOW':
+      return `Volatility is too low for profitable premium. ${failedCheck?.value ? `VIX at ${failedCheck.value}` : ''} is below the minimum threshold.`
+    case 'MAX_TRADES_REACHED':
+      return 'Maximum daily trade limit has been reached. No more trades will be opened today to manage risk.'
+    case 'NO_SIGNAL':
+      return 'No clear directional signal from ML or Oracle. The market conditions are ambiguous.'
+    case 'LOW_CONFIDENCE':
+      return `Signal confidence is below the required threshold. ${failedCheck?.value ? `Current: ${failedCheck.value}` : ''}`
+    case 'ORACLE_SAYS_NO':
+      return 'The Oracle advisor recommends skipping this opportunity due to unfavorable conditions.'
+    case 'CONFLICTING_SIGNALS':
+      return 'ML and Oracle signals are conflicting. Neither signal is strong enough to override the other.'
+    case 'RISK_CHECK_FAILED':
+      return `One or more risk checks failed. ${failedCheck ? `${failedCheck.check}: ${failedCheck.value || 'failed'}` : ''}`
+    case 'ERROR':
+      return 'An error occurred during the scan. Check logs for details.'
+    default:
+      return 'Trade conditions were not met. See details below for specific check results.'
+  }
+}
+
 // Trade Unlock Conditions Display
 function UnlockConditionsDisplay({ conditions }: { conditions: TradeUnlockCondition[] }) {
   if (!conditions || conditions.length === 0) return null
@@ -126,6 +285,16 @@ interface ScanResult {
   timestamp: string
   outcome: 'TRADED' | 'NO_TRADE' | 'SKIP' | 'ERROR' | string
   decision_summary?: string
+
+  // Skip/No-trade explanation - THE KEY WHY
+  skip_reason?: string  // e.g., "MARKET_CLOSED", "BEFORE_WINDOW", "VIX_TOO_HIGH", "MAX_TRADES_REACHED"
+  skip_explanation?: string  // Human-readable explanation
+  failed_checks?: Array<{
+    check_name: string
+    expected: string
+    actual: string
+    severity: 'blocking' | 'warning'
+  }>
 
   // Signal sources
   ml_signal?: {
@@ -258,7 +427,7 @@ export default function LastScanSummary({
             </h3>
             {lastScan && (
               <span className="text-gray-400 text-sm">
-                {getTimeAgo(lastScan.timestamp)} • {new Date(lastScan.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                {getTimeAgo(lastScan.timestamp)} • {new Date(lastScan.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} {new Date(lastScan.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
               </span>
             )}
           </div>
@@ -284,6 +453,17 @@ export default function LastScanSummary({
               {lastScan.decision_summary || `Bot decided to ${lastScan.outcome.toLowerCase()}`}
             </p>
           </div>
+
+          {/* WHY SKIPPED/NO TRADE - Prominent explanation for non-trades */}
+          {lastScan.outcome !== 'TRADED' && (
+            <SkipReasonDisplay
+              outcome={lastScan.outcome}
+              skipReason={lastScan.skip_reason}
+              skipExplanation={lastScan.skip_explanation}
+              failedChecks={lastScan.failed_checks}
+              checks={lastScan.checks}
+            />
+          )}
 
           {/* ML vs Oracle Signals - THE KEY INSIGHT */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">

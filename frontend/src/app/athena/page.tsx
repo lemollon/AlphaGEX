@@ -672,6 +672,250 @@ function ATHENAQuickActionsPanel({ onSkipToday, onAdjustRisk, onForceScan, curre
   )
 }
 
+// ==================== CLOSED POSITIONS PANEL ====================
+// Unified closed positions display matching Ares style
+interface ClosedPositionsPanelProps {
+  positions: SpreadPosition[]
+  showClosedPositions: boolean
+  setShowClosedPositions: (show: boolean) => void
+  expandedPosition: string | null
+  setExpandedPosition: (id: string | null) => void
+  formatCurrency: (val: number) => string
+}
+
+function ClosedPositionsPanel({
+  positions,
+  showClosedPositions,
+  setShowClosedPositions,
+  expandedPosition,
+  setExpandedPosition,
+  formatCurrency
+}: ClosedPositionsPanelProps) {
+  const closedPositions = positions.filter(p => p.status === 'closed' || p.status === 'expired')
+  const todayClosed = closedPositions.filter(p => p.exit_time?.startsWith(new Date().toISOString().split('T')[0]))
+
+  if (closedPositions.length === 0) return null
+
+  const totalPnl = closedPositions.reduce((sum, p) => sum + (p.realized_pnl || 0), 0)
+  const winRate = closedPositions.length > 0
+    ? (closedPositions.filter(p => (p.realized_pnl || 0) > 0).length / closedPositions.length * 100)
+    : 0
+
+  return (
+    <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
+      {/* Header with toggle */}
+      <div className="p-4 border-b border-gray-700 flex justify-between items-center">
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-semibold text-white">Closed Positions</h2>
+          <span className="text-sm text-gray-400">
+            {todayClosed.length > 0 && (
+              <span className="text-orange-400 mr-2">{todayClosed.length} today</span>
+            )}
+            {closedPositions.length} total
+          </span>
+        </div>
+        <div className="flex items-center gap-4">
+          {/* Summary stats */}
+          <div className="hidden sm:flex items-center gap-4 text-sm">
+            <span className="text-gray-400">
+              Win Rate: <span className={winRate >= 50 ? 'text-green-400' : 'text-red-400'}>{winRate.toFixed(0)}%</span>
+            </span>
+            <span className="text-gray-400">
+              Total P&L: <span className={totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}>{formatCurrency(totalPnl)}</span>
+            </span>
+          </div>
+          <button
+            onClick={() => setShowClosedPositions(!showClosedPositions)}
+            className="flex items-center gap-2 text-sm text-gray-400 hover:text-white transition px-3 py-1 rounded-lg bg-gray-700 hover:bg-gray-600"
+          >
+            {showClosedPositions ? 'Hide' : 'Show'} History
+            {showClosedPositions ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </button>
+        </div>
+      </div>
+
+      {/* Position Table */}
+      {showClosedPositions && (
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-gray-900">
+              <tr>
+                <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Date</th>
+                <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Type</th>
+                <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Strikes</th>
+                <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Qty</th>
+                <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Entry</th>
+                <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Exit</th>
+                <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Regime</th>
+                <th className="px-3 py-3 text-right text-xs text-gray-400 uppercase">P&L</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-700">
+              {closedPositions
+                .sort((a, b) => new Date(b.exit_time || 0).getTime() - new Date(a.exit_time || 0).getTime())
+                .slice(0, 20)
+                .map((pos) => {
+                  const isExpanded = expandedPosition === pos.position_id
+                  const isToday = pos.exit_time?.startsWith(new Date().toISOString().split('T')[0])
+                  const greeks = pos.greeks || { net_delta: 0, net_gamma: 0, net_theta: 0 }
+
+                  return (
+                    <React.Fragment key={pos.position_id}>
+                      <tr
+                        className={`hover:bg-gray-700/50 cursor-pointer ${isToday ? 'bg-orange-900/10' : ''}`}
+                        onClick={() => setExpandedPosition(isExpanded ? null : pos.position_id)}
+                      >
+                        <td className="px-3 py-3 text-sm text-gray-300">
+                          <div className="flex items-center gap-1">
+                            <ChevronRight className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                            <span className={isToday ? 'text-orange-400' : ''}>
+                              {pos.exit_time ? new Date(pos.exit_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '--'}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="px-3 py-3">
+                          <span className={`px-2 py-1 rounded text-xs font-medium ${
+                            pos.spread_type === 'BULL_CALL_SPREAD'
+                              ? 'bg-green-900/50 text-green-400'
+                              : 'bg-red-900/50 text-red-400'
+                          }`}>
+                            {pos.spread_type === 'BULL_CALL_SPREAD' ? 'BULL' : 'BEAR'}
+                          </span>
+                        </td>
+                        <td className="px-3 py-3 text-sm text-gray-300 font-mono">
+                          ${pos.long_strike}/{pos.short_strike}
+                        </td>
+                        <td className="px-3 py-3 text-sm text-gray-300">{pos.contracts}</td>
+                        <td className="px-3 py-3 text-sm text-gray-300">${pos.entry_price?.toFixed(2) || '--'}</td>
+                        <td className="px-3 py-3 text-sm text-gray-300">${pos.exit_price?.toFixed(2) || '--'}</td>
+                        <td className="px-3 py-3">
+                          <span className={`px-2 py-1 rounded text-xs ${
+                            pos.gex_regime === 'POSITIVE' ? 'bg-blue-900/50 text-blue-400' : 'bg-orange-900/50 text-orange-400'
+                          }`}>
+                            {pos.gex_regime}
+                          </span>
+                        </td>
+                        <td className={`px-3 py-3 text-sm font-bold text-right ${
+                          (pos.realized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'
+                        }`}>
+                          {(pos.realized_pnl || 0) >= 0 ? '+' : ''}{formatCurrency(pos.realized_pnl || 0)}
+                        </td>
+                      </tr>
+
+                      {/* Expanded Row */}
+                      {isExpanded && (
+                        <tr className="bg-gray-900/50">
+                          <td colSpan={8} className="px-4 py-4">
+                            <div className="grid grid-cols-4 gap-4 text-sm">
+                              {/* Position Details */}
+                              <div className="space-y-2">
+                                <h4 className="text-gray-400 font-medium text-xs uppercase">Position Details</h4>
+                                <div className="space-y-1">
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-500">Spread Width:</span>
+                                    <span className="text-gray-300">${pos.spread_width?.toFixed(0) || '--'}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-500">Breakeven:</span>
+                                    <span className="text-gray-300">${pos.breakeven?.toFixed(2) || '--'}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-500">SPY at Entry:</span>
+                                    <span className="text-gray-300">${pos.spot_at_entry?.toFixed(2) || '--'}</span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Greeks at Entry */}
+                              <div className="space-y-2">
+                                <h4 className="text-gray-400 font-medium text-xs uppercase">Greeks at Entry</h4>
+                                <div className="space-y-1">
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-500">Net Delta:</span>
+                                    <span className={`font-mono ${greeks.net_delta >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                      {greeks.net_delta?.toFixed(3) || '0.000'}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-500">Net Gamma:</span>
+                                    <span className="text-gray-300 font-mono">{greeks.net_gamma?.toFixed(3) || '0.000'}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-500">Net Theta:</span>
+                                    <span className="text-red-400 font-mono">{greeks.net_theta?.toFixed(3) || '0.000'}</span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Risk/Reward */}
+                              <div className="space-y-2">
+                                <h4 className="text-gray-400 font-medium text-xs uppercase">Risk / Reward</h4>
+                                <div className="space-y-1">
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-500">Max Profit:</span>
+                                    <span className="text-green-400">${pos.max_profit?.toFixed(2) || '--'}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-500">Max Loss:</span>
+                                    <span className="text-red-400">${pos.max_loss?.toFixed(2) || '--'}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-500">Oracle Conf:</span>
+                                    <span className="text-blue-400">{((pos.oracle_confidence || 0) * 100).toFixed(0)}%</span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Exit Info */}
+                              <div className="space-y-2">
+                                <h4 className="text-gray-400 font-medium text-xs uppercase">Exit Details</h4>
+                                <div className="space-y-1">
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-500">Exit Reason:</span>
+                                    <span className="text-yellow-400">{pos.exit_reason || 'Unknown'}</span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-500">Exit Time:</span>
+                                    <span className="text-gray-300 text-xs">
+                                      {pos.exit_time ? new Date(pos.exit_time).toLocaleString() : '--'}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-gray-500">Status:</span>
+                                    <span className={pos.status === 'expired' ? 'text-purple-400' : 'text-gray-400'}>{pos.status}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Oracle Reasoning */}
+                            {pos.oracle_reasoning && (
+                              <div className="mt-4 pt-3 border-t border-gray-700">
+                                <h4 className="text-gray-400 font-medium text-xs uppercase mb-2">Oracle Reasoning</h4>
+                                <p className="text-gray-500 text-sm">{pos.oracle_reasoning}</p>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  )
+                })}
+            </tbody>
+          </table>
+
+          {closedPositions.length > 20 && (
+            <div className="p-4 text-center text-gray-500 text-sm border-t border-gray-700">
+              Showing 20 of {closedPositions.length} closed positions.
+              <button className="ml-2 text-orange-400 hover:underline">View all in Positions tab →</button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function ATHENAPage() {
   // SWR hooks for data fetching with caching
   const { data: statusRes, error: statusError, isLoading: statusLoading, isValidating: statusValidating, mutate: mutateStatus } = useATHENAStatus()
@@ -1335,35 +1579,15 @@ export default function ATHENAPage() {
                 />
               </div>
 
-              {/* Today's Closed Trades */}
-              {positions.filter(p => (p.status === 'closed' || p.status === 'expired') && p.exit_time?.startsWith(new Date().toISOString().split('T')[0])).length > 0 && (
-                <div className="bg-[#0a0a0a] rounded-lg p-6">
-                  <h3 className="text-lg font-semibold text-white mb-4">Today&apos;s Closed Trades</h3>
-                  <div className="space-y-2">
-                    {positions
-                      .filter(p => (p.status === 'closed' || p.status === 'expired') && p.exit_time?.startsWith(new Date().toISOString().split('T')[0]))
-                      .map(pos => (
-                        <div key={pos.position_id} className="flex justify-between items-center p-3 bg-[#111] rounded-lg border border-gray-800">
-                          <div className="flex items-center gap-3">
-                            <div className={`w-2 h-2 rounded-full ${pos.realized_pnl >= 0 ? 'bg-[#00C805]' : 'bg-[#FF5000]'}`} />
-                            <span className="text-white">
-                              {pos.spread_type?.includes('BULL') ? 'Bull Call' : 'Bear Call'} {pos.long_strike}/{pos.short_strike}
-                            </span>
-                            <span className="text-gray-500 text-sm">{pos.contracts} contracts</span>
-                          </div>
-                          <div className="text-right">
-                            <div className={`font-bold ${(pos.realized_pnl ?? 0) >= 0 ? 'text-[#00C805]' : 'text-[#FF5000]'}`}>
-                              {(pos.realized_pnl ?? 0) >= 0 ? '+' : ''}${(pos.realized_pnl ?? 0).toFixed(2)}
-                            </div>
-                            <div className="text-gray-500 text-xs">
-                              {pos.exit_time ? new Date(pos.exit_time).toLocaleTimeString() : ''}
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                  </div>
-                </div>
-              )}
+              {/* Closed Positions Section - With toggle for history */}
+              <ClosedPositionsPanel
+                positions={positions}
+                showClosedPositions={showClosedPositions}
+                setShowClosedPositions={setShowClosedPositions}
+                expandedPosition={expandedPosition}
+                setExpandedPosition={setExpandedPosition}
+                formatCurrency={formatCurrency}
+              />
             </div>
           )}
 

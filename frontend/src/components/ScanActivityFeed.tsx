@@ -27,12 +27,58 @@ interface ScanActivity {
   put_wall?: number
   error_message?: string
   error_type?: string
+  // Enhanced skip/no-trade explanation
+  skip_reason?: string  // e.g., "MARKET_CLOSED", "VIX_TOO_HIGH", "MAX_TRADES_REACHED"
+  skip_explanation?: string  // Human-readable explanation
   checks_performed?: Array<{
     check_name: string
     passed: boolean
     value?: string
     reason?: string
   }>
+}
+
+// Helper to derive skip reason from outcome and checks
+function deriveSkipReason(outcome: string, checks?: Array<{ check_name: string; passed: boolean; value?: string }>): string {
+  if (outcome === 'MARKET_CLOSED') return 'MARKET_CLOSED'
+  if (outcome === 'BEFORE_WINDOW') return 'BEFORE_WINDOW'
+  if (outcome === 'ERROR') return 'ERROR'
+
+  if (!checks || checks.length === 0) return 'NO_SIGNAL'
+
+  const failedChecks = checks.filter(c => !c.passed)
+  if (failedChecks.length === 0) return 'NO_SIGNAL'
+
+  for (const check of failedChecks) {
+    const checkLower = check.check_name.toLowerCase()
+    if (checkLower.includes('vix') && (checkLower.includes('high') || checkLower.includes('max'))) return 'VIX_TOO_HIGH'
+    if (checkLower.includes('vix') && (checkLower.includes('low') || checkLower.includes('min'))) return 'VIX_TOO_LOW'
+    if (checkLower.includes('max') && checkLower.includes('trade')) return 'MAX_TRADES_REACHED'
+    if (checkLower.includes('confidence')) return 'LOW_CONFIDENCE'
+    if (checkLower.includes('oracle')) return 'ORACLE_SAYS_NO'
+    if (checkLower.includes('market') && checkLower.includes('hour')) return 'BEFORE_WINDOW'
+    if (checkLower.includes('conflict')) return 'CONFLICTING_SIGNALS'
+  }
+
+  return 'RISK_CHECK_FAILED'
+}
+
+function getSkipReasonDisplay(reason: string): { icon: string; label: string; color: string } {
+  switch (reason) {
+    case 'MARKET_CLOSED': return { icon: '🌙', label: 'Market Closed', color: 'text-gray-400' }
+    case 'BEFORE_WINDOW': return { icon: '⏰', label: 'Before Window', color: 'text-gray-400' }
+    case 'AFTER_WINDOW': return { icon: '🔚', label: 'After Window', color: 'text-gray-400' }
+    case 'VIX_TOO_HIGH': return { icon: '📈', label: 'VIX Too High', color: 'text-red-400' }
+    case 'VIX_TOO_LOW': return { icon: '📉', label: 'VIX Too Low', color: 'text-yellow-400' }
+    case 'MAX_TRADES_REACHED': return { icon: '🛑', label: 'Max Trades', color: 'text-blue-400' }
+    case 'NO_SIGNAL': return { icon: '📡', label: 'No Signal', color: 'text-yellow-400' }
+    case 'LOW_CONFIDENCE': return { icon: '🎯', label: 'Low Confidence', color: 'text-yellow-400' }
+    case 'RISK_CHECK_FAILED': return { icon: '⚠️', label: 'Risk Check Failed', color: 'text-orange-400' }
+    case 'ORACLE_SAYS_NO': return { icon: '🔮', label: 'Oracle Said No', color: 'text-purple-400' }
+    case 'CONFLICTING_SIGNALS': return { icon: '⚔️', label: 'Conflicting Signals', color: 'text-amber-400' }
+    case 'ERROR': return { icon: '❌', label: 'Error', color: 'text-red-400' }
+    default: return { icon: '❓', label: reason.replace(/_/g, ' '), color: 'text-gray-400' }
+  }
 }
 
 interface ScanActivityFeedProps {
@@ -166,12 +212,28 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
                     <span className="font-medium text-white">
                       Scan #{scan.scan_number}
                     </span>
-                    <span className="text-sm text-gray-400">{scan.time_ct}</span>
+                    <span className="text-sm text-gray-400">
+                      {new Date(scan.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} • {scan.time_ct}
+                    </span>
                     {scan.signal_direction && getDirectionIcon(scan.signal_direction)}
                   </div>
                   <p className="text-sm text-gray-300 mt-0.5">
                     {scan.decision_summary}
                   </p>
+                  {/* Skip Reason Badge - Prominent explanation for non-trades */}
+                  {!scan.trade_executed && scan.outcome !== 'TRADED' && (() => {
+                    const reason = scan.skip_reason || deriveSkipReason(scan.outcome, scan.checks_performed)
+                    const display = getSkipReasonDisplay(reason)
+                    return (
+                      <div className={`mt-1 inline-flex items-center gap-1 text-xs ${display.color}`}>
+                        <span>{display.icon}</span>
+                        <span className="font-medium">{display.label}</span>
+                        {scan.skip_explanation && (
+                          <span className="text-gray-500 ml-1">— {scan.skip_explanation}</span>
+                        )}
+                      </div>
+                    )
+                  })()}
                 </div>
               </div>
               <span className={`text-xs px-2 py-0.5 rounded font-medium ${
