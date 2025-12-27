@@ -113,8 +113,15 @@ export default function NexusPage() {
     return () => clearInterval(interval)
   }, [])
 
-  // Handle node click - navigate to bot page
+  // Handle node click - navigate to bot page or direct route
   const handleNodeClick = useCallback((nodeId: string) => {
+    // If it starts with '/', it's a direct route from planet clicks
+    if (nodeId.startsWith('/')) {
+      router.push(nodeId)
+      return
+    }
+
+    // Otherwise, map node IDs to routes
     const routes: Record<string, string> = {
       'gex-core': '/',
       'oracle': '/oracle',
