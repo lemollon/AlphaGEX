@@ -97,6 +97,26 @@ function getExpirationInfo(expiration?: string): {
   return { timeLeft, is0DTE, urgency, hoursLeft }
 }
 
+// Format expiration date for display (e.g., "Jan 17" or "Jan 17, 2025")
+function formatExpiration(expiration?: string): string {
+  if (!expiration) return '--'
+
+  try {
+    const date = new Date(expiration + 'T12:00:00') // Noon to avoid timezone issues
+    const now = new Date()
+    const sameYear = date.getFullYear() === now.getFullYear()
+
+    // Format: "Jan 17" for current year, "Jan 17, 2025" for different year
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      ...(sameYear ? {} : { year: 'numeric' })
+    })
+  } catch {
+    return expiration // Fallback to raw string if parsing fails
+  }
+}
+
 // Calculate time since entry
 function getPositionAge(entryTime?: string): { age: string; timestamp: string } {
   if (!entryTime) return { age: '', timestamp: '' }
@@ -169,6 +189,171 @@ function usePnLAnimation(pnl: number) {
   }, [pnl])
 
   return { isFlashing, flashDirection }
+}
+
+// Calculate probability of profit based on current price and strikes
+function calculateProbabilityOfProfit(
+  currentPrice: number,
+  putShort: number,
+  callShort: number,
+  daysToExpiry: number,
+  isIC: boolean = true
+): { probability: number; trend: 'improving' | 'worsening' | 'stable' } {
+  if (!currentPrice || !putShort || !callShort) {
+    return { probability: 0, trend: 'stable' }
+  }
+
+  // Distance to short strikes as percentage
+  const putBuffer = ((currentPrice - putShort) / currentPrice) * 100
+  const callBuffer = ((callShort - currentPrice) / currentPrice) * 100
+  const minBuffer = Math.min(putBuffer, callBuffer)
+
+  // Base probability from buffer (simplified model)
+  // More buffer = higher probability of profit
+  let baseProbability: number
+  if (minBuffer > 3) baseProbability = 85
+  else if (minBuffer > 2) baseProbability = 75
+  else if (minBuffer > 1) baseProbability = 60
+  else if (minBuffer > 0.5) baseProbability = 45
+  else if (minBuffer > 0) baseProbability = 30
+  else baseProbability = 15
+
+  // Adjust for time decay benefit (theta positive for credit spreads)
+  const timeBonus = Math.min(10, (7 - daysToExpiry) * 2)
+  const probability = Math.min(95, Math.max(5, baseProbability + timeBonus))
+
+  // Trend based on buffer symmetry
+  const trend = putBuffer > callBuffer * 1.5 ? 'worsening' :
+                callBuffer > putBuffer * 1.5 ? 'worsening' : 'stable'
+
+  return { probability: Math.round(probability), trend }
+}
+
+// Generate natural language trade explanation
+function generateTradeExplanation(position: EnhancedPosition): string {
+  const parts: string[] = []
+
+  // ML Signal
+  if (position.ml_direction && position.ml_confidence) {
+    const confidence = position.ml_confidence > 80 ? 'strong' :
+                       position.ml_confidence > 60 ? 'moderate' : 'slight'
+    parts.push(`ML predicted ${confidence} ${position.ml_direction.toLowerCase()} move`)
+  }
+
+  // GEX Regime
+  if (position.gex_regime) {
+    const regime = position.gex_regime.toLowerCase()
+    if (regime.includes('positive')) {
+      parts.push('positive gamma environment (mean reversion expected)')
+    } else if (regime.includes('negative')) {
+      parts.push('negative gamma environment (trend following)')
+    }
+  }
+
+  // VIX Context
+  if (position.vix_at_entry) {
+    if (position.vix_at_entry < 15) {
+      parts.push('low volatility favored premium selling')
+    } else if (position.vix_at_entry > 25) {
+      parts.push('elevated VIX offered rich premiums')
+    }
+  }
+
+  // Oracle Signal
+  if (position.oracle_confidence && position.oracle_confidence > 70) {
+    parts.push('Oracle confirmed directional bias')
+  }
+
+  // Gamma Walls
+  if (position.put_wall_at_entry && position.call_wall_at_entry) {
+    parts.push(`price between put wall ($${position.put_wall_at_entry}) and call wall ($${position.call_wall_at_entry})`)
+  }
+
+  if (parts.length === 0) {
+    return 'Trade entered based on standard strategy criteria'
+  }
+
+  return parts.slice(0, 3).join(', ') + '.'
+}
+
+// Probability of Profit Badge Component
+function ProbabilityBadge({ probability, trend, compact = false }: {
+  probability: number
+  trend: 'improving' | 'worsening' | 'stable'
+  compact?: boolean
+}) {
+  const color = probability >= 70 ? 'text-green-400 bg-green-400/10' :
+                probability >= 50 ? 'text-yellow-400 bg-yellow-400/10' :
+                'text-red-400 bg-red-400/10'
+
+  const trendIcon = trend === 'improving' ? '↑' :
+                    trend === 'worsening' ? '↓' : ''
+
+  if (compact) {
+    return (
+      <span className={`text-xs px-1.5 py-0.5 rounded ${color}`}>
+        {probability}% {trendIcon}
+      </span>
+    )
+  }
+
+  return (
+    <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg ${color}`}>
+      <Target className="w-3 h-3" />
+      <span className="text-xs font-medium">{probability}% PoP</span>
+      {trendIcon && <span className="text-xs">{trendIcon}</span>}
+    </div>
+  )
+}
+
+// Why This Trade Component
+function WhyThisTrade({ position, isExpanded, onToggle }: {
+  position: EnhancedPosition
+  isExpanded: boolean
+  onToggle: () => void
+}) {
+  const explanation = generateTradeExplanation(position)
+  const hasContext = position.ml_direction || position.gex_regime || position.vix_at_entry
+
+  if (!hasContext) return null
+
+  return (
+    <div className="mt-3 border-t border-gray-800 pt-3">
+      <button
+        onClick={onToggle}
+        className="flex items-center gap-2 text-xs text-gray-400 hover:text-gray-300 transition-colors w-full"
+      >
+        <Brain className="w-3 h-3" />
+        <span>Why this trade?</span>
+        {isExpanded ? <ChevronUp className="w-3 h-3 ml-auto" /> : <ChevronDown className="w-3 h-3 ml-auto" />}
+      </button>
+
+      {isExpanded && (
+        <div className="mt-2 p-2 bg-gray-900/50 rounded-lg">
+          <p className="text-xs text-gray-300 leading-relaxed">{explanation}</p>
+
+          {/* Quick stats row */}
+          <div className="flex flex-wrap gap-2 mt-2">
+            {position.ml_confidence && (
+              <span className="text-[10px] px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded">
+                ML: {position.ml_confidence}%
+              </span>
+            )}
+            {position.vix_at_entry && (
+              <span className="text-[10px] px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded">
+                VIX: {position.vix_at_entry.toFixed(1)}
+              </span>
+            )}
+            {position.oracle_confidence && (
+              <span className="text-[10px] px-1.5 py-0.5 bg-amber-500/20 text-amber-400 rounded">
+                Oracle: {position.oracle_confidence}%
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 // Greeks Display Component
@@ -392,12 +577,24 @@ function AthenaPositionCard({
   onClick?: () => void
   onClose?: () => void
 }) {
+  const [whyExpanded, setWhyExpanded] = useState(false)
   const isPositive = position.unrealized_pnl >= 0
   const isBullish = position.spread_type?.includes('BULL')
   const spreadType = isBullish ? 'Bull Call Spread' : 'Bear Put Spread'
   const { isFlashing, flashDirection } = usePnLAnimation(position.unrealized_pnl)
   const { age, timestamp } = getPositionAge(position.entry_time || position.created_at)
   const expInfo = getExpirationInfo(position.expiration)
+
+  // Calculate probability for ATHENA spreads (simplified - debit spreads)
+  const price = underlyingPrice || position.current_underlying || 0
+  const shortStrike = position.short_strike || 0
+  const longStrike = position.long_strike || 0
+  const pop = calculateProbabilityOfProfit(
+    price,
+    isBullish ? longStrike : shortStrike,  // Use appropriate strikes based on direction
+    isBullish ? shortStrike : longStrike,
+    expInfo.hoursLeft / 24
+  )
 
   // Estimate current delta
   const currentDelta = useMemo(() => {
@@ -440,6 +637,9 @@ function AthenaPositionCard({
           {expInfo.is0DTE && (
             <ZeroDTEBadge timeLeft={expInfo.timeLeft} urgency={expInfo.urgency} />
           )}
+          {pop.probability > 0 && (
+            <ProbabilityBadge probability={pop.probability} trend={pop.trend} compact />
+          )}
         </div>
         <div className="text-right">
           <div className={`text-xl font-bold transition-colors duration-200 ${
@@ -467,7 +667,7 @@ function AthenaPositionCard({
         </div>
         <div className="flex items-center justify-between text-sm">
           <div className="flex items-center gap-2">
-            <span className="text-gray-400">Exp: {position.expiration}</span>
+            <span className="text-gray-400">Exp: {formatExpiration(position.expiration)}</span>
             {!expInfo.is0DTE && (
               <span className={`text-xs ${
                 expInfo.urgency === 'critical' ? 'text-red-400' :
@@ -553,8 +753,15 @@ function AthenaPositionCard({
         vixAtEntry={position.vix_at_entry}
       />
 
-      {/* Actions */}
-      <div className="flex gap-2 mt-3 pt-3 border-t border-gray-800">
+      {/* Why This Trade - Natural Language Explanation */}
+      <WhyThisTrade
+        position={position}
+        isExpanded={whyExpanded}
+        onToggle={() => setWhyExpanded(!whyExpanded)}
+      />
+
+      {/* Actions - Mobile responsive */}
+      <div className="flex flex-col sm:flex-row gap-2 mt-3 pt-3 border-t border-gray-800">
         <button
           onClick={onClick}
           className="flex-1 flex items-center justify-center gap-1 px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm text-white transition-colors"
@@ -588,6 +795,7 @@ function AresPositionCard({
   onClick?: () => void
   onClose?: () => void
 }) {
+  const [whyExpanded, setWhyExpanded] = useState(false)
   const isPositive = position.unrealized_pnl >= 0
   const isAtRisk = position.risk_status === 'AT_RISK'
   const { isFlashing, flashDirection } = usePnLAnimation(position.unrealized_pnl)
@@ -600,6 +808,9 @@ function AresPositionCard({
   const price = underlyingPrice || position.current_underlying || 0
   const range = callShort - putShort
   const pricePosition = range > 0 ? ((price - putShort) / range) * 100 : 50
+
+  // Calculate probability of profit
+  const pop = calculateProbabilityOfProfit(price, putShort, callShort, expInfo.hoursLeft / 24)
 
   // Max profit/loss for IC
   const maxProfit = position.max_profit || (position.credit_received || 0) * 100 * (position.contracts || 1)
@@ -624,13 +835,16 @@ function AresPositionCard({
           <div className={`w-2 h-2 rounded-full animate-pulse ${isPositive ? 'bg-[#00C805]' : 'bg-[#FF5000]'}`} />
           <span className="text-white font-medium">Iron Condor</span>
           {isAtRisk && (
-            <span className="flex items-center gap-1 text-xs text-[#FF5000] bg-[#FF5000]/10 px-2 py-0.5 rounded">
+            <span className="flex items-center gap-1 text-xs text-[#FF5000] bg-[#FF5000]/10 px-2 py-0.5 rounded animate-pulse">
               <AlertTriangle className="w-3 h-3" />
               AT RISK
             </span>
           )}
           {expInfo.is0DTE && (
             <ZeroDTEBadge timeLeft={expInfo.timeLeft} urgency={expInfo.urgency} />
+          )}
+          {pop.probability > 0 && (
+            <ProbabilityBadge probability={pop.probability} trend={pop.trend} compact />
           )}
         </div>
         <div className="text-right">
@@ -722,7 +936,7 @@ function AresPositionCard({
       <div className="grid grid-cols-2 gap-3 text-sm mt-3">
         <div>
           <span className="text-gray-500 block text-xs">Expiration</span>
-          <span className="text-white font-medium">{position.expiration}</span>
+          <span className="text-white font-medium">{formatExpiration(position.expiration)}</span>
         </div>
         <div>
           <span className="text-gray-500 block text-xs">Contracts</span>
@@ -747,8 +961,15 @@ function AresPositionCard({
         vixAtEntry={position.vix_at_entry}
       />
 
-      {/* Actions */}
-      <div className="flex gap-2 mt-3 pt-3 border-t border-gray-800">
+      {/* Why This Trade - Natural Language Explanation */}
+      <WhyThisTrade
+        position={position}
+        isExpanded={whyExpanded}
+        onToggle={() => setWhyExpanded(!whyExpanded)}
+      />
+
+      {/* Actions - Mobile responsive */}
+      <div className="flex flex-col sm:flex-row gap-2 mt-3 pt-3 border-t border-gray-800">
         <button
           onClick={onClick}
           className="flex-1 flex items-center justify-center gap-1 px-3 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm text-white transition-colors"

@@ -33,7 +33,8 @@ import {
   TradeStoryCard,
   LastScanSummary,
   SignalConflictTracker,
-  PositionEntryContext
+  PositionEntryContext,
+  PresetPerformanceChart
 } from '@/components/trader'
 import type { TradeDecision } from '@/components/trader'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
@@ -2497,6 +2498,15 @@ export default function ARESPage() {
           {/* ==================== CONFIG TAB ==================== */}
           {activeTab === 'config' && (
             <div className="space-y-6">
+              {/* Preset Performance Visualization */}
+              {strategyPresets && strategyPresets.length > 0 && (
+                <PresetPerformanceChart
+                  presets={strategyPresets}
+                  activePreset={activeStrategyPreset}
+                  currentVix={marketData?.vix}
+                />
+              )}
+
               {/* Strategy Preset Selector */}
               <div className="bg-gradient-to-r from-purple-900/30 to-blue-900/30 rounded-xl border border-purple-700/50 p-6">
                 <div className="flex items-center gap-2 mb-4">

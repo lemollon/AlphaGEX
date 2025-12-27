@@ -58,6 +58,23 @@ const formatCurrency = (value: number) => {
   return `${prefix}$${Math.abs(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
+// Format expiration date for display (e.g., "Jan 17" or "Jan 17, 2025")
+function formatExpiration(expiration?: string): string {
+  if (!expiration) return '--'
+  try {
+    const date = new Date(expiration + 'T12:00:00')
+    const now = new Date()
+    const sameYear = date.getFullYear() === now.getFullYear()
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      ...(sameYear ? {} : { year: 'numeric' })
+    })
+  } catch {
+    return expiration
+  }
+}
+
 // Format percentage
 const formatPct = (value: number) => {
   const prefix = value >= 0 ? '+' : ''
@@ -95,9 +112,9 @@ function AthenaPositionCard({ position, underlyingPrice, onClick }: { position: 
       </div>
 
       <div className="text-gray-400 text-sm mb-3">
-        SPY {position.long_strike}/{position.short_strike} Call
+        SPY ${position.long_strike}/${position.short_strike} Call
         <span className="mx-2">·</span>
-        {position.expiration}
+        {formatExpiration(position.expiration)}
         <span className="mx-2">·</span>
         {position.contracts_remaining || position.contracts} contracts
         {positionAge && (
@@ -194,7 +211,7 @@ function AresPositionCard({ position, underlyingPrice, onClick }: { position: Li
 
       <div className="text-gray-400 text-sm mb-3 flex items-center gap-2 flex-wrap">
         <Clock className="w-3 h-3" />
-        {position.expiration}
+        {formatExpiration(position.expiration)}
         <span className="mx-1">·</span>
         {position.contracts} contracts
         <span className="mx-1">·</span>
