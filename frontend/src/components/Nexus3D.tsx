@@ -994,28 +994,28 @@ const STOCK_TICKERS = [
 // SOLAR SYSTEM DEFINITIONS - Each with unique flares and planet effects
 // =============================================================================
 
-// Planet routes for navigation
+// Planet routes for navigation - only pages in the main navigation
 const PLANET_ROUTES: Record<string, string> = {
-  // SOLOMON planets
-  'Analysis': '/ai-copilot',
-  'Strategy': '/strategies',
-  'Insight': '/psychology',
-  // ARGUS planets
-  'Gamma': '/gamma',
-  'Delta': '/gex',
-  'Theta': '/vix',
-  // ORACLE planets
-  'Prediction': '/oracle',
-  'Probability': '/probability',
-  'Confidence': '/ml',
-  // KRONOS planets
-  'History': '/backtesting',
-  'Backtest': '/zero-dte-backtest',
-  'Patterns': '/setups',
-  // SYSTEMS planets
-  'Health': '/system/processes',
-  'Data': '/database',
-  'Network': '/data-transparency',
+  // SOLOMON planets → AI & Feedback pages
+  'Analysis': '/solomon',           // SOLOMON (Feedback Loop)
+  'Strategy': '/daily-manna',       // Daily Manna wisdom
+  'Insight': '/feature-docs',       // Feature Documentation
+  // ARGUS planets → Analysis pages
+  'Gamma': '/argus',                // ARGUS (0DTE Gamma)
+  'Delta': '/gex',                  // GEX Analysis
+  'Theta': '/vix',                  // VIX Dashboard
+  // ORACLE planets → AI Prediction pages
+  'Prediction': '/oracle',          // ORACLE (AI Advisor)
+  'Probability': '/apollo',         // APOLLO (ML Scanner)
+  'Confidence': '/prometheus',      // PROMETHEUS (ML System)
+  // KRONOS planets → Backtesting & History
+  'History': '/gex/history',        // GEX History
+  'Backtest': '/zero-dte-backtest', // KRONOS (0DTE Condor)
+  'Patterns': '/logs',              // Decision Logs
+  // SYSTEMS planets → System pages
+  'Health': '/system/processes',    // System Processes
+  'Data': '/database',              // Database Admin
+  'Network': '/data-transparency',  // Data Transparency
 }
 
 const SOLAR_SYSTEMS = [
@@ -1068,7 +1068,7 @@ const SOLAR_SYSTEMS = [
     id: 'kronos',
     name: 'KRONOS',
     subtitle: 'Time Master',
-    route: '/backtesting',
+    route: '/zero-dte-backtest',  // KRONOS (0DTE Condor) in nav
     position: [-18, -8, -22] as [number, number, number],  // Lower left
     sunColor: '#ef4444',
     glowColor: '#f87171',
