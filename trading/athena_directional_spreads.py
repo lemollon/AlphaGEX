@@ -169,6 +169,55 @@ try:
 except ImportError:
     UNIFIED_DATA_AVAILABLE = False
 
+# Data validation for stale data detection and sanity checks
+try:
+    from trading.data_validation import (
+        validate_market_data,
+        validate_spread_strikes,
+        validate_spot_price,
+        StaleDataError,
+        InvalidDataError,
+        MAX_DATA_AGE_SECONDS
+    )
+    DATA_VALIDATION_AVAILABLE = True
+except ImportError:
+    DATA_VALIDATION_AVAILABLE = False
+    validate_market_data = None
+    StaleDataError = Exception
+    InvalidDataError = Exception
+    MAX_DATA_AGE_SECONDS = 300
+
+# Position-level stop loss management
+try:
+    from trading.position_stop_loss import (
+        PositionStopLossManager,
+        StopLossConfig,
+        StopLossType,
+        create_spread_stop_config,
+        get_stop_loss_manager,
+        check_position_stop_loss
+    )
+    STOP_LOSS_MODULE_AVAILABLE = True
+except ImportError:
+    STOP_LOSS_MODULE_AVAILABLE = False
+    PositionStopLossManager = None
+    get_stop_loss_manager = None
+
+# Idempotency for order deduplication
+try:
+    from trading.idempotency import (
+        get_idempotency_manager,
+        generate_idempotency_key,
+        check_idempotency,
+        with_idempotency,
+        mark_idempotency_completed,
+        mark_idempotency_failed
+    )
+    IDEMPOTENCY_AVAILABLE = True
+except ImportError:
+    IDEMPOTENCY_AVAILABLE = False
+    get_idempotency_manager = None
+
 logger = logging.getLogger(__name__)
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
@@ -689,7 +738,8 @@ Open Positions:  {len(self.open_positions)}/{self.config.max_open_positions}
                 open_time = datetime.strptime(position.open_date, "%Y-%m-%d")
                 duration = now - open_time.replace(tzinfo=CENTRAL_TZ)
                 duration_str = f"{duration.seconds // 3600}h {(duration.seconds % 3600) // 60}m"
-            except:
+            except (ValueError, TypeError, AttributeError) as e:
+                logger.debug(f"Could not calculate duration: {e}")
                 duration_str = "N/A"
 
             # P&L calculations
@@ -1017,7 +1067,8 @@ Current:         ${self.current_capital:,.2f}
                         'flip_point': gex_data.get('flip_point', gex_data.get('gamma_flip', 0)),
                         'spot_price': gex_data.get('spot_price', 0),
                         'regime': regime,
-                        'source': 'tradier_live'
+                        'source': 'tradier_live',
+                        'timestamp': datetime.now(CENTRAL_TZ).isoformat()
                     }
                 else:
                     error_msg = gex_data.get('error', 'Unknown error') if gex_data else 'No data'
@@ -1038,7 +1089,8 @@ Current:         ${self.current_capital:,.2f}
                         'flip_point': gex.flip_point,
                         'spot_price': gex.spot_price,
                         'regime': gex.gex_regime,
-                        'source': source
+                        'source': source,
+                        'timestamp': datetime.now(CENTRAL_TZ).isoformat()
                     }
             except Exception as e:
                 self._log_to_db("WARNING", f"Kronos calculation failed: {e}")
@@ -1059,6 +1111,7 @@ Current:         ${self.current_capital:,.2f}
 
             if row:
                 self._log_to_db("INFO", f"Using cached GEX data from {row[6]}")
+                # Note: Database cache may be stale - data_validation will flag this
                 return {
                     'net_gex': float(row[0]) if row[0] else 0,
                     'call_wall': float(row[1]) if row[1] else 0,
@@ -1066,7 +1119,8 @@ Current:         ${self.current_capital:,.2f}
                     'flip_point': float(row[3]) if row[3] else 0,
                     'spot_price': float(row[4]) if row[4] else 0,
                     'regime': row[5] or 'UNKNOWN',
-                    'source': f'database_{row[6]}'
+                    'source': f'database_{row[6]}',
+                    'timestamp': datetime.now(CENTRAL_TZ).isoformat()  # Use current time as we just fetched
                 }
         except Exception as e:
             self._log_to_db("WARNING", f"Database GEX fallback failed: {e}")
@@ -1092,8 +1146,8 @@ Current:         ${self.current_capital:,.2f}
             try:
                 from data.unified_data_provider import get_vix
                 vix = get_vix() or 20.0
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"Could not get VIX from unified provider: {e}")
 
         # Build market context for Oracle
         context = OracleMarketContext(
@@ -1161,8 +1215,8 @@ Current:         ${self.current_capital:,.2f}
             try:
                 from data.unified_data_provider import get_vix
                 vix = get_vix() or 20.0
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"Could not get VIX for ML signal: {e}")
 
         try:
             # Get signal from ML models
@@ -2407,14 +2461,14 @@ Current:         ${self.current_capital:,.2f}
                     try:
                         from data.unified_data_provider import get_vix
                         vix = get_vix() or 20.0
-                    except:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"Could not get VIX for exit GEX: {e}")
                 exit_gex_data = {
                     'spot': current_gex.get('spot_price', position.underlying_price_at_entry),
                     'vix': vix
                 }
-        except:
-            pass
+        except Exception as e:
+            logger.debug(f"Could not get exit GEX data: {e}")
 
         # Log super detailed trade close info to console
         self._log_detailed_trade_close(
@@ -3020,14 +3074,41 @@ Current:         ${self.current_capital:,.2f}
                 )
             return result
 
+        # Validate GEX data freshness - CRITICAL SAFETY CHECK
+        if DATA_VALIDATION_AVAILABLE and validate_market_data:
+            is_valid, error_msg = validate_market_data(
+                gex_data,
+                max_age_seconds=MAX_DATA_AGE_SECONDS,
+                require_timestamp=True
+            )
+            if not is_valid:
+                logger.warning(f"ATHENA: GEX data validation failed: {error_msg}")
+                result['errors'].append(f"GEX data validation failed: {error_msg}")
+                result['decision_reason'] = f"SKIP: {error_msg}"
+                self._log_skip_decision(f"GEX data validation failed: {error_msg}")
+                # Log scan activity - STALE DATA
+                if SCAN_LOGGER_AVAILABLE and log_athena_scan:
+                    log_athena_scan(
+                        outcome=ScanOutcome.ERROR,
+                        decision_summary=f"GEX data validation failed: {error_msg}",
+                        action_taken="Skipping trade - waiting for fresh data",
+                        market_data=gex_data,
+                        error_message=error_msg,
+                        error_type="STALE_DATA_ERROR",
+                        checks=[
+                            CheckResult("data_freshness", False, error_msg, f"Data < {MAX_DATA_AGE_SECONDS}s old", "Data validation failed")
+                        ]
+                    )
+                return result
+
         # Fetch VIX and add to gex_data for consistent access
         vix = 20.0  # Default
         if UNIFIED_DATA_AVAILABLE:
             try:
                 from data.unified_data_provider import get_vix
                 vix = get_vix() or 20.0
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"Could not get VIX for scan: {e}")
         gex_data['vix'] = vix
 
         # Store GEX context for logging
@@ -3976,7 +4057,8 @@ Current:         ${self.current_capital:,.2f}
                         today_date = datetime.now(CENTRAL_TZ).date()
                         dte = (exp_date - today_date).days
                         is_0dte = dte == 0
-                    except:
+                    except (ValueError, TypeError, AttributeError) as e:
+                        logger.debug(f"Could not parse expiration date: {e}")
                         dte = None
                         is_0dte = False
 

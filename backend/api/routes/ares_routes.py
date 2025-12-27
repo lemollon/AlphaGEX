@@ -11,10 +11,19 @@ ARES targets 10% monthly returns through daily 0DTE Iron Condors.
 import logging
 from datetime import datetime, timedelta
 from typing import Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends, Request
 from zoneinfo import ZoneInfo
 
 from database_adapter import get_connection
+
+# Authentication middleware
+try:
+    from backend.api.auth_middleware import require_api_key, require_admin, optional_auth, AuthInfo
+    AUTH_AVAILABLE = True
+except ImportError:
+    AUTH_AVAILABLE = False
+    require_api_key = None
+    require_admin = None
 
 router = APIRouter(prefix="/api/ares", tags=["ARES"])
 logger = logging.getLogger(__name__)
@@ -1162,13 +1171,16 @@ async def get_ares_market_data():
 
 
 @router.post("/run-cycle")
-async def run_ares_cycle():
+async def run_ares_cycle(
+    request: Request,
+    auth: AuthInfo = Depends(require_admin) if AUTH_AVAILABLE and require_admin else None
+):
     """
     Manually trigger an ARES trading cycle.
 
     This will attempt to open a new Iron Condor position if conditions are met.
 
-    PROTECTED: Only runs in paper mode for safety.
+    PROTECTED: Requires admin authentication. Only runs in paper mode for safety.
     """
     ares = get_ares_instance()
 
@@ -1246,13 +1258,18 @@ async def get_ares_config():
 
 
 @router.post("/sync-tradier")
-async def sync_tradier_positions():
+async def sync_tradier_positions(
+    request: Request,
+    auth: AuthInfo = Depends(require_api_key) if AUTH_AVAILABLE and require_api_key else None
+):
     """
     Sync positions from Tradier to AlphaGEX.
 
     Pulls current positions from Tradier account and identifies any
     that aren't already tracked in AlphaGEX. Useful for reconciliation
     after manual trades.
+
+    PROTECTED: Requires API key authentication.
     """
     ares = get_ares_instance()
 
@@ -1446,13 +1463,17 @@ async def get_ares_live_pnl():
 
 
 @router.post("/process-expired")
-async def process_expired_positions():
+async def process_expired_positions(
+    request: Request,
+    auth: AuthInfo = Depends(require_api_key) if AUTH_AVAILABLE and require_api_key else None
+):
     """
     Manually trigger processing of all expired positions.
 
     This will process any positions that have expired but weren't processed
     due to service downtime or errors. Useful for catching up after outages.
 
+    PROTECTED: Requires API key authentication.
     Processes positions where expiration <= today and status = 'open'.
     """
     ares = get_ares_instance()
@@ -1477,12 +1498,17 @@ async def process_expired_positions():
 
 
 @router.post("/skip-today")
-async def skip_ares_today():
+async def skip_ares_today(
+    request: Request,
+    auth: AuthInfo = Depends(require_api_key) if AUTH_AVAILABLE and require_api_key else None
+):
     """
     Skip trading for the rest of today.
 
     This will prevent ARES from opening any new positions until tomorrow.
     Existing positions will still be managed.
+
+    PROTECTED: Requires API key authentication.
     """
     ares = get_ares_instance()
 
@@ -1510,13 +1536,19 @@ async def skip_ares_today():
 
 
 @router.post("/config")
-async def update_ares_config(updates: dict):
+async def update_ares_config(
+    updates: dict,
+    request: Request,
+    auth: AuthInfo = Depends(require_admin) if AUTH_AVAILABLE and require_admin else None
+):
     """
     Update ARES configuration parameters.
 
     Supports updating:
     - risk_per_trade_pct: Risk per trade percentage (1-15)
     - sd_multiplier: Standard deviation multiplier (0.3-1.5)
+
+    PROTECTED: Requires admin authentication.
     """
     ares = get_ares_instance()
 
@@ -1617,12 +1649,18 @@ async def get_strategy_presets():
 
 
 @router.post("/strategy/preset")
-async def set_strategy_preset(request: dict):
+async def set_strategy_preset(
+    preset_request: dict,
+    request: Request,
+    auth: AuthInfo = Depends(require_admin) if AUTH_AVAILABLE and require_admin else None
+):
     """
     Set the active strategy preset.
 
     Body:
     - preset: Strategy preset ID (baseline, conservative, moderate, aggressive, wide_strikes)
+
+    PROTECTED: Requires admin authentication.
     """
     ares = get_ares_instance()
 
@@ -1632,7 +1670,7 @@ async def set_strategy_preset(request: dict):
             detail="ARES not initialized. Wait for scheduled startup."
         )
 
-    preset_id = request.get("preset", "").lower()
+    preset_id = preset_request.get("preset", "").lower()
 
     # Validate preset
     valid_presets = ["baseline", "conservative", "moderate", "aggressive", "wide_strikes"]

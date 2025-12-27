@@ -121,6 +121,55 @@ except ImportError:
     is_trading_enabled = None
     record_trade_pnl = None
 
+# Data validation for stale data detection and sanity checks
+try:
+    from trading.data_validation import (
+        validate_market_data,
+        validate_iron_condor_strikes,
+        validate_spot_price,
+        StaleDataError,
+        InvalidDataError,
+        MAX_DATA_AGE_SECONDS
+    )
+    DATA_VALIDATION_AVAILABLE = True
+except ImportError:
+    DATA_VALIDATION_AVAILABLE = False
+    validate_market_data = None
+    StaleDataError = Exception
+    InvalidDataError = Exception
+    MAX_DATA_AGE_SECONDS = 300
+
+# Position-level stop loss management
+try:
+    from trading.position_stop_loss import (
+        PositionStopLossManager,
+        StopLossConfig,
+        StopLossType,
+        create_iron_condor_stop_config,
+        get_stop_loss_manager,
+        check_position_stop_loss
+    )
+    STOP_LOSS_AVAILABLE = True
+except ImportError:
+    STOP_LOSS_AVAILABLE = False
+    PositionStopLossManager = None
+    get_stop_loss_manager = None
+
+# Idempotency for order deduplication
+try:
+    from trading.idempotency import (
+        get_idempotency_manager,
+        generate_idempotency_key,
+        check_idempotency,
+        with_idempotency,
+        mark_idempotency_completed,
+        mark_idempotency_failed
+    )
+    IDEMPOTENCY_AVAILABLE = True
+except ImportError:
+    IDEMPOTENCY_AVAILABLE = False
+    get_idempotency_manager = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -269,7 +318,9 @@ class ARESConfig:
     paper_trade_spx: bool = True          # Default to SPX paper trading with live data
 
     # Trade management
-    use_stop_loss: bool = False           # NO stop loss (defined risk)
+    use_stop_loss: bool = False           # Enable per-position stop loss
+    stop_loss_premium_multiple: float = 2.0  # Exit when loss >= 2x premium collected
+    stop_loss_use_time_decay: bool = True # Tighten stop near expiration
     profit_target_pct: float = 50         # Take profit at 50% of max
 
     # Trading schedule
@@ -466,6 +517,16 @@ class ARESTrader:
 
         # Position ID counter
         self._position_counter = 0
+
+        # Position stop loss manager
+        self.stop_loss_manager = None
+        if STOP_LOSS_AVAILABLE and self.config.use_stop_loss:
+            try:
+                self.stop_loss_manager = get_stop_loss_manager()
+                logger.info(f"ARES: Stop loss manager initialized "
+                           f"(premium multiple: {self.config.stop_loss_premium_multiple}x)")
+            except Exception as e:
+                logger.warning(f"ARES: Failed to initialize stop loss manager: {e}")
 
         if mode == TradingMode.LIVE:
             logger.warning("ARES: LIVE TRADING MODE - Real money at risk!")
@@ -1237,6 +1298,36 @@ class ARESTrader:
             logger.warning("ARES: Cannot execute - Tradier not available")
             return None
 
+        # Generate idempotency key to prevent duplicate orders
+        idempotency_key = None
+        if IDEMPOTENCY_AVAILABLE and generate_idempotency_key:
+            idempotency_key = generate_idempotency_key(
+                "ARES",
+                expiration,
+                ic_strikes.get('put_short_strike'),
+                ic_strikes.get('call_short_strike'),
+                contracts
+            )
+
+            # Check if this order was already processed
+            already_processed, existing_result = check_idempotency(idempotency_key)
+            if already_processed and existing_result:
+                logger.info(f"ARES: Duplicate order detected (key: {idempotency_key})")
+                # Return cached position if available
+                if 'position_id' in existing_result:
+                    logger.info(f"ARES: Returning cached result for {existing_result.get('position_id')}")
+                return None  # Prevent duplicate
+
+            # Mark as pending
+            request_data = {
+                'expiration': expiration,
+                'contracts': contracts,
+                'strikes': ic_strikes
+            }
+            if not with_idempotency(idempotency_key, "ARES", request_data):
+                logger.warning(f"ARES: Could not acquire idempotency lock for {idempotency_key}")
+                return None
+
         try:
             ticker = self.get_trading_ticker()
             spread_width = self.get_spread_width()
@@ -1403,17 +1494,284 @@ class ARESTrader:
             self.open_positions.append(position)
             self.trade_count += 1
 
+            # Register position for stop loss monitoring
+            if self.stop_loss_manager and STOP_LOSS_AVAILABLE:
+                try:
+                    exp_dt = datetime.strptime(expiration, '%Y-%m-%d').replace(
+                        hour=16, minute=0, tzinfo=self.tz
+                    )
+                    stop_config = create_iron_condor_stop_config(
+                        premium_multiple=self.config.stop_loss_premium_multiple,
+                        use_time_decay=self.config.stop_loss_use_time_decay
+                    )
+                    self.stop_loss_manager.register_position(
+                        position_id=position.position_id,
+                        entry_price=position.total_credit * 100 * position.contracts,
+                        expiration=exp_dt,
+                        premium_received=position.total_credit,
+                        max_defined_loss=position.max_loss * 100 * position.contracts,
+                        config=stop_config
+                    )
+                    logger.info(f"ARES: Registered position {position.position_id} for stop loss tracking")
+                except Exception as e:
+                    logger.warning(f"ARES: Could not register position for stop loss: {e}")
+
             # Log decision with Oracle advice and REAL alternatives from strike selection
             self._log_entry_decision(position, market_data, oracle_advice, decision_tracker, ic_strikes)
 
             # Save position to database for persistence
             self._save_position_to_db(position)
 
+            # Mark idempotency as completed with result
+            if idempotency_key and IDEMPOTENCY_AVAILABLE and mark_idempotency_completed:
+                mark_idempotency_completed(idempotency_key, {
+                    'position_id': position.position_id,
+                    'status': 'success',
+                    'order_id': position.put_spread_order_id,
+                    'credit': position.total_credit
+                })
+
             return position
 
         except Exception as e:
             logger.error(f"ARES: Error executing Iron Condor: {e}")
+
+            # Mark idempotency as failed
+            if idempotency_key and IDEMPOTENCY_AVAILABLE and mark_idempotency_failed:
+                mark_idempotency_failed(idempotency_key, str(e))
+
             return None
+
+    def _get_position_current_value(self, position: IronCondorPosition) -> float:
+        """
+        Calculate the current value of an Iron Condor position.
+
+        For Iron Condors (credit spreads):
+        - Entry value = credit received * 100 * contracts (positive)
+        - Current cost to close = current spread price * 100 * contracts
+        - Current value = entry value - current close cost
+
+        Returns:
+            Current position value in dollars (positive = profit, negative = loss)
+        """
+        try:
+            ticker = self.get_trading_ticker()
+
+            # Get current option prices for all 4 legs
+            if not self.tradier:
+                return 0.0
+
+            # Build option symbols
+            exp_fmt = position.expiration.replace('-', '')
+            if ticker == 'SPY':
+                # SPY option format: SPY230101C00400000
+                put_long_sym = f"SPY{exp_fmt}P{int(position.put_long_strike * 1000):08d}"
+                put_short_sym = f"SPY{exp_fmt}P{int(position.put_short_strike * 1000):08d}"
+                call_short_sym = f"SPY{exp_fmt}C{int(position.call_short_strike * 1000):08d}"
+                call_long_sym = f"SPY{exp_fmt}C{int(position.call_long_strike * 1000):08d}"
+            else:
+                # SPX uses different format
+                put_long_sym = f"SPXW{exp_fmt}P{int(position.put_long_strike)}"
+                put_short_sym = f"SPXW{exp_fmt}P{int(position.put_short_strike)}"
+                call_short_sym = f"SPXW{exp_fmt}C{int(position.call_short_strike)}"
+                call_long_sym = f"SPXW{exp_fmt}C{int(position.call_long_strike)}"
+
+            # Get quotes
+            symbols = [put_long_sym, put_short_sym, call_short_sym, call_long_sym]
+            quotes = self.tradier.get_quotes(symbols)
+
+            if not quotes:
+                # Fall back to theoretical value based on underlying price
+                return self._estimate_position_value(position)
+
+            # Calculate current spread value
+            # Iron Condor to close = buy back short legs, sell long legs
+            put_long_price = quotes.get(put_long_sym, {}).get('bid', 0) or 0
+            put_short_price = quotes.get(put_short_sym, {}).get('ask', 0) or 0
+            call_short_price = quotes.get(call_short_sym, {}).get('ask', 0) or 0
+            call_long_price = quotes.get(call_long_sym, {}).get('bid', 0) or 0
+
+            # Cost to close = buy shorts - sell longs
+            close_cost = (put_short_price - put_long_price + call_short_price - call_long_price)
+
+            entry_credit = position.total_credit
+            current_profit = (entry_credit - close_cost) * 100 * position.contracts
+
+            return current_profit
+
+        except Exception as e:
+            logger.debug(f"Error getting position value: {e}")
+            return self._estimate_position_value(position)
+
+    def _estimate_position_value(self, position: IronCondorPosition) -> float:
+        """
+        Estimate position value based on underlying price movement.
+
+        Used when option quotes aren't available.
+        """
+        try:
+            ticker = self.get_trading_ticker()
+            current_price = 0
+
+            if self.tradier:
+                quote = self.tradier.get_quote(ticker)
+                current_price = quote.get('last', 0) or quote.get('close', 0)
+
+            if current_price <= 0:
+                return 0.0
+
+            entry_price = position.underlying_price_at_entry
+
+            # Simple estimate: check if price is within profit zone
+            put_short = position.put_short_strike
+            call_short = position.call_short_strike
+
+            # Max profit if price between short strikes
+            if put_short <= current_price <= call_short:
+                # Estimate partial profit based on time decay (assume linear)
+                # For 0DTE, if within zone, likely at profit
+                return position.total_credit * 100 * position.contracts * 0.5
+
+            # If outside short strikes, estimate loss
+            if current_price < put_short:
+                intrusion = put_short - current_price
+                max_loss = position.max_loss * 100 * position.contracts
+                estimated_loss = min(intrusion * 100 * position.contracts, max_loss)
+                return -estimated_loss
+            elif current_price > call_short:
+                intrusion = current_price - call_short
+                max_loss = position.max_loss * 100 * position.contracts
+                estimated_loss = min(intrusion * 100 * position.contracts, max_loss)
+                return -estimated_loss
+
+            return 0.0
+
+        except Exception as e:
+            logger.debug(f"Error estimating position value: {e}")
+            return 0.0
+
+    def monitor_positions_for_stop_loss(self) -> List[IronCondorPosition]:
+        """
+        Check all open positions for stop loss triggers.
+
+        Returns:
+            List of positions that hit their stop loss
+        """
+        if not self.stop_loss_manager or not self.config.use_stop_loss:
+            return []
+
+        triggered_positions = []
+
+        for position in self.open_positions[:]:  # Copy list for safe iteration
+            try:
+                current_value = self._get_position_current_value(position)
+                entry_value = position.total_credit * 100 * position.contracts
+
+                is_triggered, reason = self.stop_loss_manager.check_stop_loss(
+                    position.position_id,
+                    current_value
+                )
+
+                if is_triggered:
+                    logger.warning(f"ARES: STOP LOSS TRIGGERED for {position.position_id}: {reason}")
+                    logger.warning(f"  Entry Value: ${entry_value:,.2f}")
+                    logger.warning(f"  Current Value: ${current_value:,.2f}")
+                    logger.warning(f"  Loss: ${entry_value - current_value:,.2f}")
+
+                    triggered_positions.append(position)
+
+                    # Close the position
+                    self._close_position_on_stop_loss(position, reason, current_value)
+
+            except Exception as e:
+                logger.debug(f"Error checking stop loss for {position.position_id}: {e}")
+
+        return triggered_positions
+
+    def _close_position_on_stop_loss(
+        self,
+        position: IronCondorPosition,
+        reason: str,
+        current_value: float
+    ) -> None:
+        """
+        Close a position due to stop loss trigger.
+
+        Args:
+            position: The position to close
+            reason: Stop loss trigger reason
+            current_value: Current position value
+        """
+        try:
+            entry_value = position.total_credit * 100 * position.contracts
+            realized_pnl = current_value  # current_value is already profit/loss
+
+            position.status = "closed"
+            position.close_date = datetime.now(self.tz).strftime('%Y-%m-%d %H:%M:%S')
+            position.realized_pnl = realized_pnl
+
+            # Update capital
+            self.capital += realized_pnl
+            self.total_pnl += realized_pnl
+
+            if realized_pnl > 0:
+                self.win_count += 1
+
+            # Remove from open positions
+            if position in self.open_positions:
+                self.open_positions.remove(position)
+            self.closed_positions.append(position)
+
+            # Unregister from stop loss manager
+            if self.stop_loss_manager:
+                self.stop_loss_manager.unregister_position(position.position_id)
+
+            # Log to database
+            self._update_position_close_in_db(position, reason)
+
+            # Record in circuit breaker
+            if CIRCUIT_BREAKER_AVAILABLE and record_trade_pnl:
+                try:
+                    record_trade_pnl(realized_pnl, position.position_id)
+                except Exception as e:
+                    logger.debug(f"Could not record to circuit breaker: {e}")
+
+            logger.info(f"ARES: Position {position.position_id} closed on STOP LOSS")
+            logger.info(f"  Reason: {reason}")
+            logger.info(f"  Realized P&L: ${realized_pnl:+,.2f}")
+            logger.info(f"  Capital: ${self.capital:,.2f}")
+
+        except Exception as e:
+            logger.error(f"Error closing position on stop loss: {e}")
+
+    def _update_position_close_in_db(self, position: IronCondorPosition, close_reason: str) -> None:
+        """Update position in database with close info."""
+        try:
+            from database_adapter import get_connection
+            conn = get_connection()
+            c = conn.cursor()
+
+            c.execute('''
+                UPDATE autonomous_open_positions
+                SET status = %s,
+                    close_date = %s,
+                    close_price = %s,
+                    realized_pnl = %s,
+                    close_reason = %s
+                WHERE position_id = %s
+            ''', (
+                'closed',
+                position.close_date,
+                position.close_price,
+                position.realized_pnl,
+                close_reason,
+                position.position_id
+            ))
+
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.debug(f"Could not update position in DB: {e}")
 
     def _log_skip_decision(self, reason: str, market_data: Optional[Dict] = None,
                            oracle_advice: Optional[Any] = None, alternatives: Optional[List[str]] = None,
@@ -2160,6 +2518,17 @@ class ARESTrader:
             except Exception as e:
                 logger.warning(f"ARES: Circuit breaker check failed: {e} - continuing with trade")
 
+        # =========================================================================
+        # POSITION MONITORING - Check stop losses on open positions
+        # =========================================================================
+        if self.open_positions and self.config.use_stop_loss:
+            try:
+                triggered = self.monitor_positions_for_stop_loss()
+                if triggered:
+                    logger.info(f"ARES: {len(triggered)} position(s) closed on stop loss")
+            except Exception as e:
+                logger.warning(f"ARES: Error monitoring positions: {e}")
+
         logger.info(f"=" * 60)
         logger.info(f"ARES Daily Cycle - {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
         logger.info(f"Mode: {self.mode.value.upper()}")
@@ -2255,6 +2624,39 @@ class ARESTrader:
             return result
 
         result['market_data'] = market_data
+
+        # Validate market data freshness - CRITICAL SAFETY CHECK
+        if DATA_VALIDATION_AVAILABLE and validate_market_data:
+            is_valid, error_msg = validate_market_data(
+                market_data,
+                max_age_seconds=MAX_DATA_AGE_SECONDS,
+                require_timestamp=True
+            )
+            if not is_valid:
+                logger.warning(f"ARES: Market data validation failed: {error_msg}")
+                result['actions'].append(f"Market data validation failed: {error_msg}")
+                self._log_skip_decision(
+                    reason=f"Market data validation failed: {error_msg}",
+                    market_data=market_data,
+                    oracle_advice=None,
+                    alternatives=["Wait for fresh market data", "Check data source"],
+                    decision_tracker=decision_tracker
+                )
+                # Log scan activity - STALE DATA
+                if SCAN_LOGGER_AVAILABLE and log_ares_scan:
+                    log_ares_scan(
+                        outcome=ScanOutcome.ERROR,
+                        decision_summary=f"Market data validation failed: {error_msg}",
+                        action_taken="Skipping trade - waiting for fresh data",
+                        full_reasoning=f"Safety check: {error_msg}. Trading on stale or invalid data could lead to incorrect strike selection.",
+                        error_message=error_msg,
+                        error_type="STALE_DATA_ERROR",
+                        checks=[
+                            CheckResult("data_freshness", False, error_msg, f"Data < {MAX_DATA_AGE_SECONDS}s old", "Data validation failed")
+                        ],
+                        market_data=market_data
+                    )
+                return result
 
         # Get GEX data for logging and AI explanations
         gex_data = self._get_gex_data()
@@ -3747,7 +4149,8 @@ class ARESTrader:
                         today_date = datetime.now(self.tz).date()
                         dte = (exp_date - today_date).days
                         is_0dte = dte == 0
-                    except:
+                    except (ValueError, TypeError, AttributeError) as e:
+                        logger.debug(f"Could not parse expiration date: {e}")
                         dte = None
                         is_0dte = False
 
