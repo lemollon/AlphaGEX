@@ -919,6 +919,44 @@ function MarketMoodRing({ gexValue = 0, vixValue = 15 }: { gexValue?: number, vi
 // STOCK TICKERS DATA
 // =============================================================================
 
+// Dynamic stock price simulation - prices fluctuate in real-time
+const useStockPrices = () => {
+  const [prices, setPrices] = useState(() => [
+    { symbol: 'SPY', price: 585, change: 0 },
+    { symbol: 'QQQ', price: 505, change: 0 },
+    { symbol: 'AAPL', price: 248, change: 0 },
+    { symbol: 'NVDA', price: 138, change: 0 },
+    { symbol: 'TSLA', price: 425, change: 0 },
+    { symbol: 'AMZN', price: 225, change: 0 },
+    { symbol: 'META', price: 612, change: 0 },
+    { symbol: 'GOOGL', price: 192, change: 0 },
+    { symbol: 'MSFT', price: 435, change: 0 },
+    { symbol: 'AMD', price: 125, change: 0 },
+  ])
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setPrices(prev => prev.map(stock => {
+        // Random walk with mean reversion
+        const volatility = stock.symbol === 'TSLA' || stock.symbol === 'NVDA' ? 0.003 : 0.001
+        const drift = (Math.random() - 0.5) * 2 * volatility
+        const newPrice = stock.price * (1 + drift)
+        const basePrice = stock.symbol === 'SPY' ? 585 : stock.symbol === 'QQQ' ? 505 :
+          stock.symbol === 'AAPL' ? 248 : stock.symbol === 'NVDA' ? 138 :
+          stock.symbol === 'TSLA' ? 425 : stock.symbol === 'AMZN' ? 225 :
+          stock.symbol === 'META' ? 612 : stock.symbol === 'GOOGL' ? 192 :
+          stock.symbol === 'MSFT' ? 435 : 125
+        const change = ((newPrice - basePrice) / basePrice) * 100
+        return { ...stock, price: newPrice, change }
+      }))
+    }, 2000) // Update every 2 seconds
+
+    return () => clearInterval(interval)
+  }, [])
+
+  return prices
+}
+
 const STOCK_TICKERS = [
   { symbol: 'SPY', basePrice: 585 },
   { symbol: 'QQQ', basePrice: 505 },
@@ -930,6 +968,78 @@ const STOCK_TICKERS = [
   { symbol: 'GOOGL', basePrice: 192 },
   { symbol: 'MSFT', basePrice: 435 },
   { symbol: 'AMD', basePrice: 125 },
+]
+
+// =============================================================================
+// SOLAR SYSTEM DEFINITIONS
+// =============================================================================
+
+const SOLAR_SYSTEMS = [
+  {
+    id: 'solomon',
+    name: 'SOLOMON',
+    subtitle: 'AI Wisdom',
+    position: [-14, 5, -12] as [number, number, number],
+    sunColor: '#f59e0b',
+    glowColor: '#fbbf24',
+    planets: [
+      { name: 'Analysis', color: '#22d3ee', size: 0.15, orbit: 1.2, speed: 0.8 },
+      { name: 'Strategy', color: '#a855f7', size: 0.12, orbit: 1.8, speed: 0.5 },
+      { name: 'Insight', color: '#10b981', size: 0.1, orbit: 2.3, speed: 0.3 },
+    ]
+  },
+  {
+    id: 'argus',
+    name: 'ARGUS',
+    subtitle: 'All-Seeing Eye',
+    position: [14, 3, -10] as [number, number, number],
+    sunColor: '#06b6d4',
+    glowColor: '#22d3ee',
+    planets: [
+      { name: 'Gamma', color: '#f97316', size: 0.18, orbit: 1.4, speed: 1.0 },
+      { name: 'Delta', color: '#ef4444', size: 0.12, orbit: 2.0, speed: 0.6 },
+      { name: 'Theta', color: '#8b5cf6', size: 0.1, orbit: 2.5, speed: 0.4 },
+    ]
+  },
+  {
+    id: 'oracle',
+    name: 'ORACLE',
+    subtitle: 'Future Sight',
+    position: [0, 8, -15] as [number, number, number],
+    sunColor: '#8b5cf6',
+    glowColor: '#a855f7',
+    planets: [
+      { name: 'Prediction', color: '#22d3ee', size: 0.16, orbit: 1.3, speed: 0.9 },
+      { name: 'Probability', color: '#10b981', size: 0.14, orbit: 1.9, speed: 0.55 },
+      { name: 'Confidence', color: '#f59e0b', size: 0.11, orbit: 2.4, speed: 0.35 },
+    ]
+  },
+  {
+    id: 'kronos',
+    name: 'KRONOS',
+    subtitle: 'Time Master',
+    position: [-10, -4, -14] as [number, number, number],
+    sunColor: '#ef4444',
+    glowColor: '#f87171',
+    planets: [
+      { name: 'History', color: '#6b7280', size: 0.15, orbit: 1.5, speed: 0.7 },
+      { name: 'Backtest', color: '#3b82f6', size: 0.13, orbit: 2.1, speed: 0.45 },
+      { name: 'Patterns', color: '#fbbf24', size: 0.1, orbit: 2.6, speed: 0.3 },
+    ]
+  },
+  {
+    id: 'systems',
+    name: 'SYSTEMS',
+    subtitle: 'Core Hub',
+    position: [12, -3, -13] as [number, number, number],
+    sunColor: '#10b981',
+    glowColor: '#34d399',
+    planets: [
+      { name: 'Health', color: '#22c55e', size: 0.14, orbit: 1.3, speed: 0.85 },
+      { name: 'Data', color: '#3b82f6', size: 0.12, orbit: 1.8, speed: 0.5 },
+      { name: 'Network', color: '#ec4899', size: 0.1, orbit: 2.2, speed: 0.35 },
+    ]
+  },
 ]
 
 // =============================================================================
@@ -2178,6 +2288,463 @@ function NebulaStorm({ vixValue = 15, paused }: { vixValue?: number, paused: boo
 }
 
 // =============================================================================
+// SOLAR SYSTEM - Beautiful Mini Solar System with Orbiting Planets
+// =============================================================================
+
+function SolarSystem({
+  system,
+  paused = false,
+  onPulseToSystem
+}: {
+  system: typeof SOLAR_SYSTEMS[0]
+  paused?: boolean
+  onPulseToSystem?: (targetId: string) => void
+}) {
+  const groupRef = useRef<THREE.Group>(null)
+  const sunRef = useRef<THREE.Mesh>(null)
+  const glowRef = useRef<THREE.Mesh>(null)
+  const ringsRef = useRef<THREE.Group>(null)
+  const [isHovered, setIsHovered] = useState(false)
+  const [pulseIntensity, setPulseIntensity] = useState(0)
+
+  // Pulse effect when receiving signal
+  const triggerPulse = useCallback(() => {
+    setPulseIntensity(1)
+  }, [])
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    // Gentle floating motion
+    if (groupRef.current) {
+      groupRef.current.position.y = system.position[1] + Math.sin(t * 0.3 + system.position[0]) * 0.3
+    }
+
+    // Sun pulsing glow
+    if (sunRef.current) {
+      const pulse = 1 + Math.sin(t * 2) * 0.1
+      sunRef.current.scale.setScalar(pulse)
+    }
+
+    // Glow breathing
+    if (glowRef.current) {
+      const glowPulse = 0.4 + Math.sin(t * 1.5) * 0.15 + pulseIntensity * 0.5
+      ;(glowRef.current.material as THREE.MeshBasicMaterial).opacity = glowPulse
+      glowRef.current.scale.setScalar(1.5 + pulseIntensity * 0.5)
+    }
+
+    // Orbital rings rotation
+    if (ringsRef.current) {
+      ringsRef.current.rotation.x = Math.PI / 2 + Math.sin(t * 0.2) * 0.1
+      ringsRef.current.rotation.z = t * 0.05
+    }
+
+    // Decay pulse intensity
+    if (pulseIntensity > 0) {
+      setPulseIntensity(prev => Math.max(0, prev - 0.02))
+    }
+  })
+
+  // Random pulse to other systems
+  useEffect(() => {
+    if (paused || !onPulseToSystem) return
+    const interval = setInterval(() => {
+      if (Math.random() < 0.15) { // 15% chance every interval
+        const otherSystems = SOLAR_SYSTEMS.filter(s => s.id !== system.id)
+        const target = otherSystems[Math.floor(Math.random() * otherSystems.length)]
+        onPulseToSystem(target.id)
+      }
+    }, 3000)
+    return () => clearInterval(interval)
+  }, [paused, system.id, onPulseToSystem])
+
+  return (
+    <group
+      ref={groupRef}
+      position={system.position}
+      onPointerOver={() => setIsHovered(true)}
+      onPointerOut={() => setIsHovered(false)}
+    >
+      {/* Outer glow halo */}
+      <Sphere ref={glowRef} args={[0.8, 32, 32]}>
+        <meshBasicMaterial color={system.glowColor} transparent opacity={0.3} />
+      </Sphere>
+
+      {/* Central sun with distortion */}
+      <Sphere ref={sunRef} args={[0.35, 32, 32]}>
+        <MeshDistortMaterial
+          color={system.sunColor}
+          emissive={system.sunColor}
+          emissiveIntensity={isHovered ? 2 : 1.2}
+          distort={0.3}
+          speed={3}
+        />
+      </Sphere>
+
+      {/* Sun core (bright center) */}
+      <Sphere args={[0.15, 16, 16]}>
+        <meshBasicMaterial color="#ffffff" />
+      </Sphere>
+
+      {/* Orbital rings */}
+      <group ref={ringsRef}>
+        {system.planets.map((planet, i) => (
+          <mesh key={i} rotation={[Math.PI / 2, 0, 0]}>
+            <torusGeometry args={[planet.orbit, 0.008, 8, 64]} />
+            <meshBasicMaterial color={planet.color} transparent opacity={0.3} />
+          </mesh>
+        ))}
+      </group>
+
+      {/* Orbiting planets */}
+      {system.planets.map((planet, i) => (
+        <OrbitingPlanet
+          key={i}
+          planet={planet}
+          systemId={system.id}
+          paused={paused}
+          phaseOffset={i * Math.PI * 0.7}
+        />
+      ))}
+
+      {/* Particle corona around sun */}
+      <SunCorona color={system.glowColor} paused={paused} />
+
+      {/* System label */}
+      <Html position={[0, 1.5, 0]} center>
+        <div
+          className={`text-center transition-all duration-300 ${isHovered ? 'scale-110' : 'scale-100'}`}
+          style={{ opacity: isHovered ? 1 : 0.7 }}
+        >
+          <div
+            className="text-sm font-bold tracking-wider"
+            style={{ color: system.sunColor, textShadow: `0 0 10px ${system.glowColor}` }}
+          >
+            {system.name}
+          </div>
+          <div className="text-xs text-gray-400">{system.subtitle}</div>
+        </div>
+      </Html>
+
+      {/* Activation ring when hovered */}
+      {isHovered && (
+        <mesh rotation={[Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[1.2, 0.02, 16, 64]} />
+          <meshBasicMaterial color={system.glowColor} transparent opacity={0.8} />
+        </mesh>
+      )}
+    </group>
+  )
+}
+
+// =============================================================================
+// ORBITING PLANET with Trail
+// =============================================================================
+
+function OrbitingPlanet({
+  planet,
+  systemId,
+  paused,
+  phaseOffset
+}: {
+  planet: { name: string, color: string, size: number, orbit: number, speed: number }
+  systemId: string
+  paused: boolean
+  phaseOffset: number
+}) {
+  const meshRef = useRef<THREE.Mesh>(null)
+  const trailRef = useRef<THREE.Points>(null)
+  const [isHovered, setIsHovered] = useState(false)
+
+  // Trail positions
+  const trailPositions = useMemo(() => new Float32Array(30 * 3), [])
+  const trailIndex = useRef(0)
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    const angle = t * planet.speed + phaseOffset
+    const x = Math.cos(angle) * planet.orbit
+    const z = Math.sin(angle) * planet.orbit
+    const y = Math.sin(angle * 2) * 0.1 // Slight vertical wobble
+
+    if (meshRef.current) {
+      meshRef.current.position.set(x, y, z)
+      meshRef.current.rotation.y = t * 2
+    }
+
+    // Update trail
+    if (trailRef.current) {
+      const idx = (trailIndex.current % 30) * 3
+      trailPositions[idx] = x
+      trailPositions[idx + 1] = y
+      trailPositions[idx + 2] = z
+      trailIndex.current++
+      trailRef.current.geometry.attributes.position.needsUpdate = true
+    }
+  })
+
+  return (
+    <group>
+      {/* Planet trail */}
+      <points ref={trailRef}>
+        <bufferGeometry>
+          <bufferAttribute
+            attach="attributes-position"
+            count={30}
+            array={trailPositions}
+            itemSize={3}
+          />
+        </bufferGeometry>
+        <pointsMaterial color={planet.color} size={0.03} transparent opacity={0.4} />
+      </points>
+
+      {/* Planet */}
+      <Sphere
+        ref={meshRef}
+        args={[planet.size, 16, 16]}
+        onPointerOver={() => setIsHovered(true)}
+        onPointerOut={() => setIsHovered(false)}
+      >
+        <meshBasicMaterial color={planet.color} />
+      </Sphere>
+
+      {/* Planet glow when hovered */}
+      {isHovered && meshRef.current && (
+        <Sphere args={[planet.size * 1.8, 8, 8]} position={meshRef.current.position}>
+          <meshBasicMaterial color={planet.color} transparent opacity={0.3} />
+        </Sphere>
+      )}
+    </group>
+  )
+}
+
+// =============================================================================
+// SUN CORONA - Particle effect around suns
+// =============================================================================
+
+function SunCorona({ color, paused }: { color: string, paused: boolean }) {
+  const particlesRef = useRef<THREE.Points>(null)
+  const count = 50
+
+  const positions = useMemo(() => {
+    const pos = new Float32Array(count * 3)
+    for (let i = 0; i < count; i++) {
+      const theta = Math.random() * Math.PI * 2
+      const phi = Math.acos(2 * Math.random() - 1)
+      const r = 0.4 + Math.random() * 0.3
+      pos[i * 3] = r * Math.sin(phi) * Math.cos(theta)
+      pos[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta)
+      pos[i * 3 + 2] = r * Math.cos(phi)
+    }
+    return pos
+  }, [])
+
+  useFrame((state) => {
+    if (paused || !particlesRef.current) return
+    const t = state.clock.elapsedTime
+    particlesRef.current.rotation.y = t * 0.2
+    particlesRef.current.rotation.x = t * 0.15
+  })
+
+  return (
+    <points ref={particlesRef}>
+      <bufferGeometry>
+        <bufferAttribute
+          attach="attributes-position"
+          count={count}
+          array={positions}
+          itemSize={3}
+        />
+      </bufferGeometry>
+      <pointsMaterial color={color} size={0.04} transparent opacity={0.6} />
+    </points>
+  )
+}
+
+// =============================================================================
+// NEURAL SYNAPSE PULSES - Light traveling between solar systems
+// =============================================================================
+
+function NeuralSynapsePulses({ paused }: { paused: boolean }) {
+  const [pulses, setPulses] = useState<Array<{
+    id: number
+    sourceId: string
+    targetId: string
+    startTime: number
+    color: string
+  }>>([])
+  const nextId = useRef(0)
+  const lastPulse = useRef(0)
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    // Spawn new pulse every 2-5 seconds
+    if (t - lastPulse.current > 2 + Math.random() * 3) {
+      lastPulse.current = t
+
+      // Pick random source and target
+      const sourceIdx = Math.floor(Math.random() * SOLAR_SYSTEMS.length)
+      let targetIdx = Math.floor(Math.random() * SOLAR_SYSTEMS.length)
+      while (targetIdx === sourceIdx) {
+        targetIdx = Math.floor(Math.random() * SOLAR_SYSTEMS.length)
+      }
+
+      const source = SOLAR_SYSTEMS[sourceIdx]
+      const target = SOLAR_SYSTEMS[targetIdx]
+
+      // Create pulse with beautiful color gradient
+      const colors = ['#22d3ee', '#a855f7', '#f59e0b', '#10b981', '#ef4444', '#ec4899']
+      const color = colors[Math.floor(Math.random() * colors.length)]
+
+      setPulses(prev => [...prev, {
+        id: nextId.current++,
+        sourceId: source.id,
+        targetId: target.id,
+        startTime: t,
+        color
+      }])
+    }
+
+    // Clean up old pulses
+    setPulses(prev => prev.filter(p => t - p.startTime < 1.5))
+  })
+
+  return (
+    <group>
+      {pulses.map(pulse => (
+        <SynapsePulse key={pulse.id} pulse={pulse} />
+      ))}
+    </group>
+  )
+}
+
+// =============================================================================
+// SYNAPSE PULSE - Individual light pulse traveling between systems
+// =============================================================================
+
+function SynapsePulse({ pulse }: {
+  pulse: { id: number, sourceId: string, targetId: string, startTime: number, color: string }
+}) {
+  const groupRef = useRef<THREE.Group>(null)
+  const glowRef = useRef<THREE.Mesh>(null)
+  const trailRef = useRef<any>(null)
+
+  const source = SOLAR_SYSTEMS.find(s => s.id === pulse.sourceId)
+  const target = SOLAR_SYSTEMS.find(s => s.id === pulse.targetId)
+
+  // Calculate curved path using quadratic bezier
+  const curve = useMemo(() => {
+    if (!source || !target) return null
+
+    const start = new THREE.Vector3(...source.position)
+    const end = new THREE.Vector3(...target.position)
+    const mid = start.clone().add(end).multiplyScalar(0.5)
+    // Curve outward from center
+    const centerDir = mid.clone().normalize()
+    mid.add(centerDir.clone().multiplyScalar(3 + Math.random() * 2))
+    mid.y += 2 + Math.random() * 3
+
+    return new THREE.QuadraticBezierCurve3(start, mid, end)
+  }, [source, target])
+
+  const trailPoints = useMemo(() => {
+    if (!curve) return []
+    return curve.getPoints(40).map(p => [p.x, p.y, p.z] as [number, number, number])
+  }, [curve])
+
+  useFrame((state) => {
+    if (!curve || !groupRef.current) return
+
+    const elapsed = state.clock.elapsedTime - pulse.startTime
+    const progress = Math.min(elapsed / 1.2, 1) // 1.2 second travel time
+
+    // Get position along curve
+    const point = curve.getPoint(progress)
+    groupRef.current.position.copy(point)
+
+    // Pulse glow effect
+    if (glowRef.current) {
+      const glowPulse = 1 + Math.sin(elapsed * 15) * 0.3
+      glowRef.current.scale.setScalar(glowPulse)
+
+      // Fade out at end
+      const fadeOut = progress > 0.8 ? (1 - progress) / 0.2 : 1
+      ;(glowRef.current.material as THREE.MeshBasicMaterial).opacity = 0.8 * fadeOut
+    }
+
+    // Update trail opacity
+    if (trailRef.current) {
+      trailRef.current.material.opacity = 0.4 * (1 - progress * 0.5)
+    }
+  })
+
+  if (!source || !target || !curve) return null
+
+  return (
+    <>
+      {/* Trail line */}
+      <Line
+        ref={trailRef}
+        points={trailPoints}
+        color={pulse.color}
+        lineWidth={2}
+        transparent
+        opacity={0.4}
+      />
+
+      {/* Moving pulse */}
+      <group ref={groupRef}>
+        {/* Core bright point */}
+        <Sphere args={[0.08, 8, 8]}>
+          <meshBasicMaterial color="#ffffff" />
+        </Sphere>
+
+        {/* Outer glow */}
+        <Sphere ref={glowRef} args={[0.2, 16, 16]}>
+          <meshBasicMaterial color={pulse.color} transparent opacity={0.8} />
+        </Sphere>
+
+        {/* Sparkle ring */}
+        <mesh rotation={[Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[0.15, 0.02, 8, 16]} />
+          <meshBasicMaterial color={pulse.color} transparent opacity={0.6} />
+        </mesh>
+      </group>
+    </>
+  )
+}
+
+// =============================================================================
+// ALL SOLAR SYSTEMS CONTAINER
+// =============================================================================
+
+function SolarSystemsContainer({ paused }: { paused: boolean }) {
+  const handlePulseToSystem = useCallback((targetId: string) => {
+    // This could trigger effects on the target system
+    // For now, the neural synapse pulses handle the visual effect
+  }, [])
+
+  return (
+    <group>
+      {SOLAR_SYSTEMS.map(system => (
+        <SolarSystem
+          key={system.id}
+          system={system}
+          paused={paused}
+          onPulseToSystem={handlePulseToSystem}
+        />
+      ))}
+      <NeuralSynapsePulses paused={paused} />
+    </group>
+  )
+}
+
+// =============================================================================
 // HIDDEN MESSAGE (Easter Egg)
 // =============================================================================
 
@@ -3405,6 +3972,9 @@ function Scene({
       <SpaceStation spotPrice={spotPrice || 585} gexValue={gexValue} vixValue={vixValue} />
       <MoonPhases paused={paused} />
       <NebulaStorm vixValue={vixValue} paused={paused} />
+
+      {/* Solar Systems with Neural Synapse Connections */}
+      <SolarSystemsContainer paused={paused} />
 
       {/* Bot nodes */}
       {BOT_NODES.map((node) => (
