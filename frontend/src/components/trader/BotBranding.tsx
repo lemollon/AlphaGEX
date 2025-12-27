@@ -500,6 +500,355 @@ export function BotPageHeader({
   )
 }
 
+// =============================================================================
+// TIME DISPLAY UTILITIES
+// =============================================================================
+// For showing "Time in Position" (open) and "Duration Held" (closed)
+
+/**
+ * Formats a duration between two dates into a human-readable string
+ * @param startTime - ISO date string of start time
+ * @param endTime - ISO date string of end time (optional, defaults to now)
+ * @returns formatted string like "2h 15m" or "3d 4h"
+ */
+export function formatDuration(startTime: string | null | undefined, endTime?: string | null): string {
+  if (!startTime) return '--'
+
+  const start = new Date(startTime)
+  const end = endTime ? new Date(endTime) : new Date()
+
+  const diffMs = end.getTime() - start.getTime()
+  if (diffMs < 0) return '--'
+
+  const seconds = Math.floor(diffMs / 1000)
+  const minutes = Math.floor(seconds / 60)
+  const hours = Math.floor(minutes / 60)
+  const days = Math.floor(hours / 24)
+
+  if (days > 0) {
+    const remainingHours = hours % 24
+    return remainingHours > 0 ? `${days}d ${remainingHours}h` : `${days}d`
+  }
+  if (hours > 0) {
+    const remainingMinutes = minutes % 60
+    return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`
+  }
+  if (minutes > 0) {
+    return `${minutes}m`
+  }
+  return `${seconds}s`
+}
+
+interface TimeInPositionProps {
+  entryTime: string | null | undefined
+  exitTime?: string | null
+  showLabel?: boolean
+  className?: string
+}
+
+/**
+ * Displays time in position with a live updating timer for open positions
+ */
+export function TimeInPosition({
+  entryTime,
+  exitTime,
+  showLabel = true,
+  className = ''
+}: TimeInPositionProps) {
+  const [now, setNow] = React.useState(new Date())
+
+  // Only update if position is still open (no exitTime)
+  React.useEffect(() => {
+    if (!exitTime && entryTime) {
+      const timer = setInterval(() => setNow(new Date()), 60000) // Update every minute
+      return () => clearInterval(timer)
+    }
+  }, [exitTime, entryTime])
+
+  const duration = formatDuration(entryTime, exitTime || now.toISOString())
+
+  return (
+    <div className={`flex items-center gap-1.5 text-gray-400 ${className}`}>
+      <Clock className="w-3 h-3" />
+      {showLabel && <span className="text-xs text-gray-500">{exitTime ? 'Held:' : 'Open:'}</span>}
+      <span className="text-xs font-medium text-gray-300">{duration}</span>
+    </div>
+  )
+}
+
+interface DateRangeDisplayProps {
+  entryTime: string | null | undefined
+  exitTime?: string | null
+  showDuration?: boolean
+  className?: string
+}
+
+/**
+ * Shows entry date → exit date with optional duration
+ */
+export function DateRangeDisplay({
+  entryTime,
+  exitTime,
+  showDuration = true,
+  className = ''
+}: DateRangeDisplayProps) {
+  if (!entryTime) return <span className="text-gray-500">--</span>
+
+  const formatDate = (dateStr: string) => {
+    return new Date(dateStr).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric'
+    })
+  }
+
+  const formatTime = (dateStr: string) => {
+    return new Date(dateStr).toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    })
+  }
+
+  return (
+    <div className={`flex flex-col gap-0.5 ${className}`}>
+      <div className="flex items-center gap-1 text-xs">
+        <span className="text-gray-500">Entry:</span>
+        <span className="text-gray-300">{formatDate(entryTime)}</span>
+        <span className="text-gray-500">{formatTime(entryTime)}</span>
+      </div>
+      {exitTime && (
+        <div className="flex items-center gap-1 text-xs">
+          <span className="text-gray-500">Exit:</span>
+          <span className="text-gray-300">{formatDate(exitTime)}</span>
+          <span className="text-gray-500">{formatTime(exitTime)}</span>
+        </div>
+      )}
+      {showDuration && (
+        <div className="flex items-center gap-1 text-xs mt-0.5">
+          <Clock className="w-3 h-3 text-gray-500" />
+          <span className="text-gray-400">{formatDuration(entryTime, exitTime)}</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// =============================================================================
+// BREAKEVEN DISTANCE DISPLAY
+// =============================================================================
+
+interface BreakevenDistanceProps {
+  currentPrice: number
+  breakeven: number | null | undefined
+  direction?: 'BULLISH' | 'BEARISH' | 'NEUTRAL' | string
+  className?: string
+}
+
+/**
+ * Shows distance to breakeven with color coding
+ */
+export function BreakevenDistance({
+  currentPrice,
+  breakeven,
+  direction,
+  className = ''
+}: BreakevenDistanceProps) {
+  if (!breakeven || !currentPrice) return <span className="text-gray-500">--</span>
+
+  const distance = breakeven - currentPrice
+  const distancePct = (distance / currentPrice) * 100
+  const isAbove = distance > 0
+
+  // Determine if we're on the "good" side of breakeven
+  let isGoodSide = false
+  if (direction === 'BULLISH') {
+    isGoodSide = currentPrice > breakeven // Want price above breakeven for bull spreads
+  } else if (direction === 'BEARISH') {
+    isGoodSide = currentPrice < breakeven // Want price below breakeven for bear spreads
+  }
+
+  const color = isGoodSide ? 'text-green-400' : 'text-yellow-400'
+
+  return (
+    <div className={`flex flex-col ${className}`}>
+      <div className={`text-sm font-medium ${color}`}>
+        ${Math.abs(distance).toFixed(2)} {isAbove ? 'below' : 'above'}
+      </div>
+      <div className="text-xs text-gray-500">
+        ({Math.abs(distancePct).toFixed(2)}% to BE)
+      </div>
+    </div>
+  )
+}
+
+// =============================================================================
+// ENTRY CONTEXT DISPLAY
+// =============================================================================
+
+interface EntryContextProps {
+  vixAtEntry?: number
+  spotAtEntry?: number
+  callWall?: number
+  putWall?: number
+  gexRegime?: string
+  className?: string
+}
+
+/**
+ * Shows market context at entry time (VIX, walls, regime)
+ */
+export function EntryContext({
+  vixAtEntry,
+  spotAtEntry,
+  callWall,
+  putWall,
+  gexRegime,
+  className = ''
+}: EntryContextProps) {
+  return (
+    <div className={`flex flex-wrap gap-2 ${className}`}>
+      {vixAtEntry !== undefined && (
+        <div className="flex items-center gap-1 px-2 py-1 bg-yellow-900/30 rounded text-xs">
+          <span className="text-yellow-500">VIX:</span>
+          <span className="text-yellow-400 font-medium">{vixAtEntry.toFixed(1)}</span>
+        </div>
+      )}
+      {spotAtEntry !== undefined && (
+        <div className="flex items-center gap-1 px-2 py-1 bg-blue-900/30 rounded text-xs">
+          <span className="text-blue-500">Spot:</span>
+          <span className="text-blue-400 font-medium">${spotAtEntry.toLocaleString()}</span>
+        </div>
+      )}
+      {gexRegime && (
+        <div className={`flex items-center gap-1 px-2 py-1 rounded text-xs ${
+          gexRegime.includes('POSITIVE') ? 'bg-green-900/30 text-green-400' :
+          gexRegime.includes('NEGATIVE') ? 'bg-red-900/30 text-red-400' :
+          'bg-gray-800 text-gray-400'
+        }`}>
+          {gexRegime.replace('_', ' ')}
+        </div>
+      )}
+      {(callWall || putWall) && (
+        <div className="flex items-center gap-1 px-2 py-1 bg-purple-900/30 rounded text-xs">
+          <span className="text-purple-500">Walls:</span>
+          <span className="text-red-400">{callWall?.toLocaleString() || '--'}</span>
+          <span className="text-gray-500">/</span>
+          <span className="text-green-400">{putWall?.toLocaleString() || '--'}</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// =============================================================================
+// UNLOCK CONDITIONS DISPLAY
+// =============================================================================
+
+interface UnlockCondition {
+  condition: string
+  currentValue: string | number
+  requiredValue: string | number
+  met: boolean
+}
+
+interface UnlockConditionsProps {
+  conditions: UnlockCondition[]
+  className?: string
+}
+
+/**
+ * Shows what conditions need to be met for trading to unlock
+ */
+export function UnlockConditions({ conditions, className = '' }: UnlockConditionsProps) {
+  if (!conditions || conditions.length === 0) return null
+
+  const metCount = conditions.filter(c => c.met).length
+
+  return (
+    <div className={`bg-gray-900/50 rounded-lg p-3 ${className}`}>
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-medium text-gray-400 uppercase">Unlock Conditions</span>
+        <span className={`text-xs ${metCount === conditions.length ? 'text-green-400' : 'text-yellow-400'}`}>
+          {metCount}/{conditions.length} met
+        </span>
+      </div>
+      <div className="space-y-1.5">
+        {conditions.map((cond, idx) => (
+          <div key={idx} className="flex items-center justify-between text-xs">
+            <div className="flex items-center gap-2">
+              {cond.met ? (
+                <CheckCircle className="w-3 h-3 text-green-400" />
+              ) : (
+                <XCircle className="w-3 h-3 text-red-400" />
+              )}
+              <span className={cond.met ? 'text-gray-300' : 'text-gray-500'}>{cond.condition}</span>
+            </div>
+            <div className="text-gray-500">
+              <span className={cond.met ? 'text-green-400' : 'text-yellow-400'}>{cond.currentValue}</span>
+              <span className="mx-1">/</span>
+              <span>{cond.requiredValue}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// =============================================================================
+// DRAWDOWN DISPLAY
+// =============================================================================
+
+interface DrawdownDisplayProps {
+  currentEquity: number
+  highWaterMark: number
+  maxDrawdownPct?: number
+  className?: string
+}
+
+/**
+ * Shows current drawdown from high water mark
+ */
+export function DrawdownDisplay({
+  currentEquity,
+  highWaterMark,
+  maxDrawdownPct,
+  className = ''
+}: DrawdownDisplayProps) {
+  const currentDrawdown = highWaterMark > 0
+    ? ((highWaterMark - currentEquity) / highWaterMark) * 100
+    : 0
+  const isInDrawdown = currentDrawdown > 0
+
+  return (
+    <div className={`${className}`}>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-xs text-gray-500">Current Drawdown</span>
+        <span className={`text-sm font-medium ${isInDrawdown ? 'text-red-400' : 'text-green-400'}`}>
+          {isInDrawdown ? `-${currentDrawdown.toFixed(2)}%` : 'At HWM'}
+        </span>
+      </div>
+      {maxDrawdownPct !== undefined && (
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-gray-500">Max Drawdown</span>
+          <span className="text-sm text-red-400">-{maxDrawdownPct.toFixed(2)}%</span>
+        </div>
+      )}
+      {/* Visual bar */}
+      <div className="mt-2 h-2 bg-gray-800 rounded-full overflow-hidden">
+        <div
+          className={`h-full transition-all duration-300 ${
+            currentDrawdown > 10 ? 'bg-red-500' :
+            currentDrawdown > 5 ? 'bg-yellow-500' :
+            'bg-green-500'
+          }`}
+          style={{ width: `${Math.min(currentDrawdown * 5, 100)}%` }}
+        />
+      </div>
+    </div>
+  )
+}
+
 // Export all components
 export default {
   BOT_BRANDS,
@@ -513,4 +862,11 @@ export default {
   DirectionIndicator,
   PnLDisplay,
   BotPageHeader,
+  formatDuration,
+  TimeInPosition,
+  DateRangeDisplay,
+  BreakevenDistance,
+  EntryContext,
+  UnlockConditions,
+  DrawdownDisplay,
 }

@@ -81,6 +81,22 @@ const formatPct = (value: number) => {
   return `${prefix}${value.toFixed(2)}%`
 }
 
+// Calculate breakeven for a spread
+function getBreakevenInfo(position: LivePosition, currentPrice?: number): { distance: number; distancePct: number; isGoodSide: boolean } | null {
+  const breakeven = position.breakeven
+  if (!breakeven || !currentPrice) return null
+
+  const distance = currentPrice - breakeven
+  const distancePct = (distance / currentPrice) * 100
+  const isBullish = position.spread_type?.includes('BULL')
+
+  // For bull spreads, we want price above breakeven
+  // For bear spreads, we want price below breakeven
+  const isGoodSide = isBullish ? distance > 0 : distance < 0
+
+  return { distance, distancePct, isGoodSide }
+}
+
 // Athena Spread Position Card
 function AthenaPositionCard({ position, underlyingPrice, onClick }: { position: LivePosition; underlyingPrice?: number; onClick?: () => void }) {
   const isPositive = position.unrealized_pnl >= 0
@@ -88,6 +104,7 @@ function AthenaPositionCard({ position, underlyingPrice, onClick }: { position: 
   const isBullish = position.spread_type?.includes('BULL')
   const { isFlashing, flashDirection } = usePnLAnimation(position.unrealized_pnl)
   const positionAge = getPositionAge(position.entry_time || position.created_at)
+  const beInfo = getBreakevenInfo(position, underlyingPrice)
 
   return (
     <div
@@ -128,6 +145,44 @@ function AthenaPositionCard({ position, underlyingPrice, onClick }: { position: 
         )}
       </div>
 
+      {/* Entry Context - VIX, GEX Regime */}
+      {(position.vix_at_entry || position.gex_regime) && (
+        <div className="flex flex-wrap gap-2 mb-3">
+          {position.vix_at_entry && (
+            <span className="px-2 py-1 bg-yellow-900/30 text-yellow-400 text-xs rounded">
+              VIX: {position.vix_at_entry.toFixed(1)}
+            </span>
+          )}
+          {position.gex_regime && (
+            <span className={`px-2 py-1 text-xs rounded ${
+              position.gex_regime.includes('POSITIVE') ? 'bg-green-900/30 text-green-400' :
+              position.gex_regime.includes('NEGATIVE') ? 'bg-red-900/30 text-red-400' :
+              'bg-gray-800 text-gray-400'
+            }`}>
+              {position.gex_regime.replace('_', ' ')}
+            </span>
+          )}
+          {position.oracle_confidence && (
+            <span className="px-2 py-1 bg-purple-900/30 text-purple-400 text-xs rounded">
+              Oracle: {(position.oracle_confidence * 100).toFixed(0)}%
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Breakeven Distance */}
+      {beInfo && (
+        <div className={`mb-3 p-2 rounded ${beInfo.isGoodSide ? 'bg-green-900/20 border border-green-700/30' : 'bg-yellow-900/20 border border-yellow-700/30'}`}>
+          <div className="flex justify-between items-center text-sm">
+            <span className="text-gray-400">Distance to BE:</span>
+            <span className={beInfo.isGoodSide ? 'text-green-400 font-medium' : 'text-yellow-400 font-medium'}>
+              ${Math.abs(beInfo.distance).toFixed(2)} {beInfo.distance > 0 ? 'above' : 'below'}
+              <span className="text-xs ml-1">({Math.abs(beInfo.distancePct).toFixed(2)}%)</span>
+            </span>
+          </div>
+        </div>
+      )}
+
       <div className="border-t border-gray-800 pt-3">
         <div className="flex justify-between text-sm">
           <span className="text-gray-500">Entry:</span>
@@ -137,6 +192,12 @@ function AthenaPositionCard({ position, underlyingPrice, onClick }: { position: 
           <span className="text-gray-500">Current:</span>
           <span className="text-white">${position.current_spread_value?.toFixed(2) || '--'}</span>
         </div>
+        {position.breakeven && (
+          <div className="flex justify-between text-sm">
+            <span className="text-gray-500">Breakeven:</span>
+            <span className="text-white">${position.breakeven.toFixed(2)}</span>
+          </div>
+        )}
         {underlyingPrice && (
           <div className="flex justify-between text-sm mt-2">
             <span className="text-gray-500">SPY:</span>
@@ -226,6 +287,22 @@ function AresPositionCard({ position, underlyingPrice, onClick }: { position: Li
           </>
         )}
       </div>
+
+      {/* Entry Context - VIX at entry */}
+      {(position.vix_at_entry || position.underlying_at_entry) && (
+        <div className="flex flex-wrap gap-2 mb-3">
+          {position.vix_at_entry && (
+            <span className="px-2 py-1 bg-yellow-900/30 text-yellow-400 text-xs rounded">
+              VIX @ Entry: {position.vix_at_entry.toFixed(1)}
+            </span>
+          )}
+          {position.underlying_at_entry && (
+            <span className="px-2 py-1 bg-blue-900/30 text-blue-400 text-xs rounded">
+              SPX @ Entry: ${position.underlying_at_entry.toLocaleString()}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Strike Visualization */}
       <div className="bg-[#0a0a0a] rounded-lg p-3 mb-3">
