@@ -1,0 +1,14 @@
+#!/bin/bash
+# Auto-run npm install when package.json changes after git pull
+
+CHANGED_FILES="$(git diff-tree -r --name-only --no-commit-id ORIG_HEAD HEAD)"
+
+check_run() {
+    echo "$CHANGED_FILES" | grep --quiet "$1" && eval "$2"
+}
+
+# If frontend/package.json changed, run npm install
+check_run "frontend/package.json" "echo '📦 package.json changed, running npm install...' && cd frontend && npm install"
+
+# If root requirements.txt changed, suggest pip install
+check_run "requirements.txt" "echo '🐍 requirements.txt changed - consider running: pip install -r requirements.txt'"
