@@ -3970,6 +3970,20 @@ Current:         ${self.current_capital:,.2f}
                     entry_value = abs(position.entry_debit) * position.initial_contracts * 100
                     pnl_pct = (total_position_pnl / entry_value * 100) if entry_value > 0 else 0
 
+                    # Calculate DTE (days to expiration)
+                    try:
+                        exp_date = datetime.strptime(position.expiration, '%Y-%m-%d').date()
+                        today_date = datetime.now(CENTRAL_TZ).date()
+                        dte = (exp_date - today_date).days
+                        is_0dte = dte == 0
+                    except:
+                        dte = None
+                        is_0dte = False
+
+                    # Calculate max profit progress (for debit spreads)
+                    max_profit = position.max_profit if hasattr(position, 'max_profit') else abs(position.short_strike - position.long_strike) - abs(position.entry_debit)
+                    profit_progress = (total_position_pnl / (max_profit * position.initial_contracts * 100) * 100) if max_profit > 0 else 0
+
                     pos_data = {
                         'position_id': position.position_id,
                         'spread_type': position.spread_type.value,
@@ -3985,7 +3999,21 @@ Current:         ${self.current_capital:,.2f}
                         'total_pnl': round(total_position_pnl, 2),
                         'pnl_pct': round(pnl_pct, 2),
                         'underlying_at_entry': position.underlying_price_at_entry,
-                        'current_underlying': current_price
+                        'current_underlying': current_price,
+                        # === Entry Context for Transparency ===
+                        'dte': dte,
+                        'is_0dte': is_0dte,
+                        'max_profit': round(max_profit * position.initial_contracts * 100, 2) if max_profit else None,
+                        'profit_progress_pct': round(profit_progress, 1),
+                        # ML/Oracle context at entry
+                        'gex_regime_at_entry': getattr(position, 'gex_regime_at_entry', None) or '',
+                        'oracle_confidence': getattr(position, 'oracle_confidence', None) or 0,
+                        'oracle_reasoning': getattr(position, 'oracle_reasoning', None) or '',
+                        # GEX levels at entry
+                        'call_wall_at_entry': getattr(position, 'call_wall_at_entry', None) or 0,
+                        'put_wall_at_entry': getattr(position, 'put_wall_at_entry', None) or 0,
+                        # Direction based on spread type
+                        'direction': 'BULLISH' if position.spread_type == SpreadType.BULL_CALL_SPREAD else 'BEARISH'
                     }
 
                     result['positions'].append(pos_data)

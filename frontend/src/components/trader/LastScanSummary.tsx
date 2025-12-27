@@ -1,7 +1,102 @@
 'use client'
 
 import { useState } from 'react'
-import { RefreshCw, CheckCircle, XCircle, AlertTriangle, Clock, Brain, Zap, Target, ChevronDown, ChevronUp, TrendingUp, TrendingDown } from 'lucide-react'
+import { RefreshCw, CheckCircle, XCircle, AlertTriangle, Clock, Brain, Zap, Target, ChevronDown, ChevronUp, TrendingUp, TrendingDown, Lightbulb, Lock, Unlock, ArrowUp, ArrowDown, Minus } from 'lucide-react'
+
+// Decision Factor Display Component
+function FactorDisplay({ factors, title }: { factors: DecisionFactor[]; title: string }) {
+  if (!factors || factors.length === 0) return null
+
+  return (
+    <div className="bg-black/30 rounded-lg p-3 border border-gray-700 mt-3">
+      <div className="flex items-center gap-2 mb-2">
+        <Lightbulb className="w-4 h-4 text-yellow-400" />
+        <span className="text-yellow-400 text-sm font-bold">{title}</span>
+      </div>
+      <div className="space-y-2">
+        {factors.slice(0, 4).map((factor, i) => (
+          <div key={i} className="flex items-center justify-between text-sm">
+            <div className="flex items-center gap-2">
+              {factor.impact === 'positive' ? (
+                <ArrowUp className="w-3 h-3 text-green-400" />
+              ) : factor.impact === 'negative' ? (
+                <ArrowDown className="w-3 h-3 text-red-400" />
+              ) : (
+                <Minus className="w-3 h-3 text-gray-400" />
+              )}
+              <span className={
+                factor.impact === 'positive' ? 'text-green-300' :
+                factor.impact === 'negative' ? 'text-red-300' : 'text-gray-300'
+              }>
+                {factor.factor}
+              </span>
+            </div>
+            {factor.value && (
+              <span className="text-gray-500 text-xs font-mono">{factor.value}</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// Trade Unlock Conditions Display
+function UnlockConditionsDisplay({ conditions }: { conditions: TradeUnlockCondition[] }) {
+  if (!conditions || conditions.length === 0) return null
+
+  const unmetConditions = conditions.filter(c => !c.met)
+  const metConditions = conditions.filter(c => c.met)
+
+  return (
+    <div className="bg-blue-900/20 rounded-lg p-4 border border-blue-700/50">
+      <div className="flex items-center gap-2 mb-3">
+        <Lock className="w-5 h-5 text-blue-400" />
+        <span className="text-blue-400 font-bold">WHAT WOULD UNLOCK A TRADE</span>
+      </div>
+
+      {/* Unmet conditions - what needs to change */}
+      {unmetConditions.length > 0 && (
+        <div className="space-y-2 mb-3">
+          {unmetConditions.map((cond, i) => (
+            <div key={i} className="bg-black/30 rounded p-2 border border-red-700/30">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-red-300 text-sm font-medium">{cond.condition}</span>
+                {cond.probability !== undefined && (
+                  <span className="text-xs text-gray-500">
+                    ~{(cond.probability * 100).toFixed(0)}% likely
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-gray-500">Current:</span>
+                <span className="text-red-400 font-mono">{cond.current_value}</span>
+                <span className="text-gray-600">→</span>
+                <span className="text-gray-500">Need:</span>
+                <span className="text-green-400 font-mono">{cond.required_value}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Met conditions - what's already good */}
+      {metConditions.length > 0 && (
+        <div className="border-t border-blue-700/30 pt-2 mt-2">
+          <span className="text-xs text-gray-500 mb-2 block">Already met:</span>
+          <div className="flex flex-wrap gap-2">
+            {metConditions.map((cond, i) => (
+              <span key={i} className="flex items-center gap-1 text-xs bg-green-900/30 text-green-400 px-2 py-1 rounded">
+                <CheckCircle className="w-3 h-3" />
+                {cond.condition}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 interface ScanCheck {
   check: string
@@ -9,6 +104,21 @@ interface ScanCheck {
   value?: string
   threshold?: string
   reason?: string
+}
+
+interface DecisionFactor {
+  factor: string
+  impact: 'positive' | 'negative' | 'neutral'
+  weight?: number
+  value?: string
+}
+
+interface TradeUnlockCondition {
+  condition: string
+  current_value: string
+  required_value: string
+  met: boolean
+  probability?: number
 }
 
 interface ScanResult {
@@ -22,11 +132,14 @@ interface ScanResult {
     direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL' | string
     confidence: number
     advice: string
+    top_factors?: DecisionFactor[]
   }
   oracle_signal?: {
     advice: string
     confidence: number
     win_probability: number
+    reasoning?: string
+    top_factors?: DecisionFactor[]
   }
 
   // Override tracking
@@ -40,6 +153,9 @@ interface ScanResult {
   // Checks performed
   checks?: ScanCheck[]
 
+  // Top decision factors - WHY the decision was made
+  top_factors?: DecisionFactor[]
+
   // Market context at scan
   market_context?: {
     spot_price: number
@@ -47,9 +163,14 @@ interface ScanResult {
     gex_regime: string
     put_wall?: number
     call_wall?: number
+    flip_point?: number
+    flip_distance_pct?: number
   }
 
-  // What would trigger
+  // Trade unlock conditions
+  unlock_conditions?: TradeUnlockCondition[]
+
+  // What would trigger (legacy text field)
   what_would_trigger?: string
 }
 
@@ -241,6 +362,18 @@ export default function LastScanSummary({
               <p className="text-gray-400 text-sm">
                 Reason: {lastScan.override_details.override_reason}
               </p>
+            </div>
+          )}
+
+          {/* TOP DECISION FACTORS - The WHY */}
+          {lastScan.top_factors && lastScan.top_factors.length > 0 && (
+            <FactorDisplay factors={lastScan.top_factors} title="TOP DECISION FACTORS" />
+          )}
+
+          {/* TRADE UNLOCK CONDITIONS - What needs to happen for a trade */}
+          {lastScan.outcome !== 'TRADED' && lastScan.unlock_conditions && (
+            <div className="mb-4">
+              <UnlockConditionsDisplay conditions={lastScan.unlock_conditions} />
             </div>
           )}
 

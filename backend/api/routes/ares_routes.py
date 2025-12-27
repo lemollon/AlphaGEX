@@ -156,10 +156,31 @@ async def get_ares_status():
 
         win_rate = round((win_count / closed_count) * 100, 1) if closed_count > 0 else 0
 
+        # Try to get stored mode and ticker from config table
+        stored_mode = "paper"
+        stored_ticker = "SPX"
+        try:
+            from database_adapter import get_connection
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM autonomous_config WHERE key = 'ares_mode'")
+            row = cursor.fetchone()
+            if row:
+                stored_mode = row[0]
+            cursor.execute("SELECT value FROM autonomous_config WHERE key = 'ares_ticker'")
+            row = cursor.fetchone()
+            if row:
+                stored_ticker = row[0]
+            conn.close()
+        except:
+            pass
+
         return {
             "success": True,
             "data": {
-                "mode": "paper",
+                "mode": stored_mode,
+                "ticker": stored_ticker,
+                "is_spy_sandbox": stored_ticker == "SPY",
                 "capital": round(starting_capital + total_pnl, 2),
                 "total_pnl": round(total_pnl, 2),
                 "trade_count": trade_count,
@@ -177,7 +198,7 @@ async def get_ares_status():
                     "risk_per_trade": 10.0,
                     "spread_width": 10.0,
                     "sd_multiplier": 1.0,
-                    "ticker": "SPX",
+                    "ticker": stored_ticker,
                     "target_return": "10% monthly"
                 },
                 "source": "database",
@@ -1312,13 +1333,15 @@ async def get_ares_live_pnl():
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Get open positions
+            # Get open positions with all entry context
             cursor.execute('''
                 SELECT
                     position_id, open_date, expiration,
-                    put_short_strike, call_short_strike,
-                    total_credit, contracts, max_loss,
-                    underlying_price_at_entry, status
+                    put_long_strike, put_short_strike,
+                    call_short_strike, call_long_strike,
+                    total_credit, contracts, max_loss, spread_width,
+                    underlying_price_at_entry, vix_at_entry, expected_move,
+                    status
                 FROM ares_positions
                 WHERE status = 'open'
             ''')
@@ -1335,22 +1358,51 @@ async def get_ares_live_pnl():
             today_realized = float(realized_row[0]) if realized_row else 0
             conn.close()
 
-            # Format open positions (without live valuation - requires market data)
+            # Format open positions with entry context
             positions = []
+            today_date = datetime.now(ZoneInfo("America/Chicago")).date()
+
             for row in open_rows:
-                pos_id, open_date, exp, put_short, call_short, credit, contracts, max_loss, entry_price, status = row
+                (pos_id, open_date, exp, put_long, put_short, call_short, call_long,
+                 credit, contracts, max_loss, spread_width, entry_price, vix_entry, exp_move, status) = row
+
                 credit_received = float(credit or 0) * 100 * (contracts or 0)
+
+                # Calculate DTE
+                dte = None
+                is_0dte = False
+                try:
+                    if exp:
+                        exp_date = datetime.strptime(str(exp), '%Y-%m-%d').date()
+                        dte = (exp_date - today_date).days
+                        is_0dte = dte == 0
+                except:
+                    pass
+
                 positions.append({
                     'position_id': pos_id,
                     'open_date': str(open_date) if open_date else None,
                     'expiration': str(exp) if exp else None,
+                    'put_long_strike': float(put_long) if put_long else 0,
                     'put_short_strike': float(put_short) if put_short else 0,
                     'call_short_strike': float(call_short) if call_short else 0,
+                    'call_long_strike': float(call_long) if call_long else 0,
                     'credit_received': round(credit_received, 2),
                     'contracts': contracts or 0,
-                    'max_loss': float(max_loss) if max_loss else 0,
+                    'max_loss': round(float(max_loss or 0) * 100 * (contracts or 0), 2),
+                    'spread_width': float(spread_width) if spread_width else 0,
                     'underlying_at_entry': float(entry_price) if entry_price else 0,
-                    'unrealized_pnl': None,  # Need live market data
+                    # Entry context for transparency
+                    'dte': dte,
+                    'is_0dte': is_0dte,
+                    'vix_at_entry': float(vix_entry) if vix_entry else 0,
+                    'expected_move': float(exp_move) if exp_move else 0,
+                    'max_profit': round(credit_received, 2),
+                    'strategy': 'IRON_CONDOR',
+                    'direction': 'NEUTRAL',
+                    # Live data not available from DB
+                    'unrealized_pnl': None,
+                    'profit_progress_pct': None,
                     'note': 'Live valuation requires ARES worker'
                 })
 
@@ -1618,6 +1670,139 @@ async def set_strategy_preset(request: dict):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _enrich_scan_for_frontend(scan: dict) -> dict:
+    """
+    Enrich scan activity data with computed fields for frontend display.
+
+    Adds:
+    - top_factors: Decision factors with positive/negative impact
+    - unlock_conditions: What would need to change for a trade (for NO_TRADE scans)
+    - Structured ml_signal and oracle_signal objects
+    """
+    enriched = dict(scan)
+
+    # Build top_factors from checks and reasoning
+    top_factors = []
+
+    # From checks performed
+    checks = scan.get('checks_performed') or []
+    for check in checks[:5]:  # Top 5 checks
+        if isinstance(check, dict):
+            check_name = check.get('check_name') or check.get('check', '')
+            passed = check.get('passed', False)
+            value = check.get('value', '')
+
+            top_factors.append({
+                'factor': check_name,
+                'impact': 'positive' if passed else 'negative',
+                'value': str(value) if value else None
+            })
+
+    # From signal confidence
+    signal_conf = scan.get('signal_confidence')
+    if signal_conf is not None:
+        top_factors.append({
+            'factor': 'Signal Confidence',
+            'impact': 'positive' if signal_conf > 0.6 else 'negative' if signal_conf < 0.4 else 'neutral',
+            'value': f"{float(signal_conf) * 100:.0f}%"
+        })
+
+    # From VIX
+    vix = scan.get('vix')
+    if vix is not None:
+        top_factors.append({
+            'factor': 'VIX Level',
+            'impact': 'positive' if 15 <= float(vix) <= 25 else 'negative',
+            'value': f"{float(vix):.1f}"
+        })
+
+    # From GEX regime
+    gex_regime = scan.get('gex_regime')
+    if gex_regime:
+        top_factors.append({
+            'factor': 'GEX Regime',
+            'impact': 'positive' if gex_regime in ['POSITIVE', 'BULLISH'] else 'neutral',
+            'value': gex_regime
+        })
+
+    enriched['top_factors'] = top_factors[:4]  # Limit to 4
+
+    # Build unlock_conditions for NO_TRADE scans
+    unlock_conditions = []
+    if scan.get('outcome') in ['NO_TRADE', 'SKIP']:
+        for check in checks:
+            if isinstance(check, dict) and not check.get('passed', True):
+                check_name = check.get('check_name') or check.get('check', '')
+                value = check.get('value', 'N/A')
+                threshold = check.get('threshold', 'N/A')
+
+                unlock_conditions.append({
+                    'condition': check_name,
+                    'current_value': str(value),
+                    'required_value': str(threshold),
+                    'met': False,
+                    'probability': 0.3  # Default estimate
+                })
+
+        # Add common unlock conditions if none from checks
+        if not unlock_conditions:
+            oracle_advice = scan.get('oracle_advice', '')
+            if oracle_advice in ['HOLD', 'SKIP_TODAY', 'REDUCE_SIZE']:
+                unlock_conditions.append({
+                    'condition': 'Oracle Advice',
+                    'current_value': oracle_advice,
+                    'required_value': 'TRADE',
+                    'met': False,
+                    'probability': 0.2
+                })
+
+    enriched['unlock_conditions'] = unlock_conditions
+
+    # Structure ML signal
+    if scan.get('signal_direction') or scan.get('signal_confidence'):
+        enriched['ml_signal'] = {
+            'direction': scan.get('signal_direction', 'NEUTRAL'),
+            'confidence': float(scan.get('signal_confidence', 0)),
+            'advice': scan.get('signal_source', 'ML'),
+            'top_factors': []  # Could add ML-specific factors
+        }
+
+    # Structure Oracle signal
+    if scan.get('oracle_advice') or scan.get('signal_win_probability'):
+        enriched['oracle_signal'] = {
+            'advice': scan.get('oracle_advice', 'HOLD'),
+            'confidence': float(scan.get('signal_confidence', 0)),
+            'win_probability': float(scan.get('signal_win_probability', 0)),
+            'reasoning': scan.get('oracle_reasoning'),
+            'top_factors': []
+        }
+
+    # Structure market context
+    enriched['market_context'] = {
+        'spot_price': float(scan.get('underlying_price', 0)) if scan.get('underlying_price') else 0,
+        'vix': float(scan.get('vix', 0)) if scan.get('vix') else 0,
+        'gex_regime': scan.get('gex_regime', 'Unknown'),
+        'put_wall': float(scan.get('put_wall', 0)) if scan.get('put_wall') else None,
+        'call_wall': float(scan.get('call_wall', 0)) if scan.get('call_wall') else None,
+        'flip_point': None,  # Could compute from walls
+        'flip_distance_pct': None
+    }
+
+    # Determine if override occurred
+    signal_source = scan.get('signal_source', '')
+    if 'Override' in str(signal_source) or 'override' in str(signal_source):
+        enriched['override_occurred'] = True
+        enriched['override_details'] = {
+            'winner': 'Oracle' if 'Oracle' in signal_source else 'ML',
+            'overridden_signal': scan.get('signal_direction', 'Unknown'),
+            'override_reason': scan.get('decision_summary', 'Override applied')
+        }
+    else:
+        enriched['override_occurred'] = False
+
+    return enriched
+
+
 @router.get("/scan-activity")
 async def get_ares_scan_activity(
     date: str = None,
@@ -1652,17 +1837,20 @@ async def get_ares_scan_activity(
         skips = sum(1 for s in scans if s.get('outcome') == 'SKIP')
         errors = sum(1 for s in scans if s.get('outcome') == 'ERROR')
 
+        # Enrich scans with frontend-friendly fields
+        enriched_scans = [_enrich_scan_for_frontend(scan) for scan in scans]
+
         return {
             "success": True,
             "data": {
-                "count": len(scans),
+                "count": len(enriched_scans),
                 "summary": {
                     "trades_executed": trades,
                     "no_trade_scans": no_trades,
                     "skips": skips,
                     "errors": errors
                 },
-                "scans": scans
+                "scans": enriched_scans
             }
         }
     except ImportError:

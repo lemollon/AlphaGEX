@@ -1031,7 +1031,103 @@ async def get_athena_live_pnl():
     """
     athena = get_athena_instance()
 
+    today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
+    today_date = datetime.now(ZoneInfo("America/Chicago")).date()
+
     if not athena:
+        # ATHENA not running - read from database
+        try:
+            from database_adapter import get_connection
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Get open positions with entry context from apache_positions
+            cursor.execute('''
+                SELECT
+                    position_id, spread_type, created_at, expiration,
+                    long_strike, short_strike, entry_price, contracts,
+                    max_profit, max_loss, spot_at_entry, gex_regime,
+                    oracle_confidence, oracle_reasoning, ticker
+                FROM apache_positions
+                WHERE status = 'open' AND expiration >= %s
+                ORDER BY created_at ASC
+            ''', (today,))
+            open_rows = cursor.fetchall()
+
+            # Get today's realized P&L from closed positions
+            cursor.execute('''
+                SELECT COALESCE(SUM(realized_pnl), 0)
+                FROM apache_positions
+                WHERE status = 'closed'
+                AND DATE(closed_at) = %s
+            ''', (today,))
+            realized_row = cursor.fetchone()
+            today_realized = float(realized_row[0]) if realized_row else 0
+            conn.close()
+
+            # Format open positions with entry context
+            positions = []
+            for row in open_rows:
+                (pos_id, spread_type, created_at, exp, long_strike, short_strike,
+                 entry_price, contracts, max_profit, max_loss, spot_entry,
+                 gex_regime, oracle_conf, oracle_reason, ticker) = row
+
+                # Calculate DTE
+                dte = None
+                is_0dte = False
+                try:
+                    if exp:
+                        exp_date = datetime.strptime(str(exp), '%Y-%m-%d').date()
+                        dte = (exp_date - today_date).days
+                        is_0dte = dte == 0
+                except:
+                    pass
+
+                # Determine direction from spread type
+                direction = 'BULLISH' if spread_type and 'BULL' in spread_type.upper() else 'BEARISH'
+
+                positions.append({
+                    'position_id': pos_id,
+                    'spread_type': spread_type,
+                    'open_date': str(created_at) if created_at else None,
+                    'expiration': str(exp) if exp else None,
+                    'long_strike': float(long_strike) if long_strike else 0,
+                    'short_strike': float(short_strike) if short_strike else 0,
+                    'entry_debit': float(entry_price) if entry_price else 0,
+                    'contracts_remaining': int(contracts) if contracts else 0,
+                    'initial_contracts': int(contracts) if contracts else 0,
+                    'max_profit': round(float(max_profit or 0) * 100 * (contracts or 0), 2),
+                    'max_loss': round(float(max_loss or 0) * 100 * (contracts or 0), 2),
+                    'underlying_at_entry': float(spot_entry) if spot_entry else 0,
+                    # Entry context for transparency
+                    'dte': dte,
+                    'is_0dte': is_0dte,
+                    'gex_regime_at_entry': gex_regime or '',
+                    'oracle_confidence': float(oracle_conf) if oracle_conf else 0,
+                    'oracle_reasoning': oracle_reason or '',
+                    'direction': direction,
+                    # Live data not available from DB
+                    'unrealized_pnl': None,
+                    'profit_progress_pct': None,
+                    'current_spread_value': None,
+                    'note': 'Live valuation requires ATHENA worker'
+                })
+
+            return {
+                "success": True,
+                "data": {
+                    "total_unrealized_pnl": None,
+                    "total_realized_pnl": round(today_realized, 2),
+                    "net_pnl": round(today_realized, 2),
+                    "positions": positions,
+                    "position_count": len(positions),
+                    "source": "database",
+                    "message": "Open positions loaded from DB - live valuation requires ATHENA worker"
+                }
+            }
+        except Exception as db_err:
+            logger.warning(f"Could not read ATHENA live P&L from database: {db_err}")
+
         return {
             "success": True,
             "data": {
@@ -1087,6 +1183,150 @@ async def process_athena_expired_positions():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _enrich_scan_for_frontend(scan: dict) -> dict:
+    """
+    Enrich scan activity data with computed fields for frontend display.
+
+    Adds:
+    - top_factors: Decision factors with positive/negative impact
+    - unlock_conditions: What would need to change for a trade (for NO_TRADE scans)
+    - Structured ml_signal and oracle_signal objects
+    """
+    enriched = dict(scan)
+
+    # Build top_factors from checks and reasoning
+    top_factors = []
+
+    # From checks performed
+    checks = scan.get('checks_performed') or []
+    for check in checks[:5]:
+        if isinstance(check, dict):
+            check_name = check.get('check_name') or check.get('check', '')
+            passed = check.get('passed', False)
+            value = check.get('value', '')
+
+            top_factors.append({
+                'factor': check_name,
+                'impact': 'positive' if passed else 'negative',
+                'value': str(value) if value else None
+            })
+
+    # From signal confidence
+    signal_conf = scan.get('signal_confidence')
+    if signal_conf is not None:
+        top_factors.append({
+            'factor': 'ML Confidence',
+            'impact': 'positive' if signal_conf > 0.6 else 'negative' if signal_conf < 0.4 else 'neutral',
+            'value': f"{float(signal_conf) * 100:.0f}%"
+        })
+
+    # From win probability
+    win_prob = scan.get('signal_win_probability')
+    if win_prob is not None:
+        top_factors.append({
+            'factor': 'Win Probability',
+            'impact': 'positive' if win_prob > 0.55 else 'negative' if win_prob < 0.45 else 'neutral',
+            'value': f"{float(win_prob) * 100:.0f}%"
+        })
+
+    # From GEX regime
+    gex_regime = scan.get('gex_regime')
+    signal_dir = scan.get('signal_direction')
+    if gex_regime and signal_dir:
+        # Check if GEX aligns with signal
+        aligned = (gex_regime in ['POSITIVE', 'BULLISH'] and signal_dir == 'BULLISH') or \
+                  (gex_regime in ['NEGATIVE', 'BEARISH'] and signal_dir == 'BEARISH')
+        top_factors.append({
+            'factor': 'GEX Alignment',
+            'impact': 'positive' if aligned else 'negative',
+            'value': f"{gex_regime} + {signal_dir}"
+        })
+
+    enriched['top_factors'] = top_factors[:4]
+
+    # Build unlock_conditions for NO_TRADE scans
+    unlock_conditions = []
+    if scan.get('outcome') in ['NO_TRADE', 'SKIP']:
+        for check in checks:
+            if isinstance(check, dict) and not check.get('passed', True):
+                check_name = check.get('check_name') or check.get('check', '')
+                value = check.get('value', 'N/A')
+                threshold = check.get('threshold', 'N/A')
+
+                unlock_conditions.append({
+                    'condition': check_name,
+                    'current_value': str(value),
+                    'required_value': str(threshold),
+                    'met': False,
+                    'probability': 0.25
+                })
+
+        # Add confidence-based unlock if applicable
+        if signal_conf is not None and signal_conf < 0.6:
+            unlock_conditions.append({
+                'condition': 'ML Confidence',
+                'current_value': f"{float(signal_conf) * 100:.0f}%",
+                'required_value': '≥60%',
+                'met': False,
+                'probability': 0.3
+            })
+
+        if win_prob is not None and win_prob < 0.55:
+            unlock_conditions.append({
+                'condition': 'Win Probability',
+                'current_value': f"{float(win_prob) * 100:.0f}%",
+                'required_value': '≥55%',
+                'met': False,
+                'probability': 0.35
+            })
+
+    enriched['unlock_conditions'] = unlock_conditions
+
+    # Structure ML signal
+    if scan.get('signal_direction') or scan.get('signal_confidence'):
+        enriched['ml_signal'] = {
+            'direction': scan.get('signal_direction', 'NEUTRAL'),
+            'confidence': float(scan.get('signal_confidence', 0)),
+            'advice': 'ML Signal',
+            'top_factors': []
+        }
+
+    # Structure Oracle signal
+    if scan.get('oracle_advice') or scan.get('signal_win_probability'):
+        enriched['oracle_signal'] = {
+            'advice': scan.get('oracle_advice', 'HOLD'),
+            'confidence': float(scan.get('signal_confidence', 0)),
+            'win_probability': float(scan.get('signal_win_probability', 0)),
+            'reasoning': scan.get('oracle_reasoning'),
+            'top_factors': []
+        }
+
+    # Structure market context
+    enriched['market_context'] = {
+        'spot_price': float(scan.get('underlying_price', 0)) if scan.get('underlying_price') else 0,
+        'vix': float(scan.get('vix', 0)) if scan.get('vix') else 0,
+        'gex_regime': scan.get('gex_regime', 'Unknown'),
+        'put_wall': float(scan.get('put_wall', 0)) if scan.get('put_wall') else None,
+        'call_wall': float(scan.get('call_wall', 0)) if scan.get('call_wall') else None,
+        'flip_point': None,
+        'flip_distance_pct': None
+    }
+
+    # Determine if override occurred
+    signal_source = scan.get('signal_source', '')
+    if 'Override' in str(signal_source) or 'override' in str(signal_source):
+        enriched['override_occurred'] = True
+        enriched['override_details'] = {
+            'winner': 'Oracle' if 'Oracle' in signal_source else 'ML',
+            'overridden_signal': scan.get('signal_direction', 'Unknown'),
+            'override_reason': scan.get('decision_summary', 'Override applied')
+        }
+    else:
+        enriched['override_occurred'] = False
+
+    return enriched
+
+
 @router.get("/scan-activity")
 async def get_athena_scan_activity(
     date: str = None,
@@ -1126,10 +1366,13 @@ async def get_athena_scan_activity(
         bullish = sum(1 for s in scans if s.get('signal_direction') == 'BULLISH' and s.get('trade_executed'))
         bearish = sum(1 for s in scans if s.get('signal_direction') == 'BEARISH' and s.get('trade_executed'))
 
+        # Enrich scans with frontend-friendly fields
+        enriched_scans = [_enrich_scan_for_frontend(scan) for scan in scans]
+
         return {
             "success": True,
             "data": {
-                "count": len(scans),
+                "count": len(enriched_scans),
                 "summary": {
                     "trades_executed": trades,
                     "bullish_trades": bullish,
@@ -1138,7 +1381,7 @@ async def get_athena_scan_activity(
                     "skips": skips,
                     "errors": errors
                 },
-                "scans": scans
+                "scans": enriched_scans
             }
         }
     except ImportError:
