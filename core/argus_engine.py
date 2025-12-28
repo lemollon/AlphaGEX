@@ -833,8 +833,9 @@ class ArgusEngine:
         danger_zones = self.identify_danger_zones(strikes_data)
 
         # Create snapshot
+        symbol = options_data.get('symbol', 'SPY')  # Get symbol from data, default to SPY
         snapshot = GammaSnapshot(
-            symbol='SPY',
+            symbol=symbol,
             expiration_date=expiration,
             snapshot_time=timestamp,
             spot_price=spot_price,

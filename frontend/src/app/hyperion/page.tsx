@@ -159,9 +159,8 @@ export default function HyperionPage() {
   const fetchGammaData = useCallback(async () => {
     try {
       setLoading(true)
-      // For now, use the same argus endpoint with the selected symbol
-      // In production, this would call a dedicated hyperion endpoint
-      const response = await apiClient.getArgusGamma(selectedSymbol, selectedExpiration || undefined)
+      // Use dedicated HYPERION endpoint for weekly options
+      const response = await apiClient.getHyperionGamma(selectedSymbol, selectedExpiration || undefined)
 
       if (response.data?.success && response.data?.data) {
         const newData = response.data.data
@@ -178,35 +177,44 @@ export default function HyperionPage() {
   // Fetch available expirations for the selected symbol
   const fetchExpirations = useCallback(async () => {
     try {
-      // Mock expirations for now - in production would fetch from API
-      const today = new Date()
-      const mockExpirations: ExpirationInfo[] = []
+      const response = await apiClient.getHyperionExpirations(selectedSymbol, 4)
 
-      // Generate next 4 weekly expirations (Fridays)
-      for (let i = 0; i < 4; i++) {
-        const daysUntilFriday = (5 - today.getDay() + 7) % 7 || 7
-        const friday = new Date(today)
-        friday.setDate(today.getDate() + daysUntilFriday + (i * 7))
+      if (response.data?.success && response.data?.data?.expirations) {
+        const exps = response.data.data.expirations as ExpirationInfo[]
+        setExpirations(exps)
+        if (exps.length > 0 && !selectedExpiration) {
+          setSelectedExpiration(exps[0].date)
+        }
+      } else {
+        // Fallback to generating mock expirations
+        const today = new Date()
+        const mockExpirations: ExpirationInfo[] = []
 
-        const dte = Math.ceil((friday.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
-        const dateStr = friday.toISOString().split('T')[0]
+        for (let i = 0; i < 4; i++) {
+          const daysUntilFriday = (5 - today.getDay() + 7) % 7 || 7
+          const friday = new Date(today)
+          friday.setDate(today.getDate() + daysUntilFriday + (i * 7))
 
-        mockExpirations.push({
-          date: dateStr,
-          dte: dte,
-          is_weekly: true,
-          is_monthly: friday.getDate() > 14 && friday.getDate() <= 21
-        })
-      }
+          const dte = Math.ceil((friday.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+          const dateStr = friday.toISOString().split('T')[0]
 
-      setExpirations(mockExpirations)
-      if (mockExpirations.length > 0 && !selectedExpiration) {
-        setSelectedExpiration(mockExpirations[0].date)
+          mockExpirations.push({
+            date: dateStr,
+            dte: dte,
+            is_weekly: true,
+            is_monthly: friday.getDate() > 14 && friday.getDate() <= 21
+          })
+        }
+
+        setExpirations(mockExpirations)
+        if (mockExpirations.length > 0 && !selectedExpiration) {
+          setSelectedExpiration(mockExpirations[0].date)
+        }
       }
     } catch (err) {
       console.error('[HYPERION] Error fetching expirations:', err)
     }
-  }, [selectedExpiration])
+  }, [selectedSymbol, selectedExpiration])
 
   // Reset data when symbol changes
   useEffect(() => {

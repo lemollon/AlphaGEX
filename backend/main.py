@@ -62,6 +62,7 @@ from backend.api.routes import (
     daily_manna_routes,  # Daily Manna - Economic news with faith-based devotionals
     prometheus_routes,  # PROMETHEUS - Enhanced ML system for SPX Wheel
     argus_routes,  # ARGUS - 0DTE Gamma Live real-time visualization
+    hyperion_routes,  # HYPERION - Weekly Gamma visualization for stocks/ETFs
     data_transparency_routes,  # Data Transparency - expose ALL hidden collected data
     docs_routes,  # Documentation - codebase search and source code retrieval
     solomon_routes,  # SOLOMON - Feedback Loop Intelligence System for bot learning
@@ -294,6 +295,7 @@ app.include_router(apollo_routes.router)
 app.include_router(daily_manna_routes.router)
 app.include_router(prometheus_routes.router)
 app.include_router(argus_routes.router)
+app.include_router(hyperion_routes.router)
 app.include_router(data_transparency_routes.router)
 app.include_router(docs_routes.router)
 app.include_router(solomon_routes.router)

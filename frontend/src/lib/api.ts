@@ -921,6 +921,13 @@ export const apiClient = {
   getArgusStrikeTrends: () => api.get('/api/argus/strike-trends'),
   getArgusGammaFlips: () => api.get('/api/argus/gamma-flips'),
 
+  // HYPERION - Weekly Gamma visualization for stocks/ETFs
+  getHyperionGamma: (symbol?: string, expiration?: string) =>
+    api.get('/api/hyperion/gamma', { params: { symbol, expiration } }),
+  getHyperionExpirations: (symbol?: string, weeks?: number) =>
+    api.get('/api/hyperion/expirations', { params: { symbol, weeks } }),
+  getHyperionSymbols: () => api.get('/api/hyperion/symbols'),
+
   // SOLOMON - Feedback Loop Intelligence System
   getSolomonDashboard: () => api.get('/api/solomon/dashboard'),
   getSolomonEnhancedDigest: () => api.get('/api/solomon/enhanced/digest'),
