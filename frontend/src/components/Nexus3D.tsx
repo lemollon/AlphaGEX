@@ -9642,15 +9642,13 @@ function Scene({
       <RocketLaunches botStatus={botStatus} />
       <SatelliteOrbiters />
       <EnergyShields paused={paused} />
-      <WormholePortals botStatus={botStatus} />
       <QuantumEntanglement botStatus={botStatus} paused={paused} />
       <BinaryStar paused={paused} />
       <SpaceStation spotPrice={spotPrice || 585} gexValue={gexValue} vixValue={vixValue} />
       <MoonPhases paused={paused} />
       <NebulaStorm vixValue={vixValue} paused={paused} />
 
-      {/* NEW WOW FACTOR: Cosmic Enhancements */}
-      <InterstellarNetwork onNavigate={handleSolarSystemClick} paused={paused} />
+      {/* Cosmic Enhancements */}
       <CosmicDustField paused={paused} />
       <HolographicUILayer paused={paused} />
 
