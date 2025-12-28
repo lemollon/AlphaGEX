@@ -281,11 +281,13 @@ function easeOutExpo(t: number): number {
 function CameraController({
   controlsRef,
   zoomTarget,
+  setZoomTarget,
   paused,
   setPaused
 }: {
   controlsRef: React.RefObject<any>
   zoomTarget: THREE.Vector3 | null
+  setZoomTarget: (t: THREE.Vector3 | null) => void
   paused: boolean
   setPaused: (p: boolean) => void
 }) {
@@ -342,6 +344,9 @@ function CameraController({
           isTransitioning.current = false
           // Update the controls to reflect final position
           controlsRef.current.update()
+          // Clear the zoom target so user can freely orbit the camera
+          setZoomTarget(null)
+          lastZoomTarget.current = null
         }
       }
     }
@@ -9492,6 +9497,7 @@ function Scene({
       <CameraController
         controlsRef={controlsRef}
         zoomTarget={zoomTarget}
+        setZoomTarget={setZoomTarget}
         paused={paused}
         setPaused={setPaused}
       />
