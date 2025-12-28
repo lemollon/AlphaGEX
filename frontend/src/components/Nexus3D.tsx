@@ -9185,12 +9185,48 @@ function BotNodeWithFlare({
   const flareRef = useRef<THREE.Mesh>(null)
   const [hovered, setHovered] = useState(false)
 
+  // Track pointer to distinguish click from drag
+  const pointerDownPos = useRef<{ x: number, y: number } | null>(null)
+  const isDragging = useRef(false)
+
   const radius = 5
   const x = Math.cos(angle) * radius
   const z = Math.sin(angle) * radius
 
   const color = STATUS_COLORS[status as keyof typeof STATUS_COLORS] || COLORS.particleGlow
   const isActive = status === 'trading' || status === 'active'
+
+  // Handle pointer down to start tracking
+  const handlePointerDown = useCallback((e: any) => {
+    pointerDownPos.current = { x: e.clientX, y: e.clientY }
+    isDragging.current = false
+  }, [])
+
+  // Handle pointer up to detect if it was a click or drag
+  const handlePointerUp = useCallback((e: any) => {
+    if (pointerDownPos.current) {
+      const dx = e.clientX - pointerDownPos.current.x
+      const dy = e.clientY - pointerDownPos.current.y
+      const distance = Math.sqrt(dx * dx + dy * dy)
+      // Only consider it a click if pointer moved less than 5 pixels
+      isDragging.current = distance > 5
+    }
+    pointerDownPos.current = null
+  }, [])
+
+  // Handle click - only if not dragging
+  const handleClick = useCallback(() => {
+    if (onClick && !isDragging.current) {
+      onClick()
+    }
+  }, [onClick])
+
+  // Handle double click - only if not dragging
+  const handleDoubleClick = useCallback(() => {
+    if (onDoubleClick && !isDragging.current) {
+      onDoubleClick()
+    }
+  }, [onDoubleClick])
 
   useFrame((state) => {
     if (paused) return
@@ -9220,8 +9256,10 @@ function BotNodeWithFlare({
 
       <Sphere
         args={[0.2, 16, 16]}
-        onClick={onClick}
-        onDoubleClick={onDoubleClick}
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
+        onClick={handleClick}
+        onDoubleClick={handleDoubleClick}
         onPointerOver={() => setHovered(true)}
         onPointerOut={() => setHovered(false)}
       >
@@ -9657,14 +9695,13 @@ function Scene({
         ref={controlsRef}
         enablePan={true}
         enableZoom={true}
-        minDistance={2}
-        maxDistance={80}
-        autoRotate={!paused && !zoomTarget}
-        autoRotateSpeed={0.25}
-        maxPolarAngle={Math.PI * 0.95}
-        minPolarAngle={Math.PI * 0.05}
         enableDamping={true}
         dampingFactor={0.05}
+        minDistance={2}
+        maxDistance={80}
+        autoRotate={false}
+        maxPolarAngle={Math.PI * 0.95}
+        minPolarAngle={Math.PI * 0.05}
       />
     </>
   )
