@@ -1378,7 +1378,7 @@ function useTouchControls(
   controlsRef: React.RefObject<any>,
   onNavigate?: (direction: 'left' | 'right' | 'up' | 'down') => void
 ) {
-  const touchStart = useRef<{ x: number, y: number } | null>(null)
+  const touchStart = useRef<{ x: number, y: number, time: number } | null>(null)
   const lastPinchDist = useRef<number>(0)
 
   useEffect(() => {
@@ -1386,10 +1386,12 @@ function useTouchControls(
       if (e.touches.length === 1) {
         touchStart.current = {
           x: e.touches[0].clientX,
-          y: e.touches[0].clientY
+          y: e.touches[0].clientY,
+          time: Date.now()
         }
       } else if (e.touches.length === 2) {
-        // Pinch start
+        // Pinch start - cancel any swipe detection
+        touchStart.current = null
         const dx = e.touches[0].clientX - e.touches[1].clientX
         const dy = e.touches[0].clientY - e.touches[1].clientY
         lastPinchDist.current = Math.sqrt(dx * dx + dy * dy)
@@ -1418,15 +1420,23 @@ function useTouchControls(
       if (touchStart.current && e.changedTouches.length === 1) {
         const dx = e.changedTouches[0].clientX - touchStart.current.x
         const dy = e.changedTouches[0].clientY - touchStart.current.y
-        const threshold = 50
+        const elapsed = Date.now() - touchStart.current.time
+        const distance = Math.sqrt(dx * dx + dy * dy)
 
-        // Detect swipe direction
-        if (Math.abs(dx) > Math.abs(dy)) {
-          if (dx > threshold) onNavigate?.('right')
-          else if (dx < -threshold) onNavigate?.('left')
-        } else {
-          if (dy > threshold) onNavigate?.('down')
-          else if (dy < -threshold) onNavigate?.('up')
+        // Require a fast swipe (< 300ms) with significant distance (> 150px)
+        // This prevents accidental navigation when trying to orbit the camera
+        const distanceThreshold = 150
+        const maxSwipeTime = 300
+
+        // Only trigger navigation for quick, deliberate swipes
+        if (elapsed < maxSwipeTime && distance > distanceThreshold) {
+          if (Math.abs(dx) > Math.abs(dy)) {
+            if (dx > 0) onNavigate?.('right')
+            else onNavigate?.('left')
+          } else {
+            if (dy > 0) onNavigate?.('down')
+            else onNavigate?.('up')
+          }
         }
       }
       touchStart.current = null
@@ -5026,9 +5036,31 @@ function SolarSystem({
   const [isHovered, setIsHovered] = useState(false)
   const [pulseIntensity, setPulseIntensity] = useState(0)
 
-  // Handle click to navigate to this system
+  // Track pointer to distinguish click from drag
+  const pointerDownPos = useRef<{ x: number, y: number } | null>(null)
+  const isDragging = useRef(false)
+
+  // Handle pointer down to start tracking
+  const handlePointerDown = useCallback((e: any) => {
+    pointerDownPos.current = { x: e.clientX, y: e.clientY }
+    isDragging.current = false
+  }, [])
+
+  // Handle pointer up to detect if it was a click or drag
+  const handlePointerUp = useCallback((e: any) => {
+    if (pointerDownPos.current) {
+      const dx = e.clientX - pointerDownPos.current.x
+      const dy = e.clientY - pointerDownPos.current.y
+      const distance = Math.sqrt(dx * dx + dy * dy)
+      // Only consider it a click if pointer moved less than 5 pixels
+      isDragging.current = distance > 5
+    }
+    pointerDownPos.current = null
+  }, [])
+
+  // Handle click to navigate to this system - only if not dragging
   const handleClick = useCallback(() => {
-    if (onSystemClick) {
+    if (onSystemClick && !isDragging.current) {
       onSystemClick(system.id, system.position)
     }
   }, [onSystemClick, system.id, system.position])
@@ -5091,6 +5123,8 @@ function SolarSystem({
       position={system.position}
       onPointerOver={() => setIsHovered(true)}
       onPointerOut={() => setIsHovered(false)}
+      onPointerDown={handlePointerDown}
+      onPointerUp={handlePointerUp}
       onClick={handleClick}
     >
       {/* Outer glow halo */}
