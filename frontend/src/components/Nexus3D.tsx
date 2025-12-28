@@ -3728,11 +3728,11 @@ function PlanetEffectComponent({ effect, color, size, paused }: { effect: Planet
           <>
             <mesh rotation={[Math.PI / 3, 0, 0]}>
               <torusGeometry args={[size * 2.2, size * 0.15, 2, 32]} />
-              <meshBasicMaterial color={color} transparent opacity={0.5} />
+              <meshBasicMaterial color={color} transparent opacity={0.5} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </mesh>
             <mesh rotation={[Math.PI / 3, 0, 0]}>
               <torusGeometry args={[size * 2.8, size * 0.1, 2, 32]} />
-              <meshBasicMaterial color={color} transparent opacity={0.3} />
+              <meshBasicMaterial color={color} transparent opacity={0.3} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </mesh>
           </>
         )
@@ -3751,7 +3751,7 @@ function PlanetEffectComponent({ effect, color, size, paused }: { effect: Planet
                   rotation={[i * 0.5, i * 0.3, i * 0.7]}
                 >
                   <octahedronGeometry args={[size * 0.3]} />
-                  <meshBasicMaterial color={color} transparent opacity={0.7} />
+                  <meshBasicMaterial color={color} transparent opacity={0.7} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
                 </mesh>
               )
             })}
@@ -3763,10 +3763,10 @@ function PlanetEffectComponent({ effect, color, size, paused }: { effect: Planet
         return (
           <>
             <Sphere args={[size * 1.8, 16, 16]}>
-              <meshBasicMaterial color={color} transparent opacity={0.15} />
+              <meshBasicMaterial color={color} transparent opacity={0.15} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </Sphere>
             <Sphere args={[size * 2.5, 16, 16]}>
-              <meshBasicMaterial color={color} transparent opacity={0.08} />
+              <meshBasicMaterial color={color} transparent opacity={0.08} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </Sphere>
           </>
         )
@@ -3785,11 +3785,11 @@ function PlanetEffectComponent({ effect, color, size, paused }: { effect: Planet
                   Math.sin(i * 1.3) * size * 1.4
                 ]}
               >
-                <meshBasicMaterial color="#ff6b35" transparent opacity={0.6} />
+                <meshBasicMaterial color="#ff6b35" transparent opacity={0.6} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
               </Sphere>
             ))}
             <Sphere args={[size * 1.5, 8, 8]}>
-              <meshBasicMaterial color="#ff4500" transparent opacity={0.2} />
+              <meshBasicMaterial color="#ff4500" transparent opacity={0.2} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </Sphere>
           </>
         )
@@ -3824,7 +3824,7 @@ function PlanetEffectComponent({ effect, color, size, paused }: { effect: Planet
         // Enhanced glow
         return (
           <Sphere args={[size * 2, 16, 16]}>
-            <meshBasicMaterial color={color} transparent opacity={0.25} />
+            <meshBasicMaterial color={color} transparent opacity={0.25} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
           </Sphere>
         )
 
@@ -3834,15 +3834,15 @@ function PlanetEffectComponent({ effect, color, size, paused }: { effect: Planet
           <>
             <mesh rotation={[Math.PI / 2, 0, 0]}>
               <torusGeometry args={[size * 1.8, 0.02, 8, 32]} />
-              <meshBasicMaterial color={color} transparent opacity={0.4} />
+              <meshBasicMaterial color={color} transparent opacity={0.4} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </mesh>
             <mesh rotation={[Math.PI / 3, Math.PI / 4, 0]}>
               <torusGeometry args={[size * 2.2, 0.02, 8, 32]} />
-              <meshBasicMaterial color={color} transparent opacity={0.3} />
+              <meshBasicMaterial color={color} transparent opacity={0.3} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </mesh>
             <mesh rotation={[Math.PI / 4, -Math.PI / 3, 0]}>
               <torusGeometry args={[size * 2.6, 0.02, 8, 32]} />
-              <meshBasicMaterial color={color} transparent opacity={0.2} />
+              <meshBasicMaterial color={color} transparent opacity={0.2} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </mesh>
           </>
         )
@@ -3860,7 +3860,7 @@ function PlanetEffectComponent({ effect, color, size, paused }: { effect: Planet
                   args={[size * 0.08, 4, 4]}
                   position={[Math.cos(angle) * r, (i % 5 - 2) * size * 0.2, Math.sin(angle) * r]}
                 >
-                  <meshBasicMaterial color="#9ca3af" transparent opacity={0.4} />
+                  <meshBasicMaterial color="#9ca3af" transparent opacity={0.4} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
                 </Sphere>
               )
             })}
@@ -3879,10 +3879,10 @@ function PlanetEffectComponent({ effect, color, size, paused }: { effect: Planet
               opacity={0.5}
             />
             <Sphere args={[size * 0.15, 8, 8]} position={[0, size * 1.5, 0]}>
-              <meshBasicMaterial color="#60a5fa" />
+              <meshBasicMaterial color="#60a5fa" side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </Sphere>
             <Sphere args={[size * 0.12, 8, 8]} position={[0, -size * 1.2, 0]}>
-              <meshBasicMaterial color="#3b82f6" />
+              <meshBasicMaterial color="#3b82f6" side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </Sphere>
           </>
         )
@@ -3892,7 +3892,7 @@ function PlanetEffectComponent({ effect, color, size, paused }: { effect: Planet
         return (
           <mesh rotation={[0, 0, 0]}>
             <torusGeometry args={[size * 2, size * 0.08, 6, 6]} />
-            <meshBasicMaterial color={color} transparent opacity={0.4} wireframe />
+            <meshBasicMaterial color={color} transparent opacity={0.4} wireframe side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
           </mesh>
         )
 
@@ -3909,7 +3909,7 @@ function PlanetEffectComponent({ effect, color, size, paused }: { effect: Planet
                   args={[size * 0.08, 4, 4]}
                   position={[Math.cos(angle) * r, (i % 3 - 1) * size * 0.3, Math.sin(angle) * r]}
                 >
-                  <meshBasicMaterial color={i % 2 === 0 ? '#22c55e' : '#3b82f6'} />
+                  <meshBasicMaterial color={i % 2 === 0 ? '#22c55e' : '#3b82f6'} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
                 </Sphere>
               )
             })}
@@ -3944,7 +3944,7 @@ function PlanetEffectComponent({ effect, color, size, paused }: { effect: Planet
     }
   }
 
-  return <group ref={groupRef}>{renderEffect()}</group>
+  return <group ref={groupRef} renderOrder={999}>{renderEffect()}</group>
 }
 
 // =============================================================================
@@ -5297,17 +5297,17 @@ function SolarSystem({
     >
       {/* Far-distance beacon glow - always visible from afar */}
       <Sphere args={[8, 16, 16]}>
-        <meshBasicMaterial color={system.glowColor} transparent opacity={0.08} />
+        <meshBasicMaterial color={system.glowColor} transparent opacity={0.08} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
       </Sphere>
 
       {/* Outer glow halo */}
       <Sphere ref={glowRef} args={[5, 32, 32]}>
-        <meshBasicMaterial color={system.glowColor} transparent opacity={0.2} />
+        <meshBasicMaterial color={system.glowColor} transparent opacity={0.2} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
       </Sphere>
 
       {/* Secondary glow */}
       <Sphere args={[3.5, 32, 32]}>
-        <meshBasicMaterial color={system.glowColor} transparent opacity={0.15} />
+        <meshBasicMaterial color={system.glowColor} transparent opacity={0.15} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
       </Sphere>
 
       {/* Central sun with distortion */}
@@ -5318,12 +5318,13 @@ function SolarSystem({
           emissiveIntensity={isHovered ? 3 : 2}
           distort={0.35}
           speed={3}
+          side={THREE.DoubleSide}
         />
       </Sphere>
 
       {/* Sun core (bright center) */}
       <Sphere args={[0.8, 16, 16]}>
-        <meshBasicMaterial color="#ffffff" />
+        <meshBasicMaterial color="#ffffff" side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
       </Sphere>
 
       {/* Orbital rings - scaled up for visibility */}
@@ -5331,7 +5332,7 @@ function SolarSystem({
         {system.planets.map((planet, i) => (
           <mesh key={i} rotation={[Math.PI / 2, 0, 0]}>
             <torusGeometry args={[planet.orbit * 2.5, 0.04, 8, 64]} />
-            <meshBasicMaterial color={planet.color} transparent opacity={0.4} />
+            <meshBasicMaterial color={planet.color} transparent opacity={0.4} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
           </mesh>
         ))}
       </group>
@@ -5347,11 +5348,15 @@ function SolarSystem({
         />
       ))}
 
-      {/* Particle corona around sun */}
-      <SunCorona color={system.glowColor} paused={paused} />
+      {/* Particle corona around sun - wrapped for visibility */}
+      <AlwaysVisibleGroup>
+        <SunCorona color={system.glowColor} paused={paused} />
+      </AlwaysVisibleGroup>
 
-      {/* Unique sun flare effect */}
-      <SunFlareEffect flareType={system.flareType as FlareType} color={system.glowColor} paused={paused} />
+      {/* Unique sun flare effect - wrapped for visibility from all angles */}
+      <AlwaysVisibleGroup>
+        <SunFlareEffect flareType={system.flareType as FlareType} color={system.glowColor} paused={paused} />
+      </AlwaysVisibleGroup>
 
       {/* Unique system ambient effects */}
       <SystemAmbientEffects systemId={system.id} color={system.glowColor} sunColor={system.sunColor} paused={paused} />
@@ -5376,7 +5381,7 @@ function SolarSystem({
       {isHovered && (
         <mesh rotation={[Math.PI / 2, 0, 0]}>
           <torusGeometry args={[1.2, 0.02, 16, 64]} />
-          <meshBasicMaterial color={system.glowColor} transparent opacity={0.8} />
+          <meshBasicMaterial color={system.glowColor} transparent opacity={0.8} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
         </mesh>
       )}
     </group>
@@ -5463,7 +5468,7 @@ function OrbitingPlanet({
 
   return (
     <group>
-      {/* Planet trail */}
+      {/* Planet trail - always visible from all angles */}
       <points ref={trailRef}>
         <bufferGeometry>
           <bufferAttribute
@@ -5473,14 +5478,14 @@ function OrbitingPlanet({
             itemSize={3}
           />
         </bufferGeometry>
-        <pointsMaterial color={planet.color} size={0.08} transparent opacity={0.5} />
+        <pointsMaterial color={planet.color} size={0.08} transparent opacity={0.5} depthTest={false} depthWrite={false} />
       </points>
 
       {/* Planet with effects */}
       <group ref={groupRef}>
-        {/* Planet atmosphere glow */}
+        {/* Planet atmosphere glow - always visible from all angles */}
         <Sphere ref={atmosphereRef} args={[scaledSize * 1.5, 16, 16]}>
-          <meshBasicMaterial color={planet.color} transparent opacity={isHovered ? 0.35 : 0.2} />
+          <meshBasicMaterial color={planet.color} transparent opacity={isHovered ? 0.35 : 0.2} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
         </Sphere>
 
         {/* Planet sphere */}
@@ -5496,12 +5501,13 @@ function OrbitingPlanet({
             emissiveIntensity={isHovered ? 0.6 : 0.3}
             distort={isHovered ? 0.15 : 0.05}
             speed={2}
+            side={THREE.DoubleSide}
           />
         </Sphere>
 
-        {/* Inner core glow */}
+        {/* Inner core glow - always visible from all angles */}
         <Sphere args={[scaledSize * 0.5, 8, 8]}>
-          <meshBasicMaterial color="#ffffff" transparent opacity={0.5} />
+          <meshBasicMaterial color="#ffffff" transparent opacity={0.5} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
         </Sphere>
 
         {/* Orbiting moons */}
@@ -5509,14 +5515,16 @@ function OrbitingPlanet({
           <OrbitingMoon key={moon.id} moon={moon} planetColor={planet.color} paused={paused} />
         ))}
 
-        {/* Planet unique effect */}
+        {/* Planet unique effect - wrapped in AlwaysVisibleGroup for 100% visibility from all angles */}
         {planet.effect && (
-          <PlanetEffectComponent
-            effect={planet.effect}
-            color={planet.color}
-            size={scaledSize}
-            paused={paused}
-          />
+          <AlwaysVisibleGroup>
+            <PlanetEffectComponent
+              effect={planet.effect}
+              color={planet.color}
+              size={scaledSize}
+              paused={paused}
+            />
+          </AlwaysVisibleGroup>
         )}
 
         {/* Hover tooltip */}
@@ -5530,16 +5538,16 @@ function OrbitingPlanet({
           </Html>
         )}
 
-        {/* Enhanced glow when hovered */}
+        {/* Enhanced glow when hovered - always visible from all angles */}
         {isHovered && (
           <>
             <Sphere args={[scaledSize * 2, 8, 8]}>
-              <meshBasicMaterial color={planet.color} transparent opacity={0.2} />
+              <meshBasicMaterial color={planet.color} transparent opacity={0.2} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </Sphere>
             {/* Pulsing ring */}
             <mesh rotation={[Math.PI / 2, 0, 0]}>
               <torusGeometry args={[scaledSize * 1.5, 0.03, 8, 32]} />
-              <meshBasicMaterial color="#ffffff" transparent opacity={0.8} />
+              <meshBasicMaterial color="#ffffff" transparent opacity={0.8} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </mesh>
           </>
         )}
@@ -5574,7 +5582,7 @@ function OrbitingMoon({
 
   return (
     <Sphere ref={meshRef} args={[moon.size, 8, 8]} position={[moon.orbit, 0, 0]}>
-      <meshBasicMaterial color={planetColor} transparent opacity={0.7} />
+      <meshBasicMaterial color={planetColor} transparent opacity={0.7} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
     </Sphere>
   )
 }
@@ -5617,7 +5625,7 @@ function SunCorona({ color, paused }: { color: string, paused: boolean }) {
           itemSize={3}
         />
       </bufferGeometry>
-      <pointsMaterial color={color} size={0.04} transparent opacity={0.6} />
+      <pointsMaterial color={color} size={0.04} transparent opacity={0.6} depthTest={false} depthWrite={false} />
     </points>
   )
 }
@@ -6274,6 +6282,7 @@ function StardustField({ paused }: { paused: boolean }) {
         transparent
         opacity={0.6}
         sizeAttenuation={true}
+        depthTest={false}
         depthWrite={false}
       />
     </points>
@@ -7351,50 +7360,66 @@ function SolarSystemsContainer({
         />
       ))}
 
-      {/* Neural Synapse Connections */}
-      <NeuralSynapsePulses paused={paused} />
+      {/* Neural Synapse Connections - wrapped for visibility from all angles */}
+      <AlwaysVisibleGroup>
+        <NeuralSynapsePulses paused={paused} />
+      </AlwaysVisibleGroup>
 
       {/* === WOW FACTOR 1: Traveling Ships Between Systems === */}
-      <InterstellarShips paused={paused} />
+      <AlwaysVisibleGroup>
+        <InterstellarShips paused={paused} />
+      </AlwaysVisibleGroup>
 
       {/* === WOW FACTOR 2: Asteroid Belts Around Each System === */}
-      {SOLAR_SYSTEMS.map(system => (
-        <SystemAsteroidBelt
-          key={`asteroids-${system.id}`}
-          position={system.position}
-          color={system.sunColor}
-          paused={paused}
-        />
-      ))}
+      <AlwaysVisibleGroup>
+        {SOLAR_SYSTEMS.map(system => (
+          <SystemAsteroidBelt
+            key={`asteroids-${system.id}`}
+            position={system.position}
+            color={system.sunColor}
+            paused={paused}
+          />
+        ))}
+      </AlwaysVisibleGroup>
 
       {/* === WOW FACTOR 3: Massive Energy Beams === */}
-      <MassiveEnergyBeams paused={paused} />
+      <AlwaysVisibleGroup>
+        <MassiveEnergyBeams paused={paused} />
+      </AlwaysVisibleGroup>
 
       {/* === WOW FACTOR 4: Dynamic Solar Flare Events === */}
-      <SolarFlareEvents paused={paused} />
+      <AlwaysVisibleGroup>
+        <SolarFlareEvents paused={paused} />
+      </AlwaysVisibleGroup>
 
       {/* === WOW FACTOR 5: Nebula Clouds Around Systems === */}
-      {SOLAR_SYSTEMS.map(system => (
-        <SystemNebula
-          key={`nebula-${system.id}`}
-          position={system.position}
-          color={system.glowColor}
-          paused={paused}
-        />
-      ))}
+      <AlwaysVisibleGroup>
+        {SOLAR_SYSTEMS.map(system => (
+          <SystemNebula
+            key={`nebula-${system.id}`}
+            position={system.position}
+            color={system.glowColor}
+            paused={paused}
+          />
+        ))}
+      </AlwaysVisibleGroup>
 
       {/* === WOW FACTOR 6: Aurora Effects === */}
-      {SOLAR_SYSTEMS.map(system => (
-        <AuroraEffect
-          key={`aurora-${system.id}`}
-          position={system.position}
-          color={system.sunColor}
-          paused={paused}
-        />
-      ))}
+      <AlwaysVisibleGroup>
+        {SOLAR_SYSTEMS.map(system => (
+          <AuroraEffect
+            key={`aurora-${system.id}`}
+            position={system.position}
+            color={system.sunColor}
+            paused={paused}
+          />
+        ))}
+      </AlwaysVisibleGroup>
 
-      {/* === WOW FACTOR 7: Ambient Stardust Field === */}
-      <StardustField paused={paused} />
+      {/* === WOW FACTOR 7: Ambient Stardust Field - wrapped for visibility === */}
+      <AlwaysVisibleGroup>
+        <StardustField paused={paused} />
+      </AlwaysVisibleGroup>
 
       {/* === WOW FACTOR 8: Thematic Enhancements Per System === */}
       {/* All planet effects wrapped in AlwaysVisibleGroup for visibility from all angles */}
@@ -9776,54 +9801,76 @@ function Scene({
       <ConstellationLines />
       <MatrixRain performanceMode={performanceMode} />
 
-      {/* Lens flare */}
-      <LensFlare paused={paused} />
+      {/* Lens flare - wrapped for visibility from all angles */}
+      <AlwaysVisibleGroup>
+        <LensFlare paused={paused} />
+      </AlwaysVisibleGroup>
 
-      {/* Core */}
-      <BreathingCore gexValue={gexValue} vixValue={vixValue} paused={paused} />
-      <CoreVortex paused={paused} />
+      {/* Core - wrapped for visibility from all angles */}
+      <AlwaysVisibleGroup>
+        <BreathingCore gexValue={gexValue} vixValue={vixValue} paused={paused} />
+        <CoreVortex paused={paused} />
+      </AlwaysVisibleGroup>
 
-      {/* Pulse effects */}
-      <MultiplePulseWaves vixValue={vixValue} paused={paused} />
-      <WaveformRings vixValue={vixValue} />
-      <ClickShockwave shockwaveTime={shockwaveTime} />
+      {/* Pulse effects - wrapped for visibility from all angles */}
+      <AlwaysVisibleGroup>
+        <MultiplePulseWaves vixValue={vixValue} paused={paused} />
+        <WaveformRings vixValue={vixValue} />
+        <ClickShockwave shockwaveTime={shockwaveTime} />
+      </AlwaysVisibleGroup>
 
-      {/* Fibers */}
-      <RadialFiberBurst mousePos={mouse3D} gravityWell={gravityWell} performanceMode={performanceMode} paused={paused} />
-      <InnerDenseShell mousePos={mouse3D} gravityWell={gravityWell} performanceMode={performanceMode} paused={paused} />
-      <PlasmaTendrils />
-      <OrbitTrails />
+      {/* Fibers - wrapped for visibility from all angles */}
+      <AlwaysVisibleGroup>
+        <RadialFiberBurst mousePos={mouse3D} gravityWell={gravityWell} performanceMode={performanceMode} paused={paused} />
+        <InnerDenseShell mousePos={mouse3D} gravityWell={gravityWell} performanceMode={performanceMode} paused={paused} />
+        <PlasmaTendrils />
+        <OrbitTrails />
+      </AlwaysVisibleGroup>
 
-      {/* Bot network */}
-      <ConnectingArcs />
-      <LightningArcs paused={paused} />
+      {/* Bot network - wrapped for visibility from all angles */}
+      <AlwaysVisibleGroup>
+        <ConnectingArcs />
+        <LightningArcs paused={paused} />
+      </AlwaysVisibleGroup>
 
-      {/* Particles */}
-      <EnergyAccumulation paused={paused} />
-      <SparkleField performanceMode={performanceMode} paused={paused} />
-      <OuterParticleRing performanceMode={performanceMode} paused={paused} />
-      <AmbientParticles performanceMode={performanceMode} paused={paused} />
+      {/* Particles - wrapped for visibility from all angles */}
+      <AlwaysVisibleGroup>
+        <EnergyAccumulation paused={paused} />
+        <SparkleField performanceMode={performanceMode} paused={paused} />
+        <OuterParticleRing performanceMode={performanceMode} paused={paused} />
+        <AmbientParticles performanceMode={performanceMode} paused={paused} />
+      </AlwaysVisibleGroup>
 
-      {/* Effects */}
-      <HolographicScanlines paused={paused} />
-      <GlitchEffect paused={paused} />
-      <AlertPulse active={true} botStatus={botStatus} />
+      {/* Effects - wrapped for visibility from all angles */}
+      <AlwaysVisibleGroup>
+        <HolographicScanlines paused={paused} />
+        <GlitchEffect paused={paused} />
+        <AlertPulse active={true} botStatus={botStatus} />
+      </AlwaysVisibleGroup>
 
-      {/* Gravity well */}
-      {gravityWell && <GravityWell position={gravityWell} active={true} />}
-
-      {/* Trade explosion */}
-      {tradeExplosion && (
-        <TradeExplosion
-          position={tradeExplosion.position}
-          type={tradeExplosion.type}
-          active={true}
-          onComplete={() => setTradeExplosion(null)}
-        />
+      {/* Gravity well - wrapped for visibility */}
+      {gravityWell && (
+        <AlwaysVisibleGroup>
+          <GravityWell position={gravityWell} active={true} />
+        </AlwaysVisibleGroup>
       )}
 
-      {/* Celebration */}
-      <SuccessCelebration active={celebrationActive} onComplete={() => setCelebrationActive(false)} />
+      {/* Trade explosion - wrapped for visibility */}
+      {tradeExplosion && (
+        <AlwaysVisibleGroup>
+          <TradeExplosion
+            position={tradeExplosion.position}
+            type={tradeExplosion.type}
+            active={true}
+            onComplete={() => setTradeExplosion(null)}
+          />
+        </AlwaysVisibleGroup>
+      )}
+
+      {/* Celebration - wrapped for visibility */}
+      <AlwaysVisibleGroup>
+        <SuccessCelebration active={celebrationActive} onComplete={() => setCelebrationActive(false)} />
+      </AlwaysVisibleGroup>
 
       {/* Easter egg */}
       <HiddenMessage visible={konamiActive} />
@@ -9834,14 +9881,16 @@ function Scene({
       <SignalStrengthBars strength={signalStrength} />
       <MarketMoodRing gexValue={gexValue} vixValue={vixValue} />
 
-      {/* Cosmic features */}
-      <AsteroidField paused={paused} stockPrices={stockPrices} />
-      <CometWithTrail paused={paused} />
-      <AsteroidBelt performanceMode={performanceMode} />
-      <ShootingStars paused={paused} />
-      <CometRain paused={paused} />
-      <SolarFlares vixValue={vixValue} paused={paused} />
-      <AuroraBorealis paused={paused} />
+      {/* Cosmic features - wrapped for visibility from all angles */}
+      <AlwaysVisibleGroup>
+        <AsteroidField paused={paused} stockPrices={stockPrices} />
+        <CometWithTrail paused={paused} />
+        <AsteroidBelt performanceMode={performanceMode} />
+        <ShootingStars paused={paused} />
+        <CometRain paused={paused} />
+        <SolarFlares vixValue={vixValue} paused={paused} />
+        <AuroraBorealis paused={paused} />
+      </AlwaysVisibleGroup>
       {/* Camera-following effects - these stay visible wherever you navigate */}
       <CameraFollowingEffects controlsRef={controlsRef}>
         <HolographicTickerTape stockPrices={stockPrices} />
@@ -9854,42 +9903,48 @@ function Scene({
         <NeuralPathways paused={paused} />
       </CameraFollowingEffects>
 
-      {/* Global effects - stay at fixed positions */}
-      <RocketLaunches botStatus={botStatus} />
-      <SatelliteOrbiters />
-      <EnergyShields paused={paused} />
-      <QuantumEntanglement botStatus={botStatus} paused={paused} />
-      <BinaryStar paused={paused} />
-      <MoonPhases paused={paused} />
-      <NebulaStorm vixValue={vixValue} paused={paused} />
-      <CosmicDustField paused={paused} />
+      {/* Global effects - stay at fixed positions, wrapped for visibility */}
+      <AlwaysVisibleGroup>
+        <RocketLaunches botStatus={botStatus} />
+        <SatelliteOrbiters />
+        <EnergyShields paused={paused} />
+        <QuantumEntanglement botStatus={botStatus} paused={paused} />
+        <BinaryStar paused={paused} />
+        <MoonPhases paused={paused} />
+        <NebulaStorm vixValue={vixValue} paused={paused} />
+        <CosmicDustField paused={paused} />
+      </AlwaysVisibleGroup>
 
       {/* Solar Systems with Neural Synapse Connections */}
       <SolarSystemsContainer paused={paused} onSystemClick={handleSolarSystemClick} />
 
-      {/* WOW FACTOR FEATURES */}
-      {/* VIX Storm Mode - chaos when VIX > 25 */}
-      <VixStormMode vixValue={vixValue} paused={paused} />
+      {/* WOW FACTOR FEATURES - wrapped for visibility from all angles */}
+      <AlwaysVisibleGroup>
+        {/* VIX Storm Mode - chaos when VIX > 25 */}
+        <VixStormMode vixValue={vixValue} paused={paused} />
 
-      {/* Market Hours Lighting - ambient changes based on market state */}
-      <MarketHoursLighting paused={paused} />
+        {/* Market Hours Lighting - ambient changes based on market state */}
+        <MarketHoursLighting paused={paused} />
 
-      {/* News Comet Stream - headlines flying by */}
-      <NewsCometStream paused={paused} />
+        {/* News Comet Stream - headlines flying by */}
+        <NewsCometStream paused={paused} />
+      </AlwaysVisibleGroup>
 
-      {/* Bot nodes */}
-      {BOT_NODES.map((node) => (
-        <BotNodeWithFlare
-          key={node.id}
-          id={node.id}
-          name={node.name}
-          angle={node.angle}
-          status={botStatus[node.id as keyof BotStatus] || 'idle'}
-          onClick={() => onNodeClick?.(node.id)}
-          onDoubleClick={() => handleNodeDoubleClick(node.id)}
-          paused={paused}
-        />
-      ))}
+      {/* Bot nodes - wrapped for visibility from all angles */}
+      <AlwaysVisibleGroup>
+        {BOT_NODES.map((node) => (
+          <BotNodeWithFlare
+            key={node.id}
+            id={node.id}
+            name={node.name}
+            angle={node.angle}
+            status={botStatus[node.id as keyof BotStatus] || 'idle'}
+            onClick={() => onNodeClick?.(node.id)}
+            onDoubleClick={() => handleNodeDoubleClick(node.id)}
+            paused={paused}
+          />
+        ))}
+      </AlwaysVisibleGroup>
 
       {/* Camera controls - disable autoRotate when viewing a solar system for full manual control */}
       <OrbitControls
