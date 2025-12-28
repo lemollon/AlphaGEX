@@ -5297,17 +5297,17 @@ function SolarSystem({
     >
       {/* Far-distance beacon glow - always visible from afar */}
       <Sphere args={[8, 16, 16]}>
-        <meshBasicMaterial color={system.glowColor} transparent opacity={0.08} />
+        <meshBasicMaterial color={system.glowColor} transparent opacity={0.08} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
       </Sphere>
 
       {/* Outer glow halo */}
       <Sphere ref={glowRef} args={[5, 32, 32]}>
-        <meshBasicMaterial color={system.glowColor} transparent opacity={0.2} />
+        <meshBasicMaterial color={system.glowColor} transparent opacity={0.2} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
       </Sphere>
 
       {/* Secondary glow */}
       <Sphere args={[3.5, 32, 32]}>
-        <meshBasicMaterial color={system.glowColor} transparent opacity={0.15} />
+        <meshBasicMaterial color={system.glowColor} transparent opacity={0.15} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
       </Sphere>
 
       {/* Central sun with distortion */}
@@ -5318,12 +5318,13 @@ function SolarSystem({
           emissiveIntensity={isHovered ? 3 : 2}
           distort={0.35}
           speed={3}
+          side={THREE.DoubleSide}
         />
       </Sphere>
 
       {/* Sun core (bright center) */}
       <Sphere args={[0.8, 16, 16]}>
-        <meshBasicMaterial color="#ffffff" />
+        <meshBasicMaterial color="#ffffff" side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
       </Sphere>
 
       {/* Orbital rings - scaled up for visibility */}
@@ -5331,7 +5332,7 @@ function SolarSystem({
         {system.planets.map((planet, i) => (
           <mesh key={i} rotation={[Math.PI / 2, 0, 0]}>
             <torusGeometry args={[planet.orbit * 2.5, 0.04, 8, 64]} />
-            <meshBasicMaterial color={planet.color} transparent opacity={0.4} />
+            <meshBasicMaterial color={planet.color} transparent opacity={0.4} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
           </mesh>
         ))}
       </group>
@@ -5347,11 +5348,15 @@ function SolarSystem({
         />
       ))}
 
-      {/* Particle corona around sun */}
-      <SunCorona color={system.glowColor} paused={paused} />
+      {/* Particle corona around sun - wrapped for visibility */}
+      <AlwaysVisibleGroup>
+        <SunCorona color={system.glowColor} paused={paused} />
+      </AlwaysVisibleGroup>
 
-      {/* Unique sun flare effect */}
-      <SunFlareEffect flareType={system.flareType as FlareType} color={system.glowColor} paused={paused} />
+      {/* Unique sun flare effect - wrapped for visibility from all angles */}
+      <AlwaysVisibleGroup>
+        <SunFlareEffect flareType={system.flareType as FlareType} color={system.glowColor} paused={paused} />
+      </AlwaysVisibleGroup>
 
       {/* Unique system ambient effects */}
       <SystemAmbientEffects systemId={system.id} color={system.glowColor} sunColor={system.sunColor} paused={paused} />
@@ -5376,7 +5381,7 @@ function SolarSystem({
       {isHovered && (
         <mesh rotation={[Math.PI / 2, 0, 0]}>
           <torusGeometry args={[1.2, 0.02, 16, 64]} />
-          <meshBasicMaterial color={system.glowColor} transparent opacity={0.8} />
+          <meshBasicMaterial color={system.glowColor} transparent opacity={0.8} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
         </mesh>
       )}
     </group>
@@ -6277,6 +6282,7 @@ function StardustField({ paused }: { paused: boolean }) {
         transparent
         opacity={0.6}
         sizeAttenuation={true}
+        depthTest={false}
         depthWrite={false}
       />
     </points>
@@ -7396,8 +7402,10 @@ function SolarSystemsContainer({
         />
       ))}
 
-      {/* === WOW FACTOR 7: Ambient Stardust Field === */}
-      <StardustField paused={paused} />
+      {/* === WOW FACTOR 7: Ambient Stardust Field - wrapped for visibility === */}
+      <AlwaysVisibleGroup>
+        <StardustField paused={paused} />
+      </AlwaysVisibleGroup>
 
       {/* === WOW FACTOR 8: Thematic Enhancements Per System === */}
       {/* All planet effects wrapped in AlwaysVisibleGroup for visibility from all angles */}
