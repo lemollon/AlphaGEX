@@ -9612,17 +9612,19 @@ function Scene({
         />
       ))}
 
-      {/* Camera controls */}
+      {/* Camera controls - disable autoRotate when viewing a solar system for full manual control */}
       <OrbitControls
         ref={controlsRef}
         enablePan={true}
         enableZoom={true}
         minDistance={2}
         maxDistance={80}
-        autoRotate={!paused}
+        autoRotate={!paused && !zoomTarget}
         autoRotateSpeed={0.25}
         maxPolarAngle={Math.PI * 0.95}
         minPolarAngle={Math.PI * 0.05}
+        enableDamping={true}
+        dampingFactor={0.05}
       />
     </>
   )
