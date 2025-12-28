@@ -895,8 +895,8 @@ export const apiClient = {
     api.get('/api/daily-manna/prayer/stats', { params: { user_id: userId } }),
 
   // ARGUS - 0DTE Gamma Live (Real-time gamma visualization)
-  getArgusGamma: (expiration?: string) =>
-    api.get('/api/argus/gamma', { params: { expiration } }),
+  getArgusGamma: (symbol?: string, expiration?: string) =>
+    api.get('/api/argus/gamma', { params: { symbol, expiration } }),
   getArgusHistory: (expiration?: string, minutes?: number) =>
     api.get('/api/argus/history', { params: { expiration, minutes } }),
   getArgusProbability: () => api.get('/api/argus/probability'),

@@ -287,14 +287,13 @@ interface EMTrendPoint {
   pct_change: number
 }
 
-// Available symbols for 0DTE analysis
-// NOTE: Backend currently only supports SPY. Others marked as coming soon.
+// 0DTE symbols supported by ARGUS (all have daily expirations Mon-Fri)
 const AVAILABLE_SYMBOLS = [
   { symbol: 'SPY', name: 'S&P 500 ETF', supported: true },
-  { symbol: 'QQQ', name: 'Nasdaq 100 ETF', supported: false },
-  { symbol: 'IWM', name: 'Russell 2000 ETF', supported: false },
-  { symbol: 'SPX', name: 'S&P 500 Index', supported: false },
-  { symbol: 'DIA', name: 'Dow Jones ETF', supported: false },
+  { symbol: 'QQQ', name: 'Nasdaq 100 ETF', supported: true },
+  { symbol: 'IWM', name: 'Russell 2000 ETF', supported: true },
+  { symbol: 'SPX', name: 'S&P 500 Index', supported: true },
+  { symbol: 'DIA', name: 'Dow Jones ETF', supported: true },
 ]
 
 export default function ArgusPage() {
@@ -327,6 +326,14 @@ export default function ArgusPage() {
   const [emTrend, setEmTrend] = useState<EMTrendPoint[]>([])
   const [showAccuracyPanel, setShowAccuracyPanel] = useState(true)
   const [showTradeIdeas, setShowTradeIdeas] = useState(true)
+
+  // Reset data when symbol changes
+  useEffect(() => {
+    // Clear cached data when switching symbols
+    setLastLiveData(null)
+    setGammaData(null)
+    setError(null)
+  }, [selectedSymbol])
 
   // Polling intervals (in milliseconds)
   const FAST_POLL_INTERVAL = 15000  // 15 seconds for gamma data
@@ -363,7 +370,7 @@ export default function ArgusPage() {
     try {
       setLoading(true)
       const expiration = day && day !== 'today' ? day.toLowerCase() : undefined
-      const response = await apiClient.getArgusGamma(expiration)
+      const response = await apiClient.getArgusGamma(selectedSymbol, expiration)
       if (response.data?.success && response.data?.data) {
         const newData = response.data.data
 
@@ -397,7 +404,7 @@ export default function ArgusPage() {
     } finally {
       setLoading(false)
     }
-  }, [isMarketOpen, lastLiveData])
+  }, [selectedSymbol, isMarketOpen, lastLiveData])
 
   const fetchDangerZoneLogs = useCallback(async () => {
     try {
