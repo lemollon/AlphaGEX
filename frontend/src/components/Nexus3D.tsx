@@ -994,30 +994,6 @@ const STOCK_TICKERS = [
 // SOLAR SYSTEM DEFINITIONS - Each with unique flares and planet effects
 // =============================================================================
 
-// Planet routes for navigation - only pages in the main navigation
-const PLANET_ROUTES: Record<string, string> = {
-  // SOLOMON planets → AI & Feedback pages
-  'Analysis': '/solomon',           // SOLOMON (Feedback Loop)
-  'Strategy': '/daily-manna',       // Daily Manna wisdom
-  'Insight': '/feature-docs',       // Feature Documentation
-  // ARGUS planets → Analysis pages
-  'Gamma': '/argus',                // ARGUS (0DTE Gamma)
-  'Delta': '/gex',                  // GEX Analysis
-  'Theta': '/vix',                  // VIX Dashboard
-  // ORACLE planets → AI Prediction pages
-  'Prediction': '/oracle',          // ORACLE (AI Advisor)
-  'Probability': '/apollo',         // APOLLO (ML Scanner)
-  'Confidence': '/prometheus',      // PROMETHEUS (ML System)
-  // KRONOS planets → Backtesting & History
-  'History': '/gex/history',        // GEX History
-  'Backtest': '/zero-dte-backtest', // KRONOS (0DTE Condor)
-  'Patterns': '/logs',              // Decision Logs
-  // SYSTEMS planets → System pages
-  'Health': '/system/processes',    // System Processes
-  'Data': '/database',              // Database Admin
-  'Network': '/data-transparency',  // Data Transparency
-}
-
 const SOLAR_SYSTEMS = [
   {
     id: 'solomon',
@@ -1092,6 +1068,21 @@ const SOLAR_SYSTEMS = [
       { name: 'Health', color: '#22c55e', size: 0.18, orbit: 2.0, speed: 0.7, effect: 'heartbeat' as const, moons: 0 },
       { name: 'Data', color: '#3b82f6', size: 0.15, orbit: 3.0, speed: 0.45, effect: 'binary' as const, moons: 1 },
       { name: 'Network', color: '#ec4899', size: 0.12, orbit: 3.8, speed: 0.3, effect: 'connections' as const, moons: 2 },
+    ]
+  },
+  {
+    id: 'apollo',
+    name: 'APOLLO',
+    subtitle: 'ML Scanner',
+    route: '/apollo',
+    position: [0, -12, -24] as [number, number, number],  // Lower center
+    sunColor: '#fbbf24',  // Bright golden (sun god)
+    glowColor: '#fcd34d',
+    flareType: 'radiant' as const,  // Radiant solar beams
+    planets: [
+      { name: 'Scanner', color: '#f97316', size: 0.20, orbit: 2.0, speed: 0.75, effect: 'fire' as const, moons: 2 },
+      { name: 'Signals', color: '#eab308', size: 0.16, orbit: 3.0, speed: 0.5, effect: 'electric' as const, moons: 1 },
+      { name: 'Patterns', color: '#facc15', size: 0.14, orbit: 3.8, speed: 0.35, effect: 'pulse' as const, moons: 3 },
     ]
   },
 ]
@@ -2344,7 +2335,7 @@ function NebulaStorm({ vixValue = 15, paused }: { vixValue?: number, paused: boo
 // SUN FLARE EFFECTS - Unique flare types for each solar system
 // =============================================================================
 
-type FlareType = 'wisdom' | 'pulse' | 'mystic' | 'eruption' | 'network'
+type FlareType = 'wisdom' | 'pulse' | 'mystic' | 'eruption' | 'network' | 'radiant'
 
 function SunFlareEffect({ flareType, color, paused }: { flareType: FlareType, color: string, paused: boolean }) {
   const groupRef = useRef<THREE.Group>(null)
@@ -2569,6 +2560,61 @@ function SunFlareEffect({ flareType, color, paused }: { flareType: FlareType, co
     )
   }
 
+  // Radiant: Brilliant solar corona with god rays (for APOLLO)
+  const RadiantFlare = () => {
+    const coronaRef = useRef<THREE.Group>(null)
+    const rayCount = 16
+
+    useFrame((state) => {
+      if (paused || !coronaRef.current) return
+      const t = state.clock.elapsedTime
+      coronaRef.current.rotation.z = t * 0.1
+
+      // Pulse the rays
+      coronaRef.current.children.forEach((child, i) => {
+        if (child instanceof THREE.Mesh) {
+          const scale = 1 + Math.sin(t * 2 + i * 0.5) * 0.2
+          child.scale.y = scale
+        }
+      })
+    })
+
+    return (
+      <group ref={coronaRef}>
+        {/* Radiant corona rays */}
+        {Array.from({ length: rayCount }).map((_, i) => {
+          const angle = (i / rayCount) * Math.PI * 2
+          const length = 2 + (i % 2) * 0.5
+          return (
+            <mesh key={i} rotation={[0, 0, angle]} position={[0, 0, 0]}>
+              <planeGeometry args={[0.08, length]} />
+              <meshBasicMaterial color={color} transparent opacity={0.6} side={THREE.DoubleSide} />
+            </mesh>
+          )
+        })}
+        {/* Inner glow ring */}
+        <mesh rotation={[Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[0.9, 0.15, 8, 32]} />
+          <meshBasicMaterial color="#ffffff" transparent opacity={0.5} />
+        </mesh>
+        {/* Outer glow ring */}
+        <mesh rotation={[Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[1.4, 0.08, 8, 32]} />
+          <meshBasicMaterial color={color} transparent opacity={0.3} />
+        </mesh>
+        {/* Bright center spots */}
+        {[0, 90, 180, 270].map((deg, i) => {
+          const rad = (deg * Math.PI) / 180
+          return (
+            <Sphere key={i} args={[0.1, 8, 8]} position={[Math.cos(rad) * 1.2, Math.sin(rad) * 1.2, 0]}>
+              <meshBasicMaterial color="#ffffff" />
+            </Sphere>
+          )
+        })}
+      </group>
+    )
+  }
+
   return (
     <group ref={groupRef}>
       {flareType === 'wisdom' && <WisdomFlare />}
@@ -2576,6 +2622,7 @@ function SunFlareEffect({ flareType, color, paused }: { flareType: FlareType, co
       {flareType === 'mystic' && <MysticFlare />}
       {flareType === 'eruption' && <EruptionFlare />}
       {flareType === 'network' && <NetworkFlare />}
+      {flareType === 'radiant' && <RadiantFlare />}
     </group>
   )
 }
@@ -3537,14 +3584,12 @@ function SolarSystem({
   system,
   paused = false,
   onPulseToSystem,
-  onSystemClick,
-  onPlanetClick
+  onSystemClick
 }: {
   system: typeof SOLAR_SYSTEMS[0]
   paused?: boolean
   onPulseToSystem?: (targetId: string) => void
   onSystemClick?: (systemId: string, position: [number, number, number]) => void
-  onPlanetClick?: (planetName: string) => void
 }) {
   const groupRef = useRef<THREE.Group>(null)
   const sunRef = useRef<THREE.Mesh>(null)
@@ -3664,7 +3709,6 @@ function SolarSystem({
           systemId={system.id}
           paused={paused}
           phaseOffset={i * Math.PI * 0.7}
-          onPlanetClick={onPlanetClick}
         />
       ))}
 
@@ -3705,41 +3749,29 @@ function SolarSystem({
 }
 
 // =============================================================================
-// ORBITING PLANET with Trail, Moons, Atmosphere, and Click Navigation
+// ORBITING PLANET with Trail, Moons, and Atmosphere
 // =============================================================================
 
 function OrbitingPlanet({
   planet,
   systemId,
   paused,
-  phaseOffset,
-  onPlanetClick
+  phaseOffset
 }: {
   planet: { name: string, color: string, size: number, orbit: number, speed: number, effect?: PlanetEffect, moons?: number }
   systemId: string
   paused: boolean
   phaseOffset: number
-  onPlanetClick?: (planetName: string) => void
 }) {
   const groupRef = useRef<THREE.Group>(null)
   const meshRef = useRef<THREE.Mesh>(null)
   const trailRef = useRef<THREE.Points>(null)
   const atmosphereRef = useRef<THREE.Mesh>(null)
   const [isHovered, setIsHovered] = useState(false)
-  const [clickPulse, setClickPulse] = useState(0)
 
   // Trail positions
   const trailPositions = useMemo(() => new Float32Array(30 * 3), [])
   const trailIndex = useRef(0)
-
-  // Handle planet click
-  const handleClick = useCallback((e: { stopPropagation: () => void }) => {
-    e.stopPropagation()
-    setClickPulse(1)
-    if (onPlanetClick) {
-      onPlanetClick(planet.name)
-    }
-  }, [onPlanetClick, planet.name])
 
   useFrame((state) => {
     if (paused) return
@@ -3773,11 +3805,6 @@ function OrbitingPlanet({
       trailIndex.current++
       trailRef.current.geometry.attributes.position.needsUpdate = true
     }
-
-    // Decay click pulse
-    if (clickPulse > 0) {
-      setClickPulse(prev => Math.max(0, prev - 0.03))
-    }
   })
 
   // Generate moon orbital data
@@ -3810,26 +3837,17 @@ function OrbitingPlanet({
 
       {/* Planet with effects */}
       <group ref={groupRef}>
-        {/* Click pulse ring effect */}
-        {clickPulse > 0 && (
-          <mesh rotation={[Math.PI / 2, 0, 0]}>
-            <ringGeometry args={[planet.size * (2 + (1 - clickPulse) * 3), planet.size * (2.1 + (1 - clickPulse) * 3.2), 32]} />
-            <meshBasicMaterial color="#ffffff" transparent opacity={clickPulse * 0.8} />
-          </mesh>
-        )}
-
         {/* Planet atmosphere glow */}
         <Sphere ref={atmosphereRef} args={[planet.size * 1.3, 16, 16]}>
           <meshBasicMaterial color={planet.color} transparent opacity={isHovered ? 0.35 : 0.15} />
         </Sphere>
 
-        {/* Planet sphere - CLICKABLE */}
+        {/* Planet sphere */}
         <Sphere
           ref={meshRef}
           args={[planet.size, 16, 16]}
           onPointerOver={() => setIsHovered(true)}
           onPointerOut={() => setIsHovered(false)}
-          onClick={handleClick}
         >
           <MeshDistortMaterial
             color={planet.color}
@@ -3863,12 +3881,10 @@ function OrbitingPlanet({
         {/* Hover tooltip */}
         {isHovered && (
           <Html position={[0, planet.size + 0.3, 0]} center>
-            <div className="bg-gray-900/90 border border-gray-700 rounded-lg px-3 py-2 text-center backdrop-blur-sm min-w-[100px]">
+            <div className="bg-gray-900/90 border border-gray-700 rounded-lg px-3 py-2 text-center backdrop-blur-sm min-w-[80px]">
               <div className="text-xs font-bold" style={{ color: planet.color }}>
                 {planet.name}
               </div>
-              <div className="text-[10px] text-gray-400 mt-1">Click to navigate</div>
-              <div className="text-[10px] text-gray-500">{PLANET_ROUTES[planet.name] || '/'}</div>
             </div>
           </Html>
         )}
@@ -4664,36 +4680,206 @@ function FloatingBooks({ position, color, paused }: { position: [number, number,
   )
 }
 
-// ARGUS: Matrix-style data rain (thematic effect)
-function ArgusMatrixRain({ position, color, paused }: { position: [number, number, number], color: string, paused: boolean }) {
-  const [columns, setColumns] = useState<Array<{ x: number, z: number, chars: string[], offset: number }>>([])
+// ARGUS: Comprehensive surveillance system with radar, drones, data streams, and heat maps
+function ArgusSurveillanceSystem({ position, color, paused }: { position: [number, number, number], color: string, paused: boolean }) {
+  const radarRef = useRef<THREE.Group>(null)
+  const dronesRef = useRef<THREE.Group>(null)
+  const dataStreamRef = useRef<THREE.Group>(null)
+  const heatMapRef = useRef<THREE.Points>(null)
+
+  // Generate heat map particles
+  const heatMapGeometry = useMemo(() => {
+    const positions = new Float32Array(200 * 3)
+    const colors = new Float32Array(200 * 3)
+
+    for (let i = 0; i < 200; i++) {
+      const angle = Math.random() * Math.PI * 2
+      const radius = 4 + Math.random() * 6
+      const height = (Math.random() - 0.5) * 8
+
+      positions[i * 3] = Math.cos(angle) * radius
+      positions[i * 3 + 1] = height
+      positions[i * 3 + 2] = Math.sin(angle) * radius
+
+      // Heat map colors: blue (cold) -> green -> yellow -> red (hot)
+      const heat = Math.random()
+      if (heat < 0.25) {
+        colors[i * 3] = 0.1; colors[i * 3 + 1] = 0.4; colors[i * 3 + 2] = 1.0 // Blue
+      } else if (heat < 0.5) {
+        colors[i * 3] = 0.1; colors[i * 3 + 1] = 0.9; colors[i * 3 + 2] = 0.3 // Green
+      } else if (heat < 0.75) {
+        colors[i * 3] = 1.0; colors[i * 3 + 1] = 0.8; colors[i * 3 + 2] = 0.1 // Yellow
+      } else {
+        colors[i * 3] = 1.0; colors[i * 3 + 1] = 0.2; colors[i * 3 + 2] = 0.1 // Red
+      }
+    }
+
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+    return geometry
+  }, [])
+
+  // Generate data stream values
+  const [dataValues, setDataValues] = useState<Array<{ value: string, angle: number, height: number }>>([])
 
   useEffect(() => {
-    const cols = []
-    for (let i = 0; i < 12; i++) {
-      const angle = (i / 12) * Math.PI * 2
-      const r = 8 + Math.random() * 2
-      cols.push({
-        x: Math.cos(angle) * r,
-        z: Math.sin(angle) * r,
-        chars: Array.from({ length: 8 }, () => String.fromCharCode(0x30A0 + Math.random() * 96)),
-        offset: Math.random() * 5
+    const values = []
+    for (let i = 0; i < 16; i++) {
+      values.push({
+        value: (Math.random() * 100).toFixed(1) + '%',
+        angle: (i / 16) * Math.PI * 2,
+        height: Math.random() * 4 - 2
       })
     }
-    setColumns(cols)
+    setDataValues(values)
+
+    // Update data values periodically
+    const interval = setInterval(() => {
+      setDataValues(prev => prev.map(v => ({
+        ...v,
+        value: (Math.random() * 100).toFixed(1) + '%',
+        height: v.height + (Math.random() - 0.5) * 0.5
+      })))
+    }, 2000)
+
+    return () => clearInterval(interval)
   }, [])
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    // Rotating radar beams
+    if (radarRef.current) {
+      radarRef.current.rotation.y = t * 1.5
+    }
+
+    // Orbiting surveillance drones
+    if (dronesRef.current) {
+      dronesRef.current.children.forEach((drone, i) => {
+        const droneAngle = t * (0.5 + i * 0.1) + (i * Math.PI * 2 / 6)
+        const droneRadius = 6 + i * 0.5
+        const bobHeight = Math.sin(t * 2 + i) * 0.5
+        drone.position.x = Math.cos(droneAngle) * droneRadius
+        drone.position.y = bobHeight + i * 0.3
+        drone.position.z = Math.sin(droneAngle) * droneRadius
+        drone.rotation.y = -droneAngle + Math.PI / 2
+      })
+    }
+
+    // Flowing data stream
+    if (dataStreamRef.current) {
+      dataStreamRef.current.rotation.y = t * 0.2
+    }
+
+    // Pulsing heat map
+    if (heatMapRef.current) {
+      const positions = heatMapRef.current.geometry.attributes.position.array as Float32Array
+      for (let i = 0; i < 200; i++) {
+        positions[i * 3 + 1] += Math.sin(t * 2 + i * 0.1) * 0.01
+      }
+      heatMapRef.current.geometry.attributes.position.needsUpdate = true
+    }
+  })
 
   return (
     <group position={position}>
-      {columns.map((col, i) => (
-        <Html key={i} position={[col.x, 2, col.z]} center>
-          <div className="flex flex-col text-[10px] font-mono" style={{ color }}>
-            {col.chars.map((char, j) => (
-              <span key={j} style={{ opacity: 0.3 + (j / col.chars.length) * 0.7 }}>{char}</span>
-            ))}
-          </div>
-        </Html>
-      ))}
+      {/* Scanning Radar Beams */}
+      <group ref={radarRef} position={[0, 0, 0]}>
+        {/* Main radar dish */}
+        <mesh rotation={[Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[0.3, 2, 32]} />
+          <meshBasicMaterial color={color} transparent opacity={0.3} side={THREE.DoubleSide} />
+        </mesh>
+        {/* Radar sweep beam 1 */}
+        <mesh rotation={[Math.PI / 2, 0, 0]}>
+          <circleGeometry args={[8, 32, 0, Math.PI / 6]} />
+          <meshBasicMaterial color={color} transparent opacity={0.4} side={THREE.DoubleSide} />
+        </mesh>
+        {/* Radar sweep beam 2 (opposite side) */}
+        <mesh rotation={[Math.PI / 2, 0, Math.PI]}>
+          <circleGeometry args={[8, 32, 0, Math.PI / 6]} />
+          <meshBasicMaterial color={color} transparent opacity={0.4} side={THREE.DoubleSide} />
+        </mesh>
+        {/* Concentric detection rings */}
+        {[3, 5, 7].map((r, i) => (
+          <mesh key={i} rotation={[Math.PI / 2, 0, 0]}>
+            <ringGeometry args={[r - 0.05, r + 0.05, 64]} />
+            <meshBasicMaterial color={color} transparent opacity={0.2} side={THREE.DoubleSide} />
+          </mesh>
+        ))}
+      </group>
+
+      {/* Surveillance Drones */}
+      <group ref={dronesRef}>
+        {Array.from({ length: 6 }).map((_, i) => (
+          <group key={i}>
+            {/* Drone body - octahedron shape */}
+            <mesh>
+              <octahedronGeometry args={[0.25, 0]} />
+              <meshBasicMaterial color={i % 2 === 0 ? '#22d3ee' : '#06b6d4'} wireframe />
+            </mesh>
+            {/* Drone scanning beam */}
+            <mesh position={[0, -1.5, 0]}>
+              <coneGeometry args={[0.8, 3, 8, 1, true]} />
+              <meshBasicMaterial color={color} transparent opacity={0.15} side={THREE.DoubleSide} />
+            </mesh>
+            {/* Drone core light */}
+            <mesh>
+              <sphereGeometry args={[0.08, 8, 8]} />
+              <meshBasicMaterial color="#ffffff" />
+            </mesh>
+          </group>
+        ))}
+      </group>
+
+      {/* Data Streams */}
+      <group ref={dataStreamRef}>
+        {dataValues.map((data, i) => {
+          const x = Math.cos(data.angle) * 5
+          const z = Math.sin(data.angle) * 5
+          return (
+            <Html key={i} position={[x, data.height, z]} center>
+              <div
+                className="font-mono text-xs px-1 py-0.5 rounded bg-black/50 border"
+                style={{
+                  color: parseFloat(data.value) > 75 ? '#ef4444' : parseFloat(data.value) > 50 ? '#f59e0b' : '#22c55e',
+                  borderColor: color,
+                  whiteSpace: 'nowrap'
+                }}
+              >
+                γ {data.value}
+              </div>
+            </Html>
+          )
+        })}
+      </group>
+
+      {/* Heat Map Particles */}
+      <points ref={heatMapRef} geometry={heatMapGeometry}>
+        <pointsMaterial
+          size={0.15}
+          transparent
+          opacity={0.7}
+          vertexColors
+          blending={THREE.AdditiveBlending}
+        />
+      </points>
+
+      {/* Central scanning eye */}
+      <group position={[0, 3, 0]}>
+        <Sphere args={[0.6, 32, 32]}>
+          <meshBasicMaterial color={color} transparent opacity={0.3} />
+        </Sphere>
+        <Sphere args={[0.3, 16, 16]}>
+          <meshBasicMaterial color="#ffffff" transparent opacity={0.6} />
+        </Sphere>
+        <mesh>
+          <ringGeometry args={[0.7, 1.0, 32]} />
+          <meshBasicMaterial color={color} transparent opacity={0.4} side={THREE.DoubleSide} />
+        </mesh>
+      </group>
     </group>
   )
 }
@@ -4877,17 +5063,621 @@ function SolarBurstEffect({ position, active, color }: { position: [number, numb
 }
 
 // =============================================================================
+// NEW COSMIC WOW EFFECTS
+// =============================================================================
+
+// Pulsar Beacons - rotating lighthouse beams from distant pulsars
+function PulsarBeacons({ paused }: { paused: boolean }) {
+  const pulsarsRef = useRef<THREE.Group>(null)
+
+  const pulsarData = useMemo(() => [
+    { position: [-35, 20, -40] as [number, number, number], color: '#06b6d4', speed: 3 },
+    { position: [40, -15, -45] as [number, number, number], color: '#a855f7', speed: 2.5 },
+    { position: [0, 30, -50] as [number, number, number], color: '#f59e0b', speed: 4 },
+  ], [])
+
+  useFrame((state) => {
+    if (paused || !pulsarsRef.current) return
+    const t = state.clock.elapsedTime
+
+    pulsarsRef.current.children.forEach((pulsar, i) => {
+      const beams = pulsar.children.filter(c => c.type === 'Mesh')
+      beams.forEach((beam, j) => {
+        beam.rotation.z = t * pulsarData[i].speed + j * Math.PI
+      })
+    })
+  })
+
+  return (
+    <group ref={pulsarsRef}>
+      {pulsarData.map((pulsar, i) => (
+        <group key={i} position={pulsar.position}>
+          {/* Pulsar core */}
+          <mesh>
+            <sphereGeometry args={[0.3, 16, 16]} />
+            <meshBasicMaterial color="#ffffff" />
+          </mesh>
+          {/* Rotating beams */}
+          {[0, 1].map(j => (
+            <mesh key={j}>
+              <planeGeometry args={[20, 0.3]} />
+              <meshBasicMaterial color={pulsar.color} transparent opacity={0.4} side={THREE.DoubleSide} />
+            </mesh>
+          ))}
+          {/* Glow */}
+          <Sphere args={[0.8, 16, 16]}>
+            <meshBasicMaterial color={pulsar.color} transparent opacity={0.2} />
+          </Sphere>
+        </group>
+      ))}
+    </group>
+  )
+}
+
+// Supernova Bursts - occasional explosive star deaths
+function SupernovaBursts({ paused }: { paused: boolean }) {
+  const [bursts, setBursts] = useState<Array<{ id: number, position: THREE.Vector3, startTime: number }>>([])
+
+  useEffect(() => {
+    if (paused) return
+    const interval = setInterval(() => {
+      setBursts(prev => {
+        const now = Date.now()
+        // Remove old bursts
+        const filtered = prev.filter(b => now - b.startTime < 3000)
+        // Occasionally add a new one
+        if (Math.random() < 0.1 && filtered.length < 2) {
+          return [...filtered, {
+            id: now,
+            position: new THREE.Vector3(
+              (Math.random() - 0.5) * 60,
+              (Math.random() - 0.5) * 40,
+              -30 - Math.random() * 30
+            ),
+            startTime: now
+          }]
+        }
+        return filtered
+      })
+    }, 2000)
+    return () => clearInterval(interval)
+  }, [paused])
+
+  return (
+    <group>
+      {bursts.map(burst => (
+        <SupernovaEffect key={burst.id} position={burst.position} startTime={burst.startTime} />
+      ))}
+    </group>
+  )
+}
+
+function SupernovaEffect({ position, startTime }: { position: THREE.Vector3, startTime: number }) {
+  const groupRef = useRef<THREE.Group>(null)
+  const [scale, setScale] = useState(0.1)
+  const [opacity, setOpacity] = useState(1)
+
+  useFrame(() => {
+    const elapsed = (Date.now() - startTime) / 1000
+    const progress = Math.min(elapsed / 3, 1)
+    setScale(progress * 8)
+    setOpacity(1 - progress)
+  })
+
+  return (
+    <group ref={groupRef} position={position}>
+      <Sphere args={[scale, 32, 32]}>
+        <meshBasicMaterial color="#ffffff" transparent opacity={opacity} />
+      </Sphere>
+      <Sphere args={[scale * 1.2, 32, 32]}>
+        <meshBasicMaterial color="#fbbf24" transparent opacity={opacity * 0.5} />
+      </Sphere>
+      <Sphere args={[scale * 1.5, 32, 32]}>
+        <meshBasicMaterial color="#ef4444" transparent opacity={opacity * 0.3} />
+      </Sphere>
+    </group>
+  )
+}
+
+// Gravitational Waves - rippling spacetime distortions
+function GravitationalWaves({ paused }: { paused: boolean }) {
+  const wavesRef = useRef<THREE.Group>(null)
+
+  useFrame((state) => {
+    if (paused || !wavesRef.current) return
+    const t = state.clock.elapsedTime
+
+    wavesRef.current.children.forEach((wave, i) => {
+      const scale = 1 + Math.sin(t * 0.5 - i * 0.3) * 0.3
+      wave.scale.setScalar(scale)
+      const mesh = wave as THREE.Mesh
+      if (mesh.material) {
+        (mesh.material as THREE.MeshBasicMaterial).opacity = 0.1 + Math.sin(t - i * 0.5) * 0.05
+      }
+    })
+  })
+
+  return (
+    <group ref={wavesRef} position={[0, 0, -25]}>
+      {Array.from({ length: 5 }).map((_, i) => (
+        <mesh key={i} rotation={[Math.PI / 2, 0, 0]}>
+          <ringGeometry args={[10 + i * 5, 10.5 + i * 5, 64]} />
+          <meshBasicMaterial color="#8b5cf6" transparent opacity={0.08 - i * 0.01} side={THREE.DoubleSide} />
+        </mesh>
+      ))}
+    </group>
+  )
+}
+
+// Cosmic Dust Lanes - flowing particle streams
+function CosmicDustLanes({ paused }: { paused: boolean }) {
+  const dustRef = useRef<THREE.Points>(null)
+
+  const geometry = useMemo(() => {
+    const positions = new Float32Array(500 * 3)
+    const colors = new Float32Array(500 * 3)
+
+    for (let i = 0; i < 500; i++) {
+      const angle = (i / 500) * Math.PI * 4
+      const radius = 15 + Math.sin(angle * 2) * 10
+      positions[i * 3] = Math.cos(angle) * radius
+      positions[i * 3 + 1] = Math.sin(angle * 3) * 5
+      positions[i * 3 + 2] = Math.sin(angle) * radius - 25
+
+      const brightness = 0.3 + Math.random() * 0.7
+      colors[i * 3] = 0.6 * brightness
+      colors[i * 3 + 1] = 0.4 * brightness
+      colors[i * 3 + 2] = 0.2 * brightness
+    }
+
+    const geom = new THREE.BufferGeometry()
+    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    geom.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+    return geom
+  }, [])
+
+  useFrame((state) => {
+    if (paused || !dustRef.current) return
+    dustRef.current.rotation.y = state.clock.elapsedTime * 0.02
+    dustRef.current.rotation.z = Math.sin(state.clock.elapsedTime * 0.1) * 0.1
+  })
+
+  return (
+    <points ref={dustRef} geometry={geometry}>
+      <pointsMaterial size={0.1} transparent opacity={0.6} vertexColors blending={THREE.AdditiveBlending} />
+    </points>
+  )
+}
+
+// Meteor Showers - streaking particles across the scene
+function MeteorShowers({ paused }: { paused: boolean }) {
+  const [meteors, setMeteors] = useState<Array<{ id: number, start: THREE.Vector3, velocity: THREE.Vector3 }>>([])
+
+  useEffect(() => {
+    if (paused) return
+    const interval = setInterval(() => {
+      setMeteors(prev => {
+        const now = Date.now()
+        if (prev.length < 8 && Math.random() < 0.3) {
+          return [...prev, {
+            id: now,
+            start: new THREE.Vector3(
+              (Math.random() - 0.5) * 80,
+              20 + Math.random() * 20,
+              -20 - Math.random() * 30
+            ),
+            velocity: new THREE.Vector3(
+              (Math.random() - 0.5) * 0.5,
+              -0.8 - Math.random() * 0.4,
+              (Math.random() - 0.5) * 0.3
+            )
+          }]
+        }
+        return prev
+      })
+    }, 300)
+    return () => clearInterval(interval)
+  }, [paused])
+
+  return (
+    <group>
+      {meteors.map(meteor => (
+        <MeteorTrail
+          key={meteor.id}
+          startPos={meteor.start}
+          velocity={meteor.velocity}
+          onComplete={() => setMeteors(prev => prev.filter(m => m.id !== meteor.id))}
+          paused={paused}
+        />
+      ))}
+    </group>
+  )
+}
+
+function MeteorTrail({ startPos, velocity, onComplete, paused }: {
+  startPos: THREE.Vector3
+  velocity: THREE.Vector3
+  onComplete: () => void
+  paused: boolean
+}) {
+  const posRef = useRef(startPos.clone())
+  const tailRef = useRef(startPos.clone())
+  const lifeRef = useRef(0)
+  const [points, setPoints] = useState<[THREE.Vector3, THREE.Vector3]>([
+    startPos.clone(),
+    startPos.clone()
+  ])
+
+  useFrame((_, delta) => {
+    if (paused) return
+    posRef.current.add(velocity.clone().multiplyScalar(delta * 30))
+    tailRef.current.copy(posRef.current).sub(velocity.clone().multiplyScalar(3))
+    lifeRef.current += delta
+
+    setPoints([posRef.current.clone(), tailRef.current.clone()])
+
+    if (lifeRef.current > 2 || posRef.current.y < -30) {
+      onComplete()
+    }
+  })
+
+  return (
+    <Line
+      points={points}
+      color="#ffffff"
+      lineWidth={2}
+      transparent
+      opacity={0.8}
+    />
+  )
+}
+
+// Solar Eclipses - moons passing in front of suns
+function SolarEclipses({ paused }: { paused: boolean }) {
+  const eclipseRef = useRef<THREE.Group>(null)
+
+  useFrame((state) => {
+    if (paused || !eclipseRef.current) return
+    const t = state.clock.elapsedTime
+
+    eclipseRef.current.children.forEach((eclipse, i) => {
+      const moonMesh = eclipse.children[0]
+      const angle = t * 0.1 + i * Math.PI
+      moonMesh.position.x = Math.cos(angle) * 3
+      moonMesh.position.y = Math.sin(angle) * 0.5
+    })
+  })
+
+  return (
+    <group ref={eclipseRef}>
+      {SOLAR_SYSTEMS.slice(0, 3).map((system, i) => (
+        <group key={i} position={system.position}>
+          {/* Eclipse moon */}
+          <mesh>
+            <sphereGeometry args={[0.5, 16, 16]} />
+            <meshBasicMaterial color="#1a1a2e" />
+          </mesh>
+          {/* Corona effect when aligned */}
+          <mesh>
+            <ringGeometry args={[0.6, 1.2, 32]} />
+            <meshBasicMaterial color={system.sunColor} transparent opacity={0.3} side={THREE.DoubleSide} />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  )
+}
+
+// Planet Alignment Beams - energy beams when planets align
+function PlanetAlignmentBeams({ paused }: { paused: boolean }) {
+  const beamsRef = useRef<THREE.Group>(null)
+  const [activeBeam, setActiveBeam] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (paused) return
+    const interval = setInterval(() => {
+      if (Math.random() < 0.2) {
+        setActiveBeam(Math.floor(Math.random() * SOLAR_SYSTEMS.length))
+        setTimeout(() => setActiveBeam(null), 2000)
+      }
+    }, 5000)
+    return () => clearInterval(interval)
+  }, [paused])
+
+  useFrame((state) => {
+    if (paused || !beamsRef.current) return
+    beamsRef.current.rotation.y = state.clock.elapsedTime * 0.05
+  })
+
+  return (
+    <group ref={beamsRef}>
+      {activeBeam !== null && SOLAR_SYSTEMS[activeBeam] && (
+        <group position={SOLAR_SYSTEMS[activeBeam].position}>
+          <mesh rotation={[0, 0, Math.PI / 2]}>
+            <cylinderGeometry args={[0.05, 0.05, 15, 8]} />
+            <meshBasicMaterial color={SOLAR_SYSTEMS[activeBeam].sunColor} transparent opacity={0.6} />
+          </mesh>
+          {/* Alignment glow */}
+          <Sphere args={[1.5, 16, 16]}>
+            <meshBasicMaterial color="#ffffff" transparent opacity={0.2} />
+          </Sphere>
+        </group>
+      )}
+    </group>
+  )
+}
+
+// Comet Swarms - groups of comets with tails
+function CometSwarms({ paused }: { paused: boolean }) {
+  const swarmsRef = useRef<THREE.Group>(null)
+
+  const comets = useMemo(() =>
+    Array.from({ length: 12 }).map((_, i) => ({
+      orbitRadius: 30 + Math.random() * 20,
+      orbitSpeed: 0.1 + Math.random() * 0.15,
+      orbitPhase: Math.random() * Math.PI * 2,
+      verticalOffset: (Math.random() - 0.5) * 20,
+      size: 0.1 + Math.random() * 0.15
+    }))
+  , [])
+
+  useFrame((state) => {
+    if (paused || !swarmsRef.current) return
+    const t = state.clock.elapsedTime
+
+    swarmsRef.current.children.forEach((comet, i) => {
+      const { orbitRadius, orbitSpeed, orbitPhase, verticalOffset } = comets[i]
+      const angle = t * orbitSpeed + orbitPhase
+      comet.position.x = Math.cos(angle) * orbitRadius
+      comet.position.y = verticalOffset + Math.sin(t * 0.5 + i) * 2
+      comet.position.z = Math.sin(angle) * orbitRadius - 25
+      comet.lookAt(comet.position.clone().add(new THREE.Vector3(-Math.sin(angle), 0, Math.cos(angle))))
+    })
+  })
+
+  return (
+    <group ref={swarmsRef}>
+      {comets.map((comet, i) => (
+        <group key={i}>
+          {/* Comet head */}
+          <mesh>
+            <sphereGeometry args={[comet.size, 8, 8]} />
+            <meshBasicMaterial color="#e0f2fe" />
+          </mesh>
+          {/* Comet tail */}
+          <mesh position={[comet.size * 5, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+            <coneGeometry args={[comet.size * 0.3, comet.size * 10, 8]} />
+            <meshBasicMaterial color="#60a5fa" transparent opacity={0.4} />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  )
+}
+
+// Orbital Rings around systems - Saturn-like rings
+function OrbitalRings({ paused }: { paused: boolean }) {
+  const ringsRef = useRef<THREE.Group>(null)
+
+  useFrame((state) => {
+    if (paused || !ringsRef.current) return
+    const t = state.clock.elapsedTime
+
+    ringsRef.current.children.forEach((ringGroup, i) => {
+      ringGroup.rotation.x = Math.PI / 3 + Math.sin(t * 0.2 + i) * 0.1
+      ringGroup.rotation.y = t * 0.05
+    })
+  })
+
+  return (
+    <group ref={ringsRef}>
+      {SOLAR_SYSTEMS.map((system, i) => (
+        <group key={i} position={system.position}>
+          {/* Inner ring */}
+          <mesh rotation={[Math.PI / 3, 0, 0]}>
+            <ringGeometry args={[5, 6, 64]} />
+            <meshBasicMaterial color={system.sunColor} transparent opacity={0.15} side={THREE.DoubleSide} />
+          </mesh>
+          {/* Outer ring */}
+          <mesh rotation={[Math.PI / 3, 0, 0]}>
+            <ringGeometry args={[6.5, 7, 64]} />
+            <meshBasicMaterial color={system.glowColor} transparent opacity={0.1} side={THREE.DoubleSide} />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  )
+}
+
+// Dyson Sphere Fragments - partial megastructures
+function DysonSphereFragments({ paused }: { paused: boolean }) {
+  const fragmentsRef = useRef<THREE.Group>(null)
+
+  useFrame((state) => {
+    if (paused || !fragmentsRef.current) return
+    fragmentsRef.current.rotation.y = state.clock.elapsedTime * 0.02
+  })
+
+  return (
+    <group ref={fragmentsRef} position={[-30, 5, -35]}>
+      {/* Partial sphere structure */}
+      {Array.from({ length: 8 }).map((_, i) => {
+        const angle = (i / 8) * Math.PI * 2
+        const radius = 5
+        return (
+          <mesh key={i} position={[Math.cos(angle) * radius, 0, Math.sin(angle) * radius]} rotation={[0, -angle, 0]}>
+            <planeGeometry args={[2, 3]} />
+            <meshBasicMaterial color="#f59e0b" transparent opacity={0.3} side={THREE.DoubleSide} wireframe />
+          </mesh>
+        )
+      })}
+      {/* Central star */}
+      <Sphere args={[1, 16, 16]}>
+        <meshBasicMaterial color="#fbbf24" />
+      </Sphere>
+      <Sphere args={[1.5, 16, 16]}>
+        <meshBasicMaterial color="#fbbf24" transparent opacity={0.3} />
+      </Sphere>
+    </group>
+  )
+}
+
+// Satellite Constellations - orbiting artificial satellites
+function SatelliteConstellations({ paused }: { paused: boolean }) {
+  const satellitesRef = useRef<THREE.Group>(null)
+
+  const satellites = useMemo(() =>
+    Array.from({ length: 20 }).map((_, i) => ({
+      orbitRadius: 12 + (i % 3) * 4,
+      orbitSpeed: 0.3 + Math.random() * 0.2,
+      orbitPhase: (i / 20) * Math.PI * 2,
+      inclination: (Math.random() - 0.5) * 0.5
+    }))
+  , [])
+
+  useFrame((state) => {
+    if (paused || !satellitesRef.current) return
+    const t = state.clock.elapsedTime
+
+    satellitesRef.current.children.forEach((sat, i) => {
+      const { orbitRadius, orbitSpeed, orbitPhase, inclination } = satellites[i]
+      const angle = t * orbitSpeed + orbitPhase
+      sat.position.x = Math.cos(angle) * orbitRadius
+      sat.position.y = Math.sin(angle * 2) * inclination * orbitRadius
+      sat.position.z = Math.sin(angle) * orbitRadius - 15
+      sat.rotation.y = angle
+    })
+  })
+
+  return (
+    <group ref={satellitesRef}>
+      {satellites.map((_, i) => (
+        <group key={i}>
+          {/* Satellite body */}
+          <mesh>
+            <boxGeometry args={[0.08, 0.08, 0.12]} />
+            <meshBasicMaterial color="#9ca3af" />
+          </mesh>
+          {/* Solar panels */}
+          <mesh position={[0.15, 0, 0]}>
+            <planeGeometry args={[0.2, 0.1]} />
+            <meshBasicMaterial color="#3b82f6" side={THREE.DoubleSide} />
+          </mesh>
+          <mesh position={[-0.15, 0, 0]}>
+            <planeGeometry args={[0.2, 0.1]} />
+            <meshBasicMaterial color="#3b82f6" side={THREE.DoubleSide} />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  )
+}
+
+// God Rays from Suns - volumetric light beams
+function GodRaysFromSuns({ paused }: { paused: boolean }) {
+  const raysRef = useRef<THREE.Group>(null)
+
+  useFrame((state) => {
+    if (paused || !raysRef.current) return
+    const t = state.clock.elapsedTime
+
+    raysRef.current.children.forEach((rayGroup, i) => {
+      rayGroup.children.forEach((ray, j) => {
+        const mesh = ray as THREE.Mesh
+        if (mesh.material) {
+          (mesh.material as THREE.MeshBasicMaterial).opacity = 0.1 + Math.sin(t * 2 + i + j * 0.5) * 0.05
+        }
+      })
+      rayGroup.rotation.z = t * 0.02
+    })
+  })
+
+  return (
+    <group ref={raysRef}>
+      {SOLAR_SYSTEMS.map((system, i) => (
+        <group key={i} position={system.position}>
+          {Array.from({ length: 6 }).map((_, j) => {
+            const angle = (j / 6) * Math.PI * 2
+            return (
+              <mesh key={j} rotation={[0, 0, angle]}>
+                <planeGeometry args={[0.3, 12]} />
+                <meshBasicMaterial
+                  color={system.sunColor}
+                  transparent
+                  opacity={0.1}
+                  side={THREE.DoubleSide}
+                  blending={THREE.AdditiveBlending}
+                />
+              </mesh>
+            )
+          })}
+        </group>
+      ))}
+    </group>
+  )
+}
+
+// Plasma Storms - chaotic energy discharges
+function PlasmaStorms({ paused }: { paused: boolean }) {
+  const stormsRef = useRef<THREE.Group>(null)
+  const [bolts, setBolts] = useState<Array<{ id: number, points: THREE.Vector3[] }>>([])
+
+  useEffect(() => {
+    if (paused) return
+    const interval = setInterval(() => {
+      setBolts(prev => {
+        const now = Date.now()
+        const filtered = prev.filter(b => now - b.id < 500)
+        if (filtered.length < 3 && Math.random() < 0.3) {
+          const start = new THREE.Vector3(
+            (Math.random() - 0.5) * 40,
+            (Math.random() - 0.5) * 20 + 10,
+            -20 - Math.random() * 20
+          )
+          const points = [start]
+          let current = start.clone()
+          for (let i = 0; i < 5; i++) {
+            current = current.clone().add(new THREE.Vector3(
+              (Math.random() - 0.5) * 4,
+              -2 - Math.random() * 3,
+              (Math.random() - 0.5) * 2
+            ))
+            points.push(current)
+          }
+          return [...filtered, { id: now, points }]
+        }
+        return filtered
+      })
+    }, 200)
+    return () => clearInterval(interval)
+  }, [paused])
+
+  return (
+    <group ref={stormsRef}>
+      {bolts.map(bolt => (
+        <Line
+          key={bolt.id}
+          points={bolt.points}
+          color="#a855f7"
+          lineWidth={2}
+          transparent
+          opacity={0.8}
+        />
+      ))}
+    </group>
+  )
+}
+
+// =============================================================================
 // ALL SOLAR SYSTEMS CONTAINER
 // =============================================================================
 
 function SolarSystemsContainer({
   paused,
-  onSystemClick,
-  onPlanetClick
+  onSystemClick
 }: {
   paused: boolean
   onSystemClick?: (systemId: string, position: [number, number, number]) => void
-  onPlanetClick?: (planetName: string) => void
 }) {
   const handlePulseToSystem = useCallback((targetId: string) => {
     // This could trigger effects on the target system
@@ -4904,7 +5694,6 @@ function SolarSystemsContainer({
           paused={paused}
           onPulseToSystem={handlePulseToSystem}
           onSystemClick={onSystemClick}
-          onPlanetClick={onPlanetClick}
         />
       ))}
 
@@ -4961,8 +5750,8 @@ function SolarSystemsContainer({
         paused={paused}
       />
 
-      {/* ARGUS - Matrix Rain */}
-      <ArgusMatrixRain
+      {/* ARGUS - Surveillance System */}
+      <ArgusSurveillanceSystem
         position={SOLAR_SYSTEMS.find(s => s.id === 'argus')?.position || [24, 5, -18]}
         color="#22d3ee"
         paused={paused}
@@ -4988,6 +5777,21 @@ function SolarSystemsContainer({
         color="#10b981"
         paused={paused}
       />
+
+      {/* === NEW COSMIC WOW EFFECTS === */}
+      <PulsarBeacons paused={paused} />
+      <SupernovaBursts paused={paused} />
+      <GravitationalWaves paused={paused} />
+      <CosmicDustLanes paused={paused} />
+      <MeteorShowers paused={paused} />
+      <SolarEclipses paused={paused} />
+      <PlanetAlignmentBeams paused={paused} />
+      <CometSwarms paused={paused} />
+      <OrbitalRings paused={paused} />
+      <DysonSphereFragments paused={paused} />
+      <SatelliteConstellations paused={paused} />
+      <GodRaysFromSuns paused={paused} />
+      <PlasmaStorms paused={paused} />
     </group>
   )
 }
@@ -7179,7 +7983,6 @@ function AmbientParticles({ performanceMode, paused = false }: { performanceMode
 interface SceneProps {
   botStatus: BotStatus
   onNodeClick?: (id: string) => void
-  onPlanetClick?: (planetName: string) => void
   gexValue?: number
   vixValue?: number
   spotPrice?: number
@@ -7204,7 +8007,6 @@ interface SceneProps {
 function Scene({
   botStatus,
   onNodeClick,
-  onPlanetClick,
   gexValue = 0,
   vixValue = 15,
   spotPrice,
@@ -7334,7 +8136,6 @@ function Scene({
       <ShootingStars paused={paused} />
       <SolarFlares vixValue={vixValue} paused={paused} />
       <AuroraBorealis paused={paused} />
-      <BlackHoleWarp paused={paused} />
       <HolographicTickerTape stockPrices={stockPrices} />
       <RocketLaunches botStatus={botStatus} />
       <SatelliteOrbiters />
@@ -7353,7 +8154,7 @@ function Scene({
       <NeuralPathways paused={paused} />
 
       {/* Solar Systems with Neural Synapse Connections */}
-      <SolarSystemsContainer paused={paused} onSystemClick={handleSolarSystemClick} onPlanetClick={onPlanetClick} />
+      <SolarSystemsContainer paused={paused} onSystemClick={handleSolarSystemClick} />
 
       {/* WOW FACTOR FEATURES */}
       {/* VIX Storm Mode - chaos when VIX > 25 */}
@@ -7367,9 +8168,6 @@ function Scene({
 
       {/* News Comet Stream - headlines flying by */}
       <NewsCometStream paused={paused} />
-
-      {/* Gravitational Lensing Black Hole */}
-      <GravitationalLensing position={[15, -5, -18]} paused={paused} />
 
       {/* Bot nodes */}
       {BOT_NODES.map((node) => (
@@ -7683,15 +8481,6 @@ export default function Nexus3D({
     setCurrentSystem(systemId === 'home' ? null : systemId)
   }, [])
 
-  // Handler to navigate when clicking a planet
-  const handlePlanetClick = useCallback((planetName: string) => {
-    const route = PLANET_ROUTES[planetName]
-    if (route && onNodeClick) {
-      // Use the route path (strip the leading /)
-      onNodeClick(route)
-    }
-  }, [onNodeClick])
-
   // Fetch real-time stock prices
   const { prices: stockPrices, isLive: stockPricesLive } = useStockPrices()
 
@@ -7848,7 +8637,6 @@ export default function Nexus3D({
             <Scene
               botStatus={botStatus}
               onNodeClick={onNodeClick}
-              onPlanetClick={handlePlanetClick}
               gexValue={gexValue}
               vixValue={vixValue}
               spotPrice={spotPrice}
