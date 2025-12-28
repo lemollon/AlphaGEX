@@ -198,9 +198,9 @@ export default function NexusPage() {
             {/* Right - Close */}
             <button
               onClick={() => router.push('/')}
-              className="pointer-events-auto text-text-muted hover:text-text-primary transition-colors"
+              className="pointer-events-auto text-text-muted hover:text-text-primary transition-colors mr-14 bg-black/50 px-3 py-1.5 rounded-lg border border-gray-700/50 hover:border-gray-500"
             >
-              <span className="text-xs">ESC to exit</span>
+              <span className="text-xs font-medium">ESC to exit</span>
             </button>
           </div>
         </div>
