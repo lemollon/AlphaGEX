@@ -1085,6 +1085,21 @@ const SOLAR_SYSTEMS = [
       { name: 'Patterns', color: '#facc15', size: 0.14, orbit: 3.8, speed: 0.35, effect: 'pulse' as const, moons: 3 },
     ]
   },
+  {
+    id: 'hyperion',
+    name: 'HYPERION',
+    subtitle: 'Mathematical Titan',
+    route: '/probability',
+    position: [-12, 18, -28] as [number, number, number],  // Upper left, far back
+    sunColor: '#6366f1',  // Indigo - mathematical elegance
+    glowColor: '#818cf8',
+    flareType: 'fractal' as const,  // Fractal geometric patterns
+    planets: [
+      { name: 'Fibonacci', color: '#a855f7', size: 0.22, orbit: 2.2, speed: 0.618, effect: 'spiral' as const, moons: 1 },  // Golden ratio speed
+      { name: 'Euler', color: '#06b6d4', size: 0.17, orbit: 3.14, speed: 0.5, effect: 'rings' as const, moons: 2 },  // Pi orbit
+      { name: 'Gauss', color: '#10b981', size: 0.14, orbit: 4.0, speed: 0.3, effect: 'glow' as const, moons: 0 },
+    ]
+  },
 ]
 
 // =============================================================================
@@ -2335,7 +2350,7 @@ function NebulaStorm({ vixValue = 15, paused }: { vixValue?: number, paused: boo
 // SUN FLARE EFFECTS - Unique flare types for each solar system
 // =============================================================================
 
-type FlareType = 'wisdom' | 'pulse' | 'mystic' | 'eruption' | 'network' | 'radiant'
+type FlareType = 'wisdom' | 'pulse' | 'mystic' | 'eruption' | 'network' | 'radiant' | 'fractal'
 
 function SunFlareEffect({ flareType, color, paused }: { flareType: FlareType, color: string, paused: boolean }) {
   const groupRef = useRef<THREE.Group>(null)
@@ -2615,6 +2630,86 @@ function SunFlareEffect({ flareType, color, paused }: { flareType: FlareType, co
     )
   }
 
+  // Fractal: Mathematical geometric patterns (for HYPERION)
+  const FractalFlare = () => {
+    const fractalRef = useRef<THREE.Group>(null)
+    const goldenRatio = 1.618033988749
+
+    useFrame((state) => {
+      if (paused || !fractalRef.current) return
+      const t = state.clock.elapsedTime
+
+      // Rotate the whole structure slowly
+      fractalRef.current.rotation.z = t * 0.05
+      fractalRef.current.rotation.y = Math.sin(t * 0.1) * 0.1
+
+      // Animate individual elements
+      fractalRef.current.children.forEach((child, i) => {
+        if (child instanceof THREE.Mesh) {
+          child.rotation.z = t * (0.1 + i * 0.02)
+          const scale = 1 + Math.sin(t * goldenRatio + i * 0.618) * 0.15
+          child.scale.setScalar(scale)
+        }
+      })
+    })
+
+    return (
+      <group ref={fractalRef}>
+        {/* Golden ratio spiral arms */}
+        {Array.from({ length: 8 }).map((_, i) => {
+          const angle = (i / 8) * Math.PI * 2
+          const armLength = 1.5 + (i % 3) * 0.3
+          return (
+            <group key={i} rotation={[0, 0, angle]}>
+              {/* Fibonacci spiral segment */}
+              <mesh position={[armLength / 2, 0, 0]}>
+                <planeGeometry args={[armLength, 0.06]} />
+                <meshBasicMaterial color={color} transparent opacity={0.5} side={THREE.DoubleSide} />
+              </mesh>
+              {/* Node points at Fibonacci positions */}
+              {[0.5, 0.8, 1.3].map((pos, j) => (
+                <Sphere key={j} args={[0.04, 8, 8]} position={[pos * armLength / 1.3, 0, 0]}>
+                  <meshBasicMaterial color="#ffffff" transparent opacity={0.8} />
+                </Sphere>
+              ))}
+            </group>
+          )
+        })}
+
+        {/* Concentric geometric rings at golden ratio intervals */}
+        {[1, goldenRatio, goldenRatio * goldenRatio].map((r, i) => (
+          <mesh key={i} rotation={[Math.PI / 2, 0, 0]}>
+            <torusGeometry args={[r * 0.6, 0.015, 6, 32]} />
+            <meshBasicMaterial color={color} transparent opacity={0.4 - i * 0.1} />
+          </mesh>
+        ))}
+
+        {/* Hexagonal sacred geometry pattern */}
+        {Array.from({ length: 6 }).map((_, i) => {
+          const angle = (i / 6) * Math.PI * 2
+          const r = 1.2
+          return (
+            <mesh key={`hex-${i}`} position={[Math.cos(angle) * r, Math.sin(angle) * r, 0]}>
+              <circleGeometry args={[0.08, 6]} />
+              <meshBasicMaterial color="#ffffff" transparent opacity={0.4} side={THREE.DoubleSide} />
+            </mesh>
+          )
+        })}
+
+        {/* Central Fibonacci spiral indicator */}
+        <mesh rotation={[Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[0.3, 0.03, 8, 32]} />
+          <meshBasicMaterial color="#ffffff" transparent opacity={0.6} />
+        </mesh>
+
+        {/* Mathematical constant markers */}
+        <Sphere args={[0.06, 8, 8]} position={[0, 0, 0]}>
+          <meshBasicMaterial color="#ffffff" />
+        </Sphere>
+      </group>
+    )
+  }
+
   return (
     <group ref={groupRef}>
       {flareType === 'wisdom' && <WisdomFlare />}
@@ -2623,6 +2718,7 @@ function SunFlareEffect({ flareType, color, paused }: { flareType: FlareType, co
       {flareType === 'eruption' && <EruptionFlare />}
       {flareType === 'network' && <NetworkFlare />}
       {flareType === 'radiant' && <RadiantFlare />}
+      {flareType === 'fractal' && <FractalFlare />}
     </group>
   )
 }
@@ -2908,6 +3004,8 @@ function SystemAmbientEffects({
       return <SystemsEffects color={color} sunColor={sunColor} paused={paused} />
     case 'apollo':
       return <ApolloEffects color={color} sunColor={sunColor} paused={paused} />
+    case 'hyperion':
+      return <HyperionEffects color={color} sunColor={sunColor} paused={paused} />
     default:
       return null
   }
@@ -3824,6 +3922,322 @@ function ApolloEffects({ color, sunColor, paused }: { color: string, sunColor: s
       </Sphere>
       <Sphere args={[2.5, 32, 32]}>
         <meshBasicMaterial color={color} transparent opacity={0.08} />
+      </Sphere>
+    </group>
+  )
+}
+
+// HYPERION - Mathematical Titan with Fibonacci spirals, fractals, and equations
+function HyperionEffects({ color, sunColor, paused }: { color: string, sunColor: string, paused: boolean }) {
+  const groupRef = useRef<THREE.Group>(null)
+  const fibonacciRef = useRef<THREE.Group>(null)
+  const equationsRef = useRef<THREE.Group>(null)
+  const platonicRef = useRef<THREE.Group>(null)
+  const waveRef = useRef<THREE.Points>(null)
+  const matrixRef = useRef<THREE.Group>(null)
+
+  // Mathematical constants
+  const PHI = 1.618033988749  // Golden ratio
+  const PI = Math.PI
+  const E = 2.718281828459
+
+  // Mathematical symbols and equations
+  const mathSymbols = useMemo(() => ['π', 'φ', 'e', '∑', '∫', '∞', '√', 'Δ', 'θ', 'λ', '∂', '∇'], [])
+  const equations = useMemo(() => ['E=mc²', 'F=ma', 'a²+b²=c²', 'eiπ+1=0', '∫f(x)dx', 'Σn=∞'], [])
+
+  // Fibonacci sequence for spiral
+  const fibonacciSequence = useMemo(() => [1, 1, 2, 3, 5, 8, 13, 21, 34], [])
+
+  // Generate sine wave particles
+  const waveGeometry = useMemo(() => {
+    const count = 200
+    const positions = new Float32Array(count * 3)
+    const colors = new Float32Array(count * 3)
+
+    for (let i = 0; i < count; i++) {
+      const t = (i / count) * PI * 4
+      const x = (i / count) * 10 - 5
+      const y = Math.sin(t) * 1.5
+      const z = Math.cos(t) * 0.5
+
+      positions[i * 3] = x
+      positions[i * 3 + 1] = y
+      positions[i * 3 + 2] = z
+
+      // Color gradient from indigo to cyan
+      const ratio = i / count
+      colors[i * 3] = 0.4 + ratio * 0.2
+      colors[i * 3 + 1] = 0.4 + ratio * 0.4
+      colors[i * 3 + 2] = 0.9
+    }
+
+    const geom = new THREE.BufferGeometry()
+    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    geom.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+    return geom
+  }, [])
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    // Animate Fibonacci spiral
+    if (fibonacciRef.current) {
+      fibonacciRef.current.rotation.z = t * 0.1 * PHI
+      fibonacciRef.current.children.forEach((child, i) => {
+        const scale = 1 + Math.sin(t * PHI + i * 0.618) * 0.1
+        child.scale.setScalar(scale)
+      })
+    }
+
+    // Float equations around
+    if (equationsRef.current) {
+      equationsRef.current.rotation.y = t * 0.05
+      equationsRef.current.children.forEach((child, i) => {
+        child.position.y = Math.sin(t + i * PHI) * 0.3
+      })
+    }
+
+    // Rotate Platonic solids
+    if (platonicRef.current) {
+      platonicRef.current.children.forEach((solid, i) => {
+        solid.rotation.x = t * (0.2 + i * 0.1)
+        solid.rotation.y = t * (0.3 + i * 0.05)
+        const orbit = t * (0.1 + i * 0.05)
+        const radius = 4 + i * 1.5
+        solid.position.x = Math.cos(orbit) * radius
+        solid.position.z = Math.sin(orbit) * radius
+        solid.position.y = Math.sin(t * 0.5 + i) * 1.5
+      })
+    }
+
+    // Animate sine wave
+    if (waveRef.current) {
+      const positions = waveRef.current.geometry.attributes.position.array as Float32Array
+      for (let i = 0; i < 200; i++) {
+        const x = positions[i * 3]
+        positions[i * 3 + 1] = Math.sin(t * 2 + x * 1.5) * 1.5
+        positions[i * 3 + 2] = Math.cos(t * 1.5 + x) * 0.5
+      }
+      waveRef.current.geometry.attributes.position.needsUpdate = true
+      waveRef.current.rotation.y = t * 0.1
+    }
+
+    // Rotate matrix grid
+    if (matrixRef.current) {
+      matrixRef.current.rotation.x = Math.sin(t * 0.2) * 0.2
+      matrixRef.current.rotation.z = t * 0.02
+    }
+  })
+
+  return (
+    <group ref={groupRef}>
+      {/* Fibonacci Spiral */}
+      <group ref={fibonacciRef} position={[0, 0, 0]}>
+        {fibonacciSequence.map((fib, i) => {
+          const angle = i * PHI * PI * 0.5
+          const radius = fib * 0.15
+          const size = 0.05 + fib * 0.01
+          return (
+            <group key={i}>
+              {/* Spiral node */}
+              <Sphere
+                args={[size, 8, 8]}
+                position={[Math.cos(angle) * radius, 0, Math.sin(angle) * radius]}
+              >
+                <meshBasicMaterial color={sunColor} transparent opacity={0.8} />
+              </Sphere>
+              {/* Connection to next node */}
+              {i > 0 && (
+                <Line
+                  points={[
+                    new THREE.Vector3(
+                      Math.cos((i - 1) * PHI * PI * 0.5) * fibonacciSequence[i - 1] * 0.15,
+                      0,
+                      Math.sin((i - 1) * PHI * PI * 0.5) * fibonacciSequence[i - 1] * 0.15
+                    ),
+                    new THREE.Vector3(
+                      Math.cos(angle) * radius,
+                      0,
+                      Math.sin(angle) * radius
+                    )
+                  ]}
+                  color={color}
+                  lineWidth={1}
+                  transparent
+                  opacity={0.5}
+                />
+              )}
+            </group>
+          )
+        })}
+      </group>
+
+      {/* Floating Mathematical Symbols */}
+      {mathSymbols.map((sym, i) => {
+        const angle = (i / mathSymbols.length) * PI * 2
+        const radius = 5 + (i % 3)
+        const height = Math.sin(i * PHI) * 2
+        return (
+          <Html key={i} position={[Math.cos(angle) * radius, height, Math.sin(angle) * radius]} center>
+            <div
+              className="text-3xl font-bold animate-pulse select-none"
+              style={{
+                color: sunColor,
+                textShadow: `0 0 15px ${sunColor}, 0 0 30px ${color}`,
+                opacity: 0.9
+              }}
+            >
+              {sym}
+            </div>
+          </Html>
+        )
+      })}
+
+      {/* Floating Equations */}
+      <group ref={equationsRef}>
+        {equations.map((eq, i) => {
+          const angle = (i / equations.length) * PI * 2 + PI / 6
+          const radius = 6.5
+          return (
+            <Html key={i} position={[Math.cos(angle) * radius, 3 + (i % 2), Math.sin(angle) * radius]} center>
+              <div className="bg-black/70 rounded-lg px-3 py-1 border border-indigo-500/50">
+                <div
+                  className="text-sm font-mono font-bold"
+                  style={{ color: '#a5b4fc' }}
+                >
+                  {eq}
+                </div>
+              </div>
+            </Html>
+          )
+        })}
+      </group>
+
+      {/* Platonic Solids orbiting */}
+      <group ref={platonicRef}>
+        {/* Tetrahedron */}
+        <mesh>
+          <tetrahedronGeometry args={[0.4, 0]} />
+          <meshBasicMaterial color={sunColor} wireframe transparent opacity={0.7} />
+        </mesh>
+        {/* Octahedron */}
+        <mesh>
+          <octahedronGeometry args={[0.35, 0]} />
+          <meshBasicMaterial color={color} wireframe transparent opacity={0.7} />
+        </mesh>
+        {/* Icosahedron */}
+        <mesh>
+          <icosahedronGeometry args={[0.3, 0]} />
+          <meshBasicMaterial color="#22d3ee" wireframe transparent opacity={0.7} />
+        </mesh>
+        {/* Dodecahedron */}
+        <mesh>
+          <dodecahedronGeometry args={[0.35, 0]} />
+          <meshBasicMaterial color="#a855f7" wireframe transparent opacity={0.7} />
+        </mesh>
+      </group>
+
+      {/* Sine Wave Visualization */}
+      <group position={[0, -2, 0]}>
+        <points ref={waveRef} geometry={waveGeometry}>
+          <pointsMaterial size={0.08} transparent opacity={0.8} vertexColors blending={THREE.AdditiveBlending} />
+        </points>
+      </group>
+
+      {/* Coordinate Grid / Matrix */}
+      <group ref={matrixRef} position={[0, -3, 0]}>
+        {/* X-Y Grid lines */}
+        {[-4, -2, 0, 2, 4].map((pos, i) => (
+          <group key={i}>
+            {/* Horizontal line */}
+            <Line
+              points={[new THREE.Vector3(-5, 0, pos), new THREE.Vector3(5, 0, pos)]}
+              color={color}
+              lineWidth={0.5}
+              transparent
+              opacity={0.2}
+            />
+            {/* Vertical line */}
+            <Line
+              points={[new THREE.Vector3(pos, 0, -5), new THREE.Vector3(pos, 0, 5)]}
+              color={color}
+              lineWidth={0.5}
+              transparent
+              opacity={0.2}
+            />
+          </group>
+        ))}
+        {/* Origin marker */}
+        <Sphere args={[0.1, 8, 8]} position={[0, 0, 0]}>
+          <meshBasicMaterial color="#ffffff" />
+        </Sphere>
+        {/* Axis labels */}
+        <Html position={[5.5, 0, 0]} center>
+          <div className="text-xs text-indigo-400 font-mono">x</div>
+        </Html>
+        <Html position={[0, 0, 5.5]} center>
+          <div className="text-xs text-indigo-400 font-mono">y</div>
+        </Html>
+      </group>
+
+      {/* Golden Ratio Rectangles */}
+      {[1, PHI, PHI * PHI].map((scale, i) => (
+        <mesh key={i} position={[0, 4 + i * 0.5, 0]} rotation={[0, i * 0.5, 0]}>
+          <planeGeometry args={[scale * 0.8, scale * 0.8 / PHI]} />
+          <meshBasicMaterial color={sunColor} transparent opacity={0.15 - i * 0.03} side={THREE.DoubleSide} wireframe />
+        </mesh>
+      ))}
+
+      {/* Pi visualization - circle with diameter */}
+      <group position={[6, 2, 0]}>
+        <mesh rotation={[PI / 2, 0, 0]}>
+          <torusGeometry args={[0.8, 0.02, 8, 64]} />
+          <meshBasicMaterial color="#06b6d4" transparent opacity={0.6} />
+        </mesh>
+        <Line
+          points={[new THREE.Vector3(-0.8, 0, 0), new THREE.Vector3(0.8, 0, 0)]}
+          color="#06b6d4"
+          lineWidth={2}
+          transparent
+          opacity={0.8}
+        />
+        <Html position={[0, 0.5, 0]} center>
+          <div className="text-xs text-cyan-400 font-mono">π = C/d</div>
+        </Html>
+      </group>
+
+      {/* Euler's Identity display */}
+      <Html position={[0, 6, 0]} center>
+        <div className="bg-black/80 rounded-xl px-4 py-2 border-2 border-indigo-500/70">
+          <div className="text-lg font-mono font-bold text-white">
+            e<sup>iπ</sup> + 1 = 0
+          </div>
+          <div className="text-[10px] text-indigo-300 text-center mt-1">
+            The Most Beautiful Equation
+          </div>
+        </div>
+      </Html>
+
+      {/* Probability distribution curve hint */}
+      <group position={[-6, 1, 0]}>
+        {Array.from({ length: 20 }).map((_, i) => {
+          const x = (i / 19) * 4 - 2
+          const y = Math.exp(-(x * x) / 2) * 1.5  // Gaussian
+          return (
+            <Sphere key={i} args={[0.05, 8, 8]} position={[x * 0.8, y, 0]}>
+              <meshBasicMaterial color={sunColor} transparent opacity={0.7} />
+            </Sphere>
+          )
+        })}
+        <Html position={[0, 2, 0]} center>
+          <div className="text-[10px] text-indigo-300 font-mono">Gaussian</div>
+        </Html>
+      </group>
+
+      {/* Outer mathematical aura */}
+      <Sphere args={[7, 32, 32]}>
+        <meshBasicMaterial color={color} transparent opacity={0.03} />
       </Sphere>
     </group>
   )
