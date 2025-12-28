@@ -342,7 +342,7 @@ function CameraController({
 }
 
 // =============================================================================
-// CAMERA-FOLLOWING EFFECTS WRAPPER - Effects that follow wherever you navigate
+// CAMERA-FOLLOWING EFFECTS WRAPPER - Effects always visible in front of camera
 // =============================================================================
 
 function CameraFollowingEffects({
@@ -356,22 +356,22 @@ function CameraFollowingEffects({
   const { camera } = useThree()
 
   useFrame(() => {
-    if (groupRef.current && controlsRef.current) {
-      // Position effects between camera and target so they're always visible
-      const target = controlsRef.current.target
-      const cameraPos = camera.position
+    if (groupRef.current) {
+      // Get camera's forward direction (where it's looking)
+      const cameraDirection = new THREE.Vector3()
+      camera.getWorldDirection(cameraDirection)
 
-      // Calculate direction from camera to target
-      const direction = new THREE.Vector3()
-      direction.subVectors(target, cameraPos).normalize()
+      // Position effects in front of the camera at a fixed distance
+      // This way they're ALWAYS visible regardless of how you rotate around the planet
+      const distanceInFront = 12
+      const effectsPosition = camera.position.clone().add(
+        cameraDirection.multiplyScalar(distanceInFront)
+      )
 
-      // Position the effects group slightly in front of the target (toward camera)
-      // This ensures effects are visible when you navigate to any location
-      const effectsPosition = target.clone().sub(direction.multiplyScalar(5))
       groupRef.current.position.copy(effectsPosition)
 
-      // Make the effects group face the camera
-      groupRef.current.lookAt(cameraPos)
+      // Make the effects group face the camera (so text/UI is readable)
+      groupRef.current.quaternion.copy(camera.quaternion)
     }
   })
 
