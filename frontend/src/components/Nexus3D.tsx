@@ -275,7 +275,7 @@ function easeOutExpo(t: number): number {
 }
 
 // =============================================================================
-// CAMERA CONTROLLER - Smooth cinematic transitions with easing
+// CAMERA CONTROLLER - Simple navigation with no interference after arrival
 // =============================================================================
 
 function CameraController({
@@ -290,60 +290,46 @@ function CameraController({
   setPaused: (p: boolean) => void
 }) {
   const { camera } = useThree()
-  const transitionProgress = useRef(0)
-  const startPosition = useRef(new THREE.Vector3())
-  const startTarget = useRef(new THREE.Vector3())
-  const lastZoomTarget = useRef<THREE.Vector3 | null>(null)
-  const isTransitioning = useRef(false)
-  const transitionDuration = 2.0 // seconds for full transition
+  const hasArrived = useRef(false)
+  const targetRef = useRef<THREE.Vector3 | null>(null)
 
   useKeyboardControls(controlsRef, setPaused, paused)
 
-  useFrame((state, delta) => {
+  useFrame(() => {
+    // Only process if we have a new target we haven't arrived at yet
     if (zoomTarget && controlsRef.current) {
       // Check if this is a new target
-      if (!lastZoomTarget.current || !lastZoomTarget.current.equals(zoomTarget)) {
-        // Start new transition
-        transitionProgress.current = 0
-        startPosition.current.copy(camera.position)
-        startTarget.current.copy(controlsRef.current.target)
-        lastZoomTarget.current = zoomTarget.clone()
-        isTransitioning.current = true
+      if (!targetRef.current || !targetRef.current.equals(zoomTarget)) {
+        targetRef.current = zoomTarget.clone()
+        hasArrived.current = false
       }
 
-      // Only update during transition
-      if (isTransitioning.current) {
-        // Update progress
-        transitionProgress.current = Math.min(1, transitionProgress.current + delta / transitionDuration)
-
-        // Apply easing for buttery smooth motion
-        const easedProgress = easeOutQuint(transitionProgress.current)
-
-        // Calculate desired camera position with dynamic offset
-        const cameraOffset = new THREE.Vector3(8, 5, 12)
-        const desiredPosition = zoomTarget.clone().add(cameraOffset)
-
-        // Smoothly interpolate camera position using eased progress
-        camera.position.lerpVectors(startPosition.current, desiredPosition, easedProgress)
-
-        // Smoothly interpolate look-at target
+      // Only move camera if we haven't arrived yet
+      if (!hasArrived.current) {
         const currentTarget = controlsRef.current.target
-        currentTarget.lerpVectors(startTarget.current, zoomTarget, easedProgress)
 
-        // Add subtle camera shake when arriving (cinematic touch)
-        if (easedProgress > 0.9 && easedProgress < 1) {
-          const shake = (1 - easedProgress) * 0.015
-          camera.position.x += (Math.random() - 0.5) * shake
-          camera.position.y += (Math.random() - 0.5) * shake
+        // Smoothly move the orbit target
+        currentTarget.lerp(zoomTarget, 0.03)
+
+        // Calculate desired camera position
+        const distance = camera.position.distanceTo(zoomTarget)
+        const targetDistance = 12
+
+        if (distance > targetDistance) {
+          const cameraOffset = new THREE.Vector3(6, 4, 10)
+          const desiredPosition = zoomTarget.clone().add(cameraOffset)
+          camera.position.lerp(desiredPosition, 0.025)
         }
 
-        // Transition complete - stop updating and let OrbitControls take over
-        if (transitionProgress.current >= 1) {
-          isTransitioning.current = false
-          // Update the controls to reflect final position
+        // Check if we've arrived (close enough)
+        const targetDist = currentTarget.distanceTo(zoomTarget)
+        if (targetDist < 0.1 && distance < targetDistance + 2) {
+          hasArrived.current = true
+          // Final sync with OrbitControls
           controlsRef.current.update()
         }
       }
+      // Once hasArrived is true, we do NOTHING - OrbitControls takes over completely
     }
   })
 
