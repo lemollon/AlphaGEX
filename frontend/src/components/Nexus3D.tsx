@@ -7360,47 +7360,61 @@ function SolarSystemsContainer({
         />
       ))}
 
-      {/* Neural Synapse Connections */}
-      <NeuralSynapsePulses paused={paused} />
+      {/* Neural Synapse Connections - wrapped for visibility from all angles */}
+      <AlwaysVisibleGroup>
+        <NeuralSynapsePulses paused={paused} />
+      </AlwaysVisibleGroup>
 
       {/* === WOW FACTOR 1: Traveling Ships Between Systems === */}
-      <InterstellarShips paused={paused} />
+      <AlwaysVisibleGroup>
+        <InterstellarShips paused={paused} />
+      </AlwaysVisibleGroup>
 
       {/* === WOW FACTOR 2: Asteroid Belts Around Each System === */}
-      {SOLAR_SYSTEMS.map(system => (
-        <SystemAsteroidBelt
-          key={`asteroids-${system.id}`}
-          position={system.position}
-          color={system.sunColor}
-          paused={paused}
-        />
-      ))}
+      <AlwaysVisibleGroup>
+        {SOLAR_SYSTEMS.map(system => (
+          <SystemAsteroidBelt
+            key={`asteroids-${system.id}`}
+            position={system.position}
+            color={system.sunColor}
+            paused={paused}
+          />
+        ))}
+      </AlwaysVisibleGroup>
 
       {/* === WOW FACTOR 3: Massive Energy Beams === */}
-      <MassiveEnergyBeams paused={paused} />
+      <AlwaysVisibleGroup>
+        <MassiveEnergyBeams paused={paused} />
+      </AlwaysVisibleGroup>
 
       {/* === WOW FACTOR 4: Dynamic Solar Flare Events === */}
-      <SolarFlareEvents paused={paused} />
+      <AlwaysVisibleGroup>
+        <SolarFlareEvents paused={paused} />
+      </AlwaysVisibleGroup>
 
       {/* === WOW FACTOR 5: Nebula Clouds Around Systems === */}
-      {SOLAR_SYSTEMS.map(system => (
-        <SystemNebula
-          key={`nebula-${system.id}`}
-          position={system.position}
-          color={system.glowColor}
-          paused={paused}
-        />
-      ))}
+      <AlwaysVisibleGroup>
+        {SOLAR_SYSTEMS.map(system => (
+          <SystemNebula
+            key={`nebula-${system.id}`}
+            position={system.position}
+            color={system.glowColor}
+            paused={paused}
+          />
+        ))}
+      </AlwaysVisibleGroup>
 
       {/* === WOW FACTOR 6: Aurora Effects === */}
-      {SOLAR_SYSTEMS.map(system => (
-        <AuroraEffect
-          key={`aurora-${system.id}`}
-          position={system.position}
-          color={system.sunColor}
-          paused={paused}
-        />
-      ))}
+      <AlwaysVisibleGroup>
+        {SOLAR_SYSTEMS.map(system => (
+          <AuroraEffect
+            key={`aurora-${system.id}`}
+            position={system.position}
+            color={system.sunColor}
+            paused={paused}
+          />
+        ))}
+      </AlwaysVisibleGroup>
 
       {/* === WOW FACTOR 7: Ambient Stardust Field - wrapped for visibility === */}
       <AlwaysVisibleGroup>
@@ -9787,54 +9801,76 @@ function Scene({
       <ConstellationLines />
       <MatrixRain performanceMode={performanceMode} />
 
-      {/* Lens flare */}
-      <LensFlare paused={paused} />
+      {/* Lens flare - wrapped for visibility from all angles */}
+      <AlwaysVisibleGroup>
+        <LensFlare paused={paused} />
+      </AlwaysVisibleGroup>
 
-      {/* Core */}
-      <BreathingCore gexValue={gexValue} vixValue={vixValue} paused={paused} />
-      <CoreVortex paused={paused} />
+      {/* Core - wrapped for visibility from all angles */}
+      <AlwaysVisibleGroup>
+        <BreathingCore gexValue={gexValue} vixValue={vixValue} paused={paused} />
+        <CoreVortex paused={paused} />
+      </AlwaysVisibleGroup>
 
-      {/* Pulse effects */}
-      <MultiplePulseWaves vixValue={vixValue} paused={paused} />
-      <WaveformRings vixValue={vixValue} />
-      <ClickShockwave shockwaveTime={shockwaveTime} />
+      {/* Pulse effects - wrapped for visibility from all angles */}
+      <AlwaysVisibleGroup>
+        <MultiplePulseWaves vixValue={vixValue} paused={paused} />
+        <WaveformRings vixValue={vixValue} />
+        <ClickShockwave shockwaveTime={shockwaveTime} />
+      </AlwaysVisibleGroup>
 
-      {/* Fibers */}
-      <RadialFiberBurst mousePos={mouse3D} gravityWell={gravityWell} performanceMode={performanceMode} paused={paused} />
-      <InnerDenseShell mousePos={mouse3D} gravityWell={gravityWell} performanceMode={performanceMode} paused={paused} />
-      <PlasmaTendrils />
-      <OrbitTrails />
+      {/* Fibers - wrapped for visibility from all angles */}
+      <AlwaysVisibleGroup>
+        <RadialFiberBurst mousePos={mouse3D} gravityWell={gravityWell} performanceMode={performanceMode} paused={paused} />
+        <InnerDenseShell mousePos={mouse3D} gravityWell={gravityWell} performanceMode={performanceMode} paused={paused} />
+        <PlasmaTendrils />
+        <OrbitTrails />
+      </AlwaysVisibleGroup>
 
-      {/* Bot network */}
-      <ConnectingArcs />
-      <LightningArcs paused={paused} />
+      {/* Bot network - wrapped for visibility from all angles */}
+      <AlwaysVisibleGroup>
+        <ConnectingArcs />
+        <LightningArcs paused={paused} />
+      </AlwaysVisibleGroup>
 
-      {/* Particles */}
-      <EnergyAccumulation paused={paused} />
-      <SparkleField performanceMode={performanceMode} paused={paused} />
-      <OuterParticleRing performanceMode={performanceMode} paused={paused} />
-      <AmbientParticles performanceMode={performanceMode} paused={paused} />
+      {/* Particles - wrapped for visibility from all angles */}
+      <AlwaysVisibleGroup>
+        <EnergyAccumulation paused={paused} />
+        <SparkleField performanceMode={performanceMode} paused={paused} />
+        <OuterParticleRing performanceMode={performanceMode} paused={paused} />
+        <AmbientParticles performanceMode={performanceMode} paused={paused} />
+      </AlwaysVisibleGroup>
 
-      {/* Effects */}
-      <HolographicScanlines paused={paused} />
-      <GlitchEffect paused={paused} />
-      <AlertPulse active={true} botStatus={botStatus} />
+      {/* Effects - wrapped for visibility from all angles */}
+      <AlwaysVisibleGroup>
+        <HolographicScanlines paused={paused} />
+        <GlitchEffect paused={paused} />
+        <AlertPulse active={true} botStatus={botStatus} />
+      </AlwaysVisibleGroup>
 
-      {/* Gravity well */}
-      {gravityWell && <GravityWell position={gravityWell} active={true} />}
-
-      {/* Trade explosion */}
-      {tradeExplosion && (
-        <TradeExplosion
-          position={tradeExplosion.position}
-          type={tradeExplosion.type}
-          active={true}
-          onComplete={() => setTradeExplosion(null)}
-        />
+      {/* Gravity well - wrapped for visibility */}
+      {gravityWell && (
+        <AlwaysVisibleGroup>
+          <GravityWell position={gravityWell} active={true} />
+        </AlwaysVisibleGroup>
       )}
 
-      {/* Celebration */}
-      <SuccessCelebration active={celebrationActive} onComplete={() => setCelebrationActive(false)} />
+      {/* Trade explosion - wrapped for visibility */}
+      {tradeExplosion && (
+        <AlwaysVisibleGroup>
+          <TradeExplosion
+            position={tradeExplosion.position}
+            type={tradeExplosion.type}
+            active={true}
+            onComplete={() => setTradeExplosion(null)}
+          />
+        </AlwaysVisibleGroup>
+      )}
+
+      {/* Celebration - wrapped for visibility */}
+      <AlwaysVisibleGroup>
+        <SuccessCelebration active={celebrationActive} onComplete={() => setCelebrationActive(false)} />
+      </AlwaysVisibleGroup>
 
       {/* Easter egg */}
       <HiddenMessage visible={konamiActive} />
@@ -9845,14 +9881,16 @@ function Scene({
       <SignalStrengthBars strength={signalStrength} />
       <MarketMoodRing gexValue={gexValue} vixValue={vixValue} />
 
-      {/* Cosmic features */}
-      <AsteroidField paused={paused} stockPrices={stockPrices} />
-      <CometWithTrail paused={paused} />
-      <AsteroidBelt performanceMode={performanceMode} />
-      <ShootingStars paused={paused} />
-      <CometRain paused={paused} />
-      <SolarFlares vixValue={vixValue} paused={paused} />
-      <AuroraBorealis paused={paused} />
+      {/* Cosmic features - wrapped for visibility from all angles */}
+      <AlwaysVisibleGroup>
+        <AsteroidField paused={paused} stockPrices={stockPrices} />
+        <CometWithTrail paused={paused} />
+        <AsteroidBelt performanceMode={performanceMode} />
+        <ShootingStars paused={paused} />
+        <CometRain paused={paused} />
+        <SolarFlares vixValue={vixValue} paused={paused} />
+        <AuroraBorealis paused={paused} />
+      </AlwaysVisibleGroup>
       {/* Camera-following effects - these stay visible wherever you navigate */}
       <CameraFollowingEffects controlsRef={controlsRef}>
         <HolographicTickerTape stockPrices={stockPrices} />
@@ -9865,42 +9903,48 @@ function Scene({
         <NeuralPathways paused={paused} />
       </CameraFollowingEffects>
 
-      {/* Global effects - stay at fixed positions */}
-      <RocketLaunches botStatus={botStatus} />
-      <SatelliteOrbiters />
-      <EnergyShields paused={paused} />
-      <QuantumEntanglement botStatus={botStatus} paused={paused} />
-      <BinaryStar paused={paused} />
-      <MoonPhases paused={paused} />
-      <NebulaStorm vixValue={vixValue} paused={paused} />
-      <CosmicDustField paused={paused} />
+      {/* Global effects - stay at fixed positions, wrapped for visibility */}
+      <AlwaysVisibleGroup>
+        <RocketLaunches botStatus={botStatus} />
+        <SatelliteOrbiters />
+        <EnergyShields paused={paused} />
+        <QuantumEntanglement botStatus={botStatus} paused={paused} />
+        <BinaryStar paused={paused} />
+        <MoonPhases paused={paused} />
+        <NebulaStorm vixValue={vixValue} paused={paused} />
+        <CosmicDustField paused={paused} />
+      </AlwaysVisibleGroup>
 
       {/* Solar Systems with Neural Synapse Connections */}
       <SolarSystemsContainer paused={paused} onSystemClick={handleSolarSystemClick} />
 
-      {/* WOW FACTOR FEATURES */}
-      {/* VIX Storm Mode - chaos when VIX > 25 */}
-      <VixStormMode vixValue={vixValue} paused={paused} />
+      {/* WOW FACTOR FEATURES - wrapped for visibility from all angles */}
+      <AlwaysVisibleGroup>
+        {/* VIX Storm Mode - chaos when VIX > 25 */}
+        <VixStormMode vixValue={vixValue} paused={paused} />
 
-      {/* Market Hours Lighting - ambient changes based on market state */}
-      <MarketHoursLighting paused={paused} />
+        {/* Market Hours Lighting - ambient changes based on market state */}
+        <MarketHoursLighting paused={paused} />
 
-      {/* News Comet Stream - headlines flying by */}
-      <NewsCometStream paused={paused} />
+        {/* News Comet Stream - headlines flying by */}
+        <NewsCometStream paused={paused} />
+      </AlwaysVisibleGroup>
 
-      {/* Bot nodes */}
-      {BOT_NODES.map((node) => (
-        <BotNodeWithFlare
-          key={node.id}
-          id={node.id}
-          name={node.name}
-          angle={node.angle}
-          status={botStatus[node.id as keyof BotStatus] || 'idle'}
-          onClick={() => onNodeClick?.(node.id)}
-          onDoubleClick={() => handleNodeDoubleClick(node.id)}
-          paused={paused}
-        />
-      ))}
+      {/* Bot nodes - wrapped for visibility from all angles */}
+      <AlwaysVisibleGroup>
+        {BOT_NODES.map((node) => (
+          <BotNodeWithFlare
+            key={node.id}
+            id={node.id}
+            name={node.name}
+            angle={node.angle}
+            status={botStatus[node.id as keyof BotStatus] || 'idle'}
+            onClick={() => onNodeClick?.(node.id)}
+            onDoubleClick={() => handleNodeDoubleClick(node.id)}
+            paused={paused}
+          />
+        ))}
+      </AlwaysVisibleGroup>
 
       {/* Camera controls - disable autoRotate when viewing a solar system for full manual control */}
       <OrbitControls
