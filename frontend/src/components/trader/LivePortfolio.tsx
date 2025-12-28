@@ -46,6 +46,13 @@ export interface LivePosition {
   put_distance?: number
   call_distance?: number
   risk_status?: string
+  // Breakeven and context
+  breakeven?: number
+  entry_vix?: number
+  vix_at_entry?: number
+  gex_regime?: string
+  gex_regime_at_entry?: string
+  oracle_confidence?: number
 }
 
 export interface EquityDataPoint {
