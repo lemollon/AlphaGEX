@@ -342,6 +342,43 @@ function CameraController({
 }
 
 // =============================================================================
+// CAMERA-FOLLOWING EFFECTS WRAPPER - Effects that follow wherever you navigate
+// =============================================================================
+
+function CameraFollowingEffects({
+  controlsRef,
+  children
+}: {
+  controlsRef: React.RefObject<any>
+  children: React.ReactNode
+}) {
+  const groupRef = useRef<THREE.Group>(null)
+  const { camera } = useThree()
+
+  useFrame(() => {
+    if (groupRef.current && controlsRef.current) {
+      // Position effects between camera and target so they're always visible
+      const target = controlsRef.current.target
+      const cameraPos = camera.position
+
+      // Calculate direction from camera to target
+      const direction = new THREE.Vector3()
+      direction.subVectors(target, cameraPos).normalize()
+
+      // Position the effects group slightly in front of the target (toward camera)
+      // This ensures effects are visible when you navigate to any location
+      const effectsPosition = target.clone().sub(direction.multiplyScalar(5))
+      groupRef.current.position.copy(effectsPosition)
+
+      // Make the effects group face the camera
+      groupRef.current.lookAt(cameraPos)
+    }
+  })
+
+  return <group ref={groupRef}>{children}</group>
+}
+
+// =============================================================================
 // GRAVITY WELL EFFECT
 // =============================================================================
 
@@ -9662,25 +9699,27 @@ function Scene({
       <CometRain paused={paused} />
       <SolarFlares vixValue={vixValue} paused={paused} />
       <AuroraBorealis paused={paused} />
-      <HolographicTickerTape stockPrices={stockPrices} />
+      {/* Camera-following effects - these stay visible wherever you navigate */}
+      <CameraFollowingEffects controlsRef={controlsRef}>
+        <HolographicTickerTape stockPrices={stockPrices} />
+        <SpaceStation spotPrice={spotPrice || 585} gexValue={gexValue} vixValue={vixValue} />
+        <FloatingCandleChart paused={paused} />
+        <HolographicUILayer paused={paused} />
+        <NeuralBrainStructure paused={paused} />
+        <NeuralNeurons paused={paused} />
+        <SynapticFiring paused={paused} />
+        <NeuralPathways paused={paused} />
+      </CameraFollowingEffects>
+
+      {/* Global effects - stay at fixed positions */}
       <RocketLaunches botStatus={botStatus} />
       <SatelliteOrbiters />
       <EnergyShields paused={paused} />
       <QuantumEntanglement botStatus={botStatus} paused={paused} />
       <BinaryStar paused={paused} />
-      <SpaceStation spotPrice={spotPrice || 585} gexValue={gexValue} vixValue={vixValue} />
       <MoonPhases paused={paused} />
       <NebulaStorm vixValue={vixValue} paused={paused} />
-
-      {/* Cosmic Enhancements */}
       <CosmicDustField paused={paused} />
-      <HolographicUILayer paused={paused} />
-
-      {/* Neural Network Visual Layer */}
-      <NeuralBrainStructure paused={paused} />
-      <NeuralNeurons paused={paused} />
-      <SynapticFiring paused={paused} />
-      <NeuralPathways paused={paused} />
 
       {/* Solar Systems with Neural Synapse Connections */}
       <SolarSystemsContainer paused={paused} onSystemClick={handleSolarSystemClick} />
@@ -9691,9 +9730,6 @@ function Scene({
 
       {/* Market Hours Lighting - ambient changes based on market state */}
       <MarketHoursLighting paused={paused} />
-
-      {/* 3D Floating Charts - holographic candlesticks */}
-      <FloatingCandleChart paused={paused} />
 
       {/* News Comet Stream - headlines flying by */}
       <NewsCometStream paused={paused} />
