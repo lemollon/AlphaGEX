@@ -331,7 +331,7 @@ function CameraController({
           controlsRef.current.update()
           // Clear the zoom target so user can freely orbit the camera
           setZoomTarget(null)
-          lastZoomTarget.current = null
+          targetRef.current = null
         }
       }
       // Once hasArrived is true, we do NOTHING - OrbitControls takes over completely
