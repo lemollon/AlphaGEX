@@ -259,7 +259,23 @@ function useKeyboardControls(
 }
 
 // =============================================================================
-// CAMERA CONTROLLER - For double-click zoom and keyboard
+// EASING FUNCTIONS - Smooth cinematic camera transitions
+// =============================================================================
+
+function easeOutQuint(t: number): number {
+  return 1 - Math.pow(1 - t, 5)
+}
+
+function easeInOutCubic(t: number): number {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
+}
+
+function easeOutExpo(t: number): number {
+  return t === 1 ? 1 : 1 - Math.pow(2, -10 * t)
+}
+
+// =============================================================================
+// CAMERA CONTROLLER - Smooth cinematic transitions with easing
 // =============================================================================
 
 function CameraController({
@@ -274,24 +290,47 @@ function CameraController({
   setPaused: (p: boolean) => void
 }) {
   const { camera } = useThree()
+  const transitionProgress = useRef(0)
+  const startPosition = useRef(new THREE.Vector3())
+  const startTarget = useRef(new THREE.Vector3())
+  const lastZoomTarget = useRef<THREE.Vector3 | null>(null)
+  const transitionDuration = 2.5 // seconds for full transition
 
   useKeyboardControls(controlsRef, setPaused, paused)
 
-  useFrame(() => {
+  useFrame((state, delta) => {
     if (zoomTarget && controlsRef.current) {
+      // Check if this is a new target
+      if (!lastZoomTarget.current || !lastZoomTarget.current.equals(zoomTarget)) {
+        // Start new transition
+        transitionProgress.current = 0
+        startPosition.current.copy(camera.position)
+        startTarget.current.copy(controlsRef.current.target)
+        lastZoomTarget.current = zoomTarget.clone()
+      }
+
+      // Update progress
+      transitionProgress.current = Math.min(1, transitionProgress.current + delta / transitionDuration)
+
+      // Apply easing for buttery smooth motion
+      const easedProgress = easeOutQuint(transitionProgress.current)
+
+      // Calculate desired camera position with dynamic offset based on approach angle
+      const cameraOffset = new THREE.Vector3(5, 6, 12)
+      const desiredPosition = zoomTarget.clone().add(cameraOffset)
+
+      // Smoothly interpolate camera position using eased progress
+      camera.position.lerpVectors(startPosition.current, desiredPosition, easedProgress)
+
+      // Smoothly interpolate look-at target
       const currentTarget = controlsRef.current.target
-      currentTarget.lerp(zoomTarget, 0.03)
+      currentTarget.lerpVectors(startTarget.current, zoomTarget, easedProgress)
 
-      // Calculate desired camera position - offset from target for good viewing angle
-      const distance = camera.position.distanceTo(zoomTarget)
-      const targetDistance = 8 // How close to get to the target
-
-      if (distance > targetDistance) {
-        // Calculate offset direction from target to camera
-        const cameraOffset = new THREE.Vector3(3, 4, 8)
-        const desiredPosition = zoomTarget.clone().add(cameraOffset)
-
-        camera.position.lerp(desiredPosition, 0.025)
+      // Add subtle camera shake when arriving (cinematic touch)
+      if (easedProgress > 0.9 && easedProgress < 1) {
+        const shake = (1 - easedProgress) * 0.02
+        camera.position.x += (Math.random() - 0.5) * shake
+        camera.position.y += (Math.random() - 0.5) * shake
       }
     }
   })
@@ -739,6 +778,769 @@ function ConstellationLines() {
         </Sphere>
       ))}
     </group>
+  )
+}
+
+// =============================================================================
+// COMET RAIN - Epic comet showers across the cosmos
+// =============================================================================
+
+interface CometRainData {
+  id: number
+  start: THREE.Vector3
+  direction: THREE.Vector3
+  speed: number
+  length: number
+  color: string
+  life: number
+}
+
+function CometRain({ paused }: { paused: boolean }) {
+  const [comets, setComets] = useState<CometRainData[]>([])
+  const meshRef = useRef<THREE.InstancedMesh>(null)
+  const trailRef = useRef<THREE.InstancedMesh>(null)
+  const maxComets = 8
+  const nextId = useRef(0)
+  const dummy = useMemo(() => new THREE.Object3D(), [])
+
+  const cometColors = useMemo(() => ['#ffffff', '#e0f2fe', '#c4b5fd', '#fef3c7', '#a5f3fc'], [])
+
+  useFrame((state, delta) => {
+    if (paused) return
+
+    // Spawn new comets
+    if (comets.length < maxComets && Math.random() < 0.02) {
+      const newComet: CometRainData = {
+        id: nextId.current++,
+        start: new THREE.Vector3(
+          (Math.random() - 0.5) * 80 + 20,
+          20 + Math.random() * 30,
+          (Math.random() - 0.5) * 60 - 30
+        ),
+        direction: new THREE.Vector3(
+          -0.8 - Math.random() * 0.4,
+          -0.6 - Math.random() * 0.3,
+          (Math.random() - 0.5) * 0.3
+        ).normalize(),
+        speed: 15 + Math.random() * 25,
+        length: 2 + Math.random() * 3,
+        color: cometColors[Math.floor(Math.random() * cometColors.length)],
+        life: 0
+      }
+      setComets(prev => [...prev, newComet])
+    }
+
+    // Update and render comets
+    setComets(prev => {
+      return prev.map(comet => ({
+        ...comet,
+        life: comet.life + delta
+      })).filter(comet => comet.life < 4)
+    })
+
+    // Update instanced meshes
+    if (meshRef.current) {
+      comets.forEach((comet, i) => {
+        const pos = comet.start.clone().add(
+          comet.direction.clone().multiplyScalar(comet.life * comet.speed)
+        )
+        dummy.position.copy(pos)
+        dummy.scale.setScalar(0.15 - comet.life * 0.02)
+        dummy.lookAt(pos.clone().add(comet.direction))
+        dummy.updateMatrix()
+        meshRef.current?.setMatrixAt(i, dummy.matrix)
+      })
+      meshRef.current.count = comets.length
+      meshRef.current.instanceMatrix.needsUpdate = true
+    }
+
+    // Update trails
+    if (trailRef.current) {
+      comets.forEach((comet, i) => {
+        const pos = comet.start.clone().add(
+          comet.direction.clone().multiplyScalar(comet.life * comet.speed)
+        )
+        const tailPos = pos.clone().add(comet.direction.clone().multiplyScalar(-comet.length))
+        const midPoint = pos.clone().add(tailPos).multiplyScalar(0.5)
+        dummy.position.copy(midPoint)
+        dummy.scale.set(0.05, comet.length * 0.5, 0.05)
+        dummy.lookAt(pos)
+        dummy.updateMatrix()
+        trailRef.current?.setMatrixAt(i, dummy.matrix)
+      })
+      trailRef.current.count = comets.length
+      trailRef.current.instanceMatrix.needsUpdate = true
+    }
+  })
+
+  return (
+    <group>
+      {/* Comet heads */}
+      <instancedMesh ref={meshRef} args={[undefined, undefined, maxComets]}>
+        <sphereGeometry args={[1, 8, 8]} />
+        <meshBasicMaterial color="#ffffff" transparent opacity={0.9} />
+      </instancedMesh>
+      {/* Trails */}
+      <instancedMesh ref={trailRef} args={[undefined, undefined, maxComets]}>
+        <cylinderGeometry args={[0.8, 0.1, 1, 8]} />
+        <meshBasicMaterial color="#a5f3fc" transparent opacity={0.4} />
+      </instancedMesh>
+      {/* Particle sparkles around comets */}
+      {comets.map(comet => {
+        const pos = comet.start.clone().add(
+          comet.direction.clone().multiplyScalar(comet.life * comet.speed)
+        )
+        return (
+          <group key={comet.id} position={pos}>
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Sphere
+                key={i}
+                args={[0.03, 4, 4]}
+                position={[
+                  (Math.random() - 0.5) * 0.5,
+                  (Math.random() - 0.5) * 0.5,
+                  (Math.random() - 0.5) * 0.5
+                ]}
+              >
+                <meshBasicMaterial color={comet.color} transparent opacity={0.6} />
+              </Sphere>
+            ))}
+          </group>
+        )
+      })}
+    </group>
+  )
+}
+
+// =============================================================================
+// INTERSTELLAR WORMHOLES - Epic swirling portals between solar systems
+// =============================================================================
+
+function InterstellarWormhole({
+  position,
+  color,
+  targetSystem,
+  onEnter,
+  paused
+}: {
+  position: [number, number, number]
+  color: string
+  targetSystem: string
+  onEnter?: (targetId: string) => void
+  paused: boolean
+}) {
+  const groupRef = useRef<THREE.Group>(null)
+  const ringRefs = useRef<THREE.Mesh[]>([])
+  const vortexRef = useRef<THREE.Points>(null)
+  const [isHovered, setIsHovered] = useState(false)
+
+  // Generate vortex particles
+  const vortexGeometry = useMemo(() => {
+    const count = 300
+    const positions = new Float32Array(count * 3)
+    const colors = new Float32Array(count * 3)
+
+    for (let i = 0; i < count; i++) {
+      const t = i / count
+      const angle = t * Math.PI * 8
+      const radius = 0.3 + t * 1.2
+      const depth = (1 - t) * 3
+
+      positions[i * 3] = Math.cos(angle) * radius
+      positions[i * 3 + 1] = Math.sin(angle) * radius
+      positions[i * 3 + 2] = depth
+
+      // Color from outer to inner
+      const c = new THREE.Color(color)
+      colors[i * 3] = c.r * (0.5 + t * 0.5)
+      colors[i * 3 + 1] = c.g * (0.5 + t * 0.5)
+      colors[i * 3 + 2] = c.b * (0.5 + t * 0.5)
+    }
+
+    const geom = new THREE.BufferGeometry()
+    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    geom.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+    return geom
+  }, [color])
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    // Spin the whole portal
+    if (groupRef.current) {
+      groupRef.current.rotation.z = t * 0.5
+    }
+
+    // Spin rings at different speeds
+    ringRefs.current.forEach((ring, i) => {
+      if (ring) {
+        ring.rotation.z = t * (0.8 + i * 0.3) * (i % 2 === 0 ? 1 : -1)
+        const scale = 1 + Math.sin(t * 2 + i) * 0.1
+        ring.scale.setScalar(scale)
+      }
+    })
+
+    // Animate vortex swirl
+    if (vortexRef.current) {
+      const positions = vortexRef.current.geometry.attributes.position.array as Float32Array
+      for (let i = 0; i < 300; i++) {
+        const baseT = i / 300
+        const angle = baseT * Math.PI * 8 + t * 3
+        const radius = 0.3 + baseT * 1.2 + Math.sin(t * 4 + i * 0.1) * 0.1
+        positions[i * 3] = Math.cos(angle) * radius
+        positions[i * 3 + 1] = Math.sin(angle) * radius
+      }
+      vortexRef.current.geometry.attributes.position.needsUpdate = true
+    }
+  })
+
+  return (
+    <group position={position}>
+      <group ref={groupRef}>
+        {/* Outer rings */}
+        {[1.5, 1.3, 1.1, 0.9].map((size, i) => (
+          <mesh
+            key={i}
+            ref={(el) => { if (el) ringRefs.current[i] = el }}
+            onPointerEnter={() => setIsHovered(true)}
+            onPointerLeave={() => setIsHovered(false)}
+            onClick={() => onEnter?.(targetSystem)}
+          >
+            <torusGeometry args={[size, 0.03 + i * 0.01, 16, 64]} />
+            <meshBasicMaterial
+              color={color}
+              transparent
+              opacity={0.6 - i * 0.1}
+            />
+          </mesh>
+        ))}
+
+        {/* Event horizon (dark center) */}
+        <mesh>
+          <circleGeometry args={[0.7, 64]} />
+          <meshBasicMaterial color="#000000" transparent opacity={0.9} />
+        </mesh>
+
+        {/* Swirling vortex particles */}
+        <points ref={vortexRef} geometry={vortexGeometry}>
+          <pointsMaterial
+            size={0.06}
+            transparent
+            opacity={0.8}
+            vertexColors
+            blending={THREE.AdditiveBlending}
+          />
+        </points>
+
+        {/* Glow effect */}
+        <Sphere args={[1.8, 32, 32]}>
+          <meshBasicMaterial color={color} transparent opacity={isHovered ? 0.15 : 0.05} />
+        </Sphere>
+      </group>
+
+      {/* Label */}
+      <Html position={[0, -2, 0]} center>
+        <div
+          className={`text-xs font-bold px-2 py-1 rounded bg-black/60 border transition-all ${
+            isHovered ? 'border-white/50 scale-110' : 'border-gray-700/50'
+          }`}
+          style={{ color }}
+        >
+          WORMHOLE → {targetSystem}
+        </div>
+      </Html>
+    </group>
+  )
+}
+
+function InterstellarNetwork({ onNavigate, paused }: { onNavigate: (systemId: string, position: [number, number, number]) => void, paused: boolean }) {
+  // Position wormholes between solar systems
+  const wormholes = useMemo(() => [
+    { position: [-5, 12, -22] as [number, number, number], color: '#f59e0b', targetSystem: 'SOLOMON' },
+    { position: [12, 0, -21] as [number, number, number], color: '#06b6d4', targetSystem: 'ARGUS' },
+    { position: [-8, -3, -23] as [number, number, number], color: '#8b5cf6', targetSystem: 'ORACLE' },
+    { position: [8, -10, -22] as [number, number, number], color: '#ef4444', targetSystem: 'KRONOS' },
+  ], [])
+
+  return (
+    <group>
+      {wormholes.map((wh, i) => (
+        <InterstellarWormhole
+          key={i}
+          position={wh.position}
+          color={wh.color}
+          targetSystem={wh.targetSystem}
+          paused={paused}
+        />
+      ))}
+    </group>
+  )
+}
+
+// =============================================================================
+// HOLOGRAPHIC UI ELEMENTS - Floating futuristic displays
+// =============================================================================
+
+function HolographicDisplay({
+  position,
+  title,
+  value,
+  color = '#06b6d4',
+  paused
+}: {
+  position: [number, number, number]
+  title: string
+  value: string
+  color?: string
+  paused: boolean
+}) {
+  const groupRef = useRef<THREE.Group>(null)
+  const [glitchOffset, setGlitchOffset] = useState(0)
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    if (groupRef.current) {
+      // Gentle floating motion
+      groupRef.current.position.y = position[1] + Math.sin(t * 0.8) * 0.2
+      groupRef.current.rotation.y = Math.sin(t * 0.3) * 0.1
+
+      // Random glitch effect
+      if (Math.random() < 0.01) {
+        setGlitchOffset((Math.random() - 0.5) * 0.1)
+        setTimeout(() => setGlitchOffset(0), 50)
+      }
+    }
+  })
+
+  return (
+    <group ref={groupRef} position={position}>
+      {/* Main holographic panel */}
+      <Html center transform occlude>
+        <div
+          className="relative select-none"
+          style={{ transform: `translateX(${glitchOffset}px)` }}
+        >
+          {/* Scan line effect */}
+          <div className="absolute inset-0 overflow-hidden rounded-lg pointer-events-none">
+            <div
+              className="absolute w-full h-1 opacity-20"
+              style={{
+                background: `linear-gradient(transparent, ${color}, transparent)`,
+                animation: 'scanline 2s linear infinite'
+              }}
+            />
+          </div>
+
+          {/* Main content */}
+          <div
+            className="bg-black/40 backdrop-blur-sm border rounded-lg px-4 py-2 min-w-[120px]"
+            style={{ borderColor: `${color}60` }}
+          >
+            <div className="text-[10px] uppercase tracking-wider opacity-60" style={{ color }}>
+              {title}
+            </div>
+            <div className="text-lg font-bold font-mono" style={{ color }}>
+              {value}
+            </div>
+          </div>
+
+          {/* Corner decorations */}
+          <div
+            className="absolute -top-1 -left-1 w-3 h-3 border-t-2 border-l-2"
+            style={{ borderColor: color }}
+          />
+          <div
+            className="absolute -top-1 -right-1 w-3 h-3 border-t-2 border-r-2"
+            style={{ borderColor: color }}
+          />
+          <div
+            className="absolute -bottom-1 -left-1 w-3 h-3 border-b-2 border-l-2"
+            style={{ borderColor: color }}
+          />
+          <div
+            className="absolute -bottom-1 -right-1 w-3 h-3 border-b-2 border-r-2"
+            style={{ borderColor: color }}
+          />
+        </div>
+      </Html>
+
+      {/* Hologram base light beam */}
+      <mesh position={[0, -0.8, 0]} rotation={[Math.PI / 2, 0, 0]}>
+        <coneGeometry args={[0.3, 1.5, 16, 1, true]} />
+        <meshBasicMaterial color={color} transparent opacity={0.1} side={THREE.DoubleSide} />
+      </mesh>
+    </group>
+  )
+}
+
+function HolographicUILayer({ paused }: { paused: boolean }) {
+  const displays = useMemo(() => [
+    { position: [15, 8, -15] as [number, number, number], title: 'SYSTEM STATUS', value: 'ONLINE', color: '#22c55e' },
+    { position: [-15, 10, -18] as [number, number, number], title: 'NEURAL SYNC', value: '98.7%', color: '#8b5cf6' },
+    { position: [18, -5, -16] as [number, number, number], title: 'DATA FLOW', value: '1.2 TB/s', color: '#06b6d4' },
+    { position: [-18, -8, -14] as [number, number, number], title: 'AI CORES', value: '7 ACTIVE', color: '#f59e0b' },
+  ], [])
+
+  return (
+    <group>
+      {displays.map((d, i) => (
+        <HolographicDisplay
+          key={i}
+          position={d.position}
+          title={d.title}
+          value={d.value}
+          color={d.color}
+          paused={paused}
+        />
+      ))}
+    </group>
+  )
+}
+
+// =============================================================================
+// GRAVITATIONAL LENSING - Warped space effect near massive objects
+// =============================================================================
+
+function GravitationalLens({
+  position,
+  radius = 1.5,
+  strength = 0.3,
+  color = '#ffffff'
+}: {
+  position: [number, number, number]
+  radius?: number
+  strength?: number
+  color?: string
+}) {
+  const meshRef = useRef<THREE.Mesh>(null)
+
+  useFrame((state) => {
+    const t = state.clock.elapsedTime
+    if (meshRef.current) {
+      // Pulsing lensing effect
+      const scale = radius + Math.sin(t * 2) * 0.1
+      meshRef.current.scale.setScalar(scale)
+    }
+  })
+
+  return (
+    <group position={position}>
+      {/* Distortion rings */}
+      {[1, 0.8, 0.6, 0.4].map((scale, i) => (
+        <mesh key={i} ref={i === 0 ? meshRef : undefined}>
+          <torusGeometry args={[radius * scale, 0.02, 8, 64]} />
+          <meshBasicMaterial
+            color={color}
+            transparent
+            opacity={0.15 - i * 0.03}
+          />
+        </mesh>
+      ))}
+
+      {/* Warped light streaks */}
+      {Array.from({ length: 8 }).map((_, i) => {
+        const angle = (i / 8) * Math.PI * 2
+        const x = Math.cos(angle) * radius * 0.5
+        const y = Math.sin(angle) * radius * 0.5
+        return (
+          <Line
+            key={i}
+            points={[
+              new THREE.Vector3(x * 0.3, y * 0.3, 0),
+              new THREE.Vector3(x * 2, y * 2, 0)
+            ]}
+            color={color}
+            lineWidth={1}
+            transparent
+            opacity={0.2}
+          />
+        )
+      })}
+    </group>
+  )
+}
+
+// =============================================================================
+// SPACE AUDIO CONTEXT - Immersive ambient sounds
+// =============================================================================
+
+const SpaceAudioContext = createContext<{
+  playSound: (type: 'whoosh' | 'hum' | 'click' | 'warp') => void
+  setVolume: (v: number) => void
+  isMuted: boolean
+  toggleMute: () => void
+}>({
+  playSound: () => {},
+  setVolume: () => {},
+  isMuted: true,
+  toggleMute: () => {}
+})
+
+function SpaceAudioProvider({ children }: { children: ReactNode }) {
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const [isMuted, setIsMuted] = useState(true) // Start muted by default
+  const [volume, setVolumeState] = useState(0.3)
+  const gainRef = useRef<GainNode | null>(null)
+
+  // Initialize audio context on first user interaction
+  const initAudio = useCallback(() => {
+    if (!audioContextRef.current) {
+      audioContextRef.current = new AudioContext()
+      gainRef.current = audioContextRef.current.createGain()
+      gainRef.current.connect(audioContextRef.current.destination)
+      gainRef.current.gain.value = isMuted ? 0 : volume
+    }
+  }, [isMuted, volume])
+
+  const playSound = useCallback((type: 'whoosh' | 'hum' | 'click' | 'warp') => {
+    if (!audioContextRef.current || isMuted) return
+
+    const ctx = audioContextRef.current
+    const osc = ctx.createOscillator()
+    const gain = ctx.createGain()
+
+    osc.connect(gain)
+    gain.connect(gainRef.current!)
+
+    switch (type) {
+      case 'whoosh':
+        osc.type = 'sine'
+        osc.frequency.setValueAtTime(400, ctx.currentTime)
+        osc.frequency.exponentialRampToValueAtTime(100, ctx.currentTime + 0.3)
+        gain.gain.setValueAtTime(0.1, ctx.currentTime)
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3)
+        osc.start()
+        osc.stop(ctx.currentTime + 0.3)
+        break
+      case 'hum':
+        osc.type = 'sine'
+        osc.frequency.value = 60
+        gain.gain.setValueAtTime(0.02, ctx.currentTime)
+        osc.start()
+        osc.stop(ctx.currentTime + 2)
+        break
+      case 'click':
+        osc.type = 'square'
+        osc.frequency.value = 800
+        gain.gain.setValueAtTime(0.05, ctx.currentTime)
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.05)
+        osc.start()
+        osc.stop(ctx.currentTime + 0.05)
+        break
+      case 'warp':
+        osc.type = 'sawtooth'
+        osc.frequency.setValueAtTime(100, ctx.currentTime)
+        osc.frequency.exponentialRampToValueAtTime(2000, ctx.currentTime + 0.5)
+        osc.frequency.exponentialRampToValueAtTime(100, ctx.currentTime + 1)
+        gain.gain.setValueAtTime(0.1, ctx.currentTime)
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1)
+        osc.start()
+        osc.stop(ctx.currentTime + 1)
+        break
+    }
+  }, [isMuted])
+
+  const toggleMute = useCallback(() => {
+    initAudio()
+    setIsMuted(prev => {
+      if (gainRef.current) {
+        gainRef.current.gain.value = prev ? volume : 0
+      }
+      return !prev
+    })
+  }, [volume, initAudio])
+
+  const setVolume = useCallback((v: number) => {
+    setVolumeState(v)
+    if (gainRef.current && !isMuted) {
+      gainRef.current.gain.value = v
+    }
+  }, [isMuted])
+
+  return (
+    <SpaceAudioContext.Provider value={{ playSound, setVolume, isMuted, toggleMute }}>
+      {children}
+    </SpaceAudioContext.Provider>
+  )
+}
+
+// =============================================================================
+// TOUCH CONTROLS - Mobile gesture support
+// =============================================================================
+
+function useTouchControls(
+  controlsRef: React.RefObject<any>,
+  onNavigate?: (direction: 'left' | 'right' | 'up' | 'down') => void
+) {
+  const touchStart = useRef<{ x: number, y: number } | null>(null)
+  const lastPinchDist = useRef<number>(0)
+
+  useEffect(() => {
+    const handleTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 1) {
+        touchStart.current = {
+          x: e.touches[0].clientX,
+          y: e.touches[0].clientY
+        }
+      } else if (e.touches.length === 2) {
+        // Pinch start
+        const dx = e.touches[0].clientX - e.touches[1].clientX
+        const dy = e.touches[0].clientY - e.touches[1].clientY
+        lastPinchDist.current = Math.sqrt(dx * dx + dy * dy)
+      }
+    }
+
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 2 && controlsRef.current) {
+        // Pinch zoom
+        const dx = e.touches[0].clientX - e.touches[1].clientX
+        const dy = e.touches[0].clientY - e.touches[1].clientY
+        const dist = Math.sqrt(dx * dx + dy * dy)
+        const delta = dist - lastPinchDist.current
+
+        // Zoom in/out
+        const zoom = delta * 0.01
+        controlsRef.current.object.position.z = Math.max(5, Math.min(50,
+          controlsRef.current.object.position.z - zoom
+        ))
+
+        lastPinchDist.current = dist
+      }
+    }
+
+    const handleTouchEnd = (e: TouchEvent) => {
+      if (touchStart.current && e.changedTouches.length === 1) {
+        const dx = e.changedTouches[0].clientX - touchStart.current.x
+        const dy = e.changedTouches[0].clientY - touchStart.current.y
+        const threshold = 50
+
+        // Detect swipe direction
+        if (Math.abs(dx) > Math.abs(dy)) {
+          if (dx > threshold) onNavigate?.('right')
+          else if (dx < -threshold) onNavigate?.('left')
+        } else {
+          if (dy > threshold) onNavigate?.('down')
+          else if (dy < -threshold) onNavigate?.('up')
+        }
+      }
+      touchStart.current = null
+    }
+
+    window.addEventListener('touchstart', handleTouchStart, { passive: true })
+    window.addEventListener('touchmove', handleTouchMove, { passive: true })
+    window.addEventListener('touchend', handleTouchEnd, { passive: true })
+
+    return () => {
+      window.removeEventListener('touchstart', handleTouchStart)
+      window.removeEventListener('touchmove', handleTouchMove)
+      window.removeEventListener('touchend', handleTouchEnd)
+    }
+  }, [controlsRef, onNavigate])
+}
+
+// =============================================================================
+// COSMIC DUST FIELD - Ambient floating particles throughout space
+// =============================================================================
+
+function CosmicDustField({ paused }: { paused: boolean }) {
+  const meshRef = useRef<THREE.InstancedMesh>(null)
+  const count = 500
+  const dummy = useMemo(() => new THREE.Object3D(), [])
+
+  const particles = useMemo(() => {
+    return Array.from({ length: count }, () => ({
+      position: new THREE.Vector3(
+        (Math.random() - 0.5) * 100,
+        (Math.random() - 0.5) * 60,
+        (Math.random() - 0.5) * 80 - 20
+      ),
+      speed: 0.01 + Math.random() * 0.03,
+      drift: new THREE.Vector3(
+        (Math.random() - 0.5) * 0.01,
+        (Math.random() - 0.5) * 0.01,
+        (Math.random() - 0.5) * 0.01
+      )
+    }))
+  }, [])
+
+  useFrame((state) => {
+    if (paused || !meshRef.current) return
+    const t = state.clock.elapsedTime
+
+    particles.forEach((p, i) => {
+      // Drift motion
+      p.position.add(p.drift)
+
+      // Wrap around
+      if (p.position.x > 50) p.position.x = -50
+      if (p.position.x < -50) p.position.x = 50
+      if (p.position.y > 30) p.position.y = -30
+      if (p.position.y < -30) p.position.y = 30
+
+      // Slight oscillation
+      const wobble = Math.sin(t * p.speed * 10 + i) * 0.1
+
+      dummy.position.set(
+        p.position.x + wobble,
+        p.position.y + wobble * 0.5,
+        p.position.z
+      )
+      dummy.scale.setScalar(0.02 + Math.sin(t + i * 0.1) * 0.01)
+      dummy.updateMatrix()
+      meshRef.current?.setMatrixAt(i, dummy.matrix)
+    })
+    meshRef.current.instanceMatrix.needsUpdate = true
+  })
+
+  return (
+    <instancedMesh ref={meshRef} args={[undefined, undefined, count]}>
+      <sphereGeometry args={[1, 4, 4]} />
+      <meshBasicMaterial color="#a5b4fc" transparent opacity={0.3} />
+    </instancedMesh>
+  )
+}
+
+// =============================================================================
+// ORBITAL TRAIL EFFECT - Glowing trails behind orbiting planets
+// =============================================================================
+
+function OrbitalTrail({
+  orbitRadius,
+  color,
+  segments = 64
+}: {
+  orbitRadius: number
+  color: string
+  segments?: number
+}) {
+  const points = useMemo(() => {
+    const pts: THREE.Vector3[] = []
+    for (let i = 0; i <= segments; i++) {
+      const angle = (i / segments) * Math.PI * 2
+      pts.push(new THREE.Vector3(
+        Math.cos(angle) * orbitRadius,
+        0,
+        Math.sin(angle) * orbitRadius
+      ))
+    }
+    return pts
+  }, [orbitRadius, segments])
+
+  return (
+    <Line
+      points={points}
+      color={color}
+      lineWidth={1}
+      transparent
+      opacity={0.2}
+      dashed
+      dashScale={10}
+      dashSize={0.5}
+      gapSize={0.3}
+    />
   )
 }
 
@@ -3941,9 +4743,33 @@ function HyperionEffects({ color, sunColor, paused }: { color: string, sunColor:
   const PI = Math.PI
   const E = 2.718281828459
 
-  // Mathematical symbols and equations
-  const mathSymbols = useMemo(() => ['π', 'φ', 'e', '∑', '∫', '∞', '√', 'Δ', 'θ', 'λ', '∂', '∇'], [])
-  const equations = useMemo(() => ['E=mc²', 'F=ma', 'a²+b²=c²', 'eiπ+1=0', '∫f(x)dx', 'Σn=∞'], [])
+  // Mathematical symbols with explanations for tooltips
+  const mathSymbolsData = useMemo(() => [
+    { sym: 'π', name: 'Pi', desc: 'Ratio of circumference to diameter ≈ 3.14159' },
+    { sym: 'φ', name: 'Phi', desc: 'Golden Ratio ≈ 1.618, found in nature and art' },
+    { sym: 'e', name: 'Euler\'s Number', desc: 'Base of natural logarithm ≈ 2.71828' },
+    { sym: '∑', name: 'Sigma', desc: 'Summation - adds sequence of numbers' },
+    { sym: '∫', name: 'Integral', desc: 'Calculates area under a curve' },
+    { sym: '∞', name: 'Infinity', desc: 'Concept of limitless or endless' },
+    { sym: '√', name: 'Square Root', desc: 'Number that produces value when squared' },
+    { sym: 'Δ', name: 'Delta', desc: 'Represents change or difference' },
+    { sym: 'θ', name: 'Theta', desc: 'Commonly represents angles in geometry' },
+    { sym: 'λ', name: 'Lambda', desc: 'Wavelength in physics, eigenvalue in math' },
+    { sym: '∂', name: 'Partial Derivative', desc: 'Rate of change in multivariable calculus' },
+    { sym: '∇', name: 'Nabla', desc: 'Gradient operator in vector calculus' },
+  ], [])
+
+  const equationsData = useMemo(() => [
+    { eq: 'E=mc²', name: 'Mass-Energy Equivalence', desc: 'Einstein\'s famous equation: Energy equals mass times the speed of light squared' },
+    { eq: 'F=ma', name: 'Newton\'s Second Law', desc: 'Force equals mass times acceleration' },
+    { eq: 'a²+b²=c²', name: 'Pythagorean Theorem', desc: 'In a right triangle, the sum of squares of legs equals the square of the hypotenuse' },
+    { eq: 'eⁱπ+1=0', name: 'Euler\'s Identity', desc: 'The most beautiful equation - connects e, i, π, 1, and 0' },
+    { eq: '∫f(x)dx', name: 'Indefinite Integral', desc: 'The antiderivative of function f' },
+    { eq: 'Σn=∞', name: 'Infinite Series', desc: 'Sum of infinitely many terms' },
+  ], [])
+
+  const [hoveredSymbol, setHoveredSymbol] = useState<number | null>(null)
+  const [hoveredEquation, setHoveredEquation] = useState<number | null>(null)
 
   // Fibonacci sequence for spiral
   const fibonacciSequence = useMemo(() => [1, 1, 2, 3, 5, 8, 13, 21, 34], [])
@@ -4073,41 +4899,79 @@ function HyperionEffects({ color, sunColor, paused }: { color: string, sunColor:
         })}
       </group>
 
-      {/* Floating Mathematical Symbols */}
-      {mathSymbols.map((sym, i) => {
-        const angle = (i / mathSymbols.length) * PI * 2
+      {/* Floating Mathematical Symbols with Hover Tooltips */}
+      {mathSymbolsData.map((data, i) => {
+        const angle = (i / mathSymbolsData.length) * PI * 2
         const radius = 5 + (i % 3)
         const height = Math.sin(i * PHI) * 2
+        const isHovered = hoveredSymbol === i
         return (
           <Html key={i} position={[Math.cos(angle) * radius, height, Math.sin(angle) * radius]} center>
             <div
-              className="text-3xl font-bold animate-pulse select-none"
-              style={{
-                color: sunColor,
-                textShadow: `0 0 15px ${sunColor}, 0 0 30px ${color}`,
-                opacity: 0.9
-              }}
+              className="relative cursor-pointer select-none transition-all duration-300"
+              onMouseEnter={() => setHoveredSymbol(i)}
+              onMouseLeave={() => setHoveredSymbol(null)}
+              style={{ transform: isHovered ? 'scale(1.3)' : 'scale(1)' }}
             >
-              {sym}
+              <div
+                className="text-3xl font-bold animate-pulse"
+                style={{
+                  color: sunColor,
+                  textShadow: `0 0 15px ${sunColor}, 0 0 30px ${color}${isHovered ? ', 0 0 50px ' + sunColor : ''}`,
+                  opacity: 0.9
+                }}
+              >
+                {data.sym}
+              </div>
+              {/* Tooltip */}
+              {isHovered && (
+                <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 z-50 animate-fadeIn">
+                  <div className="bg-black/90 border border-indigo-500/70 rounded-lg px-4 py-2 min-w-[200px] backdrop-blur-sm">
+                    <div className="text-indigo-300 font-bold text-sm">{data.name}</div>
+                    <div className="text-gray-300 text-xs mt-1">{data.desc}</div>
+                  </div>
+                  <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-indigo-500/70 rotate-45" />
+                </div>
+              )}
             </div>
           </Html>
         )
       })}
 
-      {/* Floating Equations */}
+      {/* Floating Equations with Hover Tooltips */}
       <group ref={equationsRef}>
-        {equations.map((eq, i) => {
-          const angle = (i / equations.length) * PI * 2 + PI / 6
+        {equationsData.map((data, i) => {
+          const angle = (i / equationsData.length) * PI * 2 + PI / 6
           const radius = 6.5
+          const isHovered = hoveredEquation === i
           return (
             <Html key={i} position={[Math.cos(angle) * radius, 3 + (i % 2), Math.sin(angle) * radius]} center>
-              <div className="bg-black/70 rounded-lg px-3 py-1 border border-indigo-500/50">
-                <div
-                  className="text-sm font-mono font-bold"
-                  style={{ color: '#a5b4fc' }}
-                >
-                  {eq}
+              <div
+                className="relative cursor-pointer select-none transition-all duration-300"
+                onMouseEnter={() => setHoveredEquation(i)}
+                onMouseLeave={() => setHoveredEquation(null)}
+                style={{ transform: isHovered ? 'scale(1.15)' : 'scale(1)' }}
+              >
+                <div className={`bg-black/70 rounded-lg px-3 py-1 border transition-all ${
+                  isHovered ? 'border-indigo-400 shadow-lg shadow-indigo-500/30' : 'border-indigo-500/50'
+                }`}>
+                  <div
+                    className="text-sm font-mono font-bold"
+                    style={{ color: isHovered ? '#c4b5fd' : '#a5b4fc' }}
+                  >
+                    {data.eq}
+                  </div>
                 </div>
+                {/* Tooltip */}
+                {isHovered && (
+                  <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 z-50 animate-fadeIn">
+                    <div className="bg-black/90 border border-purple-500/70 rounded-lg px-4 py-3 min-w-[250px] max-w-[300px] backdrop-blur-sm">
+                      <div className="text-purple-300 font-bold text-sm">{data.name}</div>
+                      <div className="text-gray-300 text-xs mt-1 leading-relaxed">{data.desc}</div>
+                    </div>
+                    <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-purple-500/70 rotate-45" />
+                  </div>
+                )}
               </div>
             </Html>
           )
@@ -8801,6 +9665,7 @@ function Scene({
       <CometWithTrail paused={paused} />
       <AsteroidBelt performanceMode={performanceMode} />
       <ShootingStars paused={paused} />
+      <CometRain paused={paused} />
       <SolarFlares vixValue={vixValue} paused={paused} />
       <AuroraBorealis paused={paused} />
       <HolographicTickerTape stockPrices={stockPrices} />
@@ -8813,6 +9678,11 @@ function Scene({
       <SpaceStation spotPrice={spotPrice || 585} gexValue={gexValue} vixValue={vixValue} />
       <MoonPhases paused={paused} />
       <NebulaStorm vixValue={vixValue} paused={paused} />
+
+      {/* NEW WOW FACTOR: Cosmic Enhancements */}
+      <InterstellarNetwork onNavigate={handleSolarSystemClick} paused={paused} />
+      <CosmicDustField paused={paused} />
+      <HolographicUILayer paused={paused} />
 
       {/* Neural Network Visual Layer */}
       <NeuralBrainStructure paused={paused} />
@@ -8919,7 +9789,9 @@ function ControlPanel({
   setPaused,
   onScreenshot,
   onFullscreen,
-  isFullscreen
+  isFullscreen,
+  isMuted,
+  onToggleMute
 }: {
   theme: ColorTheme
   setTheme: (t: ColorTheme) => void
@@ -8930,11 +9802,35 @@ function ControlPanel({
   onScreenshot: () => void
   onFullscreen: () => void
   isFullscreen: boolean
+  isMuted: boolean
+  onToggleMute: () => void
 }) {
   const [expanded, setExpanded] = useState(false)
 
   return (
     <div className="absolute top-4 right-4 z-10">
+      {/* Quick Audio Toggle */}
+      <button
+        onClick={onToggleMute}
+        className={`w-10 h-10 mb-2 border rounded-lg flex items-center justify-center transition-all backdrop-blur ${
+          isMuted
+            ? 'bg-black/70 border-gray-600/30 text-gray-500 hover:bg-gray-500/20'
+            : 'bg-purple-500/20 border-purple-500/50 text-purple-400 hover:bg-purple-500/30'
+        }`}
+        title={isMuted ? 'Enable Sound' : 'Mute Sound'}
+      >
+        {isMuted ? (
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+          </svg>
+        ) : (
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+          </svg>
+        )}
+      </button>
+
       <button
         onClick={() => setExpanded(!expanded)}
         className="w-10 h-10 bg-black/70 border border-cyan-500/30 rounded-lg flex items-center justify-center text-cyan-400 hover:bg-cyan-500/20 transition-colors backdrop-blur"
@@ -8962,6 +9858,20 @@ function ControlPanel({
                 />
               ))}
             </div>
+          </div>
+
+          {/* Audio control */}
+          <div className="mb-3">
+            <button
+              onClick={onToggleMute}
+              className={`w-full py-1.5 rounded text-xs font-medium transition-colors flex items-center justify-center gap-2 ${
+                isMuted
+                  ? 'bg-gray-500/20 text-gray-400 hover:bg-gray-500/30'
+                  : 'bg-purple-500/20 text-purple-400 hover:bg-purple-500/30'
+              }`}
+            >
+              {isMuted ? '🔇 Enable Sound' : '🔊 Sound On'}
+            </button>
           </div>
 
           {/* Performance mode */}
@@ -9139,7 +10049,59 @@ export default function Nexus3D({
   const [shakeActive, setShakeActive] = useState(false)
   const [zoomTarget, setZoomTarget] = useState<THREE.Vector3 | null>(null)
   const [currentSystem, setCurrentSystem] = useState<string | null>(null)
+  const [audioMuted, setAudioMuted] = useState(true)
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const gainNodeRef = useRef<GainNode | null>(null)
   const holdTimer = useRef<NodeJS.Timeout | null>(null)
+  const controlsRef = useRef<any>(null)
+
+  // Audio toggle handler
+  const handleToggleAudio = useCallback(() => {
+    if (!audioContextRef.current) {
+      audioContextRef.current = new AudioContext()
+      gainNodeRef.current = audioContextRef.current.createGain()
+      gainNodeRef.current.connect(audioContextRef.current.destination)
+    }
+
+    setAudioMuted(prev => {
+      const newMuted = !prev
+      if (gainNodeRef.current) {
+        gainNodeRef.current.gain.value = newMuted ? 0 : 0.3
+      }
+      // Play a test sound when unmuting
+      if (!newMuted && audioContextRef.current) {
+        const osc = audioContextRef.current.createOscillator()
+        const gain = audioContextRef.current.createGain()
+        osc.connect(gain)
+        gain.connect(gainNodeRef.current!)
+        osc.frequency.setValueAtTime(440, audioContextRef.current.currentTime)
+        osc.frequency.exponentialRampToValueAtTime(880, audioContextRef.current.currentTime + 0.1)
+        gain.gain.setValueAtTime(0.1, audioContextRef.current.currentTime)
+        gain.gain.exponentialRampToValueAtTime(0.001, audioContextRef.current.currentTime + 0.15)
+        osc.start()
+        osc.stop(audioContextRef.current.currentTime + 0.15)
+      }
+      return newMuted
+    })
+  }, [])
+
+  // Touch controls for mobile navigation
+  useTouchControls(controlsRef, (direction) => {
+    // Navigate between solar systems on swipe
+    const systems = ['solomon', 'argus', 'oracle', 'kronos', 'systems', 'apollo', 'hyperion']
+    const currentIdx = currentSystem ? systems.indexOf(currentSystem) : -1
+
+    let newIdx = currentIdx
+    if (direction === 'left' || direction === 'up') {
+      newIdx = currentIdx <= 0 ? systems.length - 1 : currentIdx - 1
+    } else if (direction === 'right' || direction === 'down') {
+      newIdx = currentIdx >= systems.length - 1 ? 0 : currentIdx + 1
+    }
+
+    const newSystem = systems[newIdx]
+    // Find position from SOLAR_SYSTEMS (would need to access it)
+    handleNavigateToSystem(newSystem, [0, 0, -20])
+  })
 
   // Handler to navigate to a solar system
   const handleNavigateToSystem = useCallback((systemId: string, position: [number, number, number]) => {
@@ -9271,6 +10233,8 @@ export default function Nexus3D({
           onScreenshot={handleScreenshot}
           onFullscreen={handleFullscreen}
           isFullscreen={isFullscreen}
+          isMuted={audioMuted}
+          onToggleMute={handleToggleAudio}
         />
 
         {/* Pause Indicator */}
