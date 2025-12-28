@@ -10054,23 +10054,9 @@ export default function Nexus3D({
     })
   }, [])
 
-  // Touch controls for mobile navigation
-  useTouchControls(controlsRef, (direction) => {
-    // Navigate between solar systems on swipe
-    const systems = ['solomon', 'argus', 'oracle', 'kronos', 'systems', 'apollo', 'hyperion']
-    const currentIdx = currentSystem ? systems.indexOf(currentSystem) : -1
-
-    let newIdx = currentIdx
-    if (direction === 'left' || direction === 'up') {
-      newIdx = currentIdx <= 0 ? systems.length - 1 : currentIdx - 1
-    } else if (direction === 'right' || direction === 'down') {
-      newIdx = currentIdx >= systems.length - 1 ? 0 : currentIdx + 1
-    }
-
-    const newSystem = systems[newIdx]
-    // Find position from SOLAR_SYSTEMS (would need to access it)
-    handleNavigateToSystem(newSystem, [0, 0, -20])
-  })
+  // Touch controls for mobile - only for pinch zoom, no swipe navigation
+  // (swipe navigation was causing accidental teleports when trying to orbit)
+  useTouchControls(controlsRef)
 
   // Handler to navigate to a solar system
   const handleNavigateToSystem = useCallback((systemId: string, position: [number, number, number]) => {
