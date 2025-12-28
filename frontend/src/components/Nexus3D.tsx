@@ -3728,11 +3728,11 @@ function PlanetEffectComponent({ effect, color, size, paused }: { effect: Planet
           <>
             <mesh rotation={[Math.PI / 3, 0, 0]}>
               <torusGeometry args={[size * 2.2, size * 0.15, 2, 32]} />
-              <meshBasicMaterial color={color} transparent opacity={0.5} />
+              <meshBasicMaterial color={color} transparent opacity={0.5} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </mesh>
             <mesh rotation={[Math.PI / 3, 0, 0]}>
               <torusGeometry args={[size * 2.8, size * 0.1, 2, 32]} />
-              <meshBasicMaterial color={color} transparent opacity={0.3} />
+              <meshBasicMaterial color={color} transparent opacity={0.3} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </mesh>
           </>
         )
@@ -3751,7 +3751,7 @@ function PlanetEffectComponent({ effect, color, size, paused }: { effect: Planet
                   rotation={[i * 0.5, i * 0.3, i * 0.7]}
                 >
                   <octahedronGeometry args={[size * 0.3]} />
-                  <meshBasicMaterial color={color} transparent opacity={0.7} />
+                  <meshBasicMaterial color={color} transparent opacity={0.7} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
                 </mesh>
               )
             })}
@@ -3763,10 +3763,10 @@ function PlanetEffectComponent({ effect, color, size, paused }: { effect: Planet
         return (
           <>
             <Sphere args={[size * 1.8, 16, 16]}>
-              <meshBasicMaterial color={color} transparent opacity={0.15} />
+              <meshBasicMaterial color={color} transparent opacity={0.15} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </Sphere>
             <Sphere args={[size * 2.5, 16, 16]}>
-              <meshBasicMaterial color={color} transparent opacity={0.08} />
+              <meshBasicMaterial color={color} transparent opacity={0.08} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </Sphere>
           </>
         )
@@ -3785,11 +3785,11 @@ function PlanetEffectComponent({ effect, color, size, paused }: { effect: Planet
                   Math.sin(i * 1.3) * size * 1.4
                 ]}
               >
-                <meshBasicMaterial color="#ff6b35" transparent opacity={0.6} />
+                <meshBasicMaterial color="#ff6b35" transparent opacity={0.6} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
               </Sphere>
             ))}
             <Sphere args={[size * 1.5, 8, 8]}>
-              <meshBasicMaterial color="#ff4500" transparent opacity={0.2} />
+              <meshBasicMaterial color="#ff4500" transparent opacity={0.2} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </Sphere>
           </>
         )
@@ -3824,7 +3824,7 @@ function PlanetEffectComponent({ effect, color, size, paused }: { effect: Planet
         // Enhanced glow
         return (
           <Sphere args={[size * 2, 16, 16]}>
-            <meshBasicMaterial color={color} transparent opacity={0.25} />
+            <meshBasicMaterial color={color} transparent opacity={0.25} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
           </Sphere>
         )
 
@@ -3834,15 +3834,15 @@ function PlanetEffectComponent({ effect, color, size, paused }: { effect: Planet
           <>
             <mesh rotation={[Math.PI / 2, 0, 0]}>
               <torusGeometry args={[size * 1.8, 0.02, 8, 32]} />
-              <meshBasicMaterial color={color} transparent opacity={0.4} />
+              <meshBasicMaterial color={color} transparent opacity={0.4} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </mesh>
             <mesh rotation={[Math.PI / 3, Math.PI / 4, 0]}>
               <torusGeometry args={[size * 2.2, 0.02, 8, 32]} />
-              <meshBasicMaterial color={color} transparent opacity={0.3} />
+              <meshBasicMaterial color={color} transparent opacity={0.3} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </mesh>
             <mesh rotation={[Math.PI / 4, -Math.PI / 3, 0]}>
               <torusGeometry args={[size * 2.6, 0.02, 8, 32]} />
-              <meshBasicMaterial color={color} transparent opacity={0.2} />
+              <meshBasicMaterial color={color} transparent opacity={0.2} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </mesh>
           </>
         )
@@ -3860,7 +3860,7 @@ function PlanetEffectComponent({ effect, color, size, paused }: { effect: Planet
                   args={[size * 0.08, 4, 4]}
                   position={[Math.cos(angle) * r, (i % 5 - 2) * size * 0.2, Math.sin(angle) * r]}
                 >
-                  <meshBasicMaterial color="#9ca3af" transparent opacity={0.4} />
+                  <meshBasicMaterial color="#9ca3af" transparent opacity={0.4} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
                 </Sphere>
               )
             })}
@@ -3879,10 +3879,10 @@ function PlanetEffectComponent({ effect, color, size, paused }: { effect: Planet
               opacity={0.5}
             />
             <Sphere args={[size * 0.15, 8, 8]} position={[0, size * 1.5, 0]}>
-              <meshBasicMaterial color="#60a5fa" />
+              <meshBasicMaterial color="#60a5fa" side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </Sphere>
             <Sphere args={[size * 0.12, 8, 8]} position={[0, -size * 1.2, 0]}>
-              <meshBasicMaterial color="#3b82f6" />
+              <meshBasicMaterial color="#3b82f6" side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </Sphere>
           </>
         )
@@ -3892,7 +3892,7 @@ function PlanetEffectComponent({ effect, color, size, paused }: { effect: Planet
         return (
           <mesh rotation={[0, 0, 0]}>
             <torusGeometry args={[size * 2, size * 0.08, 6, 6]} />
-            <meshBasicMaterial color={color} transparent opacity={0.4} wireframe />
+            <meshBasicMaterial color={color} transparent opacity={0.4} wireframe side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
           </mesh>
         )
 
@@ -3909,7 +3909,7 @@ function PlanetEffectComponent({ effect, color, size, paused }: { effect: Planet
                   args={[size * 0.08, 4, 4]}
                   position={[Math.cos(angle) * r, (i % 3 - 1) * size * 0.3, Math.sin(angle) * r]}
                 >
-                  <meshBasicMaterial color={i % 2 === 0 ? '#22c55e' : '#3b82f6'} />
+                  <meshBasicMaterial color={i % 2 === 0 ? '#22c55e' : '#3b82f6'} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
                 </Sphere>
               )
             })}
@@ -3944,7 +3944,7 @@ function PlanetEffectComponent({ effect, color, size, paused }: { effect: Planet
     }
   }
 
-  return <group ref={groupRef}>{renderEffect()}</group>
+  return <group ref={groupRef} renderOrder={999}>{renderEffect()}</group>
 }
 
 // =============================================================================
@@ -5463,7 +5463,7 @@ function OrbitingPlanet({
 
   return (
     <group>
-      {/* Planet trail */}
+      {/* Planet trail - always visible from all angles */}
       <points ref={trailRef}>
         <bufferGeometry>
           <bufferAttribute
@@ -5473,14 +5473,14 @@ function OrbitingPlanet({
             itemSize={3}
           />
         </bufferGeometry>
-        <pointsMaterial color={planet.color} size={0.08} transparent opacity={0.5} />
+        <pointsMaterial color={planet.color} size={0.08} transparent opacity={0.5} depthTest={false} depthWrite={false} />
       </points>
 
       {/* Planet with effects */}
       <group ref={groupRef}>
-        {/* Planet atmosphere glow */}
+        {/* Planet atmosphere glow - always visible from all angles */}
         <Sphere ref={atmosphereRef} args={[scaledSize * 1.5, 16, 16]}>
-          <meshBasicMaterial color={planet.color} transparent opacity={isHovered ? 0.35 : 0.2} />
+          <meshBasicMaterial color={planet.color} transparent opacity={isHovered ? 0.35 : 0.2} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
         </Sphere>
 
         {/* Planet sphere */}
@@ -5496,12 +5496,13 @@ function OrbitingPlanet({
             emissiveIntensity={isHovered ? 0.6 : 0.3}
             distort={isHovered ? 0.15 : 0.05}
             speed={2}
+            side={THREE.DoubleSide}
           />
         </Sphere>
 
-        {/* Inner core glow */}
+        {/* Inner core glow - always visible from all angles */}
         <Sphere args={[scaledSize * 0.5, 8, 8]}>
-          <meshBasicMaterial color="#ffffff" transparent opacity={0.5} />
+          <meshBasicMaterial color="#ffffff" transparent opacity={0.5} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
         </Sphere>
 
         {/* Orbiting moons */}
@@ -5509,14 +5510,16 @@ function OrbitingPlanet({
           <OrbitingMoon key={moon.id} moon={moon} planetColor={planet.color} paused={paused} />
         ))}
 
-        {/* Planet unique effect */}
+        {/* Planet unique effect - wrapped in AlwaysVisibleGroup for 100% visibility from all angles */}
         {planet.effect && (
-          <PlanetEffectComponent
-            effect={planet.effect}
-            color={planet.color}
-            size={scaledSize}
-            paused={paused}
-          />
+          <AlwaysVisibleGroup>
+            <PlanetEffectComponent
+              effect={planet.effect}
+              color={planet.color}
+              size={scaledSize}
+              paused={paused}
+            />
+          </AlwaysVisibleGroup>
         )}
 
         {/* Hover tooltip */}
@@ -5530,16 +5533,16 @@ function OrbitingPlanet({
           </Html>
         )}
 
-        {/* Enhanced glow when hovered */}
+        {/* Enhanced glow when hovered - always visible from all angles */}
         {isHovered && (
           <>
             <Sphere args={[scaledSize * 2, 8, 8]}>
-              <meshBasicMaterial color={planet.color} transparent opacity={0.2} />
+              <meshBasicMaterial color={planet.color} transparent opacity={0.2} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </Sphere>
             {/* Pulsing ring */}
             <mesh rotation={[Math.PI / 2, 0, 0]}>
               <torusGeometry args={[scaledSize * 1.5, 0.03, 8, 32]} />
-              <meshBasicMaterial color="#ffffff" transparent opacity={0.8} />
+              <meshBasicMaterial color="#ffffff" transparent opacity={0.8} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </mesh>
           </>
         )}
@@ -5574,7 +5577,7 @@ function OrbitingMoon({
 
   return (
     <Sphere ref={meshRef} args={[moon.size, 8, 8]} position={[moon.orbit, 0, 0]}>
-      <meshBasicMaterial color={planetColor} transparent opacity={0.7} />
+      <meshBasicMaterial color={planetColor} transparent opacity={0.7} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
     </Sphere>
   )
 }
@@ -5617,7 +5620,7 @@ function SunCorona({ color, paused }: { color: string, paused: boolean }) {
           itemSize={3}
         />
       </bufferGeometry>
-      <pointsMaterial color={color} size={0.04} transparent opacity={0.6} />
+      <pointsMaterial color={color} size={0.04} transparent opacity={0.6} depthTest={false} depthWrite={false} />
     </points>
   )
 }
