@@ -405,6 +405,99 @@ function CameraFollowingEffects({
 }
 
 // =============================================================================
+// ALWAYS VISIBLE GROUP - Disables depth testing so effects render on top
+// =============================================================================
+
+function AlwaysVisibleGroup({ children }: { children: React.ReactNode }) {
+  const groupRef = useRef<THREE.Group>(null)
+
+  useFrame(() => {
+    if (!groupRef.current) return
+
+    // Disable depth testing on all child materials so effects are ALWAYS visible
+    groupRef.current.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh || (child as THREE.Points).isPoints) {
+        const obj = child as THREE.Mesh | THREE.Points
+        if (obj.material) {
+          const mats = Array.isArray(obj.material) ? obj.material : [obj.material]
+          mats.forEach((mat) => {
+            if (mat.depthTest !== false) {
+              mat.depthTest = false
+              mat.depthWrite = false
+            }
+          })
+        }
+      }
+    })
+  })
+
+  return (
+    <group ref={groupRef} renderOrder={997}>
+      {children}
+    </group>
+  )
+}
+
+// =============================================================================
+// PLANET EFFECTS WRAPPER - Makes planet-specific effects visible from ALL angles
+// =============================================================================
+
+function PlanetEffectsWrapper({
+  planetPosition,
+  controlsRef,
+  children
+}: {
+  planetPosition: [number, number, number]
+  controlsRef: React.RefObject<any>
+  children: React.ReactNode
+}) {
+  const groupRef = useRef<THREE.Group>(null)
+  const { camera } = useThree()
+
+  useFrame(() => {
+    if (!groupRef.current) return
+
+    // Disable depth testing on all child materials so effects render on top
+    groupRef.current.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        const mesh = child as THREE.Mesh
+        if (mesh.material) {
+          const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+          mats.forEach((mat) => {
+            if (mat.depthTest !== false) {
+              mat.depthTest = false
+              mat.depthWrite = false
+            }
+          })
+        }
+      }
+    })
+
+    // Position effects on the CAMERA SIDE of the planet
+    const planetPos = new THREE.Vector3(...planetPosition)
+    const cameraPos = camera.position.clone()
+
+    // Direction from planet to camera
+    const toCamera = cameraPos.sub(planetPos).normalize()
+
+    // Position effects between camera and planet center (on camera side)
+    const distanceFromPlanet = 6 // Just in front of planet surface
+    const effectsPosition = planetPos.clone().add(toCamera.multiplyScalar(distanceFromPlanet))
+
+    groupRef.current.position.copy(effectsPosition)
+
+    // Make effects face the camera
+    groupRef.current.lookAt(camera.position)
+  })
+
+  return (
+    <group ref={groupRef} renderOrder={998}>
+      {children}
+    </group>
+  )
+}
+
+// =============================================================================
 // GRAVITY WELL EFFECT
 // =============================================================================
 
@@ -3869,24 +3962,30 @@ function SystemAmbientEffects({
   sunColor: string
   paused: boolean
 }) {
-  switch (systemId) {
-    case 'solomon':
-      return <SolomonEffects color={color} sunColor={sunColor} paused={paused} />
-    case 'argus':
-      return <ArgusEffects color={color} sunColor={sunColor} paused={paused} />
-    case 'oracle':
-      return <OracleEffects color={color} sunColor={sunColor} paused={paused} />
-    case 'kronos':
-      return <KronosEffects color={color} sunColor={sunColor} paused={paused} />
-    case 'systems':
-      return <SystemsEffects color={color} sunColor={sunColor} paused={paused} />
-    case 'apollo':
-      return <ApolloEffects color={color} sunColor={sunColor} paused={paused} />
-    case 'hyperion':
-      return <HyperionEffects color={color} sunColor={sunColor} paused={paused} />
-    default:
-      return null
+  // Wrap all effects in AlwaysVisibleGroup so they render from ANY viewing angle
+  const getEffects = () => {
+    switch (systemId) {
+      case 'solomon':
+        return <SolomonEffects color={color} sunColor={sunColor} paused={paused} />
+      case 'argus':
+        return <ArgusEffects color={color} sunColor={sunColor} paused={paused} />
+      case 'oracle':
+        return <OracleEffects color={color} sunColor={sunColor} paused={paused} />
+      case 'kronos':
+        return <KronosEffects color={color} sunColor={sunColor} paused={paused} />
+      case 'systems':
+        return <SystemsEffects color={color} sunColor={sunColor} paused={paused} />
+      case 'apollo':
+        return <ApolloEffects color={color} sunColor={sunColor} paused={paused} />
+      case 'hyperion':
+        return <HyperionEffects color={color} sunColor={sunColor} paused={paused} />
+      default:
+        return null
+    }
   }
+
+  const effects = getEffects()
+  return effects ? <AlwaysVisibleGroup>{effects}</AlwaysVisibleGroup> : null
 }
 
 // SOLOMON - Wisdom scrolls, knowledge particles, ancient symbols
@@ -7298,55 +7397,60 @@ function SolarSystemsContainer({
       <StardustField paused={paused} />
 
       {/* === WOW FACTOR 8: Thematic Enhancements Per System === */}
-      {/* SOLOMON - Floating Wisdom Books */}
-      <FloatingBooks
-        position={SOLAR_SYSTEMS.find(s => s.id === 'solomon')?.position || [-22, 8, -20]}
-        color="#f59e0b"
-        paused={paused}
-      />
+      {/* All planet effects wrapped in AlwaysVisibleGroup for visibility from all angles */}
+      <AlwaysVisibleGroup>
+        {/* SOLOMON - Floating Wisdom Books */}
+        <FloatingBooks
+          position={SOLAR_SYSTEMS.find(s => s.id === 'solomon')?.position || [-22, 8, -20]}
+          color="#f59e0b"
+          paused={paused}
+        />
 
-      {/* ARGUS - Surveillance System */}
-      <ArgusSurveillanceSystem
-        position={SOLAR_SYSTEMS.find(s => s.id === 'argus')?.position || [24, 5, -18]}
-        color="#22d3ee"
-        paused={paused}
-      />
+        {/* ARGUS - Surveillance System */}
+        <ArgusSurveillanceSystem
+          position={SOLAR_SYSTEMS.find(s => s.id === 'argus')?.position || [24, 5, -18]}
+          color="#22d3ee"
+          paused={paused}
+        />
 
-      {/* ORACLE - Crystal Ball Visions */}
-      <CrystalBallVisions
-        position={SOLAR_SYSTEMS.find(s => s.id === 'oracle')?.position || [0, 15, -25]}
-        color="#a855f7"
-        paused={paused}
-      />
+        {/* ORACLE - Crystal Ball Visions */}
+        <CrystalBallVisions
+          position={SOLAR_SYSTEMS.find(s => s.id === 'oracle')?.position || [0, 15, -25]}
+          color="#a855f7"
+          paused={paused}
+        />
 
-      {/* KRONOS - Giant Pendulum */}
-      <GiantPendulum
-        position={SOLAR_SYSTEMS.find(s => s.id === 'kronos')?.position || [-18, -8, -22]}
-        color="#ef4444"
-        paused={paused}
-      />
+        {/* KRONOS - Giant Pendulum */}
+        <GiantPendulum
+          position={SOLAR_SYSTEMS.find(s => s.id === 'kronos')?.position || [-18, -8, -22]}
+          color="#ef4444"
+          paused={paused}
+        />
 
-      {/* SYSTEMS - Holographic Terminals */}
-      <HolographicTerminals
-        position={SOLAR_SYSTEMS.find(s => s.id === 'systems')?.position || [20, -6, -20]}
-        color="#10b981"
-        paused={paused}
-      />
+        {/* SYSTEMS - Holographic Terminals */}
+        <HolographicTerminals
+          position={SOLAR_SYSTEMS.find(s => s.id === 'systems')?.position || [20, -6, -20]}
+          color="#10b981"
+          paused={paused}
+        />
+      </AlwaysVisibleGroup>
 
       {/* === NEW COSMIC WOW EFFECTS === */}
-      <PulsarBeacons paused={paused} />
-      <SupernovaBursts paused={paused} />
-      <GravitationalWaves paused={paused} />
-      <CosmicDustLanes paused={paused} />
-      <MeteorShowers paused={paused} />
-      <SolarEclipses paused={paused} />
-      <PlanetAlignmentBeams paused={paused} />
-      <CometSwarms paused={paused} />
-      <OrbitalRings paused={paused} />
-      <DysonSphereFragments paused={paused} />
-      <SatelliteConstellations paused={paused} />
-      <GodRaysFromSuns paused={paused} />
-      <PlasmaStorms paused={paused} />
+      <AlwaysVisibleGroup>
+        <PulsarBeacons paused={paused} />
+        <SupernovaBursts paused={paused} />
+        <GravitationalWaves paused={paused} />
+        <CosmicDustLanes paused={paused} />
+        <MeteorShowers paused={paused} />
+        <SolarEclipses paused={paused} />
+        <PlanetAlignmentBeams paused={paused} />
+        <CometSwarms paused={paused} />
+        <OrbitalRings paused={paused} />
+        <DysonSphereFragments paused={paused} />
+        <SatelliteConstellations paused={paused} />
+        <GodRaysFromSuns paused={paused} />
+        <PlasmaStorms paused={paused} />
+      </AlwaysVisibleGroup>
     </group>
   )
 }
