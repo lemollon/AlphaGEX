@@ -1815,10 +1815,10 @@ const SOLAR_SYSTEMS = [
     name: 'SOLOMON',
     subtitle: 'AI Wisdom',
     route: '/solomon',
-    position: [-22, 8, -20] as [number, number, number],  // Far upper left
+    position: [-45, 15, -50] as [number, number, number],  // Far upper left - spread out
     sunColor: '#f59e0b',
     glowColor: '#fbbf24',
-    flareType: 'wisdom' as const,  // Golden rays of wisdom
+    flareType: 'wisdom' as const,
     planets: [
       { name: 'Analysis', color: '#22d3ee', size: 0.18, orbit: 1.8, speed: 0.6, effect: 'rings' as const, moons: 1 },
       { name: 'Strategy', color: '#a855f7', size: 0.15, orbit: 2.8, speed: 0.4, effect: 'crystals' as const, moons: 2 },
@@ -1830,10 +1830,10 @@ const SOLAR_SYSTEMS = [
     name: 'ARGUS',
     subtitle: 'All-Seeing Eye',
     route: '/argus',
-    position: [24, 5, -18] as [number, number, number],  // Far right
+    position: [50, 10, -35] as [number, number, number],  // Far right
     sunColor: '#06b6d4',
     glowColor: '#22d3ee',
-    flareType: 'pulse' as const,  // Scanning pulse waves
+    flareType: 'pulse' as const,
     planets: [
       { name: 'Gamma', color: '#f97316', size: 0.22, orbit: 2.0, speed: 0.8, effect: 'fire' as const, moons: 2 },
       { name: 'Delta', color: '#ef4444', size: 0.16, orbit: 3.0, speed: 0.5, effect: 'electric' as const, moons: 1 },
@@ -1845,10 +1845,10 @@ const SOLAR_SYSTEMS = [
     name: 'ORACLE',
     subtitle: 'Future Sight',
     route: '/oracle',
-    position: [0, 15, -25] as [number, number, number],  // High above center
+    position: [0, 35, -60] as [number, number, number],  // High above - way up
     sunColor: '#8b5cf6',
     glowColor: '#a855f7',
-    flareType: 'mystic' as const,  // Mystical swirling energy
+    flareType: 'mystic' as const,
     planets: [
       { name: 'Prediction', color: '#22d3ee', size: 0.20, orbit: 2.2, speed: 0.7, effect: 'glow' as const, moons: 1 },
       { name: 'Probability', color: '#10b981', size: 0.17, orbit: 3.2, speed: 0.45, effect: 'orbit_rings' as const, moons: 2 },
@@ -1859,11 +1859,11 @@ const SOLAR_SYSTEMS = [
     id: 'kronos',
     name: 'KRONOS',
     subtitle: 'Time Master',
-    route: '/zero-dte-backtest',  // KRONOS (0DTE Condor) in nav
-    position: [-18, -8, -22] as [number, number, number],  // Lower left
+    route: '/zero-dte-backtest',
+    position: [-40, -20, -45] as [number, number, number],  // Lower left - spread out
     sunColor: '#ef4444',
     glowColor: '#f87171',
-    flareType: 'eruption' as const,  // Violent solar eruptions
+    flareType: 'eruption' as const,
     planets: [
       { name: 'History', color: '#6b7280', size: 0.19, orbit: 2.4, speed: 0.55, effect: 'dust' as const, moons: 1 },
       { name: 'Backtest', color: '#3b82f6', size: 0.16, orbit: 3.4, speed: 0.38, effect: 'data_stream' as const, moons: 2 },
@@ -1875,10 +1875,10 @@ const SOLAR_SYSTEMS = [
     name: 'SYSTEMS',
     subtitle: 'Core Hub',
     route: '/system/processes',
-    position: [20, -6, -20] as [number, number, number],  // Lower right
+    position: [45, -15, -55] as [number, number, number],  // Lower right - spread out
     sunColor: '#10b981',
     glowColor: '#34d399',
-    flareType: 'network' as const,  // Network connection beams
+    flareType: 'network' as const,
     planets: [
       { name: 'Health', color: '#22c55e', size: 0.18, orbit: 2.0, speed: 0.7, effect: 'heartbeat' as const, moons: 0 },
       { name: 'Data', color: '#3b82f6', size: 0.15, orbit: 3.0, speed: 0.45, effect: 'binary' as const, moons: 1 },
@@ -1890,10 +1890,10 @@ const SOLAR_SYSTEMS = [
     name: 'APOLLO',
     subtitle: 'ML Scanner',
     route: '/apollo',
-    position: [0, -12, -24] as [number, number, number],  // Lower center
-    sunColor: '#fbbf24',  // Bright golden (sun god)
+    position: [0, -30, -40] as [number, number, number],  // Below center
+    sunColor: '#fbbf24',
     glowColor: '#fcd34d',
-    flareType: 'radiant' as const,  // Radiant solar beams
+    flareType: 'radiant' as const,
     planets: [
       { name: 'Scanner', color: '#f97316', size: 0.20, orbit: 2.0, speed: 0.75, effect: 'fire' as const, moons: 2 },
       { name: 'Signals', color: '#eab308', size: 0.16, orbit: 3.0, speed: 0.5, effect: 'electric' as const, moons: 1 },
@@ -1905,13 +1905,13 @@ const SOLAR_SYSTEMS = [
     name: 'HYPERION',
     subtitle: 'Mathematical Titan',
     route: '/probability',
-    position: [-10, 8, -18] as [number, number, number],  // Closer position for better navigation
-    sunColor: '#6366f1',  // Indigo - mathematical elegance
+    position: [-25, 25, -30] as [number, number, number],  // Upper left closer
+    sunColor: '#6366f1',
     glowColor: '#818cf8',
-    flareType: 'fractal' as const,  // Fractal geometric patterns
+    flareType: 'fractal' as const,
     planets: [
-      { name: 'Fibonacci', color: '#a855f7', size: 0.22, orbit: 2.2, speed: 0.618, effect: 'spiral' as const, moons: 1 },  // Golden ratio speed
-      { name: 'Euler', color: '#06b6d4', size: 0.17, orbit: 3.14, speed: 0.5, effect: 'rings' as const, moons: 2 },  // Pi orbit
+      { name: 'Fibonacci', color: '#a855f7', size: 0.22, orbit: 2.2, speed: 0.618, effect: 'spiral' as const, moons: 1 },
+      { name: 'Euler', color: '#06b6d4', size: 0.17, orbit: 3.14, speed: 0.5, effect: 'rings' as const, moons: 2 },
       { name: 'Gauss', color: '#10b981', size: 0.14, orbit: 4.0, speed: 0.3, effect: 'glow' as const, moons: 0 },
     ]
   },
@@ -5039,11 +5039,13 @@ function SolarSystem({
   // Track pointer to distinguish click from drag
   const pointerDownPos = useRef<{ x: number, y: number } | null>(null)
   const isDragging = useRef(false)
+  const hadPointerDown = useRef(false)
 
   // Handle pointer down to start tracking
   const handlePointerDown = useCallback((e: any) => {
     pointerDownPos.current = { x: e.clientX, y: e.clientY }
     isDragging.current = false
+    hadPointerDown.current = true
   }, [])
 
   // Handle pointer up to detect if it was a click or drag
@@ -5054,15 +5056,19 @@ function SolarSystem({
       const distance = Math.sqrt(dx * dx + dy * dy)
       // Only consider it a click if pointer moved less than 20 pixels (generous threshold to avoid accidental navigation while orbiting)
       isDragging.current = distance > 20
+    } else {
+      // Pointer up without pointer down on this element = drag from elsewhere
+      isDragging.current = true
     }
     pointerDownPos.current = null
   }, [])
 
-  // Handle click to navigate to this system - only if not dragging
+  // Handle click to navigate to this system - only if not dragging AND we had a valid pointer down
   const handleClick = useCallback(() => {
-    if (onSystemClick && !isDragging.current) {
+    if (onSystemClick && !isDragging.current && hadPointerDown.current) {
       onSystemClick(system.id, system.position)
     }
+    hadPointerDown.current = false
   }, [onSystemClick, system.id, system.position])
 
   // Pulse effect when receiving signal
@@ -5127,38 +5133,43 @@ function SolarSystem({
       onPointerUp={handlePointerUp}
       onClick={handleClick}
     >
+      {/* Far-distance beacon glow - always visible from afar */}
+      <Sphere args={[8, 16, 16]}>
+        <meshBasicMaterial color={system.glowColor} transparent opacity={0.08} />
+      </Sphere>
+
       {/* Outer glow halo */}
-      <Sphere ref={glowRef} args={[1.8, 32, 32]}>
-        <meshBasicMaterial color={system.glowColor} transparent opacity={0.25} />
+      <Sphere ref={glowRef} args={[5, 32, 32]}>
+        <meshBasicMaterial color={system.glowColor} transparent opacity={0.2} />
       </Sphere>
 
       {/* Secondary glow */}
-      <Sphere args={[1.2, 32, 32]}>
+      <Sphere args={[3.5, 32, 32]}>
         <meshBasicMaterial color={system.glowColor} transparent opacity={0.15} />
       </Sphere>
 
       {/* Central sun with distortion */}
-      <Sphere ref={sunRef} args={[0.7, 32, 32]}>
+      <Sphere ref={sunRef} args={[2, 32, 32]}>
         <MeshDistortMaterial
           color={system.sunColor}
           emissive={system.sunColor}
-          emissiveIntensity={isHovered ? 2.5 : 1.5}
+          emissiveIntensity={isHovered ? 3 : 2}
           distort={0.35}
           speed={3}
         />
       </Sphere>
 
       {/* Sun core (bright center) */}
-      <Sphere args={[0.3, 16, 16]}>
+      <Sphere args={[0.8, 16, 16]}>
         <meshBasicMaterial color="#ffffff" />
       </Sphere>
 
-      {/* Orbital rings */}
+      {/* Orbital rings - scaled up for visibility */}
       <group ref={ringsRef}>
         {system.planets.map((planet, i) => (
           <mesh key={i} rotation={[Math.PI / 2, 0, 0]}>
-            <torusGeometry args={[planet.orbit, 0.008, 8, 64]} />
-            <meshBasicMaterial color={planet.color} transparent opacity={0.3} />
+            <torusGeometry args={[planet.orbit * 2.5, 0.04, 8, 64]} />
+            <meshBasicMaterial color={planet.color} transparent opacity={0.4} />
           </mesh>
         ))}
       </group>
@@ -5235,14 +5246,17 @@ function OrbitingPlanet({
   const trailPositions = useMemo(() => new Float32Array(30 * 3), [])
   const trailIndex = useRef(0)
 
+  // Scale orbit to match the larger solar system visualization
+  const scaledOrbit = planet.orbit * 2.5
+
   useFrame((state) => {
     if (paused) return
     const t = state.clock.elapsedTime
 
     const angle = t * planet.speed + phaseOffset
-    const x = Math.cos(angle) * planet.orbit
-    const z = Math.sin(angle) * planet.orbit
-    const y = Math.sin(angle * 2) * 0.1 // Slight vertical wobble
+    const x = Math.cos(angle) * scaledOrbit
+    const z = Math.sin(angle) * scaledOrbit
+    const y = Math.sin(angle * 2) * 0.2 // Slight vertical wobble
 
     if (groupRef.current) {
       groupRef.current.position.set(x, y, z)
@@ -5282,6 +5296,9 @@ function OrbitingPlanet({
     }))
   }, [planet.moons, planet.size])
 
+  // Scale planet size for better visibility
+  const scaledSize = planet.size * 3
+
   return (
     <group>
       {/* Planet trail */}
@@ -5294,35 +5311,35 @@ function OrbitingPlanet({
             itemSize={3}
           />
         </bufferGeometry>
-        <pointsMaterial color={planet.color} size={0.03} transparent opacity={0.4} />
+        <pointsMaterial color={planet.color} size={0.08} transparent opacity={0.5} />
       </points>
 
       {/* Planet with effects */}
       <group ref={groupRef}>
         {/* Planet atmosphere glow */}
-        <Sphere ref={atmosphereRef} args={[planet.size * 1.3, 16, 16]}>
-          <meshBasicMaterial color={planet.color} transparent opacity={isHovered ? 0.35 : 0.15} />
+        <Sphere ref={atmosphereRef} args={[scaledSize * 1.5, 16, 16]}>
+          <meshBasicMaterial color={planet.color} transparent opacity={isHovered ? 0.35 : 0.2} />
         </Sphere>
 
         {/* Planet sphere */}
         <Sphere
           ref={meshRef}
-          args={[planet.size, 16, 16]}
+          args={[scaledSize, 16, 16]}
           onPointerOver={() => setIsHovered(true)}
           onPointerOut={() => setIsHovered(false)}
         >
           <MeshDistortMaterial
             color={planet.color}
             emissive={planet.color}
-            emissiveIntensity={isHovered ? 0.5 : 0.2}
+            emissiveIntensity={isHovered ? 0.6 : 0.3}
             distort={isHovered ? 0.15 : 0.05}
             speed={2}
           />
         </Sphere>
 
         {/* Inner core glow */}
-        <Sphere args={[planet.size * 0.5, 8, 8]}>
-          <meshBasicMaterial color="#ffffff" transparent opacity={0.4} />
+        <Sphere args={[scaledSize * 0.5, 8, 8]}>
+          <meshBasicMaterial color="#ffffff" transparent opacity={0.5} />
         </Sphere>
 
         {/* Orbiting moons */}
@@ -5335,14 +5352,14 @@ function OrbitingPlanet({
           <PlanetEffectComponent
             effect={planet.effect}
             color={planet.color}
-            size={planet.size}
+            size={scaledSize}
             paused={paused}
           />
         )}
 
         {/* Hover tooltip */}
         {isHovered && (
-          <Html position={[0, planet.size + 0.3, 0]} center>
+          <Html position={[0, scaledSize + 0.5, 0]} center>
             <div className="bg-gray-900/90 border border-gray-700 rounded-lg px-3 py-2 text-center backdrop-blur-sm min-w-[80px]">
               <div className="text-xs font-bold" style={{ color: planet.color }}>
                 {planet.name}
@@ -5354,12 +5371,12 @@ function OrbitingPlanet({
         {/* Enhanced glow when hovered */}
         {isHovered && (
           <>
-            <Sphere args={[planet.size * 2, 8, 8]}>
+            <Sphere args={[scaledSize * 2, 8, 8]}>
               <meshBasicMaterial color={planet.color} transparent opacity={0.2} />
             </Sphere>
             {/* Pulsing ring */}
             <mesh rotation={[Math.PI / 2, 0, 0]}>
-              <torusGeometry args={[planet.size * 1.5, 0.01, 8, 32]} />
+              <torusGeometry args={[scaledSize * 1.5, 0.03, 8, 32]} />
               <meshBasicMaterial color="#ffffff" transparent opacity={0.8} />
             </mesh>
           </>
@@ -9188,6 +9205,7 @@ function BotNodeWithFlare({
   // Track pointer to distinguish click from drag
   const pointerDownPos = useRef<{ x: number, y: number } | null>(null)
   const isDragging = useRef(false)
+  const hadPointerDown = useRef(false)
 
   const radius = 5
   const x = Math.cos(angle) * radius
@@ -9200,6 +9218,7 @@ function BotNodeWithFlare({
   const handlePointerDown = useCallback((e: any) => {
     pointerDownPos.current = { x: e.clientX, y: e.clientY }
     isDragging.current = false
+    hadPointerDown.current = true
   }, [])
 
   // Handle pointer up to detect if it was a click or drag
@@ -9210,22 +9229,27 @@ function BotNodeWithFlare({
       const distance = Math.sqrt(dx * dx + dy * dy)
       // Only consider it a click if pointer moved less than 20 pixels (generous threshold to avoid accidental navigation while orbiting)
       isDragging.current = distance > 20
+    } else {
+      // Pointer up without pointer down on this element = drag from elsewhere
+      isDragging.current = true
     }
     pointerDownPos.current = null
   }, [])
 
-  // Handle click - only if not dragging
+  // Handle click - only if not dragging AND we had a valid pointer down
   const handleClick = useCallback(() => {
-    if (onClick && !isDragging.current) {
+    if (onClick && !isDragging.current && hadPointerDown.current) {
       onClick()
     }
+    hadPointerDown.current = false
   }, [onClick])
 
-  // Handle double click - only if not dragging
+  // Handle double click - only if not dragging AND we had a valid pointer down
   const handleDoubleClick = useCallback(() => {
-    if (onDoubleClick && !isDragging.current) {
+    if (onDoubleClick && !isDragging.current && hadPointerDown.current) {
       onDoubleClick()
     }
+    hadPointerDown.current = false
   }, [onDoubleClick])
 
   useFrame((state) => {
