@@ -5039,11 +5039,13 @@ function SolarSystem({
   // Track pointer to distinguish click from drag
   const pointerDownPos = useRef<{ x: number, y: number } | null>(null)
   const isDragging = useRef(false)
+  const hadPointerDown = useRef(false)
 
   // Handle pointer down to start tracking
   const handlePointerDown = useCallback((e: any) => {
     pointerDownPos.current = { x: e.clientX, y: e.clientY }
     isDragging.current = false
+    hadPointerDown.current = true
   }, [])
 
   // Handle pointer up to detect if it was a click or drag
@@ -5054,15 +5056,19 @@ function SolarSystem({
       const distance = Math.sqrt(dx * dx + dy * dy)
       // Only consider it a click if pointer moved less than 20 pixels (generous threshold to avoid accidental navigation while orbiting)
       isDragging.current = distance > 20
+    } else {
+      // Pointer up without pointer down on this element = drag from elsewhere
+      isDragging.current = true
     }
     pointerDownPos.current = null
   }, [])
 
-  // Handle click to navigate to this system - only if not dragging
+  // Handle click to navigate to this system - only if not dragging AND we had a valid pointer down
   const handleClick = useCallback(() => {
-    if (onSystemClick && !isDragging.current) {
+    if (onSystemClick && !isDragging.current && hadPointerDown.current) {
       onSystemClick(system.id, system.position)
     }
+    hadPointerDown.current = false
   }, [onSystemClick, system.id, system.position])
 
   // Pulse effect when receiving signal
@@ -9188,6 +9194,7 @@ function BotNodeWithFlare({
   // Track pointer to distinguish click from drag
   const pointerDownPos = useRef<{ x: number, y: number } | null>(null)
   const isDragging = useRef(false)
+  const hadPointerDown = useRef(false)
 
   const radius = 5
   const x = Math.cos(angle) * radius
@@ -9200,6 +9207,7 @@ function BotNodeWithFlare({
   const handlePointerDown = useCallback((e: any) => {
     pointerDownPos.current = { x: e.clientX, y: e.clientY }
     isDragging.current = false
+    hadPointerDown.current = true
   }, [])
 
   // Handle pointer up to detect if it was a click or drag
@@ -9210,22 +9218,27 @@ function BotNodeWithFlare({
       const distance = Math.sqrt(dx * dx + dy * dy)
       // Only consider it a click if pointer moved less than 20 pixels (generous threshold to avoid accidental navigation while orbiting)
       isDragging.current = distance > 20
+    } else {
+      // Pointer up without pointer down on this element = drag from elsewhere
+      isDragging.current = true
     }
     pointerDownPos.current = null
   }, [])
 
-  // Handle click - only if not dragging
+  // Handle click - only if not dragging AND we had a valid pointer down
   const handleClick = useCallback(() => {
-    if (onClick && !isDragging.current) {
+    if (onClick && !isDragging.current && hadPointerDown.current) {
       onClick()
     }
+    hadPointerDown.current = false
   }, [onClick])
 
-  // Handle double click - only if not dragging
+  // Handle double click - only if not dragging AND we had a valid pointer down
   const handleDoubleClick = useCallback(() => {
-    if (onDoubleClick && !isDragging.current) {
+    if (onDoubleClick && !isDragging.current && hadPointerDown.current) {
       onDoubleClick()
     }
+    hadPointerDown.current = false
   }, [onDoubleClick])
 
   useFrame((state) => {
