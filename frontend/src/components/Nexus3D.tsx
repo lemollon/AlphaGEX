@@ -353,12 +353,25 @@ function CameraFollowingEffects({
   children: React.ReactNode
 }) {
   const groupRef = useRef<THREE.Group>(null)
+  const { camera } = useThree()
 
   useFrame(() => {
     if (groupRef.current && controlsRef.current) {
-      // Position effects around the camera's target (where you're looking)
+      // Position effects between camera and target so they're always visible
       const target = controlsRef.current.target
-      groupRef.current.position.copy(target)
+      const cameraPos = camera.position
+
+      // Calculate direction from camera to target
+      const direction = new THREE.Vector3()
+      direction.subVectors(target, cameraPos).normalize()
+
+      // Position the effects group slightly in front of the target (toward camera)
+      // This ensures effects are visible when you navigate to any location
+      const effectsPosition = target.clone().sub(direction.multiplyScalar(5))
+      groupRef.current.position.copy(effectsPosition)
+
+      // Make the effects group face the camera
+      groupRef.current.lookAt(cameraPos)
     }
   })
 
