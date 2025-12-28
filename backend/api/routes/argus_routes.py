@@ -117,7 +117,7 @@ def is_market_hours() -> bool:
     return 8 * 60 + 30 <= time_minutes < 15 * 60
 
 
-async def fetch_gamma_data(expiration: str = None) -> dict:
+async def fetch_gamma_data(symbol: str = "SPY", expiration: str = None) -> dict:
     """
     Fetch gamma data from Tradier API with caching.
 
@@ -130,7 +130,7 @@ async def fetch_gamma_data(expiration: str = None) -> dict:
     cache_ttl = CACHE_TTL_SECONDS if market_open else 300  # 30s when open, 5min when closed
 
     # Check cache first - but skip if cached data is mock (allow retry for live)
-    cache_key = f"gamma_data_{expiration or 'today'}"
+    cache_key = f"gamma_data_{symbol}_{expiration or 'today'}"
     cached = get_cached(cache_key, cache_ttl)
     if cached and not cached.get('is_mock', False):
         logger.debug(f"ARGUS: Returning cached data for {expiration or 'today'} (market_open={market_open}, ttl={cache_ttl}s)")
@@ -143,15 +143,15 @@ async def fetch_gamma_data(expiration: str = None) -> dict:
         logger.warning("ARGUS: Tradier not available, using mock data")
         # Get real prices for mock data
         spot, vix = await get_real_prices()
-        result = get_mock_gamma_data(spot, vix)
+        result = get_mock_gamma_data(symbol, spot, vix)
         # Don't cache mock data - allow retry on next request
         return result
 
     try:
-        # Get SPY quote (synchronous method)
-        quote = tradier.get_quote('SPY')
+        # Get quote for symbol (synchronous method)
+        quote = tradier.get_quote(symbol)
         spot_price = quote.get('last', 0) or quote.get('close', 0)
-        logger.info(f"ARGUS: SPY quote fetched, price=${spot_price}")
+        logger.info(f"ARGUS: {symbol} quote fetched, price=${spot_price}")
 
         # Get VIX - use reliable vix_fetcher (NO FAKE FALLBACKS)
         from data.vix_fetcher import get_vix_price
@@ -165,7 +165,7 @@ async def fetch_gamma_data(expiration: str = None) -> dict:
         logger.info(f"ARGUS: Using expiration={expiration}")
 
         # Get options chain (synchronous method, returns OptionChain dataclass)
-        option_chain = tradier.get_option_chain('SPY', expiration)
+        option_chain = tradier.get_option_chain(symbol, expiration)
 
         # OptionChain.chains is Dict[expiration, List[OptionContract]]
         # Get contracts for the requested expiration
@@ -177,7 +177,7 @@ async def fetch_gamma_data(expiration: str = None) -> dict:
         if options_count == 0:
             logger.warning("ARGUS: No options data available (market likely closed), using mock data")
             spot, vix_val = await get_real_prices()
-            result = get_mock_gamma_data(spot, vix_val)
+            result = get_mock_gamma_data(symbol, spot, vix_val)
             # Don't cache mock data - allow retry on next request for live data
             return result
 
@@ -216,6 +216,7 @@ async def fetch_gamma_data(expiration: str = None) -> dict:
         data_fetch_time = format_central_timestamp()
 
         result = {
+            'symbol': symbol,
             'spot_price': spot_price,
             'vix': vix,
             'expiration': expiration,
@@ -233,7 +234,7 @@ async def fetch_gamma_data(expiration: str = None) -> dict:
     except Exception as e:
         logger.error(f"Error fetching gamma data: {e}")
         spot, vix_val = await get_real_prices()
-        result = get_mock_gamma_data(spot, vix_val)
+        result = get_mock_gamma_data(symbol, spot, vix_val)
         # Don't cache mock data on error - allow retry on next request
         return result
 
@@ -264,7 +265,7 @@ async def get_real_prices() -> tuple:
     return result
 
 
-def get_mock_gamma_data(spot: float = None, vix: float = None) -> dict:
+def get_mock_gamma_data(symbol: str = "SPY", spot: float = None, vix: float = None) -> dict:
     """Return mock gamma data for development/testing.
     Uses randomization to simulate live updates - marked as is_mock=True.
     """
@@ -305,6 +306,7 @@ def get_mock_gamma_data(spot: float = None, vix: float = None) -> dict:
         })
 
     return {
+        'symbol': symbol,
         'spot_price': spot,
         'vix': vix,
         'expiration': date.today().strftime('%Y-%m-%d'),
@@ -316,6 +318,7 @@ def get_mock_gamma_data(spot: float = None, vix: float = None) -> dict:
 
 @router.get("/gamma")
 async def get_gamma_data(
+    symbol: str = Query("SPY", description="Symbol (SPY, SPX, QQQ, IWM, DIA)"),
     expiration: Optional[str] = Query(None, description="Expiration date YYYY-MM-DD"),
     day: Optional[str] = Query(None, description="Day of week: mon, tue, wed, thu, fri")
 ):
@@ -340,7 +343,7 @@ async def get_gamma_data(
             expiration = engine.get_0dte_expiration('today')
 
         # Fetch raw data
-        raw_data = await fetch_gamma_data(expiration)
+        raw_data = await fetch_gamma_data(symbol, expiration)
 
         # CRITICAL: Only process through engine if data is FRESH (not cached)
         # Re-processing cached data causes ROC to become 0 because the same gamma values

@@ -895,8 +895,8 @@ export const apiClient = {
     api.get('/api/daily-manna/prayer/stats', { params: { user_id: userId } }),
 
   // ARGUS - 0DTE Gamma Live (Real-time gamma visualization)
-  getArgusGamma: (expiration?: string) =>
-    api.get('/api/argus/gamma', { params: { expiration } }),
+  getArgusGamma: (symbol?: string, expiration?: string) =>
+    api.get('/api/argus/gamma', { params: { symbol, expiration } }),
   getArgusHistory: (expiration?: string, minutes?: number) =>
     api.get('/api/argus/history', { params: { expiration, minutes } }),
   getArgusProbability: () => api.get('/api/argus/probability'),
@@ -920,6 +920,13 @@ export const apiClient = {
   getArgusDangerZoneLogs: () => api.get('/api/argus/danger-zones/log'),
   getArgusStrikeTrends: () => api.get('/api/argus/strike-trends'),
   getArgusGammaFlips: () => api.get('/api/argus/gamma-flips'),
+
+  // HYPERION - Weekly Gamma visualization for stocks/ETFs
+  getHyperionGamma: (symbol?: string, expiration?: string) =>
+    api.get('/api/hyperion/gamma', { params: { symbol, expiration } }),
+  getHyperionExpirations: (symbol?: string, weeks?: number) =>
+    api.get('/api/hyperion/expirations', { params: { symbol, weeks } }),
+  getHyperionSymbols: () => api.get('/api/hyperion/symbols'),
 
   // SOLOMON - Feedback Loop Intelligence System
   getSolomonDashboard: () => api.get('/api/solomon/dashboard'),

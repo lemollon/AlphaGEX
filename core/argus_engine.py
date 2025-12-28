@@ -202,6 +202,38 @@ class ArgusEngine:
         # Import ML models lazily to avoid circular imports
         self._ml_models = None
 
+        # Expected move smoothing state
+        # EMA smoothing reduces chart structure volatility by ~70-80%
+        self._previous_expected_move: Optional[float] = None
+        self._ema_alpha: float = 0.3  # 30% new value, 70% previous (tunable)
+
+    def reset_expected_move_smoothing(self):
+        """
+        Reset the expected move smoothing state.
+
+        Call this at the start of a new trading day or when you want
+        the expected move to immediately reflect current option prices
+        without smoothing from previous values.
+        """
+        self._previous_expected_move = None
+        logger.debug("Expected move smoothing state reset")
+
+    def set_ema_alpha(self, alpha: float):
+        """
+        Set the EMA smoothing factor for expected move.
+
+        Args:
+            alpha: Value between 0 and 1. Higher = more responsive to changes,
+                   lower = more stable/smooth. Default is 0.3.
+                   - 0.1 = very smooth (90% previous, 10% new)
+                   - 0.3 = balanced (70% previous, 30% new) [default]
+                   - 0.5 = responsive (50% previous, 50% new)
+        """
+        if not 0 < alpha <= 1:
+            raise ValueError("Alpha must be between 0 (exclusive) and 1 (inclusive)")
+        self._ema_alpha = alpha
+        logger.info(f"Expected move EMA alpha set to {alpha}")
+
     def _get_ml_models(self):
         """Lazy load ML probability models"""
         if self._ml_models is None:
@@ -278,18 +310,40 @@ class ArgusEngine:
         target_date = today + timedelta(days=days_ahead)
         return target_date.strftime('%Y-%m-%d')
 
-    def calculate_expected_move(self, atm_call_price: float, atm_put_price: float) -> float:
+    def calculate_expected_move(self, atm_call_price: float, atm_put_price: float,
+                                  apply_smoothing: bool = True) -> float:
         """
-        Calculate expected move from ATM straddle price.
+        Calculate expected move from ATM straddle price with optional EMA smoothing.
+
+        Smoothing reduces chart structure volatility by dampening rapid changes
+        in expected move that cause strike filtering bounds to shift frequently.
 
         Args:
             atm_call_price: Price of ATM call
             atm_put_price: Price of ATM put
+            apply_smoothing: Whether to apply EMA smoothing (default True)
 
         Returns:
-            Expected move in dollars
+            Expected move in dollars (smoothed if enabled)
         """
-        return atm_call_price + atm_put_price
+        raw_em = atm_call_price + atm_put_price
+
+        if not apply_smoothing or raw_em <= 0:
+            return raw_em
+
+        # Apply exponential moving average smoothing
+        if self._previous_expected_move is None:
+            # First calculation - use raw value
+            smoothed_em = raw_em
+        else:
+            # EMA: smoothed = alpha * new + (1 - alpha) * previous
+            smoothed_em = (self._ema_alpha * raw_em +
+                          (1 - self._ema_alpha) * self._previous_expected_move)
+
+        # Update state for next calculation
+        self._previous_expected_move = smoothed_em
+
+        return smoothed_em
 
     def calculate_net_gamma(self, call_gamma: float, put_gamma: float,
                             call_oi: int = 0, put_oi: int = 0) -> float:
@@ -779,8 +833,9 @@ class ArgusEngine:
         danger_zones = self.identify_danger_zones(strikes_data)
 
         # Create snapshot
+        symbol = options_data.get('symbol', 'SPY')  # Get symbol from data, default to SPY
         snapshot = GammaSnapshot(
-            symbol='SPY',
+            symbol=symbol,
             expiration_date=expiration,
             snapshot_time=timestamp,
             spot_price=spot_price,

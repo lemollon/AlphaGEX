@@ -1,0 +1,401 @@
+"""
+HYPERION (Weekly Gamma) API Routes
+====================================
+
+API endpoints for weekly options gamma visualization.
+HYPERION focuses on stocks/ETFs with weekly options (not 0DTE).
+
+Named after the Titan of Watchfulness - watching longer-term gamma setups.
+"""
+
+import logging
+from datetime import datetime, date, timedelta
+from typing import Optional, List, Dict, Any
+from fastapi import APIRouter, HTTPException, Query
+from zoneinfo import ZoneInfo
+import time
+
+from database_adapter import get_connection
+
+router = APIRouter(prefix="/api/hyperion", tags=["HYPERION"])
+logger = logging.getLogger(__name__)
+
+# Timezone
+CENTRAL_TZ = ZoneInfo("America/Chicago")
+
+# Cache
+_cache: Dict[str, Any] = {}
+_cache_times: Dict[str, float] = {}
+CACHE_TTL_SECONDS = 60  # 60 second cache for weekly data (less volatile than 0DTE)
+
+
+def get_cached(key: str, ttl: int = CACHE_TTL_SECONDS) -> Any:
+    """Get cached value if not expired"""
+    if key in _cache and key in _cache_times:
+        if time.time() - _cache_times[key] < ttl:
+            return _cache[key]
+    return None
+
+
+def set_cached(key: str, value: Any):
+    """Set cache value with current time"""
+    _cache[key] = value
+    _cache_times[key] = time.time()
+
+
+def format_central_timestamp() -> str:
+    """Get ISO formatted timestamp in Central timezone"""
+    return datetime.now(CENTRAL_TZ).isoformat()
+
+
+# Try to import Tradier data fetcher
+TRADIER_AVAILABLE = False
+TradierDataFetcher = None
+try:
+    from data.tradier_data_fetcher import TradierDataFetcher
+    TRADIER_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Tradier data fetcher not available: {e}")
+
+
+def get_tradier():
+    """Get the Tradier data fetcher instance"""
+    if not TRADIER_AVAILABLE or TradierDataFetcher is None:
+        return None
+    try:
+        return TradierDataFetcher()
+    except Exception as e:
+        logger.error(f"Failed to get Tradier fetcher: {e}")
+        return None
+
+
+def get_weekly_expirations(symbol: str, weeks: int = 4) -> List[Dict]:
+    """
+    Get weekly expiration dates for a symbol.
+
+    Weekly options typically expire on Fridays.
+    """
+    tradier = get_tradier()
+    if not tradier:
+        # Return mock expirations
+        return get_mock_expirations(weeks)
+
+    try:
+        # Get real expirations from Tradier
+        expirations = tradier.get_option_expirations(symbol)
+        today = date.today()
+
+        weekly_exps = []
+        for exp_str in expirations[:weeks * 2]:  # Get more than needed, filter later
+            try:
+                exp_date = datetime.strptime(exp_str, '%Y-%m-%d').date()
+                if exp_date >= today:
+                    dte = (exp_date - today).days
+                    # Weekly options are typically Fridays (weekday 4)
+                    is_monthly = exp_date.day > 14 and exp_date.day <= 21 and exp_date.weekday() == 4
+                    weekly_exps.append({
+                        'date': exp_str,
+                        'dte': dte,
+                        'is_weekly': True,
+                        'is_monthly': is_monthly
+                    })
+            except ValueError:
+                continue
+
+            if len(weekly_exps) >= weeks:
+                break
+
+        return weekly_exps
+    except Exception as e:
+        logger.error(f"Error fetching expirations for {symbol}: {e}")
+        return get_mock_expirations(weeks)
+
+
+def get_mock_expirations(weeks: int = 4) -> List[Dict]:
+    """Generate mock weekly expirations"""
+    today = date.today()
+    expirations = []
+
+    for i in range(weeks):
+        # Find next Friday
+        days_until_friday = (4 - today.weekday() + 7) % 7
+        if days_until_friday == 0 and i == 0:
+            days_until_friday = 7  # If today is Friday, use next Friday
+        friday = today + timedelta(days=days_until_friday + (i * 7))
+
+        dte = (friday - today).days
+        is_monthly = friday.day > 14 and friday.day <= 21
+
+        expirations.append({
+            'date': friday.strftime('%Y-%m-%d'),
+            'dte': dte,
+            'is_weekly': True,
+            'is_monthly': is_monthly
+        })
+
+    return expirations
+
+
+async def fetch_gamma_data(symbol: str, expiration: str) -> dict:
+    """
+    Fetch gamma data for a weekly options symbol.
+    """
+    cache_key = f"hyperion_gamma_{symbol}_{expiration}"
+    cached = get_cached(cache_key)
+    if cached:
+        return cached
+
+    tradier = get_tradier()
+    if not tradier:
+        logger.warning("HYPERION: Tradier not available, using mock data")
+        return get_mock_gamma_data(symbol, expiration)
+
+    try:
+        # Get quote
+        quote = tradier.get_quote(symbol)
+        spot_price = quote.get('last', 0) or quote.get('close', 0)
+        logger.info(f"HYPERION: {symbol} quote fetched, price=${spot_price}")
+
+        # Get VIX
+        from data.vix_fetcher import get_vix_price
+        vix = get_vix_price()
+
+        # Get options chain
+        option_chain = tradier.get_option_chain(symbol, expiration)
+        contracts = option_chain.chains.get(expiration, [])
+
+        if len(contracts) == 0:
+            logger.warning(f"HYPERION: No options data for {symbol} {expiration}")
+            return get_mock_gamma_data(symbol, expiration, spot_price, vix)
+
+        # Build strike data using O(1) lookup
+        options_by_key = {}
+        for contract in contracts:
+            strike = contract.strike
+            opt_type = contract.option_type
+            if strike and opt_type:
+                options_by_key[(strike, opt_type)] = contract
+
+        unique_strikes = set(c.strike for c in contracts if c.strike)
+        strikes = []
+
+        for strike in sorted(unique_strikes):
+            call = options_by_key.get((strike, 'call'))
+            put = options_by_key.get((strike, 'put'))
+
+            call_gamma = call.gamma if call else 0
+            put_gamma = put.gamma if put else 0
+            call_oi = call.open_interest if call else 0
+            put_oi = put.open_interest if put else 0
+
+            # Calculate net gamma (simplified)
+            net_gamma = (call_gamma * call_oi - put_gamma * put_oi) * 100 * spot_price
+
+            strikes.append({
+                'strike': strike,
+                'net_gamma': net_gamma,
+                'call_gamma': call_gamma,
+                'put_gamma': put_gamma,
+                'call_oi': call_oi,
+                'put_oi': put_oi,
+                'probability': 0,  # Would need ML model
+                'is_magnet': False,
+                'is_pin': False,
+                'is_danger': False
+            })
+
+        # Identify magnets (top 3 by absolute gamma)
+        sorted_strikes = sorted(strikes, key=lambda s: abs(s['net_gamma']), reverse=True)
+        for i, s in enumerate(sorted_strikes[:3]):
+            s['is_magnet'] = True
+            s['magnet_rank'] = i + 1
+
+        # Calculate expected move (ATM straddle price)
+        atm_strike = min(unique_strikes, key=lambda s: abs(s - spot_price))
+        atm_call = options_by_key.get((atm_strike, 'call'))
+        atm_put = options_by_key.get((atm_strike, 'put'))
+        expected_move = 0
+        if atm_call and atm_put:
+            call_price = atm_call.last or atm_call.mid or 0
+            put_price = atm_put.last or atm_put.mid or 0
+            expected_move = call_price + put_price
+
+        # Determine gamma regime
+        total_net_gamma = sum(s['net_gamma'] for s in strikes)
+        gamma_regime = 'POSITIVE' if total_net_gamma > 0 else 'NEGATIVE' if total_net_gamma < 0 else 'NEUTRAL'
+
+        result = {
+            'symbol': symbol,
+            'spot_price': spot_price,
+            'vix': vix,
+            'expiration_date': expiration,
+            'expected_move': expected_move,
+            'total_net_gamma': total_net_gamma,
+            'gamma_regime': gamma_regime,
+            'strikes': strikes,
+            'magnets': [{'rank': i+1, 'strike': s['strike'], 'net_gamma': s['net_gamma'], 'probability': 0}
+                       for i, s in enumerate(sorted_strikes[:3])],
+            'likely_pin': sorted_strikes[0]['strike'] if sorted_strikes else None,
+            'pin_probability': 0,
+            'danger_zones': [],
+            'is_mock': False,
+            'fetched_at': format_central_timestamp()
+        }
+
+        set_cached(cache_key, result)
+        return result
+
+    except Exception as e:
+        logger.error(f"Error fetching HYPERION gamma data: {e}")
+        return get_mock_gamma_data(symbol, expiration)
+
+
+def get_mock_gamma_data(symbol: str, expiration: str, spot: float = None, vix: float = None) -> dict:
+    """Return mock gamma data for development"""
+    import random
+
+    if spot is None:
+        # Default prices by symbol
+        default_prices = {
+            'AAPL': 195.0, 'MSFT': 425.0, 'GOOGL': 175.0, 'AMZN': 195.0,
+            'NVDA': 140.0, 'META': 580.0, 'TSLA': 250.0, 'AMD': 145.0,
+            'NFLX': 900.0, 'XLF': 45.0, 'XLE': 90.0, 'GLD': 240.0,
+            'SLV': 28.0, 'TLT': 95.0
+        }
+        spot = default_prices.get(symbol, 100.0)
+
+    if vix is None:
+        vix = 18.0
+
+    strikes = []
+    base_strike = round(spot)
+
+    for i in range(-10, 11):
+        strike = base_strike + i
+        distance = abs(i)
+
+        # Simulate gamma distribution
+        base_gamma = max(0, 0.05 - distance * 0.004) * 1e6
+        net_gamma = base_gamma * (1 + random.uniform(-0.3, 0.3))
+        if random.random() > 0.5:
+            net_gamma = -net_gamma
+
+        strikes.append({
+            'strike': strike,
+            'net_gamma': net_gamma,
+            'probability': max(0, 20 - distance * 2),
+            'is_magnet': distance <= 1,
+            'magnet_rank': distance + 1 if distance <= 2 else None,
+            'is_pin': i == 0,
+            'is_danger': random.random() > 0.9
+        })
+
+    # Sort by strike
+    strikes.sort(key=lambda s: s['strike'], reverse=True)
+
+    return {
+        'symbol': symbol,
+        'spot_price': spot,
+        'vix': vix,
+        'expiration_date': expiration,
+        'expected_move': spot * 0.02,  # ~2% move
+        'total_net_gamma': sum(s['net_gamma'] for s in strikes),
+        'gamma_regime': 'POSITIVE' if sum(s['net_gamma'] for s in strikes) > 0 else 'NEGATIVE',
+        'strikes': strikes,
+        'magnets': [{'rank': i+1, 'strike': s['strike'], 'net_gamma': s['net_gamma'], 'probability': s['probability']}
+                   for i, s in enumerate(strikes[:3])],
+        'likely_pin': base_strike,
+        'pin_probability': 25.0,
+        'danger_zones': [],
+        'is_mock': True,
+        'fetched_at': format_central_timestamp()
+    }
+
+
+@router.get("/gamma")
+async def get_hyperion_gamma(
+    symbol: str = Query("AAPL", description="Stock/ETF symbol"),
+    expiration: Optional[str] = Query(None, description="Expiration date YYYY-MM-DD")
+):
+    """
+    Get weekly gamma data for a stock/ETF.
+
+    Returns:
+    - Net gamma per strike
+    - Gamma magnets
+    - Expected move
+    """
+    try:
+        # Get default expiration if not provided
+        if not expiration:
+            expirations = get_weekly_expirations(symbol, weeks=1)
+            if expirations:
+                expiration = expirations[0]['date']
+            else:
+                expiration = (date.today() + timedelta(days=(4 - date.today().weekday() + 7) % 7 or 7)).strftime('%Y-%m-%d')
+
+        data = await fetch_gamma_data(symbol, expiration)
+
+        return {
+            "success": True,
+            "data": data
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting HYPERION gamma data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/expirations")
+async def get_hyperion_expirations(
+    symbol: str = Query("AAPL", description="Stock/ETF symbol"),
+    weeks: int = Query(4, description="Number of weeks to return")
+):
+    """
+    Get available weekly expirations for a symbol.
+    """
+    try:
+        expirations = get_weekly_expirations(symbol, weeks)
+
+        return {
+            "success": True,
+            "data": {
+                "symbol": symbol,
+                "expirations": expirations
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting HYPERION expirations: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/symbols")
+async def get_hyperion_symbols():
+    """
+    Get list of supported symbols for HYPERION.
+    """
+    symbols = [
+        {'symbol': 'AAPL', 'name': 'Apple Inc.', 'sector': 'Technology'},
+        {'symbol': 'MSFT', 'name': 'Microsoft Corp.', 'sector': 'Technology'},
+        {'symbol': 'GOOGL', 'name': 'Alphabet Inc.', 'sector': 'Technology'},
+        {'symbol': 'AMZN', 'name': 'Amazon.com Inc.', 'sector': 'Consumer'},
+        {'symbol': 'NVDA', 'name': 'NVIDIA Corp.', 'sector': 'Technology'},
+        {'symbol': 'META', 'name': 'Meta Platforms', 'sector': 'Technology'},
+        {'symbol': 'TSLA', 'name': 'Tesla Inc.', 'sector': 'Consumer'},
+        {'symbol': 'AMD', 'name': 'AMD Inc.', 'sector': 'Technology'},
+        {'symbol': 'NFLX', 'name': 'Netflix Inc.', 'sector': 'Communication'},
+        {'symbol': 'XLF', 'name': 'Financial Select ETF', 'sector': 'ETF'},
+        {'symbol': 'XLE', 'name': 'Energy Select ETF', 'sector': 'ETF'},
+        {'symbol': 'GLD', 'name': 'Gold ETF', 'sector': 'Commodity'},
+        {'symbol': 'SLV', 'name': 'Silver ETF', 'sector': 'Commodity'},
+        {'symbol': 'TLT', 'name': 'Treasury Bond ETF', 'sector': 'Fixed Income'},
+    ]
+
+    return {
+        "success": True,
+        "data": {
+            "symbols": symbols,
+            "count": len(symbols)
+        }
+    }
