@@ -1815,10 +1815,10 @@ const SOLAR_SYSTEMS = [
     name: 'SOLOMON',
     subtitle: 'AI Wisdom',
     route: '/solomon',
-    position: [-22, 8, -20] as [number, number, number],  // Far upper left
+    position: [-45, 15, -50] as [number, number, number],  // Far upper left - spread out
     sunColor: '#f59e0b',
     glowColor: '#fbbf24',
-    flareType: 'wisdom' as const,  // Golden rays of wisdom
+    flareType: 'wisdom' as const,
     planets: [
       { name: 'Analysis', color: '#22d3ee', size: 0.18, orbit: 1.8, speed: 0.6, effect: 'rings' as const, moons: 1 },
       { name: 'Strategy', color: '#a855f7', size: 0.15, orbit: 2.8, speed: 0.4, effect: 'crystals' as const, moons: 2 },
@@ -1830,10 +1830,10 @@ const SOLAR_SYSTEMS = [
     name: 'ARGUS',
     subtitle: 'All-Seeing Eye',
     route: '/argus',
-    position: [24, 5, -18] as [number, number, number],  // Far right
+    position: [50, 10, -35] as [number, number, number],  // Far right
     sunColor: '#06b6d4',
     glowColor: '#22d3ee',
-    flareType: 'pulse' as const,  // Scanning pulse waves
+    flareType: 'pulse' as const,
     planets: [
       { name: 'Gamma', color: '#f97316', size: 0.22, orbit: 2.0, speed: 0.8, effect: 'fire' as const, moons: 2 },
       { name: 'Delta', color: '#ef4444', size: 0.16, orbit: 3.0, speed: 0.5, effect: 'electric' as const, moons: 1 },
@@ -1845,10 +1845,10 @@ const SOLAR_SYSTEMS = [
     name: 'ORACLE',
     subtitle: 'Future Sight',
     route: '/oracle',
-    position: [0, 15, -25] as [number, number, number],  // High above center
+    position: [0, 35, -60] as [number, number, number],  // High above - way up
     sunColor: '#8b5cf6',
     glowColor: '#a855f7',
-    flareType: 'mystic' as const,  // Mystical swirling energy
+    flareType: 'mystic' as const,
     planets: [
       { name: 'Prediction', color: '#22d3ee', size: 0.20, orbit: 2.2, speed: 0.7, effect: 'glow' as const, moons: 1 },
       { name: 'Probability', color: '#10b981', size: 0.17, orbit: 3.2, speed: 0.45, effect: 'orbit_rings' as const, moons: 2 },
@@ -1859,11 +1859,11 @@ const SOLAR_SYSTEMS = [
     id: 'kronos',
     name: 'KRONOS',
     subtitle: 'Time Master',
-    route: '/zero-dte-backtest',  // KRONOS (0DTE Condor) in nav
-    position: [-18, -8, -22] as [number, number, number],  // Lower left
+    route: '/zero-dte-backtest',
+    position: [-40, -20, -45] as [number, number, number],  // Lower left - spread out
     sunColor: '#ef4444',
     glowColor: '#f87171',
-    flareType: 'eruption' as const,  // Violent solar eruptions
+    flareType: 'eruption' as const,
     planets: [
       { name: 'History', color: '#6b7280', size: 0.19, orbit: 2.4, speed: 0.55, effect: 'dust' as const, moons: 1 },
       { name: 'Backtest', color: '#3b82f6', size: 0.16, orbit: 3.4, speed: 0.38, effect: 'data_stream' as const, moons: 2 },
@@ -1875,10 +1875,10 @@ const SOLAR_SYSTEMS = [
     name: 'SYSTEMS',
     subtitle: 'Core Hub',
     route: '/system/processes',
-    position: [20, -6, -20] as [number, number, number],  // Lower right
+    position: [45, -15, -55] as [number, number, number],  // Lower right - spread out
     sunColor: '#10b981',
     glowColor: '#34d399',
-    flareType: 'network' as const,  // Network connection beams
+    flareType: 'network' as const,
     planets: [
       { name: 'Health', color: '#22c55e', size: 0.18, orbit: 2.0, speed: 0.7, effect: 'heartbeat' as const, moons: 0 },
       { name: 'Data', color: '#3b82f6', size: 0.15, orbit: 3.0, speed: 0.45, effect: 'binary' as const, moons: 1 },
@@ -1890,10 +1890,10 @@ const SOLAR_SYSTEMS = [
     name: 'APOLLO',
     subtitle: 'ML Scanner',
     route: '/apollo',
-    position: [0, -12, -24] as [number, number, number],  // Lower center
-    sunColor: '#fbbf24',  // Bright golden (sun god)
+    position: [0, -30, -40] as [number, number, number],  // Below center
+    sunColor: '#fbbf24',
     glowColor: '#fcd34d',
-    flareType: 'radiant' as const,  // Radiant solar beams
+    flareType: 'radiant' as const,
     planets: [
       { name: 'Scanner', color: '#f97316', size: 0.20, orbit: 2.0, speed: 0.75, effect: 'fire' as const, moons: 2 },
       { name: 'Signals', color: '#eab308', size: 0.16, orbit: 3.0, speed: 0.5, effect: 'electric' as const, moons: 1 },
@@ -1905,13 +1905,13 @@ const SOLAR_SYSTEMS = [
     name: 'HYPERION',
     subtitle: 'Mathematical Titan',
     route: '/probability',
-    position: [-10, 8, -18] as [number, number, number],  // Closer position for better navigation
-    sunColor: '#6366f1',  // Indigo - mathematical elegance
+    position: [-25, 25, -30] as [number, number, number],  // Upper left closer
+    sunColor: '#6366f1',
     glowColor: '#818cf8',
-    flareType: 'fractal' as const,  // Fractal geometric patterns
+    flareType: 'fractal' as const,
     planets: [
-      { name: 'Fibonacci', color: '#a855f7', size: 0.22, orbit: 2.2, speed: 0.618, effect: 'spiral' as const, moons: 1 },  // Golden ratio speed
-      { name: 'Euler', color: '#06b6d4', size: 0.17, orbit: 3.14, speed: 0.5, effect: 'rings' as const, moons: 2 },  // Pi orbit
+      { name: 'Fibonacci', color: '#a855f7', size: 0.22, orbit: 2.2, speed: 0.618, effect: 'spiral' as const, moons: 1 },
+      { name: 'Euler', color: '#06b6d4', size: 0.17, orbit: 3.14, speed: 0.5, effect: 'rings' as const, moons: 2 },
       { name: 'Gauss', color: '#10b981', size: 0.14, orbit: 4.0, speed: 0.3, effect: 'glow' as const, moons: 0 },
     ]
   },
