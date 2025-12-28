@@ -294,7 +294,8 @@ function CameraController({
   const startPosition = useRef(new THREE.Vector3())
   const startTarget = useRef(new THREE.Vector3())
   const lastZoomTarget = useRef<THREE.Vector3 | null>(null)
-  const transitionDuration = 2.5 // seconds for full transition
+  const isTransitioning = useRef(false)
+  const transitionDuration = 2.0 // seconds for full transition
 
   useKeyboardControls(controlsRef, setPaused, paused)
 
@@ -307,30 +308,41 @@ function CameraController({
         startPosition.current.copy(camera.position)
         startTarget.current.copy(controlsRef.current.target)
         lastZoomTarget.current = zoomTarget.clone()
+        isTransitioning.current = true
       }
 
-      // Update progress
-      transitionProgress.current = Math.min(1, transitionProgress.current + delta / transitionDuration)
+      // Only update during transition
+      if (isTransitioning.current) {
+        // Update progress
+        transitionProgress.current = Math.min(1, transitionProgress.current + delta / transitionDuration)
 
-      // Apply easing for buttery smooth motion
-      const easedProgress = easeOutQuint(transitionProgress.current)
+        // Apply easing for buttery smooth motion
+        const easedProgress = easeOutQuint(transitionProgress.current)
 
-      // Calculate desired camera position with dynamic offset based on approach angle
-      const cameraOffset = new THREE.Vector3(5, 6, 12)
-      const desiredPosition = zoomTarget.clone().add(cameraOffset)
+        // Calculate desired camera position with dynamic offset
+        const cameraOffset = new THREE.Vector3(8, 5, 12)
+        const desiredPosition = zoomTarget.clone().add(cameraOffset)
 
-      // Smoothly interpolate camera position using eased progress
-      camera.position.lerpVectors(startPosition.current, desiredPosition, easedProgress)
+        // Smoothly interpolate camera position using eased progress
+        camera.position.lerpVectors(startPosition.current, desiredPosition, easedProgress)
 
-      // Smoothly interpolate look-at target
-      const currentTarget = controlsRef.current.target
-      currentTarget.lerpVectors(startTarget.current, zoomTarget, easedProgress)
+        // Smoothly interpolate look-at target
+        const currentTarget = controlsRef.current.target
+        currentTarget.lerpVectors(startTarget.current, zoomTarget, easedProgress)
 
-      // Add subtle camera shake when arriving (cinematic touch)
-      if (easedProgress > 0.9 && easedProgress < 1) {
-        const shake = (1 - easedProgress) * 0.02
-        camera.position.x += (Math.random() - 0.5) * shake
-        camera.position.y += (Math.random() - 0.5) * shake
+        // Add subtle camera shake when arriving (cinematic touch)
+        if (easedProgress > 0.9 && easedProgress < 1) {
+          const shake = (1 - easedProgress) * 0.015
+          camera.position.x += (Math.random() - 0.5) * shake
+          camera.position.y += (Math.random() - 0.5) * shake
+        }
+
+        // Transition complete - stop updating and let OrbitControls take over
+        if (transitionProgress.current >= 1) {
+          isTransitioning.current = false
+          // Update the controls to reflect final position
+          controlsRef.current.update()
+        }
       }
     }
   })
