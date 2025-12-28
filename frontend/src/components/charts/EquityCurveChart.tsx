@@ -10,6 +10,31 @@ import {
   TrendingUp, TrendingDown, AlertTriangle, Award, Trophy, Flame,
   Activity, Cpu, PauseCircle, X, Calendar, LucideIcon
 } from 'lucide-react'
+import { BOT_BRANDS, BotName } from '@/components/trader'
+
+// Brand color lookup for chart theming
+const getBrandColors = (botFilter?: string) => {
+  if (botFilter === 'ARES') {
+    return {
+      primary: BOT_BRANDS.ARES.hexPrimary,  // Amber #F59E0B
+      light: BOT_BRANDS.ARES.hexLight,       // Light amber
+      dark: BOT_BRANDS.ARES.hexDark,         // Dark amber
+    }
+  }
+  if (botFilter === 'ATHENA') {
+    return {
+      primary: BOT_BRANDS.ATHENA.hexPrimary, // Cyan #06B6D4
+      light: BOT_BRANDS.ATHENA.hexLight,      // Light cyan
+      dark: BOT_BRANDS.ATHENA.hexDark,        // Dark cyan
+    }
+  }
+  // Default green/red for combined view
+  return {
+    primary: '#22C55E',
+    light: '#4ADE80',
+    dark: '#16A34A',
+  }
+}
 
 // ============================================================================
 // TYPES
@@ -319,10 +344,14 @@ export default function EquityCurveChart({
       <div className="p-4 border-b border-gray-800">
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div className="flex items-center gap-3">
-            <TrendingUp className="w-5 h-5 text-green-400" />
+            <TrendingUp className={`w-5 h-5 ${botFilter === 'ARES' ? 'text-amber-400' : botFilter === 'ATHENA' ? 'text-cyan-400' : 'text-green-400'}`} />
             <h3 className="font-bold text-white">{title}</h3>
             {botFilter && (
-              <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 text-xs rounded">
+              <span className={`px-2 py-0.5 text-xs rounded ${
+                botFilter === 'ARES' ? 'bg-amber-500/20 text-amber-400' :
+                botFilter === 'ATHENA' ? 'bg-cyan-500/20 text-cyan-400' :
+                'bg-purple-500/20 text-purple-400'
+              }`}>
                 {botFilter}
               </span>
             )}
@@ -373,20 +402,14 @@ export default function EquityCurveChart({
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={processedData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
               <defs>
-                {/* Green gradient for rising */}
-                <linearGradient id="equityGradientGreen" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#22C55E" stopOpacity={0.4} />
-                  <stop offset="50%" stopColor="#22C55E" stopOpacity={0.1} />
-                  <stop offset="95%" stopColor="#22C55E" stopOpacity={0} />
-                </linearGradient>
-                {/* Red gradient for falling */}
-                <linearGradient id="equityGradientRed" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#EF4444" stopOpacity={0.4} />
-                  <stop offset="50%" stopColor="#EF4444" stopOpacity={0.1} />
-                  <stop offset="95%" stopColor="#EF4444" stopOpacity={0} />
+                {/* Brand-colored gradient */}
+                <linearGradient id={`equityGradient-${botFilter || 'default'}`} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={getBrandColors(botFilter).primary} stopOpacity={0.4} />
+                  <stop offset="50%" stopColor={getBrandColors(botFilter).primary} stopOpacity={0.1} />
+                  <stop offset="95%" stopColor={getBrandColors(botFilter).primary} stopOpacity={0} />
                 </linearGradient>
                 {/* Glow filter */}
-                <filter id="glow">
+                <filter id={`glow-${botFilter || 'default'}`}>
                   <feGaussianBlur stdDeviation="2" result="coloredBlur" />
                   <feMerge>
                     <feMergeNode in="coloredBlur" />
@@ -433,14 +456,14 @@ export default function EquityCurveChart({
                 }}
               />
 
-              {/* Main equity area with glow */}
+              {/* Main equity area with brand colors */}
               <Area
                 type="monotone"
                 dataKey="equity"
-                stroke="#22C55E"
+                stroke={getBrandColors(botFilter).primary}
                 strokeWidth={2}
-                fill="url(#equityGradientGreen)"
-                filter="url(#glow)"
+                fill={`url(#equityGradient-${botFilter || 'default'})`}
+                filter={`url(#glow-${botFilter || 'default'})`}
                 animationDuration={1000}
                 animationEasing="ease-out"
               />

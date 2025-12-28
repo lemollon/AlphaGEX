@@ -15,41 +15,107 @@ export interface BotBrand {
   fullName: string
   description: string
   strategy: string
+  // Primary brand colors
   primaryColor: string
   primaryBg: string
   primaryBorder: string
   primaryText: string
+  // Light variants
+  lightBg: string
+  lightText: string
+  lightBorder: string
+  // Chart colors
+  chartLine: string
+  chartFill: string
+  chartPositive: string
+  chartNegative: string
+  // Position card colors
+  positionBorder: string
+  positionBg: string
+  positionAccent: string
+  // Badge colors
+  badgeBg: string
+  badgeText: string
+  // Gradient
   icon: React.ComponentType<{ className?: string }>
   gradientFrom: string
   gradientTo: string
+  // Hex values for charts
+  hexPrimary: string
+  hexLight: string
+  hexDark: string
 }
 
 export const BOT_BRANDS: Record<BotName, BotBrand> = {
   ARES: {
     name: 'ARES',
     fullName: 'ARES Iron Condor',
-    description: 'Premium Collection via Iron Condors',
+    description: 'Paper Trading with Real Market Data',
     strategy: '0DTE Iron Condor Strategy',
-    primaryColor: 'red',
-    primaryBg: 'bg-red-600',
-    primaryBorder: 'border-red-500',
-    primaryText: 'text-red-400',
+    // Primary - Amber/Gold (professional, not aggressive red)
+    primaryColor: 'amber',
+    primaryBg: 'bg-amber-600',
+    primaryBorder: 'border-amber-500',
+    primaryText: 'text-amber-400',
+    // Light variants
+    lightBg: 'bg-amber-900/20',
+    lightText: 'text-amber-300',
+    lightBorder: 'border-amber-700/50',
+    // Chart colors
+    chartLine: 'stroke-amber-400',
+    chartFill: 'fill-amber-500/20',
+    chartPositive: 'text-amber-400',
+    chartNegative: 'text-amber-600',
+    // Position cards
+    positionBorder: 'border-amber-600/50',
+    positionBg: 'bg-amber-950/30',
+    positionAccent: 'bg-amber-500',
+    // Badges
+    badgeBg: 'bg-amber-900/50',
+    badgeText: 'text-amber-300',
+    // Gradient
     icon: Sword,
-    gradientFrom: 'from-red-600',
-    gradientTo: 'to-red-900',
+    gradientFrom: 'from-amber-500',
+    gradientTo: 'to-amber-900',
+    // Hex for Recharts
+    hexPrimary: '#F59E0B',
+    hexLight: '#FCD34D',
+    hexDark: '#D97706',
   },
   ATHENA: {
     name: 'ATHENA',
     fullName: 'ATHENA Directional',
     description: 'GEX-Based Directional Spreads',
     strategy: 'Directional Spread Trading',
-    primaryColor: 'orange',
-    primaryBg: 'bg-orange-600',
-    primaryBorder: 'border-orange-500',
-    primaryText: 'text-orange-400',
+    // Primary - Cyan/Teal (wisdom, strategy)
+    primaryColor: 'cyan',
+    primaryBg: 'bg-cyan-600',
+    primaryBorder: 'border-cyan-500',
+    primaryText: 'text-cyan-400',
+    // Light variants
+    lightBg: 'bg-cyan-900/20',
+    lightText: 'text-cyan-300',
+    lightBorder: 'border-cyan-700/50',
+    // Chart colors
+    chartLine: 'stroke-cyan-400',
+    chartFill: 'fill-cyan-500/20',
+    chartPositive: 'text-cyan-400',
+    chartNegative: 'text-cyan-600',
+    // Position cards
+    positionBorder: 'border-cyan-600/50',
+    positionBg: 'bg-cyan-950/30',
+    positionAccent: 'bg-cyan-500',
+    // Badges
+    badgeBg: 'bg-cyan-900/50',
+    badgeText: 'text-cyan-300',
+    // Gradient
     icon: Target,
-    gradientFrom: 'from-orange-600',
-    gradientTo: 'to-orange-900',
+    gradientFrom: 'from-cyan-500',
+    gradientTo: 'to-cyan-900',
+    // Hex for Recharts
+    hexPrimary: '#06B6D4',
+    hexLight: '#67E8F9',
+    hexDark: '#0891B2',
   },
 }
 

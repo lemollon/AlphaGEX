@@ -35,6 +35,8 @@ import {
   SignalConflictTracker,
   PositionEntryContext,
   PresetPerformanceChart,
+  // Enhanced Scan Activity - MAXIMUM TRANSPARENCY
+  ScanDetailCard,
   // Unified Branding Components
   BOT_BRANDS,
   BotPageHeader,
@@ -55,7 +57,8 @@ import {
   UnlockConditions,
   DrawdownDisplay,
 } from '@/components/trader'
-import type { TradeDecision, TabId } from '@/components/trader'
+import type { TradeDecision, TabId, ScanData } from '@/components/trader'
+import EquityCurveChart from '@/components/charts/EquityCurveChart'
 import { History, LayoutDashboard } from 'lucide-react'
 
 // Unified tab configuration for ARES
@@ -67,7 +70,6 @@ const ARES_TABS = [
   { id: 'config' as const, label: 'Config', icon: Settings, description: 'Settings and controls' },
 ]
 type AresTabId = typeof ARES_TABS[number]['id']
-import EquityCurveChart from '@/components/charts/EquityCurveChart'
 
 // ==================== INTERFACES ====================
 
@@ -1904,10 +1906,19 @@ export default function ARESPage() {
           {/* ==================== ACTIVITY TAB - Unified scan activity and decisions ==================== */}
           {activeTab === 'activity' && (
             <div className="space-y-6">
-              {/* Scan Activity Feed */}
+              {/* Equity Curve - FIRST (at top) */}
+              <EquityCurveChart
+                botFilter="ARES"
+                title="ARES Performance"
+                defaultDays={30}
+                height={280}
+                showDrawdown={true}
+              />
+
+              {/* Scan Activity Feed - Enhanced with MAXIMUM detail */}
               <BotCard
                 title="Scan Activity"
-                subtitle="Real-time scan results and trading decisions"
+                subtitle="Full transparency: market context, signals, checks, and decisions"
                 icon={<Activity className="w-5 h-5" />}
                 botName="ARES"
                 freshness={{
@@ -1916,58 +1927,116 @@ export default function ARESPage() {
                   isRefreshing: scanActivityLoading
                 }}
               >
-                <ScanActivityFeed
-                  scans={scanActivity}
-                  botName="ARES"
-                  isLoading={scanActivityLoading}
-                />
+                <div className="space-y-3 max-h-[800px] overflow-y-auto">
+                  {scanActivity && scanActivity.length > 0 ? (
+                    scanActivity.slice(0, 30).map((scan: any, index: number) => {
+                      // Transform scan data to ScanData format for ScanDetailCard
+                      const scanData: ScanData = {
+                        id: scan.id || index,
+                        timestamp: scan.timestamp,
+                        scan_number: scan.scan_number,
+                        scan_duration_ms: scan.scan_duration_ms,
+                        outcome: scan.trade_executed ? 'TRADED' : scan.error ? 'ERROR' : 'NO_TRADE',
+                        market_context: {
+                          spy_price: scan.spy_price || scan.spot_price,
+                          spx_price: scan.spx_price,
+                          vix: scan.vix,
+                          gex_regime: scan.gex_regime || scan.regime,
+                          put_wall: scan.put_wall,
+                          call_wall: scan.call_wall,
+                          gamma_flip: scan.gamma_flip,
+                        },
+                        oracle_signal: scan.oracle_advice ? {
+                          signal: scan.oracle_advice.advice || scan.oracle_advice,
+                          confidence: scan.oracle_advice.confidence || scan.signal_confidence || 0,
+                          win_probability: scan.oracle_advice.win_probability || scan.signal_win_probability,
+                          reasoning: scan.oracle_advice.reasoning,
+                        } : undefined,
+                        ml_signal: scan.ml_signal ? {
+                          signal: scan.ml_signal.signal || scan.ml_signal,
+                          confidence: scan.ml_signal.confidence || 0,
+                        } : undefined,
+                        winning_signal: scan.signal_source?.includes('Oracle') ? 'oracle' : scan.signal_source?.includes('ML') ? 'ml' : 'aligned',
+                        override_occurred: scan.override_occurred,
+                        override_reason: scan.override_reason,
+                        checks: scan.checks || scan.validation_checks,
+                        decision_type: scan.decision_type,
+                        primary_reason: scan.skip_reason || scan.why || scan.decision_reason,
+                        all_reasons: scan.all_reasons || (scan.skip_reason ? [scan.skip_reason] : undefined),
+                        trade: scan.trade_executed ? {
+                          spread_type: scan.spread_type,
+                          long_strike: scan.long_strike,
+                          short_strike: scan.short_strike,
+                          expiration: scan.expiration,
+                          contracts: scan.contracts,
+                          entry_price: scan.entry_price,
+                        } : undefined,
+                        timestamps: {
+                          scan_started: scan.scan_started_at,
+                          data_fetched: scan.data_fetched_at,
+                          analysis_complete: scan.analysis_complete_at,
+                          decision_logged: scan.timestamp,
+                        },
+                        unlock_conditions: scan.unlock_conditions,
+                      }
+                      return (
+                        <ScanDetailCard
+                          key={scan.id || index}
+                          scan={scanData}
+                          botName="ARES"
+                          defaultExpanded={index === 0}
+                        />
+                      )
+                    })
+                  ) : scanActivityLoading ? (
+                    <LoadingState message="Loading scan activity..." />
+                  ) : (
+                    <EmptyState
+                      icon={<Activity className="w-8 h-8" />}
+                      title="No Scans Yet"
+                      description="Scan activity will populate when ARES runs during market hours."
+                    />
+                  )}
+                </div>
               </BotCard>
 
-              {/* Decision Log */}
+              {/* Decision Log - Quick summary view */}
               <BotCard
                 title="Decision Log"
-                subtitle="Full audit trail: What, Why, How for every decision"
+                subtitle="Quick summary of all trading decisions"
                 icon={<FileText className="w-5 h-5" />}
                 botName="ARES"
               >
-                <div className="space-y-3 max-h-[600px] overflow-y-auto">
+                <div className="space-y-2 max-h-[400px] overflow-y-auto">
                   {decisions.length > 0 ? (
                     decisions.slice(0, 20).map((decision) => {
                       const badge = getDecisionTypeBadge(decision.decision_type)
                       return (
                         <div
                           key={decision.id}
-                          className="bg-gray-900/50 rounded-lg border border-gray-700 p-3"
+                          className="flex items-center justify-between p-2 bg-gray-900/50 rounded border border-gray-700/50 hover:border-amber-700/50 transition-colors"
                         >
-                          <div className="flex items-start justify-between gap-3 mb-2">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className={`px-2 py-0.5 rounded text-xs font-medium ${badge.bg} ${badge.text}`}>
-                                {decision.decision_type?.replace(/_/g, ' ')}
-                              </span>
-                              <span className={`text-sm font-medium ${getActionColor(decision.action)}`}>
-                                {decision.action}
-                              </span>
-                              {decision.override_occurred && (
-                                <span className="px-2 py-0.5 rounded text-xs font-bold bg-amber-500/30 text-amber-400 border border-amber-500/50">
-                                  OVERRIDE
-                                </span>
-                              )}
-                              {decision.actual_pnl !== undefined && decision.actual_pnl !== 0 && (
-                                <PnLDisplay value={decision.actual_pnl} size="sm" />
-                              )}
-                            </div>
-                            <span className="text-xs text-gray-500 whitespace-nowrap">
+                          <div className="flex items-center gap-2">
+                            <span className={`px-2 py-0.5 rounded text-xs font-medium ${badge.bg} ${badge.text}`}>
+                              {decision.decision_type?.replace(/_/g, ' ')}
+                            </span>
+                            <span className={`text-sm ${getActionColor(decision.action)}`}>
+                              {decision.action}
+                            </span>
+                            {decision.override_occurred && (
+                              <span className="px-1.5 py-0.5 rounded text-xs bg-amber-500/30 text-amber-400">OVR</span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {decision.actual_pnl !== undefined && decision.actual_pnl !== 0 && (
+                              <PnLDisplay value={decision.actual_pnl} size="sm" />
+                            )}
+                            <span className="text-xs text-gray-500">
                               {new Date(decision.timestamp).toLocaleString('en-US', {
                                 month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
                               })}
                             </span>
                           </div>
-                          <p className="text-sm text-white mb-1">
-                            <span className="text-gray-500">WHAT: </span>{decision.what}
-                          </p>
-                          <p className="text-sm text-gray-400">
-                            <span className="text-yellow-500">WHY: </span>{decision.why || 'Not specified'}
-                          </p>
                         </div>
                       )
                     })
