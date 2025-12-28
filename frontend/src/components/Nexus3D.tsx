@@ -1910,12 +1910,15 @@ const FALLBACK_PRICES = [
 ]
 
 // Real-time stock prices fetched from Tradier via backend API
+// Falls back to simulated price movements if API unavailable
 const useStockPrices = () => {
   const [prices, setPrices] = useState(FALLBACK_PRICES)
   const [isLive, setIsLive] = useState(false)
+  const basePricesRef = useRef(FALLBACK_PRICES.map(p => ({ ...p, basePrice: p.price })))
 
   useEffect(() => {
     const API_URL = process.env.NEXT_PUBLIC_API_URL || ''
+    let apiAvailable = false
 
     const fetchPrices = async () => {
       try {
@@ -1929,20 +1932,46 @@ const useStockPrices = () => {
             change: q.change_pct || 0
           })))
           setIsLive(true)
+          apiAvailable = true
         }
       } catch (error) {
-        // Keep using fallback/last known prices on error
-        console.log('Stock prices: using fallback data')
+        // API unavailable - will use simulation
+        apiAvailable = false
+        console.log('Stock prices: using simulated data')
       }
+    }
+
+    // Simulate price movements when API is unavailable
+    const simulatePrices = () => {
+      if (apiAvailable) return // Don't simulate if we have live data
+
+      setPrices(prev => prev.map((stock, i) => {
+        const base = basePricesRef.current[i]?.basePrice || stock.price
+        // Random walk: -0.5% to +0.5% change
+        const randomChange = (Math.random() - 0.5) * 0.01
+        const newPrice = Math.max(base * 0.95, Math.min(base * 1.05, stock.price * (1 + randomChange)))
+        const changePct = ((newPrice - base) / base) * 100
+        return {
+          ...stock,
+          price: Math.round(newPrice * 100) / 100,
+          change: Math.round(changePct * 100) / 100
+        }
+      }))
     }
 
     // Fetch immediately
     fetchPrices()
 
     // Then refresh every 30 seconds (reasonable for visualization, avoids rate limits)
-    const interval = setInterval(fetchPrices, 30000)
+    const fetchInterval = setInterval(fetchPrices, 30000)
 
-    return () => clearInterval(interval)
+    // Simulate price movements every 3 seconds for visual effect
+    const simInterval = setInterval(simulatePrices, 3000)
+
+    return () => {
+      clearInterval(fetchInterval)
+      clearInterval(simInterval)
+    }
   }, [])
 
   return { prices, isLive }
@@ -5297,17 +5326,17 @@ function SolarSystem({
     >
       {/* Far-distance beacon glow - always visible from afar */}
       <Sphere args={[8, 16, 16]}>
-        <meshBasicMaterial color={system.glowColor} transparent opacity={0.08} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+        <meshBasicMaterial color={system.glowColor} transparent opacity={0.05} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
       </Sphere>
 
       {/* Outer glow halo */}
       <Sphere ref={glowRef} args={[5, 32, 32]}>
-        <meshBasicMaterial color={system.glowColor} transparent opacity={0.2} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+        <meshBasicMaterial color={system.glowColor} transparent opacity={0.10} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
       </Sphere>
 
       {/* Secondary glow */}
       <Sphere args={[3.5, 32, 32]}>
-        <meshBasicMaterial color={system.glowColor} transparent opacity={0.15} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+        <meshBasicMaterial color={system.glowColor} transparent opacity={0.08} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
       </Sphere>
 
       {/* Central sun with distortion */}
@@ -5483,9 +5512,9 @@ function OrbitingPlanet({
 
       {/* Planet with effects */}
       <group ref={groupRef}>
-        {/* Planet atmosphere glow - always visible from all angles */}
+        {/* Planet atmosphere glow - always visible from all angles (85-90% transparent) */}
         <Sphere ref={atmosphereRef} args={[scaledSize * 1.5, 16, 16]}>
-          <meshBasicMaterial color={planet.color} transparent opacity={isHovered ? 0.35 : 0.2} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+          <meshBasicMaterial color={planet.color} transparent opacity={isHovered ? 0.15 : 0.10} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
         </Sphere>
 
         {/* Planet sphere */}
@@ -5505,9 +5534,9 @@ function OrbitingPlanet({
           />
         </Sphere>
 
-        {/* Inner core glow - always visible from all angles */}
+        {/* Inner core glow - always visible from all angles (reduced opacity) */}
         <Sphere args={[scaledSize * 0.5, 8, 8]}>
-          <meshBasicMaterial color="#ffffff" transparent opacity={0.5} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+          <meshBasicMaterial color="#ffffff" transparent opacity={0.15} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
         </Sphere>
 
         {/* Orbiting moons */}
@@ -5538,16 +5567,16 @@ function OrbitingPlanet({
           </Html>
         )}
 
-        {/* Enhanced glow when hovered - always visible from all angles */}
+        {/* Enhanced glow when hovered - always visible from all angles (reduced opacity) */}
         {isHovered && (
           <>
             <Sphere args={[scaledSize * 2, 8, 8]}>
-              <meshBasicMaterial color={planet.color} transparent opacity={0.2} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+              <meshBasicMaterial color={planet.color} transparent opacity={0.12} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </Sphere>
             {/* Pulsing ring */}
             <mesh rotation={[Math.PI / 2, 0, 0]}>
               <torusGeometry args={[scaledSize * 1.5, 0.03, 8, 32]} />
-              <meshBasicMaterial color="#ffffff" transparent opacity={0.8} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+              <meshBasicMaterial color="#ffffff" transparent opacity={0.5} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </mesh>
           </>
         )}
