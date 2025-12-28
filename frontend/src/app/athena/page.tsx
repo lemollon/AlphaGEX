@@ -1033,20 +1033,17 @@ export default function ATHENAPage() {
   }, [decisions])
 
   // Robust "Traded Today" detection
-  // Uses multiple sources: backend daily_trades count, position creation dates, open positions
+  // Uses multiple sources: backend daily_trades count, position creation dates
   const didTradeToday = useMemo(() => {
     const today = new Date().toISOString().split('T')[0]
 
     // Primary check: backend tracks daily trades
     if ((status?.daily_trades || 0) > 0) return true
 
-    // Secondary: any open position exists (could be from earlier today)
-    if (positions.some(p => p.status === 'open')) return true
-
-    // Tertiary: any position created today
+    // Secondary: any position CREATED today (not just open - could be from previous days)
     if (positions.some(p => p.created_at?.startsWith(today))) return true
 
-    // Quaternary: any position closed today
+    // Tertiary: any position closed today
     if (positions.some(p => (p.status === 'closed' || p.status === 'expired') && p.exit_time?.startsWith(today))) return true
 
     return false
