@@ -2906,6 +2906,8 @@ function SystemAmbientEffects({
       return <KronosEffects color={color} sunColor={sunColor} paused={paused} />
     case 'systems':
       return <SystemsEffects color={color} sunColor={sunColor} paused={paused} />
+    case 'apollo':
+      return <ApolloEffects color={color} sunColor={sunColor} paused={paused} />
     default:
       return null
   }
@@ -3572,6 +3574,257 @@ function SystemsEffects({ color, sunColor, paused }: { color: string, sunColor: 
           {'11010110'}
         </div>
       </Html>
+    </group>
+  )
+}
+
+// APOLLO - Sun God with radiant beams, solar prominences, ML scanner effects
+function ApolloEffects({ color, sunColor, paused }: { color: string, sunColor: string, paused: boolean }) {
+  const groupRef = useRef<THREE.Group>(null)
+  const prominencesRef = useRef<THREE.Group>(null)
+  const scannersRef = useRef<THREE.Group>(null)
+  const photonsRef = useRef<THREE.Points>(null)
+  const sunSpotsRef = useRef<THREE.Group>(null)
+  const chariotRef = useRef<THREE.Group>(null)
+
+  // Solar symbols for the sun god theme
+  const symbols = useMemo(() => ['☉', '✧', '✦', '◎', '⊙', '☀'], [])
+
+  // Photon particle field
+  const photonGeometry = useMemo(() => {
+    const positions = new Float32Array(150 * 3)
+    const colors = new Float32Array(150 * 3)
+
+    for (let i = 0; i < 150; i++) {
+      const theta = Math.random() * Math.PI * 2
+      const phi = Math.random() * Math.PI
+      const r = 2 + Math.random() * 6
+
+      positions[i * 3] = r * Math.sin(phi) * Math.cos(theta)
+      positions[i * 3 + 1] = r * Math.cos(phi)
+      positions[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta)
+
+      // Golden to white gradient
+      const brightness = 0.8 + Math.random() * 0.2
+      colors[i * 3] = brightness
+      colors[i * 3 + 1] = brightness * 0.8
+      colors[i * 3 + 2] = brightness * 0.3
+    }
+
+    const geom = new THREE.BufferGeometry()
+    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    geom.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+    return geom
+  }, [])
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    // Animate solar prominences
+    if (prominencesRef.current) {
+      prominencesRef.current.children.forEach((prom, i) => {
+        const scale = 1 + Math.sin(t * 2 + i * 1.5) * 0.3
+        prom.scale.y = scale
+        prom.rotation.z = Math.sin(t * 0.5 + i) * 0.2
+      })
+    }
+
+    // Rotate scanner beams
+    if (scannersRef.current) {
+      scannersRef.current.rotation.y = t * 0.8
+      scannersRef.current.rotation.z = Math.sin(t * 0.3) * 0.1
+    }
+
+    // Animate photon particles outward
+    if (photonsRef.current) {
+      const positions = photonsRef.current.geometry.attributes.position.array as Float32Array
+      for (let i = 0; i < 150; i++) {
+        const idx = i * 3
+        const x = positions[idx]
+        const y = positions[idx + 1]
+        const z = positions[idx + 2]
+        const dist = Math.sqrt(x * x + y * y + z * z)
+
+        // Move outward
+        const speed = 0.02
+        positions[idx] += (x / dist) * speed
+        positions[idx + 1] += (y / dist) * speed
+        positions[idx + 2] += (z / dist) * speed
+
+        // Reset if too far
+        if (dist > 8) {
+          const theta = Math.random() * Math.PI * 2
+          const phi = Math.random() * Math.PI
+          const r = 2
+          positions[idx] = r * Math.sin(phi) * Math.cos(theta)
+          positions[idx + 1] = r * Math.cos(phi)
+          positions[idx + 2] = r * Math.sin(phi) * Math.sin(theta)
+        }
+      }
+      photonsRef.current.geometry.attributes.position.needsUpdate = true
+    }
+
+    // Animate sun spots
+    if (sunSpotsRef.current) {
+      sunSpotsRef.current.rotation.y = t * 0.1
+    }
+
+    // Apollo's chariot circling
+    if (chariotRef.current) {
+      const angle = t * 0.3
+      chariotRef.current.position.x = Math.cos(angle) * 7
+      chariotRef.current.position.z = Math.sin(angle) * 7
+      chariotRef.current.position.y = Math.sin(t) * 0.5 + 2
+      chariotRef.current.rotation.y = -angle + Math.PI / 2
+    }
+  })
+
+  return (
+    <group ref={groupRef}>
+      {/* Solar Prominences - dramatic flame arcs */}
+      <group ref={prominencesRef}>
+        {Array.from({ length: 8 }).map((_, i) => {
+          const angle = (i / 8) * Math.PI * 2
+          const height = 2 + (i % 3) * 0.5
+          return (
+            <group key={i} position={[Math.cos(angle) * 1.8, 0, Math.sin(angle) * 1.8]} rotation={[0, -angle, Math.PI / 6 + (i % 2) * 0.3]}>
+              {/* Prominence arc */}
+              <mesh>
+                <torusGeometry args={[height * 0.4, 0.15, 8, 16, Math.PI]} />
+                <meshBasicMaterial color={sunColor} transparent opacity={0.6} side={THREE.DoubleSide} />
+              </mesh>
+              {/* Inner glow */}
+              <mesh>
+                <torusGeometry args={[height * 0.4, 0.25, 8, 16, Math.PI]} />
+                <meshBasicMaterial color="#ffffff" transparent opacity={0.3} side={THREE.DoubleSide} />
+              </mesh>
+            </group>
+          )
+        })}
+      </group>
+
+      {/* ML Scanner Beams - rotating detection lasers */}
+      <group ref={scannersRef}>
+        {Array.from({ length: 4 }).map((_, i) => {
+          const angle = (i / 4) * Math.PI * 2
+          return (
+            <group key={i} rotation={[0, angle, 0]}>
+              {/* Scanner beam */}
+              <mesh position={[5, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+                <coneGeometry args={[0.1, 10, 8]} />
+                <meshBasicMaterial color={color} transparent opacity={0.4} />
+              </mesh>
+              {/* Beam glow */}
+              <mesh position={[5, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+                <coneGeometry args={[0.2, 10, 8]} />
+                <meshBasicMaterial color={sunColor} transparent opacity={0.15} />
+              </mesh>
+            </group>
+          )
+        })}
+      </group>
+
+      {/* Photon Particle Field */}
+      <points ref={photonsRef} geometry={photonGeometry}>
+        <pointsMaterial size={0.12} transparent opacity={0.8} vertexColors blending={THREE.AdditiveBlending} />
+      </points>
+
+      {/* Sun Spots */}
+      <group ref={sunSpotsRef}>
+        {Array.from({ length: 5 }).map((_, i) => {
+          const theta = Math.random() * Math.PI * 2
+          const phi = Math.random() * Math.PI * 0.6 + 0.2
+          const r = 1.1
+          return (
+            <mesh
+              key={i}
+              position={[
+                r * Math.sin(phi) * Math.cos(theta),
+                r * Math.cos(phi),
+                r * Math.sin(phi) * Math.sin(theta)
+              ]}
+            >
+              <sphereGeometry args={[0.15 + Math.random() * 0.1, 8, 8]} />
+              <meshBasicMaterial color="#78350f" transparent opacity={0.7} />
+            </mesh>
+          )
+        })}
+      </group>
+
+      {/* Apollo's Chariot - golden rays following a path */}
+      <group ref={chariotRef}>
+        {/* Chariot body */}
+        <mesh>
+          <boxGeometry args={[0.5, 0.3, 0.8]} />
+          <meshBasicMaterial color={sunColor} />
+        </mesh>
+        {/* Chariot wings/rays */}
+        {[-1, 1].map((side) => (
+          <mesh key={side} position={[side * 0.5, 0, 0]} rotation={[0, 0, side * 0.3]}>
+            <planeGeometry args={[0.8, 0.3]} />
+            <meshBasicMaterial color="#ffffff" transparent opacity={0.6} side={THREE.DoubleSide} />
+          </mesh>
+        ))}
+        {/* Trailing light */}
+        <mesh position={[0, 0, -1]} rotation={[0, 0, Math.PI / 2]}>
+          <coneGeometry args={[0.2, 2, 8]} />
+          <meshBasicMaterial color={sunColor} transparent opacity={0.3} />
+        </mesh>
+      </group>
+
+      {/* Floating sun symbols */}
+      {symbols.map((sym, i) => {
+        const angle = (i / symbols.length) * Math.PI * 2
+        const r = 4 + (i % 2) * 1.5
+        return (
+          <Html key={i} position={[Math.cos(angle) * r, Math.sin(i * 0.5) * 2, Math.sin(angle) * r]} center>
+            <div
+              className="text-2xl animate-pulse"
+              style={{
+                color: sunColor,
+                textShadow: `0 0 10px ${sunColor}, 0 0 20px ${color}`,
+                opacity: 0.8
+              }}
+            >
+              {sym}
+            </div>
+          </Html>
+        )
+      })}
+
+      {/* ML Prediction data displays */}
+      <Html position={[5, 3, 0]} center>
+        <div className="bg-black/60 rounded px-2 py-1 border border-amber-500/50">
+          <div className="text-amber-400 text-[10px] font-mono">SCAN: 94.2%</div>
+        </div>
+      </Html>
+      <Html position={[-4, 2.5, 3]} center>
+        <div className="bg-black/60 rounded px-2 py-1 border border-yellow-500/50">
+          <div className="text-yellow-400 text-[10px] font-mono">PATTERN: ▲</div>
+        </div>
+      </Html>
+      <Html position={[2, 3.5, -4]} center>
+        <div className="bg-black/60 rounded px-2 py-1 border border-orange-500/50">
+          <div className="text-orange-400 text-[10px] font-mono">SIGNAL: STRONG</div>
+        </div>
+      </Html>
+
+      {/* Concentric light rings */}
+      {[2.5, 3.5, 4.5, 5.5].map((r, i) => (
+        <mesh key={i} rotation={[Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[r, 0.02, 8, 64]} />
+          <meshBasicMaterial color={sunColor} transparent opacity={0.3 - i * 0.05} />
+        </mesh>
+      ))}
+
+      {/* Central corona explosion effect */}
+      <Sphere args={[2, 32, 32]}>
+        <meshBasicMaterial color={sunColor} transparent opacity={0.15} />
+      </Sphere>
+      <Sphere args={[2.5, 32, 32]}>
+        <meshBasicMaterial color={color} transparent opacity={0.08} />
+      </Sphere>
     </group>
   )
 }
