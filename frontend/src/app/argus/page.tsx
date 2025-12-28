@@ -38,7 +38,16 @@ import {
   History,
   Play,
   Pause,
-  CalendarOff
+  CalendarOff,
+  Search,
+  CheckCircle2,
+  XCircle,
+  Lightbulb,
+  Repeat,
+  DollarSign,
+  Percent,
+  ArrowUpRight,
+  ArrowDownRight
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
@@ -218,6 +227,68 @@ interface MarketContext {
   }
 }
 
+// New interfaces for enhanced features
+interface AccuracyMetrics {
+  pin_accuracy_7d: number
+  pin_accuracy_30d: number
+  direction_accuracy_7d: number
+  direction_accuracy_30d: number
+  magnet_hit_rate_7d: number
+  magnet_hit_rate_30d: number
+  flip_accuracy_7d: number
+  flip_accuracy_30d: number
+  total_predictions_7d: number
+  total_predictions_30d: number
+}
+
+interface BotPosition {
+  bot_name: string
+  status: 'active' | 'watching' | 'inactive' | 'no_position'
+  position_type?: string
+  short_strikes?: number[]
+  direction?: 'BULLISH' | 'BEARISH' | 'NEUTRAL'
+  entry_price?: number
+  current_pnl?: number
+  pnl_pct?: number
+  safety_vs_magnets?: 'SAFE' | 'CAUTION' | 'DANGER'
+}
+
+interface TradeIdea {
+  id: string
+  setup_type: string
+  direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL'
+  entry: number
+  target: number
+  stop: number
+  risk_reward: number
+  confidence: number
+  rationale: string
+  expires_at?: string
+}
+
+interface PatternMatch {
+  date: string
+  similarity_score: number
+  outcome_direction: 'UP' | 'DOWN' | 'FLAT'
+  outcome_pct: number
+  gamma_regime_then: string
+}
+
+interface EMTrendPoint {
+  time: string
+  expected_move: number
+  pct_change: number
+}
+
+// Available symbols for 0DTE analysis
+const AVAILABLE_SYMBOLS = [
+  { symbol: 'SPY', name: 'S&P 500 ETF' },
+  { symbol: 'QQQ', name: 'Nasdaq 100 ETF' },
+  { symbol: 'IWM', name: 'Russell 2000 ETF' },
+  { symbol: 'SPX', name: 'S&P 500 Index' },
+  { symbol: 'DIA', name: 'Dow Jones ETF' },
+]
+
 export default function ArgusPage() {
   const [gammaData, setGammaData] = useState<GammaData | null>(null)
   const [lastLiveData, setLastLiveData] = useState<GammaData | null>(null)  // Preserve last live data during market hours
@@ -236,6 +307,18 @@ export default function ArgusPage() {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
   const [dataTimestamp, setDataTimestamp] = useState<Date | null>(null)  // When data was actually fetched
   const [selectedStrike, setSelectedStrike] = useState<StrikeData | null>(null)
+
+  // New state for enhanced features
+  const [selectedSymbol, setSelectedSymbol] = useState<string>('SPY')
+  const [symbolSearch, setSymbolSearch] = useState<string>('')
+  const [showSymbolDropdown, setShowSymbolDropdown] = useState(false)
+  const [accuracyMetrics, setAccuracyMetrics] = useState<AccuracyMetrics | null>(null)
+  const [botPositions, setBotPositions] = useState<BotPosition[]>([])
+  const [tradeIdeas, setTradeIdeas] = useState<TradeIdea[]>([])
+  const [patternMatches, setPatternMatches] = useState<PatternMatch[]>([])
+  const [emTrend, setEmTrend] = useState<EMTrendPoint[]>([])
+  const [showAccuracyPanel, setShowAccuracyPanel] = useState(true)
+  const [showTradeIdeas, setShowTradeIdeas] = useState(true)
 
   // Polling intervals (in milliseconds)
   const FAST_POLL_INTERVAL = 15000  // 15 seconds for gamma data
@@ -386,6 +469,138 @@ export default function ArgusPage() {
     }
   }, [])
 
+  // Fetch accuracy metrics
+  const fetchAccuracyMetrics = useCallback(async () => {
+    try {
+      const response = await apiClient.getArgusAccuracy()
+      if (response.data?.success && response.data?.data) {
+        setAccuracyMetrics(response.data.data)
+      }
+    } catch (err) {
+      console.error('[ARGUS] Error fetching accuracy metrics:', err)
+    }
+  }, [])
+
+  // Fetch bot positions
+  const fetchBotPositions = useCallback(async () => {
+    try {
+      const response = await apiClient.getArgusBots()
+      if (response.data?.success && response.data?.data?.bots) {
+        setBotPositions(response.data.data.bots)
+      }
+    } catch (err) {
+      console.error('[ARGUS] Error fetching bot positions:', err)
+    }
+  }, [])
+
+  // Fetch pattern matches
+  const fetchPatternMatches = useCallback(async () => {
+    try {
+      const response = await apiClient.getArgusPatterns()
+      if (response.data?.success && response.data?.data?.patterns) {
+        setPatternMatches(response.data.data.patterns)
+      }
+    } catch (err) {
+      console.error('[ARGUS] Error fetching pattern matches:', err)
+    }
+  }, [])
+
+  // Generate trade ideas based on current gamma structure
+  const generateTradeIdeas = useCallback(() => {
+    if (!gammaData) return
+
+    const ideas: TradeIdea[] = []
+    const { spot_price, gamma_regime, magnets, likely_pin, expected_move, danger_zones } = gammaData
+
+    // Idea 1: Magnet Play
+    if (magnets[0] && Math.abs(magnets[0].strike - spot_price) > 0.5) {
+      const targetMagnet = magnets[0].strike
+      const isAbove = targetMagnet > spot_price
+      ideas.push({
+        id: 'magnet-play',
+        setup_type: 'Gamma Magnet',
+        direction: isAbove ? 'BULLISH' : 'BEARISH',
+        entry: spot_price,
+        target: targetMagnet,
+        stop: isAbove ? spot_price - (targetMagnet - spot_price) * 0.5 : spot_price + (spot_price - targetMagnet) * 0.5,
+        risk_reward: 2.0,
+        confidence: Math.min(magnets[0].probability, 85),
+        rationale: `Price gravitating toward ${isAbove ? 'call' : 'put'} magnet at $${targetMagnet}. ${gamma_regime} gamma supports this move.`
+      })
+    }
+
+    // Idea 2: Pin Play (if close to expiry)
+    if (likely_pin && Math.abs(likely_pin - spot_price) < expected_move) {
+      ideas.push({
+        id: 'pin-play',
+        setup_type: 'Expiry Pin',
+        direction: 'NEUTRAL',
+        entry: spot_price,
+        target: likely_pin,
+        stop: likely_pin - expected_move * 1.5,
+        risk_reward: 1.5,
+        confidence: gammaData.pin_probability,
+        rationale: `Max pain at $${likely_pin}. Iron Condor or credit spread around this strike could capture decay.`
+      })
+    }
+
+    // Idea 3: Regime Play
+    if (gamma_regime === 'NEGATIVE' && danger_zones.length < 2) {
+      ideas.push({
+        id: 'regime-momentum',
+        setup_type: 'Negative Gamma Momentum',
+        direction: 'BULLISH', // or BEARISH based on direction
+        entry: spot_price,
+        target: spot_price + expected_move * 0.8,
+        stop: spot_price - expected_move * 0.4,
+        risk_reward: 2.0,
+        confidence: 65,
+        rationale: 'Negative gamma amplifies directional moves. Momentum scalps favored over mean reversion.'
+      })
+    }
+
+    setTradeIdeas(ideas)
+  }, [gammaData])
+
+  // Build EM trend from history
+  const buildEMTrend = useCallback(() => {
+    if (!gammaData?.expected_move_change) return
+
+    // For now, use current + prior day data to show trend
+    const trend: EMTrendPoint[] = []
+    const now = new Date()
+
+    if (gammaData.expected_move_change.prior_day) {
+      trend.push({
+        time: 'Prior Close',
+        expected_move: gammaData.expected_move_change.prior_day,
+        pct_change: 0
+      })
+    }
+
+    if (gammaData.expected_move_change.at_open) {
+      trend.push({
+        time: 'Open',
+        expected_move: gammaData.expected_move_change.at_open,
+        pct_change: gammaData.expected_move_change.pct_change_open || 0
+      })
+    }
+
+    trend.push({
+      time: 'Now',
+      expected_move: gammaData.expected_move_change.current,
+      pct_change: gammaData.expected_move_change.pct_change_prior || 0
+    })
+
+    setEmTrend(trend)
+  }, [gammaData])
+
+  // Effect to generate trade ideas when gamma data updates
+  useEffect(() => {
+    generateTradeIdeas()
+    buildEMTrend()
+  }, [generateTradeIdeas, buildEMTrend])
+
   // Calculate time to expiry (market close at 3:00 PM CT / 4:00 PM ET)
   useEffect(() => {
     const calculateTimeToExpiry = () => {
@@ -481,14 +696,17 @@ export default function ArgusPage() {
           fetchContext(),
           fetchDangerZoneLogs(),
           fetchStrikeTrends(),
-          fetchGammaFlips30m()
+          fetchGammaFlips30m(),
+          fetchAccuracyMetrics(),
+          fetchBotPositions(),
+          fetchPatternMatches()
         ])
       } catch (err) {
         console.error('Error fetching initial data:', err)
       }
     }
     fetchAllData()
-  }, [fetchExpirations, fetchGammaData, fetchAlerts, fetchCommentary, fetchContext, fetchDangerZoneLogs, fetchStrikeTrends, fetchGammaFlips30m])
+  }, [fetchExpirations, fetchGammaData, fetchAlerts, fetchCommentary, fetchContext, fetchDangerZoneLogs, fetchStrikeTrends, fetchGammaFlips30m, fetchAccuracyMetrics, fetchBotPositions, fetchPatternMatches])
 
   // Check if market is closed or holiday
   const isMarketClosed = gammaData?.market_status === 'closed' || gammaData?.market_status === 'holiday'
@@ -519,18 +737,21 @@ export default function ArgusPage() {
         fetchDangerZoneLogs()
       }, 15000)
 
-      // Medium polling: Alerts, context, trends, and flips every 30 seconds
+      // Medium polling: Alerts, context, trends, flips, bots every 30 seconds
       mediumPollRef.current = setInterval(() => {
-        console.log('[ARGUS] Medium poll: fetching alerts, context, trends, flips')
+        console.log('[ARGUS] Medium poll: fetching alerts, context, trends, flips, bots')
         fetchAlerts()
         fetchContext()
         fetchStrikeTrends()
         fetchGammaFlips30m()
+        fetchBotPositions()
       }, 30000)
 
-      // Slow polling: Commentary every 60 seconds
+      // Slow polling: Commentary, accuracy, patterns every 60 seconds
       slowPollRef.current = setInterval(() => {
         fetchCommentary()
+        fetchAccuracyMetrics()
+        fetchPatternMatches()
       }, 60000)
     }
 
@@ -760,7 +981,74 @@ export default function ArgusPage() {
             </div>
             <div>
               <h1 className="text-2xl font-bold text-white">ARGUS</h1>
-              <p className="text-gray-400 text-sm">0DTE Gamma Intelligence • SPY</p>
+              <p className="text-gray-400 text-sm">0DTE Gamma Intelligence</p>
+            </div>
+
+            {/* Symbol Selector */}
+            <div className="relative">
+              <button
+                onClick={() => setShowSymbolDropdown(!showSymbolDropdown)}
+                className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 rounded-lg text-white font-bold transition-all"
+              >
+                <Search className="w-4 h-4" />
+                {selectedSymbol}
+                <ChevronDown className={`w-4 h-4 transition-transform ${showSymbolDropdown ? 'rotate-180' : ''}`} />
+              </button>
+              {showSymbolDropdown && (
+                <div className="absolute top-full left-0 mt-2 w-64 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50 overflow-hidden">
+                  <div className="p-2 border-b border-gray-700">
+                    <input
+                      type="text"
+                      value={symbolSearch}
+                      onChange={(e) => setSymbolSearch(e.target.value.toUpperCase())}
+                      placeholder="Search symbol..."
+                      className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm focus:outline-none focus:border-purple-500"
+                      autoFocus
+                    />
+                  </div>
+                  <div className="max-h-60 overflow-y-auto">
+                    {AVAILABLE_SYMBOLS
+                      .filter(s => s.symbol.includes(symbolSearch) || s.name.toLowerCase().includes(symbolSearch.toLowerCase()))
+                      .map(s => (
+                        <button
+                          key={s.symbol}
+                          onClick={() => {
+                            setSelectedSymbol(s.symbol)
+                            setShowSymbolDropdown(false)
+                            setSymbolSearch('')
+                            // In future: trigger data refetch for new symbol
+                          }}
+                          className={`w-full px-4 py-3 flex items-center justify-between hover:bg-gray-700 transition-colors ${
+                            selectedSymbol === s.symbol ? 'bg-purple-500/20' : ''
+                          }`}
+                        >
+                          <div className="text-left">
+                            <div className="font-bold text-white">{s.symbol}</div>
+                            <div className="text-xs text-gray-400">{s.name}</div>
+                          </div>
+                          {selectedSymbol === s.symbol && (
+                            <CheckCircle2 className="w-5 h-5 text-purple-400" />
+                          )}
+                        </button>
+                      ))}
+                    {symbolSearch && !AVAILABLE_SYMBOLS.some(s => s.symbol === symbolSearch) && (
+                      <div className="px-4 py-3 text-center text-gray-500 text-sm">
+                        <p>Custom symbol: <span className="text-white font-bold">{symbolSearch}</span></p>
+                        <button
+                          onClick={() => {
+                            setSelectedSymbol(symbolSearch)
+                            setShowSymbolDropdown(false)
+                            setSymbolSearch('')
+                          }}
+                          className="mt-2 px-3 py-1 bg-purple-500 hover:bg-purple-400 text-white text-xs rounded"
+                        >
+                          Use {symbolSearch}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1191,6 +1479,231 @@ export default function ArgusPage() {
             }`}>
               {timeToExpiry || '--:--'}
             </div>
+          </div>
+        </div>
+
+        {/* NEW: Accuracy Dashboard + Trade Ideas Row */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+          {/* Accuracy Dashboard */}
+          <div className="bg-gray-800/50 rounded-xl p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-white flex items-center gap-2">
+                <Percent className="w-5 h-5 text-cyan-400" />
+                System Accuracy
+              </h3>
+              <button
+                onClick={() => setShowAccuracyPanel(!showAccuracyPanel)}
+                className="text-xs text-gray-500 hover:text-white"
+              >
+                {showAccuracyPanel ? 'Hide' : 'Show'}
+              </button>
+            </div>
+            {showAccuracyPanel && (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                  <div className="text-xs text-gray-500 mb-1">Pin Accuracy (7d)</div>
+                  <div className={`text-xl font-bold ${(accuracyMetrics?.pin_accuracy_7d || 0) >= 75 ? 'text-emerald-400' : (accuracyMetrics?.pin_accuracy_7d || 0) >= 50 ? 'text-yellow-400' : 'text-rose-400'}`}>
+                    {accuracyMetrics?.pin_accuracy_7d?.toFixed(0) || '--'}%
+                  </div>
+                </div>
+                <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                  <div className="text-xs text-gray-500 mb-1">Direction (7d)</div>
+                  <div className={`text-xl font-bold ${(accuracyMetrics?.direction_accuracy_7d || 0) >= 55 ? 'text-emerald-400' : (accuracyMetrics?.direction_accuracy_7d || 0) >= 50 ? 'text-yellow-400' : 'text-rose-400'}`}>
+                    {accuracyMetrics?.direction_accuracy_7d?.toFixed(0) || '--'}%
+                  </div>
+                </div>
+                <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                  <div className="text-xs text-gray-500 mb-1">Magnet Hit (7d)</div>
+                  <div className={`text-xl font-bold ${(accuracyMetrics?.magnet_hit_rate_7d || 0) >= 70 ? 'text-emerald-400' : (accuracyMetrics?.magnet_hit_rate_7d || 0) >= 50 ? 'text-yellow-400' : 'text-rose-400'}`}>
+                    {accuracyMetrics?.magnet_hit_rate_7d?.toFixed(0) || '--'}%
+                  </div>
+                </div>
+                <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                  <div className="text-xs text-gray-500 mb-1">Flip Accuracy</div>
+                  <div className={`text-xl font-bold ${(accuracyMetrics?.flip_accuracy_7d || 0) >= 60 ? 'text-emerald-400' : (accuracyMetrics?.flip_accuracy_7d || 0) >= 45 ? 'text-yellow-400' : 'text-rose-400'}`}>
+                    {accuracyMetrics?.flip_accuracy_7d?.toFixed(0) || '--'}%
+                  </div>
+                </div>
+              </div>
+            )}
+            {showAccuracyPanel && accuracyMetrics && (
+              <div className="mt-3 text-xs text-gray-600 flex items-center gap-1">
+                <Info className="w-3 h-3" />
+                Based on {accuracyMetrics.total_predictions_7d || 0} predictions (7d) / {accuracyMetrics.total_predictions_30d || 0} (30d)
+              </div>
+            )}
+          </div>
+
+          {/* Trade Ideas Generator */}
+          <div className="bg-gradient-to-r from-emerald-900/30 to-blue-900/30 border border-emerald-500/30 rounded-xl p-5">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-white flex items-center gap-2">
+                <Lightbulb className="w-5 h-5 text-yellow-400" />
+                Trade Ideas
+                <span className="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded">AI</span>
+              </h3>
+              <button
+                onClick={() => setShowTradeIdeas(!showTradeIdeas)}
+                className="text-xs text-gray-500 hover:text-white"
+              >
+                {showTradeIdeas ? 'Hide' : 'Show'}
+              </button>
+            </div>
+            {showTradeIdeas && tradeIdeas.length > 0 ? (
+              <div className="space-y-3">
+                {tradeIdeas.slice(0, 3).map((idea) => (
+                  <div
+                    key={idea.id}
+                    className={`p-3 rounded-lg border ${
+                      idea.direction === 'BULLISH'
+                        ? 'bg-emerald-500/10 border-emerald-500/30'
+                        : idea.direction === 'BEARISH'
+                        ? 'bg-rose-500/10 border-rose-500/30'
+                        : 'bg-gray-700/30 border-gray-600/30'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className={`font-bold ${
+                          idea.direction === 'BULLISH' ? 'text-emerald-400' :
+                          idea.direction === 'BEARISH' ? 'text-rose-400' : 'text-gray-300'
+                        }`}>
+                          {idea.setup_type}
+                        </span>
+                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                          idea.direction === 'BULLISH' ? 'bg-emerald-500 text-white' :
+                          idea.direction === 'BEARISH' ? 'bg-rose-500 text-white' : 'bg-gray-600 text-white'
+                        }`}>
+                          {idea.direction}
+                        </span>
+                      </div>
+                      <span className="text-xs text-gray-500">{idea.confidence.toFixed(0)}% conf</span>
+                    </div>
+                    <div className="grid grid-cols-4 gap-2 text-xs mb-2">
+                      <div>
+                        <div className="text-gray-500">Entry</div>
+                        <div className="font-mono text-white">${idea.entry.toFixed(2)}</div>
+                      </div>
+                      <div>
+                        <div className="text-gray-500">Target</div>
+                        <div className="font-mono text-emerald-400">${idea.target.toFixed(2)}</div>
+                      </div>
+                      <div>
+                        <div className="text-gray-500">Stop</div>
+                        <div className="font-mono text-rose-400">${idea.stop.toFixed(2)}</div>
+                      </div>
+                      <div>
+                        <div className="text-gray-500">R:R</div>
+                        <div className="font-mono text-cyan-400">{idea.risk_reward.toFixed(1)}:1</div>
+                      </div>
+                    </div>
+                    <p className="text-xs text-gray-400">{idea.rationale}</p>
+                  </div>
+                ))}
+              </div>
+            ) : showTradeIdeas ? (
+              <div className="text-center py-6 text-gray-500">
+                <Lightbulb className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                <p className="text-sm">Analyzing gamma structure...</p>
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        {/* NEW: Pattern Similarity + Gamma Flips Row */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+          {/* Pattern Similarity Scorecard */}
+          <div className="bg-gray-800/50 rounded-xl p-5">
+            <h3 className="font-bold text-white flex items-center gap-2 mb-4">
+              <Repeat className="w-5 h-5 text-indigo-400" />
+              Pattern Similarity
+              <span className="text-xs text-gray-500 font-normal">vs Historical Days</span>
+            </h3>
+            {patternMatches.length > 0 ? (
+              <div className="space-y-2">
+                {patternMatches.slice(0, 3).map((match, idx) => (
+                  <div key={match.date} className="flex items-center justify-between p-2 bg-gray-900/50 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-gray-500">#{idx + 1}</span>
+                      <div>
+                        <div className="font-mono text-white text-sm">{match.date}</div>
+                        <div className="text-xs text-gray-500">{match.gamma_regime_then} regime</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <div className="text-center">
+                        <div className="text-xs text-gray-500">Match</div>
+                        <div className="font-bold text-indigo-400">{match.similarity_score.toFixed(0)}%</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-xs text-gray-500">Result</div>
+                        <div className={`font-bold flex items-center gap-1 ${
+                          match.outcome_direction === 'UP' ? 'text-emerald-400' :
+                          match.outcome_direction === 'DOWN' ? 'text-rose-400' : 'text-gray-400'
+                        }`}>
+                          {match.outcome_direction === 'UP' ? <ArrowUpRight className="w-3 h-3" /> :
+                           match.outcome_direction === 'DOWN' ? <ArrowDownRight className="w-3 h-3" /> : null}
+                          {match.outcome_pct > 0 ? '+' : ''}{match.outcome_pct.toFixed(2)}%
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-6 text-gray-500">
+                <Repeat className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                <p className="text-sm">Analyzing historical patterns...</p>
+              </div>
+            )}
+          </div>
+
+          {/* Gamma Flip History with Outcomes */}
+          <div className="bg-gray-800/50 rounded-xl p-5">
+            <h3 className="font-bold text-white flex items-center gap-2 mb-4">
+              <Zap className="w-5 h-5 text-orange-400" />
+              Recent Gamma Flips
+              <span className="text-xs text-gray-500 font-normal">Last 30 min</span>
+            </h3>
+            {gammaFlips30m.length > 0 ? (
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                {gammaFlips30m.slice(0, 6).map((flip, idx) => (
+                  <div key={`${flip.strike}-${flip.flipped_at}`} className={`flex items-center justify-between p-2 rounded-lg ${
+                    flip.direction === 'POS_TO_NEG' ? 'bg-rose-500/10' : 'bg-emerald-500/10'
+                  }`}>
+                    <div className="flex items-center gap-3">
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                        flip.direction === 'POS_TO_NEG' ? 'bg-rose-500 text-white' : 'bg-emerald-500 text-white'
+                      }`}>
+                        {flip.direction === 'POS_TO_NEG' ? '→ -γ' : '→ +γ'}
+                      </span>
+                      <div>
+                        <div className="font-mono text-white">${flip.strike}</div>
+                        <div className="text-xs text-gray-500">{flip.mins_ago.toFixed(0)}m ago</div>
+                      </div>
+                    </div>
+                    <div className="text-right text-xs">
+                      <div className="text-gray-500">Before → After</div>
+                      <div className="font-mono">
+                        <span className={flip.gamma_before > 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                          {formatGamma(flip.gamma_before)}
+                        </span>
+                        <span className="text-gray-500 mx-1">→</span>
+                        <span className={flip.gamma_after > 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                          {formatGamma(flip.gamma_after)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-6 text-gray-500">
+                <Zap className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                <p className="text-sm">No gamma flips in last 30 min</p>
+                <p className="text-xs text-gray-600 mt-1">Flips occur when gamma changes sign</p>
+              </div>
+            )}
           </div>
         </div>
 
@@ -1963,25 +2476,93 @@ export default function ArgusPage() {
               </div>
             </div>
 
-            {/* Bot Status */}
+            {/* Bot Status - Real Data */}
             <div className="bg-gray-800/50 rounded-xl p-5">
               <h3 className="font-bold text-white flex items-center gap-2 mb-4">
                 <Bot className="w-5 h-5 text-blue-400" />
-                Bot Status
+                Bot Positions
+                {botPositions.some(b => b.status === 'active') && (
+                  <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
+                )}
               </h3>
               <div className="space-y-3">
-                <div className="flex items-center justify-between p-2 bg-gray-700/30 rounded-lg">
-                  <span className="text-gray-300">ARES</span>
-                  <span className="text-emerald-400 text-sm">No Position</span>
-                </div>
-                <div className="flex items-center justify-between p-2 bg-gray-700/30 rounded-lg">
-                  <span className="text-gray-300">ATHENA</span>
-                  <span className="text-gray-500 text-sm">Watching</span>
-                </div>
-                <div className="flex items-center justify-between p-2 bg-gray-700/30 rounded-lg">
-                  <span className="text-gray-300">PHOENIX</span>
-                  <span className="text-gray-500 text-sm">Inactive</span>
-                </div>
+                {botPositions.length > 0 ? botPositions.map((bot) => (
+                  <div
+                    key={bot.bot_name}
+                    className={`p-3 rounded-lg ${
+                      bot.status === 'active'
+                        ? 'bg-emerald-500/10 border border-emerald-500/30'
+                        : 'bg-gray-700/30'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-bold text-white">{bot.bot_name}</span>
+                      <span className={`text-xs px-2 py-0.5 rounded ${
+                        bot.status === 'active' ? 'bg-emerald-500 text-white' :
+                        bot.status === 'watching' ? 'bg-yellow-500/20 text-yellow-400' :
+                        bot.status === 'no_position' ? 'bg-gray-600 text-gray-300' :
+                        'bg-gray-700 text-gray-500'
+                      }`}>
+                        {bot.status === 'no_position' ? 'No Position' : bot.status.toUpperCase()}
+                      </span>
+                    </div>
+                    {bot.status === 'active' && (
+                      <>
+                        {bot.short_strikes && bot.short_strikes.length > 0 && (
+                          <div className="text-xs text-gray-400 mb-1">
+                            Strikes: {bot.short_strikes.map(s => `$${s}`).join(' / ')}
+                          </div>
+                        )}
+                        {bot.direction && (
+                          <div className="text-xs">
+                            <span className="text-gray-500">Direction: </span>
+                            <span className={bot.direction === 'BULLISH' ? 'text-emerald-400' : bot.direction === 'BEARISH' ? 'text-rose-400' : 'text-gray-400'}>
+                              {bot.direction}
+                            </span>
+                          </div>
+                        )}
+                        {bot.current_pnl !== undefined && (
+                          <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-600/50">
+                            <span className="text-xs text-gray-500">P&L</span>
+                            <span className={`font-mono font-bold ${bot.current_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                              {bot.current_pnl >= 0 ? '+' : ''}${bot.current_pnl.toFixed(2)}
+                              {bot.pnl_pct !== undefined && (
+                                <span className="text-xs ml-1">({bot.pnl_pct >= 0 ? '+' : ''}{bot.pnl_pct.toFixed(1)}%)</span>
+                              )}
+                            </span>
+                          </div>
+                        )}
+                        {bot.safety_vs_magnets && (
+                          <div className="mt-1 text-xs">
+                            <span className="text-gray-500">Safety: </span>
+                            <span className={
+                              bot.safety_vs_magnets === 'SAFE' ? 'text-emerald-400' :
+                              bot.safety_vs_magnets === 'CAUTION' ? 'text-yellow-400' : 'text-rose-400'
+                            }>
+                              {bot.safety_vs_magnets}
+                            </span>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )) : (
+                  <>
+                    {/* Fallback for when no bot data available */}
+                    <div className="flex items-center justify-between p-2 bg-gray-700/30 rounded-lg">
+                      <span className="text-gray-300">ARES</span>
+                      <span className="text-gray-500 text-sm">Loading...</span>
+                    </div>
+                    <div className="flex items-center justify-between p-2 bg-gray-700/30 rounded-lg">
+                      <span className="text-gray-300">ATHENA</span>
+                      <span className="text-gray-500 text-sm">Loading...</span>
+                    </div>
+                    <div className="flex items-center justify-between p-2 bg-gray-700/30 rounded-lg">
+                      <span className="text-gray-300">PHOENIX</span>
+                      <span className="text-gray-500 text-sm">Loading...</span>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
 
