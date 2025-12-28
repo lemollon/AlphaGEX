@@ -5133,38 +5133,43 @@ function SolarSystem({
       onPointerUp={handlePointerUp}
       onClick={handleClick}
     >
+      {/* Far-distance beacon glow - always visible from afar */}
+      <Sphere args={[8, 16, 16]}>
+        <meshBasicMaterial color={system.glowColor} transparent opacity={0.08} />
+      </Sphere>
+
       {/* Outer glow halo */}
-      <Sphere ref={glowRef} args={[1.8, 32, 32]}>
-        <meshBasicMaterial color={system.glowColor} transparent opacity={0.25} />
+      <Sphere ref={glowRef} args={[5, 32, 32]}>
+        <meshBasicMaterial color={system.glowColor} transparent opacity={0.2} />
       </Sphere>
 
       {/* Secondary glow */}
-      <Sphere args={[1.2, 32, 32]}>
+      <Sphere args={[3.5, 32, 32]}>
         <meshBasicMaterial color={system.glowColor} transparent opacity={0.15} />
       </Sphere>
 
       {/* Central sun with distortion */}
-      <Sphere ref={sunRef} args={[0.7, 32, 32]}>
+      <Sphere ref={sunRef} args={[2, 32, 32]}>
         <MeshDistortMaterial
           color={system.sunColor}
           emissive={system.sunColor}
-          emissiveIntensity={isHovered ? 2.5 : 1.5}
+          emissiveIntensity={isHovered ? 3 : 2}
           distort={0.35}
           speed={3}
         />
       </Sphere>
 
       {/* Sun core (bright center) */}
-      <Sphere args={[0.3, 16, 16]}>
+      <Sphere args={[0.8, 16, 16]}>
         <meshBasicMaterial color="#ffffff" />
       </Sphere>
 
-      {/* Orbital rings */}
+      {/* Orbital rings - scaled up for visibility */}
       <group ref={ringsRef}>
         {system.planets.map((planet, i) => (
           <mesh key={i} rotation={[Math.PI / 2, 0, 0]}>
-            <torusGeometry args={[planet.orbit, 0.008, 8, 64]} />
-            <meshBasicMaterial color={planet.color} transparent opacity={0.3} />
+            <torusGeometry args={[planet.orbit * 2.5, 0.04, 8, 64]} />
+            <meshBasicMaterial color={planet.color} transparent opacity={0.4} />
           </mesh>
         ))}
       </group>
@@ -5241,14 +5246,17 @@ function OrbitingPlanet({
   const trailPositions = useMemo(() => new Float32Array(30 * 3), [])
   const trailIndex = useRef(0)
 
+  // Scale orbit to match the larger solar system visualization
+  const scaledOrbit = planet.orbit * 2.5
+
   useFrame((state) => {
     if (paused) return
     const t = state.clock.elapsedTime
 
     const angle = t * planet.speed + phaseOffset
-    const x = Math.cos(angle) * planet.orbit
-    const z = Math.sin(angle) * planet.orbit
-    const y = Math.sin(angle * 2) * 0.1 // Slight vertical wobble
+    const x = Math.cos(angle) * scaledOrbit
+    const z = Math.sin(angle) * scaledOrbit
+    const y = Math.sin(angle * 2) * 0.2 // Slight vertical wobble
 
     if (groupRef.current) {
       groupRef.current.position.set(x, y, z)
@@ -5288,6 +5296,9 @@ function OrbitingPlanet({
     }))
   }, [planet.moons, planet.size])
 
+  // Scale planet size for better visibility
+  const scaledSize = planet.size * 3
+
   return (
     <group>
       {/* Planet trail */}
@@ -5300,35 +5311,35 @@ function OrbitingPlanet({
             itemSize={3}
           />
         </bufferGeometry>
-        <pointsMaterial color={planet.color} size={0.03} transparent opacity={0.4} />
+        <pointsMaterial color={planet.color} size={0.08} transparent opacity={0.5} />
       </points>
 
       {/* Planet with effects */}
       <group ref={groupRef}>
         {/* Planet atmosphere glow */}
-        <Sphere ref={atmosphereRef} args={[planet.size * 1.3, 16, 16]}>
-          <meshBasicMaterial color={planet.color} transparent opacity={isHovered ? 0.35 : 0.15} />
+        <Sphere ref={atmosphereRef} args={[scaledSize * 1.5, 16, 16]}>
+          <meshBasicMaterial color={planet.color} transparent opacity={isHovered ? 0.35 : 0.2} />
         </Sphere>
 
         {/* Planet sphere */}
         <Sphere
           ref={meshRef}
-          args={[planet.size, 16, 16]}
+          args={[scaledSize, 16, 16]}
           onPointerOver={() => setIsHovered(true)}
           onPointerOut={() => setIsHovered(false)}
         >
           <MeshDistortMaterial
             color={planet.color}
             emissive={planet.color}
-            emissiveIntensity={isHovered ? 0.5 : 0.2}
+            emissiveIntensity={isHovered ? 0.6 : 0.3}
             distort={isHovered ? 0.15 : 0.05}
             speed={2}
           />
         </Sphere>
 
         {/* Inner core glow */}
-        <Sphere args={[planet.size * 0.5, 8, 8]}>
-          <meshBasicMaterial color="#ffffff" transparent opacity={0.4} />
+        <Sphere args={[scaledSize * 0.5, 8, 8]}>
+          <meshBasicMaterial color="#ffffff" transparent opacity={0.5} />
         </Sphere>
 
         {/* Orbiting moons */}
@@ -5341,14 +5352,14 @@ function OrbitingPlanet({
           <PlanetEffectComponent
             effect={planet.effect}
             color={planet.color}
-            size={planet.size}
+            size={scaledSize}
             paused={paused}
           />
         )}
 
         {/* Hover tooltip */}
         {isHovered && (
-          <Html position={[0, planet.size + 0.3, 0]} center>
+          <Html position={[0, scaledSize + 0.5, 0]} center>
             <div className="bg-gray-900/90 border border-gray-700 rounded-lg px-3 py-2 text-center backdrop-blur-sm min-w-[80px]">
               <div className="text-xs font-bold" style={{ color: planet.color }}>
                 {planet.name}
@@ -5360,12 +5371,12 @@ function OrbitingPlanet({
         {/* Enhanced glow when hovered */}
         {isHovered && (
           <>
-            <Sphere args={[planet.size * 2, 8, 8]}>
+            <Sphere args={[scaledSize * 2, 8, 8]}>
               <meshBasicMaterial color={planet.color} transparent opacity={0.2} />
             </Sphere>
             {/* Pulsing ring */}
             <mesh rotation={[Math.PI / 2, 0, 0]}>
-              <torusGeometry args={[planet.size * 1.5, 0.01, 8, 32]} />
+              <torusGeometry args={[scaledSize * 1.5, 0.03, 8, 32]} />
               <meshBasicMaterial color="#ffffff" transparent opacity={0.8} />
             </mesh>
           </>
