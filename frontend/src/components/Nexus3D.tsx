@@ -356,26 +356,52 @@ function CameraFollowingEffects({
   const { camera } = useThree()
 
   useFrame(() => {
-    if (groupRef.current) {
-      // Get camera's forward direction (where it's looking)
-      const cameraDirection = new THREE.Vector3()
-      camera.getWorldDirection(cameraDirection)
+    if (!groupRef.current) return
 
-      // Position effects in front of the camera at a fixed distance
-      // This way they're ALWAYS visible regardless of how you rotate around the planet
-      const distanceInFront = 12
-      const effectsPosition = camera.position.clone().add(
-        cameraDirection.multiplyScalar(distanceInFront)
-      )
+    // Disable depth testing on all child materials so effects are ALWAYS visible
+    // (must be in useFrame to catch dynamically created materials)
+    groupRef.current.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        const mesh = child as THREE.Mesh
+        if (mesh.material) {
+          const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+          mats.forEach((mat) => {
+            if (mat.depthTest !== false) {
+              mat.depthTest = false
+              mat.depthWrite = false
+            }
+          })
+        }
+      }
+    })
+
+    // Position effects between camera and planet (on camera side)
+    if (controlsRef.current) {
+      // Get the orbit target (what we're looking at - planet center)
+      const target = controlsRef.current.target.clone()
+      const cameraPos = camera.position.clone()
+
+      // Calculate direction from target TO camera (opposite of look direction)
+      const toCamera = cameraPos.sub(target).normalize()
+
+      // Position effects on the CAMERA SIDE of the target (between camera and planet)
+      // This ensures effects are never behind the planet
+      const distanceFromTarget = 10 // In front of planet surface toward camera
+      const effectsPosition = target.clone().add(toCamera.multiplyScalar(distanceFromTarget))
 
       groupRef.current.position.copy(effectsPosition)
 
       // Make the effects group face the camera (so text/UI is readable)
-      groupRef.current.quaternion.copy(camera.quaternion)
+      groupRef.current.lookAt(camera.position)
     }
   })
 
-  return <group ref={groupRef}>{children}</group>
+  // Use renderOrder to ensure effects render on top of planets
+  return (
+    <group ref={groupRef} renderOrder={999}>
+      {children}
+    </group>
+  )
 }
 
 // =============================================================================
