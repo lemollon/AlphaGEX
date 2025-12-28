@@ -146,19 +146,49 @@ export default function RiskMetrics({
           </div>
         )}
 
-        {/* Drawdown */}
-        <div className="grid grid-cols-2 gap-3 pt-2 border-t border-gray-700">
-          <div>
-            <p className="text-xs text-gray-500">Current DD</p>
-            <p className={`text-lg font-bold ${currentDrawdown > 5 ? 'text-red-400' : 'text-gray-300'}`}>
-              {currentDrawdown.toFixed(1)}%
-            </p>
+        {/* Drawdown with Visual Bar */}
+        <div className="pt-2 border-t border-gray-700">
+          <div className="flex justify-between text-xs mb-1">
+            <span className="text-gray-400 flex items-center gap-1">
+              <TrendingDown className="w-3 h-3" />
+              Current Drawdown
+            </span>
+            <span className={currentDrawdown > 5 ? 'text-red-400' : currentDrawdown > 2 ? 'text-yellow-400' : 'text-green-400'}>
+              {currentDrawdown > 0 ? `-${currentDrawdown.toFixed(2)}%` : 'At HWM'}
+            </span>
           </div>
-          <div>
-            <p className="text-xs text-gray-500">Max DD Today</p>
-            <p className={`text-lg font-bold ${maxDrawdownToday > 5 ? 'text-red-400' : 'text-gray-300'}`}>
-              {maxDrawdownToday.toFixed(1)}%
-            </p>
+          <div className="w-full bg-gray-700 rounded-full h-2 mb-2">
+            <div
+              className={`h-2 rounded-full transition-all ${
+                currentDrawdown > 10 ? 'bg-red-500' :
+                currentDrawdown > 5 ? 'bg-orange-500' :
+                currentDrawdown > 2 ? 'bg-yellow-500' :
+                'bg-green-500'
+              }`}
+              style={{ width: `${Math.min(currentDrawdown * 5, 100)}%` }}
+            ></div>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="text-center bg-gray-800/50 rounded p-2">
+              <p className="text-xs text-gray-500">Current DD</p>
+              <p className={`text-sm font-bold ${currentDrawdown > 5 ? 'text-red-400' : 'text-gray-300'}`}>
+                -{currentDrawdown.toFixed(1)}%
+              </p>
+            </div>
+            <div className="text-center bg-gray-800/50 rounded p-2">
+              <p className="text-xs text-gray-500">Max DD Today</p>
+              <p className={`text-sm font-bold ${maxDrawdownToday > 5 ? 'text-red-400' : 'text-gray-300'}`}>
+                -{maxDrawdownToday.toFixed(1)}%
+              </p>
+            </div>
+            {maxDrawdownAllTime !== undefined && (
+              <div className="text-center bg-gray-800/50 rounded p-2">
+                <p className="text-xs text-gray-500">All-Time Max</p>
+                <p className={`text-sm font-bold ${maxDrawdownAllTime > 10 ? 'text-red-400' : 'text-gray-300'}`}>
+                  -{maxDrawdownAllTime.toFixed(1)}%
+                </p>
+              </div>
+            )}
           </div>
         </div>
 

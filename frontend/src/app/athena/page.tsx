@@ -44,6 +44,14 @@ import {
   StatusBadge,
   DirectionIndicator,
   PnLDisplay,
+  // NEW: Time & Context Display Components
+  formatDuration,
+  TimeInPosition,
+  DateRangeDisplay,
+  BreakevenDistance,
+  EntryContext,
+  UnlockConditions,
+  DrawdownDisplay,
 } from '@/components/trader'
 import type { TradeDecision, TabId } from '@/components/trader'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
@@ -2730,11 +2738,13 @@ export default function ATHENAPage() {
                 <table className="w-full">
                   <thead className="bg-gray-900">
                     <tr>
-                      <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Date</th>
+                      <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Entry Date</th>
+                      <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Exit Date</th>
+                      <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Duration</th>
                       <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Type</th>
                       <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Strikes</th>
-                      <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Entry</th>
-                      <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Exit</th>
+                      <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Entry $</th>
+                      <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Exit $</th>
                       <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Status</th>
                       <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Reason</th>
                       <th className="px-3 py-3 text-right text-xs text-gray-400 uppercase">P&L</th>
@@ -2747,7 +2757,23 @@ export default function ATHENAPage() {
                       .map((pos) => (
                         <tr key={pos.position_id} className="hover:bg-gray-700/50">
                           <td className="px-3 py-3 text-sm text-gray-300">
-                            {pos.exit_time ? new Date(pos.exit_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '--'}
+                            {pos.created_at ? (
+                              <div className="flex flex-col">
+                                <span>{new Date(pos.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                                <span className="text-xs text-gray-500">{new Date(pos.created_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</span>
+                              </div>
+                            ) : '--'}
+                          </td>
+                          <td className="px-3 py-3 text-sm text-gray-300">
+                            {pos.exit_time ? (
+                              <div className="flex flex-col">
+                                <span>{new Date(pos.exit_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                                <span className="text-xs text-gray-500">{new Date(pos.exit_time).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</span>
+                              </div>
+                            ) : '--'}
+                          </td>
+                          <td className="px-3 py-3 text-sm">
+                            <TimeInPosition entryTime={pos.created_at} exitTime={pos.exit_time} showLabel={false} />
                           </td>
                           <td className="px-3 py-3">
                             <span className={`px-2 py-1 rounded text-xs font-medium ${
@@ -2776,7 +2802,7 @@ export default function ATHENAPage() {
                       ))}
                     {positions.filter(p => p.status === 'closed' || p.status === 'expired').length === 0 && (
                       <tr>
-                        <td colSpan={8} className="px-4 py-8">
+                        <td colSpan={10} className="px-4 py-8">
                           <EmptyState
                             icon={<History className="w-8 h-8" />}
                             title="No Trade History"
@@ -3117,6 +3143,93 @@ export default function ATHENAPage() {
                         </div>
                         <span className={status?.tradier_available ? 'text-green-400' : 'text-red-400'}>
                           {status?.tradier_available ? 'Connected' : 'Disconnected'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Backtest Stats */}
+                <div className="mt-6 pt-6 border-t border-gray-700">
+                  <h3 className="text-sm font-medium text-gray-300 uppercase tracking-wide mb-4">Strategy Backtest Stats</h3>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="bg-gray-900/50 rounded-lg p-4 text-center">
+                      <p className="text-gray-400 text-xs mb-1">Win Rate</p>
+                      <p className="text-2xl font-bold text-green-400">
+                        {performance?.summary?.avg_win_rate
+                          ? `${(performance.summary.avg_win_rate * 100).toFixed(1)}%`
+                          : closedPositions.length > 0
+                            ? `${((closedPositions.filter(p => (p.realized_pnl || 0) > 0).length / closedPositions.length) * 100).toFixed(1)}%`
+                            : '--'}
+                      </p>
+                      <p className="text-xs text-gray-500">Historical</p>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-4 text-center">
+                      <p className="text-gray-400 text-xs mb-1">Total Trades</p>
+                      <p className="text-2xl font-bold text-white">
+                        {performance?.summary?.total_trades || closedPositions.length}
+                      </p>
+                      <p className="text-xs text-gray-500">Completed</p>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-4 text-center">
+                      <p className="text-gray-400 text-xs mb-1">Avg Trade P&L</p>
+                      <p className={`text-2xl font-bold ${
+                        (totalPnl / (closedPositions.length || 1)) >= 0 ? 'text-green-400' : 'text-red-400'
+                      }`}>
+                        {closedPositions.length > 0
+                          ? formatCurrency(totalPnl / closedPositions.length)
+                          : '--'}
+                      </p>
+                      <p className="text-xs text-gray-500">Per Trade</p>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-4 text-center">
+                      <p className="text-gray-400 text-xs mb-1">Profit Factor</p>
+                      <p className="text-2xl font-bold text-blue-400">
+                        {closedPositions.length > 0 ? (() => {
+                          const wins = closedPositions.filter(p => (p.realized_pnl || 0) > 0).reduce((sum, p) => sum + (p.realized_pnl || 0), 0)
+                          const losses = Math.abs(closedPositions.filter(p => (p.realized_pnl || 0) < 0).reduce((sum, p) => sum + (p.realized_pnl || 0), 0))
+                          return losses > 0 ? (wins / losses).toFixed(2) : 'Inf'
+                        })() : '--'}
+                      </p>
+                      <p className="text-xs text-gray-500">Win/Loss Ratio</p>
+                    </div>
+                  </div>
+
+                  {/* Additional Stats Row */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400 text-xs">Bullish Trades</span>
+                        <span className="text-green-400 font-mono">
+                          {performance?.summary?.bullish_count || closedPositions.filter(p => p.spread_type?.includes('BULL')).length}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400 text-xs">Bearish Trades</span>
+                        <span className="text-red-400 font-mono">
+                          {performance?.summary?.bearish_count || closedPositions.filter(p => p.spread_type?.includes('BEAR')).length}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400 text-xs">Best Trade</span>
+                        <span className="text-green-400 font-mono">
+                          {closedPositions.length > 0
+                            ? formatCurrency(Math.max(...closedPositions.map(p => p.realized_pnl || 0)))
+                            : '--'}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="bg-gray-900/50 rounded-lg p-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400 text-xs">Worst Trade</span>
+                        <span className="text-red-400 font-mono">
+                          {closedPositions.length > 0
+                            ? formatCurrency(Math.min(...closedPositions.map(p => p.realized_pnl || 0)))
+                            : '--'}
                         </span>
                       </div>
                     </div>

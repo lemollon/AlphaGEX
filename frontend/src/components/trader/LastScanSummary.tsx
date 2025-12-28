@@ -200,6 +200,42 @@ function deriveSkipExplanation(outcome: string, reason: string, checks?: ScanChe
   }
 }
 
+// Helper to derive unlock conditions from failed checks
+function deriveUnlockConditions(checks?: ScanCheck[]): TradeUnlockCondition[] {
+  if (!checks) return []
+
+  return checks
+    .filter(c => !c.passed)
+    .map(check => {
+      // Try to parse numbers from value and threshold
+      const currentVal = check.value || 'N/A'
+      const requiredVal = check.threshold || 'Pass'
+
+      // Estimate probability based on check type
+      let probability: number | undefined
+      const checkLower = check.check.toLowerCase()
+
+      if (checkLower.includes('market') || checkLower.includes('hour') || checkLower.includes('window')) {
+        // Time-based conditions have predictable unlock times
+        probability = 0.95
+      } else if (checkLower.includes('vix')) {
+        // VIX changes frequently
+        probability = 0.6
+      } else if (checkLower.includes('max') || checkLower.includes('limit')) {
+        // Daily limits reset tomorrow
+        probability = 0.99
+      }
+
+      return {
+        condition: check.check,
+        current_value: currentVal,
+        required_value: requiredVal,
+        met: false,
+        probability
+      }
+    })
+}
+
 // Trade Unlock Conditions Display
 function UnlockConditionsDisplay({ conditions }: { conditions: TradeUnlockCondition[] }) {
   if (!conditions || conditions.length === 0) return null
@@ -551,9 +587,11 @@ export default function LastScanSummary({
           )}
 
           {/* TRADE UNLOCK CONDITIONS - What needs to happen for a trade */}
-          {lastScan.outcome !== 'TRADED' && lastScan.unlock_conditions && (
+          {lastScan.outcome !== 'TRADED' && (lastScan.unlock_conditions || lastScan.checks?.some(c => !c.passed)) && (
             <div className="mb-4">
-              <UnlockConditionsDisplay conditions={lastScan.unlock_conditions} />
+              <UnlockConditionsDisplay
+                conditions={lastScan.unlock_conditions || deriveUnlockConditions(lastScan.checks)}
+              />
             </div>
           )}
 

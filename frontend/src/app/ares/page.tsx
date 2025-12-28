@@ -46,6 +46,14 @@ import {
   StatusBadge,
   DirectionIndicator,
   PnLDisplay,
+  // NEW: Time & Context Display Components
+  formatDuration,
+  TimeInPosition,
+  DateRangeDisplay,
+  BreakevenDistance,
+  EntryContext,
+  UnlockConditions,
+  DrawdownDisplay,
 } from '@/components/trader'
 import type { TradeDecision, TabId } from '@/components/trader'
 import { History, LayoutDashboard } from 'lucide-react'
@@ -1669,6 +1677,105 @@ export default function ARESPage() {
                 )}
               </div>
 
+              {/* Oracle/ML Predictions Panel */}
+              {todayDecision && (
+                <div className="bg-gray-800 rounded-xl p-6 border border-yellow-700/50 mb-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <Brain className="w-5 h-5 text-yellow-500" />
+                      <h2 className="text-lg font-semibold text-white">Oracle Predictions</h2>
+                      <span className="px-2 py-0.5 text-xs bg-yellow-900/50 text-yellow-400 rounded">ML</span>
+                    </div>
+                    <span className="text-xs text-gray-500">
+                      {todayDecision.timestamp ? new Date(todayDecision.timestamp).toLocaleString('en-US', {
+                        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                      }) : 'Latest'}
+                    </span>
+                  </div>
+
+                  {todayDecision.oracle_advice ? (
+                    <div className="space-y-4">
+                      {/* Main Prediction */}
+                      <div className="flex items-center justify-between bg-gray-900/50 rounded-lg p-4">
+                        <div>
+                          <span className="text-gray-400 text-sm">Oracle Recommendation</span>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className={`text-2xl font-bold ${
+                              todayDecision.oracle_advice.advice === 'TRADE_FULL' ? 'text-green-400' :
+                              todayDecision.oracle_advice.advice === 'TRADE_REDUCED' ? 'text-yellow-400' :
+                              'text-red-400'
+                            }`}>
+                              {todayDecision.oracle_advice.advice?.replace(/_/g, ' ') || 'HOLD'}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-gray-400 text-sm">Win Probability</span>
+                          <div className={`text-2xl font-bold ${
+                            (todayDecision.oracle_advice.win_probability || 0) >= 0.55 ? 'text-green-400' : 'text-red-400'
+                          }`}>
+                            {((todayDecision.oracle_advice.win_probability || 0) * 100).toFixed(0)}%
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Metrics Grid */}
+                      <div className="grid grid-cols-3 gap-4">
+                        <div className="bg-gray-900/30 rounded-lg p-3 text-center">
+                          <p className="text-gray-400 text-xs mb-1">Confidence</p>
+                          <p className="text-xl font-bold text-white">
+                            {((todayDecision.oracle_advice.confidence || 0) * 100).toFixed(0)}%
+                          </p>
+                        </div>
+                        <div className="bg-gray-900/30 rounded-lg p-3 text-center">
+                          <p className="text-gray-400 text-xs mb-1">Suggested Risk</p>
+                          <p className="text-xl font-bold text-yellow-400">
+                            {(todayDecision.oracle_advice.suggested_risk_pct || 0).toFixed(1)}%
+                          </p>
+                        </div>
+                        <div className="bg-gray-900/30 rounded-lg p-3 text-center">
+                          <p className="text-gray-400 text-xs mb-1">SD Multiplier</p>
+                          <p className="text-xl font-bold text-blue-400">
+                            {(todayDecision.oracle_advice.suggested_sd_multiplier || 0).toFixed(2)}x
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Top Factors */}
+                      {todayDecision.oracle_advice.top_factors && todayDecision.oracle_advice.top_factors.length > 0 && (
+                        <div className="bg-gray-900/30 rounded-lg p-3">
+                          <p className="text-gray-400 text-xs mb-2">TOP DECISION FACTORS</p>
+                          <div className="space-y-1">
+                            {todayDecision.oracle_advice.top_factors.slice(0, 5).map(([factor, value], i) => (
+                              <div key={i} className="flex items-center justify-between text-sm">
+                                <span className="text-gray-300">{factor}</span>
+                                <span className={`font-mono ${Number(value) > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                  {typeof value === 'number' ? value.toFixed(3) : value}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Reasoning */}
+                      {todayDecision.oracle_advice.reasoning && (
+                        <div className="bg-gray-900/30 rounded-lg p-3">
+                          <p className="text-gray-400 text-xs mb-1">ORACLE REASONING</p>
+                          <p className="text-gray-300 text-sm">{todayDecision.oracle_advice.reasoning}</p>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-gray-500">
+                      <Brain className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                      <p>Oracle predictions will appear after the next scan</p>
+                      <p className="text-xs text-gray-600 mt-1">Scans run during market hours</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Two Column: SPX Summary | SPY Summary */}
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
                 {/* SPX Summary */}
@@ -2496,12 +2603,13 @@ export default function ARESPage() {
                 <table className="w-full">
                   <thead className="bg-gray-900">
                     <tr>
-                      <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Date</th>
+                      <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Entry Date</th>
+                      <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Exit Date</th>
+                      <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Duration</th>
                       <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Ticker</th>
                       <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Strikes</th>
                       <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Credit</th>
                       <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Close</th>
-                      <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">Underlying</th>
                       <th className="px-3 py-3 text-left text-xs text-gray-400 uppercase">VIX</th>
                       <th className="px-3 py-3 text-right text-xs text-gray-400 uppercase">P&L</th>
                     </tr>
@@ -2512,7 +2620,23 @@ export default function ARESPage() {
                       .map((pos) => (
                         <tr key={pos.position_id} className="hover:bg-gray-700/50">
                           <td className="px-3 py-3 text-sm text-gray-300">
-                            {pos.close_date ? new Date(pos.close_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '--'}
+                            {pos.open_date ? (
+                              <div className="flex flex-col">
+                                <span>{new Date(pos.open_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                                <span className="text-xs text-gray-500">{new Date(pos.open_date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</span>
+                              </div>
+                            ) : '--'}
+                          </td>
+                          <td className="px-3 py-3 text-sm text-gray-300">
+                            {pos.close_date ? (
+                              <div className="flex flex-col">
+                                <span>{new Date(pos.close_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span>
+                                <span className="text-xs text-gray-500">{new Date(pos.close_date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</span>
+                              </div>
+                            ) : '--'}
+                          </td>
+                          <td className="px-3 py-3 text-sm">
+                            <TimeInPosition entryTime={pos.open_date} exitTime={pos.close_date} showLabel={false} />
                           </td>
                           <td className="px-3 py-3">
                             <span className={`px-2 py-1 rounded text-xs font-medium ${
@@ -2528,7 +2652,6 @@ export default function ARESPage() {
                           </td>
                           <td className="px-3 py-3 text-sm text-green-400">${pos.total_credit?.toFixed(2) || '0.00'}</td>
                           <td className="px-3 py-3 text-sm text-gray-300">${pos.close_price?.toFixed(2) || '0.00'}</td>
-                          <td className="px-3 py-3 text-sm text-gray-300">${pos.underlying_at_entry?.toLocaleString() || '--'}</td>
                           <td className="px-3 py-3 text-sm text-yellow-400">{pos.vix_at_entry?.toFixed(1) || '--'}</td>
                           <td className="px-3 py-3 text-right">
                             <PnLDisplay value={pos.realized_pnl || 0} size="sm" />
@@ -2537,7 +2660,7 @@ export default function ARESPage() {
                       ))}
                     {closedPositions.length === 0 && (
                       <tr>
-                        <td colSpan={8} className="px-4 py-8">
+                        <td colSpan={9} className="px-4 py-8">
                           <EmptyState
                             icon={<History className="w-8 h-8" />}
                             title="No Trade History"

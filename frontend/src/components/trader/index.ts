@@ -13,6 +13,14 @@ export {
   DirectionIndicator,
   PnLDisplay,
   BotPageHeader,
+  // NEW: Time & Context Display Components
+  formatDuration,
+  TimeInPosition,
+  DateRangeDisplay,
+  BreakevenDistance,
+  EntryContext,
+  UnlockConditions,
+  DrawdownDisplay,
 } from './BotBranding'
 export type { BotName, BotBrand, TabId } from './BotBranding'
 
