@@ -39,6 +39,10 @@ export { default as LastScanSummary } from './LastScanSummary'
 export { default as SignalConflictTracker } from './SignalConflictTracker'
 export { default as PositionEntryContext } from './PositionEntryContext'
 
+// Enhanced Scan Activity - MAXIMUM TRANSPARENCY
+export { default as ScanDetailCard } from './ScanDetailCard'
+export type { ScanData, ScanCheck, SignalData, MarketContext, ScanTimestamps, TradeDetails } from './ScanDetailCard'
+
 // Status & Information
 export { default as BotStatusBanner } from './BotStatusBanner'
 export { default as TodayReportCard } from './TodayReportCard'
