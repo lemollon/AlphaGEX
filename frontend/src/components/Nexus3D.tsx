@@ -6128,34 +6128,40 @@ function AuroraEffect({ position, color, paused }: { position: [number, number, 
 }
 
 // =============================================================================
-// STARDUST PARTICLES - Ambient floating particles
+// STARDUST PARTICLES - Ambient floating particles that FOLLOW THE CAMERA
 // =============================================================================
 
 function StardustField({ paused }: { paused: boolean }) {
   const particlesRef = useRef<THREE.Points>(null)
-  const count = 200
+  const { camera } = useThree()
+  const count = 500 // More particles for more wow factor
 
+  // Generate positions in a sphere around origin (will be repositioned to follow camera)
   const positions = useMemo(() => {
     const pos = new Float32Array(count * 3)
     for (let i = 0; i < count; i++) {
-      pos[i * 3] = (Math.random() - 0.5) * 80
-      pos[i * 3 + 1] = (Math.random() - 0.5) * 40
-      pos[i * 3 + 2] = (Math.random() - 0.5) * 80
+      // Spherical distribution for even coverage from all angles
+      const theta = Math.random() * Math.PI * 2
+      const phi = Math.acos(2 * Math.random() - 1)
+      const r = 15 + Math.random() * 35 // Distance from camera: 15-50 units
+      pos[i * 3] = r * Math.sin(phi) * Math.cos(theta)
+      pos[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta)
+      pos[i * 3 + 2] = r * Math.cos(phi)
     }
     return pos
   }, [])
 
   useFrame((state) => {
-    if (paused || !particlesRef.current) return
+    if (!particlesRef.current) return
     const t = state.clock.elapsedTime
-    particlesRef.current.rotation.y = t * 0.005
 
-    // Gentle floating motion
-    const pos = particlesRef.current.geometry.attributes.position.array as Float32Array
-    for (let i = 0; i < count; i++) {
-      pos[i * 3 + 1] += Math.sin(t + i) * 0.001
+    // FOLLOW THE CAMERA - stardust is always around you
+    particlesRef.current.position.copy(camera.position)
+
+    if (!paused) {
+      particlesRef.current.rotation.y = t * 0.01
+      particlesRef.current.rotation.x = t * 0.005
     }
-    particlesRef.current.geometry.attributes.position.needsUpdate = true
   })
 
   return (
@@ -6163,7 +6169,14 @@ function StardustField({ paused }: { paused: boolean }) {
       <bufferGeometry>
         <bufferAttribute attach="attributes-position" count={count} array={positions} itemSize={3} />
       </bufferGeometry>
-      <pointsMaterial color="#ffffff" size={0.05} transparent opacity={0.4} />
+      <pointsMaterial
+        color="#ffffff"
+        size={0.15}
+        transparent
+        opacity={0.6}
+        sizeAttenuation={true}
+        depthWrite={false}
+      />
     </points>
   )
 }
