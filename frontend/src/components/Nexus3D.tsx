@@ -5052,8 +5052,8 @@ function SolarSystem({
       const dx = e.clientX - pointerDownPos.current.x
       const dy = e.clientY - pointerDownPos.current.y
       const distance = Math.sqrt(dx * dx + dy * dy)
-      // Only consider it a click if pointer moved less than 5 pixels
-      isDragging.current = distance > 5
+      // Only consider it a click if pointer moved less than 20 pixels (generous threshold to avoid accidental navigation while orbiting)
+      isDragging.current = distance > 20
     }
     pointerDownPos.current = null
   }, [])
@@ -9208,8 +9208,8 @@ function BotNodeWithFlare({
       const dx = e.clientX - pointerDownPos.current.x
       const dy = e.clientY - pointerDownPos.current.y
       const distance = Math.sqrt(dx * dx + dy * dy)
-      // Only consider it a click if pointer moved less than 5 pixels
-      isDragging.current = distance > 5
+      // Only consider it a click if pointer moved less than 20 pixels (generous threshold to avoid accidental navigation while orbiting)
+      isDragging.current = distance > 20
     }
     pointerDownPos.current = null
   }, [])
@@ -9642,15 +9642,13 @@ function Scene({
       <RocketLaunches botStatus={botStatus} />
       <SatelliteOrbiters />
       <EnergyShields paused={paused} />
-      <WormholePortals botStatus={botStatus} />
       <QuantumEntanglement botStatus={botStatus} paused={paused} />
       <BinaryStar paused={paused} />
       <SpaceStation spotPrice={spotPrice || 585} gexValue={gexValue} vixValue={vixValue} />
       <MoonPhases paused={paused} />
       <NebulaStorm vixValue={vixValue} paused={paused} />
 
-      {/* NEW WOW FACTOR: Cosmic Enhancements */}
-      <InterstellarNetwork onNavigate={handleSolarSystemClick} paused={paused} />
+      {/* Cosmic Enhancements */}
       <CosmicDustField paused={paused} />
       <HolographicUILayer paused={paused} />
 
