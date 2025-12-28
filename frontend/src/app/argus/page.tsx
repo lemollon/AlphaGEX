@@ -227,30 +227,27 @@ interface MarketContext {
   }
 }
 
-// New interfaces for enhanced features
+// New interfaces for enhanced features - matched to actual API responses
 interface AccuracyMetrics {
+  date: string | null
   pin_accuracy_7d: number
   pin_accuracy_30d: number
   direction_accuracy_7d: number
   direction_accuracy_30d: number
   magnet_hit_rate_7d: number
   magnet_hit_rate_30d: number
-  flip_accuracy_7d: number
-  flip_accuracy_30d: number
-  total_predictions_7d: number
-  total_predictions_30d: number
+  total_predictions: number
+  message?: string
 }
 
 interface BotPosition {
-  bot_name: string
-  status: 'active' | 'watching' | 'inactive' | 'no_position'
-  position_type?: string
-  short_strikes?: number[]
-  direction?: 'BULLISH' | 'BEARISH' | 'NEUTRAL'
-  entry_price?: number
-  current_pnl?: number
-  pnl_pct?: number
-  safety_vs_magnets?: 'SAFE' | 'CAUTION' | 'DANGER'
+  bot: string  // ARES, ATHENA, PHOENIX
+  strategy: string  // Iron Condor, Directional Spread, etc.
+  status: string  // open, watching, closed
+  strikes?: string  // "590/610" format
+  direction?: string  // BULLISH, BEARISH
+  pnl?: number
+  safe?: boolean
 }
 
 interface TradeIdea {
@@ -274,6 +271,16 @@ interface PatternMatch {
   gamma_regime_then: string
 }
 
+interface PatternData {
+  patterns: PatternMatch[]
+  current_structure?: {
+    gamma_regime: string
+    top_magnet: number | null
+    likely_pin: number | null
+  }
+  message?: string
+}
+
 interface EMTrendPoint {
   time: string
   expected_move: number
@@ -281,12 +288,13 @@ interface EMTrendPoint {
 }
 
 // Available symbols for 0DTE analysis
+// NOTE: Backend currently only supports SPY. Others marked as coming soon.
 const AVAILABLE_SYMBOLS = [
-  { symbol: 'SPY', name: 'S&P 500 ETF' },
-  { symbol: 'QQQ', name: 'Nasdaq 100 ETF' },
-  { symbol: 'IWM', name: 'Russell 2000 ETF' },
-  { symbol: 'SPX', name: 'S&P 500 Index' },
-  { symbol: 'DIA', name: 'Dow Jones ETF' },
+  { symbol: 'SPY', name: 'S&P 500 ETF', supported: true },
+  { symbol: 'QQQ', name: 'Nasdaq 100 ETF', supported: false },
+  { symbol: 'IWM', name: 'Russell 2000 ETF', supported: false },
+  { symbol: 'SPX', name: 'S&P 500 Index', supported: false },
+  { symbol: 'DIA', name: 'Dow Jones ETF', supported: false },
 ]
 
 export default function ArgusPage() {
@@ -481,27 +489,33 @@ export default function ArgusPage() {
     }
   }, [])
 
-  // Fetch bot positions
+  // Fetch bot positions - API returns 'positions' array
   const fetchBotPositions = useCallback(async () => {
     try {
       const response = await apiClient.getArgusBots()
-      if (response.data?.success && response.data?.data?.bots) {
-        setBotPositions(response.data.data.bots)
+      if (response.data?.success && response.data?.data?.positions) {
+        setBotPositions(response.data.data.positions)
+      } else if (response.data?.success) {
+        // No positions - that's okay, show empty state
+        setBotPositions([])
       }
     } catch (err) {
       console.error('[ARGUS] Error fetching bot positions:', err)
+      // Don't set fake data - just leave as empty array
     }
   }, [])
 
-  // Fetch pattern matches
+  // Fetch pattern matches - API may return empty patterns with message
   const fetchPatternMatches = useCallback(async () => {
     try {
       const response = await apiClient.getArgusPatterns()
-      if (response.data?.success && response.data?.data?.patterns) {
-        setPatternMatches(response.data.data.patterns)
+      if (response.data?.success && response.data?.data) {
+        // Patterns may be empty with a message - that's expected
+        setPatternMatches(response.data.data.patterns || [])
       }
     } catch (err) {
       console.error('[ARGUS] Error fetching pattern matches:', err)
+      // Don't set fake data
     }
   }, [])
 
@@ -1013,39 +1027,30 @@ export default function ArgusPage() {
                         <button
                           key={s.symbol}
                           onClick={() => {
-                            setSelectedSymbol(s.symbol)
-                            setShowSymbolDropdown(false)
-                            setSymbolSearch('')
-                            // In future: trigger data refetch for new symbol
+                            if (s.supported) {
+                              setSelectedSymbol(s.symbol)
+                              setShowSymbolDropdown(false)
+                              setSymbolSearch('')
+                            }
                           }}
-                          className={`w-full px-4 py-3 flex items-center justify-between hover:bg-gray-700 transition-colors ${
-                            selectedSymbol === s.symbol ? 'bg-purple-500/20' : ''
+                          disabled={!s.supported}
+                          className={`w-full px-4 py-3 flex items-center justify-between transition-colors ${
+                            !s.supported ? 'opacity-50 cursor-not-allowed' :
+                            selectedSymbol === s.symbol ? 'bg-purple-500/20' : 'hover:bg-gray-700'
                           }`}
                         >
                           <div className="text-left">
-                            <div className="font-bold text-white">{s.symbol}</div>
-                            <div className="text-xs text-gray-400">{s.name}</div>
+                            <div className={`font-bold ${s.supported ? 'text-white' : 'text-gray-500'}`}>{s.symbol}</div>
+                            <div className="text-xs text-gray-400">
+                              {s.name}
+                              {!s.supported && <span className="ml-2 text-yellow-500">(Coming Soon)</span>}
+                            </div>
                           </div>
-                          {selectedSymbol === s.symbol && (
+                          {selectedSymbol === s.symbol && s.supported && (
                             <CheckCircle2 className="w-5 h-5 text-purple-400" />
                           )}
                         </button>
                       ))}
-                    {symbolSearch && !AVAILABLE_SYMBOLS.some(s => s.symbol === symbolSearch) && (
-                      <div className="px-4 py-3 text-center text-gray-500 text-sm">
-                        <p>Custom symbol: <span className="text-white font-bold">{symbolSearch}</span></p>
-                        <button
-                          onClick={() => {
-                            setSelectedSymbol(symbolSearch)
-                            setShowSymbolDropdown(false)
-                            setSymbolSearch('')
-                          }}
-                          className="mt-2 px-3 py-1 bg-purple-500 hover:bg-purple-400 text-white text-xs rounded"
-                        >
-                          Use {symbolSearch}
-                        </button>
-                      </div>
-                    )}
                   </div>
                 </div>
               )}
@@ -1498,40 +1503,40 @@ export default function ArgusPage() {
                 {showAccuracyPanel ? 'Hide' : 'Show'}
               </button>
             </div>
-            {showAccuracyPanel && (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <div className="bg-gray-900/50 rounded-lg p-3 text-center">
-                  <div className="text-xs text-gray-500 mb-1">Pin Accuracy (7d)</div>
-                  <div className={`text-xl font-bold ${(accuracyMetrics?.pin_accuracy_7d || 0) >= 75 ? 'text-emerald-400' : (accuracyMetrics?.pin_accuracy_7d || 0) >= 50 ? 'text-yellow-400' : 'text-rose-400'}`}>
-                    {accuracyMetrics?.pin_accuracy_7d?.toFixed(0) || '--'}%
+            {showAccuracyPanel && accuracyMetrics && accuracyMetrics.total_predictions > 0 ? (
+              <>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                  <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                    <div className="text-xs text-gray-500 mb-1">Pin Accuracy (7d)</div>
+                    <div className={`text-xl font-bold ${accuracyMetrics.pin_accuracy_7d >= 75 ? 'text-emerald-400' : accuracyMetrics.pin_accuracy_7d >= 50 ? 'text-yellow-400' : 'text-rose-400'}`}>
+                      {accuracyMetrics.pin_accuracy_7d.toFixed(0)}%
+                    </div>
+                  </div>
+                  <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                    <div className="text-xs text-gray-500 mb-1">Direction (7d)</div>
+                    <div className={`text-xl font-bold ${accuracyMetrics.direction_accuracy_7d >= 55 ? 'text-emerald-400' : accuracyMetrics.direction_accuracy_7d >= 50 ? 'text-yellow-400' : 'text-rose-400'}`}>
+                      {accuracyMetrics.direction_accuracy_7d.toFixed(0)}%
+                    </div>
+                  </div>
+                  <div className="bg-gray-900/50 rounded-lg p-3 text-center">
+                    <div className="text-xs text-gray-500 mb-1">Magnet Hit (7d)</div>
+                    <div className={`text-xl font-bold ${accuracyMetrics.magnet_hit_rate_7d >= 70 ? 'text-emerald-400' : accuracyMetrics.magnet_hit_rate_7d >= 50 ? 'text-yellow-400' : 'text-rose-400'}`}>
+                      {accuracyMetrics.magnet_hit_rate_7d.toFixed(0)}%
+                    </div>
                   </div>
                 </div>
-                <div className="bg-gray-900/50 rounded-lg p-3 text-center">
-                  <div className="text-xs text-gray-500 mb-1">Direction (7d)</div>
-                  <div className={`text-xl font-bold ${(accuracyMetrics?.direction_accuracy_7d || 0) >= 55 ? 'text-emerald-400' : (accuracyMetrics?.direction_accuracy_7d || 0) >= 50 ? 'text-yellow-400' : 'text-rose-400'}`}>
-                    {accuracyMetrics?.direction_accuracy_7d?.toFixed(0) || '--'}%
-                  </div>
+                <div className="mt-3 text-xs text-gray-600 flex items-center gap-1">
+                  <Info className="w-3 h-3" />
+                  Based on {accuracyMetrics.total_predictions} predictions
                 </div>
-                <div className="bg-gray-900/50 rounded-lg p-3 text-center">
-                  <div className="text-xs text-gray-500 mb-1">Magnet Hit (7d)</div>
-                  <div className={`text-xl font-bold ${(accuracyMetrics?.magnet_hit_rate_7d || 0) >= 70 ? 'text-emerald-400' : (accuracyMetrics?.magnet_hit_rate_7d || 0) >= 50 ? 'text-yellow-400' : 'text-rose-400'}`}>
-                    {accuracyMetrics?.magnet_hit_rate_7d?.toFixed(0) || '--'}%
-                  </div>
-                </div>
-                <div className="bg-gray-900/50 rounded-lg p-3 text-center">
-                  <div className="text-xs text-gray-500 mb-1">Flip Accuracy</div>
-                  <div className={`text-xl font-bold ${(accuracyMetrics?.flip_accuracy_7d || 0) >= 60 ? 'text-emerald-400' : (accuracyMetrics?.flip_accuracy_7d || 0) >= 45 ? 'text-yellow-400' : 'text-rose-400'}`}>
-                    {accuracyMetrics?.flip_accuracy_7d?.toFixed(0) || '--'}%
-                  </div>
-                </div>
+              </>
+            ) : showAccuracyPanel ? (
+              <div className="text-center py-4 text-gray-500">
+                <Percent className="w-6 h-6 mx-auto mb-2 opacity-30" />
+                <p className="text-sm">No accuracy data yet</p>
+                <p className="text-xs text-gray-600 mt-1">Predictions will be tracked over time</p>
               </div>
-            )}
-            {showAccuracyPanel && accuracyMetrics && (
-              <div className="mt-3 text-xs text-gray-600 flex items-center gap-1">
-                <Info className="w-3 h-3" />
-                Based on {accuracyMetrics.total_predictions_7d || 0} predictions (7d) / {accuracyMetrics.total_predictions_30d || 0} (30d)
-              </div>
-            )}
+            ) : null}
           </div>
 
           {/* Trade Ideas Generator */}
@@ -2481,36 +2486,41 @@ export default function ArgusPage() {
               <h3 className="font-bold text-white flex items-center gap-2 mb-4">
                 <Bot className="w-5 h-5 text-blue-400" />
                 Bot Positions
-                {botPositions.some(b => b.status === 'active') && (
+                {botPositions.some(b => b.status === 'open') && (
                   <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
                 )}
               </h3>
               <div className="space-y-3">
-                {botPositions.length > 0 ? botPositions.map((bot) => (
+                {botPositions.length > 0 ? botPositions.map((bot, idx) => (
                   <div
-                    key={bot.bot_name}
+                    key={`${bot.bot}-${idx}`}
                     className={`p-3 rounded-lg ${
-                      bot.status === 'active'
+                      bot.status === 'open'
                         ? 'bg-emerald-500/10 border border-emerald-500/30'
                         : 'bg-gray-700/30'
                     }`}
                   >
                     <div className="flex items-center justify-between mb-1">
-                      <span className="font-bold text-white">{bot.bot_name}</span>
+                      <div>
+                        <span className="font-bold text-white">{bot.bot}</span>
+                        {bot.strategy && (
+                          <span className="text-xs text-gray-500 ml-2">{bot.strategy}</span>
+                        )}
+                      </div>
                       <span className={`text-xs px-2 py-0.5 rounded ${
-                        bot.status === 'active' ? 'bg-emerald-500 text-white' :
+                        bot.status === 'open' ? 'bg-emerald-500 text-white' :
                         bot.status === 'watching' ? 'bg-yellow-500/20 text-yellow-400' :
-                        bot.status === 'no_position' ? 'bg-gray-600 text-gray-300' :
+                        bot.status === 'closed' ? 'bg-gray-600 text-gray-300' :
                         'bg-gray-700 text-gray-500'
                       }`}>
-                        {bot.status === 'no_position' ? 'No Position' : bot.status.toUpperCase()}
+                        {bot.status.toUpperCase()}
                       </span>
                     </div>
-                    {bot.status === 'active' && (
+                    {bot.status === 'open' && (
                       <>
-                        {bot.short_strikes && bot.short_strikes.length > 0 && (
+                        {bot.strikes && (
                           <div className="text-xs text-gray-400 mb-1">
-                            Strikes: {bot.short_strikes.map(s => `$${s}`).join(' / ')}
+                            Strikes: ${bot.strikes}
                           </div>
                         )}
                         {bot.direction && (
@@ -2521,25 +2531,19 @@ export default function ArgusPage() {
                             </span>
                           </div>
                         )}
-                        {bot.current_pnl !== undefined && (
+                        {bot.pnl !== undefined && (
                           <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-600/50">
                             <span className="text-xs text-gray-500">P&L</span>
-                            <span className={`font-mono font-bold ${bot.current_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                              {bot.current_pnl >= 0 ? '+' : ''}${bot.current_pnl.toFixed(2)}
-                              {bot.pnl_pct !== undefined && (
-                                <span className="text-xs ml-1">({bot.pnl_pct >= 0 ? '+' : ''}{bot.pnl_pct.toFixed(1)}%)</span>
-                              )}
+                            <span className={`font-mono font-bold ${bot.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                              {bot.pnl >= 0 ? '+' : ''}${bot.pnl.toFixed(2)}
                             </span>
                           </div>
                         )}
-                        {bot.safety_vs_magnets && (
+                        {bot.safe !== undefined && (
                           <div className="mt-1 text-xs">
-                            <span className="text-gray-500">Safety: </span>
-                            <span className={
-                              bot.safety_vs_magnets === 'SAFE' ? 'text-emerald-400' :
-                              bot.safety_vs_magnets === 'CAUTION' ? 'text-yellow-400' : 'text-rose-400'
-                            }>
-                              {bot.safety_vs_magnets}
+                            <span className="text-gray-500">vs Magnets: </span>
+                            <span className={bot.safe ? 'text-emerald-400' : 'text-rose-400'}>
+                              {bot.safe ? 'SAFE' : 'AT RISK'}
                             </span>
                           </div>
                         )}
@@ -2547,21 +2551,11 @@ export default function ArgusPage() {
                     )}
                   </div>
                 )) : (
-                  <>
-                    {/* Fallback for when no bot data available */}
-                    <div className="flex items-center justify-between p-2 bg-gray-700/30 rounded-lg">
-                      <span className="text-gray-300">ARES</span>
-                      <span className="text-gray-500 text-sm">Loading...</span>
-                    </div>
-                    <div className="flex items-center justify-between p-2 bg-gray-700/30 rounded-lg">
-                      <span className="text-gray-300">ATHENA</span>
-                      <span className="text-gray-500 text-sm">Loading...</span>
-                    </div>
-                    <div className="flex items-center justify-between p-2 bg-gray-700/30 rounded-lg">
-                      <span className="text-gray-300">PHOENIX</span>
-                      <span className="text-gray-500 text-sm">Loading...</span>
-                    </div>
-                  </>
+                  <div className="text-center py-4 text-gray-500">
+                    <Bot className="w-6 h-6 mx-auto mb-2 opacity-30" />
+                    <p className="text-sm">No active bot positions</p>
+                    <p className="text-xs text-gray-600 mt-1">Positions will appear when bots are trading</p>
+                  </div>
                 )}
               </div>
             </div>
