@@ -29,6 +29,10 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
+from zoneinfo import ZoneInfo
+
+# Texas Central Time - standard timezone for all AlphaGEX operations
+CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -203,8 +207,8 @@ class PositionMonitor:
                 position['strike'],
                 str(position['expiration']),
                 'put',
-                start_date=datetime.now().strftime('%Y-%m-%d'),
-                end_date=datetime.now().strftime('%Y-%m-%d')
+                start_date=datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d'),
+                end_date=datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
             )
             if df is not None and len(df) > 0:
                 close = df.iloc[0].get('close', 0)
@@ -219,7 +223,7 @@ class PositionMonitor:
             exp_date = position['expiration']
             if isinstance(exp_date, str):
                 exp_date = datetime.strptime(exp_date, '%Y-%m-%d').date()
-            dte = (exp_date - datetime.now().date()).days
+            dte = (exp_date - datetime.now(CENTRAL_TZ).date()).days
 
             intrinsic = max(0, position['strike'] - spot)
             # Rough time value estimate
@@ -412,7 +416,7 @@ class PositionMonitor:
         if isinstance(exp_date, str):
             exp_date = datetime.strptime(exp_date, '%Y-%m-%d').date()
 
-        dte = (exp_date - datetime.now().date()).days
+        dte = (exp_date - datetime.now(CENTRAL_TZ).date()).days
         roll_at_dte = self.params.get('roll_at_dte', 7)
 
         if dte <= 0:
@@ -594,7 +598,7 @@ def run_continuous_monitor(mode: str = "paper", interval_seconds: int = 300):
 
     while True:
         try:
-            print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Running monitor cycle...")
+            print(f"\n[{datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d %H:%M:%S')}] Running monitor cycle...")
             results = monitor.run_all_checks()
 
             # Print summary
@@ -603,7 +607,7 @@ def run_continuous_monitor(mode: str = "paper", interval_seconds: int = 300):
                     print(f"  [{r.status}] Position {r.position_id}: {r.message}")
 
             # Run reconciliation every hour
-            if datetime.now().minute == 0:
+            if datetime.now(CENTRAL_TZ).minute == 0:
                 recon_results = monitor.reconcile_with_broker()
                 for r in recon_results:
                     if r.status != "OK":

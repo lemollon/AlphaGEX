@@ -39,6 +39,10 @@ from dataclasses import dataclass, asdict
 from enum import Enum
 import json
 import logging
+from zoneinfo import ZoneInfo
+
+# Texas Central Time - standard timezone for all AlphaGEX operations
+CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -230,7 +234,7 @@ class SPXWheelOptimizer:
         initial_capital: float = 1000000
     ):
         self.start_date = start_date
-        self.end_date = end_date or datetime.now().strftime('%Y-%m-%d')
+        self.end_date = end_date or datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
         self.initial_capital = initial_capital
         self.results: List[BacktestResult] = []
 
@@ -286,7 +290,7 @@ class SPXWheelOptimizer:
         best.parameters.backtest_max_drawdown = best.max_drawdown_pct
         best.parameters.backtest_total_return = best.total_return_pct
         best.parameters.backtest_period = f"{self.start_date} to {self.end_date}"
-        best.parameters.calibration_date = datetime.now().isoformat()
+        best.parameters.calibration_date = datetime.now(CENTRAL_TZ).isoformat()
 
         self._print_optimization_results(best)
         self._save_parameters(best.parameters)
@@ -487,7 +491,7 @@ class SPXWheelOptimizer:
             try:
                 import yfinance as yf
                 spx = yf.Ticker("^GSPC")  # Use S&P 500 as proxy for SPX
-                end_date = datetime.now()
+                end_date = datetime.now(CENTRAL_TZ)
                 start_date = datetime.strptime(self.start_date, '%Y-%m-%d')
                 historical_data = spx.history(start=start_date, end=end_date)
             except Exception as e:
@@ -697,7 +701,7 @@ class SPXWheelTrader:
             return ""
 
         try:
-            now = datetime.now()
+            now = datetime.now(CENTRAL_TZ)
             per_share_price = entry_price if entry_price > 0 else (premium / 100 / max(contracts, 1) if premium > 0 else 0)
 
             # =====================================================================
@@ -778,7 +782,7 @@ class SPXWheelTrader:
             if self.params.backtest_win_rate > 0:
                 backtest_ref = BacktestReference(
                     strategy_name="SPX_WHEEL_CSP",
-                    backtest_date=self.params.calibration_date or datetime.now().strftime('%Y-%m-%d'),
+                    backtest_date=self.params.calibration_date or datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d'),
                     win_rate=self.params.backtest_win_rate,
                     expectancy=self.params.backtest_expectancy,
                     max_drawdown=self.params.backtest_max_drawdown,
@@ -917,7 +921,7 @@ class SPXWheelTrader:
 
         Returns dict with actions taken and current status.
         """
-        now = datetime.now()
+        now = datetime.now(CENTRAL_TZ)
         print(f"\n[{now.strftime('%Y-%m-%d %H:%M')}] Running daily cycle...")
 
         result = {
@@ -1060,7 +1064,7 @@ class SPXWheelTrader:
             return False, reason
 
         # Check if market is open
-        now = datetime.now()
+        now = datetime.now(CENTRAL_TZ)
         if now.weekday() > 4:  # Weekend
             reason = "Weekend - market closed"
             print(f"  {reason}")
@@ -1137,7 +1141,7 @@ class SPXWheelTrader:
             return None
 
         try:
-            now = datetime.now()
+            now = datetime.now(CENTRAL_TZ)
 
             # Try to get GEX data from database
             gex_net = 0
@@ -1234,7 +1238,7 @@ class SPXWheelTrader:
 
             # Store prediction for feedback loop
             try:
-                today = datetime.now().strftime('%Y-%m-%d')
+                today = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
                 self.oracle.store_prediction(advice, context, today)
             except Exception as e:
                 logger.debug(f"ATLAS: Could not store Oracle prediction: {e}")
@@ -1350,8 +1354,8 @@ class SPXWheelTrader:
         try:
             df = polygon_fetcher.get_historical_option_prices(
                 'SPX', strike, expiration, 'put',
-                start_date=datetime.now().strftime('%Y-%m-%d'),
-                end_date=datetime.now().strftime('%Y-%m-%d')
+                start_date=datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d'),
+                end_date=datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
             )
             if df is not None and len(df) > 0:
                 close = df.iloc[0].get('close', 0)
@@ -1363,7 +1367,7 @@ class SPXWheelTrader:
 
         # Fallback to estimation
         spot = self._get_spx_price() or 5800
-        dte = (datetime.strptime(expiration, '%Y-%m-%d') - datetime.now()).days
+        dte = (datetime.strptime(expiration, '%Y-%m-%d') - datetime.now(CENTRAL_TZ)).days
         estimated = spot * 0.015 * (dte / 45) ** 0.5
         return estimated * 0.97, estimated * 1.03, "ESTIMATED"
 
@@ -1474,7 +1478,7 @@ class SPXWheelTrader:
         strike = round((spot - strike_offset) / 5) * 5
 
         # Calculate expiration (find next Friday)
-        target = datetime.now() + timedelta(days=self.params.dte_target)
+        target = datetime.now(CENTRAL_TZ) + timedelta(days=self.params.dte_target)
         days_until_friday = (4 - target.weekday()) % 7
         if days_until_friday == 0:
             days_until_friday = 7  # Next Friday, not today
@@ -1626,7 +1630,7 @@ class SPXWheelTrader:
             # Log decision for transparency with COMPLETE trade data
             vix = self._get_vix()
             premium_received = entry_price * 100 * self.params.contracts_per_trade
-            dte = (expiration - datetime.now().date()).days
+            dte = (expiration - datetime.now(CENTRAL_TZ).date()).days
 
             self._log_decision(
                 decision_type="ENTRY",
@@ -1655,7 +1659,7 @@ class SPXWheelTrader:
 
     def _process_expirations(self, spot: float) -> int:
         """Process any expiring positions"""
-        today = datetime.now().date()
+        today = datetime.now(CENTRAL_TZ).date()
         closed = 0
 
         for pos in self._get_open_positions():
@@ -1745,7 +1749,7 @@ class SPXWheelTrader:
         2. Open new position at same delta, further out
         """
         rolled = 0
-        today = datetime.now().date()
+        today = datetime.now(CENTRAL_TZ).date()
 
         for pos in self._get_open_positions():
             exp_date = pos['expiration']
@@ -1901,7 +1905,7 @@ class SPXWheelTrader:
             current_equity = base_capital + realized_pnl + open_premium + mtm_adjustment
             cumulative_pnl = current_equity - base_capital
 
-            today = datetime.now().date()
+            today = datetime.now(CENTRAL_TZ).date()
 
             cursor.execute('''
                 INSERT INTO spx_wheel_performance (date, equity, daily_pnl, cumulative_pnl, open_positions)

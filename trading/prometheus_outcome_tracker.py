@@ -18,9 +18,13 @@ import sys
 import logging
 from datetime import datetime
 from typing import Dict, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 # Add project root
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Texas Central Time - standard timezone for all AlphaGEX operations
+CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +98,7 @@ class PrometheusOutcomeTracker:
             market_data = market_data or {}
 
             features = PrometheusFeatures(
-                trade_date=datetime.now().strftime('%Y-%m-%d'),
+                trade_date=datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d'),
                 strike=strike,
                 underlying_price=underlying_price,
                 dte=dte,

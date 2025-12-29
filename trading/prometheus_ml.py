@@ -29,9 +29,13 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, asdict, field
 from enum import Enum
+from zoneinfo import ZoneInfo
 
 # Add project root
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Texas Central Time - standard timezone for all AlphaGEX operations
+CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +213,7 @@ class PrometheusPrediction:
     key_factors: Dict[str, Any]
     feature_values: Dict[str, float]
     model_version: str
-    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+    timestamp: str = field(default_factory=lambda: datetime.now(CENTRAL_TZ).isoformat())
 
     def to_dict(self) -> Dict:
         return {
@@ -314,7 +318,7 @@ class PrometheusLogger:
     ):
         """Log an event"""
         entry = {
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': datetime.now(CENTRAL_TZ).isoformat(),
             'session_id': self._session_id,
             'trace_id': self._trace_id,
             'log_type': log_type.value,
@@ -490,7 +494,7 @@ class PrometheusMLTrainer:
         Returns:
             Training metrics and interpretation
         """
-        training_id = f"{self.MODEL_VERSION_PREFIX}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        training_id = f"{self.MODEL_VERSION_PREFIX}-{datetime.now(CENTRAL_TZ).strftime('%Y%m%d-%H%M%S')}"
         start_time = time.time()
 
         self.logger.new_trace()
@@ -613,12 +617,12 @@ class PrometheusMLTrainer:
             sorted_features = sorted(self.feature_importance.items(), key=lambda x: x[1], reverse=True)
 
             # Model version
-            self.model_version = f"{self.MODEL_VERSION_PREFIX}-{datetime.now().strftime('%Y%m%d')}-v{len(outcomes)}"
+            self.model_version = f"{self.MODEL_VERSION_PREFIX}-{datetime.now(CENTRAL_TZ).strftime('%Y%m%d')}-v{len(outcomes)}"
 
             # Create metrics object
             self.training_metrics = TrainingMetrics(
                 training_id=training_id,
-                training_date=datetime.now().isoformat(),
+                training_date=datetime.now(CENTRAL_TZ).isoformat(),
                 total_samples=len(outcomes),
                 train_samples=len(X_train),
                 test_samples=len(X_test),

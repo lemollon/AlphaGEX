@@ -62,7 +62,7 @@ class MarketCalendar:
     def __init__(self):
         self.holidays = set(MARKET_HOLIDAYS_2024_2025)
         self.earnings_cache: Dict[str, List[Dict]] = {}
-        self._cache_expiry = datetime.now()
+        self._cache_expiry = datetime.now(CENTRAL_TZ)
 
         # Get Polygon API key
         try:
@@ -213,7 +213,7 @@ class MarketCalendar:
 
         # Check cache
         cache_key = f"earnings_{days_ahead}"
-        if cache_key in self.earnings_cache and datetime.now() < self._cache_expiry:
+        if cache_key in self.earnings_cache and datetime.now(CENTRAL_TZ) < self._cache_expiry:
             return self.earnings_cache[cache_key]
 
         earnings = []
@@ -224,8 +224,8 @@ class MarketCalendar:
 
         # Use Polygon's stock splits/dividends endpoint as proxy for corporate events
         # Also check ticker details for each major symbol
-        start_date = datetime.now().strftime('%Y-%m-%d')
-        end_date = (datetime.now() + timedelta(days=days_ahead)).strftime('%Y-%m-%d')
+        start_date = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
+        end_date = (datetime.now(CENTRAL_TZ) + timedelta(days=days_ahead)).strftime('%Y-%m-%d')
 
         print(f"Fetching earnings calendar for {len(symbols)} symbols ({start_date} to {end_date})...")
 
@@ -250,7 +250,7 @@ class MarketCalendar:
                                 ticker_info['estimated_next_earnings'] = estimated_next.strftime('%Y-%m-%d')
 
                                 # Check if within our window
-                                if (estimated_next - datetime.now()).days <= days_ahead:
+                                if (estimated_next - datetime.now(CENTRAL_TZ)).days <= days_ahead:
                                     ticker_info['earnings_soon'] = True
                                     earnings.append(ticker_info)
                             except:
@@ -266,7 +266,7 @@ class MarketCalendar:
 
         # Cache results for 1 hour
         self.earnings_cache[cache_key] = earnings
-        self._cache_expiry = datetime.now() + timedelta(hours=1)
+        self._cache_expiry = datetime.now(CENTRAL_TZ) + timedelta(hours=1)
 
         if earnings:
             print(f"Found {len(earnings)} symbols with upcoming earnings")
@@ -311,7 +311,7 @@ class MarketCalendar:
 
         This is a reliable fallback that uses hardcoded major earnings dates.
         """
-        today = datetime.now().date()
+        today = datetime.now(CENTRAL_TZ).date()
         check_until = today + timedelta(days=days_ahead)
 
         known_calendar = self.get_known_earnings_calendar()
@@ -384,7 +384,7 @@ class MarketCalendar:
     def is_fomc_week(self, date: datetime = None) -> bool:
         """Check if date is within FOMC meeting week"""
         if date is None:
-            date = datetime.now()
+            date = datetime.now(CENTRAL_TZ)
 
         date_str = date.strftime('%Y-%m-%d')
         fomc_dates = self.get_fomc_dates()
@@ -408,7 +408,7 @@ class MarketCalendar:
         Returns:
             (should_trade, reason_if_not)
         """
-        now = datetime.now()
+        now = datetime.now(CENTRAL_TZ)
 
         # Check if trading day
         if not self.is_trading_day(now):

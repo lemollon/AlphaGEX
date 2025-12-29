@@ -30,8 +30,12 @@ from enum import Enum
 import json
 import uuid
 import time
+from zoneinfo import ZoneInfo
 
 from database_adapter import get_connection
+
+# Texas Central Time - standard timezone for all AlphaGEX operations
+CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 
 class BotName(Enum):
@@ -313,14 +317,14 @@ class BotDecision:
 
 def generate_decision_id(bot_name: str) -> str:
     """Generate unique decision ID"""
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    timestamp = datetime.now(CENTRAL_TZ).strftime("%Y%m%d%H%M%S")
     unique = str(uuid.uuid4())[:8]
     return f"{bot_name}-{timestamp}-{unique}"
 
 
 def generate_session_id() -> str:
     """Generate session ID based on current date and time"""
-    now = datetime.now()
+    now = datetime.now(CENTRAL_TZ)
     period = "AM" if now.hour < 12 else "PM"
     return f"{now.strftime('%Y-%m-%d')}-{period}"
 
@@ -345,7 +349,7 @@ class SessionTracker:
         self._session_id = generate_session_id()
         self._scan_cycle = 0
         self._decision_sequence = 0
-        self._last_reset = datetime.now()
+        self._last_reset = datetime.now(CENTRAL_TZ)
 
     @property
     def session_id(self) -> str:
@@ -355,7 +359,7 @@ class SessionTracker:
             self._session_id = new_session
             self._scan_cycle = 0
             self._decision_sequence = 0
-            self._last_reset = datetime.now()
+            self._last_reset = datetime.now(CENTRAL_TZ)
         return self._session_id
 
     @property
@@ -452,7 +456,7 @@ class DecisionTracker:
     def add_error(self, error: str, context: str = "", retried: bool = False, resolved: bool = False):
         """Add an error record"""
         self._errors.append({
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
             "error": error,
             "context": context,
             "retried": retried,
@@ -736,7 +740,7 @@ def log_error(decision_id: str, error: str, retried: bool = False, resolved: boo
 
         errors = json.loads(row[0]) if row and row[0] else []
         errors.append({
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
             "error": error,
             "retried": retried,
             "resolved": resolved

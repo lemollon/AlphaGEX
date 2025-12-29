@@ -36,10 +36,14 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict
+from zoneinfo import ZoneInfo
 import numpy as np
 
 # Add project root
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+# Texas Central Time - standard timezone for all AlphaGEX operations
+CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 logger = logging.getLogger(__name__)
 
@@ -235,7 +239,7 @@ class SPXWheelMLTrainer:
 
         # Store metrics
         self.training_metrics = {
-            'trained_at': datetime.now().isoformat(),
+            'trained_at': datetime.now(CENTRAL_TZ).isoformat(),
             'total_samples': len(outcomes),
             'training_samples': len(X_train),
             'test_samples': len(X_test),

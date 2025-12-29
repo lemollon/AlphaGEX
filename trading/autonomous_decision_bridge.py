@@ -26,6 +26,9 @@ from typing import Dict, Optional, Any
 from zoneinfo import ZoneInfo
 import logging
 
+# Texas Central Time - standard timezone for all AlphaGEX operations
+CENTRAL_TZ = ZoneInfo("America/Chicago")
+
 from trading.decision_logger import (
     DecisionLogger,
     TradeDecision,
@@ -198,7 +201,7 @@ class DecisionBridge:
         if backtest_stats:
             backtest_ref = BacktestReference(
                 strategy_name=trade_data.get('strategy', 'Unknown'),
-                backtest_date=datetime.now().strftime('%Y-%m-%d'),
+                backtest_date=datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d'),
                 win_rate=backtest_stats.get('win_rate', 0),
                 expectancy=backtest_stats.get('expectancy', 0),
                 avg_win=backtest_stats.get('avg_win', 0),

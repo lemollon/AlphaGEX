@@ -19,10 +19,14 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict
 import math
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 logger = logging.getLogger(__name__)
+
+# Texas Central Time - standard timezone for all AlphaGEX operations
+CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 
 # =============================================================================
@@ -191,7 +195,7 @@ def fetch_position_greeks(position: Dict) -> Optional[PositionGreeks]:
         if quote:
             return PositionGreeks(
                 position_id=position.get('id', 0),
-                timestamp=datetime.now().isoformat(),
+                timestamp=datetime.now(CENTRAL_TZ).isoformat(),
                 delta=quote.get('delta', 0),
                 gamma=quote.get('gamma', 0),
                 theta=quote.get('theta', 0),
@@ -270,7 +274,7 @@ def calculate_portfolio_greeks(greeks_list: List[PositionGreeks]) -> Dict:
         'total_vega': total_vega,
         'avg_iv': avg_iv,
         'position_count': len(greeks_list),
-        'timestamp': datetime.now().isoformat()
+        'timestamp': datetime.now(CENTRAL_TZ).isoformat()
     }
 
 
@@ -463,7 +467,7 @@ def reconcile_positions() -> Dict:
                     break
 
     result = {
-        'timestamp': datetime.now().isoformat(),
+        'timestamp': datetime.now(CENTRAL_TZ).isoformat(),
         'db_count': db_count,
         'broker_count': broker_count,
         'matched_count': len(matched),
@@ -530,10 +534,10 @@ def run_daily_risk_checks():
     print("\n" + "=" * 70)
     print("DAILY RISK MANAGEMENT CHECKS")
     print("=" * 70)
-    print(f"Time: {datetime.now()}")
+    print(f"Time: {datetime.now(CENTRAL_TZ)}")
 
     results = {
-        'timestamp': datetime.now().isoformat(),
+        'timestamp': datetime.now(CENTRAL_TZ).isoformat(),
         'checks': []
     }
 
