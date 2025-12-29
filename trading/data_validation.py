@@ -62,10 +62,9 @@ def validate_market_data(
                 original_timestamp = timestamp
 
                 # Clean up potentially malformed timestamps
-                # Handle case like "2025-12-29T09:01:08032+06:00" (missing dot before microseconds)
                 import re
-                # Pattern: digits before timezone offset that look like concatenated seconds+microseconds
-                # e.g., "08032" should be "08.032" or we should just use the first 2 digits as seconds
+
+                # Pattern 1: "2025-12-29T09:01:08032+06:00" (5+ digits concatenated - missing dot before microseconds)
                 malformed_match = re.match(r'(.+T\d{2}:\d{2}:)(\d{5,})([+-]\d{2}:\d{2})', timestamp)
                 if malformed_match:
                     prefix, bad_part, tz = malformed_match.groups()
@@ -73,7 +72,37 @@ def validate_market_data(
                     seconds = bad_part[:2]
                     micros = bad_part[2:].ljust(6, '0')[:6]
                     timestamp = f"{prefix}{seconds}.{micros}{tz}"
-                    logger.debug(f"Fixed malformed timestamp: {original_timestamp} -> {timestamp}")
+                    logger.debug(f"Fixed malformed timestamp (pattern 1): {original_timestamp} -> {timestamp}")
+
+                # Pattern 2: "2025-12-29T08:33:00:044882-06:00" (colon before microseconds instead of period)
+                elif re.match(r'.+T\d{2}:\d{2}:\d{2}:\d+[+-]\d{2}:\d{2}', timestamp):
+                    # Replace the third colon (after seconds) with a period
+                    parts = timestamp.split('T')
+                    if len(parts) == 2:
+                        time_part = parts[1]
+                        # Find pattern HH:MM:SS:microseconds and fix it
+                        time_fixed = re.sub(r'^(\d{2}:\d{2}:\d{2}):(\d+)', r'\1.\2', time_part)
+                        timestamp = f"{parts[0]}T{time_fixed}"
+                        logger.debug(f"Fixed malformed timestamp (pattern 2): {original_timestamp} -> {timestamp}")
+
+                # Pattern 3: "2025-12-29T08:09:38448Z-05:00" (Z embedded in middle)
+                elif 'Z-' in timestamp or 'Z+' in timestamp:
+                    # Remove the Z, keep the offset
+                    timestamp = timestamp.replace('Z-', '-').replace('Z+', '+')
+                    # Also fix any concatenated seconds+microseconds
+                    malformed_match2 = re.match(r'(.+T\d{2}:\d{2}:)(\d{5,})([+-]\d{2}:\d{2})', timestamp)
+                    if malformed_match2:
+                        prefix, bad_part, tz = malformed_match2.groups()
+                        seconds = bad_part[:2]
+                        micros = bad_part[2:].ljust(6, '0')[:6]
+                        timestamp = f"{prefix}{seconds}.{micros}{tz}"
+                    logger.debug(f"Fixed malformed timestamp (pattern 3): {original_timestamp} -> {timestamp}")
+
+                # Pattern 4: Just "Z" at the end without offset (valid UTC format)
+                elif timestamp.endswith('Z'):
+                    # Convert Z to +00:00 for consistent parsing
+                    timestamp = timestamp[:-1] + '+00:00'
+                    logger.debug(f"Fixed UTC timestamp: {original_timestamp} -> {timestamp}")
 
                 # First try fromisoformat which handles ISO 8601 with timezone (e.g., 2025-12-29T08:55:01.587153-06:00)
                 try:

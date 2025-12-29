@@ -339,9 +339,9 @@ class ATHENAConfig:
     use_gex_walls: bool = True
     use_claude_validation: bool = True
 
-    # Timing
-    entry_start_time: str = "09:35"       # Start trading 5 min after open
-    entry_end_time: str = "15:30"         # Stop entries 30 min before close
+    # Timing (aligned with scheduler: 8:35 AM - 2:30 PM CT)
+    entry_start_time: str = "08:35"       # Start trading 5 min after market open
+    entry_end_time: str = "14:30"         # Stop entries at 2:30 PM CT
     exit_by_time: str = "15:55"           # Exit all by this time (0DTE)
 
 
