@@ -136,9 +136,44 @@ class ATHENADatabase:
                 """)
 
                 conn.commit()
+
+                # Ensure new ML/Kronos context columns exist (migration)
+                self._ensure_ml_columns(c)
+                conn.commit()
+
                 logger.info(f"{self.bot_name}: Database tables verified")
         except Exception as e:
             logger.error(f"{self.bot_name}: Failed to ensure tables: {e}")
+
+    def _ensure_ml_columns(self, cursor) -> None:
+        """
+        Add new ML/Kronos context columns if they don't exist (migration).
+
+        These columns provide FULL audit trail for trade decisions.
+        """
+        columns_to_add = [
+            # Kronos GEX context
+            ("flip_point", "DECIMAL(10, 2)"),
+            ("net_gex", "DECIMAL(15, 2)"),
+            # ML model context
+            ("ml_model_name", "VARCHAR(100)"),
+            ("ml_win_probability", "DECIMAL(5, 4)"),
+            ("ml_top_features", "TEXT"),
+            # Wall proximity context
+            ("wall_type", "VARCHAR(20)"),
+            ("wall_distance_pct", "DECIMAL(6, 4)"),
+            # Full trade reasoning
+            ("trade_reasoning", "TEXT"),
+        ]
+
+        for col_name, col_type in columns_to_add:
+            try:
+                cursor.execute(f"""
+                    ALTER TABLE athena_positions
+                    ADD COLUMN IF NOT EXISTS {col_name} {col_type}
+                """)
+            except Exception:
+                pass  # Column might already exist
 
     # =========================================================================
     # POSITION OPERATIONS
@@ -146,7 +181,7 @@ class ATHENADatabase:
 
     def get_open_positions(self) -> List[SpreadPosition]:
         """
-        Get ALL open positions from database.
+        Get ALL open positions from database with FULL context.
 
         This is the ONLY way to get current positions.
         Never trust in-memory state.
@@ -161,10 +196,13 @@ class ATHENADatabase:
                         long_strike, short_strike, expiration,
                         entry_debit, contracts, max_profit, max_loss,
                         underlying_at_entry, call_wall, put_wall,
-                        gex_regime, vix_at_entry, oracle_confidence,
-                        ml_direction, ml_confidence, order_id,
-                        status, open_time, close_time, close_price,
-                        close_reason, realized_pnl
+                        gex_regime, vix_at_entry,
+                        flip_point, net_gex,
+                        oracle_confidence, ml_direction, ml_confidence,
+                        ml_model_name, ml_win_probability, ml_top_features,
+                        wall_type, wall_distance_pct, trade_reasoning,
+                        order_id, status, open_time, close_time,
+                        close_price, close_reason, realized_pnl
                     FROM athena_positions
                     WHERE status = 'open'
                     ORDER BY open_time DESC
@@ -187,16 +225,27 @@ class ATHENADatabase:
                         put_wall=float(row[12] or 0),
                         gex_regime=row[13] or "",
                         vix_at_entry=float(row[14] or 0),
-                        oracle_confidence=float(row[15] or 0),
-                        ml_direction=row[16] or "",
-                        ml_confidence=float(row[17] or 0),
-                        order_id=row[18] or "",
-                        status=PositionStatus(row[19]),
-                        open_time=row[20],
-                        close_time=row[21],
-                        close_price=float(row[22] or 0),
-                        close_reason=row[23] or "",
-                        realized_pnl=float(row[24] or 0),
+                        # Kronos context
+                        flip_point=float(row[15] or 0),
+                        net_gex=float(row[16] or 0),
+                        # ML context (FULL audit trail)
+                        oracle_confidence=float(row[17] or 0),
+                        ml_direction=row[18] or "",
+                        ml_confidence=float(row[19] or 0),
+                        ml_model_name=row[20] or "",
+                        ml_win_probability=float(row[21] or 0),
+                        ml_top_features=row[22] or "",
+                        # Wall proximity context
+                        wall_type=row[23] or "",
+                        wall_distance_pct=float(row[24] or 0),
+                        trade_reasoning=row[25] or "",
+                        order_id=row[26] or "",
+                        status=PositionStatus(row[27]),
+                        open_time=row[28],
+                        close_time=row[29],
+                        close_price=float(row[30] or 0),
+                        close_reason=row[31] or "",
+                        realized_pnl=float(row[32] or 0),
                     )
                     positions.append(pos)
 
@@ -208,7 +257,7 @@ class ATHENADatabase:
 
     def save_position(self, pos: SpreadPosition) -> bool:
         """
-        Save a new position to database.
+        Save a new position to database with FULL context for audit trail.
 
         Returns True if successful, False otherwise.
         """
@@ -221,12 +270,16 @@ class ATHENADatabase:
                         long_strike, short_strike, expiration,
                         entry_debit, contracts, max_profit, max_loss,
                         underlying_at_entry, call_wall, put_wall,
-                        gex_regime, vix_at_entry, oracle_confidence,
-                        ml_direction, ml_confidence, order_id,
-                        status, open_time
+                        gex_regime, vix_at_entry,
+                        flip_point, net_gex,
+                        oracle_confidence, ml_direction, ml_confidence,
+                        ml_model_name, ml_win_probability, ml_top_features,
+                        wall_type, wall_distance_pct, trade_reasoning,
+                        order_id, status, open_time
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                 """, (
                     pos.position_id,
@@ -244,9 +297,20 @@ class ATHENADatabase:
                     pos.put_wall if pos.put_wall else None,
                     pos.gex_regime or None,
                     pos.vix_at_entry if pos.vix_at_entry else None,
+                    # Kronos context
+                    pos.flip_point if pos.flip_point else None,
+                    pos.net_gex if pos.net_gex else None,
+                    # ML context (FULL audit trail)
                     pos.oracle_confidence if pos.oracle_confidence else None,
                     pos.ml_direction or None,
                     pos.ml_confidence if pos.ml_confidence else None,
+                    pos.ml_model_name or None,
+                    pos.ml_win_probability if pos.ml_win_probability else None,
+                    pos.ml_top_features or None,
+                    # Wall proximity context
+                    pos.wall_type or None,
+                    pos.wall_distance_pct if pos.wall_distance_pct else None,
+                    pos.trade_reasoning or None,
                     pos.order_id or None,
                     pos.status.value,
                     pos.open_time,

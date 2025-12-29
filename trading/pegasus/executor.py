@@ -54,14 +54,18 @@ class OrderExecutor:
             return self._execute_live(signal)
 
     def _execute_paper(self, signal: IronCondorSignal) -> Optional[IronCondorPosition]:
-        """Paper trade execution"""
+        """Paper trade execution with FULL Oracle/Kronos context"""
         try:
+            import json
             now = datetime.now(CENTRAL_TZ)
             position_id = f"PEGASUS-{now.strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
 
             contracts = self._calculate_position_size(signal.max_loss)
             max_profit = signal.total_credit * 100 * contracts
             max_loss = (self.config.spread_width - signal.total_credit) * 100 * contracts
+
+            # Convert Oracle top_factors to JSON string for DB storage
+            oracle_factors_json = json.dumps(signal.oracle_top_factors) if signal.oracle_top_factors else ""
 
             position = IronCondorPosition(
                 position_id=position_id,
@@ -84,8 +88,16 @@ class OrderExecutor:
                 call_wall=signal.call_wall,
                 put_wall=signal.put_wall,
                 gex_regime=signal.gex_regime,
+                # Kronos GEX context (FULL audit trail)
+                flip_point=signal.flip_point,
+                net_gex=signal.net_gex,
+                # Oracle context (FULL audit trail)
                 oracle_confidence=signal.confidence,
+                oracle_win_probability=signal.oracle_win_probability,
+                oracle_advice=signal.oracle_advice,
                 oracle_reasoning=signal.reasoning,
+                oracle_top_factors=oracle_factors_json,
+                oracle_use_gex_walls=signal.oracle_use_gex_walls,
                 put_order_id="PAPER",
                 call_order_id="PAPER",
                 status=PositionStatus.OPEN,
@@ -96,6 +108,7 @@ class OrderExecutor:
                 f"PAPER SPX IC: {signal.put_long}/{signal.put_short}-{signal.call_short}/{signal.call_long} "
                 f"x{contracts} @ ${signal.total_credit:.2f}"
             )
+            logger.info(f"Context: Oracle={signal.oracle_advice} ({signal.oracle_win_probability:.0%}), GEX Regime={signal.gex_regime}")
 
             return position
         except Exception as e:
@@ -103,12 +116,13 @@ class OrderExecutor:
             return None
 
     def _execute_live(self, signal: IronCondorSignal) -> Optional[IronCondorPosition]:
-        """Live SPX execution - uses SPXW symbols"""
+        """Live SPX execution with FULL Oracle/Kronos context - uses SPXW symbols"""
         if not self.tradier:
             logger.error("Tradier not available")
             return None
 
         try:
+            import json
             now = datetime.now(CENTRAL_TZ)
             contracts = self._calculate_position_size(signal.max_loss)
 
@@ -151,6 +165,9 @@ class OrderExecutor:
             max_profit = signal.total_credit * 100 * contracts
             max_loss = (self.config.spread_width - signal.total_credit) * 100 * contracts
 
+            # Convert Oracle top_factors to JSON string for DB storage
+            oracle_factors_json = json.dumps(signal.oracle_top_factors) if signal.oracle_top_factors else ""
+
             position = IronCondorPosition(
                 position_id=f"PEGASUS-LIVE-{put_order_id}",
                 ticker="SPX",
@@ -169,6 +186,19 @@ class OrderExecutor:
                 underlying_at_entry=signal.spot_price,
                 vix_at_entry=signal.vix,
                 expected_move=signal.expected_move,
+                call_wall=signal.call_wall,
+                put_wall=signal.put_wall,
+                gex_regime=signal.gex_regime,
+                # Kronos GEX context (FULL audit trail)
+                flip_point=signal.flip_point,
+                net_gex=signal.net_gex,
+                # Oracle context (FULL audit trail)
+                oracle_confidence=signal.confidence,
+                oracle_win_probability=signal.oracle_win_probability,
+                oracle_advice=signal.oracle_advice,
+                oracle_reasoning=signal.reasoning,
+                oracle_top_factors=oracle_factors_json,
+                oracle_use_gex_walls=signal.oracle_use_gex_walls,
                 put_order_id=put_order_id,
                 call_order_id=call_order_id,
                 status=PositionStatus.OPEN,
@@ -176,6 +206,7 @@ class OrderExecutor:
             )
 
             logger.info(f"LIVE SPX IC: {signal.put_long}/{signal.put_short}-{signal.call_short}/{signal.call_long} x{contracts}")
+            logger.info(f"Context: Oracle={signal.oracle_advice} ({signal.oracle_win_probability:.0%}), GEX Regime={signal.gex_regime}")
             return position
         except Exception as e:
             logger.error(f"Live execution failed: {e}")

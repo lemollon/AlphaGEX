@@ -125,12 +125,43 @@ class PEGASUSDatabase:
                 """)
 
                 conn.commit()
+
+                # Ensure new Oracle/Kronos context columns exist (migration)
+                self._ensure_oracle_columns(c)
+                conn.commit()
+
                 logger.info(f"{self.bot_name}: Tables verified")
         except Exception as e:
             logger.error(f"{self.bot_name}: Table creation failed: {e}")
 
+    def _ensure_oracle_columns(self, cursor) -> None:
+        """
+        Add new Oracle/Kronos context columns if they don't exist (migration).
+
+        These columns provide FULL audit trail for trade decisions.
+        """
+        columns_to_add = [
+            # Kronos GEX context
+            ("flip_point", "DECIMAL(10, 2)"),
+            ("net_gex", "DECIMAL(15, 2)"),
+            # Oracle context
+            ("oracle_win_probability", "DECIMAL(5, 4)"),
+            ("oracle_advice", "VARCHAR(20)"),
+            ("oracle_top_factors", "TEXT"),
+            ("oracle_use_gex_walls", "BOOLEAN DEFAULT FALSE"),
+        ]
+
+        for col_name, col_type in columns_to_add:
+            try:
+                cursor.execute(f"""
+                    ALTER TABLE pegasus_positions
+                    ADD COLUMN IF NOT EXISTS {col_name} {col_type}
+                """)
+            except Exception:
+                pass  # Column might already exist
+
     def get_open_positions(self) -> List[IronCondorPosition]:
-        """Get all open positions"""
+        """Get all open positions with FULL context"""
         positions = []
         try:
             with db_connection() as conn:
@@ -143,7 +174,9 @@ class PEGASUSDatabase:
                         contracts, spread_width, total_credit, max_loss, max_profit,
                         underlying_at_entry, vix_at_entry, expected_move,
                         call_wall, put_wall, gex_regime,
-                        oracle_confidence, oracle_reasoning,
+                        flip_point, net_gex,
+                        oracle_confidence, oracle_win_probability, oracle_advice,
+                        oracle_reasoning, oracle_top_factors, oracle_use_gex_walls,
                         put_order_id, call_order_id,
                         status, open_time, close_time, close_price, close_reason, realized_pnl
                     FROM pegasus_positions
@@ -172,16 +205,24 @@ class PEGASUSDatabase:
                         call_wall=float(row[17] or 0),
                         put_wall=float(row[18] or 0),
                         gex_regime=row[19] or "",
-                        oracle_confidence=float(row[20] or 0),
-                        oracle_reasoning=row[21] or "",
-                        put_order_id=row[22] or "",
-                        call_order_id=row[23] or "",
-                        status=PositionStatus(row[24]),
-                        open_time=row[25],
-                        close_time=row[26],
-                        close_price=float(row[27] or 0),
-                        close_reason=row[28] or "",
-                        realized_pnl=float(row[29] or 0),
+                        # Kronos context
+                        flip_point=float(row[20] or 0),
+                        net_gex=float(row[21] or 0),
+                        # Oracle context (FULL audit trail)
+                        oracle_confidence=float(row[22] or 0),
+                        oracle_win_probability=float(row[23] or 0),
+                        oracle_advice=row[24] or "",
+                        oracle_reasoning=row[25] or "",
+                        oracle_top_factors=row[26] or "",
+                        oracle_use_gex_walls=bool(row[27]),
+                        put_order_id=row[28] or "",
+                        call_order_id=row[29] or "",
+                        status=PositionStatus(row[30]),
+                        open_time=row[31],
+                        close_time=row[32],
+                        close_price=float(row[33] or 0),
+                        close_reason=row[34] or "",
+                        realized_pnl=float(row[35] or 0),
                     )
                     positions.append(pos)
         except Exception as e:
@@ -189,7 +230,7 @@ class PEGASUSDatabase:
         return positions
 
     def save_position(self, pos: IronCondorPosition) -> bool:
-        """Save position to database"""
+        """Save position to database with FULL context for audit trail"""
         try:
             with db_connection() as conn:
                 c = conn.cursor()
@@ -201,10 +242,16 @@ class PEGASUSDatabase:
                         contracts, spread_width, total_credit, max_loss, max_profit,
                         underlying_at_entry, vix_at_entry, expected_move,
                         call_wall, put_wall, gex_regime,
-                        oracle_confidence, oracle_reasoning,
+                        flip_point, net_gex,
+                        oracle_confidence, oracle_win_probability, oracle_advice,
+                        oracle_reasoning, oracle_top_factors, oracle_use_gex_walls,
                         put_order_id, call_order_id,
                         status, open_time
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    )
                 """, (
                     pos.position_id, pos.ticker, pos.expiration,
                     pos.put_short_strike, pos.put_long_strike, pos.put_credit,
@@ -212,11 +259,17 @@ class PEGASUSDatabase:
                     pos.contracts, pos.spread_width, pos.total_credit, pos.max_loss, pos.max_profit,
                     pos.underlying_at_entry, pos.vix_at_entry or None, pos.expected_move or None,
                     pos.call_wall or None, pos.put_wall or None, pos.gex_regime or None,
-                    pos.oracle_confidence or None, pos.oracle_reasoning or None,
+                    # Kronos context
+                    pos.flip_point or None, pos.net_gex or None,
+                    # Oracle context (FULL audit trail)
+                    pos.oracle_confidence or None, pos.oracle_win_probability or None,
+                    pos.oracle_advice or None, pos.oracle_reasoning or None,
+                    pos.oracle_top_factors or None, pos.oracle_use_gex_walls,
                     pos.put_order_id or None, pos.call_order_id or None,
                     pos.status.value, pos.open_time,
                 ))
                 conn.commit()
+                logger.info(f"{self.bot_name}: Saved position {pos.position_id} to DB")
                 return True
         except Exception as e:
             logger.error(f"{self.bot_name}: Save position failed: {e}")
