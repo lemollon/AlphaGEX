@@ -1753,8 +1753,12 @@ class ARESTrader:
         except Exception as e:
             logger.error(f"Error closing position on stop loss: {e}")
 
-    def _update_position_close_in_db(self, position: IronCondorPosition, close_reason: str) -> None:
-        """Update position in database with close info."""
+    def _update_position_close_in_db(self, position: IronCondorPosition, close_reason: str) -> bool:
+        """Update position in database with close info.
+
+        Returns True if update succeeded, False otherwise.
+        """
+        conn = None
         try:
             from database_adapter import get_connection
             conn = get_connection()
@@ -1778,9 +1782,13 @@ class ARESTrader:
             ))
 
             conn.commit()
-            conn.close()
+            return True
         except Exception as e:
-            logger.debug(f"Could not update position in DB: {e}")
+            logger.error(f"Failed to update position close in DB: {e}")
+            return False
+        finally:
+            if conn:
+                conn.close()
 
     def _log_skip_decision(self, reason: str, market_data: Optional[Dict] = None,
                            oracle_advice: Optional[Any] = None, alternatives: Optional[List[str]] = None,
@@ -3008,6 +3016,7 @@ class ARESTrader:
         Returns:
             True if saved successfully
         """
+        conn = None
         try:
             from database_adapter import get_connection
             conn = get_connection()
@@ -3047,13 +3056,15 @@ class ARESTrader:
             ))
 
             conn.commit()
-            conn.close()
             logger.info(f"ARES: Saved position {position.position_id} to database")
             return True
 
         except Exception as e:
             logger.error(f"ARES: Failed to save position to database: {e}")
             return False
+        finally:
+            if conn:
+                conn.close()
 
     def _update_position_in_db(self, position: IronCondorPosition) -> bool:
         """
@@ -3065,6 +3076,7 @@ class ARESTrader:
         Returns:
             True if updated successfully
         """
+        conn = None
         try:
             from database_adapter import get_connection
             conn = get_connection()
@@ -3091,7 +3103,6 @@ class ARESTrader:
             ))
 
             conn.commit()
-            conn.close()
             logger.info(f"ARES: Updated position {position.position_id} in database")
 
             # Record outcome to Oracle feedback loop if position closed
@@ -3103,6 +3114,9 @@ class ARESTrader:
         except Exception as e:
             logger.error(f"ARES: Failed to update position in database: {e}")
             return False
+        finally:
+            if conn:
+                conn.close()
 
     def _record_oracle_outcome(self, position: IronCondorPosition) -> None:
         """Record position outcome to Oracle for feedback loop."""

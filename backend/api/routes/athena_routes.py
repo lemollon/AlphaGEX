@@ -1097,7 +1097,7 @@ async def get_athena_live_pnl():
             cursor.execute('''
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM apache_positions
-                WHERE status = 'closed'
+                WHERE status IN ('closed', 'expired')
                 AND DATE(exit_time) = %s
             ''', (today,))
             realized_row = cursor.fetchone()

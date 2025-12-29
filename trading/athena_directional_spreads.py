@@ -997,11 +997,7 @@ Current:         ${self.current_capital:,.2f}
         pnl_per_contract = (current_spread_value - position.entry_debit) * 100
         scale_pnl = pnl_per_contract * contracts_to_exit
 
-        # Update position tracking
-        position.contracts_remaining -= contracts_to_exit
-        position.total_scaled_pnl += scale_pnl
-
-        # For live trading, place closing order
+        # For live trading, place closing order BEFORE updating state
         if self.config.mode == TradingMode.LIVE and TRADIER_AVAILABLE and self.tradier:
             try:
                 # Determine option type based on spread type
@@ -1033,7 +1029,18 @@ Current:         ${self.current_capital:,.2f}
                 logger.info(f"⚡ LIVE SCALE-OUT: {contracts_to_exit} contracts @ ${current_spread_value:.2f}")
 
             except Exception as e:
-                logger.error(f"Live scale-out failed: {e}")
+                # CRITICAL: Order failed - do NOT update position state
+                logger.error(f"Live scale-out FAILED - position state NOT updated: {e}")
+                self._log_to_db("ERROR", f"LIVE SCALE-OUT FAILED", {
+                    'position_id': position.position_id,
+                    'contracts_attempted': contracts_to_exit,
+                    'error': str(e)
+                })
+                return 0  # Return 0 P&L since no scale-out occurred
+
+        # Update position tracking AFTER successful order (or for paper trading)
+        position.contracts_remaining -= contracts_to_exit
+        position.total_scaled_pnl += scale_pnl
 
         self._log_to_db("INFO", f"SCALE-OUT: {reason}", {
             'position_id': position.position_id,
@@ -1521,17 +1528,20 @@ Current:         ${self.current_capital:,.2f}
                 current_atr=self._calculate_atr()
             )
 
-            self.open_positions.append(position)
-            self.daily_trades += 1
-
-            # Save to database with full entry context
-            self._save_position_to_db(
+            # Save to database with full entry context FIRST
+            if not self._save_position_to_db(
                 position=position,
                 signal_id=signal_id,
                 gex_data=gex_data,
                 ml_signal=ml_signal,
                 rr_ratio=rr_ratio
-            )
+            ):
+                logger.error(f"ATHENA: Failed to save position to DB - not tracking in memory")
+                return None
+
+            # Only update in-memory state AFTER successful DB save
+            self.open_positions.append(position)
+            self.daily_trades += 1
 
             # Log comprehensive decision
             self._log_decision(
@@ -1620,17 +1630,25 @@ Current:         ${self.current_capital:,.2f}
                             current_atr=self._calculate_atr()
                         )
 
-                        self.open_positions.append(position)
-                        self.daily_trades += 1
-
-                        # Save to database with full entry context
-                        self._save_position_to_db(
+                        # Save to database with full entry context FIRST
+                        if not self._save_position_to_db(
                             position=position,
                             signal_id=signal_id,
                             gex_data=gex_data,
                             ml_signal=ml_signal,
                             rr_ratio=rr_ratio
-                        )
+                        ):
+                            logger.error(f"ATHENA: Failed to save LIVE position to DB - position may be orphaned!")
+                            self._log_to_db("ERROR", "Failed to persist LIVE position to database", {
+                                'position_id': position.position_id,
+                                'order_id': order_info.get('id')
+                            })
+                            # Still track in memory since the order was placed
+                            # but log this critical issue
+
+                        # Only update in-memory state AFTER successful DB save
+                        self.open_positions.append(position)
+                        self.daily_trades += 1
 
                         self._log_to_db("INFO", f"LIVE TRADE EXECUTED: {spread_type.value}", {
                             'position_id': position.position_id,
@@ -1670,8 +1688,12 @@ Current:         ${self.current_capital:,.2f}
         gex_data: Optional[Dict] = None,
         ml_signal: Optional[Dict] = None,
         rr_ratio: float = 0
-    ) -> None:
-        """Save position to apache_positions table with full entry context"""
+    ) -> bool:
+        """Save position to apache_positions table with full entry context.
+
+        Returns True if save succeeded, False otherwise.
+        """
+        conn = None
         try:
             conn = get_connection()
             c = conn.cursor()
@@ -1750,11 +1772,15 @@ Current:         ${self.current_capital:,.2f}
             ))
 
             conn.commit()
-            conn.close()
+            return True
         except Exception as e:
             self._log_to_db("ERROR", f"Failed to save position: {e}")
             import traceback
             traceback.print_exc()
+            return False
+        finally:
+            if conn:
+                conn.close()
 
     def _log_decision(
         self,
@@ -2519,8 +2545,12 @@ Current:         ${self.current_capital:,.2f}
         # Update daily performance tracking
         self._update_daily_performance(position)
 
-    def _update_position_in_db(self, position: SpreadPosition, exit_reason: str) -> None:
-        """Update position status in database"""
+    def _update_position_in_db(self, position: SpreadPosition, exit_reason: str) -> bool:
+        """Update position status in database.
+
+        Returns True if update succeeded, False otherwise.
+        """
+        conn = None
         try:
             conn = get_connection()
             c = conn.cursor()
@@ -2539,12 +2569,17 @@ Current:         ${self.current_capital:,.2f}
             ))
 
             conn.commit()
-            conn.close()
+            return True
         except Exception as e:
             self._log_to_db("ERROR", f"Failed to update position: {e}")
+            return False
+        finally:
+            if conn:
+                conn.close()
 
     def _update_daily_performance(self, position: SpreadPosition) -> None:
         """Update daily performance table after closing a position"""
+        conn = None
         try:
             conn = get_connection()
             c = conn.cursor()
@@ -2595,7 +2630,6 @@ Current:         ${self.current_capital:,.2f}
             ))
 
             conn.commit()
-            conn.close()
 
             self._log_to_db("DEBUG", "Daily performance updated", {
                 'date': today,
@@ -2604,6 +2638,9 @@ Current:         ${self.current_capital:,.2f}
             })
         except Exception as e:
             self._log_to_db("ERROR", f"Failed to update daily performance: {e}")
+        finally:
+            if conn:
+                conn.close()
 
     def _log_exit_decision(self, position: SpreadPosition, reason: str) -> None:
         """Log exit decision using decision_logger (same as ARES)"""
