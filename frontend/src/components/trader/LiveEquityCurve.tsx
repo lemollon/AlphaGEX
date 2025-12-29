@@ -3,6 +3,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { RefreshCw, TrendingUp, TrendingDown, Clock, Zap } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, Area, AreaChart } from 'recharts'
+import { BOT_BRANDS, BotName } from './BotBranding'
 
 export interface EquityPoint {
   date: string
@@ -25,7 +26,7 @@ export interface LivePnLData {
 export type TimePeriod = '1D' | '1W' | '1M' | '3M' | 'YTD' | '1Y' | 'ALL'
 
 interface LiveEquityCurveProps {
-  botName: 'ATHENA' | 'ARES'
+  botName: BotName
   startingCapital: number
   historicalData: EquityPoint[]  // Closed trade points
   livePnL: LivePnLData | null     // Current live P&L
@@ -177,8 +178,14 @@ export default function LiveEquityCurve({
   const todayChangePct = startingCapital > 0 ? (todayChange / startingCapital) * 100 : 0
   const isPositive = todayChange >= 0
 
-  // Chart color based on performance
-  const chartColor = isPositive ? '#00C805' : '#FF5000'
+  // Get bot brand colors
+  const brand = BOT_BRANDS[botName]
+
+  // Chart color ALWAYS uses brand color for consistent theming
+  // P&L values use green/red for financial indication
+  const chartColor = brand.hexPrimary
+  const brandPrimaryColor = brand.hexPrimary
+  const brandLightColor = brand.hexLight
 
   // Period stats
   const periodStartValue = filteredData[0]?.equity ?? startingCapital
@@ -189,22 +196,22 @@ export default function LiveEquityCurve({
   const periods: TimePeriod[] = ['1D', '1W', '1M', '3M', 'YTD', '1Y', 'ALL']
 
   return (
-    <div className="bg-[#0a0a0a] rounded-lg p-6 border border-gray-800">
+    <div className={`bg-[#0a0a0a] rounded-lg p-6 border ${brand.lightBorder}`}>
       {/* Header */}
       <div className="mb-6">
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            <span className="text-gray-400 text-sm">{botName} Portfolio</span>
-            {/* Live indicator */}
-            <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-green-500/20 border border-green-500/50">
+            <span className={`${brand.primaryText} text-sm`}>{botName} Portfolio</span>
+            {/* Live indicator - using brand colors */}
+            <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full ${brand.lightBg} border ${brand.lightBorder}`}>
               <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${brand.primaryBg} opacity-75`}></span>
+                <span className={`relative inline-flex rounded-full h-2 w-2 ${brand.primaryBg}`}></span>
               </span>
-              <span className="text-xs text-green-400 font-medium">LIVE</span>
+              <span className={`text-xs ${brand.primaryText} font-medium`}>LIVE</span>
             </span>
             {livePnL?.position_count && livePnL.position_count > 0 && (
-              <span className="text-xs text-purple-400 bg-purple-500/20 px-2 py-0.5 rounded-full">
+              <span className={`text-xs ${brand.primaryText} ${brand.lightBg} px-2 py-0.5 rounded-full`}>
                 {livePnL.position_count} open
               </span>
             )}
@@ -335,8 +342,8 @@ export default function LiveEquityCurve({
         ) : filteredData.length === 1 ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
-              <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-gradient-to-br from-green-500/20 to-green-500/5 flex items-center justify-center">
-                <Zap className="w-8 h-8 text-green-400" />
+              <div className={`w-16 h-16 mx-auto mb-4 rounded-full bg-gradient-to-br ${brand.gradientFrom}/20 ${brand.gradientTo}/5 flex items-center justify-center`}>
+                <Zap className={`w-8 h-8 ${brand.primaryText}`} />
               </div>
               <p className="text-gray-400">Position opened</p>
               <p className="text-2xl font-bold text-white mt-1">
@@ -357,7 +364,7 @@ export default function LiveEquityCurve({
         )}
       </div>
 
-      {/* Period Selector */}
+      {/* Period Selector - using brand colors */}
       <div className="flex justify-center gap-2">
         {periods.map((period) => (
           <button
@@ -365,7 +372,7 @@ export default function LiveEquityCurve({
             onClick={() => setSelectedPeriod(period)}
             className={`px-4 py-2 text-sm font-medium rounded-full transition-all ${
               selectedPeriod === period
-                ? `${isPositive ? 'bg-[#00C805]' : 'bg-[#FF5000]'} text-black`
+                ? `${brand.primaryBg} text-black`
                 : 'text-gray-400 hover:text-white hover:bg-gray-800'
             }`}
           >
@@ -384,7 +391,7 @@ export default function LiveEquityCurve({
         </div>
       )}
 
-      {/* Last Updated */}
+      {/* Last Updated - using brand colors */}
       <div className="text-center mt-4 flex items-center justify-center gap-2">
         <Clock className="w-3 h-3 text-gray-600" />
         {lastUpdated && (
@@ -393,7 +400,7 @@ export default function LiveEquityCurve({
           </span>
         )}
         <span className="text-xs text-gray-600">•</span>
-        <span className="text-xs text-green-500">Updates every {refreshInterval}s</span>
+        <span className={`text-xs ${brand.primaryText}`}>Updates every {refreshInterval}s</span>
       </div>
     </div>
   )
