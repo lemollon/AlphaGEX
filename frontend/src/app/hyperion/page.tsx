@@ -27,8 +27,7 @@ import {
   Flame,
   Search,
   CheckCircle2,
-  Calendar,
-  Sun
+  Calendar
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
@@ -138,17 +137,19 @@ export default function HyperionPage() {
   const [expirations, setExpirations] = useState<ExpirationInfo[]>([])
   const [selectedExpiration, setSelectedExpiration] = useState<string>('')
 
-  // Refs for polling
+  // Refs for polling and initial load tracking
   const pollRef = useRef<NodeJS.Timeout | null>(null)
+  const initialLoadRef = useRef(true)
 
   // Check if market is currently open
   const isMarketOpen = useCallback(() => {
     const now = new Date()
-    const day = now.getDay()
+    const ct = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }))
+    const day = ct.getDay()
     if (day === 0 || day === 6) return false
 
-    const hour = now.getHours()
-    const minutes = now.getMinutes()
+    const hour = ct.getHours()
+    const minutes = ct.getMinutes()
     const totalMinutes = hour * 60 + minutes
 
     // Market hours: 8:30 AM - 3:00 PM CT
@@ -156,21 +157,27 @@ export default function HyperionPage() {
   }, [])
 
   // Fetch gamma data
-  const fetchGammaData = useCallback(async () => {
+  const fetchGammaData = useCallback(async (expiration?: string) => {
     try {
-      setLoading(true)
+      // Only show loading on initial load, not on refresh
+      if (initialLoadRef.current) {
+        setLoading(true)
+      }
       // Use dedicated HYPERION endpoint for weekly options
-      const response = await apiClient.getHyperionGamma(selectedSymbol, selectedExpiration || undefined)
+      const exp = expiration || selectedExpiration || undefined
+      const response = await apiClient.getHyperionGamma(selectedSymbol, exp)
 
       if (response.data?.success && response.data?.data) {
         const newData = response.data.data
         setGammaData(newData)
         setLastUpdated(new Date(newData.fetched_at || new Date()))
+        setError(null)
       }
     } catch (err: any) {
       setError(err.message || 'Failed to fetch gamma data')
     } finally {
       setLoading(false)
+      initialLoadRef.current = false
     }
   }, [selectedSymbol, selectedExpiration])
 
@@ -182,8 +189,9 @@ export default function HyperionPage() {
       if (response.data?.success && response.data?.data?.expirations) {
         const exps = response.data.data.expirations as ExpirationInfo[]
         setExpirations(exps)
-        if (exps.length > 0 && !selectedExpiration) {
-          setSelectedExpiration(exps[0].date)
+        // Set default expiration if none selected
+        if (exps.length > 0) {
+          setSelectedExpiration(prev => prev || exps[0].date)
         }
       } else {
         // Fallback to generating mock expirations
@@ -207,43 +215,50 @@ export default function HyperionPage() {
         }
 
         setExpirations(mockExpirations)
-        if (mockExpirations.length > 0 && !selectedExpiration) {
-          setSelectedExpiration(mockExpirations[0].date)
+        // Set default expiration if none selected
+        if (mockExpirations.length > 0) {
+          setSelectedExpiration(prev => prev || mockExpirations[0].date)
         }
       }
     } catch (err) {
       console.error('[HYPERION] Error fetching expirations:', err)
     }
-  }, [selectedSymbol, selectedExpiration])
+  }, [selectedSymbol])
 
   // Reset data when symbol changes
   useEffect(() => {
     setGammaData(null)
     setError(null)
     setSelectedExpiration('')
+    initialLoadRef.current = true
     fetchExpirations()
-  }, [selectedSymbol, fetchExpirations])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSymbol])
 
-  // Initial data fetch
+  // Fetch gamma data when expiration changes
   useEffect(() => {
-    fetchExpirations()
-    fetchGammaData()
-  }, [fetchExpirations, fetchGammaData])
+    if (selectedExpiration) {
+      fetchGammaData(selectedExpiration)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedExpiration, selectedSymbol])
 
-  // Auto-refresh polling
+  // Auto-refresh polling - recreate interval when symbol/expiration changes to avoid stale closures
   useEffect(() => {
     if (pollRef.current) clearInterval(pollRef.current)
 
-    if (autoRefresh && isMarketOpen()) {
+    if (autoRefresh && selectedExpiration) {
+      console.log('[HYPERION] Starting auto-refresh polling for', selectedSymbol, selectedExpiration)
       pollRef.current = setInterval(() => {
-        fetchGammaData()
+        fetchGammaData(selectedExpiration)
       }, 30000) // 30 second refresh for weekly data
     }
 
     return () => {
       if (pollRef.current) clearInterval(pollRef.current)
     }
-  }, [autoRefresh, isMarketOpen, fetchGammaData])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoRefresh, selectedSymbol, selectedExpiration]) // Include symbol/expiration to avoid stale closures
 
   // Helpers
   const formatGamma = (value: number): string => {
@@ -288,70 +303,43 @@ export default function HyperionPage() {
     : 1
 
   return (
-    <div className="min-h-screen bg-gray-950">
+    <div className="min-h-screen bg-background">
       <Navigation />
 
-      <main className="max-w-7xl mx-auto px-4 py-6">
+      <main className="pt-24 px-4 sm:px-6 lg:px-8 max-w-[1600px] mx-auto pb-8">
         {/* Header */}
-        <div className="mb-6">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-amber-500/20 rounded-lg">
-                <Sun className="w-8 h-8 text-amber-400" />
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold text-white">HYPERION</h1>
-                <p className="text-sm text-gray-400">Weekly Gamma Visualization - The Watchful Titan</p>
-              </div>
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-purple-500/20 flex items-center justify-center">
+              <Eye className="w-6 h-6 text-purple-400" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold text-white">HYPERION</h1>
+              <p className="text-gray-400 text-sm">Weekly Gamma Intelligence</p>
             </div>
 
-            <div className="flex items-center gap-2">
-              {/* Auto-refresh toggle */}
-              <button
-                onClick={() => setAutoRefresh(!autoRefresh)}
-                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                  autoRefresh ? 'bg-amber-500/20 text-amber-400' : 'bg-gray-800 text-gray-400'
-                }`}
-              >
-                <RefreshCw className={`w-4 h-4 ${autoRefresh ? 'animate-spin' : ''}`} />
-              </button>
-
-              {/* Manual refresh */}
-              <button
-                onClick={() => fetchGammaData()}
-                disabled={loading}
-                className="px-3 py-2 bg-amber-500/20 text-amber-400 rounded-lg text-sm font-medium hover:bg-amber-500/30 transition-colors disabled:opacity-50"
-              >
-                Refresh
-              </button>
-            </div>
-          </div>
-
-          {/* Symbol & Expiration Selection */}
-          <div className="flex flex-wrap items-center gap-4">
             {/* Symbol Selector */}
             <div className="relative">
               <button
                 onClick={() => setShowSymbolDropdown(!showSymbolDropdown)}
-                className="flex items-center gap-2 px-4 py-2 bg-gray-800 border border-amber-500/30 rounded-lg hover:bg-gray-700 transition-colors"
+                className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 rounded-lg text-white font-bold transition-all"
               >
-                <span className="text-lg font-bold text-amber-400">{selectedSymbol}</span>
-                <ChevronDown className="w-4 h-4 text-gray-400" />
+                <Search className="w-4 h-4" />
+                {selectedSymbol}
+                <ChevronDown className={`w-4 h-4 transition-transform ${showSymbolDropdown ? 'rotate-180' : ''}`} />
               </button>
 
               {showSymbolDropdown && (
-                <div className="absolute top-full left-0 mt-2 w-72 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50">
-                  <div className="p-2">
-                    <div className="relative">
-                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
-                      <input
-                        type="text"
-                        placeholder="Search symbols..."
-                        value={symbolSearch}
-                        onChange={(e) => setSymbolSearch(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white text-sm focus:outline-none focus:border-amber-500"
-                      />
-                    </div>
+                <div className="absolute top-full left-0 mt-2 w-72 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50 overflow-hidden">
+                  <div className="p-2 border-b border-gray-700">
+                    <input
+                      type="text"
+                      placeholder="Search symbols..."
+                      value={symbolSearch}
+                      onChange={(e) => setSymbolSearch(e.target.value)}
+                      className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white text-sm focus:outline-none focus:border-purple-500"
+                      autoFocus
+                    />
                   </div>
                   <div className="max-h-60 overflow-y-auto">
                     {filteredSymbols.map(s => (
@@ -363,18 +351,18 @@ export default function HyperionPage() {
                           setSymbolSearch('')
                         }}
                         className={`w-full px-4 py-3 flex items-center justify-between transition-colors ${
-                          selectedSymbol === s.symbol ? 'bg-amber-500/20' : 'hover:bg-gray-700'
+                          selectedSymbol === s.symbol ? 'bg-purple-500/20' : 'hover:bg-gray-700'
                         }`}
                       >
                         <div className="text-left">
                           <div className="font-bold text-white">{s.symbol}</div>
                           <div className="text-xs text-gray-400">
                             {s.name}
-                            <span className="ml-2 text-amber-400/60">({s.sector})</span>
+                            <span className="ml-2 text-purple-400/60">({s.sector})</span>
                           </div>
                         </div>
                         {selectedSymbol === s.symbol && (
-                          <CheckCircle2 className="w-5 h-5 text-amber-400" />
+                          <CheckCircle2 className="w-5 h-5 text-purple-400" />
                         )}
                       </button>
                     ))}
@@ -382,7 +370,9 @@ export default function HyperionPage() {
                 </div>
               )}
             </div>
+          </div>
 
+          <div className="flex flex-wrap items-center gap-3">
             {/* Expiration Selector */}
             <div className="flex items-center gap-2 bg-gray-800/50 rounded-lg p-1">
               {expirations.map((exp) => (
@@ -391,24 +381,44 @@ export default function HyperionPage() {
                   onClick={() => setSelectedExpiration(exp.date)}
                   className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
                     selectedExpiration === exp.date
-                      ? 'bg-amber-500 text-white'
+                      ? 'bg-purple-500 text-white'
                       : 'text-gray-400 hover:text-white hover:bg-gray-700'
                   }`}
                 >
                   <div className="flex items-center gap-1">
                     <Calendar className="w-3 h-3" />
                     <span>{exp.dte}d</span>
-                    {exp.is_monthly && <span className="text-xs text-amber-300">(M)</span>}
+                    {exp.is_monthly && <span className="text-xs text-purple-300">(M)</span>}
                   </div>
                 </button>
               ))}
             </div>
 
+            {/* Auto-refresh toggle */}
+            <button
+              onClick={() => setAutoRefresh(!autoRefresh)}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm ${
+                autoRefresh ? 'bg-green-500/20 text-green-400' : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+              }`}
+            >
+              <RefreshCw className={`w-4 h-4 ${autoRefresh ? 'animate-spin' : ''}`} />
+              {autoRefresh ? 'Live' : 'Paused'}
+            </button>
+
+            {/* Manual refresh */}
+            <button
+              onClick={() => fetchGammaData()}
+              disabled={loading}
+              className="px-3 py-1.5 bg-purple-500/20 text-purple-400 rounded-lg text-sm font-medium hover:bg-purple-500/30 transition-colors disabled:opacity-50"
+            >
+              Refresh
+            </button>
+
             {/* Last Updated */}
             {lastUpdated && (
               <div className="text-xs text-gray-500 flex items-center gap-1">
                 <Clock className="w-3 h-3" />
-                Updated: {lastUpdated.toLocaleTimeString()}
+                {lastUpdated.toLocaleTimeString()}
               </div>
             )}
           </div>
@@ -428,8 +438,8 @@ export default function HyperionPage() {
         {loading && !gammaData && (
           <div className="flex items-center justify-center h-64">
             <div className="text-center">
-              <RefreshCw className="w-8 h-8 text-amber-400 animate-spin mx-auto mb-2" />
-              <p className="text-gray-400">Loading gamma data for {selectedSymbol}...</p>
+              <RefreshCw className="w-10 h-10 text-purple-500 animate-spin mx-auto mb-4" />
+              <p className="text-gray-400">Loading HYPERION data for {selectedSymbol}...</p>
             </div>
           </div>
         )}
@@ -443,14 +453,14 @@ export default function HyperionPage() {
               <div className="bg-gray-900/50 border border-gray-800 rounded-xl p-4">
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-sm font-medium text-gray-400">Current Price</h3>
-                  <Activity className="w-4 h-4 text-amber-400" />
+                  <Activity className="w-4 h-4 text-purple-400" />
                 </div>
                 <div className="text-3xl font-bold text-white mb-2">
                   ${gammaData.spot_price.toFixed(2)}
                 </div>
                 <div className="flex items-center gap-2 text-sm">
                   <span className="text-gray-400">Expected Move:</span>
-                  <span className="text-amber-400">±${gammaData.expected_move.toFixed(2)}</span>
+                  <span className="text-purple-400">±${gammaData.expected_move.toFixed(2)}</span>
                 </div>
               </div>
 
@@ -477,14 +487,14 @@ export default function HyperionPage() {
               <div className="bg-gray-900/50 border border-gray-800 rounded-xl p-4">
                 <div className="flex items-center justify-between mb-3">
                   <h3 className="text-sm font-medium text-gray-400">Top Gamma Magnets</h3>
-                  <Target className="w-4 h-4 text-amber-400" />
+                  <Target className="w-4 h-4 text-purple-400" />
                 </div>
                 {gammaData.magnets?.length > 0 ? (
                   <div className="space-y-2">
                     {gammaData.magnets.slice(0, 3).map((magnet, idx) => (
                       <div key={idx} className="flex items-center justify-between text-sm">
                         <div className="flex items-center gap-2">
-                          <span className="text-amber-400 font-bold">#{magnet.rank}</span>
+                          <span className="text-purple-400 font-bold">#{magnet.rank}</span>
                           <span className="text-white">${magnet.strike}</span>
                         </div>
                         <span className="text-gray-400">{magnet.probability.toFixed(0)}%</span>
@@ -498,12 +508,12 @@ export default function HyperionPage() {
 
               {/* Pin Prediction Card */}
               {gammaData.likely_pin && (
-                <div className="bg-gray-900/50 border border-amber-500/30 rounded-xl p-4">
+                <div className="bg-gray-900/50 border border-purple-500/30 rounded-xl p-4">
                   <div className="flex items-center justify-between mb-3">
                     <h3 className="text-sm font-medium text-gray-400">Pin Prediction</h3>
-                    <Shield className="w-4 h-4 text-amber-400" />
+                    <Shield className="w-4 h-4 text-purple-400" />
                   </div>
-                  <div className="text-2xl font-bold text-amber-400">
+                  <div className="text-2xl font-bold text-purple-400">
                     ${gammaData.likely_pin}
                   </div>
                   <div className="text-sm text-gray-400 mt-1">
@@ -561,13 +571,13 @@ export default function HyperionPage() {
                         <div
                           key={strike.strike}
                           className={`flex items-center gap-2 py-1.5 px-2 rounded ${
-                            isAtSpot ? 'bg-amber-500/10 border border-amber-500/30' : ''
-                          } ${strike.is_magnet ? 'bg-purple-500/10' : ''}`}
+                            isAtSpot ? 'bg-purple-500/10 border border-purple-500/30' : ''
+                          } ${strike.is_magnet ? 'bg-blue-500/10' : ''}`}
                         >
                           {/* Strike Price */}
                           <div className="w-16 text-right">
                             <span className={`text-sm font-medium ${
-                              isAtSpot ? 'text-amber-400' : 'text-gray-300'
+                              isAtSpot ? 'text-purple-400' : 'text-gray-300'
                             }`}>
                               ${strike.strike}
                             </span>
@@ -609,10 +619,10 @@ export default function HyperionPage() {
                           {/* Indicators */}
                           <div className="w-8 flex items-center justify-end gap-1">
                             {strike.is_magnet && (
-                              <Target className="w-3 h-3 text-purple-400" />
+                              <Target className="w-3 h-3 text-blue-400" />
                             )}
                             {strike.is_pin && (
-                              <Shield className="w-3 h-3 text-amber-400" />
+                              <Shield className="w-3 h-3 text-purple-400" />
                             )}
                             {strike.is_danger && (
                               <Flame className="w-3 h-3 text-red-400" />
@@ -630,10 +640,10 @@ export default function HyperionPage() {
         {/* Info Footer */}
         <div className="mt-6 p-4 bg-gray-900/30 border border-gray-800 rounded-lg">
           <div className="flex items-start gap-2">
-            <Info className="w-5 h-5 text-amber-400 mt-0.5 flex-shrink-0" />
+            <Info className="w-5 h-5 text-purple-400 mt-0.5 flex-shrink-0" />
             <div className="text-sm text-gray-400">
               <p className="mb-1">
-                <strong className="text-amber-400">HYPERION</strong> provides weekly gamma visualization for stocks and ETFs with weekly options.
+                <strong className="text-purple-400">HYPERION</strong> provides weekly gamma visualization for stocks and ETFs with weekly options.
               </p>
               <p>
                 Unlike ARGUS (0DTE), HYPERION focuses on longer-dated weekly expirations, helping identify
