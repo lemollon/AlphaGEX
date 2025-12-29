@@ -62,7 +62,7 @@ class EnhancedTradingSignal:
     trade_recommendation: str  # LONG, SHORT, STAY_OUT
 
     # ATHENA-specific
-    suggested_spread: str  # BULL_CALL_SPREAD, BEAR_CALL_SPREAD, NONE
+    suggested_spread: str  # BULL_CALL_SPREAD, BEAR_PUT_SPREAD, NONE
     suggested_strikes: Dict[str, float]  # entry_strike, exit_strike
     risk_adjusted_score: float
 
@@ -301,8 +301,8 @@ class GEXSignalIntegration:
                 reasoning_parts.append(f"High magnet attraction ({signal.magnet_attraction_prob:.0%}) - price likely to reach target")
 
         elif signal.trade_recommendation == 'SHORT':
-            suggested_spread = "BEAR_CALL_SPREAD"
-            # Entry at ATM, exit at put wall or -$2
+            suggested_spread = "BEAR_PUT_SPREAD"
+            # Entry at ATM, exit at put wall or -$2 (debit spread)
             entry_strike = round(spot)
             exit_strike = max(entry_strike - 2, put_wall) if put_wall else entry_strike - 2
             suggested_strikes = {'entry_strike': entry_strike, 'exit_strike': exit_strike}

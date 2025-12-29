@@ -1924,9 +1924,9 @@ class OracleAdvisor:
             spread_direction = "BULL_CALL_SPREAD"
             reasoning_parts.append(f"Recommend: {spread_direction}")
         elif direction == "BEARISH" and advice != TradingAdvice.SKIP_TODAY:
-            # Bear Call Spread: Sell ATM call, Buy OTM call
-            suggested_call = round(context.spot_price)  # ATM
-            spread_direction = "BEAR_CALL_SPREAD"
+            # Bear Put Spread: Buy ATM put, Sell OTM put (debit spread for bearish directional plays)
+            suggested_put = round(context.spot_price)  # ATM
+            spread_direction = "BEAR_PUT_SPREAD"
             reasoning_parts.append(f"Recommend: {spread_direction}")
 
         prediction = OraclePrediction(
