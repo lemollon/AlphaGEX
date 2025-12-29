@@ -3607,12 +3607,25 @@ class ARESTrader:
                     outcome = self._determine_expiration_outcome(position, closing_price)
                     realized_pnl = self._calculate_expiration_pnl(position, outcome, closing_price)
 
-                    # Update position
+                    # Update position object for DB save
                     position.status = 'expired'
                     position.close_date = position.expiration  # Use actual expiration date, not today
                     position.close_price = closing_price
                     position.realized_pnl = realized_pnl
 
+                    # Save to database FIRST - before updating in-memory state
+                    if not self._update_position_in_db(position):
+                        error_msg = f"Failed to update position {position.position_id} in database"
+                        result['errors'].append(error_msg)
+                        logger.error(f"ARES EOD: {error_msg} - skipping in-memory update")
+                        # Revert position status since DB failed
+                        position.status = 'open'
+                        position.close_date = None
+                        position.close_price = None
+                        position.realized_pnl = None
+                        continue
+
+                    # Only update in-memory state AFTER successful DB save
                     # Move from open to closed
                     if position in self.open_positions:
                         self.open_positions.remove(position)
@@ -3639,9 +3652,6 @@ class ARESTrader:
                             logger.debug(f"ARES: Recorded P&L ${realized_pnl:.2f} to circuit breaker")
                         except Exception as e:
                             logger.warning(f"ARES: Failed to record P&L to circuit breaker: {e}")
-
-                    # Save to database
-                    self._update_position_in_db(position)
 
                     # Log the expiration
                     self._log_expiration_decision(position, outcome, closing_price)
@@ -4344,7 +4354,8 @@ class ARESTrader:
                         else:
                             # Short legs: we'd buy these back, so add
                             total_value += mid
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Could not get quote for strike {strike}: {e}")
                     continue
 
             return total_value if total_value != 0 else None
