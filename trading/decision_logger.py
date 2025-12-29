@@ -192,7 +192,7 @@ class MLPredictions:
     direction: str = ""  # UP, DOWN, NEUTRAL
     direction_probability: float = 0  # 0-1 probability of predicted direction
     advice: str = ""  # LONG, SHORT, STAY_OUT
-    suggested_spread_type: str = ""  # BULL_CALL_SPREAD, BEAR_CALL_SPREAD, NONE
+    suggested_spread_type: str = ""  # BULL_CALL_SPREAD, BEAR_PUT_SPREAD, NONE
 
     # Model outputs (from 5 trained models)
     flip_gravity: float = 0  # Attraction to flip point (0-1)

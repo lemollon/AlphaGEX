@@ -1511,13 +1511,15 @@ class OracleAdvisor:
         # Determine final advice
         advice, risk_pct = self._get_advice_from_probability(base_pred['win_probability'])
 
-        # SD multiplier based on confidence
-        if base_pred['win_probability'] >= 0.75:
-            sd_mult = 0.9  # Tighter, more premium
-        elif base_pred['win_probability'] >= 0.65:
-            sd_mult = 1.0  # Standard
+        # SD multiplier - ALWAYS keep strikes at or OUTSIDE expected move
+        # Backtest showed 97% win rate with SD >= 1.0 (outside expected move)
+        # NEVER suggest SD < 1.0 - that puts strikes inside expected move = losses
+        if base_pred['win_probability'] >= 0.70:
+            sd_mult = 1.0  # Confident: baseline at expected move boundary
+        elif base_pred['win_probability'] >= 0.60:
+            sd_mult = 1.1  # Medium: slightly wider for safety
         else:
-            sd_mult = 1.2  # Wider, safer
+            sd_mult = 1.2  # Low confidence: wider strikes (or should SKIP)
 
         prediction = OraclePrediction(
             bot_name=BotName.ARES,
@@ -1922,9 +1924,9 @@ class OracleAdvisor:
             spread_direction = "BULL_CALL_SPREAD"
             reasoning_parts.append(f"Recommend: {spread_direction}")
         elif direction == "BEARISH" and advice != TradingAdvice.SKIP_TODAY:
-            # Bear Call Spread: Sell ATM call, Buy OTM call
-            suggested_call = round(context.spot_price)  # ATM
-            spread_direction = "BEAR_CALL_SPREAD"
+            # Bear Put Spread: Buy ATM put, Sell OTM put (debit spread for bearish directional plays)
+            suggested_put = round(context.spot_price)  # ATM
+            spread_direction = "BEAR_PUT_SPREAD"
             reasoning_parts.append(f"Recommend: {spread_direction}")
 
         prediction = OraclePrediction(

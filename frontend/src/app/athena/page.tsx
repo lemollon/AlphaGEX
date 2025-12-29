@@ -1921,7 +1921,7 @@ export default function ATHENAPage() {
                         <p className="text-gray-400 text-sm mb-1">Spread Type</p>
                         <p className={`text-lg font-semibold ${
                           mlSignal.spread_type === 'BULL_CALL_SPREAD' ? 'text-green-400' :
-                          mlSignal.spread_type === 'BEAR_CALL_SPREAD' ? 'text-red-400' :
+                          mlSignal.spread_type === 'BEAR_PUT_SPREAD' ? 'text-red-400' :
                           'text-gray-400'
                         }`}>
                           {mlSignal.spread_type?.replace('_', ' ') || 'NONE'}
