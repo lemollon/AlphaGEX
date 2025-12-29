@@ -109,7 +109,7 @@ export default function WhyNotTrading({ skipReasons, isLoading = false, maxDispl
               >
                 {/* Time */}
                 <span className="text-xs text-gray-500 font-mono whitespace-nowrap pt-0.5">
-                  {new Date(skip.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                  {new Date(skip.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Chicago' })} CT
                 </span>
 
                 {/* Category Badge */}

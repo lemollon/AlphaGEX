@@ -463,7 +463,7 @@ export default function LastScanSummary({
             </h3>
             {lastScan && (
               <span className="text-gray-400 text-sm">
-                {getTimeAgo(lastScan.timestamp)} • {new Date(lastScan.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} {new Date(lastScan.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                {getTimeAgo(lastScan.timestamp)} • {new Date(lastScan.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Chicago' })} {new Date(lastScan.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Chicago' })} CT
               </span>
             )}
           </div>

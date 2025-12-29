@@ -102,16 +102,16 @@ interface TradeStoryCardProps {
   underlyingPrice?: number
 }
 
-// Format timestamp to readable format
+// Format timestamp to readable format (Central Time)
 function formatTime(timestamp: string): string {
   const date = new Date(timestamp)
-  return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+  return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Chicago' }) + ' CT'
 }
 
 function formatDateTime(timestamp: string): string {
   const date = new Date(timestamp)
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
-    ' ' + date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Chicago' }) +
+    ' ' + date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Chicago' }) + ' CT'
 }
 
 // Get action color

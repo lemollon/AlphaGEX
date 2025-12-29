@@ -1608,15 +1608,6 @@ export default function ARESPage() {
                 />
               </div>
 
-              {/* Scan Activity Feed - Shows EVERY scan with reasoning */}
-              <div className="mb-6">
-                <ScanActivityFeed
-                  scans={scanActivity}
-                  botName="ARES"
-                  isLoading={scanActivityLoading}
-                />
-              </div>
-
               {/* GEX Context Panel */}
               <div className="bg-gray-800 rounded-xl p-6 border border-purple-700/50 mb-6">
                 <div className="flex items-center justify-between mb-4">
@@ -1906,15 +1897,6 @@ export default function ARESPage() {
           {/* ==================== ACTIVITY TAB - Unified scan activity and decisions ==================== */}
           {activeTab === 'activity' && (
             <div className="space-y-6">
-              {/* Equity Curve - FIRST (at top) */}
-              <EquityCurveChart
-                botFilter="ARES"
-                title="ARES Performance"
-                defaultDays={30}
-                height={280}
-                showDrawdown={true}
-              />
-
               {/* Scan Activity Feed - Enhanced with MAXIMUM detail */}
               <BotCard
                 title="Scan Activity"

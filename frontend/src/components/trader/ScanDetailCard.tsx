@@ -115,8 +115,9 @@ function formatTime(timestamp: string | undefined): string {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-    hour12: true
-  })
+    hour12: true,
+    timeZone: 'America/Chicago'
+  }) + ' CT'
 }
 
 function formatDateTime(timestamp: string | undefined): string {
@@ -129,8 +130,9 @@ function formatDateTime(timestamp: string | undefined): string {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-    hour12: true
-  })
+    hour12: true,
+    timeZone: 'America/Chicago'
+  }) + ' CT'
 }
 
 function formatMs(ms: number | undefined): string {

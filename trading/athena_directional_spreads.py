@@ -4252,6 +4252,10 @@ Current:         ${self.current_capital:,.2f}
 
     def get_status(self) -> Dict[str, Any]:
         """Get current bot status"""
+        # CRITICAL: Sync with database first to ensure accurate position count
+        # Without this, phantom positions can appear after restarts or DB changes
+        self._sync_open_positions_from_db()
+
         # Use Central Time for date comparisons to match market trading days
         today_ct = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
         return {

@@ -663,7 +663,8 @@ export function DateRangeDisplay({
   const formatDate = (dateStr: string) => {
     return new Date(dateStr).toLocaleDateString('en-US', {
       month: 'short',
-      day: 'numeric'
+      day: 'numeric',
+      timeZone: 'America/Chicago'
     })
   }
 
@@ -671,8 +672,9 @@ export function DateRangeDisplay({
     return new Date(dateStr).toLocaleTimeString('en-US', {
       hour: '2-digit',
       minute: '2-digit',
-      hour12: true
-    })
+      hour12: true,
+      timeZone: 'America/Chicago'
+    }) + ' CT'
   }
 
   return (
