@@ -697,7 +697,7 @@ function ATHENAQuickActionsPanel({ onSkipToday, onAdjustRisk, onForceScan, curre
       <div className="mt-4 pt-3 border-t border-gray-700 flex flex-wrap gap-4 text-xs text-gray-500">
         <span>Risk: <span className="text-white">{(currentRisk * 100).toFixed(0)}%</span></span>
         <span>Target: <span className="text-green-400">50% profit</span></span>
-        <span>Window: <span className="text-cyan-400">9:35-15:55 CT</span></span>
+        <span>Window: <span className="text-cyan-400">8:35-14:30 CT</span></span>
       </div>
     </div>
   )

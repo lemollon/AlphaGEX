@@ -303,15 +303,15 @@ def _generate_fallback_explanation(context: ScanContext) -> Dict[str, str]:
     if decision == DecisionType.MARKET_CLOSED:
         return {
             "summary": f"{bot_name} scan skipped - market is closed",
-            "full_explanation": f"The market is currently closed. {bot_name} only trades during market hours (ARES: 9:35 AM - 3:55 PM CT, ATHENA: 8:30 AM - 3:00 PM CT). No trading decisions are made outside these windows.",
-            "what_would_trigger": "Market needs to open. Trading window starts at 9:35 AM CT for ARES, 8:30 AM CT for ATHENA.",
+            "full_explanation": f"The market is currently closed. {bot_name} only trades during market hours (ARES: 8:30 AM - 3:55 PM CT, ATHENA: 8:30 AM - 3:00 PM CT). No trading decisions are made outside these windows.",
+            "what_would_trigger": "Market needs to open. Trading window starts at 8:30 AM CT for both ARES and ATHENA.",
             "market_insight": "Pre-market futures and overnight news should be reviewed before trading window opens."
         }
 
     if decision == DecisionType.BEFORE_WINDOW:
         return {
             "summary": f"{bot_name} scan skipped - before trading window",
-            "full_explanation": f"Current time is before {bot_name}'s trading window. ARES starts at 9:35 AM CT, ATHENA starts at 8:30 AM CT. The bot is waiting for the trading window to open.",
+            "full_explanation": f"Current time is before {bot_name}'s trading window. Both ARES and ATHENA start at 8:30 AM CT when the market opens. The bot is waiting for the trading window to open.",
             "what_would_trigger": f"Wait for trading window to open. {bot_name} will start scanning automatically.",
             "market_insight": "Early session often has higher volatility - first 30 minutes after open tend to set the day's range."
         }

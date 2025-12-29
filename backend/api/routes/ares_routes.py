@@ -1238,7 +1238,7 @@ async def get_ares_config():
         "min_credit_spy": 0.02,
         "profit_target_pct": 50,
         "use_stop_loss": False,
-        "entry_window": "09:35 - 15:55 ET",
+        "entry_window": "08:30 - 15:55 CT",
         "target_return": "10% monthly (~0.5% daily)",
         "description": "ARES (Aggressive Iron Condor) trades daily 0DTE Iron Condors targeting 10% monthly returns through premium collection."
     }

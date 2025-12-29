@@ -328,7 +328,7 @@ class ARESConfig:
 
     # Trading schedule
     trade_every_day: bool = True          # Trade Mon-Fri
-    entry_time_start: str = "09:35"       # Entry window start (after market open)
+    entry_time_start: str = "08:30"       # Entry window start (market open)
     entry_time_end: str = "15:55"         # Entry window end (before close)
 
     def apply_strategy_preset(self, preset_name: str) -> None:
@@ -1839,7 +1839,7 @@ class ARESTrader:
             # Build "how" description with methodology
             how_desc = (
                 f"ARES Aggressive IC Strategy evaluates daily: "
-                f"1) Check trading window (9:35 AM - 3:30 PM CT), "
+                f"1) Check trading window (8:30 AM - 3:30 PM CT), "
                 f"2) Verify no existing position for today, "
                 f"3) Get market data (price, VIX, expected move), "
                 f"4) Consult Oracle AI for trade/skip advice, "
@@ -2558,7 +2558,7 @@ class ARESTrader:
             logger.info("ARES: Outside trading window")
             result['actions'].append("Outside trading window")
             self._log_skip_decision(
-                reason="Outside trading window (9:35 AM - 3:30 PM CT)",
+                reason="Outside trading window (8:30 AM - 3:30 PM CT)",
                 market_data=None,
                 oracle_advice=None,
                 alternatives=["Wait for trading window to open"],
@@ -2568,11 +2568,11 @@ class ARESTrader:
             if SCAN_LOGGER_AVAILABLE and log_ares_scan:
                 log_ares_scan(
                     outcome=ScanOutcome.BEFORE_WINDOW,
-                    decision_summary="Outside trading window (9:35 AM - 3:30 PM CT)",
+                    decision_summary="Outside trading window (8:30 AM - 3:30 PM CT)",
                     action_taken="Scan skipped - waiting for trading window",
-                    full_reasoning="ARES only trades during market hours. Entry window is 9:35 AM - 3:30 PM CT to ensure good liquidity for 0DTE options.",
+                    full_reasoning="ARES only trades during market hours. Entry window is 8:30 AM - 3:30 PM CT to ensure good liquidity for 0DTE options.",
                     checks=[
-                        CheckResult("trading_window", False, now.strftime('%H:%M'), "09:35-15:30 CT", "Current time is outside trading window")
+                        CheckResult("trading_window", False, now.strftime('%H:%M'), "08:30-15:30 CT", "Current time is outside trading window")
                     ]
                 )
             return result
@@ -2596,7 +2596,7 @@ class ARESTrader:
                     full_reasoning="ARES is designed to trade ONE Iron Condor per day to avoid overexposure. A position was already opened earlier today.",
                     checks=[
                         CheckResult("daily_trade_limit", False, "1", "1 max", "Already executed daily trade"),
-                        CheckResult("trading_window", True, now.strftime('%H:%M'), "09:35-15:30 CT", "Within window")
+                        CheckResult("trading_window", True, now.strftime('%H:%M'), "08:30-15:30 CT", "Within window")
                     ]
                 )
             return result
@@ -2731,7 +2731,7 @@ class ARESTrader:
                         oracle_advice="SKIP_TODAY",
                         oracle_reasoning=oracle_advice.reasoning,
                         checks=[
-                            CheckResult("trading_window", True, now.strftime('%H:%M'), "09:35-15:30 CT", "Within window"),
+                            CheckResult("trading_window", True, now.strftime('%H:%M'), "08:30-15:30 CT", "Within window"),
                             CheckResult("daily_trade_limit", True, "0", "1 max", "No trade yet today"),
                             CheckResult("market_data", True, f"${market_data['underlying_price']:.2f}", "Required", "Market data available"),
                             CheckResult("vix_level", True, f"{market_data['vix']:.1f}", "Informational", "Current volatility"),
@@ -2783,7 +2783,7 @@ class ARESTrader:
                     error_message="Failed to get expiration date from Tradier API",
                     error_type="EXPIRATION_ERROR",
                     checks=[
-                        CheckResult("trading_window", True, now.strftime('%H:%M'), "09:35-15:30 CT", "Within window"),
+                        CheckResult("trading_window", True, now.strftime('%H:%M'), "08:30-15:30 CT", "Within window"),
                         CheckResult("market_data", True, f"${market_data['underlying_price']:.2f}", "Required", "Available"),
                         CheckResult("expiration_date", False, "None", "Required", "Could not determine 0DTE expiration")
                     ]
@@ -2858,7 +2858,7 @@ class ARESTrader:
                     oracle_advice=oracle_advice.advice.value if oracle_advice else "N/A",
                     oracle_reasoning=oracle_advice.reasoning if oracle_advice else "Oracle not available",
                     checks=[
-                        CheckResult("trading_window", True, now.strftime('%H:%M'), "09:35-15:30 CT", "Within window"),
+                        CheckResult("trading_window", True, now.strftime('%H:%M'), "08:30-15:30 CT", "Within window"),
                         CheckResult("market_data", True, f"${market_data['underlying_price']:.2f}", "Required", "Available"),
                         CheckResult("vix_level", True, f"{market_data['vix']:.1f}", "Informational", "Current volatility"),
                         CheckResult("expected_move", True, f"${market_data['expected_move']:.2f}", f"{effective_sd_mult:.2f} SD", f"Looking for strikes {adjusted_expected_move:.0f} pts OTM"),
@@ -2934,7 +2934,7 @@ class ARESTrader:
                     premium_collected=position.total_credit * 100 * contracts,
                     max_risk=position.max_loss * 100 * contracts,
                     checks=[
-                        CheckResult("trading_window", True, now.strftime('%H:%M'), "09:35-15:30 CT", "Within window"),
+                        CheckResult("trading_window", True, now.strftime('%H:%M'), "08:30-15:30 CT", "Within window"),
                         CheckResult("daily_trade_limit", True, "0", "1 max", "First trade today"),
                         CheckResult("market_data", True, f"${market_data['underlying_price']:.2f}", "Required", "Available"),
                         CheckResult("vix_level", True, f"{market_data['vix']:.1f}", "Informational", f"VIX at {market_data['vix']:.1f} - good for premium selling"),
@@ -2980,7 +2980,7 @@ class ARESTrader:
                     },
                     contracts=contracts,
                     checks=[
-                        CheckResult("trading_window", True, now.strftime('%H:%M'), "09:35-15:30 CT", "Within window"),
+                        CheckResult("trading_window", True, now.strftime('%H:%M'), "08:30-15:30 CT", "Within window"),
                         CheckResult("market_data", True, f"${market_data['underlying_price']:.2f}", "Required", "Available"),
                         CheckResult("oracle_approval", True, "TRADE", "TRADE", "Oracle approved"),
                         CheckResult("strikes_available", True, f"{ic_strikes['put_short_strike']}P/{ic_strikes['call_short_strike']}C", "Required", "Suitable strikes found"),

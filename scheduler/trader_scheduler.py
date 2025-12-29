@@ -15,7 +15,7 @@ TRADING BOTS:
 ============
 - PHOENIX: 0DTE options trading (hourly 10 AM - 3 PM ET)
 - ATLAS: SPX Cash-Secured Put Wheel (daily at 10:05 AM ET)
-- ARES: Aggressive Iron Condor targeting 10% monthly (every 5 min 9:35 AM - 2:55 PM CT)
+- ARES: Aggressive Iron Condor targeting 10% monthly (every 5 min 8:30 AM - 2:55 PM CT)
 - ARES EOD: Process expired 0DTE positions (daily at 3:05 PM CT)
 - ATHENA: GEX Directional Spreads (every 5 min 8:35 AM - 2:30 PM CT)
 - ATHENA EOD: Process expired 0DTE spreads (daily at 3:10 PM CT)
@@ -552,8 +552,8 @@ class AutonomousTraderScheduler:
             self._save_heartbeat('ARES', 'MARKET_CLOSED')
             return
 
-        # Check if within ARES entry window (9:35 AM - 2:55 PM CT for 0DTE)
-        entry_start = now.replace(hour=9, minute=35, second=0)
+        # Check if within ARES entry window (8:30 AM - 2:55 PM CT for 0DTE)
+        entry_start = now.replace(hour=8, minute=30, second=0)
         entry_end = now.replace(hour=14, minute=55, second=0)
 
         if now < entry_start:
@@ -1116,7 +1116,7 @@ class AutonomousTraderScheduler:
         logger.info(f"Timezone: America/Chicago (Texas Central Time)")
         logger.info(f"PHOENIX Schedule: DISABLED here - handled by AutonomousTrader (every 5 min)")
         logger.info(f"ATLAS Schedule: Daily at 9:05 AM CT, Mon-Fri")
-        logger.info(f"ARES Schedule: Daily at 9:35 AM CT, Mon-Fri")
+        logger.info(f"ARES Schedule: Every 5 min (8:30 AM - 2:55 PM CT), Mon-Fri")
         logger.info(f"ATHENA Schedule: Every 5 min (8:35 AM - 2:30 PM CT), Mon-Fri")
         logger.info(f"ARGUS Schedule: Every 5 min (8:30 AM - 3:00 PM CT), Mon-Fri")
         logger.info(f"SOLOMON Schedule: DAILY at 4:00 PM CT (after market close)")

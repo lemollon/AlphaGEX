@@ -58,18 +58,26 @@ def validate_market_data(
         try:
             # Parse timestamp if string
             if isinstance(timestamp, str):
-                # Try common formats
-                for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M:%S.%f']:
-                    try:
-                        timestamp = datetime.strptime(timestamp, fmt)
-                        break
-                    except ValueError:
-                        continue
-                else:
+                parsed = None
+                # First try fromisoformat which handles ISO 8601 with timezone (e.g., 2025-12-29T08:55:01.587153-06:00)
+                try:
+                    parsed = datetime.fromisoformat(timestamp)
+                except ValueError:
+                    # Fall back to common formats without timezone
+                    for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M:%S.%f']:
+                        try:
+                            parsed = datetime.strptime(timestamp, fmt)
+                            break
+                        except ValueError:
+                            continue
+
+                if parsed is None:
                     # Could not parse timestamp
                     if require_timestamp:
                         return False, f"Could not parse timestamp: {timestamp}"
                     timestamp = None
+                else:
+                    timestamp = parsed
 
             if timestamp:
                 # Make timezone-aware if needed
