@@ -925,28 +925,51 @@ RESPONSE GUIDELINES:
 def get_gexis_welcome_message() -> str:
     """Get a J.A.R.V.I.S.-style welcome message for new chat sessions"""
     greeting = get_time_greeting()
+    now = datetime.now()
+    day_of_week = now.strftime('%A').upper()
+    hour = now.hour
+    is_weekend = now.weekday() >= 5
 
-    return f"""{greeting}, {USER_NAME}. GEXIS online and fully operational.
+    # Dynamic market context
+    if is_weekend:
+        market_context = "Markets closed. Optimal time for strategy development and preparation."
+    elif hour < 8:
+        market_context = "Pre-market reconnaissance active. European flows being analyzed."
+    elif 8 <= hour < 9:
+        market_context = "Pre-market session in progress. Monitoring overnight developments."
+    elif 9 <= hour < 15:
+        market_context = "Markets LIVE. Full situational awareness engaged."
+    elif 15 <= hour < 16:
+        market_context = "Power hour active. Elevated gamma activity expected."
+    else:
+        market_context = "After-hours mode. Processing today's data and preparing tomorrow's intelligence."
 
-**Systems Status:**
-- **ARES** (Iron Condor): Standing by
-- **ATHENA** (Directional): Ready
-- **PHOENIX** (0DTE): Monitoring
-- **ATLAS** (Wheel): Active
-- **ORACLE** (AI Advisor): Online
-- **KRONOS** (GEX): Processing
-- **ARGUS** (Gamma): Tracking
-- **NEXUS** (Neural): Visualizing
-- Market data feeds: Connected
+    return f"""{greeting}, {USER_NAME}. GEXIS online.
 
-I have full access to your AlphaGEX trading ecosystem - real-time GEX analysis, bot performance, probability systems, and your complete trading history.
+**━━━ SYSTEM STATUS ━━━**
+◉ ARES (Iron Condor): Armed
+◉ ATHENA (Directional): Ready
+◉ PHOENIX (0DTE): Monitoring
+◉ ATLAS (Wheel): Active
+◉ ORACLE (AI Advisor): Online
+◉ ARGUS (Gamma): Tracking
+◉ Market Data: Connected
 
-What shall we tackle today, Prime? Market analysis, strategy review, or perhaps a status briefing on your positions?"""
+**━━━ {day_of_week} BRIEFING ━━━**
+{market_context}
+
+Full access to your AlphaGEX ecosystem confirmed—real-time gamma exposure, dealer positioning, probability engines, bot performance, and your complete trading history.
+
+*"What's our objective today, Prime?"*"""
 
 
 def get_gexis_clear_chat_message() -> str:
     """Get message when chat is cleared"""
-    return f"Conversation cleared, {USER_NAME}. GEXIS memory reset and ready for a fresh dialogue. What's on your mind, Prime?"
+    return f"""Memory banks cleared, {USER_NAME}.
+
+All previous context purged. Systems recalibrated.
+
+*Standing by for new directives, Prime.*"""
 
 
 def get_gexis_error_message(error_type: str = "general") -> str:
