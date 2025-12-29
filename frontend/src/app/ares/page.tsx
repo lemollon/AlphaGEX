@@ -784,7 +784,7 @@ function QuickActionsPanel({ onSkipToday, onAdjustRisk, onForceScan, currentRisk
       <div className="mt-4 pt-3 border-t border-gray-700 flex flex-wrap gap-4 text-xs text-gray-500">
         <span>Risk: <span className="text-white">{currentRisk}%</span></span>
         <span>Target: <span className="text-green-400">50% profit</span></span>
-        <span>Window: <span className="text-cyan-400">9:35-15:55 CT</span></span>
+        <span>Window: <span className="text-cyan-400">8:30-15:55 CT</span></span>
       </div>
     </div>
   )
@@ -2287,7 +2287,7 @@ export default function ARESPage() {
                 <div className="md:col-span-2 bg-gray-700/30 border border-gray-600 rounded-lg p-4">
                   <h3 className="text-gray-300 font-semibold mb-4">General Settings</h3>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <div className="flex flex-col"><span className="text-gray-400 text-sm">Entry Window:</span><span className="text-white font-mono">{config?.entry_window || '9:35 AM - 2:55 PM CT'}</span></div>
+                    <div className="flex flex-col"><span className="text-gray-400 text-sm">Entry Window:</span><span className="text-white font-mono">{config?.entry_window || '8:30 AM - 2:55 PM CT'}</span></div>
                     <div className="flex flex-col"><span className="text-gray-400 text-sm">Scan Interval:</span><span className="text-white font-mono">{status?.scan_interval_minutes || 5} min</span></div>
                     <div className="flex flex-col"><span className="text-gray-400 text-sm">Mode:</span><span className="text-white font-mono">{status?.mode || 'paper'}</span></div>
                     <div className="flex flex-col"><span className="text-gray-400 text-sm">Monthly Target:</span><span className="text-green-400 font-mono">10%</span></div>
