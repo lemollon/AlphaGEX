@@ -318,19 +318,59 @@ export default function EquityCurveChart({
   }
 
   if (error) {
+    const brandColors = getBrandColors(botFilter)
     return (
-      <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
-        <p className="text-red-400 text-center">Failed to load equity curve data</p>
+      <div className={`bg-[#0a0a0a] border rounded-lg p-6 ${
+        botFilter === 'ARES' ? 'border-amber-700/50' :
+        botFilter === 'ATHENA' ? 'border-cyan-700/50' :
+        'border-gray-800'
+      }`}>
+        <div className="text-center py-8">
+          <div className={`w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center ${
+            botFilter === 'ARES' ? 'bg-amber-900/30' :
+            botFilter === 'ATHENA' ? 'bg-cyan-900/30' :
+            'bg-gray-800/50'
+          }`}>
+            <TrendingUp className={`w-8 h-8 ${
+              botFilter === 'ARES' ? 'text-amber-400' :
+              botFilter === 'ATHENA' ? 'text-cyan-400' :
+              'text-gray-400'
+            }`} />
+          </div>
+          <p className={`font-medium mb-2 ${
+            botFilter === 'ARES' ? 'text-amber-400' :
+            botFilter === 'ATHENA' ? 'text-cyan-400' :
+            'text-gray-300'
+          }`}>No Equity Data Available</p>
+          <p className="text-gray-500 text-sm">
+            {botFilter ? `${botFilter} hasn't completed any trades yet.` : 'No trading history found.'}
+          </p>
+          <p className="text-gray-600 text-xs mt-2">
+            Data will appear once trades are executed and closed.
+          </p>
+        </div>
       </div>
     )
   }
 
   if (isLoading || !data) {
     return (
-      <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
+      <div className={`bg-[#0a0a0a] border rounded-lg p-6 ${
+        botFilter === 'ARES' ? 'border-amber-700/50' :
+        botFilter === 'ATHENA' ? 'border-cyan-700/50' :
+        'border-gray-800'
+      }`}>
         <div className="animate-pulse space-y-4">
-          <div className="h-6 bg-gray-800 rounded w-1/3" />
-          <div className="h-64 bg-gray-800 rounded" />
+          <div className={`h-6 rounded w-1/3 ${
+            botFilter === 'ARES' ? 'bg-amber-900/30' :
+            botFilter === 'ATHENA' ? 'bg-cyan-900/30' :
+            'bg-gray-800'
+          }`} />
+          <div className={`h-64 rounded ${
+            botFilter === 'ARES' ? 'bg-amber-900/20' :
+            botFilter === 'ATHENA' ? 'bg-cyan-900/20' :
+            'bg-gray-800'
+          }`} />
         </div>
       </div>
     )
@@ -339,7 +379,11 @@ export default function EquityCurveChart({
   const summary = data.summary
 
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+    <div className={`bg-[#0a0a0a] border rounded-lg overflow-hidden ${
+      botFilter === 'ARES' ? 'border-amber-700/50' :
+      botFilter === 'ATHENA' ? 'border-cyan-700/50' :
+      'border-gray-800'
+    }`}>
       {/* Header */}
       <div className="p-4 border-b border-gray-800">
         <div className="flex items-center justify-between flex-wrap gap-4">
@@ -470,8 +514,24 @@ export default function EquityCurveChart({
             </AreaChart>
           </ResponsiveContainer>
         ) : (
-          <div className="flex items-center justify-center h-full text-gray-500">
-            No equity data available
+          <div className="flex items-center justify-center h-full">
+            <div className="text-center">
+              <div className={`w-12 h-12 mx-auto mb-3 rounded-full flex items-center justify-center ${
+                botFilter === 'ARES' ? 'bg-amber-900/30' :
+                botFilter === 'ATHENA' ? 'bg-cyan-900/30' :
+                'bg-gray-800/50'
+              }`}>
+                <TrendingUp className={`w-6 h-6 ${
+                  botFilter === 'ARES' ? 'text-amber-400/70' :
+                  botFilter === 'ATHENA' ? 'text-cyan-400/70' :
+                  'text-gray-500'
+                }`} />
+              </div>
+              <p className="text-gray-500 text-sm">No equity data available</p>
+              <p className="text-gray-600 text-xs mt-1">
+                Chart will populate once trades are closed
+              </p>
+            </div>
           </div>
         )}
       </div>
