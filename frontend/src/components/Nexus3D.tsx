@@ -222,6 +222,11 @@ function useKeyboardControls(
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!controlsRef.current) return
 
+      // Don't capture keyboard events when user is typing in an input field
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return
+      }
+
       const rotateSpeed = 0.1
       switch (e.code) {
         case 'ArrowLeft':
