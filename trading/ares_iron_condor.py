@@ -1761,7 +1761,7 @@ class ARESTrader:
             c = conn.cursor()
 
             c.execute('''
-                UPDATE autonomous_open_positions
+                UPDATE ares_positions
                 SET status = %s,
                     close_date = %s,
                     close_price = %s,
