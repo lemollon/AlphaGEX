@@ -1259,7 +1259,7 @@ async def get_ares_config():
                 "min_credit_spy": config.min_credit_per_spread_spy,
                 "profit_target_pct": config.profit_target_pct,
                 "use_stop_loss": config.use_stop_loss,
-                "entry_window": f"{config.entry_time_start} - {config.entry_time_end} ET",
+                "entry_window": f"{config.entry_time_start} - {config.entry_time_end} CT",
                 "target_return": "10% monthly (~0.5% daily)",
                 "mode": ares.mode.value
             }

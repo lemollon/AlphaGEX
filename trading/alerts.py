@@ -28,6 +28,10 @@ from datetime import datetime
 from typing import Dict, List, Optional
 import json
 import logging
+from zoneinfo import ZoneInfo
+
+# Texas Central Time - standard timezone for all AlphaGEX operations
+CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 logger = logging.getLogger(__name__)
 
@@ -75,14 +79,14 @@ class TradingAlerts:
             return True
 
         last_sent = self._sent_alerts[alert_key]
-        minutes_elapsed = (datetime.now() - last_sent).total_seconds() / 60
+        minutes_elapsed = (datetime.now(CENTRAL_TZ) - last_sent).total_seconds() / 60
         return minutes_elapsed >= self._cooldown_minutes
 
     def _record_alert(self, alert_key: str, level: str, subject: str, body: str):
         """Record alert in history"""
-        self._sent_alerts[alert_key] = datetime.now()
+        self._sent_alerts[alert_key] = datetime.now(CENTRAL_TZ)
         self.alert_history.append({
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': datetime.now(CENTRAL_TZ).isoformat(),
             'level': level,
             'subject': subject,
             'body': body[:500],  # Truncate for storage
@@ -118,7 +122,7 @@ class TradingAlerts:
 SPX WHEEL TRADING ALERT
 =======================
 Level: {level}
-Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Time: {datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d %H:%M:%S')}
 
 {body}
 
@@ -174,7 +178,7 @@ indicating significant losses on this position.
 
     def alert_position_itm(self, position: Dict, spot_price: float, intrinsic_value: float):
         """Alert when position goes in-the-money"""
-        alert_key = f"itm_{position.get('id')}_{datetime.now().strftime('%Y%m%d')}"
+        alert_key = f"itm_{position.get('id')}_{datetime.now(CENTRAL_TZ).strftime('%Y%m%d')}"
 
         if not self._can_send_alert(alert_key):
             return
@@ -231,7 +235,7 @@ Premium Received: ${position.get('premium_received'):,.2f}
 
     def alert_divergence(self, live_win_rate: float, backtest_win_rate: float, divergence: float):
         """Alert when live performance diverges significantly from backtest"""
-        alert_key = f"divergence_{datetime.now().strftime('%Y%m%d')}"
+        alert_key = f"divergence_{datetime.now(CENTRAL_TZ).strftime('%Y%m%d')}"
 
         if not self._can_send_alert(alert_key):
             return
@@ -284,9 +288,9 @@ Price Source: {position.get('price_source', 'UNKNOWN')}
 
     def alert_daily_summary(self, summary: Dict):
         """Send daily trading summary"""
-        alert_key = f"daily_{datetime.now().strftime('%Y%m%d')}"
+        alert_key = f"daily_{datetime.now(CENTRAL_TZ).strftime('%Y%m%d')}"
 
-        subject = f"DAILY SUMMARY - {datetime.now().strftime('%Y-%m-%d')}"
+        subject = f"DAILY SUMMARY - {datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')}"
         body = f"""
 DAILY SPX WHEEL TRADING SUMMARY
 ===============================
@@ -318,7 +322,7 @@ DATA QUALITY:
 
     def alert_error(self, error_type: str, error_message: str, context: Dict = None):
         """Alert on system errors"""
-        alert_key = f"error_{error_type}_{datetime.now().strftime('%Y%m%d%H')}"
+        alert_key = f"error_{error_type}_{datetime.now(CENTRAL_TZ).strftime('%Y%m%d%H')}"
 
         if not self._can_send_alert(alert_key):
             return
@@ -329,7 +333,7 @@ SYSTEM ERROR DETECTED!
 
 Error Type: {error_type}
 Message: {error_message}
-Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Time: {datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d %H:%M:%S')}
 
 Context:
 {json.dumps(context, indent=2, default=str) if context else 'No additional context'}
@@ -342,7 +346,7 @@ Please check the system logs and dashboard for more details.
 
     def alert_position_reconciliation_mismatch(self, db_positions: List, broker_positions: List):
         """Alert when database doesn't match broker"""
-        alert_key = f"reconciliation_{datetime.now().strftime('%Y%m%d')}"
+        alert_key = f"reconciliation_{datetime.now(CENTRAL_TZ).strftime('%Y%m%d')}"
 
         if not self._can_send_alert(alert_key):
             return

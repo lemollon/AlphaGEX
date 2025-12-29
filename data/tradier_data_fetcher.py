@@ -1172,7 +1172,7 @@ class TradierExecutor:
         target_dte: int
     ) -> Optional[str]:
         """Find expiration closest to target DTE"""
-        today = datetime.now().date()
+        today = datetime.now(CENTRAL_TZ).date()
 
         best_exp = None
         best_diff = float('inf')

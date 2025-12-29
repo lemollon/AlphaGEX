@@ -35,10 +35,14 @@ from datetime import datetime, date, timedelta
 from typing import Dict, Optional, Tuple
 from dataclasses import dataclass, asdict
 from enum import Enum
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 logger = logging.getLogger(__name__)
+
+# Texas Central Time - standard timezone for all AlphaGEX operations
+CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 
 class CircuitBreakerState(Enum):
@@ -100,12 +104,12 @@ class CircuitBreaker:
         self.state = CircuitBreakerState.ACTIVE
         self.trip_reason: Optional[str] = None
         self.trip_time: Optional[datetime] = None
-        self.last_reset: datetime = datetime.now()
+        self.last_reset: datetime = datetime.now(CENTRAL_TZ)
 
         # Daily tracking
         self.daily_pnl: float = 0.0
         self.daily_trades: int = 0
-        self.current_date: date = datetime.now().date()
+        self.current_date: date = datetime.now(CENTRAL_TZ).date()
 
         # Consecutive loss tracking
         self.consecutive_losses: int = 0
@@ -138,12 +142,12 @@ class CircuitBreaker:
                 if data.get('state') == 'KILLED':
                     self.state = CircuitBreakerState.KILLED
                     self.trip_reason = data.get('trip_reason', 'Kill switch active')
-                    self.trip_time = datetime.fromisoformat(data.get('trip_time', datetime.now().isoformat()))
+                    self.trip_time = datetime.fromisoformat(data.get('trip_time', datetime.now(CENTRAL_TZ).isoformat()))
                     logger.warning(f"Circuit breaker loaded in KILLED state: {self.trip_reason}")
 
                 # Load daily data if same day
                 saved_date = data.get('current_date')
-                if saved_date == str(datetime.now().date()):
+                if saved_date == str(datetime.now(CENTRAL_TZ).date()):
                     self.daily_pnl = data.get('daily_pnl', 0.0)
                     self.daily_trades = data.get('daily_trades', 0)
 
@@ -166,7 +170,7 @@ class CircuitBreaker:
                 'daily_trades': self.daily_trades,
                 'current_date': str(self.current_date),
                 'trip_history': self.trip_history[-50:],  # Keep last 50
-                'last_updated': datetime.now().isoformat()
+                'last_updated': datetime.now(CENTRAL_TZ).isoformat()
             }
 
             with open(state_file, 'w') as f:
@@ -177,7 +181,7 @@ class CircuitBreaker:
 
     def _check_daily_reset(self):
         """Check if we should reset daily counters"""
-        today = datetime.now().date()
+        today = datetime.now(CENTRAL_TZ).date()
 
         if today > self.current_date:
             # New day - reset counters
@@ -190,12 +194,12 @@ class CircuitBreaker:
             self.daily_pnl = 0.0
             self.daily_trades = 0
             self.current_date = today
-            self.last_reset = datetime.now()
+            self.last_reset = datetime.now(CENTRAL_TZ)
             self._save_state()
 
     def is_within_trading_hours(self) -> bool:
         """Check if current time is within trading hours"""
-        now = datetime.now()
+        now = datetime.now(CENTRAL_TZ)
 
         # Weekend check
         if now.weekday() >= 5:
@@ -281,8 +285,8 @@ class CircuitBreaker:
 
         # Consecutive loss cooldown check
         if self.consecutive_loss_cooldown_until:
-            if datetime.now() < self.consecutive_loss_cooldown_until:
-                remaining = self.consecutive_loss_cooldown_until - datetime.now()
+            if datetime.now(CENTRAL_TZ) < self.consecutive_loss_cooldown_until:
+                remaining = self.consecutive_loss_cooldown_until - datetime.now(CENTRAL_TZ)
                 return False, f"Consecutive loss cooldown ({self.consecutive_losses} losses). {remaining.seconds // 60} min remaining"
             else:
                 # Cooldown expired, clear it
@@ -305,10 +309,10 @@ class CircuitBreaker:
         """Trip the circuit breaker"""
         self.state = CircuitBreakerState.TRIPPED
         self.trip_reason = reason
-        self.trip_time = datetime.now()
+        self.trip_time = datetime.now(CENTRAL_TZ)
 
         self.trip_history.append({
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': datetime.now(CENTRAL_TZ).isoformat(),
             'reason': reason,
             'daily_pnl': self.daily_pnl,
             'daily_trades': self.daily_trades
@@ -340,10 +344,10 @@ class CircuitBreaker:
         """
         self.state = CircuitBreakerState.KILLED
         self.trip_reason = reason
-        self.trip_time = datetime.now()
+        self.trip_time = datetime.now(CENTRAL_TZ)
 
         self.trip_history.append({
-            'timestamp': datetime.now().isoformat(),
+            'timestamp': datetime.now(CENTRAL_TZ).isoformat(),
             'reason': f"KILL SWITCH: {reason}",
             'daily_pnl': self.daily_pnl,
             'daily_trades': self.daily_trades
@@ -427,7 +431,7 @@ class CircuitBreaker:
 
         # Check if we should enter cooldown due to consecutive losses
         if self.consecutive_losses >= self.config.max_consecutive_losses:
-            cooldown_until = datetime.now() + timedelta(hours=self.config.consecutive_loss_cooldown_hours)
+            cooldown_until = datetime.now(CENTRAL_TZ) + timedelta(hours=self.config.consecutive_loss_cooldown_hours)
             self.consecutive_loss_cooldown_until = cooldown_until
             reason = f"Consecutive loss limit hit ({self.consecutive_losses} losses). Cooldown until {cooldown_until.strftime('%H:%M')}"
             self._trip_breaker(reason)

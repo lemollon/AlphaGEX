@@ -27,6 +27,10 @@ Usage:
 import logging
 from datetime import datetime
 from typing import Optional, Dict, Any
+from zoneinfo import ZoneInfo
+
+# Texas Central Time - standard timezone for all AlphaGEX operations
+CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +106,7 @@ class SolomonIntegrationMixin:
             return True  # Allow trading if Solomon is not available
 
         # Check cache
-        now = datetime.now()
+        now = datetime.now(CENTRAL_TZ)
         if (self._solomon_kill_check_time and
             self._solomon_kill_check_cache is not None and
             (now - self._solomon_kill_check_time).total_seconds() < cache_seconds):
