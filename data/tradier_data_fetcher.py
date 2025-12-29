@@ -17,8 +17,12 @@ from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
 from enum import Enum
 import logging
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
+
+# Texas Central Time - standard timezone for all AlphaGEX operations
+CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 
 class OrderSide(Enum):
@@ -68,7 +72,7 @@ class OptionContract:
     implied_volatility: float = 0.0
 
     # Metadata
-    last_updated: datetime = field(default_factory=datetime.now)
+    last_updated: datetime = field(default_factory=lambda: datetime.now(CENTRAL_TZ))
 
 
 @dataclass
@@ -77,7 +81,7 @@ class OptionChain:
     underlying: str
     underlying_price: float
     chains: Dict[str, List[OptionContract]] = field(default_factory=dict)  # expiration -> contracts
-    last_updated: datetime = field(default_factory=datetime.now)
+    last_updated: datetime = field(default_factory=lambda: datetime.now(CENTRAL_TZ))
 
     @property
     def symbol(self) -> str:
@@ -380,7 +384,7 @@ class TradierDataFetcher:
             underlying=symbol,
             underlying_price=underlying_price,
             chains={expiration: contracts},
-            last_updated=datetime.now()
+            last_updated=datetime.now(CENTRAL_TZ)
         )
 
         logger.info(f"Fetched {len(contracts)} contracts for {symbol} exp {expiration}")
@@ -418,7 +422,7 @@ class TradierDataFetcher:
             underlying=symbol,
             underlying_price=underlying_price,
             chains=all_chains,
-            last_updated=datetime.now()
+            last_updated=datetime.now(CENTRAL_TZ)
         )
 
     def find_atm_options(

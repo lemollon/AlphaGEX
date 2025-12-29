@@ -59,12 +59,29 @@ def validate_market_data(
             # Parse timestamp if string
             if isinstance(timestamp, str):
                 parsed = None
+                original_timestamp = timestamp
+
+                # Clean up potentially malformed timestamps
+                # Handle case like "2025-12-29T09:01:08032+06:00" (missing dot before microseconds)
+                import re
+                # Pattern: digits before timezone offset that look like concatenated seconds+microseconds
+                # e.g., "08032" should be "08.032" or we should just use the first 2 digits as seconds
+                malformed_match = re.match(r'(.+T\d{2}:\d{2}:)(\d{5,})([+-]\d{2}:\d{2})', timestamp)
+                if malformed_match:
+                    prefix, bad_part, tz = malformed_match.groups()
+                    # Take first 2 digits as seconds, rest as microseconds
+                    seconds = bad_part[:2]
+                    micros = bad_part[2:].ljust(6, '0')[:6]
+                    timestamp = f"{prefix}{seconds}.{micros}{tz}"
+                    logger.debug(f"Fixed malformed timestamp: {original_timestamp} -> {timestamp}")
+
                 # First try fromisoformat which handles ISO 8601 with timezone (e.g., 2025-12-29T08:55:01.587153-06:00)
                 try:
                     parsed = datetime.fromisoformat(timestamp)
                 except ValueError:
                     # Fall back to common formats without timezone
-                    for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M:%S.%f']:
+                    for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%dT%H:%M:%S.%f',
+                                '%Y-%m-%dT%H:%M:%S%z', '%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S%z']:
                         try:
                             parsed = datetime.strptime(timestamp, fmt)
                             break
@@ -72,9 +89,10 @@ def validate_market_data(
                             continue
 
                 if parsed is None:
-                    # Could not parse timestamp
+                    # Could not parse timestamp - log the issue but don't fail the validation
+                    logger.warning(f"Could not parse timestamp: {original_timestamp}")
                     if require_timestamp:
-                        return False, f"Could not parse timestamp: {timestamp}"
+                        return False, f"Could not parse timestamp: {original_timestamp}"
                     timestamp = None
                 else:
                     timestamp = parsed

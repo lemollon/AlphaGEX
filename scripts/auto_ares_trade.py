@@ -77,7 +77,7 @@ def main():
             return {'skipped': True, 'reason': 'already_traded_today'}
 
         if not status.get('in_trading_window'):
-            print(f"\n⏰ Outside trading window (9:35 AM - 3:30 PM ET)")
+            print(f"\n⏰ Outside trading window (8:30 AM - 3:30 PM CT)")
             print(f"   Running anyway for testing...")
 
         # Run the daily cycle - NO CONFIRMATION

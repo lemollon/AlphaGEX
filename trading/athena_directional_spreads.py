@@ -1705,9 +1705,9 @@ Current:         ${self.current_capital:,.2f}
                     flip_point_at_entry, net_gex_at_entry,
                     entry_delta, entry_gamma, entry_theta, entry_vega,
                     ml_direction, ml_confidence, ml_win_probability,
-                    breakeven, rr_ratio
+                    breakeven, rr_ratio, status
                 ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                          %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                          %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 position.position_id,
                 signal_id,
@@ -1737,7 +1737,8 @@ Current:         ${self.current_capital:,.2f}
                 ml_confidence if ml_confidence > 0 else None,
                 ml_win_prob if ml_win_prob > 0 else None,
                 breakeven,
-                rr_ratio if rr_ratio > 0 else None
+                rr_ratio if rr_ratio > 0 else None,
+                'open'  # Explicitly set status to 'open'
             ))
 
             conn.commit()

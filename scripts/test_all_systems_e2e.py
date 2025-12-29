@@ -156,8 +156,8 @@ def test_scheduler_config():
         log_info(f"ARES entry_time_start: {ares_config.entry_time_start}")
         log_info(f"ARES entry_time_end: {ares_config.entry_time_end}")
 
-        # The scheduler should run at 9:35 AM CT (same as entry_time_start)
-        if ares_config.entry_time_start == "09:35":
+        # The scheduler should run at 8:30 AM CT (same as entry_time_start)
+        if ares_config.entry_time_start == "08:30":
             log_pass(section, "ARES trading window", f"{ares_config.entry_time_start} - {ares_config.entry_time_end}")
         else:
             log_warn(section, "ARES trading window", f"Starts at {ares_config.entry_time_start}, scheduler should match")
@@ -174,8 +174,8 @@ def test_scheduler_config():
         log_info("")
         log_info("Expected Scheduler Times (CT):")
         log_info("  ATLAS:  9:05 AM daily")
-        log_info("  ARES:   9:35 AM daily")
-        log_info("  ATHENA: Every 30 min (8:35 AM - 2:30 PM)")
+        log_info("  ARES:   8:30 AM - 3:30 PM, every 5 min")
+        log_info("  ATHENA: Every 5 min (8:35 AM - 2:30 PM)")
         log_info("  ARGUS:  Every 5 min (8:30 AM - 3:00 PM)")
 
         return True
