@@ -37,10 +37,10 @@ services:
 
   # SERVICE 2: Autonomous Trader (Background Worker)
   # Runs ALL trading bots:
-  #   - ARES: Aggressive Iron Condor (9:35 AM - 3:55 PM ET, once daily)
+  #   - ARES: Aggressive Iron Condor (8:30 AM - 3:30 PM CT, every 5 min, once daily)
   #   - ATHENA: GEX Directional Spreads (8:35 AM - 2:30 PM CT, every 5 min, up to 5/day)
   #   - PHOENIX: 0DTE SPY/SPX options (hourly during market hours)
-  #   - ATLAS: SPX Wheel strategy (daily at 10:05 AM ET)
+  #   - ATLAS: SPX Wheel strategy (daily at 9:05 AM CT)
   - type: worker
     name: alphagex-trader
     runtime: python

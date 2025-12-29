@@ -275,7 +275,7 @@ CORS_ORIGINS=https://your-frontend.vercel.app
 ## Key Trading Bots
 
 ### ARES - Aggressive Iron Condor
-- **Schedule**: 9:35 AM - 3:55 PM ET, once daily
+- **Schedule**: 8:30 AM - 3:30 PM CT, every 5 min, once daily
 - **Strategy**: Iron Condor with dynamic strike selection
 - **Files**: `trading/ares_iron_condor.py`, `backend/api/routes/ares_routes.py`
 
@@ -290,7 +290,7 @@ CORS_ORIGINS=https://your-frontend.vercel.app
 - **Files**: Various in `trading/` and `backtest/`
 
 ### ATLAS - SPX Wheel
-- **Schedule**: Daily at 10:05 AM ET
+- **Schedule**: Daily at 9:05 AM CT
 - **Strategy**: SPX Wheel premium collection
 - **Files**: `trading/spx_wheel_system.py`, `trading/wheel_strategy.py`
 
