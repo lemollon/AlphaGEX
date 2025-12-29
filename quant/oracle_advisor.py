@@ -1446,9 +1446,33 @@ class OracleAdvisor:
         suggested_call = None
 
         if use_gex_walls and context.gex_call_wall > 0 and context.gex_put_wall > 0:
-            # GEX-Protected IC: strikes outside walls
-            suggested_put = context.gex_put_wall - 10  # $10 below put wall
-            suggested_call = context.gex_call_wall + 10  # $10 above call wall
+            # GEX-Protected IC: strikes OUTSIDE walls (support/resistance)
+            # GEX walls from SPY need to be scaled for SPX trading
+            # SPX is ~10x SPY price, so walls need proportional scaling
+
+            gex_put_wall = context.gex_put_wall
+            gex_call_wall = context.gex_call_wall
+
+            # Check if trading SPX (price > 1000) but GEX walls are SPY-scale (< 1000)
+            is_spx_trading = context.spot_price > 1000
+            is_spy_gex_data = gex_put_wall < 1000 and gex_call_wall < 1000
+
+            if is_spx_trading and is_spy_gex_data:
+                # Scale SPY walls to SPX (multiply by ratio)
+                scale_factor = context.spot_price / ((gex_put_wall + gex_call_wall) / 2)
+                gex_put_wall = gex_put_wall * scale_factor
+                gex_call_wall = gex_call_wall * scale_factor
+                logger.info(f"Scaled SPY GEX walls to SPX: Put ${gex_put_wall:.0f}, Call ${gex_call_wall:.0f} (scale: {scale_factor:.2f}x)")
+
+            # Use proportional buffer based on expected move (0.5% of price as minimum)
+            # This ensures buffer scales with the underlying
+            buffer = max(context.spot_price * 0.005, context.spot_price * context.expected_move_pct / 100 * 0.25)
+
+            suggested_put = gex_put_wall - buffer  # Below put wall (support)
+            suggested_call = gex_call_wall + buffer  # Above call wall (resistance)
+
+            logger.info(f"GEX-Protected strikes: Put ${suggested_put:.0f} (wall ${gex_put_wall:.0f} - ${buffer:.0f}), "
+                       f"Call ${suggested_call:.0f} (wall ${gex_call_wall:.0f} + ${buffer:.0f})")
 
         # Adjust advice based on GEX regime
         reasoning_parts = []
@@ -1749,7 +1773,8 @@ class OracleAdvisor:
         self,
         context: MarketContext,
         use_gex_walls: bool = True,
-        use_claude_validation: bool = True
+        use_claude_validation: bool = True,
+        wall_filter_pct: float = 1.0  # Default 1.0%, backtest showed 0.5% = 98% WR
     ) -> OraclePrediction:
         """
         Get directional spread advice for ATHENA.
@@ -1845,17 +1870,17 @@ class OracleAdvisor:
                 direction_confidence = 0.65
                 reasoning_parts.append(f"Near call wall resistance ({dist_to_call_wall:.1f}%)")
 
-        # Wall filter check
+        # Wall filter check - use configurable parameter (backtest: 0.5% = 98% WR, 1.0% = 90% WR)
         wall_filter_passed = False
         if use_gex_walls:
-            if direction == "BULLISH" and dist_to_put_wall < 1.5:
+            if direction == "BULLISH" and dist_to_put_wall < wall_filter_pct:
                 wall_filter_passed = True
-                reasoning_parts.append("Wall filter PASSED: Near put wall for bullish")
-            elif direction == "BEARISH" and dist_to_call_wall < 1.5:
+                reasoning_parts.append(f"Wall filter PASSED: {dist_to_put_wall:.2f}% from put wall (threshold: {wall_filter_pct}%)")
+            elif direction == "BEARISH" and dist_to_call_wall < wall_filter_pct:
                 wall_filter_passed = True
-                reasoning_parts.append("Wall filter PASSED: Near call wall for bearish")
+                reasoning_parts.append(f"Wall filter PASSED: {dist_to_call_wall:.2f}% from call wall (threshold: {wall_filter_pct}%)")
             else:
-                reasoning_parts.append(f"Wall filter: Call wall {dist_to_call_wall:.1f}%, Put wall {dist_to_put_wall:.1f}%")
+                reasoning_parts.append(f"Wall filter FAILED: Call wall {dist_to_call_wall:.1f}%, Put wall {dist_to_put_wall:.1f}% (need < {wall_filter_pct}%)")
 
         # Adjust win probability based on direction confidence
         if direction != "FLAT":

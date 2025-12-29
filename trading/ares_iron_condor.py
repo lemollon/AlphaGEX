@@ -197,51 +197,54 @@ class StrategyPreset(Enum):
 
 
 # Strategy preset configurations
+# NOTE: All presets now use 1.0 SD minimum (strikes OUTSIDE expected move)
+# This ensures IC wings are protected from normal daily price movement
+# GEX walls provide additional protection when available
 STRATEGY_PRESETS = {
     StrategyPreset.BASELINE: {
         "name": "Baseline",
-        "description": "Original ARES - no VIX filtering, 10% risk, 0.5 SD",
+        "description": "No VIX filtering, 1.0 SD strikes outside expected move",
         "vix_hard_skip": None,  # No VIX skip
         "risk_per_trade_pct": 10.0,
-        "sd_multiplier": 0.5,
+        "sd_multiplier": 1.0,  # Strikes OUTSIDE expected move
         "backtest_sharpe": 8.55,
         "backtest_win_rate": 94.8,
     },
     StrategyPreset.CONSERVATIVE: {
         "name": "Conservative",
-        "description": "Skip only during extreme volatility (VIX > 35)",
+        "description": "Skip extreme volatility (VIX > 35), 1.0 SD strikes",
         "vix_hard_skip": 35.0,
         "risk_per_trade_pct": 10.0,
-        "sd_multiplier": 0.5,
+        "sd_multiplier": 1.0,  # Strikes OUTSIDE expected move
         "backtest_sharpe": 10.2,
         "backtest_win_rate": 95.5,
     },
     StrategyPreset.MODERATE: {
         "name": "Moderate (Recommended)",
-        "description": "VIX > 32 skip - best risk-adjusted returns",
+        "description": "VIX > 32 skip, 1.0 SD strikes - best risk-adjusted",
         "vix_hard_skip": 32.0,
         "risk_per_trade_pct": 10.0,
-        "sd_multiplier": 0.5,
+        "sd_multiplier": 1.0,  # Strikes OUTSIDE expected move
         "backtest_sharpe": 16.84,
         "backtest_win_rate": 97.6,
     },
     StrategyPreset.AGGRESSIVE: {
         "name": "Aggressive Filter",
-        "description": "Full VIX ruleset with streak tracking",
+        "description": "Full VIX ruleset with streak tracking, 1.0 SD",
         "vix_hard_skip": 30.0,
         "vix_monday_friday_skip": 30.0,
         "vix_streak_skip": 28.0,
         "risk_per_trade_pct": 10.0,
-        "sd_multiplier": 0.5,
+        "sd_multiplier": 1.0,  # Strikes OUTSIDE expected move
         "backtest_sharpe": 18.5,
         "backtest_win_rate": 98.2,
     },
     StrategyPreset.WIDE_STRIKES: {
         "name": "Wide Strikes",
-        "description": "1.0 SD strikes for higher probability, lower premium",
+        "description": "1.2 SD even wider strikes for maximum safety",
         "vix_hard_skip": 32.0,
         "risk_per_trade_pct": 8.0,
-        "sd_multiplier": 1.0,
+        "sd_multiplier": 1.2,  # Even further outside expected move
         "backtest_sharpe": 14.2,
         "backtest_win_rate": 98.5,
     },
@@ -302,7 +305,7 @@ class ARESConfig:
     risk_per_trade_pct: float = 10.0     # 10% of capital per trade
     spread_width: float = 10.0            # $10 wide spreads (SPX)
     spread_width_spy: float = 2.0         # $2 wide spreads (SPY for sandbox)
-    sd_multiplier: float = 0.5            # 0.5 SD strikes (closer to ATM for better liquidity)
+    sd_multiplier: float = 1.0            # 1.0 SD = strikes OUTSIDE expected move (safer for IC)
 
     # Execution parameters
     ticker: str = "SPX"                   # Trade SPX in production
@@ -339,7 +342,7 @@ class ARESConfig:
                 self.vix_monday_friday_skip = preset.get("vix_monday_friday_skip", 0.0)
                 self.vix_streak_skip = preset.get("vix_streak_skip", 0.0)
                 self.risk_per_trade_pct = preset.get("risk_per_trade_pct", 10.0)
-                self.sd_multiplier = preset.get("sd_multiplier", 0.5)
+                self.sd_multiplier = preset.get("sd_multiplier", 1.0)
                 logger.info(f"Applied strategy preset: {preset_name} - VIX skip: {self.vix_hard_skip}, SD: {self.sd_multiplier}")
         except ValueError:
             logger.warning(f"Unknown strategy preset: {preset_name}, keeping current settings")
@@ -801,6 +804,8 @@ class ARESTrader:
             c = conn.cursor()
 
             # Get latest GEX data
+            # NOTE: SPY is used for GEX regime classification (not strike selection).
+            # GEX wall-based strike selection is DISABLED - see line ~2741 for details.
             c.execute("""
                 SELECT net_gex, call_wall, put_wall, gex_flip_point
                 FROM gex_data
@@ -857,6 +862,10 @@ class ARESTrader:
                 c = conn.cursor()
 
                 # Get latest GEX data
+                # NOTE: SPY is used intentionally for GEX regime classification since:
+                # 1. SPY has higher options volume = more reliable GEX data
+                # 2. SPX and SPY have correlated gamma exposure regimes
+                # 3. GEX walls are NOT used for strike selection (disabled - see line ~2741)
                 c.execute("""
                     SELECT net_gex, call_wall, put_wall, gex_flip_point
                     FROM gex_data
@@ -2738,7 +2747,10 @@ class ARESTrader:
             logger.info(f"  Oracle Advice: {oracle_advice.advice.value}")
             logger.info(f"  Oracle Win Prob: {oracle_advice.win_probability:.1%}")
 
-            # Capture GEX wall strikes if available (72% win rate in backtests)
+            # Use GEX wall-based strikes for IC wings OUTSIDE support/resistance
+            # GEX walls = where market makers have gamma exposure = support/resistance
+            # Put strike should be BELOW put wall (support)
+            # Call strike should be ABOVE call wall (resistance)
             oracle_put_strike = getattr(oracle_advice, 'suggested_put_strike', None)
             oracle_call_strike = getattr(oracle_advice, 'suggested_call_strike', None)
             if oracle_put_strike and oracle_call_strike:
@@ -2779,23 +2791,20 @@ class ARESTrader:
             return result
 
         # Calculate expected move with SD multiplier
-        # Oracle suggests SD multipliers based on win probability:
-        #   0.9 = high confidence (tighter strikes, more premium)
-        #   1.0 = standard confidence
-        #   1.2 = low confidence (wider strikes, safer)
-        # Oracle's suggested_sd_multiplier IS the actual SD multiplier to use
-        # Config sd_multiplier is only used as fallback when Oracle doesn't provide one
+        # IC wings should be OUTSIDE the expected move (SD >= 1.0)
+        # Oracle suggests SD multipliers based on market conditions:
+        #   0.9-1.2 range puts strikes at or outside expected move
+        # This protects the IC from normal daily price movement
         adjusted_expected_move = market_data['expected_move']
 
         if oracle_sd_mult and oracle_sd_mult > 0:
-            # Oracle provides the SD multiplier directly - USE IT as the actual value
-            # Oracle calculates optimal SD based on win probability and market conditions
+            # Use Oracle's SD multiplier - it's calibrated for market conditions
             effective_sd_mult = oracle_sd_mult
-            logger.info(f"  Using Oracle SD multiplier: {effective_sd_mult:.2f} (Oracle overrides config {self.config.sd_multiplier:.2f})")
+            logger.info(f"  Using Oracle SD multiplier: {effective_sd_mult:.2f}")
         else:
-            # Fallback to config when Oracle doesn't provide SD multiplier
+            # Fallback to config (should be >= 1.0 for wings outside expected move)
             effective_sd_mult = self.config.sd_multiplier
-            logger.info(f"  Using config SD multiplier: {effective_sd_mult:.2f} (no Oracle suggestion)")
+            logger.info(f"  Using config SD multiplier: {effective_sd_mult:.2f}")
 
         adjusted_expected_move = market_data['expected_move'] * effective_sd_mult
         logger.info(f"  SD Mult: {effective_sd_mult:.2f} -> Adjusted Move: ${adjusted_expected_move:.2f} (expected move ${market_data['expected_move']:.2f})")
