@@ -172,7 +172,7 @@ export default function SignalConflictTracker({
                     <div key={i} className="bg-black/30 rounded-lg p-3 border border-gray-700">
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-xs text-gray-500">
-                          {new Date(conflict.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                          {new Date(conflict.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Chicago' })} CT
                         </span>
                         <div className="flex items-center gap-2">
                           <span className={`px-2 py-0.5 rounded text-xs font-bold ${

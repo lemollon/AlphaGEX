@@ -75,10 +75,11 @@ class CircuitBreakerConfig:
     max_consecutive_losses: int = 3  # Stop trading after 3 consecutive losses
     consecutive_loss_cooldown_hours: float = 24.0  # Hours to wait after hitting limit
 
-    # Trading hours (24h format)
-    trading_start_hour: int = 9
+    # Trading hours (24h format) - Central Time
+    # Market open: 8:30 AM CT, Market close: 3:00 PM CT
+    trading_start_hour: int = 8
     trading_start_minute: int = 30
-    trading_end_hour: int = 16
+    trading_end_hour: int = 15
     trading_end_minute: int = 0
 
     # Auto-reset next day

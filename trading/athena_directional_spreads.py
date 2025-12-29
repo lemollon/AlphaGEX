@@ -1366,7 +1366,8 @@ Current:         ${self.current_capital:,.2f}
         if self.daily_trades >= self.config.max_daily_trades:
             return False, f"Daily trade limit reached ({self.config.max_daily_trades})"
 
-        # Check max open positions
+        # Check max open positions - SYNC WITH DB FIRST to avoid phantom position issues
+        self._sync_open_positions_from_db()
         if len(self.open_positions) >= self.config.max_open_positions:
             return False, f"Max positions reached ({self.config.max_open_positions})"
 
@@ -2997,6 +2998,9 @@ Current:         ${self.current_capital:,.2f}
 
     def _run_daily_cycle_inner(self, now: datetime, scan_number: int) -> Dict[str, Any]:
         """Inner implementation of run_daily_cycle - separated for error handling."""
+        # CRITICAL: Sync positions with DB before any checks to prevent phantom position issues
+        self._sync_open_positions_from_db()
+
         self._log_to_db("INFO", f"=== ATHENA Scan #{scan_number} at {now.strftime('%I:%M %p CT')} ===")
         self._log_to_db("INFO", f"ATHENA is ACTIVE - checking for directional spread opportunities...")
 
@@ -4252,6 +4256,10 @@ Current:         ${self.current_capital:,.2f}
 
     def get_status(self) -> Dict[str, Any]:
         """Get current bot status"""
+        # CRITICAL: Sync with database first to ensure accurate position count
+        # Without this, phantom positions can appear after restarts or DB changes
+        self._sync_open_positions_from_db()
+
         # Use Central Time for date comparisons to match market trading days
         today_ct = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
         return {

@@ -213,7 +213,7 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
                       Scan #{scan.scan_number}
                     </span>
                     <span className="text-sm text-gray-400">
-                      {new Date(scan.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} • {scan.time_ct}
+                      {new Date(scan.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Chicago' })} • {scan.time_ct}
                     </span>
                     {scan.signal_direction && getDirectionIcon(scan.signal_direction)}
                   </div>

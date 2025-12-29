@@ -145,7 +145,7 @@ export default function ActivityTimeline({ activities, maxDisplay = 10, isLoadin
                       </div>
                       <div className="flex items-center gap-2 flex-shrink-0">
                         <span className="text-xs text-gray-500">
-                          {new Date(activity.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                          {new Date(activity.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Chicago' })} CT
                         </span>
                         {activity.details && (
                           <span className="text-gray-500">

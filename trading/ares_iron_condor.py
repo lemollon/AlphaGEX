@@ -2505,6 +2505,9 @@ class ARESTrader:
         # =========================================================================
         # CIRCUIT BREAKER CHECK - FIRST LINE OF DEFENSE
         # =========================================================================
+        # CRITICAL: Sync positions with DB before any checks to prevent phantom position issues
+        self._sync_open_positions_from_db()
+
         if CIRCUIT_BREAKER_AVAILABLE and is_trading_enabled:
             try:
                 can_trade, cb_reason = is_trading_enabled(
@@ -4433,6 +4436,10 @@ class ARESTrader:
 
     def get_status(self) -> Dict:
         """Get current ARES status"""
+        # CRITICAL: Sync with database first to ensure accurate position count
+        # Without this, phantom positions can appear after restarts or DB changes
+        self._sync_open_positions_from_db()
+
         now = datetime.now(self.tz)
         today = now.strftime('%Y-%m-%d')
 
