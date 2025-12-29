@@ -80,6 +80,10 @@ class OrderExecutor:
             max_profit = signal.total_credit * 100 * contracts
             max_loss = (spread_width - signal.total_credit) * 100 * contracts
 
+            # Convert Oracle top_factors to JSON string for DB storage
+            import json
+            oracle_factors_json = json.dumps(signal.oracle_top_factors) if signal.oracle_top_factors else ""
+
             position = IronCondorPosition(
                 position_id=position_id,
                 ticker=self.config.ticker,
@@ -101,8 +105,17 @@ class OrderExecutor:
                 call_wall=signal.call_wall,
                 put_wall=signal.put_wall,
                 gex_regime=signal.gex_regime,
+                # Kronos context
+                flip_point=signal.flip_point,
+                net_gex=signal.net_gex,
+                # Oracle context (FULL audit trail)
                 oracle_confidence=signal.confidence,
+                oracle_win_probability=signal.oracle_win_probability,
+                oracle_advice=signal.oracle_advice,
                 oracle_reasoning=signal.reasoning,
+                oracle_top_factors=oracle_factors_json,
+                oracle_use_gex_walls=signal.oracle_use_gex_walls,
+                # Order tracking
                 put_order_id="PAPER",
                 call_order_id="PAPER",
                 status=PositionStatus.OPEN,
@@ -181,6 +194,10 @@ class OrderExecutor:
             max_profit = actual_credit * 100 * contracts
             max_loss = (spread_width - actual_credit) * 100 * contracts
 
+            # Convert Oracle top_factors to JSON string for DB storage
+            import json
+            oracle_factors_json = json.dumps(signal.oracle_top_factors) if signal.oracle_top_factors else ""
+
             position = IronCondorPosition(
                 position_id=f"ARES-LIVE-{put_order_id}",
                 ticker=self.config.ticker,
@@ -202,8 +219,17 @@ class OrderExecutor:
                 call_wall=signal.call_wall,
                 put_wall=signal.put_wall,
                 gex_regime=signal.gex_regime,
+                # Kronos context
+                flip_point=signal.flip_point,
+                net_gex=signal.net_gex,
+                # Oracle context (FULL audit trail)
                 oracle_confidence=signal.confidence,
+                oracle_win_probability=signal.oracle_win_probability,
+                oracle_advice=signal.oracle_advice,
                 oracle_reasoning=signal.reasoning,
+                oracle_top_factors=oracle_factors_json,
+                oracle_use_gex_walls=signal.oracle_use_gex_walls,
+                # Order tracking
                 put_order_id=put_order_id,
                 call_order_id=call_order_id,
                 status=PositionStatus.OPEN,
