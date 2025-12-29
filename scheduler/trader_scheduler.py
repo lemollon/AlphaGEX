@@ -80,25 +80,38 @@ except ImportError:
     TradingMode = None
     print("Warning: SPXWheelTrader not available. ATLAS bot will be disabled.")
 
-# Import ARES (Aggressive Iron Condor)
+# Import ARES V2 (SPY Iron Condors)
 try:
-    from trading.ares_iron_condor import ARESTrader, TradingMode as ARESTradingMode
+    from trading.ares_v2 import ARESTrader, ARESConfig, TradingMode as ARESTradingMode
     ARES_AVAILABLE = True
 except ImportError:
     ARES_AVAILABLE = False
     ARESTrader = None
+    ARESConfig = None
     ARESTradingMode = None
-    print("Warning: ARESTrader not available. ARES bot will be disabled.")
+    print("Warning: ARES V2 not available. ARES bot will be disabled.")
 
-# Import ATHENA (Directional Spreads)
+# Import ATHENA V2 (SPY Directional Spreads)
 try:
-    from trading.athena_directional_spreads import ATHENATrader, TradingMode as ATHENATradingMode
+    from trading.athena_v2 import ATHENATrader, ATHENAConfig, TradingMode as ATHENATradingMode
     ATHENA_AVAILABLE = True
 except ImportError:
     ATHENA_AVAILABLE = False
     ATHENATrader = None
+    ATHENAConfig = None
     ATHENATradingMode = None
-    print("Warning: ATHENATrader not available. ATHENA bot will be disabled.")
+    print("Warning: ATHENA V2 not available. ATHENA bot will be disabled.")
+
+# Import PEGASUS (SPX Iron Condors)
+try:
+    from trading.pegasus import PEGASUSTrader, PEGASUSConfig, TradingMode as PEGASUSTradingMode
+    PEGASUS_AVAILABLE = True
+except ImportError:
+    PEGASUS_AVAILABLE = False
+    PEGASUSTrader = None
+    PEGASUSConfig = None
+    PEGASUSTradingMode = None
+    print("Warning: PEGASUS not available. SPX trading will be disabled.")
 
 # Import decision logger for comprehensive logging
 try:
@@ -171,36 +184,42 @@ class AutonomousTraderScheduler:
                 logger.warning(f"ATLAS initialization failed: {e}")
                 self.atlas_trader = None
 
-        # ARES - Aggressive Iron Condor (10% monthly target)
+        # ARES V2 - SPY Iron Condors (10% monthly target)
         # Capital: $200,000 (20% of total)
-        # PAPER mode: Uses real SPX data from Tradier Production API, paper trades internally
-        # LIVE mode: Uses real SPX data AND submits real orders to Tradier
+        # PAPER mode: Uses real SPY data, paper trades internally
         self.ares_trader = None
         if ARES_AVAILABLE:
             try:
-                self.ares_trader = ARESTrader(
-                    mode=ARESTradingMode.PAPER,  # Paper trading with real SPX data
-                    initial_capital=CAPITAL_ALLOCATION['ARES']
-                )
-                logger.info(f"✅ ARES initialized with ${CAPITAL_ALLOCATION['ARES']:,} capital (PAPER mode, real SPX data)")
+                config = ARESConfig(mode=ARESTradingMode.PAPER)
+                self.ares_trader = ARESTrader(config=config)
+                logger.info(f"✅ ARES V2 initialized (SPY Iron Condors, PAPER mode)")
             except Exception as e:
-                logger.warning(f"ARES initialization failed: {e}")
+                logger.warning(f"ARES V2 initialization failed: {e}")
                 self.ares_trader = None
 
-        # ATHENA - GEX-Based Directional Spreads
-        # Capital: $100,000 (from Reserve)
-        # Uses ML probability models for signal generation
+        # ATHENA V2 - SPY Directional Spreads
+        # Uses GEX + ML signals for directional spread trading
         self.athena_trader = None
         if ATHENA_AVAILABLE:
             try:
-                self.athena_trader = ATHENATrader(
-                    initial_capital=100_000,  # Uses portion of reserve
-                    config=None  # Will load from database
-                )
-                logger.info(f"✅ ATHENA initialized with $100,000 capital (PAPER mode, GEX ML signals)")
+                config = ATHENAConfig(mode=ATHENATradingMode.PAPER)
+                self.athena_trader = ATHENATrader(config=config)
+                logger.info(f"✅ ATHENA V2 initialized (SPY Directional Spreads, PAPER mode)")
             except Exception as e:
-                logger.warning(f"ATHENA initialization failed: {e}")
+                logger.warning(f"ATHENA V2 initialization failed: {e}")
                 self.athena_trader = None
+
+        # PEGASUS - SPX Iron Condors ($10 spreads)
+        # Uses larger spread widths for SPX index options
+        self.pegasus_trader = None
+        if PEGASUS_AVAILABLE:
+            try:
+                config = PEGASUSConfig(mode=PEGASUSTradingMode.PAPER)
+                self.pegasus_trader = PEGASUSTrader(config=config)
+                logger.info(f"✅ PEGASUS initialized (SPX Iron Condors, PAPER mode)")
+            except Exception as e:
+                logger.warning(f"PEGASUS initialization failed: {e}")
+                self.pegasus_trader = None
 
         # Log capital allocation summary
         logger.info(f"📊 CAPITAL ALLOCATION:")
@@ -216,12 +235,14 @@ class AutonomousTraderScheduler:
         self.last_atlas_check = None
         self.last_ares_check = None
         self.last_athena_check = None
+        self.last_pegasus_check = None
         self.last_argus_check = None
         self.last_error = None
         self.execution_count = 0
         self.atlas_execution_count = 0
         self.ares_execution_count = 0
         self.athena_execution_count = 0
+        self.pegasus_execution_count = 0
         self.argus_execution_count = 0
 
         # Load saved state from database
@@ -528,22 +549,20 @@ class AutonomousTraderScheduler:
 
     def scheduled_ares_logic(self):
         """
-        ARES (Aggressive Iron Condor) trading logic - runs every 5 minutes during market hours
+        ARES V2 (SPY Iron Condor) trading logic - runs every 5 minutes during market hours
 
-        The aggressive Iron Condor strategy:
-        - Targets 10% monthly returns
-        - Trades 0DTE Iron Condors every weekday
-        - 1 SD strikes, 10% risk per trade
-        - No stop loss - let theta work
-        - Scans every 5 mins for optimal entry timing
+        Uses the new modular V2 architecture:
+        - Database is single source of truth
+        - Clean run_cycle() API
+        - Trades SPY Iron Condors with $2 spreads
         """
         now = datetime.now(CENTRAL_TZ)
 
         logger.info(f"=" * 80)
-        logger.info(f"ARES (Aggressive IC) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        logger.info(f"ARES V2 (SPY IC) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
         if not self.ares_trader:
-            logger.warning("ARES trader not available - skipping")
+            logger.warning("ARES V2 trader not available - skipping")
             self._save_heartbeat('ARES', 'UNAVAILABLE')
             return
 
@@ -552,83 +571,50 @@ class AutonomousTraderScheduler:
             self._save_heartbeat('ARES', 'MARKET_CLOSED')
             return
 
-        # Check if within ARES entry window (8:30 AM - 3:30 PM CT for 0DTE)
-        entry_start = now.replace(hour=8, minute=30, second=0)
-        entry_end = now.replace(hour=15, minute=30, second=0)
-
-        if now < entry_start:
-            logger.info(f"Before entry window ({entry_start.strftime('%H:%M')}). Skipping.")
-            self._save_heartbeat('ARES', 'BEFORE_WINDOW')
-            return
-
-        if now > entry_end:
-            logger.info(f"After entry window ({entry_end.strftime('%H:%M')}). Managing existing positions only.")
-            # Still scan but won't open new positions due to 0DTE risk
-
-        logger.info("Market is OPEN. Scanning for ARES aggressive Iron Condor opportunities...")
-
         # Check Solomon kill switch before trading
         if SOLOMON_AVAILABLE:
             try:
                 solomon = get_solomon()
                 if solomon.is_bot_killed('ARES'):
-                    logger.warning("ARES: Kill switch is ACTIVE - skipping trade scan")
-                    self._save_heartbeat('ARES', 'KILLED', {'reason': 'Solomon kill switch active'})
+                    logger.warning("ARES: Kill switch is ACTIVE - skipping")
+                    self._save_heartbeat('ARES', 'KILLED', {'reason': 'Solomon kill switch'})
                     logger.info(f"=" * 80)
                     return
             except Exception as e:
-                logger.debug(f"ARES: Could not check Solomon kill switch: {e}")
+                logger.debug(f"ARES: Could not check Solomon: {e}")
 
         try:
             self.last_ares_check = now
 
-            # Run the daily ARES cycle
-            result = self.ares_trader.run_daily_cycle()
+            # Run the V2 cycle
+            result = self.ares_trader.run_cycle()
 
-            traded = False
-            scan_context = {'symbol': 'SPX'}
+            traded = result.get('trade_opened', False)
+            closed = result.get('positions_closed', 0)
+            action = result.get('action', 'none')
 
-            if result:
-                logger.info(f"ARES scan completed:")
-                logger.info(f"  Capital: ${result.get('capital', 0):,.2f}")
-                logger.info(f"  Open Positions: {result.get('open_positions', 0)}")
-                logger.info(f"  Actions: {result.get('actions', [])}")
-
-                # Get market context for logging
-                if hasattr(self.ares_trader, 'last_market_data'):
-                    scan_context['market'] = self.ares_trader.last_market_data
-
-                # Log any new positions
-                if result.get('new_position'):
-                    pos = result.get('new_position')
-                    logger.info(f"  NEW POSITION: {pos.get('position_id')} - {pos.get('strikes')}")
-                    logger.info(f"    Contracts: {pos.get('contracts')}, Credit: ${pos.get('credit', 0):.2f}")
-                    traded = True
-
-                # Log NO_TRADE with reason if no new position
-                if not traded and not result.get('new_position'):
-                    no_trade_reason = result.get('skip_reason', result.get('reason', 'Position limit reached or no favorable setup'))
-                    self._log_no_trade_decision('ARES', no_trade_reason, scan_context)
-            else:
-                logger.info("ARES: No result returned from cycle")
-                self._log_no_trade_decision('ARES', 'No result from trading cycle', scan_context)
+            logger.info(f"ARES V2 cycle completed: {action}")
+            if traded:
+                logger.info(f"  NEW TRADE OPENED")
+            if closed > 0:
+                logger.info(f"  Positions closed: {closed}, P&L: ${result.get('realized_pnl', 0):.2f}")
+            if result.get('errors'):
+                for err in result['errors']:
+                    logger.warning(f"  Skip reason: {err}")
 
             self.ares_execution_count += 1
             self._save_heartbeat('ARES', 'TRADED' if traded else 'SCAN_COMPLETE', {
                 'scan_number': self.ares_execution_count,
                 'traded': traded,
-                'open_positions': result.get('open_positions', 0) if result else 0,
-                'capital': result.get('capital', 0) if result else 0
+                'action': action
             })
-            logger.info(f"ARES scan #{self.ares_execution_count} completed (next scan in 5 min)")
+            logger.info(f"ARES V2 scan #{self.ares_execution_count} completed")
             logger.info(f"=" * 80)
 
         except Exception as e:
-            error_msg = f"ERROR in ARES trading logic: {str(e)}"
-            logger.error(error_msg)
+            logger.error(f"ERROR in ARES V2: {str(e)}")
             logger.error(traceback.format_exc())
             self._save_heartbeat('ARES', 'ERROR', {'error': str(e)})
-            logger.info("ARES will retry next interval")
             logger.info(f"=" * 80)
 
     def scheduled_ares_eod_logic(self):
@@ -819,24 +805,21 @@ class AutonomousTraderScheduler:
 
     def scheduled_athena_logic(self):
         """
-        ATHENA (GEX Directional Spreads) trading logic - runs every 5 minutes during market hours
+        ATHENA V2 (SPY Directional Spreads) trading logic - runs every 5 minutes during market hours
 
-        The GEX-based directional spread strategy:
-        - Uses live Tradier GEX data for real-time signal generation
-        - ML probability models for direction prediction
-        - Bull Call Spreads for bullish, Bear Call Spreads for bearish
-        - 0DTE options on SPY
+        Uses the new modular V2 architecture:
+        - Database is single source of truth
+        - Clean run_cycle() API
+        - Trades SPY Directional Spreads with $2 spreads
         - GEX wall proximity filter for high probability setups
-
-        Runs continuously 8:35 AM - 2:30 PM CT to capture intraday GEX shifts.
         """
         now = datetime.now(CENTRAL_TZ)
 
         logger.info(f"=" * 80)
-        logger.info(f"ATHENA (GEX Directional) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        logger.info(f"ATHENA V2 (SPY Spreads) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
         if not self.athena_trader:
-            logger.warning("ATHENA trader not available - skipping")
+            logger.warning("ATHENA V2 trader not available - skipping")
             self._save_heartbeat('ATHENA', 'UNAVAILABLE')
             return
 
@@ -845,111 +828,160 @@ class AutonomousTraderScheduler:
             self._save_heartbeat('ATHENA', 'MARKET_CLOSED')
             return
 
-        # Check if within entry window (8:35 AM - 2:30 PM CT)
-        entry_start = now.replace(hour=8, minute=35, second=0)
-        entry_end = now.replace(hour=14, minute=30, second=0)
-
-        if now < entry_start:
-            logger.info(f"Before entry window ({entry_start.strftime('%H:%M')}). Skipping.")
-            self._save_heartbeat('ATHENA', 'BEFORE_WINDOW')
-            return
-
-        if now > entry_end:
-            logger.info(f"After entry window ({entry_end.strftime('%H:%M')}). Checking exits only.")
-            # Still run to check exits, but won't open new positions
-            # The Apache trader handles this via should_trade() time checks
-
-        logger.info("Market is OPEN. Scanning live GEX data for directional opportunities...")
-
         # Check Solomon kill switch before trading
         if SOLOMON_AVAILABLE:
             try:
                 solomon = get_solomon()
                 if solomon.is_bot_killed('ATHENA'):
-                    logger.warning("ATHENA: Kill switch is ACTIVE - skipping trade scan")
-                    self._save_heartbeat('ATHENA', 'KILLED', {'reason': 'Solomon kill switch active'})
+                    logger.warning("ATHENA: Kill switch is ACTIVE - skipping")
+                    self._save_heartbeat('ATHENA', 'KILLED', {'reason': 'Solomon kill switch'})
                     logger.info(f"=" * 80)
                     return
             except Exception as e:
-                logger.debug(f"ATHENA: Could not check Solomon kill switch: {e}")
+                logger.debug(f"ATHENA: Could not check Solomon: {e}")
 
         try:
             self.last_athena_check = now
 
-            # Run the ATHENA intraday cycle
-            result = self.athena_trader.run_daily_cycle()
+            # Run the V2 cycle
+            result = self.athena_trader.run_cycle()
 
-            scan_context = {}
-            traded = False
+            traded = result.get('trade_opened', False)
+            closed = result.get('positions_closed', 0)
+            action = result.get('action', 'none')
 
-            if result:
-                logger.info(f"ATHENA intraday scan completed:")
-
-                # === GEX CONTEXT ===
-                gex_ctx = result.get('gex_context')
-                if gex_ctx:
-                    logger.info(f"  GEX Context:")
-                    logger.info(f"    SPY: ${gex_ctx.get('spot_price', 0):.2f}")
-                    logger.info(f"    Walls: Put ${gex_ctx.get('put_wall', 0):.0f} | Call ${gex_ctx.get('call_wall', 0):.0f}")
-                    logger.info(f"    Regime: {gex_ctx.get('regime', 'N/A')} | Source: {gex_ctx.get('source', 'N/A')}")
-                    scan_context['gex'] = gex_ctx
-
-                # === ML SIGNAL ===
-                ml_sig = result.get('ml_signal')
-                if ml_sig:
-                    logger.info(f"  ML Signal:")
-                    logger.info(f"    Direction: {ml_sig.get('direction', 'N/A')} | Advice: {ml_sig.get('advice', 'N/A')}")
-                    logger.info(f"    Confidence: {ml_sig.get('confidence', 0)*100:.1f}% | Win Prob: {ml_sig.get('win_probability', 0)*100:.1f}%")
-                    scan_context['ml'] = ml_sig
-
-                # === DECISION REASON ===
-                decision = result.get('decision_reason')
-                if decision:
-                    logger.info(f"  >>> DECISION: {decision}")
-
-                # === TRADE STATS ===
-                trades_executed = result.get('trades_executed', 0)
-                logger.info(f"  Stats: Attempted={result.get('trades_attempted', 0)} | Executed={trades_executed} | Closed={result.get('positions_closed', 0)}")
-
-                if result.get('daily_pnl', 0) != 0:
-                    logger.info(f"  Daily P&L: ${result.get('daily_pnl', 0):,.2f}")
-
-                # Log R:R ratio if available
-                if result.get('rr_ratio'):
-                    logger.info(f"  R:R Ratio: {result.get('rr_ratio', 0):.2f}:1")
-
-                traded = trades_executed > 0
-
-                # Log NO_TRADE decision with full context if no trade was made
-                if not traded:
-                    no_trade_reason = decision or result.get('skip_reason', 'No favorable setup found')
-                    scan_context['symbol'] = 'SPY'
-                    scan_context['market'] = {
-                        'spot_price': gex_ctx.get('spot_price') if gex_ctx else None,
-                        'time': now.isoformat()
-                    }
-                    self._log_no_trade_decision('ATHENA', no_trade_reason, scan_context)
-
-            else:
-                logger.info("ATHENA: No result returned")
-                self._log_no_trade_decision('ATHENA', 'No result from trading cycle', {'symbol': 'SPY'})
+            logger.info(f"ATHENA V2 cycle completed: {action}")
+            if traded:
+                logger.info(f"  NEW TRADE OPENED")
+            if closed > 0:
+                logger.info(f"  Positions closed: {closed}, P&L: ${result.get('realized_pnl', 0):.2f}")
+            if result.get('errors'):
+                for err in result['errors']:
+                    logger.warning(f"  Skip reason: {err}")
 
             self.athena_execution_count += 1
             self._save_heartbeat('ATHENA', 'TRADED' if traded else 'SCAN_COMPLETE', {
                 'scan_number': self.athena_execution_count,
                 'traded': traded,
-                'gex_context': scan_context.get('gex'),
-                'ml_signal': scan_context.get('ml')
+                'action': action
             })
-            logger.info(f"ATHENA scan #{self.athena_execution_count} completed (next scan in 5 min)")
+            logger.info(f"ATHENA V2 scan #{self.athena_execution_count} completed")
             logger.info(f"=" * 80)
 
         except Exception as e:
-            error_msg = f"ERROR in ATHENA trading logic: {str(e)}"
-            logger.error(error_msg)
+            logger.error(f"ERROR in ATHENA V2: {str(e)}")
             logger.error(traceback.format_exc())
             self._save_heartbeat('ATHENA', 'ERROR', {'error': str(e)})
-            logger.info("ATHENA will retry next interval")
+            logger.info(f"=" * 80)
+
+    def scheduled_pegasus_logic(self):
+        """
+        PEGASUS (SPX Iron Condor) trading logic - runs every 5 minutes during market hours
+
+        Uses the new modular architecture:
+        - Database is single source of truth
+        - Clean run_cycle() API
+        - Trades SPX Iron Condors with $10 spreads
+        - Uses SPXW weekly options
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"PEGASUS (SPX IC) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.pegasus_trader:
+            logger.warning("PEGASUS trader not available - skipping")
+            self._save_heartbeat('PEGASUS', 'UNAVAILABLE')
+            return
+
+        if not self.is_market_open():
+            logger.info("Market is CLOSED. Skipping PEGASUS logic.")
+            self._save_heartbeat('PEGASUS', 'MARKET_CLOSED')
+            return
+
+        # Check Solomon kill switch before trading
+        if SOLOMON_AVAILABLE:
+            try:
+                solomon = get_solomon()
+                if solomon.is_bot_killed('PEGASUS'):
+                    logger.warning("PEGASUS: Kill switch is ACTIVE - skipping")
+                    self._save_heartbeat('PEGASUS', 'KILLED', {'reason': 'Solomon kill switch'})
+                    logger.info(f"=" * 80)
+                    return
+            except Exception as e:
+                logger.debug(f"PEGASUS: Could not check Solomon: {e}")
+
+        try:
+            self.last_pegasus_check = now
+
+            # Run the cycle
+            result = self.pegasus_trader.run_cycle()
+
+            traded = result.get('trade_opened', False)
+            closed = result.get('positions_closed', 0)
+            action = result.get('action', 'none')
+
+            logger.info(f"PEGASUS cycle completed: {action}")
+            if traded:
+                logger.info(f"  NEW TRADE OPENED")
+            if closed > 0:
+                logger.info(f"  Positions closed: {closed}, P&L: ${result.get('realized_pnl', 0):.2f}")
+            if result.get('errors'):
+                for err in result['errors']:
+                    logger.warning(f"  Skip reason: {err}")
+
+            self.pegasus_execution_count += 1
+            self._save_heartbeat('PEGASUS', 'TRADED' if traded else 'SCAN_COMPLETE', {
+                'scan_number': self.pegasus_execution_count,
+                'traded': traded,
+                'action': action
+            })
+            logger.info(f"PEGASUS scan #{self.pegasus_execution_count} completed")
+            logger.info(f"=" * 80)
+
+        except Exception as e:
+            logger.error(f"ERROR in PEGASUS: {str(e)}")
+            logger.error(traceback.format_exc())
+            self._save_heartbeat('PEGASUS', 'ERROR', {'error': str(e)})
+            logger.info(f"=" * 80)
+
+    def scheduled_pegasus_eod_logic(self):
+        """
+        PEGASUS End-of-Day processing - runs daily at 3:15 PM CT
+
+        Processes expired SPX Iron Condor positions:
+        - Calculates realized P&L based on closing price
+        - Updates position status to 'expired'
+        - Updates daily performance metrics
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"PEGASUS EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.pegasus_trader:
+            logger.warning("PEGASUS trader not available - skipping EOD processing")
+            return
+
+        logger.info("Processing expired PEGASUS positions...")
+
+        try:
+            # Force close any remaining open positions
+            result = self.pegasus_trader.force_close_all("EOD_EXPIRATION")
+
+            if result:
+                logger.info(f"PEGASUS EOD processing completed:")
+                logger.info(f"  Closed: {result.get('closed', 0)} positions")
+                logger.info(f"  Total P&L: ${result.get('total_pnl', 0):,.2f}")
+            else:
+                logger.info("PEGASUS EOD: No positions to process")
+
+            logger.info(f"PEGASUS EOD processing completed successfully")
+            logger.info(f"=" * 80)
+
+        except Exception as e:
+            logger.error(f"ERROR in PEGASUS EOD: {str(e)}")
+            logger.error(traceback.format_exc())
             logger.info(f"=" * 80)
 
     def scheduled_argus_logic(self):
@@ -1112,13 +1144,14 @@ class AutonomousTraderScheduler:
 
         logger.info("=" * 80)
         logger.info("STARTING AUTONOMOUS TRADING SCHEDULER")
-        logger.info(f"Bots: PHOENIX (0DTE), ATLAS (Wheel), ARES (Aggressive IC), ATHENA (GEX Directional), ARGUS (Commentary), SOLOMON (Feedback Loop)")
+        logger.info(f"Bots: PHOENIX, ATLAS, ARES (SPY IC), PEGASUS (SPX IC), ATHENA, ARGUS, SOLOMON")
         logger.info(f"Timezone: America/Chicago (Texas Central Time)")
         logger.info(f"PHOENIX Schedule: DISABLED here - handled by AutonomousTrader (every 5 min)")
         logger.info(f"ATLAS Schedule: Daily at 9:05 AM CT, Mon-Fri")
-        logger.info(f"ARES Schedule: Every 5 min (8:30 AM - 3:30 PM CT), Mon-Fri")
-        logger.info(f"ATHENA Schedule: Every 5 min (8:35 AM - 2:30 PM CT), Mon-Fri")
-        logger.info(f"ARGUS Schedule: Every 5 min (8:30 AM - 3:00 PM CT), Mon-Fri")
+        logger.info(f"ARES Schedule: Every 5 min (8:30 AM - 3:30 PM CT), SPY Iron Condors")
+        logger.info(f"PEGASUS Schedule: Every 5 min (8:30 AM - 3:30 PM CT), SPX Iron Condors")
+        logger.info(f"ATHENA Schedule: Every 5 min (8:35 AM - 2:30 PM CT), SPY Spreads")
+        logger.info(f"ARGUS Schedule: Every 5 min (8:30 AM - 3:00 PM CT), Commentary")
         logger.info(f"SOLOMON Schedule: DAILY at 4:00 PM CT (after market close)")
         logger.info(f"Log file: {LOG_FILE}")
         logger.info("=" * 80)
@@ -1248,6 +1281,45 @@ class AutonomousTraderScheduler:
             logger.info("✅ ATHENA EOD job scheduled (3:10 PM CT daily)")
         else:
             logger.warning("⚠️ ATHENA not available - GEX directional trading disabled")
+
+        # =================================================================
+        # PEGASUS JOB: SPX Iron Condors - runs every 5 minutes during market hours
+        # Trades SPX options with $10 spread widths using SPXW symbols
+        # =================================================================
+        if self.pegasus_trader:
+            self.scheduler.add_job(
+                self.scheduled_pegasus_logic,
+                trigger=IntervalTrigger(
+                    minutes=5,
+                    start_date=datetime.now(CENTRAL_TZ).replace(
+                        hour=8, minute=30, second=0, microsecond=0
+                    ),
+                    timezone='America/Chicago'
+                ),
+                id='pegasus_trading',
+                name='PEGASUS - SPX Iron Condor (5-min intervals)',
+                replace_existing=True
+            )
+            logger.info("✅ PEGASUS job scheduled (every 5 min, 8:30 AM - 3:30 PM CT)")
+
+            # =================================================================
+            # PEGASUS EOD JOB: Process expired positions - runs at 3:15 PM CT
+            # =================================================================
+            self.scheduler.add_job(
+                self.scheduled_pegasus_eod_logic,
+                trigger=CronTrigger(
+                    hour=15,       # 3:00 PM CT - after market close
+                    minute=15,     # 3:15 PM CT (after ARES/ATHENA EOD)
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='pegasus_eod',
+                name='PEGASUS - EOD Position Expiration',
+                replace_existing=True
+            )
+            logger.info("✅ PEGASUS EOD job scheduled (3:15 PM CT daily)")
+        else:
+            logger.warning("⚠️ PEGASUS not available - SPX IC trading disabled")
 
         # =================================================================
         # ARGUS JOB: Commentary Generation - runs every 5 minutes during market hours
@@ -1410,6 +1482,12 @@ def get_athena_trader():
     return scheduler.athena_trader if scheduler else None
 
 
+def get_pegasus_trader():
+    """Get the PEGASUS trader instance from the scheduler"""
+    scheduler = get_scheduler()
+    return scheduler.pegasus_trader if scheduler else None
+
+
 # ============================================================================
 # STANDALONE EXECUTION MODE (for Render Background Worker)
 # ============================================================================
@@ -1469,7 +1547,7 @@ def run_standalone():
             # Log status periodically
             status = scheduler.get_status()
             if status['market_open']:
-                logger.info(f"Market OPEN - Executions: PHOENIX={scheduler.execution_count}, ATLAS={scheduler.atlas_execution_count}, ARES={scheduler.ares_execution_count}, ATHENA={scheduler.athena_execution_count}, ARGUS={scheduler.argus_execution_count}")
+                logger.info(f"Market OPEN - Executions: PHOENIX={scheduler.execution_count}, ATLAS={scheduler.atlas_execution_count}, ARES={scheduler.ares_execution_count}, PEGASUS={scheduler.pegasus_execution_count}, ATHENA={scheduler.athena_execution_count}, ARGUS={scheduler.argus_execution_count}")
             else:
                 logger.debug(f"Market closed. Next run: {status.get('next_run', 'Unknown')}")
 

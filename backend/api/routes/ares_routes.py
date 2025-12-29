@@ -42,17 +42,17 @@ except ImportError:
 router = APIRouter(prefix="/api/ares", tags=["ARES"])
 logger = logging.getLogger(__name__)
 
-# Try to import ARES trader and strategy presets
+# Try to import ARES V2 trader and strategy presets
 ares_trader = None
 try:
-    from trading.ares_iron_condor import ARESTrader, TradingMode, StrategyPreset, STRATEGY_PRESETS
+    from trading.ares_v2 import ARESTrader, TradingMode, StrategyPreset, STRATEGY_PRESETS
     # Note: ARES trader is initialized by scheduler, we query its state
     ARES_AVAILABLE = True
 except ImportError:
     ARES_AVAILABLE = False
     StrategyPreset = None
     STRATEGY_PRESETS = {}
-    logger.warning("ARES module not available")
+    logger.warning("ARES V2 module not available")
 
 
 def get_ares_instance():
@@ -1190,7 +1190,7 @@ async def run_ares_cycle(
     auth: AuthInfo = Depends(require_admin) if AUTH_AVAILABLE and require_admin else None
 ):
     """
-    Manually trigger an ARES trading cycle.
+    Manually trigger an ARES V2 trading cycle.
 
     This will attempt to open a new Iron Condor position if conditions are met.
 
@@ -1205,12 +1205,13 @@ async def run_ares_cycle(
         )
 
     try:
-        result = ares.run_daily_cycle()
+        # V2 uses run_cycle() instead of run_daily_cycle()
+        result = ares.run_cycle()
 
         return {
             "success": True,
             "data": result,
-            "message": "ARES cycle completed"
+            "message": "ARES V2 cycle completed"
         }
     except Exception as e:
         logger.error(f"Error running ARES cycle: {e}")

@@ -29,6 +29,7 @@ from . import ml_routes
 from . import spx_backtest_routes
 from . import ares_routes
 from . import athena_routes
+from . import pegasus_routes
 from . import daily_manna_routes
 from . import prometheus_routes
 
@@ -59,6 +60,7 @@ __all__ = [
     'spx_backtest_routes',
     'ares_routes',
     'athena_routes',
+    'pegasus_routes',
     'daily_manna_routes',
     'prometheus_routes',
 ]
