@@ -1773,7 +1773,8 @@ class OracleAdvisor:
         self,
         context: MarketContext,
         use_gex_walls: bool = True,
-        use_claude_validation: bool = True
+        use_claude_validation: bool = True,
+        wall_filter_pct: float = 1.0  # Default 1.0%, backtest showed 0.5% = 98% WR
     ) -> OraclePrediction:
         """
         Get directional spread advice for ATHENA.
@@ -1869,17 +1870,17 @@ class OracleAdvisor:
                 direction_confidence = 0.65
                 reasoning_parts.append(f"Near call wall resistance ({dist_to_call_wall:.1f}%)")
 
-        # Wall filter check
+        # Wall filter check - use configurable parameter (backtest: 0.5% = 98% WR, 1.0% = 90% WR)
         wall_filter_passed = False
         if use_gex_walls:
-            if direction == "BULLISH" and dist_to_put_wall < 1.5:
+            if direction == "BULLISH" and dist_to_put_wall < wall_filter_pct:
                 wall_filter_passed = True
-                reasoning_parts.append("Wall filter PASSED: Near put wall for bullish")
-            elif direction == "BEARISH" and dist_to_call_wall < 1.5:
+                reasoning_parts.append(f"Wall filter PASSED: {dist_to_put_wall:.2f}% from put wall (threshold: {wall_filter_pct}%)")
+            elif direction == "BEARISH" and dist_to_call_wall < wall_filter_pct:
                 wall_filter_passed = True
-                reasoning_parts.append("Wall filter PASSED: Near call wall for bearish")
+                reasoning_parts.append(f"Wall filter PASSED: {dist_to_call_wall:.2f}% from call wall (threshold: {wall_filter_pct}%)")
             else:
-                reasoning_parts.append(f"Wall filter: Call wall {dist_to_call_wall:.1f}%, Put wall {dist_to_put_wall:.1f}%")
+                reasoning_parts.append(f"Wall filter FAILED: Call wall {dist_to_call_wall:.1f}%, Put wall {dist_to_put_wall:.1f}% (need < {wall_filter_pct}%)")
 
         # Adjust win probability based on direction confidence
         if direction != "FLAT":
