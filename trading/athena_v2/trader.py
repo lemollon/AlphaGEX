@@ -34,6 +34,16 @@ except ImportError:
     CIRCUIT_BREAKER_AVAILABLE = False
     is_trading_enabled = None
 
+# Scan activity logging
+try:
+    from trading.scan_activity_logger import log_athena_scan, ScanOutcome, CheckResult
+    SCAN_LOGGER_AVAILABLE = True
+except ImportError:
+    SCAN_LOGGER_AVAILABLE = False
+    log_athena_scan = None
+    ScanOutcome = None
+    CheckResult = None
+
 
 class ATHENATrader:
     """
@@ -86,6 +96,15 @@ class ATHENATrader:
             'details': {}
         }
 
+        # Track context for scan activity logging
+        scan_context = {
+            'market_data': None,
+            'gex_data': None,
+            'signal': None,
+            'checks': [],
+            'position': None
+        }
+
         try:
             # Update heartbeat
             self.db.update_heartbeat("SCANNING", f"Cycle at {now.strftime('%I:%M %p')}")
@@ -96,6 +115,9 @@ class ATHENATrader:
                 result['action'] = 'skip'
                 result['details']['skip_reason'] = reason
                 self.db.log("INFO", f"Skipping: {reason}")
+
+                # Log skip to scan activity
+                self._log_scan_activity(result, scan_context, skip_reason=reason)
                 return result
 
             # Step 2: Check and manage existing positions
@@ -106,11 +128,24 @@ class ATHENATrader:
             # Step 3: Look for new entry if we have capacity
             open_positions = self.db.get_open_positions()
             if len(open_positions) < self.config.max_open_positions:
-                opened = self._try_new_entry()
-                result['trades_opened'] = 1 if opened else 0
-                if opened:
+                position, signal = self._try_new_entry_with_context()
+                result['trades_opened'] = 1 if position else 0
+                if position:
                     result['action'] = 'opened'
-                    result['details']['position'] = opened.to_dict()
+                    result['details']['position'] = position.to_dict()
+                    scan_context['position'] = position
+                if signal:
+                    scan_context['signal'] = signal
+                    scan_context['market_data'] = {
+                        'underlying_price': signal.spot_price,
+                        'symbol': 'SPY',
+                        'vix': signal.vix,
+                    }
+                    scan_context['gex_data'] = {
+                        'regime': signal.gex_regime,
+                        'call_wall': signal.call_wall,
+                        'put_wall': signal.put_wall,
+                    }
 
             if result['trades_closed'] > 0:
                 result['action'] = 'closed' if result['action'] == 'none' else 'both'
@@ -120,6 +155,9 @@ class ATHENATrader:
 
             self.db.update_heartbeat("IDLE", f"Cycle complete: {result['action']}")
 
+            # Log scan activity
+            self._log_scan_activity(result, scan_context)
+
         except Exception as e:
             logger.error(f"Cycle error: {e}")
             import traceback
@@ -127,6 +165,9 @@ class ATHENATrader:
             result['errors'].append(str(e))
             result['action'] = 'error'
             self.db.log("ERROR", f"Cycle error: {e}")
+
+            # Log error to scan activity
+            self._log_scan_activity(result, scan_context, error_msg=str(e))
 
         return result
 
@@ -268,15 +309,26 @@ class ATHENATrader:
 
         Returns SpreadPosition if successful, None otherwise.
         """
+        position, _ = self._try_new_entry_with_context()
+        return position
+
+    def _try_new_entry_with_context(self) -> tuple[Optional[SpreadPosition], Optional[Any]]:
+        """
+        Try to open a new position, returning both position and signal for logging.
+
+        Returns (SpreadPosition, Signal) tuple.
+        """
+        from typing import Any
+
         # Generate signal
         signal = self.signals.generate_signal()
         if not signal:
             self.db.log("INFO", "No valid signal generated")
-            return None
+            return None, None
 
         if not signal.is_valid:
             self.db.log("INFO", f"Signal invalid: {signal.reasoning}")
-            return None
+            return None, signal  # Return signal for logging even if invalid
 
         # Log the signal
         self.db.log_signal(
@@ -297,7 +349,7 @@ class ATHENATrader:
         position = self.executor.execute_spread(signal)
         if not position:
             self.db.log("ERROR", "Execution failed", {'signal': signal.reasoning})
-            return None
+            return None, signal
 
         # Save to database
         if not self.db.save_position(position):
@@ -307,7 +359,79 @@ class ATHENATrader:
 
         self.db.log("INFO", f"Opened: {position.position_id}", position.to_dict())
 
-        return position
+        return position, signal
+
+    def _log_scan_activity(
+        self,
+        result: Dict,
+        context: Dict,
+        skip_reason: str = "",
+        error_msg: str = ""
+    ):
+        """Log scan activity for visibility and tracking"""
+        if not SCAN_LOGGER_AVAILABLE or not log_athena_scan:
+            return
+
+        try:
+            # Determine outcome
+            if error_msg:
+                outcome = ScanOutcome.ERROR
+                decision = f"Error: {error_msg}"
+            elif result.get('trades_opened', 0) > 0:
+                outcome = ScanOutcome.TRADED
+                decision = "Directional spread opened"
+            elif skip_reason:
+                if 'Weekend' in skip_reason or 'CLOSED' in skip_reason:
+                    outcome = ScanOutcome.MARKET_CLOSED
+                elif 'Before' in skip_reason:
+                    outcome = ScanOutcome.BEFORE_WINDOW
+                elif 'After' in skip_reason:
+                    outcome = ScanOutcome.AFTER_WINDOW
+                elif 'Daily limit' in skip_reason or 'Max positions' in skip_reason:
+                    outcome = ScanOutcome.SKIP
+                else:
+                    outcome = ScanOutcome.NO_TRADE
+                decision = skip_reason
+            else:
+                outcome = ScanOutcome.NO_TRADE
+                decision = "No valid signal"
+
+            # Build signal context
+            signal = context.get('signal')
+            signal_direction = ""
+            signal_confidence = 0
+            signal_win_probability = 0
+            oracle_advice = ""
+            oracle_reasoning = ""
+
+            if signal:
+                signal_direction = signal.direction
+                signal_confidence = signal.confidence
+                signal_win_probability = getattr(signal, 'win_probability', 0)
+                oracle_advice = "ENTER" if signal.is_valid else "SKIP"
+                oracle_reasoning = signal.reasoning
+
+            # Build trade details if position opened
+            position = context.get('position')
+
+            log_athena_scan(
+                outcome=outcome,
+                decision_summary=decision,
+                market_data=context.get('market_data'),
+                gex_data=context.get('gex_data'),
+                checks=context.get('checks', []),
+                signal_source="ATHENA_V2",
+                signal_direction=signal_direction,
+                signal_confidence=signal_confidence,
+                signal_win_probability=signal_win_probability,
+                oracle_advice=oracle_advice,
+                oracle_reasoning=oracle_reasoning,
+                trade_executed=result.get('trades_opened', 0) > 0,
+                error_message=error_msg,
+                generate_ai_explanation=False,  # Keep it simple
+            )
+        except Exception as e:
+            logger.warning(f"Failed to log scan activity: {e}")
 
     def _update_daily_summary(self, today: str, cycle_result: Dict) -> None:
         """Update daily performance summary"""

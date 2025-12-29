@@ -761,6 +761,56 @@ def log_ares_scan(
     )
 
 
+def log_pegasus_scan(
+    outcome: ScanOutcome,
+    decision_summary: str,
+    market_data: Optional[Dict] = None,
+    gex_data: Optional[Dict] = None,
+    checks: Optional[List[CheckResult]] = None,
+    signal_source: str = "",
+    signal_direction: str = "",
+    signal_confidence: float = 0,
+    signal_win_probability: float = 0,
+    oracle_advice: str = "",
+    oracle_reasoning: str = "",
+    trade_executed: bool = False,
+    error_message: str = "",
+    generate_ai_explanation: bool = False,  # Disable by default for PEGASUS
+    **kwargs
+) -> Optional[str]:
+    """
+    Log PEGASUS (SPX Iron Condor) scan activity.
+
+    PEGASUS trades SPX Iron Condors with $10 spreads using SPXW weekly options.
+    Similar to ARES but for SPX instead of SPY.
+    """
+    full_reasoning = kwargs.pop('full_reasoning', '')
+    action_taken = kwargs.pop('action_taken', '')
+    error_type = kwargs.pop('error_type', '')
+
+    return log_scan_activity(
+        bot_name="PEGASUS",
+        outcome=outcome,
+        decision_summary=decision_summary,
+        action_taken=action_taken,
+        full_reasoning=full_reasoning,
+        market_data=market_data,
+        gex_data=gex_data,
+        checks=checks,
+        signal_source=signal_source,
+        signal_direction=signal_direction,
+        signal_confidence=signal_confidence,
+        signal_win_probability=signal_win_probability,
+        oracle_advice=oracle_advice,
+        oracle_reasoning=oracle_reasoning,
+        trade_executed=trade_executed,
+        error_message=error_message,
+        error_type=error_type,
+        generate_ai_explanation=generate_ai_explanation,
+        **kwargs
+    )
+
+
 def log_athena_scan(
     outcome: ScanOutcome,
     decision_summary: str,

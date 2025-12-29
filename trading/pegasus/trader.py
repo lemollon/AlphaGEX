@@ -27,6 +27,16 @@ except ImportError:
     CIRCUIT_BREAKER_AVAILABLE = False
     is_trading_enabled = None
 
+# Scan activity logging
+try:
+    from trading.scan_activity_logger import log_pegasus_scan, ScanOutcome, CheckResult
+    SCAN_LOGGER_AVAILABLE = True
+except ImportError:
+    SCAN_LOGGER_AVAILABLE = False
+    log_pegasus_scan = None
+    ScanOutcome = None
+    CheckResult = None
+
 
 class PEGASUSTrader:
     """
@@ -57,6 +67,16 @@ class PEGASUSTrader:
             'positions_closed': 0,
             'realized_pnl': 0.0,
             'errors': [],
+            'details': {}
+        }
+
+        # Track context for scan activity logging
+        scan_context = {
+            'market_data': None,
+            'gex_data': None,
+            'signal': None,
+            'checks': [],
+            'position': None
         }
 
         try:
@@ -66,6 +86,11 @@ class PEGASUSTrader:
             if not can_trade:
                 result['action'] = 'skip'
                 result['errors'].append(reason)
+                result['details']['skip_reason'] = reason
+                self.db.log("INFO", f"Skipping: {reason}")
+
+                # Log skip to scan activity
+                self._log_scan_activity(result, scan_context, skip_reason=reason)
                 return result
 
             # Manage positions
@@ -75,20 +100,44 @@ class PEGASUSTrader:
 
             # Try new entry
             if not self.db.has_traded_today(today):
-                pos = self._try_entry()
-                if pos:
+                position, signal = self._try_entry_with_context()
+                if position:
                     result['trade_opened'] = True
                     result['action'] = 'opened'
+                    result['details']['position'] = position.to_dict()
+                    scan_context['position'] = position
+                if signal:
+                    scan_context['signal'] = signal
+                    scan_context['market_data'] = {
+                        'underlying_price': signal.spot_price,
+                        'symbol': 'SPX',
+                        'vix': signal.vix,
+                        'expected_move': signal.expected_move,
+                    }
+                    scan_context['gex_data'] = {
+                        'regime': signal.gex_regime,
+                        'call_wall': signal.call_wall,
+                        'put_wall': signal.put_wall,
+                    }
 
             if closed > 0:
                 result['action'] = 'closed' if result['action'] == 'none' else 'both'
 
+            # Update daily performance
+            self._update_daily_summary(today, result)
+
             self.db.update_heartbeat("IDLE", f"Complete: {result['action']}")
+
+            # Log scan activity
+            self._log_scan_activity(result, scan_context)
 
         except Exception as e:
             logger.error(f"Cycle error: {e}")
             result['errors'].append(str(e))
             result['action'] = 'error'
+
+            # Log error to scan activity
+            self._log_scan_activity(result, scan_context, error_msg=str(e))
 
         return result
 
@@ -171,16 +220,154 @@ class PEGASUSTrader:
         return False, ""
 
     def _try_entry(self) -> Optional[IronCondorPosition]:
+        """Try to open a new Iron Condor"""
+        position, _ = self._try_entry_with_context()
+        return position
+
+    def _try_entry_with_context(self) -> tuple[Optional[IronCondorPosition], Optional[Any]]:
+        """Try to open a new Iron Condor, returning both position and signal for logging"""
+        from typing import Any
+
         signal = self.signals.generate_signal()
-        if not signal or not signal.is_valid:
-            return None
+        if not signal:
+            self.db.log("INFO", "No valid signal generated")
+            return None, None
+
+        if not signal.is_valid:
+            self.db.log("INFO", f"Signal invalid: {signal.reasoning}")
+            return None, signal  # Return signal for logging even if invalid
+
+        # Log the signal
+        self.db.log_signal(
+            spot_price=signal.spot_price,
+            vix=signal.vix,
+            expected_move=signal.expected_move,
+            call_wall=signal.call_wall,
+            put_wall=signal.put_wall,
+            gex_regime=signal.gex_regime,
+            put_short=signal.put_short,
+            put_long=signal.put_long,
+            call_short=signal.call_short,
+            call_long=signal.call_long,
+            total_credit=signal.total_credit,
+            confidence=signal.confidence,
+            was_executed=True,
+            reasoning=signal.reasoning,
+        )
 
         position = self.executor.execute_iron_condor(signal)
-        if position:
-            self.db.save_position(position)
-            self.db.log("INFO", f"Opened: {position.position_id}")
+        if not position:
+            self.db.log("ERROR", "Execution failed", {'signal': signal.reasoning})
+            return None, signal
 
-        return position
+        if not self.db.save_position(position):
+            self.db.log("ERROR", "Failed to save position", {'pos_id': position.position_id})
+            logger.error(f"Position {position.position_id} executed but not saved!")
+
+        self.db.log("INFO", f"Opened: {position.position_id}", position.to_dict())
+
+        return position, signal
+
+    def _log_scan_activity(
+        self,
+        result: Dict,
+        context: Dict,
+        skip_reason: str = "",
+        error_msg: str = ""
+    ):
+        """Log scan activity for visibility"""
+        if not SCAN_LOGGER_AVAILABLE or not log_pegasus_scan:
+            return
+
+        try:
+            # Determine outcome
+            if error_msg:
+                outcome = ScanOutcome.ERROR
+                decision = f"Error: {error_msg}"
+            elif result.get('trade_opened'):
+                outcome = ScanOutcome.TRADED
+                decision = "SPX Iron Condor opened"
+            elif skip_reason:
+                if 'Weekend' in skip_reason or 'CLOSED' in skip_reason:
+                    outcome = ScanOutcome.MARKET_CLOSED
+                elif 'Before' in skip_reason:
+                    outcome = ScanOutcome.BEFORE_WINDOW
+                elif 'After' in skip_reason:
+                    outcome = ScanOutcome.AFTER_WINDOW
+                elif 'Already traded' in skip_reason:
+                    outcome = ScanOutcome.SKIP
+                else:
+                    outcome = ScanOutcome.NO_TRADE
+                decision = skip_reason
+            else:
+                outcome = ScanOutcome.NO_TRADE
+                decision = "No valid signal"
+
+            # Build signal context
+            signal = context.get('signal')
+            signal_source = ""
+            signal_confidence = 0
+            oracle_advice = ""
+            oracle_reasoning = ""
+
+            if signal:
+                signal_source = signal.source
+                signal_confidence = signal.confidence
+                oracle_advice = "ENTER" if signal.is_valid else "SKIP"
+                oracle_reasoning = signal.reasoning
+
+            # Build trade details if position opened
+            position = context.get('position')
+            strike_selection = None
+            contracts = 0
+            premium = 0
+            max_risk = 0
+
+            if position:
+                strike_selection = {
+                    'put_long': position.put_long_strike,
+                    'put_short': position.put_short_strike,
+                    'call_short': position.call_short_strike,
+                    'call_long': position.call_long_strike,
+                }
+                contracts = position.contracts
+                premium = position.total_credit * 100 * contracts
+                max_risk = position.max_loss
+
+            log_pegasus_scan(
+                outcome=outcome,
+                decision_summary=decision,
+                market_data=context.get('market_data'),
+                gex_data=context.get('gex_data'),
+                signal_source=signal_source,
+                signal_confidence=signal_confidence,
+                oracle_advice=oracle_advice,
+                oracle_reasoning=oracle_reasoning,
+                trade_executed=result.get('trade_opened', False),
+                error_message=error_msg,
+                generate_ai_explanation=False,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to log scan activity: {e}")
+
+    def _update_daily_summary(self, today: str, cycle_result: Dict) -> None:
+        """Update daily performance record"""
+        try:
+            traded = 1 if cycle_result.get('trade_opened') else 0
+            if self.db.has_traded_today(today):
+                traded = 1
+
+            summary = DailySummary(
+                date=today,
+                trades_executed=traded,
+                positions_closed=cycle_result.get('positions_closed', 0),
+                realized_pnl=cycle_result.get('realized_pnl', 0),
+                open_positions=self.db.get_position_count(),
+            )
+
+            self.db.update_daily_performance(summary)
+        except Exception as e:
+            logger.warning(f"Failed to update daily summary: {e}")
 
     def get_status(self) -> Dict[str, Any]:
         now = datetime.now(CENTRAL_TZ)

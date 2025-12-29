@@ -33,6 +33,16 @@ except ImportError:
     CIRCUIT_BREAKER_AVAILABLE = False
     is_trading_enabled = None
 
+# Scan activity logging
+try:
+    from trading.scan_activity_logger import log_ares_scan, ScanOutcome, CheckResult
+    SCAN_LOGGER_AVAILABLE = True
+except ImportError:
+    SCAN_LOGGER_AVAILABLE = False
+    log_ares_scan = None
+    ScanOutcome = None
+    CheckResult = None
+
 
 class ARESTrader:
     """
@@ -80,6 +90,15 @@ class ARESTrader:
             'details': {}
         }
 
+        # Track context for scan activity logging
+        scan_context = {
+            'market_data': None,
+            'gex_data': None,
+            'signal': None,
+            'checks': [],
+            'position': None
+        }
+
         try:
             self.db.update_heartbeat("SCANNING", f"Cycle at {now.strftime('%I:%M %p')}")
 
@@ -88,7 +107,11 @@ class ARESTrader:
             if not can_trade:
                 result['action'] = 'skip'
                 result['details']['skip_reason'] = reason
+                result['errors'].append(reason)
                 self.db.log("INFO", f"Skipping: {reason}")
+
+                # Log skip to scan activity
+                self._log_scan_activity(result, scan_context, reason)
                 return result
 
             # Step 2: Check and manage existing positions
@@ -98,11 +121,25 @@ class ARESTrader:
 
             # Step 3: Try to open new position (once per day)
             if not self.db.has_traded_today(today):
-                position = self._try_new_entry()
+                position, signal = self._try_new_entry_with_context()
                 if position:
                     result['trade_opened'] = True
                     result['action'] = 'opened'
                     result['details']['position'] = position.to_dict()
+                    scan_context['position'] = position
+                if signal:
+                    scan_context['signal'] = signal
+                    scan_context['market_data'] = {
+                        'underlying_price': signal.spot_price,
+                        'symbol': 'SPY',
+                        'vix': signal.vix,
+                        'expected_move': signal.expected_move,
+                    }
+                    scan_context['gex_data'] = {
+                        'regime': signal.gex_regime,
+                        'call_wall': signal.call_wall,
+                        'put_wall': signal.put_wall,
+                    }
 
             if result['positions_closed'] > 0:
                 result['action'] = 'closed' if result['action'] == 'none' else 'both'
@@ -112,6 +149,9 @@ class ARESTrader:
 
             self.db.update_heartbeat("IDLE", f"Cycle complete: {result['action']}")
 
+            # Log scan activity
+            self._log_scan_activity(result, scan_context)
+
         except Exception as e:
             logger.error(f"Cycle error: {e}")
             import traceback
@@ -120,7 +160,98 @@ class ARESTrader:
             result['action'] = 'error'
             self.db.log("ERROR", f"Cycle error: {e}")
 
+            # Log error to scan activity
+            self._log_scan_activity(result, scan_context, error_msg=str(e))
+
         return result
+
+    def _log_scan_activity(
+        self,
+        result: Dict,
+        context: Dict,
+        skip_reason: str = "",
+        error_msg: str = ""
+    ):
+        """Log scan activity for visibility"""
+        if not SCAN_LOGGER_AVAILABLE or not log_ares_scan:
+            return
+
+        try:
+            # Determine outcome
+            if error_msg:
+                outcome = ScanOutcome.ERROR
+                decision = f"Error: {error_msg}"
+            elif result.get('trade_opened'):
+                outcome = ScanOutcome.TRADED
+                decision = "Iron Condor opened"
+            elif skip_reason:
+                if 'Weekend' in skip_reason or 'CLOSED' in skip_reason:
+                    outcome = ScanOutcome.MARKET_CLOSED
+                elif 'Before' in skip_reason:
+                    outcome = ScanOutcome.BEFORE_WINDOW
+                elif 'After' in skip_reason:
+                    outcome = ScanOutcome.AFTER_WINDOW
+                elif 'Already traded' in skip_reason:
+                    outcome = ScanOutcome.SKIP
+                else:
+                    outcome = ScanOutcome.NO_TRADE
+                decision = skip_reason
+            else:
+                outcome = ScanOutcome.NO_TRADE
+                decision = "No valid signal"
+
+            # Build signal context
+            signal = context.get('signal')
+            signal_source = ""
+            signal_confidence = 0
+            oracle_advice = ""
+            oracle_reasoning = ""
+
+            if signal:
+                signal_source = signal.source
+                signal_confidence = signal.confidence
+                oracle_advice = "ENTER" if signal.is_valid else "SKIP"
+                oracle_reasoning = signal.reasoning
+
+            # Build trade details if position opened
+            position = context.get('position')
+            strike_selection = None
+            contracts = 0
+            premium = 0
+            max_risk = 0
+
+            if position:
+                strike_selection = {
+                    'put_long': position.put_long_strike,
+                    'put_short': position.put_short_strike,
+                    'call_short': position.call_short_strike,
+                    'call_long': position.call_long_strike,
+                }
+                contracts = position.contracts
+                premium = position.total_credit * 100 * contracts
+                max_risk = position.max_loss
+
+            log_ares_scan(
+                outcome=outcome,
+                decision_summary=decision,
+                action_taken=result.get('action', 'none'),
+                market_data=context.get('market_data'),
+                gex_data=context.get('gex_data'),
+                signal_source=signal_source,
+                signal_confidence=signal_confidence,
+                oracle_advice=oracle_advice,
+                oracle_reasoning=oracle_reasoning,
+                trade_executed=result.get('trade_opened', False),
+                position_id=position.position_id if position else "",
+                strike_selection=strike_selection,
+                contracts=contracts,
+                premium_collected=premium,
+                max_risk=max_risk,
+                error_message=error_msg,
+                generate_ai_explanation=False,  # Keep it simple for now
+            )
+        except Exception as e:
+            logger.warning(f"Failed to log scan activity: {e}")
 
     def _check_trading_conditions(
         self,
@@ -234,15 +365,22 @@ class ARESTrader:
 
     def _try_new_entry(self) -> Optional[IronCondorPosition]:
         """Try to open a new Iron Condor"""
+        position, _ = self._try_new_entry_with_context()
+        return position
+
+    def _try_new_entry_with_context(self) -> tuple[Optional[IronCondorPosition], Optional[Any]]:
+        """Try to open a new Iron Condor, returning both position and signal for logging"""
+        from .signals import IronCondorSignal
+
         # Generate signal
         signal = self.signals.generate_signal()
         if not signal:
             self.db.log("INFO", "No valid signal generated")
-            return None
+            return None, None
 
         if not signal.is_valid:
             self.db.log("INFO", f"Signal invalid: {signal.reasoning}")
-            return None
+            return None, signal  # Return signal for logging even if invalid
 
         # Log the signal
         self.db.log_signal(
@@ -266,7 +404,7 @@ class ARESTrader:
         position = self.executor.execute_iron_condor(signal)
         if not position:
             self.db.log("ERROR", "Execution failed", {'signal': signal.reasoning})
-            return None
+            return None, signal
 
         # Save to database
         if not self.db.save_position(position):
@@ -275,7 +413,7 @@ class ARESTrader:
 
         self.db.log("INFO", f"Opened: {position.position_id}", position.to_dict())
 
-        return position
+        return position, signal
 
     def _update_daily_summary(self, today: str, cycle_result: Dict) -> None:
         """Update daily performance"""

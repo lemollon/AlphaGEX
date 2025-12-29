@@ -309,3 +309,70 @@ class PEGASUSDatabase:
         except Exception as e:
             logger.warning(f"{self.bot_name}: Using default config: {e}")
         return config
+
+    def log_signal(
+        self,
+        spot_price: float,
+        vix: float,
+        expected_move: float,
+        call_wall: float,
+        put_wall: float,
+        gex_regime: str,
+        put_short: float,
+        put_long: float,
+        call_short: float,
+        call_long: float,
+        total_credit: float,
+        confidence: float,
+        was_executed: bool,
+        skip_reason: Optional[str] = None,
+        reasoning: Optional[str] = None
+    ) -> Optional[int]:
+        """Log an Iron Condor signal"""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    INSERT INTO pegasus_signals (
+                        spot_price, vix, expected_move,
+                        put_short, put_long, call_short, call_long,
+                        total_credit, confidence, was_executed, skip_reason
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                """, (
+                    spot_price, vix, expected_move,
+                    put_short, put_long, call_short, call_long,
+                    total_credit, confidence, was_executed, skip_reason
+                ))
+                signal_id = c.fetchone()[0]
+                conn.commit()
+                return signal_id
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to log signal: {e}")
+            return None
+
+    def update_daily_performance(self, summary) -> bool:
+        """Update daily performance record"""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    INSERT INTO pegasus_daily_perf (
+                        trade_date, trades_executed, positions_closed, realized_pnl
+                    ) VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (trade_date) DO UPDATE SET
+                        trades_executed = EXCLUDED.trades_executed,
+                        positions_closed = EXCLUDED.positions_closed,
+                        realized_pnl = EXCLUDED.realized_pnl,
+                        updated_at = NOW()
+                """, (
+                    summary.date,
+                    summary.trades_executed,
+                    summary.positions_closed,
+                    summary.realized_pnl,
+                ))
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to update daily perf: {e}")
+            return False
