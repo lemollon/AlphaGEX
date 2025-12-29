@@ -4354,7 +4354,8 @@ class ARESTrader:
                         else:
                             # Short legs: we'd buy these back, so add
                             total_value += mid
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Could not get quote for strike {strike}: {e}")
                     continue
 
             return total_value if total_value != 0 else None
