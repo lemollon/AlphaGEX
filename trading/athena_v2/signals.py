@@ -137,6 +137,8 @@ class SignalGenerator:
                 'flip_point': gex.get('flip_point', gex.get('gamma_flip', 0)),
                 'vix': vix,
                 'timestamp': datetime.now(CENTRAL_TZ),
+                # Raw Kronos data for audit
+                'kronos_raw': gex,
             }
         except Exception as e:
             logger.error(f"GEX fetch error: {e}")
@@ -326,11 +328,28 @@ class SignalGenerator:
             logger.info(f"R:R ratio {rr_ratio:.2f} below minimum {self.config.min_rr_ratio}")
             return None
 
-        # Step 9: Build and return signal
-        reasoning = f"{wall_reason}. "
+        # Step 9: Build detailed reasoning (FULL audit trail)
+        reasoning_parts = []
+        reasoning_parts.append(f"VIX={vix:.1f}, GEX Regime={gex_data['gex_regime']}")
+        reasoning_parts.append(wall_reason)
+
         if ml_signal:
-            reasoning += f"ML: {ml_direction} ({ml_confidence:.0%}). "
-        reasoning += f"R:R = {rr_ratio:.2f}:1"
+            reasoning_parts.append(f"ML: {ml_direction} ({ml_confidence:.0%})")
+            if ml_signal.get('win_probability'):
+                reasoning_parts.append(f"Win Prob: {ml_signal['win_probability']:.0%}")
+
+        reasoning_parts.append(f"R:R = {rr_ratio:.2f}:1")
+        reasoning = " | ".join(reasoning_parts)
+
+        # Determine wall type and distance
+        wall_type = ""
+        wall_distance = 0
+        if direction == "BULLISH":
+            wall_type = "PUT_WALL"
+            wall_distance = abs(((spot_price - gex_data['put_wall']) / spot_price) * 100)
+        else:
+            wall_type = "CALL_WALL"
+            wall_distance = abs(((gex_data['call_wall'] - spot_price) / spot_price) * 100)
 
         signal = TradeSignal(
             direction=direction,
@@ -341,16 +360,30 @@ class SignalGenerator:
             put_wall=gex_data['put_wall'],
             gex_regime=gex_data['gex_regime'],
             vix=vix,
+            # Kronos context
+            flip_point=gex_data.get('flip_point', 0),
+            net_gex=gex_data.get('net_gex', 0),
+            # Strikes
             long_strike=long_strike,
             short_strike=short_strike,
             expiration=expiration,
+            # Pricing
             estimated_debit=debit,
             max_profit=max_profit,
             max_loss=max_loss,
             rr_ratio=rr_ratio,
+            # Source and reasoning
             source="GEX_WALL" if not ml_signal else "GEX_ML",
             reasoning=reasoning,
+            # ML context (for audit)
+            ml_model_name=ml_signal.get('model_name', '') if ml_signal else '',
+            ml_win_probability=ml_signal.get('win_probability', 0) if ml_signal else 0,
+            ml_top_features='',  # Could extract from model if available
+            # Wall context
+            wall_type=wall_type,
+            wall_distance_pct=wall_distance,
         )
 
         logger.info(f"Signal generated: {direction} {spread_type.value} @ {spot_price}")
+        logger.info(f"Context: Wall={wall_type} ({wall_distance:.2f}%), ML={ml_direction or 'N/A'} ({ml_confidence:.0%})")
         return signal
