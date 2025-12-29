@@ -18,14 +18,42 @@ function getTimeGreeting(): string {
   return 'Good evening'
 }
 
-// Get GEXIS welcome message
+// Get GEXIS welcome message - JARVIS-style sophisticated greeting
 function getGexisWelcomeMessage(): string {
   const greeting = getTimeGreeting()
-  return `${greeting}, ${USER_NAME}. GEXIS online and at your service.
+  const now = new Date()
+  const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long' })
+  const isWeekend = now.getDay() === 0 || now.getDay() === 6
+  const hour = now.getHours()
 
-I have full access to AlphaGEX's trading intelligence. I can analyze market conditions, interpret gamma exposure levels, evaluate trade setups, and provide strategic insights.
+  // Dynamic context based on time
+  let marketContext = ''
+  if (isWeekend) {
+    marketContext = `Markets closed. Optimal time for strategy development and backtesting.`
+  } else if (hour < 8) {
+    marketContext = `Pre-market reconnaissance in progress. Scanning overnight flows.`
+  } else if (hour >= 9 && hour < 15) {
+    marketContext = `Markets LIVE. Full situational awareness engaged.`
+  } else if (hour >= 15 && hour < 16) {
+    marketContext = `Power hour active. Monitoring gamma acceleration.`
+  } else {
+    marketContext = `Post-market analysis mode. Processing today's data.`
+  }
 
-How may I assist you today?`
+  return `${greeting}, ${USER_NAME}. GEXIS online.
+
+**━━━ COMMAND CENTER ACTIVE ━━━**
+◉ Neural Core: Operational
+◉ Trading Intelligence: Connected
+◉ Pattern Recognition: Scanning
+◉ Risk Protocols: Armed
+
+**━━━ ${dayOfWeek.toUpperCase()} STATUS ━━━**
+${marketContext}
+
+Full access to AlphaGEX systems confirmed—gamma analytics, dealer flow intelligence, probability engines, and your complete trading ecosystem.
+
+*"What's our objective today, Prime?"*`
 }
 
 interface Message {

@@ -93,22 +93,54 @@ function getTimeGreeting(): string {
   return 'Good evening'
 }
 
-// Get GEXIS welcome message
+// Get GEXIS welcome message - JARVIS-style sophisticated greeting
 function getGexisWelcomeMessage(): string {
   const greeting = getTimeGreeting()
-  return `${greeting}, ${USER_NAME}. GEXIS online and at your service.
+  const now = new Date()
+  const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long' })
+  const isWeekend = now.getDay() === 0 || now.getDay() === 6
+  const hour = now.getHours()
+  const isMarketHours = hour >= 8 && hour < 16 && !isWeekend // Simplified CT check
 
-All systems are operational. I have full access to AlphaGEX's trading intelligence, including real-time GEX analysis, bot status monitoring, trade recommendations, and your trading history.
+  // Dynamic status based on time
+  let marketContext = ''
+  if (isWeekend) {
+    marketContext = `Markets are closed for the weekend. Perfect time for strategy review and preparation.`
+  } else if (hour < 8) {
+    marketContext = `Pre-market analysis available. European markets are active.`
+  } else if (hour >= 8 && hour < 9) {
+    marketContext = `Pre-market session active. Monitoring overnight developments.`
+  } else if (hour >= 9 && hour < 15) {
+    marketContext = `Markets are LIVE. All systems monitoring in real-time.`
+  } else if (hour >= 15 && hour < 16) {
+    marketContext = `Power hour in progress. Elevated gamma activity expected.`
+  } else {
+    marketContext = `After-hours session. Preparing tomorrow's intelligence.`
+  }
 
-Quick Commands:
-Type /help for available commands, or ask me anything naturally.
+  return `${greeting}, ${USER_NAME}. GEXIS online.
 
-How may I assist you today?`
+**━━━ SYSTEM STATUS ━━━**
+◉ Neural Core: Active
+◉ Market Feed: Connected
+◉ Trading Bots: Standing By
+◉ Risk Monitor: Vigilant
+
+**━━━ ${dayOfWeek.toUpperCase()} BRIEFING ━━━**
+${marketContext}
+
+I have full situational awareness of your AlphaGEX ecosystem—real-time gamma exposure, dealer positioning, bot performance, and your complete trading history.
+
+*"Shall I run a market scan, or do you have a specific objective today, Prime?"*`
 }
 
-// Get GEXIS chat cleared message
+// Get GEXIS chat cleared message - JARVIS-style
 function getGexisClearMessage(): string {
-  return `Chat cleared, ${USER_NAME}. Ready for a fresh conversation. What shall we analyze?`
+  return `Memory banks cleared, ${USER_NAME}.
+
+All previous context purged. Systems recalibrated.
+
+*Standing by for new directives.*`
 }
 
 // Play notification sound

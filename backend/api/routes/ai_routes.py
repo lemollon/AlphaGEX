@@ -1053,17 +1053,36 @@ async def get_gexis_welcome():
             else:
                 greeting = "Good evening"
 
+            # Get day of week for context
+            day_of_week = datetime.now().strftime('%A').upper()
+            hour = datetime.now().hour
+            is_weekend = datetime.now().weekday() >= 5
+
+            if is_weekend:
+                market_context = "Markets closed. Optimal time for strategy development."
+            elif hour < 9:
+                market_context = "Pre-market analysis in progress."
+            elif hour < 16:
+                market_context = "Markets LIVE. Full situational awareness engaged."
+            else:
+                market_context = "After-hours mode. Processing today's data."
+
             return {
                 "success": True,
-                "message": f"""{greeting}, Optionist Prime. GEXIS online and at your service.
+                "message": f"""{greeting}, Optionist Prime. GEXIS online.
 
-All systems are operational. I have full access to AlphaGEX's trading intelligence, including:
-- Real-time GEX analysis and market maker positioning
-- ARES, ATHENA, and ATLAS bot status monitoring
-- Trade recommendations and probability analysis
-- Your trading history and performance insights
+**━━━ SYSTEM STATUS ━━━**
+◉ Neural Core: Active
+◉ Trading Bots: Standing By
+◉ Market Feed: Connected
+◉ Risk Monitor: Vigilant
 
-How may I assist you today?"""
+**━━━ {day_of_week} BRIEFING ━━━**
+{market_context}
+
+Full access to AlphaGEX confirmed—gamma analytics, dealer positioning, bot performance, and your complete trading ecosystem.
+
+*"What's our objective today, Prime?"*"""
             }
     except Exception as e:
         return {"success": False, "error": str(e)}
