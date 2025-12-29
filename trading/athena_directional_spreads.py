@@ -453,7 +453,15 @@ class ATHENATrader:
                 elif name == 'mode':
                     self.config.mode = TradingMode.PAPER if value == 'paper' else TradingMode.LIVE
                 elif name == 'wall_filter_pct':
-                    self.config.wall_filter_pct = float(value)
+                    db_value = float(value)
+                    # CRITICAL: Backtest showed 0.5% = 98% WR, 1.0% = 90% WR
+                    # Warn if database has a suboptimal value
+                    if db_value > 0.5:
+                        logger.warning(f"ATHENA: Database wall_filter_pct={db_value}% is SUBOPTIMAL! "
+                                      f"Backtest showed: 0.5%=98% WR, 1.0%=90% WR. Using 0.5% instead.")
+                        self.config.wall_filter_pct = 0.5  # Override with optimal value
+                    else:
+                        self.config.wall_filter_pct = db_value
                 elif name == 'spread_width':
                     self.config.spread_width = int(value)
                 elif name == 'contracts_per_trade':
