@@ -2460,13 +2460,17 @@ Current:         ${self.current_capital:,.2f}
 
         return closed
 
-    def _close_position(self, position: SpreadPosition, reason: str) -> None:
-        """Close a position - includes P&L from all scale-outs"""
-        position.status = "closed"
-        position.close_date = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d %H:%M:%S")
+    def _close_position(self, position: SpreadPosition, reason: str) -> bool:
+        """Close a position - includes P&L from all scale-outs.
 
+        Returns True if position was closed successfully, False if DB update failed.
+        """
         # Get current spread value for final close price
         current_spread_value = self._get_current_spread_value(position)
+
+        # Prepare position for close (set fields for DB update)
+        position.status = "closed"
+        position.close_date = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d %H:%M:%S")
         position.close_price = current_spread_value
 
         # Calculate total realized P&L (scale-outs already recorded + any remaining)
@@ -2487,6 +2491,17 @@ Current:         ${self.current_capital:,.2f}
             'exit_reason': reason
         })
 
+        # Update database FIRST - before updating in-memory state
+        if not self._update_position_in_db(position, reason):
+            logger.error(f"ATHENA: Failed to update position {position.position_id} in DB - reverting")
+            # Revert position status since DB failed
+            position.status = "open"
+            position.close_date = None
+            position.close_price = None
+            position.realized_pnl = None
+            return False
+
+        # Only update in-memory state AFTER successful DB save
         # Move to closed positions
         if position in self.open_positions:
             self.open_positions.remove(position)
@@ -2531,19 +2546,13 @@ Current:         ${self.current_capital:,.2f}
             gex_data=exit_gex_data
         )
 
-        # Update database
-        self._update_position_in_db(position, reason)
-
         # Log exit decision
         self._log_exit_decision(position, reason)
 
-        self._log_to_db("INFO", f"Position closed: {reason}", {
-            'position_id': position.position_id,
-            'realized_pnl': position.realized_pnl
-        })
-
         # Update daily performance tracking
         self._update_daily_performance(position)
+
+        return True
 
     def _update_position_in_db(self, position: SpreadPosition, exit_reason: str) -> bool:
         """Update position status in database.
