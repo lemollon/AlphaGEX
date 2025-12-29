@@ -44,6 +44,10 @@ from typing import Optional, Dict, List, Tuple
 from functools import lru_cache
 from scipy.stats import norm
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+# Texas Central Time - standard timezone for all AlphaGEX operations
+CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
@@ -551,7 +555,7 @@ class PolygonDataFetcher:
             'has_intraday': False,
             'stocks_status': 'N/A',
             'options_status': 'N/A',
-            'detected_at': datetime.now().isoformat()
+            'detected_at': datetime.now(CENTRAL_TZ).isoformat()
         }
 
         try:
@@ -1296,13 +1300,13 @@ def fetch_vix_data() -> Dict:
         return {
             'current': 18.0,
             'source': 'default',
-            'timestamp': datetime.now().isoformat()
+            'timestamp': datetime.now(CENTRAL_TZ).isoformat()
         }
 
     return {
         'current': price,
         'source': 'polygon',
-        'timestamp': datetime.now().isoformat()
+        'timestamp': datetime.now(CENTRAL_TZ).isoformat()
     }
 
 

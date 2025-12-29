@@ -22,8 +22,12 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
+
+# Texas Central Time - standard timezone for all AlphaGEX operations
+CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 
 # =============================================================================
@@ -182,7 +186,7 @@ def calculate_gex_from_chain(
             flip_point=spot_price,
             max_pain=spot_price,
             data_source='empty',
-            timestamp=datetime.now()
+            timestamp=datetime.now(CENTRAL_TZ)
         )
 
     # Group by strike
@@ -693,7 +697,7 @@ class TradierGEXCalculator:
                 'expiration': zero_dte_expiration,
                 'contracts_count': len(zero_dte_contracts),
                 'data_source': 'tradier_0dte_calculated',
-                'timestamp': datetime.now().isoformat()
+                'timestamp': datetime.now(CENTRAL_TZ).isoformat()
             }
 
         except Exception as e:
@@ -802,7 +806,7 @@ class TradierGEXCalculator:
                 'expirations_included': sorted(expirations_included),
                 'contracts_count': len(all_contracts),
                 'data_source': 'tradier_all_expirations_calculated',
-                'timestamp': datetime.now().isoformat()
+                'timestamp': datetime.now(CENTRAL_TZ).isoformat()
             }
 
         except Exception as e:
