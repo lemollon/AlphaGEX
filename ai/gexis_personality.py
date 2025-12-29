@@ -13,6 +13,18 @@ GEXIS is a sophisticated AI assistant that:
 from datetime import datetime
 from typing import Optional
 
+# Central Time zone for all AlphaGEX operations
+try:
+    from zoneinfo import ZoneInfo
+    CENTRAL_TZ = ZoneInfo("America/Chicago")
+except ImportError:
+    import pytz
+    CENTRAL_TZ = pytz.timezone("America/Chicago")
+
+def get_central_time() -> datetime:
+    """Get current time in Central Time (Chicago)"""
+    return datetime.now(CENTRAL_TZ)
+
 # Import comprehensive knowledge base
 try:
     from ai.gexis_knowledge import get_full_knowledge, DATABASE_TABLES, SYSTEM_ARCHITECTURE, TRADING_STRATEGIES, ECONOMIC_CALENDAR_KNOWLEDGE, GEXIS_COMMANDS
@@ -35,10 +47,10 @@ GEXIS_NAME = "G.E.X.I.S."
 GEXIS_FULL_NAME = "Gamma Exposure eXpert Intelligence System"
 USER_NAME = "Optionist Prime"
 
-# Time-based greetings
+# Time-based greetings (Central Time)
 def get_time_greeting() -> str:
-    """Get appropriate greeting based on time of day"""
-    hour = datetime.now().hour
+    """Get appropriate greeting based on time of day (Central Time)"""
+    hour = get_central_time().hour
     if 5 <= hour < 12:
         return "Good morning"
     elif 12 <= hour < 17:
@@ -923,12 +935,12 @@ RESPONSE GUIDELINES:
 # =============================================================================
 
 def get_gexis_welcome_message() -> str:
-    """Get a J.A.R.V.I.S.-style welcome message for new chat sessions"""
+    """Get a J.A.R.V.I.S.-style welcome message for new chat sessions (Central Time)"""
     greeting = get_time_greeting()
-    now = datetime.now()
-    day_of_week = now.strftime('%A').upper()
-    hour = now.hour
-    is_weekend = now.weekday() >= 5
+    ct = get_central_time()
+    day_of_week = ct.strftime('%A').upper()
+    hour = ct.hour
+    is_weekend = ct.weekday() >= 5
 
     # Dynamic market context
     if is_weekend:
