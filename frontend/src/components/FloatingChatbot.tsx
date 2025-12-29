@@ -85,9 +85,14 @@ function extractSymbolFromQuery(query: string): string {
   return 'SPY'
 }
 
-// Get time-based greeting for GEXIS
+// Get Central Time date/time (all AlphaGEX operations use Chicago time)
+function getCentralTime(): Date {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Chicago' }))
+}
+
+// Get time-based greeting for GEXIS (Central Time)
 function getTimeGreeting(): string {
-  const hour = new Date().getHours()
+  const hour = getCentralTime().getHours()
   if (hour >= 5 && hour < 12) return 'Good morning'
   if (hour >= 12 && hour < 17) return 'Good afternoon'
   return 'Good evening'
@@ -96,11 +101,10 @@ function getTimeGreeting(): string {
 // Get GEXIS welcome message - JARVIS-style sophisticated greeting
 function getGexisWelcomeMessage(): string {
   const greeting = getTimeGreeting()
-  const now = new Date()
-  const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long' })
-  const isWeekend = now.getDay() === 0 || now.getDay() === 6
-  const hour = now.getHours()
-  const isMarketHours = hour >= 8 && hour < 16 && !isWeekend // Simplified CT check
+  const ct = getCentralTime()
+  const dayOfWeek = ct.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'America/Chicago' })
+  const isWeekend = ct.getDay() === 0 || ct.getDay() === 6
+  const hour = ct.getHours()
 
   // Dynamic status based on time
   let marketContext = ''

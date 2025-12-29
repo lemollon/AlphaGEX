@@ -12,6 +12,14 @@ import base64
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 
+# Central Time zone for all AlphaGEX operations
+try:
+    from zoneinfo import ZoneInfo
+    CENTRAL_TZ = ZoneInfo("America/Chicago")
+except ImportError:
+    import pytz
+    CENTRAL_TZ = pytz.timezone("America/Chicago")
+
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 import asyncio
@@ -1044,8 +1052,9 @@ async def get_gexis_welcome():
                 "proactive": False
             }
         else:
-            from datetime import datetime
-            hour = datetime.now().hour
+            # Use Central Time for all time-based logic
+            ct = datetime.now(CENTRAL_TZ)
+            hour = ct.hour
             if 5 <= hour < 12:
                 greeting = "Good morning"
             elif 12 <= hour < 17:
@@ -1053,10 +1062,9 @@ async def get_gexis_welcome():
             else:
                 greeting = "Good evening"
 
-            # Get day of week for context
-            day_of_week = datetime.now().strftime('%A').upper()
-            hour = datetime.now().hour
-            is_weekend = datetime.now().weekday() >= 5
+            # Get day of week for context (Central Time)
+            day_of_week = ct.strftime('%A').upper()
+            is_weekend = ct.weekday() >= 5
 
             if is_weekend:
                 market_context = "Markets closed. Optimal time for strategy development."
