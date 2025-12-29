@@ -2505,6 +2505,9 @@ class ARESTrader:
         # =========================================================================
         # CIRCUIT BREAKER CHECK - FIRST LINE OF DEFENSE
         # =========================================================================
+        # CRITICAL: Sync positions with DB before any checks to prevent phantom position issues
+        self._sync_open_positions_from_db()
+
         if CIRCUIT_BREAKER_AVAILABLE and is_trading_enabled:
             try:
                 can_trade, cb_reason = is_trading_enabled(
