@@ -158,8 +158,8 @@ class PolygonDataFetcher:
             return cached
 
         try:
-            to_date = datetime.now().strftime('%Y-%m-%d')
-            from_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+            to_date = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
+            from_date = (datetime.now(CENTRAL_TZ) - timedelta(days=days)).strftime('%Y-%m-%d')
 
             url = f"{self.base_url}/v2/aggs/ticker/{symbol}/range/{multiplier}/{timeframe}/{from_date}/{to_date}"
             params = {"apiKey": self.api_key, "sort": "asc", "limit": 50000}
@@ -586,7 +586,7 @@ class PolygonDataFetcher:
 
             # Test 3: Check options access
             try:
-                exp_date = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
+                exp_date = (datetime.now(CENTRAL_TZ) + timedelta(days=30)).strftime('%Y-%m-%d')
                 exp_str = exp_date.replace('-', '')[2:]
                 option_ticker = f"O:SPY{exp_str}C00570000"
 
@@ -687,7 +687,7 @@ class PolygonDataFetcher:
             option_ticker = f"O:{symbol}{exp_str}{type_char}{strike_str}"
 
             if end_date is None:
-                end_date = datetime.now().strftime('%Y-%m-%d')
+                end_date = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
 
             # Use aggregates endpoint for historical data
             url = f"{self.base_url}/v2/aggs/ticker/{option_ticker}/range/1/day/{start_date}/{end_date}"
@@ -1071,8 +1071,8 @@ def calculate_theoretical_option_price(
 
     # Calculate time to expiry
     try:
-        exp_date = datetime.strptime(expiration, '%Y-%m-%d')
-        days_to_exp = (exp_date - datetime.now()).days
+        exp_date = datetime.strptime(expiration, '%Y-%m-%d').replace(tzinfo=CENTRAL_TZ)
+        days_to_exp = (exp_date - datetime.now(CENTRAL_TZ)).days
         time_to_expiry = max(1, days_to_exp) / 365.0  # At least 1 day
     except (ValueError, TypeError):
         time_to_expiry = 7 / 365.0  # Default to 7 days
@@ -1219,7 +1219,7 @@ if __name__ == "__main__":
 
     # Test options
     print("\n3. Testing options chain...")
-    exp_date = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d')
+    exp_date = (datetime.now(CENTRAL_TZ) + timedelta(days=30)).strftime('%Y-%m-%d')
     chain = get_options_chain('SPY', expiration=exp_date)
     if chain is not None:
         print(f"   ✅ Got {len(chain)} options contracts")
@@ -1416,7 +1416,7 @@ def get_vix_for_date(date_str: str) -> float:
         target_date = datetime.strptime(date_str, '%Y-%m-%d')
 
         # Get VIX history covering the target date
-        days_ago = (datetime.now() - target_date).days + 5  # Buffer for weekends
+        days_ago = (datetime.now(CENTRAL_TZ) - target_date).days + 5  # Buffer for weekends
         days_ago = max(5, min(days_ago, 400))  # Limit to ~1 year of data
 
         # CRITICAL FIX: VIX is an index - try multiple ticker formats

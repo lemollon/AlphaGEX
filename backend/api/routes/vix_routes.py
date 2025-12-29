@@ -795,7 +795,8 @@ async def get_vix_signal_history(
                 try:
                     date_str = str(row.get('signal_date', ''))
                     time_str = str(row.get('signal_time', '00:00:00'))
-                    timestamp = f"{date_str}T{time_str}"
+                    # Create proper ISO 8601 timestamp with Central Time timezone
+                    timestamp = f"{date_str}T{time_str}-06:00"  # CT is UTC-6 (or -05:00 during DST)
                 except Exception:
                     timestamp = None
 

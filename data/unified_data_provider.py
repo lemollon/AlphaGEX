@@ -14,6 +14,10 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
+from zoneinfo import ZoneInfo
+
+# Texas Central Time - standard timezone for all AlphaGEX operations
+CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 logger = logging.getLogger(__name__)
 
@@ -162,7 +166,7 @@ class UnifiedDataProvider:
                         bid=float(data.get('bid', 0) or 0),
                         ask=float(data.get('ask', 0) or 0),
                         volume=int(data.get('volume', 0) or 0),
-                        timestamp=datetime.now(),
+                        timestamp=datetime.now(CENTRAL_TZ),
                         source='tradier'
                     )
             except Exception as e:
@@ -179,7 +183,7 @@ class UnifiedDataProvider:
                         bid=float(data.get('bid', 0) or 0),
                         ask=float(data.get('ask', 0) or 0),
                         volume=int(data.get('volume', 0) or 0),
-                        timestamp=datetime.now(),
+                        timestamp=datetime.now(CENTRAL_TZ),
                         source='polygon'
                     )
             except Exception as e:
@@ -309,7 +313,7 @@ class UnifiedDataProvider:
                     flip_point=float(data.get('flipPoint', 0) or data.get('flip_point', 0)),
                     call_gex=float(data.get('callGamma', 0) or data.get('call_gex', 0)),
                     put_gex=float(data.get('putGamma', 0) or data.get('put_gex', 0)),
-                    timestamp=datetime.now()
+                    timestamp=datetime.now(CENTRAL_TZ)
                 )
         except Exception as e:
             logger.error(f"Failed to get GEX for {symbol}: {e}")
@@ -374,7 +378,7 @@ class UnifiedDataProvider:
     ) -> List[HistoricalBar]:
         """Get history from Tradier"""
         # Tradier uses different endpoint for historical data
-        end_date = datetime.now()
+        end_date = datetime.now(CENTRAL_TZ)
         start_date = end_date - timedelta(days=days)
 
         params = {
@@ -418,7 +422,7 @@ class UnifiedDataProvider:
         interval: str
     ) -> List[HistoricalBar]:
         """Get history from Polygon"""
-        end_date = datetime.now()
+        end_date = datetime.now(CENTRAL_TZ)
         start_date = end_date - timedelta(days=days)
 
         # Map interval to Polygon format
@@ -444,7 +448,7 @@ class UnifiedDataProvider:
         bars = []
         for bar in (data or []):
             bars.append(HistoricalBar(
-                timestamp=datetime.fromtimestamp(bar['t'] / 1000) if 't' in bar else datetime.now(),
+                timestamp=datetime.fromtimestamp(bar['t'] / 1000, tz=CENTRAL_TZ) if 't' in bar else datetime.now(CENTRAL_TZ),
                 open=float(bar.get('o', 0)),
                 high=float(bar.get('h', 0)),
                 low=float(bar.get('l', 0)),

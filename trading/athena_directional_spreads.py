@@ -745,11 +745,13 @@ Open Positions:  {len(self.open_positions)}/{self.config.max_open_positions}
             from datetime import datetime
             now = datetime.now(CENTRAL_TZ)
 
-            # Calculate duration
+            # Calculate duration (timezone-aware)
             try:
-                open_time = datetime.strptime(position.open_date, "%Y-%m-%d")
-                duration = now - open_time.replace(tzinfo=CENTRAL_TZ)
-                duration_str = f"{duration.seconds // 3600}h {(duration.seconds % 3600) // 60}m"
+                # Parse date string and make timezone-aware
+                open_date_naive = datetime.strptime(position.open_date, "%Y-%m-%d")
+                open_time = open_date_naive.replace(tzinfo=CENTRAL_TZ)
+                duration = now - open_time
+                duration_str = f"{duration.days}d {duration.seconds // 3600}h {(duration.seconds % 3600) // 60}m"
             except (ValueError, TypeError, AttributeError) as e:
                 logger.debug(f"Could not calculate duration: {e}")
                 duration_str = "N/A"
@@ -1335,12 +1337,18 @@ Current:         ${self.current_capital:,.2f}
         """Check if we should trade today"""
         now = datetime.now(CENTRAL_TZ)
 
-        # Check if market hours
-        market_open = now.replace(hour=8, minute=30, second=0)
-        market_close = now.replace(hour=15, minute=0, second=0)
+        # Check if weekend (Saturday=5, Sunday=6)
+        if now.weekday() >= 5:
+            return False, "Market closed - weekend"
+
+        # Check if market hours (use config times)
+        start_parts = self.config.entry_start_time.split(':')
+        end_parts = self.config.entry_end_time.split(':')
+        market_open = now.replace(hour=int(start_parts[0]), minute=int(start_parts[1]), second=0)
+        market_close = now.replace(hour=int(end_parts[0]), minute=int(end_parts[1]), second=0)
 
         if not (market_open <= now <= market_close):
-            return False, "Outside market hours"
+            return False, f"Outside trading window ({self.config.entry_start_time} - {self.config.entry_end_time} CT)"
 
         # Check daily trade limit
         today = now.strftime("%Y-%m-%d")

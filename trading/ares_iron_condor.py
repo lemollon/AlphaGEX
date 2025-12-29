@@ -3739,8 +3739,9 @@ class ARESTrader:
                 from data.unified_data_provider import get_unified_provider
                 provider = get_unified_provider()
                 if provider:
-                    # Get enough days of history to cover the date
-                    days_back = (datetime.now(self.tz) - datetime.strptime(for_date, '%Y-%m-%d').replace(tzinfo=self.tz)).days + 5
+                    # Get enough days of history to cover the date (timezone-aware)
+                    target_date = datetime.strptime(for_date, '%Y-%m-%d').replace(tzinfo=self.tz)
+                    days_back = (datetime.now(self.tz) - target_date).days + 5
                     bars = provider.get_historical_bars(ticker, days=days_back, interval='day')
 
                     if bars:
@@ -4356,10 +4357,10 @@ class ARESTrader:
         - Distance to short strikes (delta exposure)
         """
         try:
-            # Parse expiration
-            exp_date = datetime.strptime(position.expiration, '%Y-%m-%d')
+            # Parse expiration (timezone-aware)
+            exp_date = datetime.strptime(position.expiration, '%Y-%m-%d').replace(tzinfo=self.tz)
             now = datetime.now(self.tz)
-            dte = (exp_date - now.replace(tzinfo=None)).days + 1
+            dte = (exp_date.date() - now.date()).days + 1
 
             # Credit received
             credit = position.total_credit
