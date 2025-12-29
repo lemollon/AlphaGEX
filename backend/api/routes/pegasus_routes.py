@@ -1,0 +1,717 @@
+"""
+PEGASUS SPX Iron Condor Bot API Routes
+========================================
+
+API endpoints for the PEGASUS SPX Iron Condor trading bot.
+Trades SPX options with $10 spread widths using SPXW weekly options.
+"""
+
+import logging
+from datetime import datetime, timedelta
+from typing import Optional
+from fastapi import APIRouter, HTTPException, Depends, Request
+from zoneinfo import ZoneInfo
+
+from database_adapter import get_connection
+
+# Authentication middleware
+try:
+    from backend.api.auth_middleware import require_api_key, require_admin, AuthInfo
+    AUTH_AVAILABLE = True
+except ImportError:
+    AUTH_AVAILABLE = False
+    require_api_key = None
+    require_admin = None
+
+router = APIRouter(prefix="/api/pegasus", tags=["PEGASUS"])
+logger = logging.getLogger(__name__)
+
+# Try to import PEGASUS trader
+pegasus_trader = None
+try:
+    from trading.pegasus import PEGASUSTrader, PEGASUSConfig, TradingMode, StrategyPreset
+    PEGASUS_AVAILABLE = True
+except ImportError as e:
+    PEGASUS_AVAILABLE = False
+    PEGASUSConfig = None
+    StrategyPreset = None
+    logger.warning(f"PEGASUS module not available: {e}")
+
+
+def get_pegasus_instance():
+    """Get the PEGASUS trader instance from scheduler if available"""
+    global pegasus_trader
+    if pegasus_trader:
+        return pegasus_trader
+
+    try:
+        from scheduler.trader_scheduler import get_pegasus_trader
+        pegasus_trader = get_pegasus_trader()
+        return pegasus_trader
+    except Exception:
+        return None
+
+
+def _get_heartbeat(bot_name: str) -> dict:
+    """Get heartbeat info for a bot from the database"""
+    CENTRAL_TZ = ZoneInfo("America/Chicago")
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT last_heartbeat, status, scan_count, details
+            FROM bot_heartbeats
+            WHERE bot_name = %s
+        ''', (bot_name,))
+
+        row = cursor.fetchone()
+        conn.close()
+
+        if row:
+            last_heartbeat, status, scan_count, details = row
+
+            if last_heartbeat:
+                if last_heartbeat.tzinfo is None:
+                    last_heartbeat = last_heartbeat.replace(tzinfo=ZoneInfo("UTC"))
+                last_heartbeat_ct = last_heartbeat.astimezone(CENTRAL_TZ)
+            else:
+                last_heartbeat_ct = None
+
+            return {
+                'last_scan': last_heartbeat_ct.strftime('%Y-%m-%d %H:%M:%S CT') if last_heartbeat_ct else None,
+                'last_scan_iso': last_heartbeat_ct.isoformat() if last_heartbeat_ct else None,
+                'status': status,
+                'scan_count_today': scan_count or 0,
+                'details': details or {}
+            }
+        return {
+            'last_scan': None,
+            'last_scan_iso': None,
+            'status': 'NEVER_RUN',
+            'scan_count_today': 0,
+            'details': {}
+        }
+    except Exception as e:
+        logger.debug(f"Could not get heartbeat for {bot_name}: {e}")
+        return {
+            'last_scan': None,
+            'last_scan_iso': None,
+            'status': 'UNKNOWN',
+            'scan_count_today': 0,
+            'details': {}
+        }
+
+
+@router.get("/status")
+async def get_pegasus_status():
+    """
+    Get current PEGASUS bot status.
+
+    Returns mode, capital, P&L, positions, configuration, and heartbeat.
+    """
+    pegasus = get_pegasus_instance()
+    heartbeat = _get_heartbeat('PEGASUS')
+
+    if not pegasus:
+        # PEGASUS not running - read stats from database
+        starting_capital = 200000
+        total_pnl = 0
+        trade_count = 0
+        win_count = 0
+        open_count = 0
+        closed_count = 0
+        traded_today = False
+        today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
+
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                SELECT
+                    COUNT(*) as total,
+                    SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_count,
+                    SUM(CASE WHEN status IN ('closed', 'expired') THEN 1 ELSE 0 END) as closed_count,
+                    SUM(CASE WHEN status IN ('closed', 'expired') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                    COALESCE(SUM(CASE WHEN status IN ('closed', 'expired') THEN realized_pnl ELSE 0 END), 0) as total_pnl,
+                    SUM(CASE WHEN DATE(open_time AT TIME ZONE 'America/Chicago') = %s THEN 1 ELSE 0 END) as traded_today
+                FROM pegasus_positions
+            ''', (today,))
+            row = cursor.fetchone()
+            conn.close()
+
+            if row:
+                trade_count = row[0] or 0
+                open_count = row[1] or 0
+                closed_count = row[2] or 0
+                win_count = row[3] or 0
+                total_pnl = float(row[4] or 0)
+                traded_today = (row[5] or 0) > 0
+        except Exception as db_err:
+            logger.debug(f"Could not read PEGASUS stats from database: {db_err}")
+
+        win_rate = round((win_count / closed_count) * 100, 1) if closed_count > 0 else 0
+
+        return {
+            "success": True,
+            "data": {
+                "mode": "paper",
+                "ticker": "SPX",
+                "capital": round(starting_capital + total_pnl, 2),
+                "total_pnl": round(total_pnl, 2),
+                "trade_count": trade_count,
+                "win_rate": win_rate,
+                "open_positions": open_count,
+                "closed_positions": closed_count,
+                "traded_today": traded_today,
+                "in_trading_window": False,
+                "high_water_mark": round(max(starting_capital, starting_capital + total_pnl), 2),
+                "current_time": datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d %H:%M:%S CT'),
+                "is_active": False,
+                "scan_interval_minutes": 5,
+                "heartbeat": heartbeat,
+                "config": {
+                    "risk_per_trade": 10.0,
+                    "spread_width": 10.0,
+                    "sd_multiplier": 1.0,
+                    "ticker": "SPX"
+                },
+                "source": "database",
+                "message": "Stats loaded from database - PEGASUS worker running separately"
+            }
+        }
+
+    try:
+        status = pegasus.get_status()
+        status['is_active'] = True
+        status['scan_interval_minutes'] = 5
+        status['heartbeat'] = heartbeat
+
+        return {
+            "success": True,
+            "data": status
+        }
+    except Exception as e:
+        logger.error(f"Error getting PEGASUS status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/positions")
+async def get_pegasus_positions():
+    """
+    Get PEGASUS open and recently closed positions.
+
+    Returns Iron Condor positions with full details.
+    """
+    pegasus = get_pegasus_instance()
+
+    if not pegasus:
+        # PEGASUS not running - read from database directly
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Get open positions
+            cursor.execute('''
+                SELECT
+                    position_id, expiration,
+                    put_long_strike, put_short_strike, call_short_strike, call_long_strike,
+                    put_credit, call_credit, total_credit,
+                    contracts, spread_width, max_loss,
+                    underlying_at_entry, vix_at_entry, status
+                FROM pegasus_positions
+                WHERE status = 'open'
+                ORDER BY open_time DESC
+            ''')
+            open_rows = cursor.fetchall()
+
+            # Get closed positions (last 100)
+            cursor.execute('''
+                SELECT
+                    position_id, expiration,
+                    put_long_strike, put_short_strike, call_short_strike, call_long_strike,
+                    put_credit, call_credit, total_credit,
+                    contracts, spread_width, max_loss, close_price, realized_pnl,
+                    underlying_at_entry, vix_at_entry, status, close_reason
+                FROM pegasus_positions
+                WHERE status IN ('closed', 'expired')
+                ORDER BY close_time DESC
+                LIMIT 100
+            ''')
+            closed_rows = cursor.fetchall()
+            conn.close()
+
+            # Format open positions
+            open_positions = []
+            for row in open_rows:
+                pos_id, exp, put_long, put_short, call_short, call_long, \
+                    put_cr, call_cr, total_cr, contracts, spread_w, max_loss, \
+                    underlying, vix, status = row
+
+                dte = 0
+                if exp:
+                    try:
+                        exp_date = datetime.strptime(str(exp), "%Y-%m-%d").date()
+                        today = datetime.now(ZoneInfo("America/Chicago")).date()
+                        dte = (exp_date - today).days
+                    except:
+                        pass
+
+                open_positions.append({
+                    "position_id": pos_id,
+                    "ticker": "SPX",
+                    "expiration": str(exp) if exp else None,
+                    "dte": dte,
+                    "is_0dte": dte == 0,
+                    "put_long_strike": float(put_long) if put_long else 0,
+                    "put_short_strike": float(put_short) if put_short else 0,
+                    "call_short_strike": float(call_short) if call_short else 0,
+                    "call_long_strike": float(call_long) if call_long else 0,
+                    "put_spread": f"{put_long}/{put_short}P",
+                    "call_spread": f"{call_short}/{call_long}C",
+                    "put_credit": float(put_cr) if put_cr else 0,
+                    "call_credit": float(call_cr) if call_cr else 0,
+                    "total_credit": float(total_cr) if total_cr else 0,
+                    "contracts": contracts or 0,
+                    "spread_width": float(spread_w) if spread_w else 0,
+                    "max_loss": float(max_loss) if max_loss else 0,
+                    "premium_collected": float(total_cr or 0) * 100 * (contracts or 0),
+                    "underlying_at_entry": float(underlying) if underlying else 0,
+                    "vix_at_entry": float(vix) if vix else 0,
+                    "status": status
+                })
+
+            # Format closed positions
+            closed_positions = []
+            for row in closed_rows:
+                pos_id, exp, put_long, put_short, call_short, call_long, \
+                    put_cr, call_cr, total_cr, contracts, spread_w, max_loss, close_price, realized_pnl, \
+                    underlying, vix, status, close_reason = row
+
+                max_profit = float(total_cr or 0) * 100 * (contracts or 0)
+                return_pct = round((float(realized_pnl or 0) / max_profit) * 100, 1) if max_profit else 0
+
+                closed_positions.append({
+                    "position_id": pos_id,
+                    "ticker": "SPX",
+                    "expiration": str(exp) if exp else None,
+                    "put_long_strike": float(put_long) if put_long else 0,
+                    "put_short_strike": float(put_short) if put_short else 0,
+                    "call_short_strike": float(call_short) if call_short else 0,
+                    "call_long_strike": float(call_long) if call_long else 0,
+                    "put_spread": f"{put_long}/{put_short}P",
+                    "call_spread": f"{call_short}/{call_long}C",
+                    "contracts": contracts or 0,
+                    "spread_width": float(spread_w) if spread_w else 0,
+                    "total_credit": float(total_cr) if total_cr else 0,
+                    "max_profit": max_profit,
+                    "max_loss": float(max_loss) if max_loss else 0,
+                    "close_price": float(close_price) if close_price else 0,
+                    "realized_pnl": float(realized_pnl) if realized_pnl else 0,
+                    "return_pct": return_pct,
+                    "close_reason": close_reason,
+                    "underlying_at_entry": float(underlying) if underlying else 0,
+                    "vix_at_entry": float(vix) if vix else 0,
+                    "status": status
+                })
+
+            return {
+                "success": True,
+                "data": {
+                    "open_positions": open_positions,
+                    "closed_positions": closed_positions,
+                    "open_count": len(open_positions),
+                    "closed_count": len(closed_positions),
+                    "source": "database"
+                }
+            }
+        except Exception as db_err:
+            logger.warning(f"Could not read positions from database: {db_err}")
+
+        return {
+            "success": True,
+            "data": {
+                "open_positions": [],
+                "closed_positions": [],
+                "message": "No positions found"
+            }
+        }
+
+    try:
+        positions = pegasus.get_positions()
+        open_positions = []
+        for pos in positions:
+            dte = 0
+            if pos.expiration:
+                try:
+                    exp_date = datetime.strptime(pos.expiration, "%Y-%m-%d").date()
+                    today = datetime.now(ZoneInfo("America/Chicago")).date()
+                    dte = (exp_date - today).days
+                except:
+                    pass
+
+            open_positions.append({
+                "position_id": pos.position_id,
+                "ticker": "SPX",
+                "expiration": pos.expiration,
+                "dte": dte,
+                "is_0dte": dte == 0,
+                "put_long_strike": pos.put_long_strike,
+                "put_short_strike": pos.put_short_strike,
+                "call_short_strike": pos.call_short_strike,
+                "call_long_strike": pos.call_long_strike,
+                "put_spread": f"{pos.put_long_strike}/{pos.put_short_strike}P",
+                "call_spread": f"{pos.call_short_strike}/{pos.call_long_strike}C",
+                "put_credit": pos.put_credit,
+                "call_credit": pos.call_credit,
+                "total_credit": pos.total_credit,
+                "contracts": pos.contracts,
+                "spread_width": pos.spread_width,
+                "max_loss": pos.max_loss,
+                "max_profit": pos.max_profit,
+                "premium_collected": pos.total_credit * 100 * pos.contracts,
+                "underlying_at_entry": pos.underlying_at_entry,
+                "vix_at_entry": pos.vix_at_entry,
+                "status": pos.status.value
+            })
+
+        return {
+            "success": True,
+            "data": {
+                "open_positions": open_positions,
+                "closed_positions": [],
+                "open_count": len(open_positions),
+                "closed_count": 0
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting PEGASUS positions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/equity-curve")
+async def get_pegasus_equity_curve(days: int = 30):
+    """
+    Get PEGASUS equity curve data.
+
+    Args:
+        days: Number of days of history (default 30)
+
+    Returns equity curve built from closed positions.
+    """
+    starting_capital = 200000
+    today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT DATE(close_time AT TIME ZONE 'America/Chicago') as close_date,
+                   realized_pnl, position_id
+            FROM pegasus_positions
+            WHERE status IN ('closed', 'expired')
+            AND close_time IS NOT NULL
+            ORDER BY close_time ASC
+        ''')
+        rows = cursor.fetchall()
+        conn.close()
+
+        if rows:
+            equity_curve = []
+            positions_by_date = {}
+            for row in rows:
+                close_date, pnl, pos_id = row
+                date_key = str(close_date) if close_date else None
+                if date_key:
+                    if date_key not in positions_by_date:
+                        positions_by_date[date_key] = []
+                    positions_by_date[date_key].append({'pnl': float(pnl or 0), 'id': pos_id})
+
+            sorted_dates = sorted(positions_by_date.keys())
+            cumulative_pnl = 0
+
+            if sorted_dates:
+                equity_curve.append({
+                    "date": sorted_dates[0],
+                    "equity": starting_capital,
+                    "pnl": 0,
+                    "daily_pnl": 0,
+                    "return_pct": 0
+                })
+
+            for date_str in sorted_dates:
+                daily_pnl = sum(p['pnl'] for p in positions_by_date[date_str])
+                cumulative_pnl += daily_pnl
+                current_equity = starting_capital + cumulative_pnl
+
+                equity_curve.append({
+                    "date": date_str,
+                    "equity": round(current_equity, 2),
+                    "pnl": round(cumulative_pnl, 2),
+                    "daily_pnl": round(daily_pnl, 2),
+                    "return_pct": round((cumulative_pnl / starting_capital) * 100, 2),
+                    "trades_closed": len(positions_by_date[date_str])
+                })
+
+            if equity_curve and equity_curve[-1]["date"] != today:
+                equity_curve.append({
+                    "date": today,
+                    "equity": round(starting_capital + cumulative_pnl, 2),
+                    "pnl": round(cumulative_pnl, 2),
+                    "daily_pnl": 0,
+                    "return_pct": round((cumulative_pnl / starting_capital) * 100, 2)
+                })
+
+            return {
+                "success": True,
+                "data": {
+                    "equity_curve": equity_curve,
+                    "starting_capital": starting_capital,
+                    "current_equity": round(starting_capital + cumulative_pnl, 2),
+                    "total_pnl": round(cumulative_pnl, 2),
+                    "total_return_pct": round((cumulative_pnl / starting_capital) * 100, 2),
+                    "closed_positions_count": len(rows),
+                    "source": "database"
+                }
+            }
+    except Exception as db_err:
+        logger.warning(f"Could not read equity curve from database: {db_err}")
+
+    return {
+        "success": True,
+        "data": {
+            "equity_curve": [{
+                "date": today,
+                "equity": starting_capital,
+                "pnl": 0,
+                "daily_pnl": 0,
+                "return_pct": 0
+            }],
+            "starting_capital": starting_capital,
+            "current_equity": starting_capital,
+            "total_pnl": 0,
+            "message": "No closed positions found"
+        }
+    }
+
+
+@router.post("/run-cycle")
+async def run_pegasus_cycle(
+    request: Request,
+    auth: AuthInfo = Depends(require_admin) if AUTH_AVAILABLE and require_admin else None
+):
+    """
+    Manually trigger a PEGASUS trading cycle.
+
+    This will attempt to open a new SPX Iron Condor position if conditions are met.
+
+    PROTECTED: Requires admin authentication.
+    """
+    pegasus = get_pegasus_instance()
+
+    if not pegasus:
+        raise HTTPException(
+            status_code=503,
+            detail="PEGASUS not initialized. Wait for scheduled startup."
+        )
+
+    try:
+        result = pegasus.run_cycle()
+
+        return {
+            "success": True,
+            "data": result,
+            "message": "PEGASUS cycle completed"
+        }
+    except Exception as e:
+        logger.error(f"Error running PEGASUS cycle: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/config")
+async def get_pegasus_config():
+    """
+    Get PEGASUS configuration parameters.
+    """
+    pegasus = get_pegasus_instance()
+
+    default_config = {
+        "ticker": "SPX",
+        "spread_width": 10.0,
+        "risk_per_trade_pct": 10.0,
+        "sd_multiplier": 1.0,
+        "min_credit": 1.50,
+        "profit_target_pct": 50,
+        "use_stop_loss": False,
+        "entry_window": "08:30 - 15:55 CT",
+        "description": "PEGASUS trades SPX Iron Condors with $10 spread widths using SPXW weekly options."
+    }
+
+    if pegasus and hasattr(pegasus, 'config'):
+        config = pegasus.config
+        return {
+            "success": True,
+            "data": {
+                "ticker": "SPX",
+                "spread_width": config.spread_width,
+                "risk_per_trade_pct": config.risk_per_trade_pct,
+                "sd_multiplier": config.sd_multiplier,
+                "min_credit": config.min_credit,
+                "profit_target_pct": config.profit_target_pct,
+                "use_stop_loss": config.use_stop_loss,
+                "entry_window": f"{config.entry_start} - {config.entry_end} CT",
+                "mode": config.mode.value
+            }
+        }
+
+    return {
+        "success": True,
+        "data": default_config
+    }
+
+
+@router.post("/force-close")
+async def force_close_pegasus_positions(
+    request: Request,
+    auth: AuthInfo = Depends(require_admin) if AUTH_AVAILABLE and require_admin else None
+):
+    """
+    Force close all open PEGASUS positions.
+
+    PROTECTED: Requires admin authentication.
+    """
+    pegasus = get_pegasus_instance()
+
+    if not pegasus:
+        raise HTTPException(
+            status_code=503,
+            detail="PEGASUS not initialized."
+        )
+
+    try:
+        result = pegasus.force_close_all("MANUAL")
+
+        return {
+            "success": True,
+            "data": result,
+            "message": f"Closed {result.get('closed', 0)} positions"
+        }
+    except Exception as e:
+        logger.error(f"Error force closing PEGASUS positions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/live-pnl")
+async def get_pegasus_live_pnl():
+    """
+    Get real-time unrealized P&L for all open PEGASUS positions.
+    """
+    pegasus = get_pegasus_instance()
+    today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
+
+    if not pegasus:
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                SELECT
+                    position_id, expiration,
+                    put_long_strike, put_short_strike,
+                    call_short_strike, call_long_strike,
+                    total_credit, contracts, max_loss, spread_width,
+                    underlying_at_entry, vix_at_entry
+                FROM pegasus_positions
+                WHERE status = 'open'
+            ''')
+            open_rows = cursor.fetchall()
+
+            cursor.execute('''
+                SELECT COALESCE(SUM(realized_pnl), 0)
+                FROM pegasus_positions
+                WHERE status IN ('closed', 'expired')
+                AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
+            ''', (today,))
+            realized_row = cursor.fetchone()
+            today_realized = float(realized_row[0]) if realized_row else 0
+            conn.close()
+
+            positions = []
+            for row in open_rows:
+                (pos_id, exp, put_long, put_short, call_short, call_long,
+                 credit, contracts, max_loss, spread_width, entry_price, vix_entry) = row
+
+                credit_received = float(credit or 0) * 100 * (contracts or 0)
+
+                positions.append({
+                    'position_id': pos_id,
+                    'expiration': str(exp) if exp else None,
+                    'put_long_strike': float(put_long) if put_long else 0,
+                    'put_short_strike': float(put_short) if put_short else 0,
+                    'call_short_strike': float(call_short) if call_short else 0,
+                    'call_long_strike': float(call_long) if call_long else 0,
+                    'credit_received': round(credit_received, 2),
+                    'contracts': contracts or 0,
+                    'max_loss': round(float(max_loss or 0) * 100 * (contracts or 0), 2),
+                    'underlying_at_entry': float(entry_price) if entry_price else 0,
+                    'vix_at_entry': float(vix_entry) if vix_entry else 0,
+                    'unrealized_pnl': None,
+                    'note': 'Live valuation requires PEGASUS worker'
+                })
+
+            return {
+                "success": True,
+                "data": {
+                    "total_unrealized_pnl": None,
+                    "total_realized_pnl": round(today_realized, 2),
+                    "net_pnl": round(today_realized, 2),
+                    "positions": positions,
+                    "position_count": len(positions),
+                    "source": "database",
+                    "message": "Open positions loaded from DB - live valuation requires PEGASUS worker"
+                }
+            }
+        except Exception as db_err:
+            logger.warning(f"Could not read PEGASUS live P&L from database: {db_err}")
+
+        return {
+            "success": True,
+            "data": {
+                "total_unrealized_pnl": 0,
+                "total_realized_pnl": 0,
+                "net_pnl": 0,
+                "positions": [],
+                "position_count": 0,
+                "message": "PEGASUS not initialized"
+            }
+        }
+
+    try:
+        status = pegasus.get_status()
+        positions = pegasus.get_positions()
+
+        return {
+            "success": True,
+            "data": {
+                "total_unrealized_pnl": status.get('unrealized_pnl', 0),
+                "total_realized_pnl": 0,
+                "net_pnl": status.get('unrealized_pnl', 0),
+                "positions": [
+                    {
+                        'position_id': p.position_id,
+                        'expiration': p.expiration,
+                        'credit_received': p.total_credit * 100 * p.contracts,
+                        'contracts': p.contracts,
+                        'status': p.status.value
+                    }
+                    for p in positions
+                ],
+                "position_count": len(positions)
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting PEGASUS live P&L: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

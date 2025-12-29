@@ -50,18 +50,19 @@ except ImportError:
 router = APIRouter(prefix="/api/athena", tags=["ATHENA"])
 logger = logging.getLogger(__name__)
 
-# Try to import ATHENA trader
+# Try to import ATHENA V2 trader
 athena_trader = None
 try:
-    from trading.athena_directional_spreads import ATHENATrader, TradingMode, run_athena
+    from trading.athena_v2 import ATHENATrader, ATHENAConfig, TradingMode
     ATHENA_AVAILABLE = True
 except ImportError as e:
     ATHENA_AVAILABLE = False
-    logger.warning(f"ATHENA module not available: {e}")
+    ATHENAConfig = None
+    logger.warning(f"ATHENA V2 module not available: {e}")
 
 
 def get_athena_instance():
-    """Get the ATHENA trader instance"""
+    """Get the ATHENA V2 trader instance"""
     global athena_trader
     if athena_trader:
         return athena_trader
@@ -75,13 +76,14 @@ def get_athena_instance():
     except Exception as e:
         logger.debug(f"Could not get ATHENA from scheduler: {e}")
 
-    # Initialize a new instance if needed
-    if ATHENA_AVAILABLE:
+    # Initialize a new V2 instance if needed
+    if ATHENA_AVAILABLE and ATHENAConfig:
         try:
-            athena_trader = run_athena(capital=100_000, mode="paper")
+            config = ATHENAConfig(mode=TradingMode.PAPER)
+            athena_trader = ATHENATrader(config=config)
             return athena_trader
         except Exception as e:
-            logger.error(f"Failed to initialize ATHENA: {e}")
+            logger.error(f"Failed to initialize ATHENA V2: {e}")
 
     return None
 
@@ -710,7 +712,7 @@ async def run_athena_cycle(
     auth: AuthInfo = Depends(require_admin) if AUTH_AVAILABLE and require_admin else None
 ):
     """
-    Manually trigger an ATHENA trading cycle.
+    Manually trigger an ATHENA V2 trading cycle.
 
     Use for testing or forcing a trade check outside the scheduler.
 
@@ -722,7 +724,8 @@ async def run_athena_cycle(
         raise HTTPException(status_code=503, detail="ATHENA not available")
 
     try:
-        result = athena.run_daily_cycle()
+        # V2 uses run_cycle() instead of run_daily_cycle()
+        result = athena.run_cycle()
         return {
             "success": True,
             "data": result

@@ -1,0 +1,476 @@
+"""
+ARES V2 - Order Executor
+=========================
+
+Clean order execution for Iron Condors via Tradier.
+
+Iron Condor = Bull Put Spread + Bear Call Spread
+Both are credit spreads (receive premium).
+"""
+
+import logging
+import uuid
+from datetime import datetime
+from typing import Optional, Dict, Any, Tuple
+from zoneinfo import ZoneInfo
+
+from .models import (
+    IronCondorPosition, PositionStatus,
+    IronCondorSignal, ARESConfig, TradingMode, CENTRAL_TZ
+)
+
+logger = logging.getLogger(__name__)
+
+# Tradier import
+try:
+    from data.tradier_data_fetcher import TradierDataFetcher
+    TRADIER_AVAILABLE = True
+except ImportError:
+    TRADIER_AVAILABLE = False
+    TradierDataFetcher = None
+
+# Data provider
+try:
+    from data.unified_data_provider import get_price
+    DATA_AVAILABLE = True
+except ImportError:
+    DATA_AVAILABLE = False
+
+
+class OrderExecutor:
+    """
+    Executes Iron Condor orders via Tradier.
+
+    Handles both paper (simulated) and live execution.
+    """
+
+    def __init__(self, config: ARESConfig):
+        self.config = config
+        self.tradier = None
+
+        if TRADIER_AVAILABLE and config.mode == TradingMode.LIVE:
+            try:
+                self.tradier = TradierDataFetcher()
+                logger.info("ARES OrderExecutor: Tradier initialized for LIVE trading")
+            except Exception as e:
+                logger.error(f"Tradier init failed: {e}")
+
+    def execute_iron_condor(self, signal: IronCondorSignal) -> Optional[IronCondorPosition]:
+        """
+        Execute an Iron Condor trade.
+
+        Returns IronCondorPosition on success, None on failure.
+        """
+        if self.config.mode == TradingMode.PAPER:
+            return self._execute_paper(signal)
+        else:
+            return self._execute_live(signal)
+
+    def _execute_paper(self, signal: IronCondorSignal) -> Optional[IronCondorPosition]:
+        """Execute paper trade (simulation)"""
+        try:
+            now = datetime.now(CENTRAL_TZ)
+            position_id = f"ARES-{now.strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+
+            # Calculate contracts based on risk
+            contracts = self._calculate_position_size(signal.max_loss)
+
+            # Calculate actual P&L values
+            spread_width = signal.put_short - signal.put_long
+            max_profit = signal.total_credit * 100 * contracts
+            max_loss = (spread_width - signal.total_credit) * 100 * contracts
+
+            position = IronCondorPosition(
+                position_id=position_id,
+                ticker=self.config.ticker,
+                expiration=signal.expiration,
+                put_short_strike=signal.put_short,
+                put_long_strike=signal.put_long,
+                put_credit=signal.estimated_put_credit,
+                call_short_strike=signal.call_short,
+                call_long_strike=signal.call_long,
+                call_credit=signal.estimated_call_credit,
+                contracts=contracts,
+                spread_width=spread_width,
+                total_credit=signal.total_credit,
+                max_profit=max_profit,
+                max_loss=max_loss,
+                underlying_at_entry=signal.spot_price,
+                vix_at_entry=signal.vix,
+                expected_move=signal.expected_move,
+                call_wall=signal.call_wall,
+                put_wall=signal.put_wall,
+                gex_regime=signal.gex_regime,
+                oracle_confidence=signal.confidence,
+                oracle_reasoning=signal.reasoning,
+                put_order_id="PAPER",
+                call_order_id="PAPER",
+                status=PositionStatus.OPEN,
+                open_time=now,
+            )
+
+            logger.info(
+                f"PAPER IC: {signal.put_long}/{signal.put_short}-{signal.call_short}/{signal.call_long} "
+                f"x{contracts} @ ${signal.total_credit:.2f} credit"
+            )
+
+            return position
+
+        except Exception as e:
+            logger.error(f"Paper execution failed: {e}")
+            return None
+
+    def _execute_live(self, signal: IronCondorSignal) -> Optional[IronCondorPosition]:
+        """Execute live Iron Condor via Tradier"""
+        if not self.tradier:
+            logger.error("Live execution requested but Tradier not available")
+            return None
+
+        try:
+            now = datetime.now(CENTRAL_TZ)
+
+            # Get real quotes for the IC
+            ic_quote = self._get_iron_condor_quote(signal)
+            if not ic_quote:
+                logger.error("Failed to get IC quotes")
+                return None
+
+            actual_credit = ic_quote['total_credit']
+            contracts = self._calculate_position_size(ic_quote['max_loss_per_contract'] * 100)
+
+            # Execute as two spreads (put spread + call spread)
+            # Bull Put Spread (credit)
+            put_result = self.tradier.place_vertical_spread(
+                symbol=self.config.ticker,
+                expiration=signal.expiration,
+                long_strike=signal.put_long,
+                short_strike=signal.put_short,
+                option_type="put",
+                quantity=contracts,
+                limit_price=round(ic_quote['put_credit'], 2),
+                is_credit=True,
+            )
+
+            if not put_result or not put_result.get('order'):
+                logger.error(f"Put spread order failed: {put_result}")
+                return None
+
+            put_order_id = str(put_result['order'].get('id', 'UNKNOWN'))
+
+            # Bear Call Spread (credit)
+            call_result = self.tradier.place_vertical_spread(
+                symbol=self.config.ticker,
+                expiration=signal.expiration,
+                long_strike=signal.call_long,
+                short_strike=signal.call_short,
+                option_type="call",
+                quantity=contracts,
+                limit_price=round(ic_quote['call_credit'], 2),
+                is_credit=True,
+            )
+
+            if not call_result or not call_result.get('order'):
+                logger.error(f"Call spread order failed: {call_result}")
+                # Note: Put spread was already placed - should handle this
+                return None
+
+            call_order_id = str(call_result['order'].get('id', 'UNKNOWN'))
+
+            # Calculate P&L
+            spread_width = signal.put_short - signal.put_long
+            max_profit = actual_credit * 100 * contracts
+            max_loss = (spread_width - actual_credit) * 100 * contracts
+
+            position = IronCondorPosition(
+                position_id=f"ARES-LIVE-{put_order_id}",
+                ticker=self.config.ticker,
+                expiration=signal.expiration,
+                put_short_strike=signal.put_short,
+                put_long_strike=signal.put_long,
+                put_credit=ic_quote['put_credit'],
+                call_short_strike=signal.call_short,
+                call_long_strike=signal.call_long,
+                call_credit=ic_quote['call_credit'],
+                contracts=contracts,
+                spread_width=spread_width,
+                total_credit=actual_credit,
+                max_profit=max_profit,
+                max_loss=max_loss,
+                underlying_at_entry=signal.spot_price,
+                vix_at_entry=signal.vix,
+                expected_move=signal.expected_move,
+                call_wall=signal.call_wall,
+                put_wall=signal.put_wall,
+                gex_regime=signal.gex_regime,
+                oracle_confidence=signal.confidence,
+                oracle_reasoning=signal.reasoning,
+                put_order_id=put_order_id,
+                call_order_id=call_order_id,
+                status=PositionStatus.OPEN,
+                open_time=now,
+            )
+
+            logger.info(
+                f"LIVE IC: {signal.put_long}/{signal.put_short}-{signal.call_short}/{signal.call_long} "
+                f"x{contracts} @ ${actual_credit:.2f} [Put: {put_order_id}, Call: {call_order_id}]"
+            )
+
+            return position
+
+        except Exception as e:
+            logger.error(f"Live execution failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def close_position(
+        self,
+        position: IronCondorPosition,
+        reason: str
+    ) -> Tuple[bool, float, float]:
+        """
+        Close an Iron Condor position.
+
+        Returns: (success, close_price, realized_pnl)
+        """
+        if self.config.mode == TradingMode.PAPER:
+            return self._close_paper(position, reason)
+        else:
+            return self._close_live(position, reason)
+
+    def _close_paper(
+        self,
+        position: IronCondorPosition,
+        reason: str
+    ) -> Tuple[bool, float, float]:
+        """Close paper position with simulated pricing"""
+        try:
+            current_price = self._get_current_price()
+            if not current_price:
+                current_price = position.underlying_at_entry
+
+            # Estimate current IC value
+            close_price = self._estimate_ic_value(position, current_price)
+
+            # P&L = credit received - debit to close
+            # For IC: we received total_credit, now we pay close_price to close
+            pnl_per_contract = (position.total_credit - close_price) * 100
+            realized_pnl = pnl_per_contract * position.contracts
+
+            logger.info(
+                f"PAPER CLOSE: {position.position_id} "
+                f"@ ${close_price:.2f}, P&L: ${realized_pnl:.2f} [{reason}]"
+            )
+
+            return True, close_price, realized_pnl
+
+        except Exception as e:
+            logger.error(f"Paper close failed: {e}")
+            return False, 0, 0
+
+    def _close_live(
+        self,
+        position: IronCondorPosition,
+        reason: str
+    ) -> Tuple[bool, float, float]:
+        """Close live IC position via Tradier"""
+        if not self.tradier:
+            logger.error("Cannot close - Tradier not available")
+            return False, 0, 0
+
+        try:
+            # Get current IC quote
+            ic_quote = self._get_position_quote(position)
+            if not ic_quote:
+                logger.error("Failed to get closing quotes")
+                return False, 0, 0
+
+            close_price = ic_quote['total_value']
+
+            # Close put spread (buy back)
+            put_result = self.tradier.place_vertical_spread(
+                symbol=position.ticker,
+                expiration=position.expiration,
+                long_strike=position.put_long_strike,
+                short_strike=position.put_short_strike,
+                option_type="put",
+                quantity=position.contracts,
+                limit_price=round(ic_quote['put_value'], 2),
+                is_closing=True,
+            )
+
+            # Close call spread (buy back)
+            call_result = self.tradier.place_vertical_spread(
+                symbol=position.ticker,
+                expiration=position.expiration,
+                long_strike=position.call_long_strike,
+                short_strike=position.call_short_strike,
+                option_type="call",
+                quantity=position.contracts,
+                limit_price=round(ic_quote['call_value'], 2),
+                is_closing=True,
+            )
+
+            if not put_result or not call_result:
+                logger.error("Close orders failed")
+                return False, 0, 0
+
+            # P&L calculation
+            pnl_per_contract = (position.total_credit - close_price) * 100
+            realized_pnl = pnl_per_contract * position.contracts
+
+            logger.info(
+                f"LIVE CLOSE: {position.position_id} "
+                f"@ ${close_price:.2f}, P&L: ${realized_pnl:.2f} [{reason}]"
+            )
+
+            return True, close_price, realized_pnl
+
+        except Exception as e:
+            logger.error(f"Live close failed: {e}")
+            return False, 0, 0
+
+    def _calculate_position_size(self, max_loss_per_contract: float) -> int:
+        """Calculate position size based on risk settings"""
+        capital = 100_000  # Default
+        max_risk = capital * (self.config.risk_per_trade_pct / 100)
+
+        if max_loss_per_contract <= 0:
+            return 1
+
+        contracts = int(max_risk / max_loss_per_contract)
+        return max(1, min(contracts, self.config.max_contracts))
+
+    def _get_current_price(self) -> Optional[float]:
+        """Get current underlying price"""
+        if DATA_AVAILABLE:
+            try:
+                return get_price(self.config.ticker)
+            except Exception:
+                pass
+        return None
+
+    def _get_iron_condor_quote(self, signal: IronCondorSignal) -> Optional[Dict[str, float]]:
+        """Get real quotes for IC"""
+        if not self.tradier:
+            return None
+
+        try:
+            # Get quotes for all 4 legs
+            put_long_quote = self._get_option_quote(signal.put_long, signal.expiration, "put")
+            put_short_quote = self._get_option_quote(signal.put_short, signal.expiration, "put")
+            call_short_quote = self._get_option_quote(signal.call_short, signal.expiration, "call")
+            call_long_quote = self._get_option_quote(signal.call_long, signal.expiration, "call")
+
+            if not all([put_long_quote, put_short_quote, call_short_quote, call_long_quote]):
+                return None
+
+            # Bull Put Spread credit = short bid - long ask
+            put_credit = put_short_quote['bid'] - put_long_quote['ask']
+
+            # Bear Call Spread credit = short bid - long ask
+            call_credit = call_short_quote['bid'] - call_long_quote['ask']
+
+            total_credit = put_credit + call_credit
+            spread_width = signal.put_short - signal.put_long
+            max_loss = spread_width - total_credit
+
+            return {
+                'put_credit': max(0.01, put_credit),
+                'call_credit': max(0.01, call_credit),
+                'total_credit': max(0.02, total_credit),
+                'max_loss_per_contract': max_loss,
+            }
+        except Exception as e:
+            logger.warning(f"IC quote error: {e}")
+            return None
+
+    def _get_position_quote(self, position: IronCondorPosition) -> Optional[Dict[str, float]]:
+        """Get current quote for an open position"""
+        if not self.tradier:
+            return None
+
+        try:
+            put_long = self._get_option_quote(position.put_long_strike, position.expiration, "put")
+            put_short = self._get_option_quote(position.put_short_strike, position.expiration, "put")
+            call_short = self._get_option_quote(position.call_short_strike, position.expiration, "call")
+            call_long = self._get_option_quote(position.call_long_strike, position.expiration, "call")
+
+            if not all([put_long, put_short, call_short, call_long]):
+                return None
+
+            # To close, we buy back what we sold (ask) and sell what we bought (bid)
+            put_value = put_short['ask'] - put_long['bid']  # Cost to close put spread
+            call_value = call_short['ask'] - call_long['bid']  # Cost to close call spread
+
+            return {
+                'put_value': max(0, put_value),
+                'call_value': max(0, call_value),
+                'total_value': put_value + call_value,
+            }
+        except Exception as e:
+            logger.warning(f"Position quote error: {e}")
+            return None
+
+    def _get_option_quote(self, strike: float, expiration: str, option_type: str) -> Optional[Dict]:
+        """Get quote for a single option"""
+        if not self.tradier:
+            return None
+
+        try:
+            symbol = self._build_option_symbol(strike, expiration, option_type)
+            quote = self.tradier.get_option_quote(symbol)
+            if quote:
+                return {
+                    'bid': quote.get('bid', 0),
+                    'ask': quote.get('ask', 0),
+                    'mid': (quote.get('bid', 0) + quote.get('ask', 0)) / 2,
+                }
+        except Exception:
+            pass
+        return None
+
+    def _build_option_symbol(self, strike: float, expiration: str, option_type: str) -> str:
+        """Build OCC option symbol"""
+        ticker = self.config.ticker
+        exp_date = datetime.strptime(expiration, "%Y-%m-%d")
+        exp_str = exp_date.strftime("%y%m%d")
+        opt_char = "C" if option_type.lower() == "call" else "P"
+        strike_str = f"{int(strike * 1000):08d}"
+        return f"{ticker}{exp_str}{opt_char}{strike_str}"
+
+    def _estimate_ic_value(self, position: IronCondorPosition, current_price: float) -> float:
+        """Estimate current IC value for paper trading"""
+        # Simplified estimation based on how close price is to strikes
+
+        # If price is in the "safe zone" (between short strikes), IC is worth less
+        if position.put_short_strike < current_price < position.call_short_strike:
+            # Calculate how centered we are
+            put_dist = (current_price - position.put_short_strike) / position.spread_width
+            call_dist = (position.call_short_strike - current_price) / position.spread_width
+
+            # IC loses value as it approaches expiration while in safe zone
+            # Simple decay model: value = credit * (time_factor + proximity_factor)
+            proximity_factor = min(put_dist, call_dist) / 2
+            return position.total_credit * max(0.1, 0.5 - proximity_factor * 0.3)
+
+        # If price breaches a short strike, IC gains value (loss for us)
+        elif current_price <= position.put_short_strike:
+            # Put side is ITM
+            intrinsic = position.put_short_strike - current_price
+            return min(position.spread_width, intrinsic + position.total_credit * 0.2)
+        else:
+            # Call side is ITM
+            intrinsic = current_price - position.call_short_strike
+            return min(position.spread_width, intrinsic + position.total_credit * 0.2)
+
+    def get_position_current_value(self, position: IronCondorPosition) -> Optional[float]:
+        """Get current value of an IC position"""
+        if self.config.mode == TradingMode.PAPER:
+            current_price = self._get_current_price()
+            if current_price:
+                return self._estimate_ic_value(position, current_price)
+            return None
+        else:
+            quote = self._get_position_quote(position)
+            return quote['total_value'] if quote else None
