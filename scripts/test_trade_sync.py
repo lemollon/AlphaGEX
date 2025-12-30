@@ -45,23 +45,20 @@ class TradeSyncValidator:
     def __init__(self):
         self.errors = []
         self.warnings = []
-        self.conn = None
 
     def get_connection(self):
-        """Get database connection"""
-        if not self.conn:
-            from database_adapter import get_connection
-            self.conn = get_connection()
-        return self.conn
+        """Get a fresh database connection for each test"""
+        from database_adapter import get_connection
+        return get_connection()
 
-    def close_connection(self):
-        """Close database connection"""
-        if self.conn:
+    def safe_close(self, conn):
+        """Safely close a connection"""
+        if conn:
             try:
-                self.conn.close()
+                conn.rollback()  # Rollback any pending transaction
+                conn.close()
             except:
                 pass
-            self.conn = None
 
     # =========================================================================
     # ARES VALIDATION
@@ -70,18 +67,19 @@ class TradeSyncValidator:
     def validate_ares_open_positions(self) -> dict:
         """Validate ARES open positions sync"""
         results = {"passed": True, "details": {}}
+        conn = None
 
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            # Get open positions from database
+            # Get open positions from database (using actual schema)
             cursor.execute("""
                 SELECT
-                    position_id, ticker, expiration, status,
+                    position_id, expiration, status,
                     put_short_strike, put_long_strike,
                     call_short_strike, call_long_strike,
-                    total_credit, contracts, max_loss, max_profit,
+                    total_credit, contracts, max_loss,
                     underlying_at_entry, open_time
                 FROM ares_positions
                 WHERE status = 'open'
@@ -94,7 +92,7 @@ class TradeSyncValidator:
             today = datetime.now(CENTRAL_TZ).date()
             stale_positions = []
             for pos in db_positions:
-                exp_date = pos[2]
+                exp_date = pos[1]  # expiration is index 1 now
                 if exp_date and exp_date < today:
                     stale_positions.append({
                         "position_id": pos[0],
@@ -110,9 +108,10 @@ class TradeSyncValidator:
             # Check for positions with missing critical fields
             incomplete = []
             for pos in db_positions:
-                if not pos[4] or not pos[5] or not pos[6] or not pos[7]:  # strikes
+                # Indices: 3=put_short, 4=put_long, 5=call_short, 6=call_long, 7=total_credit
+                if not pos[3] or not pos[4] or not pos[5] or not pos[6]:  # strikes
                     incomplete.append({"position_id": pos[0], "issue": "missing strikes"})
-                elif not pos[8] or pos[8] <= 0:  # total_credit
+                elif not pos[7] or pos[7] <= 0:  # total_credit
                     incomplete.append({"position_id": pos[0], "issue": "missing/zero credit"})
 
             if incomplete:
@@ -122,17 +121,15 @@ class TradeSyncValidator:
             # Validate position data integrity
             for pos in db_positions:
                 position_id = pos[0]
-                put_short, put_long = float(pos[4] or 0), float(pos[5] or 0)
-                call_short, call_long = float(pos[6] or 0), float(pos[7] or 0)
-                total_credit = float(pos[8] or 0)
-                contracts = int(pos[9] or 0)
+                put_short, put_long = float(pos[3] or 0), float(pos[4] or 0)
+                call_short, call_long = float(pos[5] or 0), float(pos[6] or 0)
 
                 # Put spread: long < short (buying lower strike, selling higher)
-                if put_long >= put_short:
+                if put_long and put_short and put_long >= put_short:
                     self.warnings.append(f"ARES {position_id}: Put spread strikes invalid ({put_long} >= {put_short})")
 
                 # Call spread: short < long (selling lower strike, buying higher)
-                if call_short >= call_long:
+                if call_short and call_long and call_short >= call_long:
                     self.warnings.append(f"ARES {position_id}: Call spread strikes invalid ({call_short} >= {call_long})")
 
             results["details"]["integrity_checked"] = True
@@ -141,23 +138,26 @@ class TradeSyncValidator:
             results["passed"] = False
             results["details"]["error"] = str(e)
             self.errors.append(f"ARES open position validation failed: {e}")
+        finally:
+            self.safe_close(conn)
 
         return results
 
     def validate_ares_closed_positions(self) -> dict:
         """Validate ARES closed positions have proper P&L"""
         results = {"passed": True, "details": {}}
+        conn = None
 
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            # Get recent closed positions
+            # Get recent closed positions (using actual schema - no ticker column)
             cursor.execute("""
                 SELECT
-                    position_id, ticker, expiration, status,
+                    position_id, expiration, status,
                     total_credit, contracts, close_price, realized_pnl,
-                    close_reason, close_time
+                    close_time
                 FROM ares_positions
                 WHERE status IN ('closed', 'expired')
                 ORDER BY close_time DESC
@@ -170,16 +170,15 @@ class TradeSyncValidator:
             missing_pnl = []
             for pos in closed_positions:
                 position_id = pos[0]
-                total_credit = float(pos[4] or 0)
-                contracts = int(pos[5] or 0)
-                close_price = pos[6]
-                realized_pnl = pos[7]
-                close_reason = pos[8]
+                total_credit = float(pos[3] or 0)
+                contracts = int(pos[4] or 0)
+                close_price = pos[5]
+                realized_pnl = pos[6]
 
                 if realized_pnl is None:
                     missing_pnl.append({
                         "position_id": position_id,
-                        "close_reason": close_reason
+                        "status": pos[2]
                     })
                 elif close_price is not None:
                     # Verify P&L calculation: (credit - close_price) * contracts * 100
@@ -199,12 +198,15 @@ class TradeSyncValidator:
             results["passed"] = False
             results["details"]["error"] = str(e)
             self.errors.append(f"ARES closed position validation failed: {e}")
+        finally:
+            self.safe_close(conn)
 
         return results
 
     def validate_ares_equity_curve(self) -> dict:
         """Validate ARES equity curve data"""
         results = {"passed": True, "details": {}}
+        conn = None
 
         try:
             conn = self.get_connection()
@@ -232,7 +234,6 @@ class TradeSyncValidator:
                 results["details"]["total_pnl_30d"] = round(total_pnl, 2)
 
             # Check for today's open positions affecting equity
-            today = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
             cursor.execute("""
                 SELECT COUNT(*), SUM(total_credit * contracts * 100)
                 FROM ares_positions
@@ -247,6 +248,8 @@ class TradeSyncValidator:
             results["passed"] = False
             results["details"]["error"] = str(e)
             self.errors.append(f"ARES equity curve validation failed: {e}")
+        finally:
+            self.safe_close(conn)
 
         return results
 
@@ -257,12 +260,13 @@ class TradeSyncValidator:
     def validate_athena_open_positions(self) -> dict:
         """Validate ATHENA open positions sync"""
         results = {"passed": True, "details": {}}
+        conn = None
 
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            # Get open positions from database
+            # Get open positions from database (apache_positions is the actual table)
             cursor.execute("""
                 SELECT
                     position_id, spread_type, ticker, expiration, status,
@@ -304,12 +308,15 @@ class TradeSyncValidator:
             results["passed"] = False
             results["details"]["error"] = str(e)
             self.errors.append(f"ATHENA open position validation failed: {e}")
+        finally:
+            self.safe_close(conn)
 
         return results
 
     def validate_athena_closed_positions(self) -> dict:
         """Validate ATHENA closed positions have proper P&L"""
         results = {"passed": True, "details": {}}
+        conn = None
 
         try:
             conn = self.get_connection()
@@ -347,12 +354,15 @@ class TradeSyncValidator:
             results["passed"] = False
             results["details"]["error"] = str(e)
             self.errors.append(f"ATHENA closed position validation failed: {e}")
+        finally:
+            self.safe_close(conn)
 
         return results
 
     def validate_athena_equity_curve(self) -> dict:
         """Validate ATHENA equity curve data"""
         results = {"passed": True, "details": {}}
+        conn = None
 
         try:
             conn = self.get_connection()
@@ -382,6 +392,8 @@ class TradeSyncValidator:
             results["passed"] = False
             results["details"]["error"] = str(e)
             self.errors.append(f"ATHENA equity curve validation failed: {e}")
+        finally:
+            self.safe_close(conn)
 
         return results
 
@@ -392,18 +404,20 @@ class TradeSyncValidator:
     def validate_pegasus_open_positions(self) -> dict:
         """Validate PEGASUS open positions sync"""
         results = {"passed": True, "details": {}}
+        conn = None
 
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
 
+            # PEGASUS uses same schema as ARES (Iron Condor) - no ticker column
             cursor.execute("""
                 SELECT
-                    position_id, ticker, expiration, status,
+                    position_id, expiration, status,
                     put_short_strike, put_long_strike,
                     call_short_strike, call_long_strike,
-                    total_credit, contracts, max_loss, max_profit,
-                    underlying_at_entry, open_time
+                    total_credit, contracts, max_loss,
+                    open_time
                 FROM pegasus_positions
                 WHERE status = 'open'
                 ORDER BY open_time DESC
@@ -415,7 +429,7 @@ class TradeSyncValidator:
             today = datetime.now(CENTRAL_TZ).date()
             stale_positions = []
             for pos in db_positions:
-                exp_date = pos[2]
+                exp_date = pos[1]  # expiration is index 1
                 if exp_date and exp_date < today:
                     stale_positions.append({
                         "position_id": pos[0],
@@ -432,22 +446,26 @@ class TradeSyncValidator:
             results["passed"] = False
             results["details"]["error"] = str(e)
             self.errors.append(f"PEGASUS open position validation failed: {e}")
+        finally:
+            self.safe_close(conn)
 
         return results
 
     def validate_pegasus_closed_positions(self) -> dict:
         """Validate PEGASUS closed positions"""
         results = {"passed": True, "details": {}}
+        conn = None
 
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
 
+            # PEGASUS uses same schema as ARES - no ticker column
             cursor.execute("""
                 SELECT
-                    position_id, ticker, status,
+                    position_id, status,
                     total_credit, contracts, close_price, realized_pnl,
-                    close_reason, close_time
+                    close_time
                 FROM pegasus_positions
                 WHERE status IN ('closed', 'expired')
                 ORDER BY close_time DESC
@@ -456,8 +474,8 @@ class TradeSyncValidator:
             closed_positions = cursor.fetchall()
             results["details"]["closed_count"] = len(closed_positions)
 
-            # Check for missing P&L
-            missing_pnl = [pos[0] for pos in closed_positions if pos[6] is None]
+            # Check for missing P&L (realized_pnl is index 5)
+            missing_pnl = [pos[0] for pos in closed_positions if pos[5] is None]
             if missing_pnl:
                 results["details"]["missing_pnl_count"] = len(missing_pnl)
                 self.warnings.append(f"PEGASUS has {len(missing_pnl)} closed position(s) without P&L")
@@ -466,12 +484,15 @@ class TradeSyncValidator:
             results["passed"] = False
             results["details"]["error"] = str(e)
             self.errors.append(f"PEGASUS closed position validation failed: {e}")
+        finally:
+            self.safe_close(conn)
 
         return results
 
     def validate_pegasus_equity_curve(self) -> dict:
         """Validate PEGASUS equity curve"""
         results = {"passed": True, "details": {}}
+        conn = None
 
         try:
             conn = self.get_connection()
@@ -501,6 +522,8 @@ class TradeSyncValidator:
             results["passed"] = False
             results["details"]["error"] = str(e)
             self.errors.append(f"PEGASUS equity curve validation failed: {e}")
+        finally:
+            self.safe_close(conn)
 
         return results
 
@@ -677,8 +700,6 @@ class TradeSyncValidator:
         else:
             print(f"  ⚠️  {all_failed} validation(s) need attention")
         print("=" * 70)
-
-        self.close_connection()
 
         return {
             "passed": all_passed,
