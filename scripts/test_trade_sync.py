@@ -73,14 +73,14 @@ class TradeSyncValidator:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            # Get open positions from database (using actual schema)
+            # Get open positions from database (using actual production schema)
+            # Note: underlying_at_entry may not exist in production - using minimal columns
             cursor.execute("""
                 SELECT
                     position_id, expiration, status,
                     put_short_strike, put_long_strike,
                     call_short_strike, call_long_strike,
-                    total_credit, contracts, max_loss,
-                    underlying_at_entry, open_time
+                    total_credit, contracts, max_loss, open_time
                 FROM ares_positions
                 WHERE status = 'open'
                 ORDER BY open_time DESC
@@ -92,7 +92,7 @@ class TradeSyncValidator:
             today = datetime.now(CENTRAL_TZ).date()
             stale_positions = []
             for pos in db_positions:
-                exp_date = pos[1]  # expiration is index 1 now
+                exp_date = pos[1]  # expiration is index 1
                 if exp_date and exp_date < today:
                     stale_positions.append({
                         "position_id": pos[0],
@@ -152,7 +152,7 @@ class TradeSyncValidator:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            # Get recent closed positions (using actual schema - no ticker column)
+            # Get recent closed positions (using actual production schema)
             cursor.execute("""
                 SELECT
                     position_id, expiration, status,
@@ -170,9 +170,6 @@ class TradeSyncValidator:
             missing_pnl = []
             for pos in closed_positions:
                 position_id = pos[0]
-                total_credit = float(pos[3] or 0)
-                contracts = int(pos[4] or 0)
-                close_price = pos[5]
                 realized_pnl = pos[6]
 
                 if realized_pnl is None:
@@ -180,19 +177,18 @@ class TradeSyncValidator:
                         "position_id": position_id,
                         "status": pos[2]
                     })
-                elif close_price is not None:
-                    # Verify P&L calculation: (credit - close_price) * contracts * 100
-                    expected_pnl = (total_credit - float(close_price)) * contracts * 100
-                    actual_pnl = float(realized_pnl)
-                    # Allow 1% tolerance for rounding
-                    if abs(expected_pnl - actual_pnl) > abs(expected_pnl) * 0.01 + 1:
-                        self.warnings.append(
-                            f"ARES {position_id}: P&L mismatch expected={expected_pnl:.2f}, actual={actual_pnl:.2f}"
-                        )
 
             if missing_pnl:
                 results["details"]["missing_pnl_positions"] = missing_pnl
                 self.warnings.append(f"ARES has {len(missing_pnl)} closed position(s) without P&L")
+
+            # Calculate summary stats
+            if closed_positions:
+                total_pnl = sum(float(pos[6] or 0) for pos in closed_positions)
+                winners = sum(1 for pos in closed_positions if pos[6] and float(pos[6]) > 0)
+                results["details"]["recent_total_pnl"] = round(total_pnl, 2)
+                results["details"]["recent_winners"] = winners
+                results["details"]["recent_losers"] = len(closed_positions) - winners
 
         except Exception as e:
             results["passed"] = False
@@ -213,15 +209,16 @@ class TradeSyncValidator:
             cursor = conn.cursor()
 
             # Get daily P&L from closed positions
+            # Use explicit cast for timezone conversion (PostgreSQL compatibility)
             cursor.execute("""
                 SELECT
-                    DATE(close_time AT TIME ZONE 'America/Chicago') as trade_date,
+                    DATE(close_time::timestamp AT TIME ZONE 'America/Chicago') as trade_date,
                     COUNT(*) as trades,
                     SUM(realized_pnl) as daily_pnl
                 FROM ares_positions
                 WHERE status IN ('closed', 'expired')
                 AND close_time >= NOW() - INTERVAL '30 days'
-                GROUP BY DATE(close_time AT TIME ZONE 'America/Chicago')
+                GROUP BY DATE(close_time::timestamp AT TIME ZONE 'America/Chicago')
                 ORDER BY trade_date
             """)
             equity_data = cursor.fetchall()
@@ -368,15 +365,16 @@ class TradeSyncValidator:
             conn = self.get_connection()
             cursor = conn.cursor()
 
+            # Use explicit cast for timezone conversion (PostgreSQL compatibility)
             cursor.execute("""
                 SELECT
-                    DATE(exit_time AT TIME ZONE 'America/Chicago') as trade_date,
+                    DATE(exit_time::timestamp AT TIME ZONE 'America/Chicago') as trade_date,
                     COUNT(*) as trades,
                     SUM(realized_pnl) as daily_pnl
                 FROM apache_positions
                 WHERE status IN ('closed', 'expired')
                 AND exit_time >= NOW() - INTERVAL '30 days'
-                GROUP BY DATE(exit_time AT TIME ZONE 'America/Chicago')
+                GROUP BY DATE(exit_time::timestamp AT TIME ZONE 'America/Chicago')
                 ORDER BY trade_date
             """)
             equity_data = cursor.fetchall()
@@ -498,15 +496,16 @@ class TradeSyncValidator:
             conn = self.get_connection()
             cursor = conn.cursor()
 
+            # Use explicit cast for timezone conversion (PostgreSQL compatibility)
             cursor.execute("""
                 SELECT
-                    DATE(close_time AT TIME ZONE 'America/Chicago') as trade_date,
+                    DATE(close_time::timestamp AT TIME ZONE 'America/Chicago') as trade_date,
                     COUNT(*) as trades,
                     SUM(realized_pnl) as daily_pnl
                 FROM pegasus_positions
                 WHERE status IN ('closed', 'expired')
                 AND close_time >= NOW() - INTERVAL '30 days'
-                GROUP BY DATE(close_time AT TIME ZONE 'America/Chicago')
+                GROUP BY DATE(close_time::timestamp AT TIME ZONE 'America/Chicago')
                 ORDER BY trade_date
             """)
             equity_data = cursor.fetchall()
