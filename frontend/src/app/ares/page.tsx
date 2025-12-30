@@ -6,7 +6,7 @@ import {
   BarChart3, ChevronDown, ChevronUp, Server, Clock, Zap,
   Shield, Crosshair, Settings, Wallet, History, LayoutDashboard, Download
 } from 'lucide-react'
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
+// Recharts imports removed - using shared EquityCurveChart component
 import Navigation from '@/components/Navigation'
 import ScanActivityFeed from '@/components/ScanActivityFeed'
 import { useToast } from '@/components/ui/Toast'
@@ -25,7 +25,11 @@ import {
   LoadingState,
   StatCard,
   BOT_BRANDS,
+  BotStatusBanner,
+  TodayReportCard,
+  LastScanSummary,
 } from '@/components/trader'
+import EquityCurveChart from '@/components/charts/EquityCurveChart'
 
 // ==============================================================================
 // INTERFACES
@@ -585,6 +589,27 @@ export default function AresPage() {
             {/* Portfolio Tab */}
             {activeTab === 'portfolio' && (
               <>
+                {/* Bot Status Banner - Shows active/paused/error status with countdown */}
+                <BotStatusBanner
+                  botName="ARES"
+                  isActive={status?.is_active || false}
+                  lastScan={status?.heartbeat?.last_scan_iso}
+                  scanInterval={status?.scan_interval_minutes || 5}
+                  openPositions={openPositions.length}
+                  todayPnl={closedPositions.filter(p => {
+                    const closeTime = p.close_time_iso || p.close_time
+                    if (!closeTime) return false
+                    const today = new Date().toISOString().split('T')[0]
+                    return closeTime.startsWith(today)
+                  }).reduce((sum, p) => sum + (p.realized_pnl || 0), 0)}
+                  todayTrades={closedPositions.filter(p => {
+                    const closeTime = p.close_time_iso || p.close_time
+                    if (!closeTime) return false
+                    const today = new Date().toISOString().split('T')[0]
+                    return closeTime.startsWith(today)
+                  }).length}
+                />
+
                 {/* Open Positions */}
                 <BotCard title="Open Positions" icon={<Crosshair className="h-5 w-5" />}>
                   {openPositions.length === 0 ? (
@@ -598,61 +623,11 @@ export default function AresPage() {
                   )}
                 </BotCard>
 
-                {/* Equity Curve */}
-                <BotCard title="Equity Curve" icon={<BarChart3 className="h-5 w-5" />}>
-                  {equityCurve.length === 0 ? (
-                    <EmptyState title="No equity data yet" description="Equity curve will appear after trades are closed" icon={<BarChart3 className="h-8 w-8" />} />
-                  ) : (
-                    <div className="h-[300px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart data={equityCurve}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                          <XAxis
-                            dataKey="date"
-                            tick={{ fill: '#888', fontSize: 10 }}
-                            tickFormatter={(value) => {
-                              const date = new Date(value)
-                              return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-                            }}
-                          />
-                          <YAxis
-                            tick={{ fill: '#888', fontSize: 10 }}
-                            tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
-                            domain={['dataMin - 1000', 'dataMax + 1000']}
-                          />
-                          <Tooltip
-                            contentStyle={{ backgroundColor: '#1a1a1a', border: '1px solid #333' }}
-                            formatter={(value: number) => [`$${Number(value).toLocaleString()}`, 'Equity']}
-                            labelFormatter={(label) => new Date(label).toLocaleDateString('en-US', {
-                              month: 'short',
-                              day: 'numeric',
-                              year: 'numeric'
-                            })}
-                          />
-                          <ReferenceLine
-                            y={100000}
-                            stroke="#666"
-                            strokeDasharray="3 3"
-                            label={{ value: 'Start', fill: '#666', fontSize: 10 }}
-                          />
-                          <Area
-                            type="monotone"
-                            dataKey="equity"
-                            stroke={brand.hexPrimary}
-                            fill="url(#aresGradient)"
-                            strokeWidth={2}
-                          />
-                          <defs>
-                            <linearGradient id="aresGradient" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor={brand.hexPrimary} stopOpacity={0.3} />
-                              <stop offset="95%" stopColor={brand.hexPrimary} stopOpacity={0} />
-                            </linearGradient>
-                          </defs>
-                        </AreaChart>
-                      </ResponsiveContainer>
-                    </div>
-                  )}
-                </BotCard>
+                {/* Equity Curve - Using Shared Component */}
+                <EquityCurveChart
+                  title="ARES Equity Curve"
+                  botFilter="ARES"
+                />
               </>
             )}
 

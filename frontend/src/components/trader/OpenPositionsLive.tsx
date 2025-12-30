@@ -5,7 +5,7 @@ import { TrendingUp, TrendingDown, AlertTriangle, Clock, ChevronRight, Timer } f
 import { LivePosition } from './LivePortfolio'
 
 interface OpenPositionsLiveProps {
-  botName: 'ATHENA' | 'ARES'
+  botName: 'ATHENA' | 'ARES' | 'PEGASUS'
   positions: LivePosition[]
   underlyingPrice?: number
   isLoading?: boolean
@@ -411,6 +411,7 @@ export default function OpenPositionsLive({ botName, positions, underlyingPrice,
               onClick={() => onPositionClick?.(position)}
             />
           ) : (
+            // ARES and PEGASUS both trade Iron Condors
             <AresPositionCard
               key={position.position_id}
               position={position}

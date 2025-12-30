@@ -976,6 +976,9 @@ export default function ATHENAPage() {
   const error = statusError?.message || null
   const isRefreshing = statusValidating || posValidating || signalsValidating || perfValidating || adviceValidating || mlValidating || logsValidating || decisionsValidating
 
+  // Brand info for consistent styling
+  const brand = BOT_BRANDS.ATHENA
+
   // Toast notifications for user feedback
   const toast = useToast()
 
@@ -1316,7 +1319,7 @@ export default function ATHENAPage() {
             <button
               onClick={runCycle}
               disabled={runningCycle}
-              className="flex items-center gap-2 px-4 py-2 bg-cyan-600 rounded-lg hover:bg-cyan-500 transition disabled:opacity-50"
+              className={`flex items-center gap-2 px-4 py-2 ${brand.primaryBg} rounded-lg hover:opacity-90 transition disabled:opacity-50`}
             >
               <Play className={`w-4 h-4 ${runningCycle ? 'animate-pulse' : ''}`} />
               <span className="text-white text-sm">Run Cycle</span>
@@ -1333,7 +1336,7 @@ export default function ATHENAPage() {
                   onClick={() => setActiveTab(tab.id)}
                   className={`flex-1 px-4 py-2.5 rounded-lg transition flex items-center justify-center gap-2 ${
                     activeTab === tab.id
-                      ? 'bg-cyan-600 text-white shadow-lg'
+                      ? `${brand.lightBg} ${brand.primaryText} border ${brand.primaryBorder}`
                       : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
                   }`}
                   title={tab.description}
@@ -3078,7 +3081,7 @@ export default function ATHENAPage() {
                     <button
                       onClick={() => runCycle()}
                       disabled={runningCycle}
-                      className="flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 rounded-lg transition disabled:opacity-50"
+                      className={`flex items-center gap-2 px-4 py-2 ${brand.primaryBg} hover:opacity-90 rounded-lg transition disabled:opacity-50`}
                     >
                       <Play className="w-4 h-4" />
                       <span>Run Scan Cycle</span>
