@@ -417,7 +417,8 @@ async def get_gamma_data(
                 "likely_pin": snapshot.likely_pin,
                 "pin_probability": snapshot.pin_probability,
                 "danger_zones": snapshot.danger_zones,
-                "gamma_flips": snapshot.gamma_flips
+                "gamma_flips": snapshot.gamma_flips,
+                "pinning_status": snapshot.pinning_status
             }
         }
 
