@@ -133,7 +133,7 @@ Your role is to analyze trading bot performance and provide actionable recommend
 You analyze:
 - ARES: Aggressive 0DTE Iron Condor strategy on SPX
 - ATHENA: GEX-based directional spreads
-- ATLAS: SPX Cash-Secured Put Wheel
+- PEGASUS: SPX Iron Condor
 - PHOENIX: 0DTE SPY/SPX options
 
 Provide your analysis in JSON format with these fields:
@@ -377,7 +377,7 @@ Provide analysis in JSON format:
     "bot_recommendations": {
         "ARES": {"action": "TRADE/PAUSE/REDUCE_SIZE", "reason": "why"},
         "ATHENA": {"action": "...", "reason": "..."},
-        "ATLAS": {"action": "...", "reason": "..."},
+        "PEGASUS": {"action": "...", "reason": "..."},
         "PHOENIX": {"action": "...", "reason": "..."}
     },
     "suggested_actions": [...]

@@ -38,7 +38,7 @@ ARCHITECTURE:
 BOTS COVERED:
 - ARES: Aggressive Iron Condor (0DTE SPX)
 - ATHENA: Directional Spreads (Bull/Bear Call)
-- ATLAS: SPX Wheel Strategy
+- PEGASUS: SPX Iron Condor
 - PHOENIX: 0DTE Options Trading
 
 DATABASE TABLES:
@@ -103,7 +103,7 @@ class BotName(Enum):
     """Trading bots under Solomon's oversight"""
     ARES = "ARES"
     ATHENA = "ATHENA"
-    ATLAS = "ATLAS"
+    PEGASUS = "PEGASUS"
     PHOENIX = "PHOENIX"
 
 
@@ -1612,7 +1612,7 @@ class SolomonFeedbackLoop:
             table_map = {
                 'ARES': 'ares_positions',
                 'ATHENA': 'athena_positions',
-                'ATLAS': 'spx_wheel_trades',
+                'PEGASUS': 'pegasus_positions',
                 'PHOENIX': 'autonomous_trades'
             }
 
@@ -1970,7 +1970,7 @@ class SolomonFeedbackLoop:
         errors = []
         outcomes_processed = 0
 
-        bots = [BotName.ARES, BotName.ATHENA, BotName.ATLAS, BotName.PHOENIX]
+        bots = [BotName.ARES, BotName.ATHENA, BotName.PEGASUS, BotName.PHOENIX]
 
         try:
             # Step 1: Expire old proposals

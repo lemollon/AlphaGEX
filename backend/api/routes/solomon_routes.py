@@ -73,7 +73,7 @@ class ResumeRequest(BaseModel):
 
 class ProposalCreateRequest(BaseModel):
     """Request to create a new proposal"""
-    bot_name: str = Field(..., description="Bot name (ARES, ATHENA, ATLAS, PHOENIX)")
+    bot_name: str = Field(..., description="Bot name (ARES, ATHENA, PEGASUS, PHOENIX)")
     proposal_type: str = Field(..., description="Type of proposal (MODEL_UPDATE, PARAMETER_CHANGE, etc.)")
     title: str = Field(..., description="Short title for the proposal")
     description: str = Field(..., description="Detailed description")
@@ -160,7 +160,7 @@ async def get_bot_dashboard(bot_name: str):
         raise HTTPException(status_code=503, detail="Solomon system not available")
 
     bot_name = bot_name.upper()
-    if bot_name not in ['ARES', 'ATHENA', 'ATLAS', 'PHOENIX']:
+    if bot_name not in ['ARES', 'ATHENA', 'PEGASUS', 'PHOENIX']:
         raise HTTPException(status_code=400, detail=f"Invalid bot name: {bot_name}")
 
     try:
@@ -596,7 +596,7 @@ async def get_kill_switch_status():
         status = solomon.get_kill_switch_status()
 
         # Add bots not yet in the table
-        for bot in ['ARES', 'ATHENA', 'ATLAS', 'PHOENIX']:
+        for bot in ['ARES', 'ATHENA', 'PEGASUS', 'PHOENIX']:
             if bot not in status:
                 status[bot] = {
                     'bot_name': bot,
@@ -1256,7 +1256,7 @@ class ValidatedProposalRequest(BaseModel):
     This is the recommended way to create proposals as it enforces
     the "proven improvement required" policy.
     """
-    bot_name: str = Field(..., description="Bot name (ARES, ATHENA, ATLAS, PHOENIX)")
+    bot_name: str = Field(..., description="Bot name (ARES, ATHENA, PEGASUS, PHOENIX)")
     title: str = Field(..., description="Short title for the proposal")
 
     # DETAILED REASONING (WHY)
