@@ -358,11 +358,35 @@ export default function IntelligenceDashboard() {
             </div>
 
             {feed.market_snapshot.psychology_trap && (
-              <div className="flex items-center gap-2 p-2 bg-danger/10 border border-danger/20 rounded-lg overflow-hidden">
-                <AlertTriangle className="w-4 h-4 text-danger flex-shrink-0" />
-                <span className="text-sm text-danger font-medium break-words">
-                  Psychology Trap: {feed.market_snapshot.psychology_trap}
-                </span>
+              <div className="p-3 bg-danger/10 border border-danger/20 rounded-lg overflow-hidden">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-5 h-5 text-danger flex-shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <span className="text-sm text-danger font-bold">
+                        Psychology Trap Active
+                      </span>
+                      <a
+                        href="/psychology"
+                        className="text-xs text-primary hover:text-primary/80 underline flex-shrink-0"
+                      >
+                        View Details
+                      </a>
+                    </div>
+                    <div className="text-sm text-text-primary font-medium mb-2 break-words">
+                      {feed.market_snapshot.psychology_trap}
+                    </div>
+                    <div className="text-xs text-text-secondary">
+                      {feed.market_snapshot.psychology_trap?.includes('FLIP POINT')
+                        ? 'Price is near the gamma flip point. Expect high volatility and potential trend reversal. Reduce position size and widen stops.'
+                        : feed.market_snapshot.psychology_trap?.includes('FALSE')
+                        ? 'Potential false signal detected. Market may be trapping traders - wait for confirmation before entering.'
+                        : feed.market_snapshot.psychology_trap?.includes('LIBERATION')
+                        ? 'Liberation setup detected. Big move potential if price breaks current level. Watch for breakout confirmation.'
+                        : 'Market psychology trap detected. Exercise caution and verify signals with multiple confirmations.'}
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -411,10 +435,10 @@ export default function IntelligenceDashboard() {
           updatedAt={feed.options_flow.updated_at}
           expanded={expandedSections.has('flow')}
           onToggle={() => toggleSection('flow')}
-          badge={<SentimentBadge sentiment={feed.options_flow.sentiment} />}
+          badge={<SentimentBadge sentiment={feed.options_flow.sentiment || 'NEUTRAL'} />}
           summary={
             <span className="text-xs text-text-muted truncate">
-              P/C: {feed.options_flow.put_call_ratio?.toFixed(2)}
+              P/C: {feed.options_flow.put_call_ratio?.toFixed(2) || 'N/A'}
             </span>
           }
         >
@@ -422,27 +446,40 @@ export default function IntelligenceDashboard() {
             <div className="grid grid-cols-3 gap-3">
               <div className="p-3 bg-background-hover rounded-lg text-center overflow-hidden">
                 <div className="text-xs text-text-muted mb-1 truncate">Put/Call Ratio</div>
-                <div className={`text-xl font-bold truncate ${feed.options_flow.put_call_ratio > 1.2 ? 'text-danger' : feed.options_flow.put_call_ratio < 0.8 ? 'text-success' : 'text-text-primary'}`}>
-                  {feed.options_flow.put_call_ratio?.toFixed(2)}
+                <div className={`text-xl font-bold truncate ${
+                  feed.options_flow.put_call_ratio > 1.2 ? 'text-danger' :
+                  feed.options_flow.put_call_ratio < 0.8 ? 'text-success' : 'text-text-primary'
+                }`}>
+                  {feed.options_flow.put_call_ratio?.toFixed(2) || 'N/A'}
                 </div>
               </div>
               <div className="p-3 bg-background-hover rounded-lg text-center overflow-hidden">
                 <div className="text-xs text-text-muted mb-1 truncate">Unusual Calls</div>
                 <div className="text-xl font-bold text-success truncate">
-                  {feed.options_flow.unusual_call_volume?.toLocaleString()}
+                  {feed.options_flow.unusual_call_volume > 0
+                    ? feed.options_flow.unusual_call_volume.toLocaleString()
+                    : <span className="text-text-muted text-sm">No data</span>}
                 </div>
               </div>
               <div className="p-3 bg-background-hover rounded-lg text-center overflow-hidden">
                 <div className="text-xs text-text-muted mb-1 truncate">Unusual Puts</div>
                 <div className="text-xl font-bold text-danger truncate">
-                  {feed.options_flow.unusual_put_volume?.toLocaleString()}
+                  {feed.options_flow.unusual_put_volume > 0
+                    ? feed.options_flow.unusual_put_volume.toLocaleString()
+                    : <span className="text-text-muted text-sm">No data</span>}
                 </div>
               </div>
             </div>
-            {feed.options_flow.smart_money_signal && (
+            {feed.options_flow.smart_money_signal ? (
               <div className="p-3 bg-primary/5 border border-primary/20 rounded-lg overflow-hidden">
                 <div className="text-sm text-text-primary break-words">
                   <strong>Signal:</strong> {feed.options_flow.smart_money_signal}
+                </div>
+              </div>
+            ) : (
+              <div className="p-3 bg-text-muted/5 border border-text-muted/20 rounded-lg overflow-hidden">
+                <div className="text-sm text-text-muted break-words">
+                  Neutral put/call ratio - no strong directional bias from options flow. Wait for clearer signals.
                 </div>
               </div>
             )}
@@ -455,7 +492,9 @@ export default function IntelligenceDashboard() {
                   : 'Neutral put/call ratio - no strong directional bias from options flow. Wait for clearer signals.'
               }
               whyItMatters={
-                `Unusual volume (Calls: ${feed.options_flow.unusual_call_volume?.toLocaleString()}, Puts: ${feed.options_flow.unusual_put_volume?.toLocaleString()}) shows where large traders are positioning. These flows often precede price moves as institutions hedge or speculate.`
+                feed.options_flow.unusual_call_volume > 0 || feed.options_flow.unusual_put_volume > 0
+                  ? `Unusual volume (Calls: ${feed.options_flow.unusual_call_volume?.toLocaleString() || '0'}, Puts: ${feed.options_flow.unusual_put_volume?.toLocaleString() || '0'}) shows where large traders are positioning. These flows often precede price moves as institutions hedge or speculate.`
+                  : 'Unusual volume data is currently unavailable. This may indicate low institutional activity or data source limitations.'
               }
             />
           </div>
@@ -474,13 +513,13 @@ export default function IntelligenceDashboard() {
           onToggle={() => toggleSection('history')}
           summary={
             <div className="flex items-center gap-1 flex-shrink-0">
-              {feed.gex_history.gex_change_billions >= 0 ? (
+              {(feed.gex_history.gex_change_billions || 0) >= 0 ? (
                 <ArrowUpRight className="w-4 h-4 text-success" />
               ) : (
                 <ArrowDownRight className="w-4 h-4 text-danger" />
               )}
-              <span className={`text-xs font-medium ${feed.gex_history.gex_change_billions >= 0 ? 'text-success' : 'text-danger'}`}>
-                {feed.gex_history.gex_change_billions >= 0 ? '+' : ''}{feed.gex_history.gex_change_billions}B
+              <span className={`text-xs font-medium ${(feed.gex_history.gex_change_billions || 0) >= 0 ? 'text-success' : 'text-danger'}`}>
+                {(feed.gex_history.gex_change_billions || 0) >= 0 ? '+' : ''}{(feed.gex_history.gex_change_billions || 0).toFixed(2)}B
               </span>
             </div>
           }
@@ -490,38 +529,44 @@ export default function IntelligenceDashboard() {
               <div className="p-3 bg-background-hover rounded-lg text-center overflow-hidden">
                 <div className="text-xs text-text-muted mb-1 truncate">Yesterday</div>
                 <div className="text-lg font-bold text-text-secondary truncate">
-                  ${feed.gex_history.yesterday_gex_billions}B
+                  {typeof feed.gex_history.yesterday_gex_billions === 'number'
+                    ? `$${feed.gex_history.yesterday_gex_billions.toFixed(2)}B`
+                    : 'N/A'}
                 </div>
               </div>
               <div className="p-3 bg-background-hover rounded-lg text-center overflow-hidden">
                 <div className="text-xs text-text-muted mb-1 truncate">Today</div>
-                <div className={`text-lg font-bold truncate ${feed.gex_history.today_gex_billions >= 0 ? 'text-success' : 'text-danger'}`}>
-                  ${feed.gex_history.today_gex_billions}B
+                <div className={`text-lg font-bold truncate ${(feed.gex_history.today_gex_billions || 0) >= 0 ? 'text-success' : 'text-danger'}`}>
+                  {typeof feed.gex_history.today_gex_billions === 'number'
+                    ? `$${feed.gex_history.today_gex_billions.toFixed(2)}B`
+                    : 'N/A'}
                 </div>
               </div>
               <div className="p-3 bg-background-hover rounded-lg text-center overflow-hidden">
                 <div className="text-xs text-text-muted mb-1 truncate">Change</div>
-                <div className={`text-lg font-bold truncate ${feed.gex_history.gex_change_billions >= 0 ? 'text-success' : 'text-danger'}`}>
-                  {feed.gex_history.gex_change_billions >= 0 ? '+' : ''}{feed.gex_history.gex_change_billions}B
+                <div className={`text-lg font-bold truncate ${(feed.gex_history.gex_change_billions || 0) >= 0 ? 'text-success' : 'text-danger'}`}>
+                  {typeof feed.gex_history.gex_change_billions === 'number'
+                    ? `${feed.gex_history.gex_change_billions >= 0 ? '+' : ''}${feed.gex_history.gex_change_billions.toFixed(2)}B`
+                    : 'N/A'}
                 </div>
               </div>
             </div>
             <div className="flex items-center justify-between p-2 bg-background-hover rounded-lg overflow-hidden">
               <span className="text-xs text-text-muted">Trend</span>
               <span className={`text-sm font-medium truncate ${feed.gex_history.gex_trend?.includes('RISING') ? 'text-success' : feed.gex_history.gex_trend?.includes('FALLING') ? 'text-danger' : 'text-text-primary'}`}>
-                {feed.gex_history.gex_trend?.replace(/_/g, ' ')}
+                {feed.gex_history.gex_trend?.replace(/_/g, ' ') || 'STABLE'}
               </span>
             </div>
             <InsightBox
               whatToDo={
-                feed.gex_history.gex_change_billions > 0.5
+                (feed.gex_history.gex_change_billions || 0) > 0.5
                   ? 'GEX is rising significantly - volatility is decreasing. Sell premium strategies (iron condors, credit spreads) become more favorable.'
-                  : feed.gex_history.gex_change_billions < -0.5
+                  : (feed.gex_history.gex_change_billions || 0) < -0.5
                   ? 'GEX is falling significantly - volatility is increasing. Buy premium strategies (straddles, long options) or tighten stops on existing positions.'
                   : 'GEX is stable day-over-day. Current volatility regime likely to persist - maintain existing strategy bias.'
               }
               whyItMatters={
-                `Day-over-day GEX change (${feed.gex_history.gex_change_billions >= 0 ? '+' : ''}${feed.gex_history.gex_change_billions}B) predicts volatility shifts. Rising GEX = dealers absorb more risk = calmer markets. Falling GEX = dealers shed risk = choppier markets.`
+                `Day-over-day GEX change (${(feed.gex_history.gex_change_billions || 0) >= 0 ? '+' : ''}${(feed.gex_history.gex_change_billions || 0).toFixed(2)}B) predicts volatility shifts. Rising GEX = dealers absorb more risk = calmer markets. Falling GEX = dealers shed risk = choppier markets.`
               }
             />
           </div>
@@ -588,40 +633,49 @@ export default function IntelligenceDashboard() {
       )}
 
       {/* Pattern Performance */}
-      {feed?.pattern_performance && feed.pattern_performance.patterns?.length > 0 && (
+      {feed?.pattern_performance && (
         <IntelCard
           title="Pattern Performance"
           icon={Target}
-          color="success"
+          color={feed.pattern_performance.best_pattern?.win_rate >= 60 ? 'success' : 'primary'}
           refreshInterval="every 30 min"
           updatedAt={feed.pattern_performance.updated_at}
           expanded={expandedSections.has('patterns')}
           onToggle={() => toggleSection('patterns')}
           summary={
-            feed.pattern_performance.best_pattern && (
+            feed.pattern_performance.best_pattern ? (
               <span className="text-xs text-success truncate">
                 Best: {feed.pattern_performance.best_pattern.win_rate}% WR
               </span>
+            ) : (
+              <span className="text-xs text-text-muted truncate">No patterns</span>
             )
           }
         >
           <div className="space-y-3">
             <div className="text-xs text-text-muted mb-2 overflow-hidden">
-              Current Regime: <span className="text-text-primary font-medium">{feed.pattern_performance.current_regime?.replace(/_/g, ' ')}</span>
+              Current Regime: <span className="text-text-primary font-medium">{feed.pattern_performance.current_regime?.replace(/_/g, ' ') || 'Unknown'}</span>
             </div>
-            {feed.pattern_performance.patterns.map((pattern: any, idx: number) => (
-              <div key={idx} className="flex items-center justify-between p-2 bg-background-hover rounded-lg overflow-hidden gap-2">
-                <span className="text-sm text-text-primary truncate flex-1">{pattern.pattern || 'Unknown'}</span>
-                <div className="flex items-center gap-3 flex-shrink-0">
-                  <span className={`text-sm font-medium ${pattern.win_rate >= 60 ? 'text-success' : pattern.win_rate >= 40 ? 'text-warning' : 'text-danger'}`}>
-                    {pattern.win_rate}% WR
-                  </span>
-                  <span className={`text-sm ${pattern.avg_pnl >= 0 ? 'text-success' : 'text-danger'}`}>
-                    ${pattern.avg_pnl?.toFixed(0)} avg
-                  </span>
+            {feed.pattern_performance.patterns?.length > 0 ? (
+              feed.pattern_performance.patterns.map((pattern: any, idx: number) => (
+                <div key={idx} className="flex items-center justify-between p-2 bg-background-hover rounded-lg overflow-hidden gap-2">
+                  <span className="text-sm text-text-primary truncate flex-1">{pattern.pattern || 'Unknown'}</span>
+                  <div className="flex items-center gap-3 flex-shrink-0">
+                    <span className={`text-sm font-medium ${pattern.win_rate >= 60 ? 'text-success' : pattern.win_rate >= 40 ? 'text-warning' : 'text-danger'}`}>
+                      {pattern.win_rate}% WR
+                    </span>
+                    <span className={`text-sm ${pattern.avg_pnl >= 0 ? 'text-success' : 'text-danger'}`}>
+                      ${pattern.avg_pnl?.toFixed(0)} avg
+                    </span>
+                  </div>
                 </div>
+              ))
+            ) : (
+              <div className="p-4 bg-background-hover rounded-lg text-center">
+                <div className="text-text-muted text-sm mb-2">No pattern data available</div>
+                <div className="text-text-secondary text-xs">Pattern performance data will appear once enough trades have been recorded in the current regime.</div>
               </div>
-            ))}
+            )}
             <InsightBox
               whatToDo={
                 feed.pattern_performance.best_pattern?.win_rate >= 60
@@ -629,7 +683,7 @@ export default function IntelligenceDashboard() {
                   : 'No high-probability patterns in current regime. Reduce position sizes or wait for better setups.'
               }
               whyItMatters={
-                `Pattern performance varies by GEX regime (${feed.pattern_performance.current_regime?.replace(/_/g, ' ')}). Strategies that work in positive gamma don't work in negative gamma. Always trade WITH the current regime, not against it.`
+                `Pattern performance varies by GEX regime (${feed.pattern_performance.current_regime?.replace(/_/g, ' ') || 'current'}). Strategies that work in positive gamma don't work in negative gamma. Always trade WITH the current regime, not against it.`
               }
             />
           </div>
@@ -809,11 +863,11 @@ export default function IntelligenceDashboard() {
       )}
 
       {/* Key Events */}
-      {feed?.key_events && (feed.key_events.high_impact_today || feed.key_events.fed_day || feed.key_events.triple_witching) && (
+      {feed?.key_events && (
         <IntelCard
           title="Key Events"
           icon={Calendar}
-          color="warning"
+          color={(feed.key_events.fed_day || feed.key_events.high_impact_today || feed.key_events.triple_witching) ? 'warning' : 'primary'}
           refreshInterval="every 30 min"
           updatedAt={feed.key_events.updated_at}
           expanded={expandedSections.has('events')}
@@ -823,7 +877,11 @@ export default function IntelligenceDashboard() {
               <span className="text-xs font-medium px-2 py-0.5 rounded bg-danger/20 text-danger flex-shrink-0">FED DAY</span>
             ) : feed.key_events.high_impact_today ? (
               <span className="text-xs font-medium px-2 py-0.5 rounded bg-warning/20 text-warning flex-shrink-0">HIGH IMPACT</span>
-            ) : null
+            ) : feed.key_events.triple_witching ? (
+              <span className="text-xs font-medium px-2 py-0.5 rounded bg-warning/20 text-warning flex-shrink-0">OPEX</span>
+            ) : (
+              <span className="text-xs font-medium px-2 py-0.5 rounded bg-success/20 text-success flex-shrink-0">CLEAR</span>
+            )
           }
         >
           <div className="space-y-3">
@@ -839,6 +897,21 @@ export default function IntelligenceDashboard() {
                 <span className="text-sm text-warning font-medium">Monthly Options Expiration</span>
               </div>
             )}
+            {feed.key_events.high_impact_today && !feed.key_events.fed_day && !feed.key_events.triple_witching && (
+              <div className="flex items-center gap-2 p-2 bg-warning/10 border border-warning/20 rounded-lg overflow-hidden">
+                <AlertTriangle className="w-4 h-4 text-warning flex-shrink-0" />
+                <span className="text-sm text-warning font-medium">High-Impact Economic Event</span>
+              </div>
+            )}
+            {!feed.key_events.fed_day && !feed.key_events.triple_witching && !feed.key_events.high_impact_today && (
+              <div className="flex items-center gap-2 p-3 bg-success/10 border border-success/20 rounded-lg overflow-hidden">
+                <Zap className="w-4 h-4 text-success flex-shrink-0" />
+                <div>
+                  <span className="text-sm text-success font-medium">No High-Impact Events Today</span>
+                  <p className="text-xs text-text-muted mt-1">Clear calendar - normal trading conditions expected. Good day for standard GEX-based strategies.</p>
+                </div>
+              </div>
+            )}
             {feed.key_events.interpretation && (
               <div className="p-2 bg-background-hover rounded-lg overflow-hidden">
                 <span className="text-sm text-text-secondary break-words">{feed.key_events.interpretation}</span>
@@ -850,14 +923,18 @@ export default function IntelligenceDashboard() {
                   ? 'Fed days are high volatility - reduce position sizes by 50%. Wait until 30 mins after announcement for initial reaction to settle before trading.'
                   : feed.key_events.triple_witching
                   ? 'Expiration day - expect pinning action toward max pain and high OI strikes. Avoid holding 0DTE options past 2pm ET unless you have conviction.'
-                  : 'High impact event day - be prepared for sudden moves. Use wider stops and smaller position sizes.'
+                  : feed.key_events.high_impact_today
+                  ? 'High impact event day - be prepared for sudden moves. Use wider stops and smaller position sizes.'
+                  : 'No major events - good day for normal trading. Follow GEX signals and execute your standard strategies with confidence.'
               }
               whyItMatters={
                 feed.key_events.fed_day
                   ? 'Fed announcements cause 2-3x normal volatility. The initial move often reverses. Wait for dust to settle before committing capital.'
                   : feed.key_events.triple_witching
                   ? 'Monthly OPEX sees massive gamma unwind. Price tends to pin to strikes with highest OI, then often moves sharply after 4pm as hedges are lifted.'
-                  : 'High-impact events create uncertainty. The market often overreacts initially, creating opportunities for patient traders.'
+                  : feed.key_events.high_impact_today
+                  ? 'High-impact events create uncertainty. The market often overreacts initially, creating opportunities for patient traders.'
+                  : 'Clean event calendars often produce the most predictable GEX behavior. Dealer hedging flows dominate when macro surprises are unlikely.'
               }
             />
           </div>
