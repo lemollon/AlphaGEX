@@ -199,7 +199,7 @@ export default function DashboardScanFeed() {
                       </div>
                       <div className="flex items-center gap-1 text-xs text-text-muted flex-shrink-0">
                         <Clock className="w-3 h-3" />
-                        {scan.time_ct || new Date(scan.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Chicago' })}
+                        {scan.time_ct || (new Date(scan.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'America/Chicago' }) + ' CT')}
                       </div>
                     </div>
                   </div>

@@ -356,8 +356,8 @@ export default function GammaExpirationWidget() {
                     hour: '2-digit',
                     minute: '2-digit',
                     hour12: true,
-                    timeZoneName: 'short'
-                  })}
+                    timeZone: 'America/Chicago'
+                  })} CT
                   {refreshing && <span className="ml-1 text-primary">(refreshing...)</span>}
                 </span>
               )}

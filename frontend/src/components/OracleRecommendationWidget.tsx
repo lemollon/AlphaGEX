@@ -6,42 +6,86 @@ import {
   Eye,
   Brain,
   TrendingUp,
-  TrendingDown,
   Minus,
   RefreshCw,
   ChevronDown,
   ChevronUp,
-  Zap,
   AlertTriangle,
-  CheckCircle,
-  Target,
-  Shield
+  Shield,
+  Clock
 } from 'lucide-react'
 import { api } from '@/lib/api'
 
-interface OracleRecommendation {
-  strategy: 'IC' | 'DIRECTIONAL' | 'HOLD'
+// Interface matching actual API response from /api/oracle/strategy-recommendation
+interface OracleAPIResponse {
+  recommended_strategy: 'IC' | 'DIRECTIONAL' | 'HOLD'
   confidence: number
   reasoning: string
   vix_regime: string
   gex_regime: string
-  win_probability?: number
-  top_factors?: string[]
+  ic_suitability?: number
+  dir_suitability?: number
+  size_multiplier?: number
+  market_data?: {
+    spot_price: number
+    vix: number
+    call_wall: number
+    put_wall: number
+  }
+  timestamp?: string
+}
+
+// Helper to format timestamp in Central Time
+function formatCentralTime(timestamp?: string): string {
+  if (!timestamp) return ''
+  try {
+    const date = new Date(timestamp)
+    return date.toLocaleTimeString('en-US', {
+      timeZone: 'America/Chicago',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    }) + ' CT'
+  } catch {
+    return ''
+  }
 }
 
 export default function OracleRecommendationWidget() {
   const [expanded, setExpanded] = useState(true)
   const [loading, setLoading] = useState(true)
-  const [recommendation, setRecommendation] = useState<OracleRecommendation | null>(null)
+  const [recommendation, setRecommendation] = useState<OracleAPIResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [lastUpdated, setLastUpdated] = useState<string>('')
 
   const fetchRecommendation = async () => {
     setLoading(true)
     setError(null)
     try {
       const response = await api.get('/api/oracle/strategy-recommendation')
-      if (response.data?.success && response.data?.data) {
-        setRecommendation(response.data.data)
+      // API returns object directly (not wrapped in success/data)
+      const data = response.data
+      if (data && (data.recommended_strategy || data.strategy)) {
+        // Normalize the response - handle both field names
+        const normalized: OracleAPIResponse = {
+          recommended_strategy: data.recommended_strategy || data.strategy || 'HOLD',
+          confidence: data.confidence || 0,
+          reasoning: data.reasoning || '',
+          vix_regime: data.vix_regime || 'UNKNOWN',
+          gex_regime: data.gex_regime || 'UNKNOWN',
+          ic_suitability: data.ic_suitability,
+          dir_suitability: data.dir_suitability,
+          size_multiplier: data.size_multiplier,
+          market_data: data.market_data,
+          timestamp: data.timestamp
+        }
+        setRecommendation(normalized)
+        setLastUpdated(formatCentralTime(data.timestamp) || new Date().toLocaleTimeString('en-US', {
+          timeZone: 'America/Chicago',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true
+        }) + ' CT')
       } else {
         setError('No recommendation available')
       }
@@ -95,7 +139,7 @@ export default function OracleRecommendationWidget() {
     }
   }
 
-  const config = recommendation ? getStrategyConfig(recommendation.strategy) : null
+  const config = recommendation ? getStrategyConfig(recommendation.recommended_strategy) : null
 
   return (
     <div className={`card bg-gradient-to-r from-info/5 to-transparent border border-info/20`}>
@@ -184,15 +228,6 @@ export default function OracleRecommendationWidget() {
                   </div>
                 </div>
 
-                {recommendation.win_probability && (
-                  <div className="flex items-center gap-2 mb-3">
-                    <CheckCircle className="w-4 h-4 text-success" />
-                    <span className="text-sm text-text-primary">
-                      Estimated win rate: <strong className="text-success">{recommendation.win_probability}%</strong>
-                    </span>
-                  </div>
-                )}
-
                 {recommendation.reasoning && (
                   <div className="p-3 bg-background-card/50 rounded-lg">
                     <p className="text-sm text-text-secondary">{recommendation.reasoning}</p>
@@ -224,18 +259,33 @@ export default function OracleRecommendationWidget() {
                 </div>
               </div>
 
-              {/* Top Factors */}
-              {recommendation.top_factors && recommendation.top_factors.length > 0 && (
-                <div className="space-y-2">
-                  <div className="text-xs font-semibold text-text-muted uppercase tracking-wide">Key Factors</div>
-                  <div className="space-y-1">
-                    {recommendation.top_factors.slice(0, 3).map((factor, idx) => (
-                      <div key={idx} className="flex items-center gap-2 text-sm text-text-secondary">
-                        <Zap className="w-3 h-3 text-primary flex-shrink-0" />
-                        <span>{factor}</span>
+              {/* Suitability Scores */}
+              {(recommendation.ic_suitability !== undefined || recommendation.dir_suitability !== undefined) && (
+                <div className="grid grid-cols-2 gap-3">
+                  {recommendation.ic_suitability !== undefined && (
+                    <div className="p-3 bg-background-hover rounded-lg">
+                      <div className="text-xs text-text-muted mb-1">IC Suitability</div>
+                      <div className={`text-sm font-semibold ${recommendation.ic_suitability >= 0.6 ? 'text-success' : recommendation.ic_suitability >= 0.4 ? 'text-warning' : 'text-danger'}`}>
+                        {(recommendation.ic_suitability * 100).toFixed(0)}%
                       </div>
-                    ))}
-                  </div>
+                    </div>
+                  )}
+                  {recommendation.dir_suitability !== undefined && (
+                    <div className="p-3 bg-background-hover rounded-lg">
+                      <div className="text-xs text-text-muted mb-1">Directional Suitability</div>
+                      <div className={`text-sm font-semibold ${recommendation.dir_suitability >= 0.6 ? 'text-success' : recommendation.dir_suitability >= 0.4 ? 'text-warning' : 'text-danger'}`}>
+                        {(recommendation.dir_suitability * 100).toFixed(0)}%
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Last Updated Time */}
+              {lastUpdated && (
+                <div className="flex items-center gap-2 text-xs text-text-muted">
+                  <Clock className="w-3 h-3" />
+                  <span>Updated: {lastUpdated}</span>
                 </div>
               )}
 
