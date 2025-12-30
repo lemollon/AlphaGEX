@@ -140,6 +140,22 @@ class TradingAdvice(Enum):
     SKIP_TODAY = "SKIP_TODAY"           # Low confidence, don't trade
 
 
+class StrategyType(Enum):
+    """Strategy types for IC vs Directional selection"""
+    IRON_CONDOR = "IRON_CONDOR"         # ARES/PEGASUS - profit when pinned
+    DIRECTIONAL = "DIRECTIONAL"         # ATHENA - profit when price moves
+    SKIP = "SKIP"                       # Market too uncertain
+
+
+class VIXRegime(Enum):
+    """VIX-based volatility regime"""
+    LOW = "LOW"                # VIX < 15 - cheap options, low premium
+    NORMAL = "NORMAL"          # VIX 15-22 - ideal for IC
+    ELEVATED = "ELEVATED"      # VIX 22-28 - cautious IC, consider directional
+    HIGH = "HIGH"              # VIX 28-35 - favor directional
+    EXTREME = "EXTREME"        # VIX > 35 - favor directional or skip
+
+
 class GEXRegime(Enum):
     """GEX market regime"""
     POSITIVE = "POSITIVE"    # Mean reversion, good for premium selling
@@ -203,6 +219,50 @@ class OraclePrediction:
 
     # Claude AI analysis data for logging transparency
     claude_analysis: Optional['ClaudeAnalysis'] = None
+
+    # Strategy recommendation: When SKIP_TODAY, may suggest alternative bot
+    # e.g., ARES skip due to high VIX -> suggest ATHENA directional
+    suggested_alternative: Optional[BotName] = None
+    strategy_recommendation: Optional['StrategyRecommendation'] = None
+
+
+@dataclass
+class StrategyRecommendation:
+    """
+    Strategy recommendation based on VIX + GEX regime analysis.
+
+    This helps decide: Should we trade Iron Condors (ARES/PEGASUS)
+    or Directional Spreads (ATHENA) given current market conditions?
+
+    Decision Matrix:
+    ┌─────────────┬────────────────┬────────────────┬────────────────┐
+    │ VIX Regime  │  GEX POSITIVE  │  GEX NEUTRAL   │  GEX NEGATIVE  │
+    ├─────────────┼────────────────┼────────────────┼────────────────┤
+    │ LOW (<15)   │  IC (reduced)  │  SKIP          │  DIRECTIONAL   │
+    │ NORMAL      │  IC (full)     │  IC (reduced)  │  DIRECTIONAL   │
+    │ ELEVATED    │  IC (reduced)  │  DIRECTIONAL   │  DIRECTIONAL   │
+    │ HIGH        │  DIRECTIONAL   │  DIRECTIONAL   │  DIRECTIONAL   │
+    │ EXTREME     │  SKIP          │  SKIP          │  DIRECTIONAL   │
+    └─────────────┴────────────────┴────────────────┴────────────────┘
+    """
+    recommended_strategy: StrategyType
+    vix_regime: VIXRegime
+    gex_regime: GEXRegime
+    confidence: float  # 0-1 how confident in the recommendation
+
+    # Why this strategy
+    reasoning: str
+
+    # Strategy-specific details
+    ic_suitability: float = 0.0   # 0-1 how suitable for Iron Condor
+    dir_suitability: float = 0.0  # 0-1 how suitable for Directional
+
+    # Suggested position sizing multiplier (0.25, 0.5, 0.75, 1.0)
+    size_multiplier: float = 1.0
+
+    # Raw market data for transparency
+    vix: float = 0.0
+    spot_price: float = 0.0
 
 
 @dataclass
@@ -1077,6 +1137,38 @@ class OracleAdvisor:
         'gex_between_walls',
     ]
 
+    # V2 features with VIX regime for strategy selection
+    FEATURE_COLS_V2 = [
+        'vix',
+        'vix_percentile_30d',
+        'vix_change_1d',
+        'day_of_week',
+        'price_change_1d',
+        'expected_move_pct',
+        'win_rate_30d',
+        'win_rate_7d',          # Recent momentum (faster adaptation)
+        # GEX features
+        'gex_normalized',
+        'gex_regime_positive',
+        'gex_distance_to_flip_pct',
+        'gex_between_walls',
+        # VIX regime features for IC vs Directional
+        'vix_regime_low',       # 1 if VIX < 15
+        'vix_regime_normal',    # 1 if VIX 15-22
+        'vix_regime_elevated',  # 1 if VIX 22-28
+        'vix_regime_high',      # 1 if VIX 28-35
+        'vix_regime_extreme',   # 1 if VIX > 35
+        # Strategy suitability (computed from VIX + GEX)
+        'ic_suitability',       # 0-1 how suitable for Iron Condor
+        'dir_suitability',      # 0-1 how suitable for Directional
+        # Regime features (from regime_classifications table)
+        'regime_trend_score',   # -1 to 1 (bearish to bullish)
+        'regime_vol_percentile', # 0-100 volatility percentile
+        # Psychology features (fear/greed indicators)
+        'psychology_fear_score', # 0-1 market fear level
+        'psychology_momentum',   # Price momentum indicator
+    ]
+
     # V1 features (backward compatibility)
     FEATURE_COLS_V1 = [
         'vix',
@@ -1317,6 +1409,337 @@ class OracleAdvisor:
             return False
 
     # =========================================================================
+    # STRATEGY SELECTION (IC vs DIRECTIONAL)
+    # =========================================================================
+
+    def _get_vix_regime(self, vix: float) -> VIXRegime:
+        """Classify VIX into regime buckets"""
+        if vix < 15:
+            return VIXRegime.LOW
+        elif vix < 22:
+            return VIXRegime.NORMAL
+        elif vix < 28:
+            return VIXRegime.ELEVATED
+        elif vix < 35:
+            return VIXRegime.HIGH
+        else:
+            return VIXRegime.EXTREME
+
+    def get_strategy_recommendation(
+        self,
+        context: MarketContext
+    ) -> StrategyRecommendation:
+        """
+        Determine whether to trade Iron Condors or Directional Spreads.
+
+        This is the CENTRAL method that bots can call before deciding
+        whether to proceed with their specific strategy.
+
+        Key Insight:
+        - IC (ARES/PEGASUS) profits when price stays PINNED
+        - Directional (ATHENA) profits when price MOVES
+
+        Decision Logic:
+        1. HIGH VIX + NEGATIVE GEX = TRENDING = Favor DIRECTIONAL
+        2. NORMAL VIX + POSITIVE GEX = PINNING = Favor IC
+        3. EXTREME VIX = Too risky, SKIP or reduced DIRECTIONAL
+        4. LOW VIX = Cheap options, favor DIRECTIONAL if trending
+
+        Returns:
+            StrategyRecommendation with recommended strategy and reasoning
+        """
+        vix_regime = self._get_vix_regime(context.vix)
+        gex_regime = context.gex_regime
+
+        reasoning_parts = []
+        ic_score = 0.5  # Start neutral
+        dir_score = 0.5
+
+        # =========================================================================
+        # VIX REGIME SCORING
+        # =========================================================================
+        if vix_regime == VIXRegime.LOW:
+            # Low VIX = cheap options, but low premium for IC
+            ic_score -= 0.15
+            dir_score += 0.10
+            reasoning_parts.append(f"VIX {context.vix:.1f} (LOW): Cheap options favor directional, IC premium weak")
+
+        elif vix_regime == VIXRegime.NORMAL:
+            # Normal VIX = IDEAL for IC (goldilocks zone)
+            ic_score += 0.20
+            reasoning_parts.append(f"VIX {context.vix:.1f} (NORMAL): Ideal IC environment")
+
+        elif vix_regime == VIXRegime.ELEVATED:
+            # Elevated VIX = IC possible but caution needed
+            ic_score -= 0.05
+            dir_score += 0.15
+            reasoning_parts.append(f"VIX {context.vix:.1f} (ELEVATED): Consider directional if trending")
+
+        elif vix_regime == VIXRegime.HIGH:
+            # High VIX = Markets volatile, favor directional
+            ic_score -= 0.25
+            dir_score += 0.25
+            reasoning_parts.append(f"VIX {context.vix:.1f} (HIGH): Volatile market favors directional")
+
+        elif vix_regime == VIXRegime.EXTREME:
+            # Extreme VIX = Panic/crisis, very risky
+            ic_score -= 0.40
+            dir_score += 0.10  # Still risky for directional
+            reasoning_parts.append(f"VIX {context.vix:.1f} (EXTREME): Crisis conditions, reduce exposure")
+
+        # =========================================================================
+        # GEX REGIME SCORING
+        # =========================================================================
+        if gex_regime == GEXRegime.POSITIVE:
+            # Positive GEX = Mean reversion, pinning behavior
+            ic_score += 0.25
+            dir_score -= 0.10
+            reasoning_parts.append("GEX POSITIVE: Mean reversion, pinning favors IC")
+
+        elif gex_regime == GEXRegime.NEGATIVE:
+            # Negative GEX = Trending, explosive moves
+            ic_score -= 0.30
+            dir_score += 0.30
+            reasoning_parts.append("GEX NEGATIVE: Trending market favors directional")
+
+        elif gex_regime == GEXRegime.NEUTRAL:
+            # Neutral = Mixed signals
+            reasoning_parts.append("GEX NEUTRAL: Mixed signals")
+
+        # =========================================================================
+        # ADDITIONAL FACTORS
+        # =========================================================================
+
+        # Day of week adjustment (Monday/Friday more volatile)
+        if context.day_of_week in [0, 4]:  # Monday=0, Friday=4
+            ic_score -= 0.05
+            reasoning_parts.append("Mon/Fri: Higher volatility days")
+
+        # Distance to flip point
+        if context.gex_distance_to_flip_pct > 2:
+            # Far above flip = more pinning
+            ic_score += 0.05
+        elif context.gex_distance_to_flip_pct < -2:
+            # Far below flip = more trending
+            dir_score += 0.05
+
+        # =========================================================================
+        # DETERMINE RECOMMENDATION
+        # =========================================================================
+
+        # Normalize scores to 0-1
+        ic_score = max(0.0, min(1.0, ic_score))
+        dir_score = max(0.0, min(1.0, dir_score))
+
+        # Calculate position size multiplier based on confidence
+        confidence = max(ic_score, dir_score)
+        if vix_regime == VIXRegime.EXTREME:
+            size_multiplier = 0.25
+        elif vix_regime == VIXRegime.HIGH:
+            size_multiplier = 0.50
+        elif vix_regime == VIXRegime.ELEVATED:
+            size_multiplier = 0.75
+        else:
+            size_multiplier = 1.0
+
+        # Determine strategy
+        if vix_regime == VIXRegime.EXTREME and gex_regime != GEXRegime.NEGATIVE:
+            # Extreme VIX without clear trend = SKIP
+            strategy = StrategyType.SKIP
+            reasoning_parts.append("RESULT: SKIP - Extreme VIX without clear directional signal")
+
+        elif ic_score > dir_score + 0.15:
+            # Clear IC advantage
+            strategy = StrategyType.IRON_CONDOR
+            reasoning_parts.append(f"RESULT: IRON_CONDOR (IC={ic_score:.2f} > DIR={dir_score:.2f})")
+
+        elif dir_score > ic_score + 0.10:
+            # Clear directional advantage
+            strategy = StrategyType.DIRECTIONAL
+            reasoning_parts.append(f"RESULT: DIRECTIONAL (DIR={dir_score:.2f} > IC={ic_score:.2f})")
+
+        else:
+            # Close call - default to IC in normal conditions, directional in elevated
+            if vix_regime in [VIXRegime.LOW, VIXRegime.NORMAL]:
+                strategy = StrategyType.IRON_CONDOR
+                reasoning_parts.append(f"RESULT: IRON_CONDOR (close call, normal VIX)")
+            else:
+                strategy = StrategyType.DIRECTIONAL
+                reasoning_parts.append(f"RESULT: DIRECTIONAL (close call, elevated VIX)")
+
+        # Log the recommendation
+        self.live_log.log("STRATEGY_REC", f"Recommended: {strategy.value}", {
+            "vix": context.vix,
+            "vix_regime": vix_regime.value,
+            "gex_regime": gex_regime.value,
+            "ic_score": ic_score,
+            "dir_score": dir_score,
+            "strategy": strategy.value,
+            "size_multiplier": size_multiplier
+        })
+
+        return StrategyRecommendation(
+            recommended_strategy=strategy,
+            vix_regime=vix_regime,
+            gex_regime=gex_regime,
+            confidence=confidence,
+            reasoning=" | ".join(reasoning_parts),
+            ic_suitability=ic_score,
+            dir_suitability=dir_score,
+            size_multiplier=size_multiplier,
+            vix=context.vix,
+            spot_price=context.spot_price
+        )
+
+    def analyze_strategy_performance(self, days: int = 30) -> Dict[str, Any]:
+        """
+        Analyze IC vs Directional performance by VIX/GEX regime.
+
+        This helps Oracle LEARN which strategy works best in which conditions.
+        Uses data from oracle_training_outcomes table.
+
+        Returns:
+            Dict with performance metrics by regime and strategy type
+        """
+        if not DB_AVAILABLE:
+            return {"error": "Database not available"}
+
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Query outcomes with regime context
+            cursor.execute("""
+                SELECT
+                    bot_name,
+                    features->>'vix' as vix,
+                    features->>'gex_regime' as gex_regime,
+                    is_win,
+                    net_pnl,
+                    trade_date
+                FROM oracle_training_outcomes
+                WHERE trade_date >= CURRENT_DATE - INTERVAL '%s days'
+                ORDER BY trade_date DESC
+            """, (days,))
+
+            rows = cursor.fetchall()
+            conn.close()
+
+            if not rows:
+                return {"error": "No outcome data available", "days": days}
+
+            # Categorize by strategy and regime
+            ic_bots = ['ARES', 'PEGASUS']
+            dir_bots = ['ATHENA']
+
+            results = {
+                'ic_by_vix_regime': {
+                    'LOW': {'wins': 0, 'total': 0, 'pnl': 0},
+                    'NORMAL': {'wins': 0, 'total': 0, 'pnl': 0},
+                    'ELEVATED': {'wins': 0, 'total': 0, 'pnl': 0},
+                    'HIGH': {'wins': 0, 'total': 0, 'pnl': 0},
+                    'EXTREME': {'wins': 0, 'total': 0, 'pnl': 0},
+                },
+                'dir_by_vix_regime': {
+                    'LOW': {'wins': 0, 'total': 0, 'pnl': 0},
+                    'NORMAL': {'wins': 0, 'total': 0, 'pnl': 0},
+                    'ELEVATED': {'wins': 0, 'total': 0, 'pnl': 0},
+                    'HIGH': {'wins': 0, 'total': 0, 'pnl': 0},
+                    'EXTREME': {'wins': 0, 'total': 0, 'pnl': 0},
+                },
+                'ic_by_gex_regime': {
+                    'POSITIVE': {'wins': 0, 'total': 0, 'pnl': 0},
+                    'NEUTRAL': {'wins': 0, 'total': 0, 'pnl': 0},
+                    'NEGATIVE': {'wins': 0, 'total': 0, 'pnl': 0},
+                },
+                'dir_by_gex_regime': {
+                    'POSITIVE': {'wins': 0, 'total': 0, 'pnl': 0},
+                    'NEUTRAL': {'wins': 0, 'total': 0, 'pnl': 0},
+                    'NEGATIVE': {'wins': 0, 'total': 0, 'pnl': 0},
+                },
+                'total_ic': {'wins': 0, 'total': 0, 'pnl': 0},
+                'total_dir': {'wins': 0, 'total': 0, 'pnl': 0},
+            }
+
+            for row in rows:
+                bot_name, vix_str, gex_regime, is_win, net_pnl, trade_date = row
+                vix = float(vix_str) if vix_str else 20.0
+                gex_regime = gex_regime or 'NEUTRAL'
+                net_pnl = net_pnl or 0
+
+                # Determine VIX regime
+                if vix < 15:
+                    vix_regime = 'LOW'
+                elif vix < 22:
+                    vix_regime = 'NORMAL'
+                elif vix < 28:
+                    vix_regime = 'ELEVATED'
+                elif vix < 35:
+                    vix_regime = 'HIGH'
+                else:
+                    vix_regime = 'EXTREME'
+
+                # Categorize
+                is_ic = bot_name in ic_bots
+                is_dir = bot_name in dir_bots
+
+                if is_ic:
+                    results['ic_by_vix_regime'][vix_regime]['total'] += 1
+                    results['ic_by_vix_regime'][vix_regime]['pnl'] += net_pnl
+                    results['ic_by_gex_regime'][gex_regime]['total'] += 1
+                    results['ic_by_gex_regime'][gex_regime]['pnl'] += net_pnl
+                    results['total_ic']['total'] += 1
+                    results['total_ic']['pnl'] += net_pnl
+                    if is_win:
+                        results['ic_by_vix_regime'][vix_regime]['wins'] += 1
+                        results['ic_by_gex_regime'][gex_regime]['wins'] += 1
+                        results['total_ic']['wins'] += 1
+
+                elif is_dir:
+                    results['dir_by_vix_regime'][vix_regime]['total'] += 1
+                    results['dir_by_vix_regime'][vix_regime]['pnl'] += net_pnl
+                    results['dir_by_gex_regime'][gex_regime]['total'] += 1
+                    results['dir_by_gex_regime'][gex_regime]['pnl'] += net_pnl
+                    results['total_dir']['total'] += 1
+                    results['total_dir']['pnl'] += net_pnl
+                    if is_win:
+                        results['dir_by_vix_regime'][vix_regime]['wins'] += 1
+                        results['dir_by_gex_regime'][gex_regime]['wins'] += 1
+                        results['total_dir']['wins'] += 1
+
+            # Calculate win rates
+            for regime_dict in [results['ic_by_vix_regime'], results['dir_by_vix_regime'],
+                               results['ic_by_gex_regime'], results['dir_by_gex_regime']]:
+                for regime, stats in regime_dict.items():
+                    if stats['total'] > 0:
+                        stats['win_rate'] = stats['wins'] / stats['total']
+                    else:
+                        stats['win_rate'] = 0
+
+            for total_key in ['total_ic', 'total_dir']:
+                if results[total_key]['total'] > 0:
+                    results[total_key]['win_rate'] = results[total_key]['wins'] / results[total_key]['total']
+                else:
+                    results[total_key]['win_rate'] = 0
+
+            results['days_analyzed'] = days
+            results['total_trades'] = len(rows)
+
+            # Log the analysis
+            self.live_log.log("STRATEGY_ANALYSIS", "IC vs Directional performance analyzed", {
+                "days": days,
+                "total_trades": len(rows),
+                "ic_win_rate": results['total_ic'].get('win_rate', 0),
+                "dir_win_rate": results['total_dir'].get('win_rate', 0),
+            })
+
+            return results
+
+        except Exception as e:
+            logger.error(f"Failed to analyze strategy performance: {e}")
+            return {"error": str(e)}
+
+    # =========================================================================
     # BOT-SPECIFIC ADVICE
     # =========================================================================
 
@@ -1383,13 +1806,31 @@ class OracleAdvisor:
                 skip_threshold_used = vix_streak_skip
 
         # If any VIX skip rule triggered, return SKIP_TODAY
+        # BUT: Check if conditions favor directional trading (ATHENA)
         if skip_reason:
+            # Get strategy recommendation to see if ATHENA directional is better
+            strategy_rec = self.get_strategy_recommendation(context)
+
+            # Determine if we should suggest ATHENA instead of just skipping
+            suggest_athena = False
+            enhanced_reasoning = skip_reason
+
+            if strategy_rec.recommended_strategy == StrategyType.DIRECTIONAL:
+                suggest_athena = True
+                enhanced_reasoning = f"{skip_reason} | Consider ATHENA directional: {strategy_rec.reasoning}"
+            elif context.gex_regime == GEXRegime.NEGATIVE and context.vix < 40:
+                # Trending market with elevated VIX = good for directional
+                suggest_athena = True
+                enhanced_reasoning = f"{skip_reason} | GEX NEGATIVE (trending) favors ATHENA directional"
+
             self.live_log.log("VIX_SKIP", skip_reason, {
                 "vix": context.vix,
                 "threshold": skip_threshold_used,
                 "day_of_week": context.day_of_week,
                 "recent_losses": recent_losses,
-                "action": "SKIP_TODAY"
+                "action": "SKIP_TODAY",
+                "suggest_athena": suggest_athena,
+                "strategy_rec": strategy_rec.recommended_strategy.value
             })
             return OraclePrediction(
                 bot_name=BotName.ARES,
@@ -1398,14 +1839,17 @@ class OracleAdvisor:
                 confidence=0.95,  # High confidence in the skip decision
                 suggested_risk_pct=0.0,
                 suggested_sd_multiplier=1.0,
-                reasoning=skip_reason,
+                reasoning=enhanced_reasoning,
                 top_factors=[
                     ("vix_level", context.vix),
                     ("skip_threshold", skip_threshold_used),
                     ("day_of_week", context.day_of_week),
-                    ("recent_losses", recent_losses)
+                    ("recent_losses", recent_losses),
+                    ("suggest_athena", 1.0 if suggest_athena else 0.0)
                 ],
-                model_version=self.model_version
+                model_version=self.model_version,
+                suggested_alternative=BotName.ATHENA if suggest_athena else None,
+                strategy_recommendation=strategy_rec
             )
 
         # === FULL DATA FLOW LOGGING: INPUT ===
@@ -2053,13 +2497,31 @@ class OracleAdvisor:
                 skip_threshold_used = vix_streak_skip
 
         # If any VIX skip rule triggered, return SKIP_TODAY
+        # BUT: Check if conditions favor directional trading (ATHENA)
         if skip_reason:
+            # Get strategy recommendation to see if ATHENA directional is better
+            strategy_rec = self.get_strategy_recommendation(context)
+
+            # Determine if we should suggest ATHENA instead of just skipping
+            suggest_athena = False
+            enhanced_reasoning = skip_reason
+
+            if strategy_rec.recommended_strategy == StrategyType.DIRECTIONAL:
+                suggest_athena = True
+                enhanced_reasoning = f"{skip_reason} | Consider ATHENA directional: {strategy_rec.reasoning}"
+            elif context.gex_regime == GEXRegime.NEGATIVE and context.vix < 40:
+                # Trending market with elevated VIX = good for directional
+                suggest_athena = True
+                enhanced_reasoning = f"{skip_reason} | GEX NEGATIVE (trending) favors ATHENA directional"
+
             self.live_log.log("VIX_SKIP", skip_reason, {
                 "vix": context.vix,
                 "threshold": skip_threshold_used,
                 "day_of_week": context.day_of_week,
                 "recent_losses": recent_losses,
-                "action": "SKIP_TODAY"
+                "action": "SKIP_TODAY",
+                "suggest_athena": suggest_athena,
+                "strategy_rec": strategy_rec.recommended_strategy.value
             })
             return OraclePrediction(
                 bot_name=BotName.PEGASUS,
@@ -2068,14 +2530,17 @@ class OracleAdvisor:
                 confidence=0.95,
                 suggested_risk_pct=0.0,
                 suggested_sd_multiplier=1.0,
-                reasoning=skip_reason,
+                reasoning=enhanced_reasoning,
                 top_factors=[
                     ("vix_level", context.vix),
                     ("skip_threshold", skip_threshold_used),
                     ("day_of_week", context.day_of_week),
-                    ("recent_losses", recent_losses)
+                    ("recent_losses", recent_losses),
+                    ("suggest_athena", 1.0 if suggest_athena else 0.0)
                 ],
-                model_version=self.model_version
+                model_version=self.model_version,
+                suggested_alternative=BotName.ATHENA if suggest_athena else None,
+                strategy_recommendation=strategy_rec
             )
 
         # === FULL DATA FLOW LOGGING: INPUT ===
@@ -2465,12 +2930,17 @@ class OracleAdvisor:
         pnls = []
 
         for i, trade in enumerate(trades):
-            # Rolling stats
-            lookback_start = max(0, i - 30)
-            recent_outcomes = outcomes[lookback_start:i] if i > 0 else []
-            recent_pnls = pnls[lookback_start:i] if i > 0 else []
+            # Rolling stats - 30 day lookback
+            lookback_start_30 = max(0, i - 30)
+            recent_outcomes_30 = outcomes[lookback_start_30:i] if i > 0 else []
+            recent_pnls = pnls[lookback_start_30:i] if i > 0 else []
 
-            win_rate_30d = sum(1 for o in recent_outcomes if o == 'MAX_PROFIT') / len(recent_outcomes) if recent_outcomes else 0.68
+            # Rolling stats - 7 day lookback (for faster momentum)
+            lookback_start_7 = max(0, i - 7)
+            recent_outcomes_7 = outcomes[lookback_start_7:i] if i > 0 else []
+
+            win_rate_30d = sum(1 for o in recent_outcomes_30 if o == 'MAX_PROFIT') / len(recent_outcomes_30) if recent_outcomes_30 else 0.68
+            win_rate_7d = sum(1 for o in recent_outcomes_7 if o == 'MAX_PROFIT') / len(recent_outcomes_7) if recent_outcomes_7 else 0.68
             avg_pnl_30d = sum(recent_pnls) / len(recent_pnls) if recent_pnls else 0
 
             trade_date = trade.get('trade_date', '')
@@ -2494,6 +2964,47 @@ class OracleAdvisor:
             outcomes.append(outcome)
             pnls.append(net_pnl)
 
+            # =========================================================================
+            # REGIME FEATURES (from trade context or defaults)
+            # =========================================================================
+            # Trend score: -1 (bearish) to 1 (bullish)
+            regime_trend_score = trade.get('regime_trend_score', 0)
+            if regime_trend_score == 0:
+                # Infer from price change if not provided
+                if price_change_1d > 0.5:
+                    regime_trend_score = min(1.0, price_change_1d / 2)
+                elif price_change_1d < -0.5:
+                    regime_trend_score = max(-1.0, price_change_1d / 2)
+
+            # Vol percentile: use VIX as proxy
+            regime_vol_percentile = trade.get('regime_vol_percentile', 50)
+            if regime_vol_percentile == 50:
+                # Approximate from VIX (12=low, 20=mid, 30=high)
+                if vix < 12:
+                    regime_vol_percentile = 10
+                elif vix < 15:
+                    regime_vol_percentile = 25
+                elif vix < 20:
+                    regime_vol_percentile = 50
+                elif vix < 25:
+                    regime_vol_percentile = 75
+                else:
+                    regime_vol_percentile = 90
+
+            # =========================================================================
+            # PSYCHOLOGY FEATURES (fear/greed indicators)
+            # =========================================================================
+            # Fear score: 0 (greed) to 1 (extreme fear)
+            psychology_fear_score = trade.get('psychology_fear_score', 0.5)
+            if psychology_fear_score == 0.5:
+                # Approximate from VIX (higher VIX = more fear)
+                psychology_fear_score = min(1.0, max(0.0, (vix - 12) / 28))
+
+            # Momentum: price momentum indicator
+            psychology_momentum = trade.get('psychology_momentum', 0)
+            if psychology_momentum == 0:
+                psychology_momentum = price_change_1d / 5  # Scale to roughly -1 to 1
+
             record = {
                 'trade_date': trade_date,
                 'vix': vix,
@@ -2503,9 +3014,16 @@ class OracleAdvisor:
                 'price_change_1d': price_change_1d,
                 'expected_move_pct': expected_move_pct,
                 'win_rate_30d': win_rate_30d,
+                'win_rate_7d': win_rate_7d,
                 'outcome': outcome,
                 'is_win': is_win,
                 'net_pnl': net_pnl,
+                # Regime features
+                'regime_trend_score': regime_trend_score,
+                'regime_vol_percentile': regime_vol_percentile,
+                # Psychology features
+                'psychology_fear_score': psychology_fear_score,
+                'psychology_momentum': psychology_momentum,
             }
 
             if has_gex:
@@ -2515,10 +3033,58 @@ class OracleAdvisor:
                 record['gex_distance_to_flip_pct'] = trade.get('gex_distance_to_flip_pct', 0)
                 record['gex_between_walls'] = 1 if trade.get('gex_between_walls', True) else 0
             else:
+                gex_regime = 'NEUTRAL'
                 record['gex_normalized'] = 0
                 record['gex_regime_positive'] = 0
                 record['gex_distance_to_flip_pct'] = 0
                 record['gex_between_walls'] = 1
+
+            # =========================================================================
+            # VIX REGIME FEATURES (for IC vs Directional learning)
+            # =========================================================================
+            record['vix_regime_low'] = 1 if vix < 15 else 0
+            record['vix_regime_normal'] = 1 if 15 <= vix < 22 else 0
+            record['vix_regime_elevated'] = 1 if 22 <= vix < 28 else 0
+            record['vix_regime_high'] = 1 if 28 <= vix < 35 else 0
+            record['vix_regime_extreme'] = 1 if vix >= 35 else 0
+
+            # Calculate IC vs Directional suitability
+            # IC good when: Normal VIX + Positive GEX
+            # Directional good when: High VIX + Negative GEX
+            ic_score = 0.5
+            dir_score = 0.5
+
+            # VIX impact
+            if vix < 15:
+                ic_score -= 0.15
+                dir_score += 0.10
+            elif vix < 22:
+                ic_score += 0.20
+            elif vix < 28:
+                ic_score -= 0.05
+                dir_score += 0.15
+            elif vix < 35:
+                ic_score -= 0.25
+                dir_score += 0.25
+            else:
+                ic_score -= 0.40
+                dir_score += 0.10
+
+            # GEX impact
+            if gex_regime == 'POSITIVE':
+                ic_score += 0.25
+                dir_score -= 0.10
+            elif gex_regime == 'NEGATIVE':
+                ic_score -= 0.30
+                dir_score += 0.30
+
+            record['ic_suitability'] = max(0.0, min(1.0, ic_score))
+            record['dir_suitability'] = max(0.0, min(1.0, dir_score))
+
+            # Track strategy type from bot name if available
+            bot_name = trade.get('bot_name', 'ARES')
+            record['is_ic_strategy'] = 1 if bot_name in ['ARES', 'PEGASUS'] else 0
+            record['is_dir_strategy'] = 1 if bot_name in ['ATHENA'] else 0
 
             records.append(record)
 
@@ -3353,15 +3919,20 @@ def train_from_live_outcomes(min_samples: int = 100) -> Optional[TrainingMetrics
 
 
 def auto_train(
-    threshold_outcomes: int = 100,
+    threshold_outcomes: int = 20,  # Reduced from 100 for more frequent learning
     force: bool = False
 ) -> Dict[str, Any]:
     """
     Automatic Oracle training trigger.
 
     Called by scheduler on:
-    1. Weekly schedule (Sunday midnight CT)
-    2. When threshold outcomes is reached (100+ new outcomes)
+    1. Daily schedule (midnight CT)
+    2. When threshold outcomes is reached (20+ new outcomes)
+    3. After any bot completes a trade (via outcome recording)
+
+    Training Frequency:
+    - Original: Weekly + 100 outcome threshold
+    - Updated: Daily + 20 outcome threshold (faster learning)
 
     Training strategy:
     1. If KRONOS backtest data available and no live outcomes -> Train from KRONOS
@@ -3369,7 +3940,7 @@ def auto_train(
     3. If both available -> Train from live, use KRONOS as fallback
 
     Args:
-        threshold_outcomes: Minimum new outcomes before retraining
+        threshold_outcomes: Minimum new outcomes before retraining (default: 20)
         force: Force training even if threshold not met
 
     Returns:
@@ -3418,8 +3989,9 @@ def auto_train(
     oracle.live_log.log("AUTO_TRAIN_START", reason, {"pending_outcomes": pending_count})
 
     # Try training from live outcomes first (more accurate)
-    if pending_count >= 50:  # Need at least 50 for live training
-        metrics = train_from_live_outcomes(min_samples=50)
+    # Reduced threshold from 50 to 20 for faster learning from live data
+    if pending_count >= 20:  # Need at least 20 for live training
+        metrics = train_from_live_outcomes(min_samples=20)
         if metrics:
             result["training_metrics"] = metrics.__dict__
             result["success"] = True

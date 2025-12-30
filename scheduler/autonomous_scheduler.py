@@ -18,9 +18,10 @@ from core_classes_and_engines import TradingVolatilityAPI
 BACKTEST_REFRESH_INTERVAL_DAYS = 7
 
 # Oracle auto-training settings
-ORACLE_TRAINING_DAY = 6  # Sunday (0=Monday, 6=Sunday)
+# Updated: Daily training instead of weekly for faster learning
+ORACLE_TRAINING_DAY = None  # None = daily training (previously: 6 for Sunday only)
 ORACLE_TRAINING_HOUR = 0  # Midnight CT
-ORACLE_OUTCOME_THRESHOLD = 100  # Train when this many new outcomes available
+ORACLE_OUTCOME_THRESHOLD = 20  # Train when this many new outcomes available (reduced from 100)
 
 # Market hours in Central Time (Texas)
 MARKET_OPEN_CT = dt_time(8, 30)   # 8:30 AM CT = 9:30 AM ET
@@ -194,11 +195,16 @@ def check_and_train_oracle(force: bool = False):
         print(f"   Pending outcomes: {pending_count}")
         print(f"   Threshold: {ORACLE_OUTCOME_THRESHOLD}")
 
-        # Check if it's weekly training time (Sunday midnight CT)
-        is_weekly_train_time = (
-            ct_now.weekday() == ORACLE_TRAINING_DAY and
-            ct_now.hour == ORACLE_TRAINING_HOUR
-        )
+        # Check if it's scheduled training time
+        # If ORACLE_TRAINING_DAY is None, train daily at ORACLE_TRAINING_HOUR
+        # Otherwise, train weekly on the specified day
+        if ORACLE_TRAINING_DAY is None:
+            is_scheduled_train_time = ct_now.hour == ORACLE_TRAINING_HOUR
+        else:
+            is_scheduled_train_time = (
+                ct_now.weekday() == ORACLE_TRAINING_DAY and
+                ct_now.hour == ORACLE_TRAINING_HOUR
+            )
 
         # Check if threshold is reached
         threshold_reached = pending_count >= ORACLE_OUTCOME_THRESHOLD
@@ -206,9 +212,9 @@ def check_and_train_oracle(force: bool = False):
         # Check if model needs initial training
         needs_initial = not oracle.is_trained
 
-        if force or is_weekly_train_time or threshold_reached or needs_initial:
+        if force or is_scheduled_train_time or threshold_reached or needs_initial:
             reason = "Forced" if force else (
-                "Weekly schedule" if is_weekly_train_time else (
+                "Daily schedule" if is_scheduled_train_time else (
                     f"Threshold ({pending_count} >= {ORACLE_OUTCOME_THRESHOLD})" if threshold_reached else
                     "Initial training"
                 )
