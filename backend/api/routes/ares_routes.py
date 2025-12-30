@@ -43,13 +43,45 @@ router = APIRouter(prefix="/api/ares", tags=["ARES"])
 logger = logging.getLogger(__name__)
 
 # Try to import Tradier for account balance
+# NOTE: data/__init__.py imports polygon_data_fetcher which requires pandas
+# If pandas is missing, the whole data package fails. We try multiple import methods.
 TradierDataFetcher = None
+TRADIER_AVAILABLE = False
+
+# Method 1: Try standard import (works if pandas is installed)
 try:
     from data.tradier_data_fetcher import TradierDataFetcher
     TRADIER_AVAILABLE = True
-except ImportError:
-    TRADIER_AVAILABLE = False
-    logger.debug("TradierDataFetcher not available for balance fetching")
+    logger.info("TradierDataFetcher loaded via standard import")
+except ImportError as e:
+    logger.debug(f"Standard import failed: {e}")
+
+# Method 2: Try direct file import (bypasses data/__init__.py)
+if not TRADIER_AVAILABLE:
+    try:
+        import importlib.util
+        import sys
+        from pathlib import Path
+
+        # Find the tradier_data_fetcher.py file
+        # backend/api/routes/ares_routes.py -> go up 3 levels to project root
+        project_root = Path(__file__).parent.parent.parent.parent
+        tradier_path = project_root / 'data' / 'tradier_data_fetcher.py'
+
+        if tradier_path.exists():
+            spec = importlib.util.spec_from_file_location("tradier_direct", str(tradier_path))
+            tradier_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(tradier_module)
+            TradierDataFetcher = tradier_module.TradierDataFetcher
+            TRADIER_AVAILABLE = True
+            logger.info(f"TradierDataFetcher loaded via direct import from {tradier_path}")
+        else:
+            logger.warning(f"tradier_data_fetcher.py not found at {tradier_path}")
+    except Exception as e:
+        logger.warning(f"Direct import also failed: {e}")
+
+if not TRADIER_AVAILABLE:
+    logger.warning("TradierDataFetcher not available - ARES will use default capital")
 
 # Try to import ARES V2 trader and strategy presets
 ares_trader = None
@@ -143,9 +175,11 @@ def _get_tradier_account_balance() -> dict:
     - option_buying_power: Available for options trading
     - sandbox: Whether using sandbox API
     - connected: Whether API call succeeded
+    - error: Error message if connection failed
     """
     if not TRADIER_AVAILABLE or not TradierDataFetcher:
-        return {'connected': False, 'total_equity': 0, 'sandbox': True}
+        logger.warning("TradierDataFetcher not available - using default capital")
+        return {'connected': False, 'total_equity': 0, 'sandbox': True, 'error': 'TradierDataFetcher not imported'}
 
     try:
         # Try to get API config
@@ -167,9 +201,11 @@ def _get_tradier_account_balance() -> dict:
         # Check if sandbox mode is enabled (defaults to True for safety)
         use_sandbox = getattr(APIConfig, 'TRADIER_SANDBOX', True)
 
+        logger.info(f"Tradier balance fetch: api_key={'SET' if api_key else 'NOT SET'}, account_id={account_id}, sandbox={use_sandbox}")
+
         if not api_key or not account_id:
-            logger.debug("No Tradier credentials available for balance fetch")
-            return {'connected': False, 'total_equity': 0, 'sandbox': use_sandbox}
+            logger.warning("No Tradier credentials available for balance fetch")
+            return {'connected': False, 'total_equity': 0, 'sandbox': use_sandbox, 'error': 'No credentials configured'}
 
         tradier = TradierDataFetcher(
             api_key=api_key,
@@ -178,19 +214,27 @@ def _get_tradier_account_balance() -> dict:
         )
 
         balance = tradier.get_account_balance()
+        logger.info(f"Tradier balance response: {balance}")
+
         if balance:
+            total_equity = balance.get('total_equity', 0)
+            logger.info(f"Tradier balance fetch SUCCESS: total_equity=${total_equity:,.2f}")
             return {
                 'connected': True,
-                'total_equity': balance.get('total_equity', 0),
+                'total_equity': total_equity,
                 'option_buying_power': balance.get('option_buying_power', 0),
-                'sandbox': use_sandbox
+                'sandbox': use_sandbox,
+                'account_id': account_id
             }
 
-        return {'connected': False, 'total_equity': 0, 'sandbox': use_sandbox}
+        logger.warning("Tradier balance fetch returned empty response")
+        return {'connected': False, 'total_equity': 0, 'sandbox': use_sandbox, 'error': 'Empty response from Tradier'}
 
     except Exception as e:
-        logger.debug(f"Could not get Tradier balance: {e}")
-        return {'connected': False, 'total_equity': 0, 'sandbox': True}
+        logger.error(f"Tradier balance fetch ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        return {'connected': False, 'total_equity': 0, 'sandbox': True, 'error': str(e)}
 
 
 @router.get("/status")
