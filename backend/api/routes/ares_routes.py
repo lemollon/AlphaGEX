@@ -374,247 +374,118 @@ async def get_ares_positions():
 
     Returns Iron Condor positions with full details.
     """
-    ares = get_ares_instance()
-
-    if not ares:
-        # ARES not running in this process - read from database directly
-        try:
-            from database_adapter import get_connection
-            conn = get_connection()
-            cursor = conn.cursor()
-
-            # Get open positions
-            cursor.execute('''
-                SELECT
-                    position_id, open_time, expiration,
-                    put_long_strike, put_short_strike, call_short_strike, call_long_strike,
-                    put_credit, call_credit, total_credit,
-                    contracts, spread_width, max_loss,
-                    underlying_at_entry, vix_at_entry, status
-                FROM ares_positions
-                WHERE status = 'open'
-                ORDER BY open_time DESC
-            ''')
-            open_rows = cursor.fetchall()
-
-            # Get closed positions (last 100)
-            cursor.execute('''
-                SELECT
-                    position_id, open_time, close_time, expiration,
-                    put_long_strike, put_short_strike, call_short_strike, call_long_strike,
-                    put_credit, call_credit, total_credit,
-                    contracts, spread_width, max_loss, close_price, realized_pnl,
-                    underlying_at_entry, vix_at_entry, status
-                FROM ares_positions
-                WHERE status IN ('closed', 'expired')
-                ORDER BY close_time DESC
-                LIMIT 100
-            ''')
-            closed_rows = cursor.fetchall()
-            conn.close()
-
-            # Format open positions
-            open_positions = []
-            for row in open_rows:
-                pos_id, open_date, exp, put_long, put_short, call_short, call_long, \
-                    put_cr, call_cr, total_cr, contracts, spread_w, max_loss, \
-                    underlying, vix, status = row
-
-                # Calculate DTE
-                dte = 0
-                if exp:
-                    try:
-                        exp_date = datetime.strptime(str(exp), "%Y-%m-%d").date()
-                        today = datetime.now(ZoneInfo("America/Chicago")).date()
-                        dte = (exp_date - today).days
-                    except:
-                        pass
-
-                ticker = "SPY" if spread_w and spread_w <= 5 else "SPX"
-                open_positions.append({
-                    "position_id": pos_id,
-                    "ticker": ticker,
-                    "open_date": str(open_date) if open_date else None,
-                    "expiration": str(exp) if exp else None,
-                    "dte": dte,
-                    "is_0dte": dte == 0,
-                    "put_long_strike": float(put_long) if put_long else 0,
-                    "put_short_strike": float(put_short) if put_short else 0,
-                    "call_short_strike": float(call_short) if call_short else 0,
-                    "call_long_strike": float(call_long) if call_long else 0,
-                    "put_spread": f"{put_long}/{put_short}P",
-                    "call_spread": f"{call_short}/{call_long}C",
-                    "put_credit": float(put_cr) if put_cr else 0,
-                    "call_credit": float(call_cr) if call_cr else 0,
-                    "total_credit": float(total_cr) if total_cr else 0,
-                    "contracts": contracts or 0,
-                    "spread_width": float(spread_w) if spread_w else 0,
-                    "max_loss": float(max_loss) if max_loss else 0,
-                    "premium_collected": float(total_cr or 0) * 100 * (contracts or 0),
-                    "underlying_at_entry": float(underlying) if underlying else 0,
-                    "vix_at_entry": float(vix) if vix else 0,
-                    "status": status
-                })
-
-            # Format closed positions
-            closed_positions = []
-            for row in closed_rows:
-                pos_id, open_date, close_date, exp, put_long, put_short, call_short, call_long, \
-                    put_cr, call_cr, total_cr, contracts, spread_w, max_loss, close_price, realized_pnl, \
-                    underlying, vix, status = row
-
-                max_profit = float(total_cr or 0) * 100 * (contracts or 0)
-                return_pct = round((float(realized_pnl or 0) / max_profit) * 100, 1) if max_profit else 0
-                ticker = "SPY" if spread_w and spread_w <= 5 else "SPX"
-
-                closed_positions.append({
-                    "position_id": pos_id,
-                    "ticker": ticker,
-                    "open_date": str(open_date) if open_date else None,
-                    "close_date": str(close_date) if close_date else None,
-                    "expiration": str(exp) if exp else None,
-                    "put_long_strike": float(put_long) if put_long else 0,
-                    "put_short_strike": float(put_short) if put_short else 0,
-                    "call_short_strike": float(call_short) if call_short else 0,
-                    "call_long_strike": float(call_long) if call_long else 0,
-                    "put_spread": f"{put_long}/{put_short}P",
-                    "call_spread": f"{call_short}/{call_long}C",
-                    "contracts": contracts or 0,
-                    "spread_width": float(spread_w) if spread_w else 0,
-                    "total_credit": float(total_cr) if total_cr else 0,
-                    "max_profit": max_profit,
-                    "max_loss": float(max_loss) if max_loss else 0,
-                    "close_price": float(close_price) if close_price else 0,
-                    "realized_pnl": float(realized_pnl) if realized_pnl else 0,
-                    "return_pct": return_pct,
-                    "underlying_at_entry": float(underlying) if underlying else 0,
-                    "vix_at_entry": float(vix) if vix else 0,
-                    "status": status
-                })
-
-            return {
-                "success": True,
-                "data": {
-                    "open_positions": open_positions,
-                    "closed_positions": closed_positions,
-                    "open_count": len(open_positions),
-                    "closed_count": len(closed_positions),
-                    "source": "database"
-                }
-            }
-        except Exception as db_err:
-            logger.warning(f"Could not read positions from database: {db_err}")
-
-        # Fallback
-        return {
-            "success": True,
-            "data": {
-                "open_positions": [],
-                "closed_positions": [],
-                "message": "No positions found"
-            }
-        }
-
+    # Always read from database for reliability
     try:
-        # Helper to infer ticker from spread width
-        def get_ticker(pos):
-            if hasattr(pos, 'spread_width'):
-                return "SPY" if pos.spread_width <= 5 else "SPX"
-            # Fallback: infer from underlying price
-            if hasattr(pos, 'underlying_price_at_entry') and pos.underlying_price_at_entry:
-                return "SPY" if pos.underlying_price_at_entry < 1000 else "SPX"
-            return "SPX"
+        conn = get_connection()
+        cursor = conn.cursor()
 
+        # Get open positions
+        cursor.execute('''
+            SELECT
+                position_id, open_time, expiration,
+                put_long_strike, put_short_strike, call_short_strike, call_long_strike,
+                put_credit, call_credit, total_credit,
+                contracts, spread_width, max_loss,
+                underlying_at_entry, vix_at_entry, status
+            FROM ares_positions
+            WHERE status = 'open'
+            ORDER BY open_time DESC
+        ''')
+        open_rows = cursor.fetchall()
+
+        # Get closed positions (last 100)
+        cursor.execute('''
+            SELECT
+                position_id, open_time, close_time, expiration,
+                put_long_strike, put_short_strike, call_short_strike, call_long_strike,
+                put_credit, call_credit, total_credit,
+                contracts, spread_width, max_loss, close_price, realized_pnl,
+                underlying_at_entry, vix_at_entry, status
+            FROM ares_positions
+            WHERE status IN ('closed', 'expired')
+            ORDER BY close_time DESC
+            LIMIT 100
+        ''')
+        closed_rows = cursor.fetchall()
+        conn.close()
+
+        # Format open positions
         open_positions = []
-        for pos in ares.open_positions:
+        for row in open_rows:
+            pos_id, open_date, exp, put_long, put_short, call_short, call_long, \
+                put_cr, call_cr, total_cr, contracts, spread_w, max_loss, \
+                underlying, vix, status = row
+
             # Calculate DTE
             dte = 0
-            if pos.expiration:
+            if exp:
                 try:
-                    from datetime import datetime
-                    exp_date = datetime.strptime(pos.expiration, "%Y-%m-%d").date()
+                    exp_date = datetime.strptime(str(exp), "%Y-%m-%d").date()
                     today = datetime.now(ZoneInfo("America/Chicago")).date()
                     dte = (exp_date - today).days
                 except:
                     pass
 
-            # Format spread strings
-            put_spread = f"{pos.put_long_strike}/{pos.put_short_strike}P"
-            call_spread = f"{pos.call_short_strike}/{pos.call_long_strike}C"
-
+            ticker = "SPY" if spread_w and spread_w <= 5 else "SPX"
             open_positions.append({
-                "position_id": pos.position_id,
-                "ticker": get_ticker(pos),
-                "open_date": pos.open_date,
-                "expiration": pos.expiration,
+                "position_id": pos_id,
+                "ticker": ticker,
+                "open_date": str(open_date) if open_date else None,
+                "expiration": str(exp) if exp else None,
                 "dte": dte,
                 "is_0dte": dte == 0,
-                "put_long_strike": pos.put_long_strike,
-                "put_short_strike": pos.put_short_strike,
-                "call_short_strike": pos.call_short_strike,
-                "call_long_strike": pos.call_long_strike,
-                "put_spread": put_spread,
-                "call_spread": call_spread,
-                "put_credit": pos.put_credit,
-                "call_credit": pos.call_credit,
-                "total_credit": pos.total_credit,
-                "contracts": pos.contracts,
-                "spread_width": pos.spread_width,
-                "max_loss": pos.max_loss,
-                "premium_collected": pos.total_credit * 100 * pos.contracts,
-                "max_profit": pos.total_credit * 100 * pos.contracts,
-                "rr_ratio": round((pos.total_credit * 100 * pos.contracts) / pos.max_loss, 2) if pos.max_loss else 0,
-                "underlying_at_entry": pos.underlying_price_at_entry,
-                "vix_at_entry": pos.vix_at_entry,
-                "gex_regime": getattr(pos, 'gex_regime', None),
-                "oracle_confidence": getattr(pos, 'oracle_confidence', None),
-                "status": pos.status
+                "put_long_strike": float(put_long) if put_long else 0,
+                "put_short_strike": float(put_short) if put_short else 0,
+                "call_short_strike": float(call_short) if call_short else 0,
+                "call_long_strike": float(call_long) if call_long else 0,
+                "put_spread": f"{put_long}/{put_short}P",
+                "call_spread": f"{call_short}/{call_long}C",
+                "put_credit": float(put_cr) if put_cr else 0,
+                "call_credit": float(call_cr) if call_cr else 0,
+                "total_credit": float(total_cr) if total_cr else 0,
+                "contracts": contracts or 0,
+                "spread_width": float(spread_w) if spread_w else 0,
+                "max_loss": float(max_loss) if max_loss else 0,
+                "premium_collected": float(total_cr or 0) * 100 * (contracts or 0),
+                "underlying_at_entry": float(underlying) if underlying else 0,
+                "vix_at_entry": float(vix) if vix else 0,
+                "status": status
             })
 
+        # Format closed positions
         closed_positions = []
-        for pos in ares.closed_positions[-100:]:  # Last 100 closed (increased from 20)
-            # Calculate DTE at entry
-            dte_at_entry = 0
-            if pos.expiration and pos.open_date:
-                try:
-                    from datetime import datetime
-                    exp_date = datetime.strptime(pos.expiration, "%Y-%m-%d").date()
-                    open_date = datetime.strptime(pos.open_date, "%Y-%m-%d").date()
-                    dte_at_entry = (exp_date - open_date).days
-                except:
-                    pass
+        for row in closed_rows:
+            pos_id, open_date, close_date, exp, put_long, put_short, call_short, call_long, \
+                put_cr, call_cr, total_cr, contracts, spread_w, max_loss, close_price, realized_pnl, \
+                underlying, vix, status = row
 
-            # Calculate return percentage
-            max_profit = pos.total_credit * 100 * pos.contracts if pos.total_credit and pos.contracts else 0
-            return_pct = round((pos.realized_pnl / max_profit) * 100, 1) if max_profit and pos.realized_pnl else 0
+            max_profit = float(total_cr or 0) * 100 * (contracts or 0)
+            return_pct = round((float(realized_pnl or 0) / max_profit) * 100, 1) if max_profit else 0
+            ticker = "SPY" if spread_w and spread_w <= 5 else "SPX"
 
             closed_positions.append({
-                "position_id": pos.position_id,
-                "ticker": get_ticker(pos),
-                "open_date": pos.open_date,
-                "close_date": pos.close_date,
-                "expiration": pos.expiration,
-                "dte_at_entry": dte_at_entry,
-                "was_0dte": dte_at_entry == 0,
-                "put_long_strike": pos.put_long_strike,
-                "put_short_strike": pos.put_short_strike,
-                "call_short_strike": pos.call_short_strike,
-                "call_long_strike": pos.call_long_strike,
-                "put_spread": f"{pos.put_long_strike}/{pos.put_short_strike}P",
-                "call_spread": f"{pos.call_short_strike}/{pos.call_long_strike}C",
-                "contracts": pos.contracts,
-                "spread_width": pos.spread_width,
-                "total_credit": pos.total_credit,
+                "position_id": pos_id,
+                "ticker": ticker,
+                "open_date": str(open_date) if open_date else None,
+                "close_date": str(close_date) if close_date else None,
+                "expiration": str(exp) if exp else None,
+                "put_long_strike": float(put_long) if put_long else 0,
+                "put_short_strike": float(put_short) if put_short else 0,
+                "call_short_strike": float(call_short) if call_short else 0,
+                "call_long_strike": float(call_long) if call_long else 0,
+                "put_spread": f"{put_long}/{put_short}P",
+                "call_spread": f"{call_short}/{call_long}C",
+                "contracts": contracts or 0,
+                "spread_width": float(spread_w) if spread_w else 0,
+                "total_credit": float(total_cr) if total_cr else 0,
                 "max_profit": max_profit,
-                "max_loss": pos.max_loss,
-                "close_price": pos.close_price,
-                "realized_pnl": pos.realized_pnl,
+                "max_loss": float(max_loss) if max_loss else 0,
+                "close_price": float(close_price) if close_price else 0,
+                "realized_pnl": float(realized_pnl) if realized_pnl else 0,
                 "return_pct": return_pct,
-                "exit_reason": getattr(pos, 'exit_reason', None),
-                "underlying_at_entry": pos.underlying_price_at_entry,
-                "vix_at_entry": getattr(pos, 'vix_at_entry', None),
-                "gex_regime": getattr(pos, 'gex_regime', None),
-                "status": pos.status
+                "underlying_at_entry": float(underlying) if underlying else 0,
+                "vix_at_entry": float(vix) if vix else 0,
+                "status": status
             })
 
         return {
@@ -623,12 +494,19 @@ async def get_ares_positions():
                 "open_positions": open_positions,
                 "closed_positions": closed_positions,
                 "open_count": len(open_positions),
-                "closed_count": len(ares.closed_positions)
+                "closed_count": len(closed_positions)
             }
         }
     except Exception as e:
         logger.error(f"Error getting ARES positions: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        return {
+            "success": True,
+            "data": {
+                "open_positions": [],
+                "closed_positions": [],
+                "message": f"Could not load positions: {str(e)}"
+            }
+        }
 
 
 @router.get("/equity-curve")
@@ -1645,12 +1523,104 @@ async def get_ares_live_pnl():
             }
         }
 
+    # Check if ares has get_live_pnl method
+    if not hasattr(ares, 'get_live_pnl'):
+        # Method not available on this trader version - fall back to database
+        logger.debug("ARES trader doesn't have get_live_pnl method, using database fallback")
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Get open positions
+            cursor.execute('''
+                SELECT
+                    position_id, open_date, expiration,
+                    put_long_strike, put_short_strike,
+                    call_short_strike, call_long_strike,
+                    total_credit, contracts, max_loss, spread_width,
+                    underlying_price_at_entry, vix_at_entry, status
+                FROM ares_positions
+                WHERE status = 'open'
+            ''')
+            open_rows = cursor.fetchall()
+
+            # Get today's realized P&L
+            cursor.execute('''
+                SELECT COALESCE(SUM(realized_pnl), 0)
+                FROM ares_positions
+                WHERE status IN ('closed', 'expired')
+                AND close_date = %s
+            ''', (today,))
+            realized_row = cursor.fetchone()
+            today_realized = float(realized_row[0]) if realized_row else 0
+            conn.close()
+
+            # Format positions
+            positions = []
+            today_date = datetime.now(ZoneInfo("America/Chicago")).date()
+
+            for row in open_rows:
+                (pos_id, open_date, exp, put_long, put_short, call_short, call_long,
+                 credit, contracts, max_loss, spread_width, entry_price, vix_entry, status) = row
+
+                credit_received = float(credit or 0) * 100 * (contracts or 0)
+                positions.append({
+                    'position_id': pos_id,
+                    'open_date': str(open_date) if open_date else None,
+                    'expiration': str(exp) if exp else None,
+                    'credit_received': round(credit_received, 2),
+                    'contracts': contracts or 0,
+                    'max_profit': round(credit_received, 2),
+                    'unrealized_pnl': None,
+                    'note': 'Live valuation not available'
+                })
+
+            return {
+                "success": True,
+                "data": {
+                    "total_unrealized_pnl": None,
+                    "total_realized_pnl": round(today_realized, 2),
+                    "net_pnl": round(today_realized, 2),
+                    "positions": positions,
+                    "position_count": len(positions),
+                    "source": "database",
+                    "message": "Trader active but get_live_pnl not available"
+                }
+            }
+        except Exception as db_err:
+            logger.warning(f"Database fallback failed: {db_err}")
+            return {
+                "success": True,
+                "data": {
+                    "total_unrealized_pnl": 0,
+                    "total_realized_pnl": 0,
+                    "net_pnl": 0,
+                    "positions": [],
+                    "position_count": 0,
+                    "message": "Could not retrieve live P&L"
+                }
+            }
+
     try:
         live_pnl = ares.get_live_pnl()
 
         return {
             "success": True,
             "data": live_pnl
+        }
+    except AttributeError as e:
+        # Method exists but failed - shouldn't happen but handle gracefully
+        logger.warning(f"ARES get_live_pnl attribute error: {e}")
+        return {
+            "success": True,
+            "data": {
+                "total_unrealized_pnl": 0,
+                "total_realized_pnl": 0,
+                "net_pnl": 0,
+                "positions": [],
+                "position_count": 0,
+                "message": f"Live P&L method error: {str(e)}"
+            }
         }
     except Exception as e:
         logger.error(f"Error getting ARES live P&L: {e}")

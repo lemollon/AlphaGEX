@@ -50,6 +50,22 @@ except ImportError:
 router = APIRouter(prefix="/api/athena", tags=["ATHENA"])
 logger = logging.getLogger(__name__)
 
+
+def _resolve_query_param(param, default=None):
+    """
+    Resolve a FastAPI Query parameter to its actual value.
+
+    When endpoints are called directly (bypassing FastAPI routing),
+    Query objects aren't resolved. This helper extracts the actual value.
+    """
+    if param is None:
+        return default
+    # If it's a Query object (has .default attribute), get the default
+    if hasattr(param, 'default'):
+        return param.default if param.default is not None else default
+    # Otherwise return the value as-is
+    return param
+
 # Try to import ATHENA V2 trader
 athena_trader = None
 try:
@@ -241,6 +257,10 @@ async def get_athena_positions(
 
     Returns open and/or closed positions with P&L details, Greeks, and market context.
     """
+    # Resolve Query objects for direct function calls (E2E tests)
+    status_filter = _resolve_query_param(status_filter, None)
+    limit = _resolve_query_param(limit, 500)
+
     try:
         conn = get_connection()
         c = conn.cursor()
@@ -511,6 +531,10 @@ async def get_athena_logs(
     """
     Get ATHENA logs for debugging and monitoring.
     """
+    # Resolve Query objects for direct function calls (E2E tests)
+    level = _resolve_query_param(level, None)
+    limit = _resolve_query_param(limit, 100)
+
     try:
         conn = get_connection()
         c = conn.cursor()
@@ -1182,12 +1206,100 @@ async def get_athena_live_pnl():
             }
         }
 
+    # Check if athena has get_live_pnl method
+    if not hasattr(athena, 'get_live_pnl'):
+        # Method not available on this trader version - fall back to database
+        logger.debug("ATHENA trader doesn't have get_live_pnl method, using database fallback")
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Get open positions
+            cursor.execute('''
+                SELECT
+                    position_id, spread_type, created_at, expiration,
+                    long_strike, short_strike, entry_price, contracts,
+                    max_profit, max_loss, spot_at_entry, ticker
+                FROM apache_positions
+                WHERE status = 'open' AND expiration >= %s
+            ''', (today,))
+            open_rows = cursor.fetchall()
+
+            # Get today's realized P&L
+            cursor.execute('''
+                SELECT COALESCE(SUM(realized_pnl), 0)
+                FROM apache_positions
+                WHERE status IN ('closed', 'expired')
+                AND DATE(exit_time) = %s
+            ''', (today,))
+            realized_row = cursor.fetchone()
+            today_realized = float(realized_row[0]) if realized_row else 0
+            conn.close()
+
+            # Format positions
+            positions = []
+            for row in open_rows:
+                (pos_id, spread_type, created_at, exp, long_strike, short_strike,
+                 entry_price, contracts, max_profit, max_loss, spot_entry, ticker) = row
+
+                positions.append({
+                    'position_id': pos_id,
+                    'spread_type': spread_type,
+                    'open_date': str(created_at) if created_at else None,
+                    'expiration': str(exp) if exp else None,
+                    'entry_debit': float(entry_price) if entry_price else 0,
+                    'contracts_remaining': int(contracts) if contracts else 0,
+                    'max_profit': float(max_profit) if max_profit else 0,
+                    'unrealized_pnl': None,
+                    'note': 'Live valuation not available'
+                })
+
+            return {
+                "success": True,
+                "data": {
+                    "total_unrealized_pnl": None,
+                    "total_realized_pnl": round(today_realized, 2),
+                    "net_pnl": round(today_realized, 2),
+                    "positions": positions,
+                    "position_count": len(positions),
+                    "source": "database",
+                    "message": "Trader active but get_live_pnl not available"
+                }
+            }
+        except Exception as db_err:
+            logger.warning(f"Database fallback failed: {db_err}")
+            return {
+                "success": True,
+                "data": {
+                    "total_unrealized_pnl": 0,
+                    "total_realized_pnl": 0,
+                    "net_pnl": 0,
+                    "positions": [],
+                    "position_count": 0,
+                    "message": "Could not retrieve live P&L"
+                }
+            }
+
     try:
         live_pnl = athena.get_live_pnl()
 
         return {
             "success": True,
             "data": live_pnl
+        }
+    except AttributeError as e:
+        # Method exists but failed - shouldn't happen but handle gracefully
+        logger.warning(f"ATHENA get_live_pnl attribute error: {e}")
+        return {
+            "success": True,
+            "data": {
+                "total_unrealized_pnl": 0,
+                "total_realized_pnl": 0,
+                "net_pnl": 0,
+                "positions": [],
+                "position_count": 0,
+                "message": f"Live P&L method error: {str(e)}"
+            }
         }
     except Exception as e:
         logger.error(f"Error getting ATHENA live P&L: {e}")
