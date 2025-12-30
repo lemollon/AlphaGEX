@@ -606,7 +606,7 @@ export default function PegasusPage() {
                 {/* Open Positions */}
                 <BotCard title="Open Positions" icon={<Crosshair className="h-5 w-5" />}>
                   {openPositions.length === 0 ? (
-                    <EmptyState message="No open positions" icon={<Crosshair className="h-8 w-8" />} />
+                    <EmptyState title="No open positions" description="Positions will appear here when trades are opened" icon={<Crosshair className="h-8 w-8" />} />
                   ) : (
                     <div className="space-y-4">
                       {openPositions.map((position) => (
@@ -619,7 +619,7 @@ export default function PegasusPage() {
                 {/* Equity Curve */}
                 <BotCard title="Equity Curve" icon={<BarChart3 className="h-5 w-5" />}>
                   {equityCurve.length === 0 ? (
-                    <EmptyState message="No equity data yet" icon={<BarChart3 className="h-8 w-8" />} />
+                    <EmptyState title="No equity data yet" description="Equity curve will appear after trades are closed" icon={<BarChart3 className="h-8 w-8" />} />
                   ) : (
                     <div className="h-[300px]">
                       <ResponsiveContainer width="100%" height="100%">
@@ -757,7 +757,7 @@ export default function PegasusPage() {
                   </div>
                 )}
                 {closedPositions.length === 0 ? (
-                  <EmptyState message="No closed positions yet" icon={<History className="h-8 w-8" />} />
+                  <EmptyState title="No closed positions yet" description="Closed trades will appear here" icon={<History className="h-8 w-8" />} />
                 ) : (
                   <div className="space-y-4">
                     {closedPositions.map((position) => (
