@@ -27,6 +27,21 @@ import {
   usePEGASUSLivePnL
 } from '@/lib/hooks/useMarketData'
 
+// Helper to format timestamp in Central Time
+function formatCentralTime(timestamp: string): string {
+  try {
+    const date = new Date(timestamp)
+    return date.toLocaleTimeString('en-US', {
+      timeZone: 'America/Chicago',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    }) + ' CT'
+  } catch {
+    return ''
+  }
+}
+
 interface BotStatusCardProps {
   name: string
   icon: React.ReactNode
@@ -110,7 +125,7 @@ function BotStatusCard({ name, icon, href, status, livePnL, color, isLoading }: 
 
         {status?.last_scan_at && (
           <div className="mt-2 text-xs text-text-muted">
-            Last scan: {new Date(status.last_scan_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+            Last scan: {formatCentralTime(status.last_scan_at)}
           </div>
         )}
       </div>

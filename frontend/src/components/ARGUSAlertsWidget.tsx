@@ -17,8 +17,9 @@ import {
 } from 'lucide-react'
 import { api } from '@/lib/api'
 
+// Normalized interface after transforming API response
 interface GammaAlert {
-  type: 'BUILDING' | 'COLLAPSING' | 'SPIKE' | 'FLIP' | 'DANGER_ZONE'
+  type: 'BUILDING' | 'COLLAPSING' | 'SPIKE' | 'FLIP' | 'DANGER_ZONE' | string
   strike: number
   message: string
   severity: 'HIGH' | 'MEDIUM' | 'LOW'
@@ -35,6 +36,32 @@ interface ARGUSData {
   pin_status?: string
   gamma_flip_direction?: string
   last_updated?: string
+}
+
+// Helper to format timestamp in Central Time
+function formatCentralTime(timestamp: string): string {
+  try {
+    const date = new Date(timestamp)
+    return date.toLocaleTimeString('en-US', {
+      timeZone: 'America/Chicago',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true
+    }) + ' CT'
+  } catch {
+    return ''
+  }
+}
+
+// Transform API response to match our interface
+function normalizeAlert(apiAlert: any): GammaAlert {
+  return {
+    type: apiAlert.alert_type || apiAlert.type || 'UNKNOWN',
+    strike: apiAlert.strike || 0,
+    message: apiAlert.message || '',
+    severity: (apiAlert.priority || apiAlert.severity || 'LOW').toUpperCase(),
+    timestamp: apiAlert.triggered_at || apiAlert.timestamp || new Date().toISOString()
+  }
 }
 
 export default function ARGUSAlertsWidget() {
@@ -54,9 +81,12 @@ export default function ARGUSAlertsWidget() {
         api.get('/api/argus/gamma?symbol=SPY').catch(() => ({ data: { data: null } }))
       ])
 
-      const alerts = alertsRes.data?.data?.alerts || alertsRes.data?.alerts || []
+      const rawAlerts = alertsRes.data?.data?.alerts || alertsRes.data?.alerts || []
       const dangerZones = dangerRes.data?.data?.zones || dangerRes.data?.zones || []
       const gammaData = gammaRes.data?.data || {}
+
+      // Normalize alerts to our interface
+      const alerts = rawAlerts.map(normalizeAlert)
 
       setData({
         alerts: alerts.slice(0, 5),
@@ -236,7 +266,7 @@ export default function ARGUSAlertsWidget() {
                           {alert.timestamp && (
                             <div className="flex items-center gap-1 mt-1 text-xs text-text-muted">
                               <Clock className="w-3 h-3" />
-                              {new Date(alert.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                              {formatCentralTime(alert.timestamp)}
                             </div>
                           )}
                         </div>
@@ -283,7 +313,7 @@ export default function ARGUSAlertsWidget() {
               {/* Last updated */}
               {data?.last_updated && (
                 <div className="text-center text-xs text-text-muted">
-                  Updated: {new Date(data.last_updated).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                  Updated: {formatCentralTime(data.last_updated)}
                 </div>
               )}
             </div>
