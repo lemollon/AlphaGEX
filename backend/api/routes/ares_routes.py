@@ -43,13 +43,45 @@ router = APIRouter(prefix="/api/ares", tags=["ARES"])
 logger = logging.getLogger(__name__)
 
 # Try to import Tradier for account balance
+# NOTE: data/__init__.py imports polygon_data_fetcher which requires pandas
+# If pandas is missing, the whole data package fails. We try multiple import methods.
 TradierDataFetcher = None
+TRADIER_AVAILABLE = False
+
+# Method 1: Try standard import (works if pandas is installed)
 try:
     from data.tradier_data_fetcher import TradierDataFetcher
     TRADIER_AVAILABLE = True
-except ImportError:
-    TRADIER_AVAILABLE = False
-    logger.debug("TradierDataFetcher not available for balance fetching")
+    logger.info("TradierDataFetcher loaded via standard import")
+except ImportError as e:
+    logger.debug(f"Standard import failed: {e}")
+
+# Method 2: Try direct file import (bypasses data/__init__.py)
+if not TRADIER_AVAILABLE:
+    try:
+        import importlib.util
+        import sys
+        from pathlib import Path
+
+        # Find the tradier_data_fetcher.py file
+        # backend/api/routes/ares_routes.py -> go up 3 levels to project root
+        project_root = Path(__file__).parent.parent.parent.parent
+        tradier_path = project_root / 'data' / 'tradier_data_fetcher.py'
+
+        if tradier_path.exists():
+            spec = importlib.util.spec_from_file_location("tradier_direct", str(tradier_path))
+            tradier_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(tradier_module)
+            TradierDataFetcher = tradier_module.TradierDataFetcher
+            TRADIER_AVAILABLE = True
+            logger.info(f"TradierDataFetcher loaded via direct import from {tradier_path}")
+        else:
+            logger.warning(f"tradier_data_fetcher.py not found at {tradier_path}")
+    except Exception as e:
+        logger.warning(f"Direct import also failed: {e}")
+
+if not TRADIER_AVAILABLE:
+    logger.warning("TradierDataFetcher not available - ARES will use default capital")
 
 # Try to import ARES V2 trader and strategy presets
 ares_trader = None
