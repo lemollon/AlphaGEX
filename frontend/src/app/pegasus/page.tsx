@@ -604,9 +604,9 @@ export default function PegasusPage() {
             {activeTab === 'portfolio' && (
               <>
                 {/* Open Positions */}
-                <BotCard title="Open Positions" icon={Crosshair}>
+                <BotCard title="Open Positions" icon={<Crosshair className="h-5 w-5" />}>
                   {openPositions.length === 0 ? (
-                    <EmptyState message="No open positions" icon={Crosshair} />
+                    <EmptyState title="No open positions" description="Positions will appear here when trades are opened" icon={<Crosshair className="h-8 w-8" />} />
                   ) : (
                     <div className="space-y-4">
                       {openPositions.map((position) => (
@@ -617,9 +617,9 @@ export default function PegasusPage() {
                 </BotCard>
 
                 {/* Equity Curve */}
-                <BotCard title="Equity Curve" icon={BarChart3}>
+                <BotCard title="Equity Curve" icon={<BarChart3 className="h-5 w-5" />}>
                   {equityCurve.length === 0 ? (
-                    <EmptyState message="No equity data yet" icon={BarChart3} />
+                    <EmptyState title="No equity data yet" description="Equity curve will appear after trades are closed" icon={<BarChart3 className="h-8 w-8" />} />
                   ) : (
                     <div className="h-[300px]">
                       <ResponsiveContainer width="100%" height="100%">
@@ -676,7 +676,7 @@ export default function PegasusPage() {
 
             {/* Overview Tab */}
             {activeTab === 'overview' && (
-              <BotCard title="Bot Status" icon={Server}>
+              <BotCard title="Bot Status" icon={<Server className="h-5 w-5" />}>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="bg-gray-800/50 rounded-lg p-4">
                     <span className="text-gray-500 text-sm block">Mode</span>
@@ -728,7 +728,7 @@ export default function PegasusPage() {
 
             {/* Activity Tab */}
             {activeTab === 'activity' && (
-              <BotCard title="Scan Activity" icon={Activity}>
+              <BotCard title="Scan Activity" icon={<Activity className="h-5 w-5" />}>
                 <ScanActivityFeed
                   scans={scans}
                   botName="PEGASUS"
@@ -739,7 +739,7 @@ export default function PegasusPage() {
 
             {/* History Tab */}
             {activeTab === 'history' && (
-              <BotCard title="Closed Positions" icon={History}>
+              <BotCard title="Closed Positions" icon={<History className="h-5 w-5" />}>
                 {/* Export Button */}
                 {closedPositions.length > 0 && (
                   <div className="flex justify-end mb-4">
@@ -757,7 +757,7 @@ export default function PegasusPage() {
                   </div>
                 )}
                 {closedPositions.length === 0 ? (
-                  <EmptyState message="No closed positions yet" icon={History} />
+                  <EmptyState title="No closed positions yet" description="Closed trades will appear here" icon={<History className="h-8 w-8" />} />
                 ) : (
                   <div className="space-y-4">
                     {closedPositions.map((position) => (
@@ -770,7 +770,7 @@ export default function PegasusPage() {
 
             {/* Config Tab */}
             {activeTab === 'config' && (
-              <BotCard title="Configuration" icon={Settings}>
+              <BotCard title="Configuration" icon={<Settings className="h-5 w-5" />}>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="bg-gray-800/50 rounded-lg p-4">
                     <span className="text-gray-500 text-sm block">Spread Width</span>
