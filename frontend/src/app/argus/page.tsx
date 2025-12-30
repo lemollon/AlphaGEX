@@ -140,6 +140,14 @@ interface GammaData {
   pin_probability: number
   danger_zones: DangerZone[]
   gamma_flips: any[]
+  pinning_status?: {
+    is_pinning: boolean
+    pin_strike?: number
+    distance_to_pin_pct?: number
+    avg_roc?: number
+    message?: string
+    trade_idea?: string
+  }
 }
 
 interface DangerZoneLog {
@@ -2343,22 +2351,48 @@ export default function ArgusPage() {
                     )}
                   </div>
                 ) : (
-                  <div className="mb-3">
-                    <div className="flex items-center justify-between p-3 bg-emerald-500/10 rounded-lg border border-emerald-500/20">
-                      <div className="flex items-center gap-2">
-                        <Shield className="w-5 h-5 text-emerald-400" />
-                        <div>
-                          <p className="text-sm font-medium text-emerald-400">All Clear</p>
-                          <p className="text-[10px] text-gray-500">
-                            All strikes stable (ROC within ±25%)
+                  <div className="mb-3 space-y-2">
+                    {/* Pinning Status Alert */}
+                    {gammaData?.pinning_status?.is_pinning ? (
+                      <div className="p-3 bg-emerald-500/10 rounded-lg border border-emerald-500/20">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <Target className="w-5 h-5 text-emerald-400" />
+                            <span className="text-sm font-medium text-emerald-400">Pinning Detected</span>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"></span>
+                            <span className="text-[10px] text-emerald-400/70">Stable</span>
+                          </div>
+                        </div>
+                        <p className="text-xs text-gray-300 mb-2">{gammaData.pinning_status.message}</p>
+                        {gammaData.pinning_status.trade_idea && (
+                          <p className="text-[10px] text-blue-400 bg-blue-500/10 px-2 py-1 rounded">
+                            💡 {gammaData.pinning_status.trade_idea}
                           </p>
+                        )}
+                        <div className="flex justify-between text-[10px] text-gray-500 mt-2">
+                          <span>Avg ROC: {gammaData.pinning_status.avg_roc?.toFixed(1)}%</span>
+                          <span>Pin Distance: {gammaData.pinning_status.distance_to_pin_pct?.toFixed(2)}%</span>
                         </div>
                       </div>
-                      <div className="flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"></span>
-                        <span className="text-[10px] text-emerald-400/70">Monitoring</span>
+                    ) : (
+                      <div className="flex items-center justify-between p-3 bg-emerald-500/10 rounded-lg border border-emerald-500/20">
+                        <div className="flex items-center gap-2">
+                          <Shield className="w-5 h-5 text-emerald-400" />
+                          <div>
+                            <p className="text-sm font-medium text-emerald-400">All Clear</p>
+                            <p className="text-[10px] text-gray-500">
+                              All strikes stable (ROC within ±25%)
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"></span>
+                          <span className="text-[10px] text-emerald-400/70">Monitoring</span>
+                        </div>
                       </div>
-                    </div>
+                    )}
                     {/* Show top ROC strikes even when calm */}
                     {gammaData && gammaData.strikes && gammaData.strikes.length > 0 && (
                       <div className="mt-2">

@@ -151,6 +151,64 @@ def identify_danger_zones(symbol: str, strikes: List[Dict]) -> List[Dict]:
     return danger_zones
 
 
+def detect_pinning_condition(
+    strikes: List[Dict],
+    spot_price: float,
+    likely_pin: float,
+    danger_zones: List[Dict]
+) -> Dict:
+    """
+    Detect if the market is in a "pinning" condition.
+
+    Pinning is detected when:
+    1. No danger zones (gamma is stable, no significant ROC)
+    2. Spot price is within 0.5% of likely pin strike
+    3. Average absolute ROC is low (< 5%)
+
+    Returns:
+        Dict with pinning status and details
+    """
+    if not strikes or not likely_pin:
+        return {'is_pinning': False}
+
+    # Check 1: No danger zones
+    has_no_danger = len(danger_zones) == 0
+
+    # Check 2: Spot is close to pin (within 0.5%)
+    distance_to_pin_pct = abs(spot_price - likely_pin) / spot_price * 100 if spot_price > 0 else 100
+    is_near_pin = distance_to_pin_pct < 0.5
+
+    # Check 3: Average ROC is low (stable gamma)
+    roc_values = []
+    for s in strikes:
+        roc_1 = abs(s.get('roc_1min', 0))
+        roc_5 = abs(s.get('roc_5min', 0))
+        roc_values.extend([roc_1, roc_5])
+
+    avg_roc = sum(roc_values) / len(roc_values) if roc_values else 0
+    is_stable = avg_roc < 5.0  # Less than 5% average movement
+
+    # Determine pinning status
+    is_pinning = has_no_danger and (is_near_pin or is_stable)
+
+    if is_pinning:
+        if is_near_pin:
+            message = f"PINNING: Price is pinning near ${likely_pin} strike (within {distance_to_pin_pct:.2f}%). Gamma stable, expect tight range."
+        else:
+            message = f"STABLE: No gamma movement detected (avg ROC: {avg_roc:.1f}%). Price likely to gravitate toward ${likely_pin} pin."
+
+        return {
+            'is_pinning': True,
+            'pin_strike': likely_pin,
+            'distance_to_pin_pct': round(distance_to_pin_pct, 2),
+            'avg_roc': round(avg_roc, 2),
+            'message': message,
+            'trade_idea': 'Iron Condor or Credit Spread around pin strike may be favorable.'
+        }
+
+    return {'is_pinning': False}
+
+
 # Try to import Tradier data fetcher
 TRADIER_AVAILABLE = False
 TradierDataFetcher = None
@@ -343,6 +401,12 @@ async def fetch_gamma_data(symbol: str, expiration: str) -> dict:
         # Identify danger zones based on ROC thresholds
         danger_zones = identify_danger_zones(symbol, strikes)
 
+        # Determine likely pin
+        likely_pin = sorted_strikes[0]['strike'] if sorted_strikes else None
+
+        # Detect pinning condition (stable gamma = likely to pin)
+        pinning_status = detect_pinning_condition(strikes, spot_price, likely_pin, danger_zones)
+
         result = {
             'symbol': symbol,
             'spot_price': spot_price,
@@ -356,9 +420,10 @@ async def fetch_gamma_data(symbol: str, expiration: str) -> dict:
             'strikes': strikes,
             'magnets': [{'rank': i+1, 'strike': s['strike'], 'net_gamma': s['net_gamma'], 'probability': 0}
                        for i, s in enumerate(sorted_strikes[:3])],
-            'likely_pin': sorted_strikes[0]['strike'] if sorted_strikes else None,
+            'likely_pin': likely_pin,
             'pin_probability': 0,
             'danger_zones': danger_zones,
+            'pinning_status': pinning_status,
             'gamma_flips': [],
             'is_mock': False,
             'fetched_at': format_central_timestamp()
@@ -430,6 +495,9 @@ def get_mock_gamma_data(symbol: str, expiration: str, spot: float = None, vix: f
     # Identify danger zones based on ROC thresholds
     danger_zones = identify_danger_zones(symbol, strikes)
 
+    # Detect pinning condition
+    pinning_status = detect_pinning_condition(strikes, spot, base_strike, danger_zones)
+
     return {
         'symbol': symbol,
         'spot_price': spot,
@@ -446,6 +514,7 @@ def get_mock_gamma_data(symbol: str, expiration: str, spot: float = None, vix: f
         'likely_pin': base_strike,
         'pin_probability': 25.0,
         'danger_zones': danger_zones,
+        'pinning_status': pinning_status,
         'gamma_flips': [],
         'is_mock': True,
         'fetched_at': format_central_timestamp()

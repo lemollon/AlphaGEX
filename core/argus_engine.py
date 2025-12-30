@@ -123,6 +123,7 @@ class GammaSnapshot:
     pin_probability: float
     danger_zones: List[Dict]
     gamma_flips: List[Dict]
+    pinning_status: Dict = field(default_factory=lambda: {'is_pinning': False})
 
     def to_dict(self) -> Dict:
         return {
@@ -142,7 +143,8 @@ class GammaSnapshot:
             'likely_pin': self.likely_pin,
             'pin_probability': self.pin_probability,
             'danger_zones': self.danger_zones,
-            'gamma_flips': self.gamma_flips
+            'gamma_flips': self.gamma_flips,
+            'pinning_status': self.pinning_status
         }
 
 
@@ -606,6 +608,62 @@ class ArgusEngine:
 
         return danger_zones
 
+    def detect_pinning_condition(
+        self,
+        strikes: List[StrikeData],
+        spot_price: float,
+        likely_pin: float,
+        danger_zones: List[Dict]
+    ) -> Dict:
+        """
+        Detect if the market is in a "pinning" condition.
+
+        Pinning is detected when:
+        1. No danger zones (gamma is stable, no significant ROC)
+        2. Spot price is within 0.5% of likely pin strike
+        3. Average absolute ROC is low (< 5%)
+
+        Returns:
+            Dict with pinning status and details
+        """
+        if not strikes or not likely_pin:
+            return {'is_pinning': False}
+
+        # Check 1: No danger zones
+        has_no_danger = len(danger_zones) == 0
+
+        # Check 2: Spot is close to pin (within 0.5%)
+        distance_to_pin_pct = abs(spot_price - likely_pin) / spot_price * 100 if spot_price > 0 else 100
+        is_near_pin = distance_to_pin_pct < 0.5
+
+        # Check 3: Average ROC is low (stable gamma)
+        roc_values = []
+        for s in strikes:
+            roc_values.extend([abs(s.roc_1min), abs(s.roc_5min)])
+
+        avg_roc = sum(roc_values) / len(roc_values) if roc_values else 0
+        is_stable = avg_roc < 5.0  # Less than 5% average movement
+
+        # Determine pinning status
+        is_pinning = has_no_danger and (is_near_pin or is_stable)
+
+        if is_pinning:
+            if is_near_pin:
+                message = f"PINNING: Price is pinning near ${likely_pin} strike (within {distance_to_pin_pct:.2f}%). Gamma stable, expect tight range."
+            else:
+                message = f"STABLE: No gamma movement detected (avg ROC: {avg_roc:.1f}%). Price likely to gravitate toward ${likely_pin} pin."
+
+            return {
+                'is_pinning': True,
+                'pin_strike': likely_pin,
+                'distance_to_pin_pct': round(distance_to_pin_pct, 2),
+                'avg_roc': round(avg_roc, 2),
+                'message': message,
+                'trade_idea': 'Iron Condor or Credit Spread around pin strike may be favorable.'
+            }
+
+        return {'is_pinning': False}
+
     def generate_alerts(self, current: GammaSnapshot, previous: Optional[GammaSnapshot]) -> List[Alert]:
         """
         Generate alerts based on current snapshot vs previous.
@@ -832,6 +890,9 @@ class ArgusEngine:
         likely_pin, pin_probability = self.identify_pin_strike(strikes_data, spot_price)
         danger_zones = self.identify_danger_zones(strikes_data)
 
+        # Detect pinning condition (no danger zones = stable gamma = likely pinning)
+        pinning_status = self.detect_pinning_condition(strikes_data, spot_price, likely_pin, danger_zones)
+
         # Create snapshot
         symbol = options_data.get('symbol', 'SPY')  # Get symbol from data, default to SPY
         snapshot = GammaSnapshot(
@@ -851,7 +912,8 @@ class ArgusEngine:
             likely_pin=likely_pin,
             pin_probability=pin_probability,
             danger_zones=danger_zones,
-            gamma_flips=gamma_flips
+            gamma_flips=gamma_flips,
+            pinning_status=pinning_status
         )
 
         # Generate alerts

@@ -93,6 +93,14 @@ interface GammaData {
   pin_probability: number | null
   danger_zones: DangerZone[]
   gamma_flips: any[]
+  pinning_status?: {
+    is_pinning: boolean
+    pin_strike?: number
+    distance_to_pin_pct?: number
+    avg_roc?: number
+    message?: string
+    trade_idea?: string
+  }
   is_stale?: boolean
 }
 
@@ -794,6 +802,39 @@ export default function HyperionPage() {
                           <span className="text-xs text-gray-400 px-2 py-0.5 bg-gray-800 rounded">{dz.danger_type}</span>
                         </div>
                       ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Pinning Status Card - Show when gamma is stable */}
+                {gammaData.pinning_status?.is_pinning && (
+                  <div className="bg-gray-800/50 border border-emerald-500/30 rounded-xl p-5">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="font-bold text-white flex items-center gap-2">
+                        <Target className="w-5 h-5 text-emerald-400" />
+                        Pinning Detected
+                      </h3>
+                      <span className="px-2 py-0.5 bg-emerald-500/20 text-emerald-400 text-xs rounded-full">
+                        Stable Gamma
+                      </span>
+                    </div>
+                    <div className="space-y-3">
+                      <div className="p-3 bg-emerald-500/10 rounded-lg">
+                        <p className="text-sm text-emerald-300">{gammaData.pinning_status.message}</p>
+                      </div>
+                      {gammaData.pinning_status.trade_idea && (
+                        <div className="p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+                          <div className="flex items-center gap-2 mb-1">
+                            <Info className="w-4 h-4 text-blue-400" />
+                            <span className="text-xs font-medium text-blue-400">Trade Idea</span>
+                          </div>
+                          <p className="text-sm text-blue-300">{gammaData.pinning_status.trade_idea}</p>
+                        </div>
+                      )}
+                      <div className="flex justify-between text-xs text-gray-400">
+                        <span>Avg ROC: {gammaData.pinning_status.avg_roc?.toFixed(1)}%</span>
+                        <span>Distance to Pin: {gammaData.pinning_status.distance_to_pin_pct?.toFixed(2)}%</span>
+                      </div>
                     </div>
                   </div>
                 )}
