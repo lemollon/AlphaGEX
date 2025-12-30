@@ -37,6 +37,18 @@ except ImportError:
     ScanOutcome = None
     CheckResult = None
 
+# Bot decision logging (for bot_decision_logs table)
+try:
+    from trading.bot_logger import (
+        log_bot_decision, BotDecision, MarketContext as BotLogMarketContext,
+        GEXContext, OracleContext, TradeDetails, RiskChecks, DecisionType
+    )
+    BOT_LOGGER_AVAILABLE = True
+except ImportError:
+    BOT_LOGGER_AVAILABLE = False
+    log_bot_decision = None
+    BotDecision = None
+
 
 class PEGASUSTrader:
     """
@@ -91,6 +103,7 @@ class PEGASUSTrader:
 
                 # Log skip to scan activity
                 self._log_scan_activity(result, scan_context, skip_reason=reason)
+                self._log_bot_decision(result, scan_context, skip_reason=reason)
                 return result
 
             # Manage positions
@@ -130,6 +143,7 @@ class PEGASUSTrader:
 
             # Log scan activity
             self._log_scan_activity(result, scan_context)
+            self._log_bot_decision(result, scan_context)
 
         except Exception as e:
             logger.error(f"Cycle error: {e}")
@@ -138,6 +152,7 @@ class PEGASUSTrader:
 
             # Log error to scan activity
             self._log_scan_activity(result, scan_context, error_msg=str(e))
+            self._log_bot_decision(result, scan_context, error_msg=str(e))
 
         return result
 
@@ -349,6 +364,94 @@ class PEGASUSTrader:
             )
         except Exception as e:
             logger.warning(f"Failed to log scan activity: {e}")
+
+    def _log_bot_decision(
+        self,
+        result: Dict,
+        context: Dict,
+        decision_type: str = "SCAN",
+        skip_reason: str = "",
+        error_msg: str = ""
+    ):
+        """Log decision to bot_decision_logs table for full audit trail"""
+        if not BOT_LOGGER_AVAILABLE or not log_bot_decision:
+            return
+
+        try:
+            signal = context.get('signal')
+            position = context.get('position')
+            market = context.get('market_data') or {}
+            gex = context.get('gex_data') or {}
+
+            # Determine decision type
+            if error_msg:
+                dec_type = DecisionType.SKIP
+                action = "ERROR"
+                reason = error_msg
+            elif result.get('trade_opened'):
+                dec_type = DecisionType.ENTRY
+                action = "OPEN_IC"
+                reason = "SPX Iron Condor opened"
+            elif skip_reason:
+                dec_type = DecisionType.SKIP
+                action = "SKIP"
+                reason = skip_reason
+            else:
+                dec_type = DecisionType.SKIP
+                action = "NO_TRADE"
+                reason = "No valid signal"
+
+            # Build market context
+            market_ctx = BotLogMarketContext(
+                symbol="SPX",
+                spot_price=market.get('underlying_price', 0),
+                vix=market.get('vix', 0),
+            )
+
+            # Build GEX context
+            gex_ctx = GEXContext(
+                regime=gex.get('regime', 'NEUTRAL'),
+                call_wall=gex.get('call_wall', 0),
+                put_wall=gex.get('put_wall', 0),
+                net_gex=gex.get('net_gex', 0),
+            )
+
+            # Build Oracle context
+            oracle_ctx = OracleContext(
+                advice=signal.oracle_advice if signal else "",
+                confidence=signal.confidence if signal else 0,
+                win_probability=signal.oracle_win_probability if signal else 0,
+                reasoning=signal.reasoning if signal else "",
+            )
+
+            # Build trade details if position opened
+            trade_details = None
+            if position:
+                trade_details = TradeDetails(
+                    contracts=position.contracts,
+                    premium_collected=position.total_credit * 100 * position.contracts,
+                    max_loss=position.max_loss,
+                    expiration=position.expiration,
+                )
+
+            decision = BotDecision(
+                bot_name="PEGASUS",
+                decision_type=dec_type,
+                action=action,
+                symbol="SPX",
+                what=f"PEGASUS {action}",
+                why=reason,
+                market_context=market_ctx,
+                gex_context=gex_ctx,
+                oracle_context=oracle_ctx,
+                trade_details=trade_details,
+            )
+
+            log_bot_decision(decision)
+            logger.debug(f"Logged PEGASUS decision: {action}")
+
+        except Exception as e:
+            logger.warning(f"Failed to log bot decision: {e}")
 
     def _update_daily_summary(self, today: str, cycle_result: Dict) -> None:
         """Update daily performance record"""
