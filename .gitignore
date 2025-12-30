@@ -18,6 +18,10 @@ secrets.toml
 gex_copilot.py
 restart_streamlit.sh
 
+# Next.js build output
+.next/
+frontend/.next/
+
 # IDE
 .vscode/
 .idea/
