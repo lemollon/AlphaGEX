@@ -26,6 +26,23 @@ except ImportError:
 router = APIRouter(prefix="/api/pegasus", tags=["PEGASUS"])
 logger = logging.getLogger(__name__)
 
+
+def _resolve_query_param(param, default=None):
+    """
+    Resolve a FastAPI Query parameter to its actual value.
+
+    When endpoints are called directly (bypassing FastAPI routing),
+    Query objects aren't resolved. This helper extracts the actual value.
+    """
+    if param is None:
+        return default
+    # If it's a Query object (has .default attribute), get the default
+    if hasattr(param, 'default'):
+        return param.default if param.default is not None else default
+    # Otherwise return the value as-is
+    return param
+
+
 # Try to import PEGASUS trader
 pegasus_trader = None
 try:
@@ -799,6 +816,10 @@ async def get_pegasus_logs(
     """
     Get PEGASUS logs for debugging and monitoring.
     """
+    # Resolve Query objects for direct function calls (E2E tests)
+    level = _resolve_query_param(level, None)
+    limit = _resolve_query_param(limit, 100)
+
     try:
         conn = get_connection()
         c = conn.cursor()
@@ -897,6 +918,9 @@ async def get_pegasus_performance(
     """
     Get PEGASUS performance metrics over time.
     """
+    # Resolve Query objects for direct function calls (E2E tests)
+    days = _resolve_query_param(days, 30)
+
     try:
         conn = get_connection()
         c = conn.cursor()

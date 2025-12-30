@@ -42,6 +42,23 @@ except ImportError:
 router = APIRouter(prefix="/api/ares", tags=["ARES"])
 logger = logging.getLogger(__name__)
 
+
+def _resolve_query_param(param, default=None):
+    """
+    Resolve a FastAPI Query parameter to its actual value.
+
+    When endpoints are called directly (bypassing FastAPI routing),
+    Query objects aren't resolved. This helper extracts the actual value.
+    """
+    if param is None:
+        return default
+    # If it's a Query object (has .default attribute), get the default
+    if hasattr(param, 'default'):
+        return param.default if param.default is not None else default
+    # Otherwise return the value as-is
+    return param
+
+
 # Try to import Tradier for account balance
 # NOTE: data/__init__.py imports polygon_data_fetcher which requires pandas
 # If pandas is missing, the whole data package fails. We try multiple import methods.
@@ -1008,6 +1025,10 @@ async def get_ares_logs(
     """
     Get ARES logs for debugging and monitoring.
     """
+    # Resolve Query objects for direct function calls (E2E tests)
+    level = _resolve_query_param(level, None)
+    limit = _resolve_query_param(limit, 100)
+
     try:
         conn = get_connection()
         c = conn.cursor()
@@ -1419,7 +1440,6 @@ async def get_ares_live_pnl():
     if not ares:
         # ARES not running - read from database
         try:
-            from database_adapter import get_connection
             conn = get_connection()
             cursor = conn.cursor()
 
