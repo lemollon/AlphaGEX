@@ -228,10 +228,14 @@ class ARESDatabase:
         return positions
 
     def save_position(self, pos: IronCondorPosition) -> bool:
-        """Save a new position to database"""
+        """Save a new position to database with FULL Oracle/Kronos context"""
         try:
             with db_connection() as conn:
                 c = conn.cursor()
+
+                # Ensure new columns exist (migration)
+                self._ensure_oracle_columns(c)
+
                 c.execute("""
                     INSERT INTO ares_positions (
                         position_id, ticker, expiration,
@@ -240,13 +244,16 @@ class ARESDatabase:
                         contracts, spread_width, total_credit, max_loss, max_profit,
                         underlying_at_entry, vix_at_entry, expected_move,
                         call_wall, put_wall, gex_regime,
-                        oracle_confidence, oracle_reasoning,
+                        flip_point, net_gex,
+                        oracle_confidence, oracle_win_probability, oracle_advice,
+                        oracle_reasoning, oracle_top_factors, oracle_use_gex_walls,
                         put_order_id, call_order_id,
                         status, open_time
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s
                     )
                 """, (
                     pos.position_id, pos.ticker, pos.expiration,
@@ -255,7 +262,9 @@ class ARESDatabase:
                     pos.contracts, pos.spread_width, pos.total_credit, pos.max_loss, pos.max_profit,
                     pos.underlying_at_entry, pos.vix_at_entry or None, pos.expected_move or None,
                     pos.call_wall or None, pos.put_wall or None, pos.gex_regime or None,
-                    pos.oracle_confidence or None, pos.oracle_reasoning or None,
+                    pos.flip_point or None, pos.net_gex or None,
+                    pos.oracle_confidence or None, pos.oracle_win_probability or None, pos.oracle_advice or None,
+                    pos.oracle_reasoning or None, pos.oracle_top_factors or None, pos.oracle_use_gex_walls,
                     pos.put_order_id or None, pos.call_order_id or None,
                     pos.status.value, pos.open_time,
                 ))
@@ -264,7 +273,29 @@ class ARESDatabase:
                 return True
         except Exception as e:
             logger.error(f"{self.bot_name}: Failed to save position: {e}")
+            import traceback
+            traceback.print_exc()
             return False
+
+    def _ensure_oracle_columns(self, cursor) -> None:
+        """Add new Oracle/Kronos columns if they don't exist (migration)"""
+        columns_to_add = [
+            ("flip_point", "DECIMAL(10, 2)"),
+            ("net_gex", "DECIMAL(15, 2)"),
+            ("oracle_win_probability", "DECIMAL(5, 4)"),
+            ("oracle_advice", "VARCHAR(20)"),
+            ("oracle_top_factors", "TEXT"),
+            ("oracle_use_gex_walls", "BOOLEAN DEFAULT FALSE"),
+        ]
+
+        for col_name, col_type in columns_to_add:
+            try:
+                cursor.execute(f"""
+                    ALTER TABLE ares_positions
+                    ADD COLUMN IF NOT EXISTS {col_name} {col_type}
+                """)
+            except Exception:
+                pass  # Column might already exist
 
     def close_position(
         self,

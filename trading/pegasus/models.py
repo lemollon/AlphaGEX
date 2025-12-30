@@ -14,7 +14,7 @@ PEGASUS trades SPX Iron Condors:
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from zoneinfo import ZoneInfo
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
@@ -113,9 +113,17 @@ class IronCondorPosition:
     put_wall: float = 0
     gex_regime: str = ""
 
-    # Oracle context
+    # Kronos context (flip point, net GEX)
+    flip_point: float = 0
+    net_gex: float = 0
+
+    # Oracle context (FULL audit trail)
     oracle_confidence: float = 0
+    oracle_win_probability: float = 0
+    oracle_advice: str = ""
     oracle_reasoning: str = ""
+    oracle_top_factors: str = ""  # JSON string of top factors
+    oracle_use_gex_walls: bool = False
 
     # Order tracking
     put_order_id: str = ""
@@ -151,7 +159,28 @@ class IronCondorPosition:
             'max_profit': self.max_profit,
             'underlying_at_entry': self.underlying_at_entry,
             'vix_at_entry': self.vix_at_entry,
+            'expected_move': self.expected_move,
+            'call_wall': self.call_wall,
+            'put_wall': self.put_wall,
+            'gex_regime': self.gex_regime,
+            # Kronos context
+            'flip_point': self.flip_point,
+            'net_gex': self.net_gex,
+            # Oracle context (FULL audit trail)
+            'oracle_confidence': self.oracle_confidence,
+            'oracle_win_probability': self.oracle_win_probability,
+            'oracle_advice': self.oracle_advice,
+            'oracle_reasoning': self.oracle_reasoning,
+            'oracle_top_factors': self.oracle_top_factors,
+            'oracle_use_gex_walls': self.oracle_use_gex_walls,
+            # Order tracking
+            'put_order_id': self.put_order_id,
+            'call_order_id': self.call_order_id,
             'status': self.status.value,
+            'open_time': self.open_time.isoformat() if self.open_time else None,
+            'close_time': self.close_time.isoformat() if self.close_time else None,
+            'close_price': self.close_price,
+            'close_reason': self.close_reason,
             'realized_pnl': self.realized_pnl,
         }
 
@@ -200,7 +229,12 @@ class PEGASUSConfig:
 
 @dataclass
 class IronCondorSignal:
-    """Signal for SPX Iron Condor"""
+    """
+    Signal for SPX Iron Condor.
+
+    Contains full context for trade audit trail.
+    """
+    # Market context
     spot_price: float
     vix: float
     expected_move: float
@@ -208,21 +242,36 @@ class IronCondorSignal:
     put_wall: float
     gex_regime: str
 
-    put_short: float
-    put_long: float
-    call_short: float
-    call_long: float
-    expiration: str
+    # Kronos GEX context
+    flip_point: float = 0
+    net_gex: float = 0
 
-    estimated_put_credit: float
-    estimated_call_credit: float
-    total_credit: float
-    max_loss: float
-    max_profit: float
+    # Strike recommendations
+    put_short: float = 0
+    put_long: float = 0
+    call_short: float = 0
+    call_long: float = 0
+    expiration: str = ""
 
-    confidence: float
-    reasoning: str
-    source: str = "GEX"
+    # Estimated pricing
+    estimated_put_credit: float = 0
+    estimated_call_credit: float = 0
+    total_credit: float = 0
+    max_loss: float = 0
+    max_profit: float = 0
+
+    # Signal quality
+    confidence: float = 0
+    reasoning: str = ""
+    source: str = "GEX"  # GEX, ORACLE, or SD
+
+    # Oracle prediction details (CRITICAL for audit)
+    oracle_win_probability: float = 0
+    oracle_advice: str = ""  # ENTER, HOLD, EXIT
+    oracle_top_factors: List[Dict[str, Any]] = field(default_factory=list)
+    oracle_suggested_sd: float = 1.0
+    oracle_use_gex_walls: bool = False
+    oracle_probabilities: Dict[str, float] = field(default_factory=dict)
 
     @property
     def is_valid(self) -> bool:

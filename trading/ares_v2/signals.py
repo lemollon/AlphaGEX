@@ -123,6 +123,7 @@ class SignalGenerator:
                 'put_wall': gex_data.get('put_wall', 0) if gex_data else 0,
                 'gex_regime': gex_data.get('regime', 'NEUTRAL') if gex_data else 'NEUTRAL',
                 'net_gex': gex_data.get('net_gex', 0) if gex_data else 0,
+                'flip_point': gex_data.get('flip_point', 0) if gex_data else 0,
                 'timestamp': datetime.now(CENTRAL_TZ),
             }
         except Exception as e:
@@ -264,7 +265,17 @@ class SignalGenerator:
         }
 
     def get_oracle_advice(self, market_data: Dict) -> Optional[Dict[str, Any]]:
-        """Get Oracle ML advice if available"""
+        """
+        Get Oracle ML advice if available.
+
+        Returns FULL prediction context for audit trail including:
+        - win_probability: The key metric!
+        - confidence: Model confidence
+        - top_factors: WHY Oracle made this decision
+        - suggested_sd_multiplier: Risk adjustment
+        - use_gex_walls: Whether to use GEX wall strikes
+        - probabilities: Raw probability dict
+        """
         if not self.oracle:
             return None
 
@@ -283,15 +294,34 @@ class SignalGenerator:
             prediction = self.oracle.get_prediction(context, BotName.ARES)
 
             if prediction:
+                # Extract top_factors as list of dicts for JSON storage
+                top_factors = []
+                if hasattr(prediction, 'top_factors') and prediction.top_factors:
+                    for factor_name, impact in prediction.top_factors:
+                        top_factors.append({'factor': factor_name, 'impact': impact})
+
                 return {
+                    # Core metrics
                     'confidence': prediction.confidence,
+                    'win_probability': getattr(prediction, 'win_probability', 0),
                     'advice': prediction.advice.value if prediction.advice else 'HOLD',
                     'reasoning': prediction.reasoning,
+
+                    # Decision factors (WHY)
+                    'top_factors': top_factors,
+                    'probabilities': getattr(prediction, 'probabilities', {}),
+
+                    # Suggested adjustments
+                    'suggested_sd_multiplier': getattr(prediction, 'suggested_sd_multiplier', 1.0),
+                    'use_gex_walls': getattr(prediction, 'use_gex_walls', False),
                     'suggested_put_strike': getattr(prediction, 'suggested_put_strike', None),
                     'suggested_call_strike': getattr(prediction, 'suggested_call_strike', None),
+                    'suggested_risk_pct': getattr(prediction, 'suggested_risk_pct', 10.0),
                 }
         except Exception as e:
             logger.warning(f"Oracle advice error: {e}")
+            import traceback
+            traceback.print_exc()
 
         return None
 
@@ -300,8 +330,15 @@ class SignalGenerator:
         Generate an Iron Condor signal.
 
         This is the MAIN entry point for signal generation.
+
+        Returns signal with FULL context for audit trail:
+        - Market data (spot, VIX, expected move)
+        - Kronos GEX data (walls, regime, flip point, net GEX)
+        - Oracle prediction (win probability, top factors, advice)
+        - Strike selection rationale
+        - Credit/risk calculations
         """
-        # Step 1: Get market data
+        # Step 1: Get market data (includes Kronos GEX)
         market_data = self.get_market_data()
         if not market_data:
             logger.info("No market data available")
@@ -317,16 +354,18 @@ class SignalGenerator:
             logger.info(f"VIX filter blocked: {vix_reason}")
             return None
 
-        # Step 3: Get Oracle advice (optional)
+        # Step 3: Get Oracle advice (FULL context)
         oracle = self.get_oracle_advice(market_data)
         confidence = oracle.get('confidence', 0.7) if oracle else 0.7
+        win_probability = oracle.get('win_probability', 0) if oracle else 0
 
-        # Step 4: Calculate strikes
+        # Step 4: Calculate strikes (use Oracle's suggestion if available)
+        use_gex_walls = oracle.get('use_gex_walls', False) if oracle else False
         strikes = self.calculate_strikes(
             spot_price=spot,
             expected_move=expected_move,
-            call_wall=market_data['call_wall'],
-            put_wall=market_data['put_wall'],
+            call_wall=market_data['call_wall'] if use_gex_walls else 0,
+            put_wall=market_data['put_wall'] if use_gex_walls else 0,
         )
 
         # Step 5: Estimate credits
@@ -349,37 +388,66 @@ class SignalGenerator:
         now = datetime.now(CENTRAL_TZ)
         expiration = now.strftime("%Y-%m-%d")
 
-        # Step 8: Build reasoning
-        reasoning = f"VIX={vix:.1f}, EM=${expected_move:.2f}. "
-        if strikes['using_gex']:
-            reasoning += "GEX-Protected strikes. "
-        else:
-            reasoning += f"{self.config.sd_multiplier} SD strikes. "
-        if oracle:
-            reasoning += f"Oracle: {oracle.get('advice', 'N/A')} ({oracle.get('confidence', 0):.0%})"
+        # Step 8: Build detailed reasoning (FULL audit trail)
+        reasoning_parts = []
+        reasoning_parts.append(f"VIX={vix:.1f}, Expected Move=${expected_move:.2f}")
+        reasoning_parts.append(f"GEX Regime={market_data['gex_regime']}")
 
-        # Build signal
+        if strikes['using_gex']:
+            reasoning_parts.append(f"GEX-Protected: Put Wall ${market_data['put_wall']}, Call Wall ${market_data['call_wall']}")
+        else:
+            reasoning_parts.append(f"{self.config.sd_multiplier} SD strikes")
+
+        if oracle:
+            reasoning_parts.append(f"Oracle: {oracle.get('advice', 'N/A')} (Win Prob: {win_probability:.0%}, Conf: {confidence:.0%})")
+            if oracle.get('top_factors'):
+                top_factors_str = ", ".join([f"{f['factor']}: {f['impact']:.2f}" for f in oracle['top_factors'][:3]])
+                reasoning_parts.append(f"Top Factors: {top_factors_str}")
+
+        reasoning = " | ".join(reasoning_parts)
+
+        # Build signal with FULL context
         signal = IronCondorSignal(
+            # Market context
             spot_price=spot,
             vix=vix,
             expected_move=expected_move,
             call_wall=market_data['call_wall'],
             put_wall=market_data['put_wall'],
             gex_regime=market_data['gex_regime'],
+
+            # Kronos context
+            flip_point=market_data.get('flip_point', 0),
+            net_gex=market_data.get('net_gex', 0),
+
+            # Strikes
             put_short=strikes['put_short'],
             put_long=strikes['put_long'],
             call_short=strikes['call_short'],
             call_long=strikes['call_long'],
             expiration=expiration,
+
+            # Pricing
             estimated_put_credit=pricing['put_credit'],
             estimated_call_credit=pricing['call_credit'],
             total_credit=pricing['total_credit'],
             max_loss=pricing['max_loss'],
             max_profit=pricing['max_profit'],
+
+            # Signal quality
             confidence=confidence,
             reasoning=reasoning,
             source="GEX" if strikes['using_gex'] else "SD",
+
+            # Oracle context (FULL for audit)
+            oracle_win_probability=win_probability,
+            oracle_advice=oracle.get('advice', '') if oracle else '',
+            oracle_top_factors=oracle.get('top_factors', []) if oracle else [],
+            oracle_suggested_sd=oracle.get('suggested_sd_multiplier', 1.0) if oracle else 1.0,
+            oracle_use_gex_walls=oracle.get('use_gex_walls', False) if oracle else False,
+            oracle_probabilities=oracle.get('probabilities', {}) if oracle else {},
         )
 
         logger.info(f"Signal: IC {strikes['put_long']}/{strikes['put_short']}-{strikes['call_short']}/{strikes['call_long']} @ ${pricing['total_credit']:.2f}")
+        logger.info(f"Oracle: Win Prob={win_probability:.0%}, Advice={oracle.get('advice', 'N/A') if oracle else 'N/A'}")
         return signal

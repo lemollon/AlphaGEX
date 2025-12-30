@@ -102,9 +102,21 @@ class OrderExecutor:
                 put_wall=signal.put_wall,
                 gex_regime=signal.gex_regime,
                 vix_at_entry=signal.vix,
+                # Kronos GEX context (FULL audit trail)
+                flip_point=signal.flip_point,
+                net_gex=signal.net_gex,
+                # ML context (FULL audit trail)
                 oracle_confidence=signal.confidence,
                 ml_direction=signal.direction,
                 ml_confidence=signal.confidence,
+                ml_model_name=signal.ml_model_name,
+                ml_win_probability=signal.ml_win_probability,
+                ml_top_features=signal.ml_top_features,
+                # Wall proximity context
+                wall_type=signal.wall_type,
+                wall_distance_pct=signal.wall_distance_pct,
+                # Full trade reasoning for audit
+                trade_reasoning=signal.reasoning,
                 order_id="PAPER",
                 status=PositionStatus.OPEN,
                 open_time=now,
@@ -194,9 +206,21 @@ class OrderExecutor:
                 put_wall=signal.put_wall,
                 gex_regime=signal.gex_regime,
                 vix_at_entry=signal.vix,
+                # Kronos GEX context (FULL audit trail)
+                flip_point=signal.flip_point,
+                net_gex=signal.net_gex,
+                # ML context (FULL audit trail)
                 oracle_confidence=signal.confidence,
                 ml_direction=signal.direction,
                 ml_confidence=signal.confidence,
+                ml_model_name=signal.ml_model_name,
+                ml_win_probability=signal.ml_win_probability,
+                ml_top_features=signal.ml_top_features,
+                # Wall proximity context
+                wall_type=signal.wall_type,
+                wall_distance_pct=signal.wall_distance_pct,
+                # Full trade reasoning for audit
+                trade_reasoning=signal.reasoning,
                 order_id=order_id,
                 status=PositionStatus.OPEN,
                 open_time=now,

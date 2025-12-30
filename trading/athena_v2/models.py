@@ -67,10 +67,20 @@ class SpreadPosition:
     gex_regime: str = ""
     vix_at_entry: float = 0.0
 
-    # Oracle/ML context
+    # Kronos context (for audit trail)
+    flip_point: float = 0.0
+    net_gex: float = 0.0
+
+    # Oracle/ML context (FULL for audit)
     oracle_confidence: float = 0.0
     ml_direction: str = ""
     ml_confidence: float = 0.0
+    ml_model_name: str = ""
+    ml_win_probability: float = 0.0
+    ml_top_features: str = ""  # JSON string
+    wall_type: str = ""  # PUT_WALL or CALL_WALL
+    wall_distance_pct: float = 0.0
+    trade_reasoning: str = ""  # Full reasoning
 
     # Order tracking
     order_id: str = ""
@@ -102,7 +112,7 @@ class SpreadPosition:
         return self.status == PositionStatus.OPEN
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for DB/logging"""
+        """Convert to dictionary for DB/logging with FULL context"""
         return {
             'position_id': self.position_id,
             'spread_type': self.spread_type.value,
@@ -115,13 +125,25 @@ class SpreadPosition:
             'max_profit': self.max_profit,
             'max_loss': self.max_loss,
             'underlying_at_entry': self.underlying_at_entry,
+            # Market context
             'call_wall': self.call_wall,
             'put_wall': self.put_wall,
             'gex_regime': self.gex_regime,
             'vix_at_entry': self.vix_at_entry,
+            # Kronos context
+            'flip_point': self.flip_point,
+            'net_gex': self.net_gex,
+            # ML/Oracle context (FULL for audit)
             'oracle_confidence': self.oracle_confidence,
             'ml_direction': self.ml_direction,
             'ml_confidence': self.ml_confidence,
+            'ml_model_name': self.ml_model_name,
+            'ml_win_probability': self.ml_win_probability,
+            'ml_top_features': self.ml_top_features,
+            'wall_type': self.wall_type,
+            'wall_distance_pct': self.wall_distance_pct,
+            'trade_reasoning': self.trade_reasoning,
+            # Order tracking
             'order_id': self.order_id,
             'status': self.status.value,
             'open_time': self.open_time.isoformat() if self.open_time else None,
@@ -178,6 +200,8 @@ class ATHENAConfig:
 class TradeSignal:
     """
     A trading signal with all context needed for execution.
+
+    Contains FULL context for audit trail.
     """
     direction: str  # "BULLISH" or "BEARISH"
     spread_type: SpreadType
@@ -190,20 +214,33 @@ class TradeSignal:
     gex_regime: str
     vix: float
 
+    # Kronos GEX context
+    flip_point: float = 0
+    net_gex: float = 0
+
     # Target strikes
-    long_strike: float
-    short_strike: float
-    expiration: str
+    long_strike: float = 0
+    short_strike: float = 0
+    expiration: str = ""
 
     # Pricing
-    estimated_debit: float
-    max_profit: float
-    max_loss: float
-    rr_ratio: float
+    estimated_debit: float = 0
+    max_profit: float = 0
+    max_loss: float = 0
+    rr_ratio: float = 0
 
     # Source
-    source: str = "ML"  # "ML", "ORACLE", or "COMBINED"
+    source: str = "ML"  # "ML", "GEX_WALL", or "COMBINED"
     reasoning: str = ""
+
+    # ML model details (for audit)
+    ml_model_name: str = ""
+    ml_win_probability: float = 0
+    ml_top_features: str = ""  # JSON string of top features
+
+    # Wall proximity details
+    wall_type: str = ""  # "PUT_WALL" or "CALL_WALL"
+    wall_distance_pct: float = 0
 
     @property
     def is_valid(self) -> bool:

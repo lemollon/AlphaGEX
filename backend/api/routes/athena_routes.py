@@ -1449,3 +1449,104 @@ async def get_athena_scan_activity_today():
     """Get all ATHENA scans from today with summary."""
     today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
     return await get_athena_scan_activity(date=today, limit=200)
+
+
+@router.get("/equity-curve")
+async def get_athena_equity_curve(days: int = 30):
+    """
+    Get ATHENA equity curve data.
+
+    Returns cumulative P&L over time for charting.
+    Data comes from athena_positions (V2) or apache_positions (legacy).
+    """
+    CENTRAL_TZ = ZoneInfo("America/Chicago")
+    starting_capital = 100000
+    today = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
+
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+
+        # Try V2 tables first, fall back to legacy
+        try:
+            c.execute("""
+                SELECT
+                    DATE(close_time AT TIME ZONE 'America/Chicago') as trade_date,
+                    SUM(realized_pnl) as daily_pnl,
+                    COUNT(*) as trades
+                FROM athena_positions
+                WHERE status IN ('closed', 'expired')
+                AND close_time >= NOW() - INTERVAL '%s days'
+                GROUP BY DATE(close_time AT TIME ZONE 'America/Chicago')
+                ORDER BY trade_date
+            """, (days,))
+            rows = c.fetchall()
+        except Exception:
+            # Fall back to legacy table
+            c.execute("""
+                SELECT
+                    DATE(exit_time AT TIME ZONE 'America/Chicago') as trade_date,
+                    SUM(realized_pnl) as daily_pnl,
+                    COUNT(*) as trades
+                FROM apache_positions
+                WHERE status IN ('closed', 'expired')
+                AND exit_time >= NOW() - INTERVAL '%s days'
+                GROUP BY DATE(exit_time AT TIME ZONE 'America/Chicago')
+                ORDER BY trade_date
+            """, (days,))
+            rows = c.fetchall()
+
+        conn.close()
+
+        # Build equity curve
+        equity_curve = []
+        running_pnl = 0.0
+
+        for row in rows:
+            trade_date, daily_pnl, trades = row
+            running_pnl += float(daily_pnl or 0)
+            equity_curve.append({
+                "date": str(trade_date),
+                "cumulative_pnl": round(running_pnl, 2),
+                "daily_pnl": round(float(daily_pnl or 0), 2),
+                "trade_count": trades,
+                "equity": round(starting_capital + running_pnl, 2),
+            })
+
+        # Add today if not present
+        if equity_curve and equity_curve[-1]["date"] != today:
+            equity_curve.append({
+                "date": today,
+                "cumulative_pnl": round(running_pnl, 2),
+                "daily_pnl": 0,
+                "trade_count": 0,
+                "equity": round(starting_capital + running_pnl, 2),
+            })
+
+        return {
+            "success": True,
+            "data": {
+                "starting_capital": starting_capital,
+                "current_equity": round(starting_capital + running_pnl, 2),
+                "total_pnl": round(running_pnl, 2),
+                "equity_curve": equity_curve,
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting ATHENA equity curve: {e}")
+        return {
+            "success": True,
+            "data": {
+                "starting_capital": starting_capital,
+                "current_equity": starting_capital,
+                "total_pnl": 0,
+                "equity_curve": [{
+                    "date": today,
+                    "cumulative_pnl": 0,
+                    "daily_pnl": 0,
+                    "trade_count": 0,
+                    "equity": starting_capital,
+                }],
+                "message": f"Error loading equity curve: {str(e)}"
+            }
+        }
