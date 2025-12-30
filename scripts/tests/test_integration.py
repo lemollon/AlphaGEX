@@ -298,7 +298,7 @@ def test_trader_decision_flow():
     print_header("TRADER DECISION FLOW TEST")
     results = []
 
-    bots = ['ARES', 'ATLAS', 'PHOENIX', 'HERMES', 'ORACLE']
+    bots = ['ARES', 'ATLAS', 'PHOENIX', 'HERMES', 'ORACLE', 'ATHENA', 'PEGASUS']
 
     # Check decision logs for each bot
     for bot in bots:

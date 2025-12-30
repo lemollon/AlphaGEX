@@ -1216,7 +1216,7 @@ export default function SolomonPage() {
     return (
       <div className="min-h-screen bg-gray-900">
         <Navigation />
-        <main className="max-w-7xl mx-auto px-4 py-8">
+        <main className="max-w-7xl mx-auto px-4 py-8 pt-24">
           <div className="flex items-center justify-center h-64">
             <RefreshCw className="w-8 h-8 text-purple-400 animate-spin" />
           </div>
@@ -1229,7 +1229,7 @@ export default function SolomonPage() {
     return (
       <div className="min-h-screen bg-gray-900">
         <Navigation />
-        <main className="max-w-7xl mx-auto px-4 py-8">
+        <main className="max-w-7xl mx-auto px-4 py-8 pt-24">
           <div className="bg-red-500/10 border border-red-500/50 rounded-lg p-6 text-center">
             <AlertTriangle className="w-12 h-12 text-red-400 mx-auto mb-4" />
             <h2 className="text-xl font-bold text-red-400 mb-2">Solomon Unavailable</h2>
@@ -1254,7 +1254,7 @@ export default function SolomonPage() {
     <div className="min-h-screen bg-gray-900">
       <Navigation />
 
-      <main className="max-w-7xl mx-auto px-4 py-8">
+      <main className="max-w-7xl mx-auto px-4 py-8 pt-24">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
@@ -1505,7 +1505,7 @@ export default function SolomonPage() {
               >
                 <option value="ARES">ARES</option>
                 <option value="ATHENA">ATHENA</option>
-                <option value="ATLAS">ATLAS</option>
+                <option value="PEGASUS">PEGASUS</option>
                 <option value="PHOENIX">PHOENIX</option>
               </select>
             </div>

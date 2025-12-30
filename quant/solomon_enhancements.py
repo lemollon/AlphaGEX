@@ -731,7 +731,7 @@ class CrossBotAnalyzer:
 
     def get_all_correlations(self, days: int = 30) -> List[CrossBotCorrelation]:
         """Get correlations between all bot pairs"""
-        bots = ['ARES', 'ATHENA', 'ATLAS', 'PHOENIX']
+        bots = ['ARES', 'ATHENA', 'PEGASUS', 'PHOENIX']
         correlations = []
 
         for i, bot_a in enumerate(bots):
@@ -1080,7 +1080,7 @@ class WeekendPreChecker:
 
         # Analyze each bot
         bot_recommendations = {}
-        for bot in ['ARES', 'ATHENA', 'ATLAS', 'PHOENIX']:
+        for bot in ['ARES', 'ATHENA', 'PEGASUS', 'PHOENIX']:
             bot_recommendations[bot] = self._analyze_bot_readiness(bot)
 
         # Overall risk assessment
@@ -1227,7 +1227,7 @@ class DailyDigestGenerator:
         total_trades = 0
         total_wins = 0
 
-        for bot in ['ARES', 'ATHENA', 'ATLAS', 'PHOENIX']:
+        for bot in ['ARES', 'ATHENA', 'PEGASUS', 'PHOENIX']:
             bot_stats = self._get_bot_daily_stats(bot, for_date)
             digest['bots'][bot] = bot_stats
 

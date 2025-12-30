@@ -71,7 +71,7 @@ class SolomonIntegrationMixin:
         Initialize Solomon integration for this bot.
 
         Args:
-            bot_name: The bot identifier (ARES, ATHENA, ATLAS, PHOENIX)
+            bot_name: The bot identifier (ARES, ATHENA, PEGASUS, PHOENIX)
         """
         self._solomon_bot_name = bot_name
         self._solomon_enabled = True

@@ -219,7 +219,7 @@ def main():
         market_trend="NEUTRAL"
     )
 
-    bots = ['ARES', 'ATLAS', 'PHOENIX', 'ATHENA']
+    bots = ['ARES', 'ATLAS', 'PHOENIX', 'ATHENA', 'PEGASUS']
 
     for bot_name in bots:
         try:
