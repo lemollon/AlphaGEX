@@ -143,9 +143,11 @@ def _get_tradier_account_balance() -> dict:
     - option_buying_power: Available for options trading
     - sandbox: Whether using sandbox API
     - connected: Whether API call succeeded
+    - error: Error message if connection failed
     """
     if not TRADIER_AVAILABLE or not TradierDataFetcher:
-        return {'connected': False, 'total_equity': 0, 'sandbox': True}
+        logger.warning("TradierDataFetcher not available - using default capital")
+        return {'connected': False, 'total_equity': 0, 'sandbox': True, 'error': 'TradierDataFetcher not imported'}
 
     try:
         # Try to get API config
@@ -167,9 +169,11 @@ def _get_tradier_account_balance() -> dict:
         # Check if sandbox mode is enabled (defaults to True for safety)
         use_sandbox = getattr(APIConfig, 'TRADIER_SANDBOX', True)
 
+        logger.info(f"Tradier balance fetch: api_key={'SET' if api_key else 'NOT SET'}, account_id={account_id}, sandbox={use_sandbox}")
+
         if not api_key or not account_id:
-            logger.debug("No Tradier credentials available for balance fetch")
-            return {'connected': False, 'total_equity': 0, 'sandbox': use_sandbox}
+            logger.warning("No Tradier credentials available for balance fetch")
+            return {'connected': False, 'total_equity': 0, 'sandbox': use_sandbox, 'error': 'No credentials configured'}
 
         tradier = TradierDataFetcher(
             api_key=api_key,
@@ -178,19 +182,27 @@ def _get_tradier_account_balance() -> dict:
         )
 
         balance = tradier.get_account_balance()
+        logger.info(f"Tradier balance response: {balance}")
+
         if balance:
+            total_equity = balance.get('total_equity', 0)
+            logger.info(f"Tradier balance fetch SUCCESS: total_equity=${total_equity:,.2f}")
             return {
                 'connected': True,
-                'total_equity': balance.get('total_equity', 0),
+                'total_equity': total_equity,
                 'option_buying_power': balance.get('option_buying_power', 0),
-                'sandbox': use_sandbox
+                'sandbox': use_sandbox,
+                'account_id': account_id
             }
 
-        return {'connected': False, 'total_equity': 0, 'sandbox': use_sandbox}
+        logger.warning("Tradier balance fetch returned empty response")
+        return {'connected': False, 'total_equity': 0, 'sandbox': use_sandbox, 'error': 'Empty response from Tradier'}
 
     except Exception as e:
-        logger.debug(f"Could not get Tradier balance: {e}")
-        return {'connected': False, 'total_equity': 0, 'sandbox': True}
+        logger.error(f"Tradier balance fetch ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        return {'connected': False, 'total_equity': 0, 'sandbox': True, 'error': str(e)}
 
 
 @router.get("/status")
