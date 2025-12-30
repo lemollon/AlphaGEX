@@ -4,10 +4,11 @@ import React, { useState, useMemo } from 'react'
 import {
   Shield, TrendingUp, TrendingDown, Activity, DollarSign, Target,
   RefreshCw, BarChart3, ChevronDown, ChevronUp, Server, Clock, Zap,
-  Brain, Crosshair, Settings, Wallet, History, LayoutDashboard, Eye
+  Brain, Crosshair, Settings, Wallet, History, LayoutDashboard, Eye, Download
 } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, ReferenceLine } from 'recharts'
 import Navigation from '@/components/Navigation'
+import ScanActivityFeed from '@/components/ScanActivityFeed'
 import { apiClient } from '@/lib/api'
 import { useToast } from '@/components/ui/Toast'
 import {
@@ -120,6 +121,7 @@ interface IronCondorPosition {
 const PEGASUS_TABS = [
   { id: 'portfolio' as const, label: 'Portfolio', icon: Wallet, description: 'Live P&L and positions' },
   { id: 'overview' as const, label: 'Overview', icon: LayoutDashboard, description: 'Bot status and metrics' },
+  { id: 'activity' as const, label: 'Activity', icon: Activity, description: 'Scans and decisions' },
   { id: 'history' as const, label: 'History', icon: History, description: 'Closed positions' },
   { id: 'config' as const, label: 'Config', icon: Settings, description: 'Settings and controls' },
 ]
@@ -171,6 +173,71 @@ function parseOracleTopFactors(topFactors: string): Array<{ factor: string; impa
   } catch {
     return []
   }
+}
+
+// Export trades to CSV
+function exportTradesToCSV(positions: IronCondorPosition[], filename: string) {
+  const headers = [
+    'Position ID',
+    'Expiration',
+    'Put Spread',
+    'Call Spread',
+    'Contracts',
+    'Total Credit',
+    'Max Profit',
+    'Max Loss',
+    'Realized P&L',
+    'Return %',
+    'Close Reason',
+    'Open Time',
+    'Close Time',
+    'SPX at Entry',
+    'VIX at Entry',
+    'GEX Regime',
+    'Flip Point',
+    'Net GEX',
+    'Oracle Confidence',
+    'Oracle Win Prob',
+    'Oracle Advice',
+    'Oracle Reasoning',
+  ]
+
+  const rows = positions.map(p => [
+    p.position_id,
+    p.expiration,
+    p.put_spread,
+    p.call_spread,
+    p.contracts,
+    p.total_credit?.toFixed(2),
+    p.premium_collected?.toFixed(2),
+    p.max_loss?.toFixed(2),
+    p.realized_pnl?.toFixed(2) || '0',
+    p.return_pct?.toFixed(1) || '0',
+    p.close_reason || '',
+    p.open_time || '',
+    p.close_time || '',
+    p.underlying_at_entry?.toFixed(2),
+    p.vix_at_entry?.toFixed(2),
+    p.gex_regime,
+    p.flip_point?.toFixed(0),
+    p.net_gex?.toFixed(0),
+    ((p.oracle_confidence || 0) * 100).toFixed(0) + '%',
+    ((p.oracle_win_probability || 0) * 100).toFixed(0) + '%',
+    p.oracle_advice,
+    `"${(p.oracle_reasoning || '').replace(/"/g, '""')}"`,
+  ])
+
+  const csvContent = [
+    headers.join(','),
+    ...rows.map(row => row.join(','))
+  ].join('\n')
+
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(blob)
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(link.href)
 }
 
 // ==============================================================================
@@ -429,12 +496,14 @@ export default function PegasusPage() {
   const { data: equityData, error: equityError, isLoading: equityLoading } = usePEGASUSEquityCurve(30)
   const { data: configData } = usePEGASUSConfig()
   const { data: livePnLData } = usePEGASUSLivePnL()
+  const { data: scanData, isLoading: scansLoading } = useScanActivityPegasus(50)
 
   // Extract data
   const status: PEGASUSStatus | null = statusData?.data || null
   const openPositions: IronCondorPosition[] = positionsData?.data?.open_positions || []
   const closedPositions: IronCondorPosition[] = positionsData?.data?.closed_positions || []
   const equityCurve = equityData?.data?.equity_curve || []
+  const scans = scanData?.data?.scans || []
   const config = configData?.data || null
 
   // Calculate stats
@@ -448,7 +517,7 @@ export default function PegasusPage() {
 
   const handleRefresh = async () => {
     await refreshStatus()
-    addToast({ type: 'success', message: 'PEGASUS data refreshed' })
+    addToast({ type: 'success', title: 'Refreshed', message: 'PEGASUS data refreshed' })
   }
 
   if (statusLoading) {
@@ -657,9 +726,36 @@ export default function PegasusPage() {
               </BotCard>
             )}
 
+            {/* Activity Tab */}
+            {activeTab === 'activity' && (
+              <BotCard title="Scan Activity" icon={Activity}>
+                <ScanActivityFeed
+                  scans={scans}
+                  botName="PEGASUS"
+                  isLoading={scansLoading}
+                />
+              </BotCard>
+            )}
+
             {/* History Tab */}
             {activeTab === 'history' && (
               <BotCard title="Closed Positions" icon={History}>
+                {/* Export Button */}
+                {closedPositions.length > 0 && (
+                  <div className="flex justify-end mb-4">
+                    <button
+                      onClick={() => {
+                        const today = new Date().toISOString().split('T')[0]
+                        exportTradesToCSV(closedPositions, `pegasus-trades-${today}.csv`)
+                        addToast({ type: 'success', title: 'Export Complete', message: `Exported ${closedPositions.length} trades to CSV` })
+                      }}
+                      className="flex items-center gap-2 px-4 py-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-400 border border-blue-500/30 rounded-lg transition-colors"
+                    >
+                      <Download className="w-4 h-4" />
+                      <span className="text-sm">Export CSV</span>
+                    </button>
+                  </div>
+                )}
                 {closedPositions.length === 0 ? (
                   <EmptyState message="No closed positions yet" icon={History} />
                 ) : (
