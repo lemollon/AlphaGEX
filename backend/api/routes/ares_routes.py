@@ -11,7 +11,7 @@ ARES targets 10% monthly returns through daily 0DTE Iron Condors.
 import logging
 from datetime import datetime, timedelta
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request, Query
 from zoneinfo import ZoneInfo
 
 from database_adapter import get_connection
@@ -1120,6 +1120,63 @@ async def get_ares_performance():
     except Exception as e:
         logger.error(f"Error getting ARES performance: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/logs")
+async def get_ares_logs(
+    level: Optional[str] = Query(None, description="Filter by level: DEBUG, INFO, WARNING, ERROR"),
+    limit: int = Query(100, description="Max logs to return")
+):
+    """
+    Get ARES logs for debugging and monitoring.
+    """
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+
+        where_clause = ""
+        params = []
+        if level:
+            where_clause = "WHERE level = %s"
+            params.append(level)
+        params.append(limit)
+
+        c.execute(f"""
+            SELECT
+                id, created_at, level, message, details
+            FROM ares_logs
+            {where_clause}
+            ORDER BY created_at DESC
+            LIMIT %s
+        """, tuple(params))
+
+        rows = c.fetchall()
+        conn.close()
+
+        logs = []
+        for row in rows:
+            logs.append({
+                "id": row[0],
+                "created_at": row[1].isoformat() if row[1] else None,
+                "level": row[2],
+                "message": row[3],
+                "details": row[4]
+            })
+
+        return {
+            "success": True,
+            "data": logs,
+            "count": len(logs)
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting ARES logs: {e}")
+        return {
+            "success": True,
+            "data": [],
+            "count": 0,
+            "message": "Log table not available"
+        }
 
 
 @router.get("/decisions")

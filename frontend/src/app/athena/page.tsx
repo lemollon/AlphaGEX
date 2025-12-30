@@ -1295,10 +1295,10 @@ export default function ATHENAPage() {
   const totalPnl = closedPositions.reduce((sum, p) => sum + (p.realized_pnl || 0), 0)
 
   return (
-    <div className="min-h-screen bg-black">
+    <>
       <Navigation />
-      <main className="lg:pl-16 pt-24 text-white">
-        <div className="p-6">
+      <main className="min-h-screen bg-black text-white px-4 pb-4 md:px-6 md:pb-6 pt-28">
+        <div className="max-w-7xl mx-auto space-y-6">
           {/* Unified Header */}
           <BotPageHeader
             botName="ATHENA"
@@ -3159,26 +3159,25 @@ export default function ATHENAPage() {
             </div>
           )}
         </div>
+
+        {/* Position Detail Modal */}
+        <PositionDetailModal
+          isOpen={selectedPosition !== null}
+          onClose={() => setSelectedPosition(null)}
+          position={selectedPosition || {
+            position_id: '',
+            spread_type: '',
+            long_strike: 0,
+            short_strike: 0,
+            expiration: '',
+            contracts: 0,
+            entry_price: 0,
+            status: ''
+          }}
+          underlyingPrice={livePnL?.underlying_price}
+          botType="ATHENA"
+        />
       </main>
-
-      {/* Position Detail Modal */}
-      <PositionDetailModal
-        isOpen={selectedPosition !== null}
-        onClose={() => setSelectedPosition(null)}
-        position={selectedPosition || {
-          position_id: '',
-          spread_type: '',
-          long_strike: 0,
-          short_strike: 0,
-          expiration: '',
-          contracts: 0,
-          entry_price: 0,
-          status: ''
-        }}
-        underlyingPrice={livePnL?.underlying_price}
-        botType="ATHENA"
-      />
-
-    </div>
+    </>
   )
 }

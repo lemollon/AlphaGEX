@@ -9,7 +9,7 @@ Trades SPX options with $10 spread widths using SPXW weekly options.
 import logging
 from datetime import datetime, timedelta
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request, Query
 from zoneinfo import ZoneInfo
 
 from database_adapter import get_connection
@@ -789,3 +789,193 @@ async def get_pegasus_live_pnl():
     except Exception as e:
         logger.error(f"Error getting PEGASUS live P&L: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/logs")
+async def get_pegasus_logs(
+    level: Optional[str] = Query(None, description="Filter by level: DEBUG, INFO, WARNING, ERROR"),
+    limit: int = Query(100, description="Max logs to return")
+):
+    """
+    Get PEGASUS logs for debugging and monitoring.
+    """
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+
+        where_clause = "WHERE bot_name = 'PEGASUS'"
+        params = []
+        if level:
+            where_clause += " AND log_level = %s"
+            params.append(level)
+        params.append(limit)
+
+        c.execute(f"""
+            SELECT
+                id, created_at, log_level, message, details
+            FROM pegasus_logs
+            {where_clause}
+            ORDER BY created_at DESC
+            LIMIT %s
+        """, tuple(params))
+
+        rows = c.fetchall()
+        conn.close()
+
+        logs = []
+        for row in rows:
+            logs.append({
+                "id": row[0],
+                "created_at": row[1].isoformat() if row[1] else None,
+                "level": row[2],
+                "message": row[3],
+                "details": row[4]
+            })
+
+        return {
+            "success": True,
+            "data": logs,
+            "count": len(logs)
+        }
+
+    except Exception as e:
+        # If pegasus_logs table doesn't exist, try bot_logs
+        try:
+            conn = get_connection()
+            c = conn.cursor()
+
+            where_clause = "WHERE bot_name = 'PEGASUS'"
+            params = []
+            if level:
+                where_clause += " AND level = %s"
+                params.append(level)
+            params.append(limit)
+
+            c.execute(f"""
+                SELECT
+                    id, created_at, level, message, details
+                FROM bot_logs
+                {where_clause}
+                ORDER BY created_at DESC
+                LIMIT %s
+            """, tuple(params))
+
+            rows = c.fetchall()
+            conn.close()
+
+            logs = []
+            for row in rows:
+                logs.append({
+                    "id": row[0],
+                    "created_at": row[1].isoformat() if row[1] else None,
+                    "level": row[2],
+                    "message": row[3],
+                    "details": row[4]
+                })
+
+            return {
+                "success": True,
+                "data": logs,
+                "count": len(logs)
+            }
+        except Exception:
+            pass
+
+        logger.error(f"Error getting PEGASUS logs: {e}")
+        return {
+            "success": True,
+            "data": [],
+            "count": 0,
+            "message": "Log table not available"
+        }
+
+
+@router.get("/performance")
+async def get_pegasus_performance(
+    days: int = Query(30, description="Number of days to include")
+):
+    """
+    Get PEGASUS performance metrics over time.
+    """
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+
+        # Get closed positions for performance calculation
+        c.execute("""
+            SELECT
+                DATE(close_time AT TIME ZONE 'America/Chicago') as trade_date,
+                COUNT(*) as trades_executed,
+                SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as trades_won,
+                SUM(CASE WHEN realized_pnl <= 0 THEN 1 ELSE 0 END) as trades_lost,
+                COALESCE(SUM(realized_pnl), 0) as net_pnl
+            FROM pegasus_positions
+            WHERE status IN ('closed', 'expired')
+            AND close_time >= CURRENT_DATE - INTERVAL '%s days'
+            GROUP BY DATE(close_time AT TIME ZONE 'America/Chicago')
+            ORDER BY trade_date DESC
+        """, (days,))
+
+        rows = c.fetchall()
+
+        # Calculate summary stats
+        c.execute("""
+            SELECT
+                COUNT(*) as total_trades,
+                SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as total_wins,
+                COALESCE(SUM(realized_pnl), 0) as total_pnl
+            FROM pegasus_positions
+            WHERE status IN ('closed', 'expired')
+            AND close_time >= CURRENT_DATE - INTERVAL '%s days'
+        """, (days,))
+
+        summary_row = c.fetchone()
+        conn.close()
+
+        daily_data = []
+        for row in rows:
+            trades = row[1] or 0
+            wins = row[2] or 0
+            win_rate = (wins / trades * 100) if trades > 0 else 0
+
+            daily_data.append({
+                "date": str(row[0]),
+                "trades": trades,
+                "wins": wins,
+                "losses": row[3] or 0,
+                "win_rate": round(win_rate, 1),
+                "net_pnl": float(row[4]) if row[4] else 0
+            })
+
+        total_trades = summary_row[0] if summary_row else 0
+        total_wins = summary_row[1] if summary_row else 0
+        avg_win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0
+
+        return {
+            "success": True,
+            "data": {
+                "summary": {
+                    "total_trades": total_trades,
+                    "total_wins": total_wins,
+                    "total_pnl": float(summary_row[2]) if summary_row and summary_row[2] else 0,
+                    "avg_win_rate": round(avg_win_rate, 1)
+                },
+                "daily": daily_data
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting PEGASUS performance: {e}")
+        return {
+            "success": True,
+            "data": {
+                "summary": {
+                    "total_trades": 0,
+                    "total_wins": 0,
+                    "total_pnl": 0,
+                    "avg_win_rate": 0
+                },
+                "daily": []
+            },
+            "message": "Performance data not available"
+        }

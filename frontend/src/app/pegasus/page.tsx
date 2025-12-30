@@ -534,7 +534,7 @@ export default function PegasusPage() {
   return (
     <>
       <Navigation />
-      <main className="min-h-screen bg-black text-white p-4 md:p-6 pt-20">
+      <main className="min-h-screen bg-black text-white px-4 pb-4 md:px-6 md:pb-6 pt-28">
         <div className="max-w-7xl mx-auto space-y-6">
 
           {/* Header - Branded */}

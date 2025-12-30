@@ -347,6 +347,7 @@ export const apiClient = {
   getARESMarketData: () => api.get('/api/ares/market-data'),
   getARESTradierStatus: () => api.get('/api/ares/tradier-status'),
   getARESDecisions: (limit: number = 50) => api.get('/api/ares/decisions', { params: { limit } }),
+  getARESLogs: (level?: string, limit: number = 100) => api.get('/api/ares/logs', { params: { level, limit } }),
   getARESConfig: () => api.get('/api/ares/config'),
 
   // ATHENA - Directional Spread Bot
