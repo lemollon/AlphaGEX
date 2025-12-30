@@ -551,31 +551,31 @@ export default function PegasusPage() {
             <StatCard
               label="Capital"
               value={formatCurrency(capital)}
-              icon={DollarSign}
+              icon={<DollarSign className="h-4 w-4" />}
               color="blue"
             />
             <StatCard
               label="Total P&L"
               value={`${totalPnL >= 0 ? '+' : ''}${formatCurrency(totalPnL)}`}
-              icon={TrendingUp}
+              icon={<TrendingUp className="h-4 w-4" />}
               color={totalPnL >= 0 ? 'green' : 'red'}
             />
             <StatCard
               label="Win Rate"
               value={`${winRate.toFixed(1)}%`}
-              icon={Target}
+              icon={<Target className="h-4 w-4" />}
               color={winRate >= 60 ? 'green' : winRate >= 50 ? 'yellow' : 'red'}
             />
             <StatCard
               label="Trades"
               value={tradeCount.toString()}
-              icon={Activity}
+              icon={<Activity className="h-4 w-4" />}
               color="blue"
             />
             <StatCard
               label="Open Positions"
               value={openPositions.length.toString()}
-              icon={Crosshair}
+              icon={<Crosshair className="h-4 w-4" />}
               color="blue"
             />
           </div>
