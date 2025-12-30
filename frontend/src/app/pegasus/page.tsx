@@ -6,7 +6,7 @@ import {
   RefreshCw, BarChart3, ChevronDown, ChevronUp, Server, Clock, Zap,
   Brain, Crosshair, Settings, Wallet, History, LayoutDashboard, Eye, Download
 } from 'lucide-react'
-import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, ReferenceLine } from 'recharts'
+// Recharts imports removed - using shared EquityCurveChart component
 import Navigation from '@/components/Navigation'
 import ScanActivityFeed from '@/components/ScanActivityFeed'
 import { apiClient } from '@/lib/api'
@@ -14,7 +14,6 @@ import { useToast } from '@/components/ui/Toast'
 import {
   usePEGASUSStatus,
   usePEGASUSPositions,
-  usePEGASUSEquityCurve,
   usePEGASUSConfig,
   usePEGASUSLivePnL,
   useScanActivityPegasus,
@@ -30,7 +29,9 @@ import {
   PnLDisplay,
   BOT_BRANDS,
   BotName,
+  BotStatusBanner,
 } from '@/components/trader'
+import EquityCurveChart from '@/components/charts/EquityCurveChart'
 
 // ==============================================================================
 // INTERFACES
@@ -493,7 +494,7 @@ export default function PegasusPage() {
   // Data hooks
   const { data: statusData, error: statusError, isLoading: statusLoading, mutate: refreshStatus } = usePEGASUSStatus()
   const { data: positionsData, error: positionsError, isLoading: positionsLoading } = usePEGASUSPositions()
-  const { data: equityData, error: equityError, isLoading: equityLoading } = usePEGASUSEquityCurve(30)
+  // Equity curve data is now fetched by the shared EquityCurveChart component
   const { data: configData } = usePEGASUSConfig()
   const { data: livePnLData } = usePEGASUSLivePnL()
   const { data: scanData, isLoading: scansLoading } = useScanActivityPegasus(50)
@@ -502,7 +503,6 @@ export default function PegasusPage() {
   const status: PEGASUSStatus | null = statusData?.data || null
   const openPositions: IronCondorPosition[] = positionsData?.data?.open_positions || []
   const closedPositions: IronCondorPosition[] = positionsData?.data?.closed_positions || []
-  const equityCurve = equityData?.data?.equity_curve || []
   const scans = scanData?.data?.scans || []
   const config = configData?.data || null
 
@@ -603,6 +603,27 @@ export default function PegasusPage() {
             {/* Portfolio Tab */}
             {activeTab === 'portfolio' && (
               <>
+                {/* Bot Status Banner - Shows active/paused/error status with countdown */}
+                <BotStatusBanner
+                  botName="PEGASUS"
+                  isActive={status?.is_active || false}
+                  lastScan={status?.heartbeat?.last_scan_iso}
+                  scanInterval={status?.scan_interval_minutes || 5}
+                  openPositions={openPositions.length}
+                  todayPnl={closedPositions.filter(p => {
+                    const closeTime = p.close_time_iso || p.close_time
+                    if (!closeTime) return false
+                    const today = new Date().toISOString().split('T')[0]
+                    return closeTime.startsWith(today)
+                  }).reduce((sum, p) => sum + (p.realized_pnl || 0), 0)}
+                  todayTrades={closedPositions.filter(p => {
+                    const closeTime = p.close_time_iso || p.close_time
+                    if (!closeTime) return false
+                    const today = new Date().toISOString().split('T')[0]
+                    return closeTime.startsWith(today)
+                  }).length}
+                />
+
                 {/* Open Positions */}
                 <BotCard title="Open Positions" icon={<Crosshair className="h-5 w-5" />}>
                   {openPositions.length === 0 ? (
@@ -616,61 +637,11 @@ export default function PegasusPage() {
                   )}
                 </BotCard>
 
-                {/* Equity Curve */}
-                <BotCard title="Equity Curve" icon={<BarChart3 className="h-5 w-5" />}>
-                  {equityCurve.length === 0 ? (
-                    <EmptyState title="No equity data yet" description="Equity curve will appear after trades are closed" icon={<BarChart3 className="h-8 w-8" />} />
-                  ) : (
-                    <div className="h-[300px]">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart data={equityCurve}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                          <XAxis
-                            dataKey="date"
-                            tick={{ fill: '#888', fontSize: 10 }}
-                            tickFormatter={(value) => {
-                              const date = new Date(value)
-                              return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-                            }}
-                          />
-                          <YAxis
-                            tick={{ fill: '#888', fontSize: 10 }}
-                            tickFormatter={(value) => `$${(value / 1000).toFixed(0)}k`}
-                            domain={['dataMin - 1000', 'dataMax + 1000']}
-                          />
-                          <Tooltip
-                            contentStyle={{ backgroundColor: '#1a1a1a', border: '1px solid #333' }}
-                            formatter={(value: any) => [`$${Number(value).toLocaleString()}`, 'Equity']}
-                            labelFormatter={(label) => new Date(label).toLocaleDateString('en-US', {
-                              month: 'short',
-                              day: 'numeric',
-                              year: 'numeric'
-                            })}
-                          />
-                          <ReferenceLine
-                            y={200000}
-                            stroke="#666"
-                            strokeDasharray="3 3"
-                            label={{ value: 'Start', fill: '#666', fontSize: 10 }}
-                          />
-                          <Area
-                            type="monotone"
-                            dataKey="equity"
-                            stroke={brand.hexPrimary}
-                            fill="url(#pegasusGradient)"
-                            strokeWidth={2}
-                          />
-                          <defs>
-                            <linearGradient id="pegasusGradient" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor={brand.hexPrimary} stopOpacity={0.3} />
-                              <stop offset="95%" stopColor={brand.hexPrimary} stopOpacity={0} />
-                            </linearGradient>
-                          </defs>
-                        </AreaChart>
-                      </ResponsiveContainer>
-                    </div>
-                  )}
-                </BotCard>
+                {/* Equity Curve - Using Shared Component */}
+                <EquityCurveChart
+                  title="PEGASUS Equity Curve"
+                  botFilter="PEGASUS"
+                />
               </>
             )}
 
