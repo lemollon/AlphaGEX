@@ -1,14 +1,14 @@
 'use client'
 
 import React from 'react'
-import { Sword, Target, TrendingUp, TrendingDown, Clock, AlertTriangle, CheckCircle, XCircle, RefreshCw } from 'lucide-react'
+import { Sword, Target, Shield, TrendingUp, TrendingDown, Clock, AlertTriangle, CheckCircle, XCircle, RefreshCw } from 'lucide-react'
 
 // =============================================================================
 // BOT BRANDING SYSTEM
 // =============================================================================
-// Unified branding for ARES and ATHENA to ensure visual consistency
+// Unified branding for ARES, ATHENA, and PEGASUS to ensure visual consistency
 
-export type BotName = 'ARES' | 'ATHENA'
+export type BotName = 'ARES' | 'ATHENA' | 'PEGASUS'
 
 export interface BotBrand {
   name: BotName
@@ -116,6 +116,41 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     hexPrimary: '#06B6D4',
     hexLight: '#67E8F9',
     hexDark: '#0891B2',
+  },
+  PEGASUS: {
+    name: 'PEGASUS',
+    fullName: 'PEGASUS SPX Iron Condor',
+    description: 'SPX Iron Condor Trading with Oracle Intelligence',
+    strategy: 'SPX Iron Condor Strategy',
+    // Primary - Blue/Indigo (protection, stability, SPX)
+    primaryColor: 'blue',
+    primaryBg: 'bg-blue-600',
+    primaryBorder: 'border-blue-500',
+    primaryText: 'text-blue-400',
+    // Light variants
+    lightBg: 'bg-blue-900/20',
+    lightText: 'text-blue-300',
+    lightBorder: 'border-blue-700/50',
+    // Chart colors
+    chartLine: 'stroke-blue-400',
+    chartFill: 'fill-blue-500/20',
+    chartPositive: 'text-blue-400',
+    chartNegative: 'text-blue-600',
+    // Position cards
+    positionBorder: 'border-blue-600/50',
+    positionBg: 'bg-blue-950/30',
+    positionAccent: 'bg-blue-500',
+    // Badges
+    badgeBg: 'bg-blue-900/50',
+    badgeText: 'text-blue-300',
+    // Gradient
+    icon: Shield,
+    gradientFrom: 'from-blue-500',
+    gradientTo: 'to-blue-900',
+    // Hex for Recharts
+    hexPrimary: '#3B82F6',
+    hexLight: '#93C5FD',
+    hexDark: '#1D4ED8',
   },
 }
 

@@ -213,28 +213,42 @@ async def get_pegasus_positions():
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Get open positions
+            # Get open positions with FULL audit trail context
             cursor.execute('''
                 SELECT
                     position_id, expiration,
                     put_long_strike, put_short_strike, call_short_strike, call_long_strike,
                     put_credit, call_credit, total_credit,
                     contracts, spread_width, max_loss,
-                    underlying_at_entry, vix_at_entry, status
+                    underlying_at_entry, vix_at_entry, status,
+                    -- GEX context
+                    gex_regime, call_wall, put_wall, flip_point, net_gex,
+                    -- Oracle audit trail
+                    oracle_confidence, oracle_win_probability, oracle_advice,
+                    oracle_reasoning, oracle_top_factors,
+                    -- Timing
+                    open_time
                 FROM pegasus_positions
                 WHERE status = 'open'
                 ORDER BY open_time DESC
             ''')
             open_rows = cursor.fetchall()
 
-            # Get closed positions (last 100)
+            # Get closed positions (last 100) with FULL audit trail context
             cursor.execute('''
                 SELECT
                     position_id, expiration,
                     put_long_strike, put_short_strike, call_short_strike, call_long_strike,
                     put_credit, call_credit, total_credit,
                     contracts, spread_width, max_loss, close_price, realized_pnl,
-                    underlying_at_entry, vix_at_entry, status, close_reason
+                    underlying_at_entry, vix_at_entry, status, close_reason,
+                    -- GEX context
+                    gex_regime, call_wall, put_wall, flip_point, net_gex,
+                    -- Oracle audit trail
+                    oracle_confidence, oracle_win_probability, oracle_advice,
+                    oracle_reasoning, oracle_top_factors,
+                    -- Timing
+                    open_time, close_time
                 FROM pegasus_positions
                 WHERE status IN ('closed', 'expired')
                 ORDER BY close_time DESC
@@ -243,12 +257,16 @@ async def get_pegasus_positions():
             closed_rows = cursor.fetchall()
             conn.close()
 
-            # Format open positions
+            # Format open positions with FULL audit trail context
             open_positions = []
             for row in open_rows:
-                pos_id, exp, put_long, put_short, call_short, call_long, \
-                    put_cr, call_cr, total_cr, contracts, spread_w, max_loss, \
-                    underlying, vix, status = row
+                (pos_id, exp, put_long, put_short, call_short, call_long,
+                 put_cr, call_cr, total_cr, contracts, spread_w, max_loss,
+                 underlying, vix, status,
+                 gex_regime, call_wall, put_wall, flip_point, net_gex,
+                 oracle_confidence, oracle_win_prob, oracle_advice,
+                 oracle_reasoning, oracle_top_factors,
+                 open_time) = row
 
                 dte = 0
                 if exp:
@@ -258,6 +276,13 @@ async def get_pegasus_positions():
                         dte = (exp_date - today).days
                     except:
                         pass
+
+                # Format open_time to Central Time
+                open_time_ct = None
+                if open_time:
+                    if open_time.tzinfo is None:
+                        open_time = open_time.replace(tzinfo=ZoneInfo("UTC"))
+                    open_time_ct = open_time.astimezone(ZoneInfo("America/Chicago"))
 
                 open_positions.append({
                     "position_id": pos_id,
@@ -280,18 +305,50 @@ async def get_pegasus_positions():
                     "premium_collected": float(total_cr or 0) * 100 * (contracts or 0),
                     "underlying_at_entry": float(underlying) if underlying else 0,
                     "vix_at_entry": float(vix) if vix else 0,
-                    "status": status
+                    "status": status,
+                    # GEX context (AUDIT TRAIL)
+                    "gex_regime": gex_regime or "NEUTRAL",
+                    "call_wall": float(call_wall) if call_wall else 0,
+                    "put_wall": float(put_wall) if put_wall else 0,
+                    "flip_point": float(flip_point) if flip_point else 0,
+                    "net_gex": float(net_gex) if net_gex else 0,
+                    # Oracle context (AUDIT TRAIL - why this trade was chosen)
+                    "oracle_confidence": float(oracle_confidence) if oracle_confidence else 0,
+                    "oracle_win_probability": float(oracle_win_prob) if oracle_win_prob else 0,
+                    "oracle_advice": oracle_advice or "",
+                    "oracle_reasoning": oracle_reasoning or "",
+                    "oracle_top_factors": oracle_top_factors or "",
+                    # Timing (Central Time)
+                    "open_time": open_time_ct.strftime('%Y-%m-%d %H:%M:%S CT') if open_time_ct else None,
+                    "open_time_iso": open_time_ct.isoformat() if open_time_ct else None,
                 })
 
-            # Format closed positions
+            # Format closed positions with FULL audit trail context
             closed_positions = []
             for row in closed_rows:
-                pos_id, exp, put_long, put_short, call_short, call_long, \
-                    put_cr, call_cr, total_cr, contracts, spread_w, max_loss, close_price, realized_pnl, \
-                    underlying, vix, status, close_reason = row
+                (pos_id, exp, put_long, put_short, call_short, call_long,
+                 put_cr, call_cr, total_cr, contracts, spread_w, max_loss, close_price, realized_pnl,
+                 underlying, vix, status, close_reason,
+                 gex_regime, call_wall, put_wall, flip_point, net_gex,
+                 oracle_confidence, oracle_win_prob, oracle_advice,
+                 oracle_reasoning, oracle_top_factors,
+                 open_time, close_time) = row
 
                 max_profit = float(total_cr or 0) * 100 * (contracts or 0)
                 return_pct = round((float(realized_pnl or 0) / max_profit) * 100, 1) if max_profit else 0
+
+                # Format times to Central Time
+                open_time_ct = None
+                if open_time:
+                    if open_time.tzinfo is None:
+                        open_time = open_time.replace(tzinfo=ZoneInfo("UTC"))
+                    open_time_ct = open_time.astimezone(ZoneInfo("America/Chicago"))
+
+                close_time_ct = None
+                if close_time:
+                    if close_time.tzinfo is None:
+                        close_time = close_time.replace(tzinfo=ZoneInfo("UTC"))
+                    close_time_ct = close_time.astimezone(ZoneInfo("America/Chicago"))
 
                 closed_positions.append({
                     "position_id": pos_id,
@@ -314,7 +371,24 @@ async def get_pegasus_positions():
                     "close_reason": close_reason,
                     "underlying_at_entry": float(underlying) if underlying else 0,
                     "vix_at_entry": float(vix) if vix else 0,
-                    "status": status
+                    "status": status,
+                    # GEX context (AUDIT TRAIL)
+                    "gex_regime": gex_regime or "NEUTRAL",
+                    "call_wall": float(call_wall) if call_wall else 0,
+                    "put_wall": float(put_wall) if put_wall else 0,
+                    "flip_point": float(flip_point) if flip_point else 0,
+                    "net_gex": float(net_gex) if net_gex else 0,
+                    # Oracle context (AUDIT TRAIL - why this trade was chosen)
+                    "oracle_confidence": float(oracle_confidence) if oracle_confidence else 0,
+                    "oracle_win_probability": float(oracle_win_prob) if oracle_win_prob else 0,
+                    "oracle_advice": oracle_advice or "",
+                    "oracle_reasoning": oracle_reasoning or "",
+                    "oracle_top_factors": oracle_top_factors or "",
+                    # Timing (Central Time)
+                    "open_time": open_time_ct.strftime('%Y-%m-%d %H:%M:%S CT') if open_time_ct else None,
+                    "open_time_iso": open_time_ct.isoformat() if open_time_ct else None,
+                    "close_time": close_time_ct.strftime('%Y-%m-%d %H:%M:%S CT') if close_time_ct else None,
+                    "close_time_iso": close_time_ct.isoformat() if close_time_ct else None,
                 })
 
             return {

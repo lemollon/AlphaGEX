@@ -506,6 +506,59 @@ const fetchers = {
       return { success: false, data: { archive: [] } }
     }
   },
+
+  // PEGASUS SPX Iron Condor Bot
+  pegasusStatus: async () => {
+    try {
+      const response = await api.get('/api/pegasus/status')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  pegasusPositions: async () => {
+    try {
+      const response = await api.get('/api/pegasus/positions')
+      return response.data
+    } catch {
+      return { success: false, data: { open_positions: [], closed_positions: [] } }
+    }
+  },
+  pegasusEquityCurve: async (days: number = 30) => {
+    try {
+      const response = await api.get(`/api/pegasus/equity-curve?days=${days}`)
+      return response.data
+    } catch {
+      return { success: false, data: { equity_curve: [] } }
+    }
+  },
+  pegasusConfig: async () => {
+    try {
+      const response = await api.get('/api/pegasus/config')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  pegasusLivePnL: async () => {
+    try {
+      const response = await api.get('/api/pegasus/live-pnl')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  scanActivityPegasus: async (limit?: number, date?: string) => {
+    try {
+      const params = new URLSearchParams()
+      params.append('limit', String(limit || 50))
+      if (date) params.append('date', date)
+      const response = await api.get(`/api/scans/activity/PEGASUS?${params}`)
+      return response.data
+    } catch {
+      return { success: false, data: { scans: [] } }
+    }
+  },
 }
 
 // =============================================================================
@@ -825,6 +878,58 @@ export function useScanActivityToday(bot?: string, options?: SWRConfiguration) {
   return useSWR(
     `scan-activity-today-${bot || 'all'}`,
     () => fetchers.scanActivityToday(bot),
+    { ...swrConfig, refreshInterval: 30 * 1000, ...options }
+  )
+}
+
+// =============================================================================
+// PEGASUS SPX IRON CONDOR HOOKS
+// =============================================================================
+
+export function usePEGASUSStatus(options?: SWRConfiguration) {
+  return useSWR('pegasus-status', fetchers.pegasusStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function usePEGASUSPositions(options?: SWRConfiguration) {
+  return useSWR('pegasus-positions', fetchers.pegasusPositions, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function usePEGASUSEquityCurve(days: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `pegasus-equity-curve-${days}`,
+    () => fetchers.pegasusEquityCurve(days),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function usePEGASUSConfig(options?: SWRConfiguration) {
+  return useSWR('pegasus-config', fetchers.pegasusConfig, {
+    ...swrConfig,
+    refreshInterval: 5 * 60 * 1000,
+    ...options,
+  })
+}
+
+export function usePEGASUSLivePnL(options?: SWRConfiguration) {
+  return useSWR('pegasus-live-pnl', fetchers.pegasusLivePnL, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useScanActivityPegasus(limit: number = 50, date?: string, options?: SWRConfiguration) {
+  return useSWR(
+    `scan-activity-pegasus-${limit}-${date || 'all'}`,
+    () => fetchers.scanActivityPegasus(limit, date),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
 }
