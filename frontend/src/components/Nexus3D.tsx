@@ -50,6 +50,7 @@ class Canvas3DErrorBoundary extends Component<{ children: ReactNode, fallback: R
 export interface BotStatus {
   ares?: 'active' | 'idle' | 'trading' | 'error'
   athena?: 'active' | 'idle' | 'trading' | 'error'
+  pegasus?: 'active' | 'idle' | 'trading' | 'error'
   phoenix?: 'active' | 'idle' | 'trading' | 'error'
   atlas?: 'active' | 'idle' | 'trading' | 'error'
   oracle?: 'active' | 'idle' | 'trading' | 'error'
@@ -160,10 +161,11 @@ const STATUS_COLORS = {
 
 const BOT_NODES = [
   { id: 'oracle', name: 'ORACLE', angle: 0 },
-  { id: 'ares', name: 'ARES', angle: Math.PI * 2 / 5 },
-  { id: 'athena', name: 'ATHENA', angle: Math.PI * 4 / 5 },
-  { id: 'atlas', name: 'ATLAS', angle: Math.PI * 6 / 5 },
-  { id: 'phoenix', name: 'PHOENIX', angle: Math.PI * 8 / 5 },
+  { id: 'ares', name: 'ARES', angle: Math.PI / 3 },           // 60°
+  { id: 'athena', name: 'ATHENA', angle: Math.PI * 2 / 3 },   // 120°
+  { id: 'pegasus', name: 'PEGASUS', angle: Math.PI },          // 180°
+  { id: 'atlas', name: 'ATLAS', angle: Math.PI * 4 / 3 },     // 240°
+  { id: 'phoenix', name: 'PHOENIX', angle: Math.PI * 5 / 3 }, // 300°
 ]
 
 // =============================================================================
@@ -9501,7 +9503,7 @@ function BotNodeWithFlare({
     if (flareRef.current && isActive) {
       const pulse = Math.sin(t * 4) * 0.5 + 0.5
       flareRef.current.scale.setScalar(0.5 + pulse * 0.3)
-      ;(flareRef.current.material as THREE.MeshBasicMaterial).opacity = 0.3 + pulse * 0.2
+      ;(flareRef.current.material as THREE.MeshBasicMaterial).opacity = 0.08 + pulse * 0.07
     }
   })
 
@@ -9509,12 +9511,12 @@ function BotNodeWithFlare({
     <group ref={groupRef} position={[x, 0, z]}>
       {isActive && (
         <Sphere ref={flareRef} args={[1, 16, 16]}>
-          <meshBasicMaterial color={color} transparent opacity={0.4} />
+          <meshBasicMaterial color={color} transparent opacity={0.12} />
         </Sphere>
       )}
 
       <Sphere args={[0.35, 16, 16]}>
-        <meshBasicMaterial color={color} transparent opacity={hovered ? 0.5 : 0.25} />
+        <meshBasicMaterial color={color} transparent opacity={hovered ? 0.2 : 0.1} />
       </Sphere>
 
       <Sphere
@@ -9532,7 +9534,7 @@ function BotNodeWithFlare({
       {status === 'trading' && (
         <mesh rotation={[Math.PI / 2, 0, 0]}>
           <torusGeometry args={[0.4, 0.02, 16, 32]} />
-          <meshBasicMaterial color={color} transparent opacity={0.8} />
+          <meshBasicMaterial color={color} transparent opacity={0.5} />
         </mesh>
       )}
 

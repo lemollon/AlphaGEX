@@ -25,6 +25,7 @@ const TRADING_TIPS = [
   "Call walls act as resistance, put walls as support",
   "ARES hunts Iron Condor opportunities when volatility spikes",
   "ATHENA captures directional momentum with GEX-aligned spreads",
+  "PEGASUS trades weekly SPX Iron Condors with $10 spread protection",
   "PHOENIX targets 0DTE gamma scalps during high-activity periods",
   "ATLAS wheels premium through systematic SPX strategies",
   "ORACLE's ML models predict direction with 65%+ accuracy",
@@ -39,6 +40,7 @@ export default function NexusPage() {
     oracle: 'active',
     ares: 'idle',
     athena: 'idle',
+    pegasus: 'idle',
     phoenix: 'idle',
     atlas: 'idle',
   })
@@ -54,9 +56,10 @@ export default function NexusPage() {
   useEffect(() => {
     const fetchBotStatus = async () => {
       try {
-        const [aresRes, athenaRes] = await Promise.all([
+        const [aresRes, athenaRes, pegasusRes] = await Promise.all([
           apiClient.getARESStatus().catch(() => null),
           apiClient.getATHENAStatus().catch(() => null),
+          apiClient.getPEGASUSStatus().catch(() => null),
         ])
 
         setBotStatus(prev => ({
@@ -65,6 +68,8 @@ export default function NexusPage() {
                 aresRes?.data?.enabled ? 'active' : 'idle',
           athena: athenaRes?.data?.status === 'running' ? 'trading' :
                   athenaRes?.data?.enabled ? 'active' : 'idle',
+          pegasus: pegasusRes?.data?.status === 'running' ? 'trading' :
+                   pegasusRes?.data?.enabled ? 'active' : 'idle',
         }))
       } catch (error) {
         console.error('Failed to fetch bot status:', error)
@@ -127,6 +132,7 @@ export default function NexusPage() {
       'oracle': '/oracle',
       'ares': '/ares',
       'athena': '/athena',
+      'pegasus': '/pegasus',
       'phoenix': '/trader',
       'atlas': '/spx-wheel',
     }

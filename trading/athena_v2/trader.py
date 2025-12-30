@@ -44,6 +44,16 @@ except ImportError:
     ScanOutcome = None
     CheckResult = None
 
+# Oracle for outcome recording
+try:
+    from quant.oracle_advisor import OracleAdvisor, BotName as OracleBotName, TradeOutcome as OracleTradeOutcome
+    ORACLE_AVAILABLE = True
+except ImportError:
+    ORACLE_AVAILABLE = False
+    OracleAdvisor = None
+    OracleBotName = None
+    OracleTradeOutcome = None
+
 
 class ATHENATrader:
     """
@@ -249,6 +259,9 @@ class ATHENATrader:
                     closed_count += 1
                     total_pnl += pnl
 
+                    # Record outcome to Oracle for ML feedback loop
+                    self._record_oracle_outcome(pos, reason, pnl)
+
                     # Record to circuit breaker
                     if CIRCUIT_BREAKER_AVAILABLE and record_trade_pnl:
                         try:
@@ -259,6 +272,40 @@ class ATHENATrader:
                     self.db.log("INFO", f"Closed {pos.position_id}: {reason}, P&L=${pnl:.2f}")
 
         return closed_count, total_pnl
+
+    def _record_oracle_outcome(self, pos: SpreadPosition, close_reason: str, pnl: float):
+        """Record trade outcome to Oracle for ML feedback loop"""
+        if not ORACLE_AVAILABLE:
+            return
+
+        try:
+            oracle = OracleAdvisor()
+
+            # Determine outcome type based on P&L
+            # ATHENA trades directional spreads, so it's simpler: WIN or LOSS
+            if pnl > 0:
+                outcome = OracleTradeOutcome.MAX_PROFIT if 'PROFIT_TARGET' in close_reason else OracleTradeOutcome.PARTIAL_PROFIT
+            else:
+                outcome = OracleTradeOutcome.LOSS
+
+            # Get trade date from position
+            trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+
+            # Record to Oracle using ATHENA bot name
+            success = oracle.update_outcome(
+                trade_date=trade_date,
+                bot_name=OracleBotName.ATHENA,
+                outcome=outcome,
+                actual_pnl=pnl,
+            )
+
+            if success:
+                logger.info(f"ATHENA: Recorded outcome to Oracle - {outcome.value}, P&L=${pnl:.2f}")
+            else:
+                logger.warning(f"ATHENA: Failed to record outcome to Oracle")
+
+        except Exception as e:
+            logger.warning(f"ATHENA: Oracle outcome recording failed: {e}")
 
     def _check_exit_conditions(
         self,
@@ -502,6 +549,8 @@ class ATHENATrader:
                 self.db.close_position(
                     pos.position_id, close_price, pnl, reason
                 )
+                # Record outcome to Oracle for ML feedback
+                self._record_oracle_outcome(pos, reason, pnl)
             results.append({
                 'position_id': pos.position_id,
                 'success': success,

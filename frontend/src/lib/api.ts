@@ -364,6 +364,18 @@ export const apiClient = {
   processATHENAExpired: () => api.post('/api/athena/process-expired'),
   skipATHENAToday: () => api.post('/api/athena/skip-today'),
 
+  // PEGASUS - SPX Iron Condor Bot
+  getPEGASUSStatus: () => api.get('/api/pegasus/status'),
+  getPEGASUSPositions: (status?: string) => api.get('/api/pegasus/positions', { params: status ? { status_filter: status } : {} }),
+  getPEGASUSLogs: (level?: string, limit: number = 100) => api.get('/api/pegasus/logs', { params: { level, limit } }),
+  getPEGASUSPerformance: (days: number = 30) => api.get('/api/pegasus/performance', { params: { days } }),
+  getPEGASUSConfig: () => api.get('/api/pegasus/config'),
+  updatePEGASUSConfig: (name: string, value: string) => api.post(`/api/pegasus/config/${name}`, null, { params: { value } }),
+  runPEGASUSCycle: () => api.post('/api/pegasus/run'),
+  getPEGASUSLivePnL: () => api.get('/api/pegasus/live-pnl'),
+  processPEGASUSExpired: () => api.post('/api/pegasus/process-expired'),
+  skipPEGASUSToday: () => api.post('/api/pegasus/skip-today'),
+
   // ARES - Live P&L
   getARESLivePnL: () => api.get('/api/ares/live-pnl'),
   processARESExpired: () => api.post('/api/ares/process-expired'),
