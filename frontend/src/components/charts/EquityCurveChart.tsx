@@ -28,6 +28,13 @@ const getBrandColors = (botFilter?: string) => {
       dark: BOT_BRANDS.ATHENA.hexDark,        // Dark cyan
     }
   }
+  if (botFilter === 'PEGASUS') {
+    return {
+      primary: BOT_BRANDS.PEGASUS.hexPrimary, // Blue #3B82F6
+      light: BOT_BRANDS.PEGASUS.hexLight,      // Light blue
+      dark: BOT_BRANDS.PEGASUS.hexDark,        // Dark blue
+    }
+  }
   // Default green/red for combined view
   return {
     primary: '#22C55E',
@@ -323,23 +330,27 @@ export default function EquityCurveChart({
       <div className={`bg-[#0a0a0a] border rounded-lg p-6 ${
         botFilter === 'ARES' ? 'border-amber-700/50' :
         botFilter === 'ATHENA' ? 'border-cyan-700/50' :
+        botFilter === 'PEGASUS' ? 'border-blue-700/50' :
         'border-gray-800'
       }`}>
         <div className="text-center py-8">
           <div className={`w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center ${
             botFilter === 'ARES' ? 'bg-amber-900/30' :
             botFilter === 'ATHENA' ? 'bg-cyan-900/30' :
+            botFilter === 'PEGASUS' ? 'bg-blue-900/30' :
             'bg-gray-800/50'
           }`}>
             <TrendingUp className={`w-8 h-8 ${
               botFilter === 'ARES' ? 'text-amber-400' :
               botFilter === 'ATHENA' ? 'text-cyan-400' :
+              botFilter === 'PEGASUS' ? 'text-blue-400' :
               'text-gray-400'
             }`} />
           </div>
           <p className={`font-medium mb-2 ${
             botFilter === 'ARES' ? 'text-amber-400' :
             botFilter === 'ATHENA' ? 'text-cyan-400' :
+            botFilter === 'PEGASUS' ? 'text-blue-400' :
             'text-gray-300'
           }`}>No Equity Data Available</p>
           <p className="text-gray-500 text-sm">
@@ -358,17 +369,20 @@ export default function EquityCurveChart({
       <div className={`bg-[#0a0a0a] border rounded-lg p-6 ${
         botFilter === 'ARES' ? 'border-amber-700/50' :
         botFilter === 'ATHENA' ? 'border-cyan-700/50' :
+        botFilter === 'PEGASUS' ? 'border-blue-700/50' :
         'border-gray-800'
       }`}>
         <div className="animate-pulse space-y-4">
           <div className={`h-6 rounded w-1/3 ${
             botFilter === 'ARES' ? 'bg-amber-900/30' :
             botFilter === 'ATHENA' ? 'bg-cyan-900/30' :
+            botFilter === 'PEGASUS' ? 'bg-blue-900/30' :
             'bg-gray-800'
           }`} />
           <div className={`h-64 rounded ${
             botFilter === 'ARES' ? 'bg-amber-900/20' :
             botFilter === 'ATHENA' ? 'bg-cyan-900/20' :
+            botFilter === 'PEGASUS' ? 'bg-blue-900/20' :
             'bg-gray-800'
           }`} />
         </div>
@@ -382,18 +396,20 @@ export default function EquityCurveChart({
     <div className={`bg-[#0a0a0a] border rounded-lg overflow-hidden ${
       botFilter === 'ARES' ? 'border-amber-700/50' :
       botFilter === 'ATHENA' ? 'border-cyan-700/50' :
+      botFilter === 'PEGASUS' ? 'border-blue-700/50' :
       'border-gray-800'
     }`}>
       {/* Header */}
       <div className="p-4 border-b border-gray-800">
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div className="flex items-center gap-3">
-            <TrendingUp className={`w-5 h-5 ${botFilter === 'ARES' ? 'text-amber-400' : botFilter === 'ATHENA' ? 'text-cyan-400' : 'text-green-400'}`} />
+            <TrendingUp className={`w-5 h-5 ${botFilter === 'ARES' ? 'text-amber-400' : botFilter === 'ATHENA' ? 'text-cyan-400' : botFilter === 'PEGASUS' ? 'text-blue-400' : 'text-green-400'}`} />
             <h3 className="font-bold text-white">{title}</h3>
             {botFilter && (
               <span className={`px-2 py-0.5 text-xs rounded ${
                 botFilter === 'ARES' ? 'bg-amber-500/20 text-amber-400' :
                 botFilter === 'ATHENA' ? 'bg-cyan-500/20 text-cyan-400' :
+                botFilter === 'PEGASUS' ? 'bg-blue-500/20 text-blue-400' :
                 'bg-purple-500/20 text-purple-400'
               }`}>
                 {botFilter}
@@ -519,11 +535,13 @@ export default function EquityCurveChart({
               <div className={`w-12 h-12 mx-auto mb-3 rounded-full flex items-center justify-center ${
                 botFilter === 'ARES' ? 'bg-amber-900/30' :
                 botFilter === 'ATHENA' ? 'bg-cyan-900/30' :
+                botFilter === 'PEGASUS' ? 'bg-blue-900/30' :
                 'bg-gray-800/50'
               }`}>
                 <TrendingUp className={`w-6 h-6 ${
                   botFilter === 'ARES' ? 'text-amber-400/70' :
                   botFilter === 'ATHENA' ? 'text-cyan-400/70' :
+                  botFilter === 'PEGASUS' ? 'text-blue-400/70' :
                   'text-gray-500'
                 }`} />
               </div>

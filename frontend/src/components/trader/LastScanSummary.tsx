@@ -380,7 +380,7 @@ interface ScanResult {
 }
 
 interface LastScanSummaryProps {
-  botName: 'ARES' | 'ATHENA'
+  botName: 'ARES' | 'ATHENA' | 'PEGASUS'
   lastScan: ScanResult | null
   isLoading: boolean
   nextScanIn?: number // seconds
