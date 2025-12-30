@@ -54,11 +54,12 @@ interface BotStatusCardProps {
 
 function BotStatusCard({ name, icon, href, status, livePnL, color, isLoading }: BotStatusCardProps) {
   const isActive = status?.is_active || status?.bot_status === 'ACTIVE' || status?.status === 'active'
-  const hasOpenPositions = (status?.open_positions_count || 0) > 0 || (status?.positions?.open?.length || 0) > 0
-  const openPositionsCount = status?.open_positions_count || status?.positions?.open?.length || 0
+  // API returns 'open_positions' as a count, not 'open_positions_count'
+  const openPositionsCount = status?.open_positions || status?.open_positions_count || status?.positions?.open?.length || 0
+  const hasOpenPositions = openPositionsCount > 0
 
-  // Get P&L values
-  const totalPnL = livePnL?.total_unrealized_pnl || livePnL?.unrealized_pnl || status?.total_pnl || 0
+  // Get P&L values - handle both response formats
+  const totalPnL = livePnL?.total_unrealized_pnl || livePnL?.unrealized_pnl || status?.unrealized_pnl || status?.total_pnl || 0
   const todayPnL = livePnL?.today_pnl || status?.today_pnl || 0
 
   const colorClasses: Record<string, { bg: string; border: string; text: string }> = {
