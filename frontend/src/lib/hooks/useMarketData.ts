@@ -189,6 +189,14 @@ const fetchers = {
       return { success: false, data: null }
     }
   },
+  athenaConfig: async () => {
+    try {
+      const response = await api.get('/api/athena/config')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
   aresLivePnL: async () => {
     try {
       const response = await api.get('/api/ares/live-pnl')
@@ -852,6 +860,14 @@ export function useATHENALivePnL(options?: SWRConfiguration) {
     fetchers.athenaLivePnL,
     { ...swrConfig, refreshInterval: 10 * 1000, ...options }  // 10 second refresh for live data
   )
+}
+
+export function useATHENAConfig(options?: SWRConfiguration) {
+  return useSWR('athena-config', fetchers.athenaConfig, {
+    ...swrConfig,
+    refreshInterval: 5 * 60 * 1000,  // 5 minute refresh for config
+    ...options,
+  })
 }
 
 export function useARESLivePnL(options?: SWRConfiguration) {
