@@ -142,18 +142,40 @@ class SignalGenerator:
         """
         Get Oracle prediction with FULL context for audit trail.
 
+        Uses get_pegasus_advice() for SPX Iron Condor specific advice.
         Returns dict with: confidence, win_probability, advice, top_factors, etc.
         """
         if not self.oracle:
             return None
 
         try:
-            prediction = self.oracle.get_prediction(
+            # Build MarketContext for Oracle
+            from quant.oracle_advisor import MarketContext, GEXRegime
+
+            # Determine GEX regime
+            gex_regime_str = market_data.get('gex_regime', 'NEUTRAL').upper()
+            try:
+                gex_regime = GEXRegime[gex_regime_str] if gex_regime_str in GEXRegime.__members__ else GEXRegime.NEUTRAL
+            except (KeyError, AttributeError):
+                gex_regime = GEXRegime.NEUTRAL
+
+            context = MarketContext(
                 spot_price=market_data['spot_price'],
                 vix=market_data['vix'],
-                call_wall=market_data['call_wall'],
-                put_wall=market_data['put_wall'],
-                gex_regime=market_data['gex_regime'],
+                gex_call_wall=market_data.get('call_wall', 0),
+                gex_put_wall=market_data.get('put_wall', 0),
+                gex_regime=gex_regime,
+                gex_flip_point=market_data.get('flip_point', 0),
+                gex_net=market_data.get('net_gex', 0),
+                expected_move_pct=market_data.get('expected_move', 0) / market_data['spot_price'] * 100 if market_data['spot_price'] else 0,
+            )
+
+            # Call PEGASUS-specific advice method
+            prediction = self.oracle.get_pegasus_advice(
+                context=context,
+                use_gex_walls=True,
+                use_claude_validation=False,  # Skip Claude for performance
+                spread_width=self.config.spread_width,
             )
 
             if not prediction:
@@ -167,16 +189,16 @@ class SignalGenerator:
 
             return {
                 'confidence': prediction.confidence,
-                'win_probability': getattr(prediction, 'win_probability', 0),
-                'advice': prediction.advice.value if hasattr(prediction, 'advice') and prediction.advice else 'HOLD',
+                'win_probability': prediction.win_probability,
+                'advice': prediction.advice.value if prediction.advice else 'HOLD',
                 'top_factors': top_factors,
-                'probabilities': getattr(prediction, 'probabilities', {}),
-                'suggested_sd_multiplier': getattr(prediction, 'suggested_sd_multiplier', 1.0),
-                'use_gex_walls': getattr(prediction, 'use_gex_walls', False),
-                'reasoning': getattr(prediction, 'reasoning', ''),
+                'probabilities': {},
+                'suggested_sd_multiplier': prediction.suggested_sd_multiplier,
+                'use_gex_walls': True,
+                'reasoning': prediction.reasoning or '',
             }
         except Exception as e:
-            logger.warning(f"Oracle error: {e}")
+            logger.warning(f"PEGASUS Oracle error: {e}")
             return None
 
     def _calculate_expected_move(self, spot: float, vix: float) -> float:

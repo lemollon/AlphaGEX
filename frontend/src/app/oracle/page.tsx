@@ -587,7 +587,7 @@ export default function OraclePage() {
               <h1 className="text-3xl font-bold text-text-primary">Oracle Knowledge Base</h1>
             </div>
             <p className="text-text-secondary">
-              Centralized intelligence hub for ARES, ATLAS, PHOENIX, and ATHENA - All bot interactions, Claude AI reasoning, and ML predictions
+              Centralized intelligence hub for ARES, ATHENA, PEGASUS, and PHOENIX - All bot interactions, Claude AI reasoning, and ML predictions
             </p>
           </div>
 
@@ -667,8 +667,8 @@ export default function OraclePage() {
               <h3 className="text-lg font-semibold text-white">Bot Heartbeats</h3>
               <span className="text-xs text-gray-500">(5-min scan intervals)</span>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {['ARES', 'ATHENA', 'ATLAS', 'PHOENIX'].map((botName) => {
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {['ARES', 'ATHENA', 'PEGASUS', 'PHOENIX'].map((botName) => {
                 const hb = botHeartbeats[botName]
                 const statusColor = hb?.status === 'TRADED' ? 'bg-green-500' :
                                    hb?.status === 'SCAN_COMPLETE' ? 'bg-blue-500' :
@@ -785,9 +785,9 @@ export default function OraclePage() {
                   >
                     <option value="ALL">All Bots</option>
                     <option value="ARES">ARES</option>
-                    <option value="ATLAS">ATLAS</option>
-                    <option value="PHOENIX">PHOENIX</option>
                     <option value="ATHENA">ATHENA</option>
+                    <option value="PEGASUS">PEGASUS</option>
+                    <option value="PHOENIX">PHOENIX</option>
                   </select>
                 </div>
                 <div className="flex items-center gap-2">
