@@ -280,18 +280,33 @@ class SignalGenerator:
             return None
 
         try:
-            # Build context for Oracle
-            from quant.oracle_advisor import MarketContext as OracleMarketContext, BotName
+            # Build context for Oracle using correct field names
+            from quant.oracle_advisor import MarketContext as OracleMarketContext, GEXRegime
+
+            # Convert gex_regime string to GEXRegime enum
+            gex_regime_str = market_data.get('gex_regime', 'NEUTRAL').upper()
+            try:
+                gex_regime = GEXRegime[gex_regime_str] if gex_regime_str in GEXRegime.__members__ else GEXRegime.NEUTRAL
+            except (KeyError, AttributeError):
+                gex_regime = GEXRegime.NEUTRAL
 
             context = OracleMarketContext(
-                spot=market_data['spot_price'],
+                spot_price=market_data['spot_price'],
                 vix=market_data['vix'],
-                put_wall=market_data['put_wall'],
-                call_wall=market_data['call_wall'],
-                gex_regime=market_data['gex_regime'],
+                gex_put_wall=market_data['put_wall'],
+                gex_call_wall=market_data['call_wall'],
+                gex_regime=gex_regime,
+                gex_net=market_data.get('net_gex', 0),
+                gex_flip_point=market_data.get('flip_point', 0),
+                expected_move_pct=market_data.get('expected_move', 0) / market_data['spot_price'] * 100 if market_data['spot_price'] else 0,
             )
 
-            prediction = self.oracle.get_prediction(context, BotName.ARES)
+            # Call correct method: get_ares_advice instead of get_prediction
+            prediction = self.oracle.get_ares_advice(
+                context=context,
+                use_gex_walls=True,
+                use_claude_validation=False,  # Skip Claude for performance during live trading
+            )
 
             if prediction:
                 # Extract top_factors as list of dicts for JSON storage

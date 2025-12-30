@@ -43,6 +43,16 @@ except ImportError:
     ScanOutcome = None
     CheckResult = None
 
+# Oracle for outcome recording
+try:
+    from quant.oracle_advisor import OracleAdvisor, BotName as OracleBotName, TradeOutcome as OracleTradeOutcome
+    ORACLE_AVAILABLE = True
+except ImportError:
+    ORACLE_AVAILABLE = False
+    OracleAdvisor = None
+    OracleBotName = None
+    OracleTradeOutcome = None
+
 
 class ARESTrader:
     """
@@ -324,9 +334,57 @@ class ARESTrader:
                         except Exception:
                             pass
 
+                    # Record outcome to Oracle for ML feedback loop
+                    self._record_oracle_outcome(pos, reason, pnl)
+
                     self.db.log("INFO", f"Closed {pos.position_id}: {reason}, P&L=${pnl:.2f}")
 
         return closed_count, total_pnl
+
+    def _record_oracle_outcome(self, pos: IronCondorPosition, close_reason: str, pnl: float):
+        """Record trade outcome to Oracle for ML feedback loop"""
+        if not ORACLE_AVAILABLE:
+            return
+
+        try:
+            oracle = OracleAdvisor()
+
+            # Determine outcome type based on close reason and P&L
+            if pnl > 0:
+                if 'PROFIT_TARGET' in close_reason or 'MAX_PROFIT' in close_reason:
+                    outcome = OracleTradeOutcome.MAX_PROFIT
+                else:
+                    outcome = OracleTradeOutcome.PARTIAL_PROFIT
+            else:
+                if 'STOP_LOSS' in close_reason:
+                    outcome = OracleTradeOutcome.LOSS
+                elif 'CALL' in close_reason.upper() and 'BREACH' in close_reason.upper():
+                    outcome = OracleTradeOutcome.CALL_BREACHED
+                elif 'PUT' in close_reason.upper() and 'BREACH' in close_reason.upper():
+                    outcome = OracleTradeOutcome.PUT_BREACHED
+                else:
+                    outcome = OracleTradeOutcome.LOSS
+
+            # Get trade date from position
+            trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+
+            # Record to Oracle
+            success = oracle.update_outcome(
+                trade_date=trade_date,
+                bot_name=OracleBotName.ARES,
+                outcome=outcome,
+                actual_pnl=pnl,
+                put_strike=pos.put_short if hasattr(pos, 'put_short') else None,
+                call_strike=pos.call_short if hasattr(pos, 'call_short') else None,
+            )
+
+            if success:
+                logger.info(f"ARES: Recorded outcome to Oracle - {outcome.value}, P&L=${pnl:.2f}")
+            else:
+                logger.warning(f"ARES: Failed to record outcome to Oracle")
+
+        except Exception as e:
+            logger.warning(f"ARES: Oracle outcome recording failed: {e}")
 
     def _check_exit_conditions(
         self,
@@ -481,6 +539,8 @@ class ARESTrader:
             success, close_price, pnl = self.executor.close_position(pos, reason)
             if success:
                 self.db.close_position(pos.position_id, close_price, pnl, reason)
+                # Record outcome to Oracle for ML feedback
+                self._record_oracle_outcome(pos, reason, pnl)
             results.append({
                 'position_id': pos.position_id,
                 'success': success,

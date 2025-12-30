@@ -21,11 +21,13 @@ logger = logging.getLogger(__name__)
 
 # Optional imports with clear fallbacks
 try:
-    from quant.oracle_advisor import OracleAdvisor, OraclePrediction, TradingAdvice
+    from quant.oracle_advisor import OracleAdvisor, OraclePrediction, TradingAdvice, MarketContext as OracleMarketContext, GEXRegime
     ORACLE_AVAILABLE = True
 except ImportError:
     ORACLE_AVAILABLE = False
     OracleAdvisor = None
+    OracleMarketContext = None
+    GEXRegime = None
 
 try:
     from quant.kronos_gex_calculator import KronosGEXCalculator
@@ -174,6 +176,75 @@ class SignalGenerator:
 
         return None
 
+    def get_oracle_advice(self, gex_data: Dict) -> Optional[Dict[str, Any]]:
+        """
+        Get Oracle ML advice for ATHENA directional trades.
+
+        Returns FULL prediction context for audit trail including:
+        - win_probability: The key metric!
+        - confidence: Model confidence
+        - direction: BULLISH, BEARISH, or FLAT
+        - top_factors: WHY Oracle made this decision
+        """
+        if not self.oracle or not ORACLE_AVAILABLE:
+            return None
+
+        try:
+            # Convert gex_regime string to GEXRegime enum
+            gex_regime_str = gex_data.get('gex_regime', 'NEUTRAL').upper()
+            try:
+                gex_regime = GEXRegime[gex_regime_str] if gex_regime_str in GEXRegime.__members__ else GEXRegime.NEUTRAL
+            except (KeyError, AttributeError):
+                gex_regime = GEXRegime.NEUTRAL
+
+            # Build context for Oracle
+            context = OracleMarketContext(
+                spot_price=gex_data['spot_price'],
+                vix=gex_data['vix'],
+                gex_put_wall=gex_data.get('put_wall', 0),
+                gex_call_wall=gex_data.get('call_wall', 0),
+                gex_regime=gex_regime,
+                gex_net=gex_data.get('net_gex', 0),
+                gex_flip_point=gex_data.get('flip_point', 0),
+            )
+
+            # Call ATHENA-specific advice method
+            prediction = self.oracle.get_athena_advice(
+                context=context,
+                use_gex_walls=True,
+                use_claude_validation=False,  # Skip Claude for performance
+                wall_filter_pct=self.config.wall_filter_pct,
+            )
+
+            if not prediction:
+                return None
+
+            # Extract top_factors as list of dicts for JSON storage
+            top_factors = []
+            if hasattr(prediction, 'top_factors') and prediction.top_factors:
+                for factor_name, impact in prediction.top_factors:
+                    top_factors.append({'factor': factor_name, 'impact': impact})
+
+            # Determine Oracle's direction from reasoning
+            oracle_direction = "FLAT"
+            if hasattr(prediction, 'reasoning') and prediction.reasoning:
+                if "BULLISH" in prediction.reasoning.upper() or "BULL" in prediction.reasoning.upper():
+                    oracle_direction = "BULLISH"
+                elif "BEARISH" in prediction.reasoning.upper() or "BEAR" in prediction.reasoning.upper():
+                    oracle_direction = "BEARISH"
+
+            return {
+                'confidence': prediction.confidence,
+                'win_probability': prediction.win_probability,
+                'advice': prediction.advice.value if prediction.advice else 'HOLD',
+                'direction': oracle_direction,
+                'top_factors': top_factors,
+                'reasoning': prediction.reasoning or '',
+            }
+        except Exception as e:
+            logger.warning(f"ATHENA Oracle error: {e}")
+            return None
+
     def check_wall_proximity(self, gex_data: Dict) -> Tuple[bool, str, str]:
         """
         Check if price is near a GEX wall for entry.
@@ -288,8 +359,14 @@ class SignalGenerator:
         ml_direction = ml_signal.get('direction') if ml_signal else None
         ml_confidence = ml_signal.get('confidence', 0) if ml_signal else 0
 
+        # Step 3.5: Get Oracle advice (ATHENA-specific predictions)
+        oracle = self.get_oracle_advice(gex_data)
+        oracle_direction = oracle.get('direction', 'FLAT') if oracle else 'FLAT'
+        oracle_confidence = oracle.get('confidence', 0) if oracle else 0
+        oracle_win_prob = oracle.get('win_probability', 0) if oracle else 0
+
         # Step 4: Determine final direction
-        # Wall proximity is primary, ML is confirmation
+        # Wall proximity is primary, ML and Oracle are confirmation
         direction = wall_direction
 
         # If ML disagrees strongly, reduce confidence
@@ -299,6 +376,19 @@ class SignalGenerator:
                 confidence = min(0.9, confidence + ml_confidence * 0.2)
             elif ml_direction and ml_direction != direction and ml_confidence > 0.7:
                 confidence -= 0.2
+
+        # Oracle can boost or reduce confidence further
+        if oracle:
+            if oracle_direction == direction and oracle_confidence > 0.6:
+                confidence = min(0.95, confidence + oracle_confidence * 0.15)
+                logger.info(f"Oracle confirms direction {direction} with {oracle_confidence:.0%} confidence")
+            elif oracle_direction != direction and oracle_direction != 'FLAT' and oracle_confidence > 0.7:
+                confidence -= 0.15
+                logger.info(f"Oracle disagrees: {oracle_direction} vs wall {direction}")
+            # Oracle SKIP_TODAY overrides
+            if oracle.get('advice') == 'SKIP_TODAY':
+                logger.info(f"Oracle advises SKIP_TODAY: {oracle.get('reasoning', '')}")
+                return None
 
         if confidence < 0.5:
             logger.info(f"Confidence too low: {confidence:.2f}")
@@ -336,7 +426,12 @@ class SignalGenerator:
         if ml_signal:
             reasoning_parts.append(f"ML: {ml_direction} ({ml_confidence:.0%})")
             if ml_signal.get('win_probability'):
-                reasoning_parts.append(f"Win Prob: {ml_signal['win_probability']:.0%}")
+                reasoning_parts.append(f"ML Win Prob: {ml_signal['win_probability']:.0%}")
+
+        if oracle:
+            reasoning_parts.append(f"Oracle: {oracle.get('advice', 'N/A')} ({oracle_direction}, {oracle_confidence:.0%})")
+            if oracle_win_prob:
+                reasoning_parts.append(f"Oracle Win Prob: {oracle_win_prob:.0%}")
 
         reasoning_parts.append(f"R:R = {rr_ratio:.2f}:1")
         reasoning = " | ".join(reasoning_parts)
@@ -350,6 +445,22 @@ class SignalGenerator:
         else:
             wall_type = "CALL_WALL"
             wall_distance = abs(((gex_data['call_wall'] - spot_price) / spot_price) * 100)
+
+        # Determine source based on what's available
+        if oracle and ml_signal:
+            source = "GEX_ML_ORACLE"
+        elif oracle:
+            source = "GEX_ORACLE"
+        elif ml_signal:
+            source = "GEX_ML"
+        else:
+            source = "GEX_WALL"
+
+        # Convert Oracle top_factors to JSON string for storage
+        import json
+        oracle_top_factors_json = ""
+        if oracle and oracle.get('top_factors'):
+            oracle_top_factors_json = json.dumps(oracle['top_factors'])
 
         signal = TradeSignal(
             direction=direction,
@@ -373,17 +484,23 @@ class SignalGenerator:
             max_loss=max_loss,
             rr_ratio=rr_ratio,
             # Source and reasoning
-            source="GEX_WALL" if not ml_signal else "GEX_ML",
+            source=source,
             reasoning=reasoning,
             # ML context (for audit)
             ml_model_name=ml_signal.get('model_name', '') if ml_signal else '',
             ml_win_probability=ml_signal.get('win_probability', 0) if ml_signal else 0,
             ml_top_features='',  # Could extract from model if available
+            # Oracle context (for audit)
+            oracle_win_probability=oracle_win_prob,
+            oracle_advice=oracle.get('advice', '') if oracle else '',
+            oracle_direction=oracle_direction,
+            oracle_confidence=oracle_confidence,
+            oracle_top_factors=oracle_top_factors_json,
             # Wall context
             wall_type=wall_type,
             wall_distance_pct=wall_distance,
         )
 
         logger.info(f"Signal generated: {direction} {spread_type.value} @ {spot_price}")
-        logger.info(f"Context: Wall={wall_type} ({wall_distance:.2f}%), ML={ml_direction or 'N/A'} ({ml_confidence:.0%})")
+        logger.info(f"Context: Wall={wall_type} ({wall_distance:.2f}%), ML={ml_direction or 'N/A'} ({ml_confidence:.0%}), Oracle={oracle_direction or 'N/A'} ({oracle_confidence:.0%})")
         return signal

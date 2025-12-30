@@ -230,13 +230,20 @@ class TradeSignal:
     rr_ratio: float = 0
 
     # Source
-    source: str = "ML"  # "ML", "GEX_WALL", or "COMBINED"
+    source: str = "ML"  # "ML", "GEX_WALL", "GEX_ORACLE", or "COMBINED"
     reasoning: str = ""
 
     # ML model details (for audit)
     ml_model_name: str = ""
     ml_win_probability: float = 0
     ml_top_features: str = ""  # JSON string of top features
+
+    # Oracle details (for audit)
+    oracle_win_probability: float = 0
+    oracle_advice: str = ""  # TRADE_FULL, TRADE_REDUCED, SKIP_TODAY
+    oracle_direction: str = ""  # BULLISH, BEARISH, FLAT
+    oracle_confidence: float = 0
+    oracle_top_factors: str = ""  # JSON string of top factors
 
     # Wall proximity details
     wall_type: str = ""  # "PUT_WALL" or "CALL_WALL"
