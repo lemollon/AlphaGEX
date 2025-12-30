@@ -7,10 +7,10 @@ import {
   Activity, DollarSign, Timer, Eye
 } from 'lucide-react'
 
-// Unified Decision interface that works for both ARES and ATHENA
+// Unified Decision interface that works for ARES, ATHENA, and PEGASUS
 export interface TradeDecision {
-  id: string | number  // Supports both d.id (ARES) and d.decision_id (ATHENA)
-  bot_name: 'ARES' | 'ATHENA'
+  id: string | number  // Supports both d.id (ARES) and d.decision_id (ATHENA/PEGASUS)
+  bot_name: 'ARES' | 'ATHENA' | 'PEGASUS'
   symbol: string
   decision_type: string
   action: string
@@ -519,7 +519,11 @@ export default function TradeStoryCard({
                 </span>
                 <span>{decision.symbol}</span>
                 {decision.bot_name && (
-                  <span className={`${decision.bot_name === 'ARES' ? 'text-red-400' : 'text-orange-400'}`}>
+                  <span className={`${
+                    decision.bot_name === 'ARES' ? 'text-amber-400' :
+                    decision.bot_name === 'ATHENA' ? 'text-cyan-400' :
+                    decision.bot_name === 'PEGASUS' ? 'text-blue-400' : 'text-gray-400'
+                  }`}>
                     {decision.bot_name}
                   </span>
                 )}
