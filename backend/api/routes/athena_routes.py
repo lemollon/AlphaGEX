@@ -1103,7 +1103,6 @@ async def get_athena_live_pnl():
     if not athena:
         # ATHENA not running - read from database
         try:
-            from database_adapter import get_connection
             conn = get_connection()
             cursor = conn.cursor()
 
