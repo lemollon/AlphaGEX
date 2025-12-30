@@ -4,6 +4,10 @@ import Navigation from '@/components/Navigation'
 import IntelligenceDashboard from '@/components/IntelligenceDashboard'
 import GammaExpirationWidget from '@/components/GammaExpirationWidget'
 import DailyMannaWidget from '@/components/DailyMannaWidget'
+import BotStatusOverview from '@/components/BotStatusOverview'
+import OracleRecommendationWidget from '@/components/OracleRecommendationWidget'
+import ARGUSAlertsWidget from '@/components/ARGUSAlertsWidget'
+import DashboardScanFeed from '@/components/DashboardScanFeed'
 
 export default function Dashboard() {
   return (
@@ -11,7 +15,7 @@ export default function Dashboard() {
       <Navigation />
 
       <main className="pt-24 transition-all duration-300">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
 
           {/* Daily Manna Widget - Faith meets Finance */}
           <div className="mb-6">
@@ -24,17 +28,29 @@ export default function Dashboard() {
             <p className="text-text-secondary text-sm mt-1">Real-time GEX intelligence & trading signals</p>
           </div>
 
-          {/* Main Content - Two Column Layout */}
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6 items-start">
+          {/* Top Row - Bot Status & Oracle Recommendation */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+            <BotStatusOverview />
+            <OracleRecommendationWidget />
+          </div>
 
-            {/* Left Column - Intelligence Feed (2/3 width on xl) */}
-            <div className="xl:col-span-2">
+          {/* Main Content - Three Column Layout */}
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+
+            {/* Left Column - Intelligence Feed (5/12 width on xl) */}
+            <div className="xl:col-span-5">
               <IntelligenceDashboard />
             </div>
 
-            {/* Right Column - Gamma Expiration Widget (1/3 width on xl, sticky on desktop) */}
-            <div className="xl:col-span-1 xl:sticky xl:top-20 xl:self-start">
+            {/* Middle Column - Gamma Expiration Widget (4/12 width on xl) */}
+            <div className="xl:col-span-4 xl:sticky xl:top-20 xl:self-start">
               <GammaExpirationWidget />
+            </div>
+
+            {/* Right Column - ARGUS Alerts & Scan Activity (3/12 width on xl) */}
+            <div className="xl:col-span-3 space-y-4 xl:sticky xl:top-20 xl:self-start">
+              <ARGUSAlertsWidget />
+              <DashboardScanFeed />
             </div>
 
           </div>
