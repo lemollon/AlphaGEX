@@ -709,7 +709,166 @@ class TradeSyncValidator:
         }
 
 
+def cleanup_stale_positions(dry_run: bool = True):
+    """
+    Clean up stale positions that expired but weren't closed.
+
+    Args:
+        dry_run: If True, only show what would be cleaned up without making changes
+    """
+    from database_adapter import get_connection
+
+    print_header(f"STALE POSITION CLEANUP {'(DRY RUN)' if dry_run else '(LIVE)'}")
+
+    today = datetime.now(CENTRAL_TZ).date()
+
+    # ATHENA (apache_positions)
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT position_id, spread_type, expiration, entry_price, contracts
+            FROM apache_positions
+            WHERE status = 'open' AND expiration < %s
+        """, (today,))
+        stale_athena = cursor.fetchall()
+
+        if stale_athena:
+            print(f"\n  ATHENA: Found {len(stale_athena)} stale position(s)")
+            for pos in stale_athena:
+                pos_id, spread_type, exp, entry_price, contracts = pos
+                # Expired positions are max loss (entry price * contracts * 100)
+                # For options that expired worthless, P&L = -entry_price * contracts * 100
+                realized_pnl = -float(entry_price or 0) * int(contracts or 0) * 100
+                print(f"      - {pos_id}: {spread_type}, exp {exp}, P&L ${realized_pnl:.2f}")
+
+                if not dry_run:
+                    cursor.execute("""
+                        UPDATE apache_positions
+                        SET status = 'expired',
+                            exit_time = %s,
+                            exit_reason = 'auto_expired',
+                            realized_pnl = %s
+                        WHERE position_id = %s
+                    """, (datetime.now(CENTRAL_TZ), realized_pnl, pos_id))
+
+            if not dry_run:
+                conn.commit()
+                print(f"      ✅ Updated {len(stale_athena)} ATHENA position(s)")
+        else:
+            print("\n  ATHENA: No stale positions")
+
+        conn.close()
+    except Exception as e:
+        print(f"  ❌ ATHENA cleanup failed: {e}")
+
+    # ARES (ares_positions)
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT position_id, expiration, total_credit, contracts
+            FROM ares_positions
+            WHERE status = 'open' AND expiration < %s
+        """, (today,))
+        stale_ares = cursor.fetchall()
+
+        if stale_ares:
+            print(f"\n  ARES: Found {len(stale_ares)} stale position(s)")
+            for pos in stale_ares:
+                pos_id, exp, total_credit, contracts = pos
+                # Iron Condor that expired worthless = max profit (credit received)
+                realized_pnl = float(total_credit or 0) * int(contracts or 0) * 100
+                print(f"      - {pos_id}: exp {exp}, P&L ${realized_pnl:.2f} (expired worthless)")
+
+                if not dry_run:
+                    cursor.execute("""
+                        UPDATE ares_positions
+                        SET status = 'expired',
+                            close_time = %s,
+                            close_reason = 'auto_expired',
+                            realized_pnl = %s
+                        WHERE position_id = %s
+                    """, (datetime.now(CENTRAL_TZ), realized_pnl, pos_id))
+
+            if not dry_run:
+                conn.commit()
+                print(f"      ✅ Updated {len(stale_ares)} ARES position(s)")
+        else:
+            print("\n  ARES: No stale positions")
+
+        conn.close()
+    except Exception as e:
+        print(f"  ❌ ARES cleanup failed: {e}")
+
+    # PEGASUS (pegasus_positions)
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT position_id, expiration, total_credit, contracts
+            FROM pegasus_positions
+            WHERE status = 'open' AND expiration < %s
+        """, (today,))
+        stale_pegasus = cursor.fetchall()
+
+        if stale_pegasus:
+            print(f"\n  PEGASUS: Found {len(stale_pegasus)} stale position(s)")
+            for pos in stale_pegasus:
+                pos_id, exp, total_credit, contracts = pos
+                realized_pnl = float(total_credit or 0) * int(contracts or 0) * 100
+                print(f"      - {pos_id}: exp {exp}, P&L ${realized_pnl:.2f} (expired worthless)")
+
+                if not dry_run:
+                    cursor.execute("""
+                        UPDATE pegasus_positions
+                        SET status = 'expired',
+                            close_time = %s,
+                            close_reason = 'auto_expired',
+                            realized_pnl = %s
+                        WHERE position_id = %s
+                    """, (datetime.now(CENTRAL_TZ), realized_pnl, pos_id))
+
+            if not dry_run:
+                conn.commit()
+                print(f"      ✅ Updated {len(stale_pegasus)} PEGASUS position(s)")
+        else:
+            print("\n  PEGASUS: No stale positions")
+
+        conn.close()
+    except Exception as e:
+        print(f"  ❌ PEGASUS cleanup failed: {e}")
+
+    print("\n" + "=" * 70)
+    if dry_run:
+        print("  💡 Run with --fix to apply these changes")
+    else:
+        print("  ✅ Cleanup complete")
+    print("=" * 70)
+
+
 if __name__ == "__main__":
-    validator = TradeSyncValidator()
-    results = validator.run_all_validations()
-    sys.exit(1 if results["failed"] > 0 else 0)
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Trade Sync Validation and Cleanup")
+    parser.add_argument("--fix", action="store_true", help="Fix stale positions (mark expired)")
+    parser.add_argument("--cleanup-only", action="store_true", help="Only run cleanup, skip validation")
+    args = parser.parse_args()
+
+    if args.cleanup_only:
+        cleanup_stale_positions(dry_run=not args.fix)
+    else:
+        validator = TradeSyncValidator()
+        results = validator.run_all_validations()
+
+        # If there are stale positions, offer cleanup
+        if any("stale" in str(e).lower() for e in results.get("errors", [])):
+            print("\n💡 To fix stale positions, run: python scripts/test_trade_sync.py --fix")
+
+        if args.fix:
+            cleanup_stale_positions(dry_run=False)
+
+        sys.exit(1 if results["failed"] > 0 else 0)
