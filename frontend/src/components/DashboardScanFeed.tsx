@@ -165,7 +165,7 @@ export default function DashboardScanFeed() {
               <p className="text-text-secondary text-xs mt-1">Bots will scan during market hours</p>
             </div>
           ) : (
-            <div className="space-y-2 max-h-64 overflow-y-auto">
+            <div className="space-y-2">
               {allScans.map((scan: any, idx: number) => {
                 const config = getOutcomeConfig(scan.outcome, scan.trade_executed)
                 return (
