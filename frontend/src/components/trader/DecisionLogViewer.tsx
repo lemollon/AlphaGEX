@@ -186,7 +186,9 @@ export default function DecisionLogViewer({ defaultBot, hideFilter = false }: De
               <option value="all">All Bots</option>
               <option value="PHOENIX">PHOENIX (0DTE)</option>
               <option value="ATLAS">ATLAS (Wheel)</option>
-              <option value="ARES">ARES (Aggressive IC)</option>
+              <option value="ARES">ARES (SPY IC)</option>
+              <option value="ATHENA">ATHENA (Spreads)</option>
+              <option value="PEGASUS">PEGASUS (SPX IC)</option>
               <option value="HERMES">HERMES (Manual)</option>
               <option value="ORACLE">ORACLE (Advisory)</option>
             </select>
