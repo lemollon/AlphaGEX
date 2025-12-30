@@ -9503,7 +9503,7 @@ function BotNodeWithFlare({
     if (flareRef.current && isActive) {
       const pulse = Math.sin(t * 4) * 0.5 + 0.5
       flareRef.current.scale.setScalar(0.5 + pulse * 0.3)
-      ;(flareRef.current.material as THREE.MeshBasicMaterial).opacity = 0.3 + pulse * 0.2
+      ;(flareRef.current.material as THREE.MeshBasicMaterial).opacity = 0.08 + pulse * 0.07
     }
   })
 
@@ -9511,12 +9511,12 @@ function BotNodeWithFlare({
     <group ref={groupRef} position={[x, 0, z]}>
       {isActive && (
         <Sphere ref={flareRef} args={[1, 16, 16]}>
-          <meshBasicMaterial color={color} transparent opacity={0.4} />
+          <meshBasicMaterial color={color} transparent opacity={0.12} />
         </Sphere>
       )}
 
       <Sphere args={[0.35, 16, 16]}>
-        <meshBasicMaterial color={color} transparent opacity={hovered ? 0.5 : 0.25} />
+        <meshBasicMaterial color={color} transparent opacity={hovered ? 0.2 : 0.1} />
       </Sphere>
 
       <Sphere
@@ -9534,7 +9534,7 @@ function BotNodeWithFlare({
       {status === 'trading' && (
         <mesh rotation={[Math.PI / 2, 0, 0]}>
           <torusGeometry args={[0.4, 0.02, 16, 32]} />
-          <meshBasicMaterial color={color} transparent opacity={0.8} />
+          <meshBasicMaterial color={color} transparent opacity={0.5} />
         </mesh>
       )}
 
