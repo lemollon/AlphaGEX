@@ -35,7 +35,8 @@ import {
   BookOpen,
   Pin,
   PinOff,
-  Flame
+  Flame,
+  Shield
 } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 import BuildVersion from './BuildVersion'
@@ -52,8 +53,9 @@ const navItems = [
   { href: '/zero-dte-backtest', label: 'KRONOS (0DTE Condor)', icon: Clock, category: 'AI & Testing' },
   { href: '/oracle', label: 'ORACLE (AI Advisor)', icon: Eye, category: 'AI & Testing' },
   { href: '/solomon', label: 'SOLOMON (Feedback Loop)', icon: BookOpen, category: 'AI & Testing' },
-  { href: '/ares', label: 'ARES (SPX Iron Condor)', icon: Sword, category: 'Live Trading' },
+  { href: '/ares', label: 'ARES (SPY Iron Condor)', icon: Sword, category: 'Live Trading' },
   { href: '/athena', label: 'ATHENA (Directional Spreads)', icon: Target, category: 'Live Trading' },
+  { href: '/pegasus', label: 'PEGASUS (SPX Iron Condor)', icon: Shield, category: 'Live Trading' },
   { href: '/vix', label: 'VIX Dashboard', icon: Activity, category: 'Volatility' },
   { href: '/volatility-comparison', label: 'Volatility Comparison', icon: TrendingDown, category: 'Volatility' },
   { href: '/alerts', label: 'Alerts', icon: Bell, category: 'Volatility' },
