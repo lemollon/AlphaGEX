@@ -205,7 +205,7 @@ class PEGASUSConfig:
     # Risk limits
     risk_per_trade_pct: float = 10.0
     max_contracts: int = 100
-    min_credit: float = 1.50  # Higher minimum for SPX
+    min_credit: float = 0.75  # Lowered from $1.50 to capture more opportunities
 
     # Exit rules
     use_stop_loss: bool = False

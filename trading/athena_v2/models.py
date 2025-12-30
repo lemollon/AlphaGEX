@@ -169,7 +169,7 @@ class ATHENAConfig:
     # Strategy params
     ticker: str = "SPY"
     spread_width: int = 2  # $2 spreads
-    wall_filter_pct: float = 0.5  # Only trade within 0.5% of GEX wall
+    wall_filter_pct: float = 3.0  # Trade within 3% of GEX wall (was 0.5% - too restrictive)
     min_rr_ratio: float = 1.5  # Min risk:reward
 
     # Exit rules
