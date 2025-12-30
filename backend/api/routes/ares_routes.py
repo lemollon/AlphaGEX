@@ -151,18 +151,30 @@ def _get_tradier_account_balance() -> dict:
         # Try to get API config
         from unified_config import APIConfig
 
-        # Check for sandbox credentials (ARES uses sandbox for SPY)
-        sandbox_key = getattr(APIConfig, 'TRADIER_SANDBOX_API_KEY', None) or getattr(APIConfig, 'TRADIER_API_KEY', None)
-        sandbox_account = getattr(APIConfig, 'TRADIER_SANDBOX_ACCOUNT_ID', None) or getattr(APIConfig, 'TRADIER_ACCOUNT_ID', None)
+        # Check for credentials - try multiple sources
+        # Priority: SANDBOX_* > PROD_* > generic TRADIER_*
+        api_key = (
+            getattr(APIConfig, 'TRADIER_SANDBOX_API_KEY', None) or
+            getattr(APIConfig, 'TRADIER_PROD_API_KEY', None) or
+            getattr(APIConfig, 'TRADIER_API_KEY', None)
+        )
+        account_id = (
+            getattr(APIConfig, 'TRADIER_SANDBOX_ACCOUNT_ID', None) or
+            getattr(APIConfig, 'TRADIER_PROD_ACCOUNT_ID', None) or
+            getattr(APIConfig, 'TRADIER_ACCOUNT_ID', None)
+        )
 
-        if not sandbox_key or not sandbox_account:
+        # Check if sandbox mode is enabled (defaults to True for safety)
+        use_sandbox = getattr(APIConfig, 'TRADIER_SANDBOX', True)
+
+        if not api_key or not account_id:
             logger.debug("No Tradier credentials available for balance fetch")
-            return {'connected': False, 'total_equity': 0, 'sandbox': True}
+            return {'connected': False, 'total_equity': 0, 'sandbox': use_sandbox}
 
         tradier = TradierDataFetcher(
-            api_key=sandbox_key,
-            account_id=sandbox_account,
-            sandbox=True
+            api_key=api_key,
+            account_id=account_id,
+            sandbox=use_sandbox
         )
 
         balance = tradier.get_account_balance()
@@ -171,10 +183,10 @@ def _get_tradier_account_balance() -> dict:
                 'connected': True,
                 'total_equity': balance.get('total_equity', 0),
                 'option_buying_power': balance.get('option_buying_power', 0),
-                'sandbox': True
+                'sandbox': use_sandbox
             }
 
-        return {'connected': False, 'total_equity': 0, 'sandbox': True}
+        return {'connected': False, 'total_equity': 0, 'sandbox': use_sandbox}
 
     except Exception as e:
         logger.debug(f"Could not get Tradier balance: {e}")
