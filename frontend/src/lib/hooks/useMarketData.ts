@@ -197,6 +197,14 @@ const fetchers = {
       return { success: false, data: null }
     }
   },
+  aresLogs: async (level?: string, limit: number = 100) => {
+    try {
+      const response = await api.get('/api/ares/logs', { params: { level, limit } })
+      return response.data
+    } catch {
+      return { success: false, data: [] }
+    }
+  },
 
   // Scan Activity - comprehensive logging for EVERY scan
   scanActivityAres: async (limit?: number, date?: string) => {
@@ -851,6 +859,14 @@ export function useARESLivePnL(options?: SWRConfiguration) {
     'ares-live-pnl',
     fetchers.aresLivePnL,
     { ...swrConfig, refreshInterval: 10 * 1000, ...options }  // 10 second refresh for live data
+  )
+}
+
+export function useARESLogs(level?: string, limit: number = 100, options?: SWRConfiguration) {
+  return useSWR(
+    `ares-logs-${level || 'all'}-${limit}`,
+    () => fetchers.aresLogs(level, limit),
+    { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
 }
 
