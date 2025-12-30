@@ -627,7 +627,6 @@ export default function AresPage() {
                 <EquityCurveChart
                   title="ARES Equity Curve"
                   botFilter="ARES"
-                  startingCapital={capital}
                 />
               </>
             )}
