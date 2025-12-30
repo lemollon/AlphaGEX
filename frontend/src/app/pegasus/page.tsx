@@ -541,7 +541,7 @@ export default function PegasusPage() {
           <BotPageHeader
             botName="PEGASUS"
             isActive={status?.is_active || false}
-            lastHeartbeat={status?.heartbeat?.last_scan_iso || null}
+            lastHeartbeat={status?.heartbeat?.last_scan_iso || undefined}
             onRefresh={handleRefresh}
             isRefreshing={statusLoading}
           />
