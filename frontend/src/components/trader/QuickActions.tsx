@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { Play, Pause, RefreshCw, Settings, Zap, AlertTriangle } from 'lucide-react'
 
 interface QuickActionsProps {
-  botName: 'ATHENA' | 'ARES'
+  botName: 'ATHENA' | 'ARES' | 'PEGASUS'
   isActive: boolean
   isPaused: boolean
   isScanning: boolean
