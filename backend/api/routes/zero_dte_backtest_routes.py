@@ -2138,6 +2138,9 @@ class OracleExplainRequest(BaseModel):
 
 def _get_all_heartbeats() -> dict:
     """Get heartbeat info for all bots from the database"""
+    from zoneinfo import ZoneInfo
+    CENTRAL_TZ = ZoneInfo("America/Chicago")
+
     try:
         conn = get_connection()
         cursor = conn.cursor()
@@ -2154,9 +2157,20 @@ def _get_all_heartbeats() -> dict:
         heartbeats = {}
         for row in rows:
             bot_name, last_heartbeat, status, scan_count, details = row
+
+            # Convert timestamp to Central Time
+            last_heartbeat_ct = None
+            if last_heartbeat:
+                # PostgreSQL may return UTC or naive datetime - handle both cases
+                if last_heartbeat.tzinfo is None:
+                    # Naive datetime from PostgreSQL - assume it's UTC
+                    last_heartbeat = last_heartbeat.replace(tzinfo=ZoneInfo("UTC"))
+                # Convert to Central Time
+                last_heartbeat_ct = last_heartbeat.astimezone(CENTRAL_TZ)
+
             heartbeats[bot_name] = {
-                'last_scan': last_heartbeat.strftime('%Y-%m-%d %H:%M:%S CT') if last_heartbeat else None,
-                'last_scan_iso': last_heartbeat.isoformat() if last_heartbeat else None,
+                'last_scan': last_heartbeat_ct.strftime('%Y-%m-%d %H:%M:%S CT') if last_heartbeat_ct else None,
+                'last_scan_iso': last_heartbeat_ct.isoformat() if last_heartbeat_ct else None,
                 'status': status,
                 'scan_count_today': scan_count or 0,
                 'details': details or {}

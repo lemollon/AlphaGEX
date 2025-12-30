@@ -42,6 +42,15 @@ except ImportError:
 router = APIRouter(prefix="/api/ares", tags=["ARES"])
 logger = logging.getLogger(__name__)
 
+# Try to import Tradier for account balance
+TradierDataFetcher = None
+try:
+    from data.tradier_data_fetcher import TradierDataFetcher
+    TRADIER_AVAILABLE = True
+except ImportError:
+    TRADIER_AVAILABLE = False
+    logger.debug("TradierDataFetcher not available for balance fetching")
+
 # Try to import ARES V2 trader and strategy presets
 ares_trader = None
 try:
@@ -125,6 +134,65 @@ def _get_heartbeat(bot_name: str) -> dict:
         }
 
 
+def _get_tradier_account_balance() -> dict:
+    """
+    Get account balance from Tradier API.
+
+    Returns dict with:
+    - total_equity: Account total value
+    - option_buying_power: Available for options trading
+    - sandbox: Whether using sandbox API
+    - connected: Whether API call succeeded
+    """
+    if not TRADIER_AVAILABLE or not TradierDataFetcher:
+        return {'connected': False, 'total_equity': 0, 'sandbox': True}
+
+    try:
+        # Try to get API config
+        from unified_config import APIConfig
+
+        # Check for credentials - try multiple sources
+        # Priority: SANDBOX_* > PROD_* > generic TRADIER_*
+        api_key = (
+            getattr(APIConfig, 'TRADIER_SANDBOX_API_KEY', None) or
+            getattr(APIConfig, 'TRADIER_PROD_API_KEY', None) or
+            getattr(APIConfig, 'TRADIER_API_KEY', None)
+        )
+        account_id = (
+            getattr(APIConfig, 'TRADIER_SANDBOX_ACCOUNT_ID', None) or
+            getattr(APIConfig, 'TRADIER_PROD_ACCOUNT_ID', None) or
+            getattr(APIConfig, 'TRADIER_ACCOUNT_ID', None)
+        )
+
+        # Check if sandbox mode is enabled (defaults to True for safety)
+        use_sandbox = getattr(APIConfig, 'TRADIER_SANDBOX', True)
+
+        if not api_key or not account_id:
+            logger.debug("No Tradier credentials available for balance fetch")
+            return {'connected': False, 'total_equity': 0, 'sandbox': use_sandbox}
+
+        tradier = TradierDataFetcher(
+            api_key=api_key,
+            account_id=account_id,
+            sandbox=use_sandbox
+        )
+
+        balance = tradier.get_account_balance()
+        if balance:
+            return {
+                'connected': True,
+                'total_equity': balance.get('total_equity', 0),
+                'option_buying_power': balance.get('option_buying_power', 0),
+                'sandbox': use_sandbox
+            }
+
+        return {'connected': False, 'total_equity': 0, 'sandbox': use_sandbox}
+
+    except Exception as e:
+        logger.debug(f"Could not get Tradier balance: {e}")
+        return {'connected': False, 'total_equity': 0, 'sandbox': True}
+
+
 @router.get("/status")
 async def get_ares_status():
     """
@@ -139,7 +207,6 @@ async def get_ares_status():
 
     if not ares:
         # ARES not running in this process - read stats from database
-        starting_capital = 200000
         total_pnl = 0
         trade_count = 0
         win_count = 0
@@ -181,7 +248,7 @@ async def get_ares_status():
 
         # Try to get stored mode and ticker from config table
         stored_mode = "paper"
-        stored_ticker = "SPX"
+        stored_ticker = "SPY"  # Default to SPY for sandbox
         try:
             from database_adapter import get_connection
             conn = get_connection()
@@ -198,13 +265,24 @@ async def get_ares_status():
         except:
             pass
 
+        # Get actual Tradier account balance instead of hardcoded value
+        tradier_balance = _get_tradier_account_balance()
+        if tradier_balance.get('connected') and tradier_balance.get('total_equity', 0) > 0:
+            # Use actual Tradier balance
+            capital = round(tradier_balance['total_equity'], 2)
+            sandbox_connected = True
+        else:
+            # Fallback to default if Tradier unavailable
+            capital = 100000  # Consistent default with frontend
+            sandbox_connected = False
+
         return {
             "success": True,
             "data": {
                 "mode": stored_mode,
                 "ticker": stored_ticker,
                 "is_spy_sandbox": stored_ticker == "SPY",
-                "capital": round(starting_capital + total_pnl, 2),
+                "capital": capital,  # Now uses actual Tradier balance when available
                 "total_pnl": round(total_pnl, 2),
                 "trade_count": trade_count,
                 "win_rate": win_rate,
@@ -212,11 +290,12 @@ async def get_ares_status():
                 "closed_positions": closed_count,
                 "traded_today": traded_today,
                 "in_trading_window": False,
-                "high_water_mark": round(max(starting_capital, starting_capital + total_pnl), 2),
+                "high_water_mark": capital,  # High water mark = current capital
                 "current_time": datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d %H:%M:%S CT'),
                 "is_active": False,
                 "scan_interval_minutes": 5,
                 "heartbeat": heartbeat,
+                "sandbox_connected": sandbox_connected,
                 "config": {
                     "risk_per_trade": 10.0,
                     "spread_width": 10.0,
@@ -224,8 +303,8 @@ async def get_ares_status():
                     "ticker": stored_ticker,
                     "target_return": "10% monthly"
                 },
-                "source": "database",
-                "message": "Stats loaded from database - ARES worker running separately"
+                "source": "tradier" if sandbox_connected else "database",
+                "message": "Capital synced with Tradier sandbox" if sandbox_connected else "Stats loaded from database - ARES worker running separately"
             }
         }
 
@@ -263,28 +342,28 @@ async def get_ares_positions():
             # Get open positions
             cursor.execute('''
                 SELECT
-                    position_id, open_date, expiration,
+                    position_id, open_time, expiration,
                     put_long_strike, put_short_strike, call_short_strike, call_long_strike,
                     put_credit, call_credit, total_credit,
                     contracts, spread_width, max_loss,
-                    underlying_price_at_entry, vix_at_entry, status
+                    underlying_at_entry, vix_at_entry, status
                 FROM ares_positions
                 WHERE status = 'open'
-                ORDER BY open_date DESC
+                ORDER BY open_time DESC
             ''')
             open_rows = cursor.fetchall()
 
             # Get closed positions (last 100)
             cursor.execute('''
                 SELECT
-                    position_id, open_date, close_date, expiration,
+                    position_id, open_time, close_time, expiration,
                     put_long_strike, put_short_strike, call_short_strike, call_long_strike,
                     put_credit, call_credit, total_credit,
                     contracts, spread_width, max_loss, close_price, realized_pnl,
-                    underlying_price_at_entry, vix_at_entry, status
+                    underlying_at_entry, vix_at_entry, status
                 FROM ares_positions
                 WHERE status IN ('closed', 'expired')
-                ORDER BY close_date DESC
+                ORDER BY close_time DESC
                 LIMIT 100
             ''')
             closed_rows = cursor.fetchall()

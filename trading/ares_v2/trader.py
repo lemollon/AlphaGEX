@@ -570,10 +570,13 @@ class ARESTrader:
             self.db.log("ERROR", "Execution failed", {'signal': signal.reasoning})
             return None, signal
 
-        # Save to database
+        # Save to database - CRITICAL: Only return position if save succeeds
         if not self.db.save_position(position):
-            self.db.log("ERROR", "Failed to save position", {'pos_id': position.position_id})
-            logger.error(f"Position {position.position_id} executed but not saved!")
+            self.db.log("ERROR", "Failed to save position to database", {'pos_id': position.position_id})
+            logger.error(f"Position {position.position_id} executed but not saved to database!")
+            # Return None to indicate trade did NOT complete successfully
+            # This prevents scan activity from showing "TRADED" when position isn't persisted
+            return None, signal
 
         self.db.log("INFO", f"Opened: {position.position_id}", position.to_dict())
 

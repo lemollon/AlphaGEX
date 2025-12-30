@@ -99,9 +99,10 @@ async def comprehensive_system_health():
     """
     from datetime import datetime, timedelta
     from zoneinfo import ZoneInfo
+    CENTRAL_TZ = ZoneInfo("America/Chicago")
 
     health = {
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
         "overall_status": "healthy",
         "issues": [],
         "warnings": [],

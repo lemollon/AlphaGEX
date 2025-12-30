@@ -1061,8 +1061,8 @@ async def websocket_kronos_gex(websocket: WebSocket):
                             "message": f"Failed to fetch GEX: {str(e)}"
                         })
             except asyncio.TimeoutError:
-                # Send heartbeat
-                await websocket.send_json({"type": "heartbeat", "timestamp": datetime.now().isoformat()})
+                # Send heartbeat in Central Time
+                await websocket.send_json({"type": "heartbeat", "timestamp": datetime.now(CENTRAL_TZ).isoformat()})
 
     except WebSocketDisconnect:
         kronos_manager.disconnect(websocket, None)
