@@ -132,7 +132,7 @@ class TestBotLoggerTable:
         print(f"\nBot decision counts: {bot_counts}")
 
         # List of expected bots
-        expected_bots = ['ARES', 'ATLAS', 'ATHENA', 'PHOENIX']
+        expected_bots = ['ARES', 'ATLAS', 'ATHENA', 'PHOENIX', 'PEGASUS']
 
         # Check which bots have logged
         for bot in expected_bots:

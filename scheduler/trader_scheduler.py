@@ -35,9 +35,10 @@ This partitioning provides:
 # CAPITAL ALLOCATION CONFIGURATION
 # ============================================================================
 CAPITAL_ALLOCATION = {
-    'PHOENIX': 300_000,   # 0DTE options trading
-    'ATLAS': 400_000,     # SPX wheel strategy
-    'ARES': 200_000,      # Aggressive Iron Condor (10% monthly target)
+    'PHOENIX': 250_000,   # 0DTE options trading
+    'ATLAS': 300_000,     # SPX wheel strategy
+    'ARES': 150_000,      # Aggressive Iron Condor (SPY 0DTE)
+    'PEGASUS': 200_000,   # SPX Iron Condor ($10 spreads, weekly)
     'RESERVE': 100_000,   # Emergency reserve
     'TOTAL': 1_000_000,
 }

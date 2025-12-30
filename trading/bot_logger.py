@@ -45,7 +45,8 @@ class BotName(Enum):
     ARES = "ARES"
     HERMES = "HERMES"
     ORACLE = "ORACLE"
-    ATHENA = "ATHENA"  # Directional Spreads (Bull Call / Bear Call)
+    ATHENA = "ATHENA"    # Directional Spreads (Bull Call / Bear Call)
+    PEGASUS = "PEGASUS"  # SPX Iron Condor ($10 spreads, weekly)
 
 
 class DecisionType(Enum):
@@ -865,3 +866,13 @@ def get_hermes_logger():
 def get_oracle_logger():
     """Get a pre-configured logger for ORACLE"""
     return lambda decision: log_bot_decision(decision) if decision.bot_name == "ORACLE" else None
+
+
+def get_athena_logger():
+    """Get a pre-configured logger for ATHENA"""
+    return lambda decision: log_bot_decision(decision) if decision.bot_name == "ATHENA" else None
+
+
+def get_pegasus_logger():
+    """Get a pre-configured logger for PEGASUS"""
+    return lambda decision: log_bot_decision(decision) if decision.bot_name == "PEGASUS" else None

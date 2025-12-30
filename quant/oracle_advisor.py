@@ -115,11 +115,12 @@ logger = logging.getLogger(__name__)
 
 class BotName(Enum):
     """Trading bots that Oracle advises"""
-    ARES = "ARES"          # Aggressive Iron Condor
+    ARES = "ARES"          # Aggressive Iron Condor (SPY 0DTE)
     ATLAS = "ATLAS"        # SPX Wheel Strategy
     PHOENIX = "PHOENIX"    # Directional Calls
     HERMES = "HERMES"      # Manual Wheel via UI
     ATHENA = "ATHENA"      # Directional Spreads (Bull Call / Bear Call)
+    PEGASUS = "PEGASUS"    # SPX Iron Condor ($10 spreads, weekly)
 
 
 class TradeOutcome(Enum):
@@ -1975,6 +1976,239 @@ class OracleAdvisor:
             "model_version": self.model_version
         }
         self.live_log.log_data_flow("ATHENA", "DECISION", decision_data)
+
+        return prediction
+
+    # =========================================================================
+    # PEGASUS ADVICE (SPX IRON CONDOR - WEEKLY)
+    # =========================================================================
+
+    def get_pegasus_advice(
+        self,
+        context: MarketContext,
+        use_gex_walls: bool = True,
+        use_claude_validation: bool = True,
+        vix_hard_skip: float = 0.0,
+        vix_monday_friday_skip: float = 0.0,
+        vix_streak_skip: float = 0.0,
+        recent_losses: int = 0,
+        spread_width: float = 10.0  # Default $10 spread width
+    ) -> OraclePrediction:
+        """
+        Get Iron Condor advice for PEGASUS (SPX Weekly Iron Condors).
+
+        PEGASUS trades SPX weekly options with $10 spread widths.
+        Key differences from ARES:
+        - SPX (cash-settled) vs SPY
+        - Weekly expirations vs 0DTE
+        - Larger notional value per contract
+        - One trade per day max
+
+        Args:
+            context: Current market conditions
+            use_gex_walls: Whether to suggest strikes based on GEX walls
+            use_claude_validation: Whether to use Claude AI to validate prediction
+            vix_hard_skip: Skip if VIX > this threshold (0 = disabled)
+            vix_monday_friday_skip: Skip on Mon/Fri if VIX > this (0 = disabled)
+            vix_streak_skip: Skip after recent losses if VIX > this (0 = disabled)
+            recent_losses: Number of recent consecutive losses
+            spread_width: Width of IC spreads (default $10)
+
+        Returns:
+            OraclePrediction with SPX IC-specific advice
+        """
+        # Log prediction request
+        self.live_log.log("PREDICT", "PEGASUS advice requested", {
+            "vix": context.vix,
+            "gex_regime": context.gex_regime.value,
+            "spot_price": context.spot_price,
+            "use_gex_walls": use_gex_walls,
+            "use_claude": use_claude_validation,
+            "vix_hard_skip": vix_hard_skip,
+            "spread_width": spread_width
+        })
+
+        # =========================================================================
+        # VIX-BASED SKIP LOGIC (Similar to ARES but tuned for SPX weekly)
+        # =========================================================================
+        skip_reason = None
+        skip_threshold_used = 0.0
+
+        # Rule 1: Hard VIX skip (SPX weekly more sensitive to vol)
+        if vix_hard_skip > 0 and context.vix > vix_hard_skip:
+            skip_reason = f"VIX {context.vix:.1f} > {vix_hard_skip} - volatility too high for SPX Iron Condor"
+            skip_threshold_used = vix_hard_skip
+
+        # Rule 2: Monday/Friday VIX skip (weekly expiration risk)
+        elif vix_monday_friday_skip > 0 and context.day_of_week in [0, 4]:
+            if context.vix > vix_monday_friday_skip:
+                day_name = "Monday" if context.day_of_week == 0 else "Friday"
+                skip_reason = f"VIX {context.vix:.1f} > {vix_monday_friday_skip} on {day_name} - weekly expiration risk"
+                skip_threshold_used = vix_monday_friday_skip
+
+        # Rule 3: Streak-based VIX skip
+        elif vix_streak_skip > 0 and recent_losses >= 2:
+            if context.vix > vix_streak_skip:
+                skip_reason = f"VIX {context.vix:.1f} > {vix_streak_skip} with {recent_losses} recent losses - risk reduction"
+                skip_threshold_used = vix_streak_skip
+
+        # If any VIX skip rule triggered, return SKIP_TODAY
+        if skip_reason:
+            self.live_log.log("VIX_SKIP", skip_reason, {
+                "vix": context.vix,
+                "threshold": skip_threshold_used,
+                "day_of_week": context.day_of_week,
+                "recent_losses": recent_losses,
+                "action": "SKIP_TODAY"
+            })
+            return OraclePrediction(
+                bot_name=BotName.PEGASUS,
+                advice=TradingAdvice.SKIP_TODAY,
+                win_probability=0.35,
+                confidence=0.95,
+                suggested_risk_pct=0.0,
+                suggested_sd_multiplier=1.0,
+                reasoning=skip_reason,
+                top_factors=[
+                    ("vix_level", context.vix),
+                    ("skip_threshold", skip_threshold_used),
+                    ("day_of_week", context.day_of_week),
+                    ("recent_losses", recent_losses)
+                ],
+                model_version=self.model_version
+            )
+
+        # === FULL DATA FLOW LOGGING: INPUT ===
+        input_data = {
+            "spot_price": context.spot_price,
+            "price_change_1d": context.price_change_1d,
+            "vix": context.vix,
+            "vix_percentile_30d": context.vix_percentile_30d,
+            "vix_change_1d": context.vix_change_1d,
+            "gex_net": context.gex_net,
+            "gex_normalized": context.gex_normalized,
+            "gex_regime": context.gex_regime.value,
+            "gex_flip_point": context.gex_flip_point,
+            "gex_call_wall": context.gex_call_wall,
+            "gex_put_wall": context.gex_put_wall,
+            "gex_distance_to_flip_pct": context.gex_distance_to_flip_pct,
+            "gex_between_walls": context.gex_between_walls,
+            "day_of_week": context.day_of_week,
+            "days_to_opex": context.days_to_opex,
+            "spread_width": spread_width
+        }
+        self.live_log.log_data_flow("PEGASUS", "INPUT", input_data)
+
+        # Get base prediction
+        base_pred = self._get_base_prediction(context)
+
+        # === FULL DATA FLOW LOGGING: ML_OUTPUT ===
+        self.live_log.log_data_flow("PEGASUS", "ML_OUTPUT", {
+            "win_probability": base_pred.get('win_probability'),
+            "top_factors": base_pred.get('top_factors', []),
+            "probabilities": base_pred.get('probabilities', {}),
+            "model_version": self.model_version
+        })
+
+        reasoning_parts = []
+
+        # SPX-specific GEX analysis (use SPX values from context)
+        # SPX typically has ~10x the notional of SPY
+        gex_context = f"GEX Regime: {context.gex_regime.value}"
+        if context.gex_between_walls:
+            gex_context += " - Price between walls (pinning expected)"
+            reasoning_parts.append("SPX between GEX walls - favorable for Iron Condor")
+        else:
+            reasoning_parts.append(f"SPX GEX regime: {context.gex_regime.value}")
+
+        # Weekly expiration considerations
+        if context.days_to_opex <= 2:
+            reasoning_parts.append(f"Near expiration ({context.days_to_opex} days) - elevated gamma risk")
+
+        # Determine trading advice based on probability
+        win_prob = base_pred['win_probability']
+
+        # SPX IC thresholds (slightly more conservative than SPY 0DTE)
+        if win_prob >= 0.58:
+            advice = TradingAdvice.TRADE_FULL
+            risk_pct = 0.03  # 3% risk for full position
+            reasoning_parts.append(f"Strong setup: {win_prob:.1%} win probability")
+        elif win_prob >= 0.52:
+            advice = TradingAdvice.TRADE_HALF
+            risk_pct = 0.015  # 1.5% risk for half position
+            reasoning_parts.append(f"Moderate setup: {win_prob:.1%} win probability")
+        elif win_prob >= 0.48:
+            advice = TradingAdvice.TRADE_CAUTIOUS
+            risk_pct = 0.01  # 1% risk for cautious position
+            reasoning_parts.append(f"Marginal setup: {win_prob:.1%} win probability")
+        else:
+            advice = TradingAdvice.SKIP_TODAY
+            risk_pct = 0.0
+            reasoning_parts.append(f"Poor setup: {win_prob:.1%} win probability - skip")
+
+        # GEX wall-based strike suggestions for SPX
+        suggested_put = None
+        suggested_call = None
+
+        if use_gex_walls and context.gex_put_wall > 0 and context.gex_call_wall > 0:
+            # For SPX IC, use GEX walls as outer boundaries
+            # Put spread below put wall, call spread above call wall
+            suggested_put = context.gex_put_wall - spread_width
+            suggested_call = context.gex_call_wall + spread_width
+            reasoning_parts.append(f"GEX walls: Put wall {context.gex_put_wall:.0f}, Call wall {context.gex_call_wall:.0f}")
+
+        # Claude AI validation (optional)
+        claude_analysis = None
+        if use_claude_validation and self.claude_analyzer:
+            try:
+                claude_analysis = self.claude_analyzer.analyze_setup(
+                    context, "PEGASUS_IC", win_prob, reasoning_parts
+                )
+                if claude_analysis:
+                    reasoning_parts.append(f"Claude: {claude_analysis.recommendation}")
+                    # Adjust confidence based on Claude
+                    if claude_analysis.confidence_adjustment:
+                        win_prob = min(0.95, max(0.05, win_prob + claude_analysis.confidence_adjustment))
+            except Exception as e:
+                self.live_log.log("CLAUDE_ERROR", f"PEGASUS Claude validation failed: {e}")
+
+        # Build final prediction
+        prediction = OraclePrediction(
+            bot_name=BotName.PEGASUS,
+            advice=advice,
+            win_probability=win_prob,
+            confidence=base_pred.get('confidence', 0.6),
+            suggested_risk_pct=risk_pct,
+            suggested_sd_multiplier=1.0,  # SPX uses fixed spread widths
+            reasoning=" | ".join(reasoning_parts),
+            top_factors=base_pred.get('top_factors', []),
+            model_version=self.model_version,
+            suggested_put_strike=suggested_put,
+            suggested_call_strike=suggested_call
+        )
+
+        # Log prediction result
+        self.live_log.log("PREDICT_DONE", f"PEGASUS: {advice.value} ({win_prob:.1%})", {
+            "advice": advice.value,
+            "win_probability": win_prob,
+            "spread_width": spread_width,
+            "claude_validated": claude_analysis is not None
+        })
+
+        # === FULL DATA FLOW LOGGING: DECISION ===
+        decision_data = {
+            "advice": advice.value,
+            "win_probability": win_prob,
+            "confidence": prediction.confidence,
+            "risk_pct": risk_pct,
+            "spread_width": spread_width,
+            "suggested_put_strike": suggested_put,
+            "suggested_call_strike": suggested_call,
+            "reasoning": prediction.reasoning,
+            "claude_validated": claude_analysis is not None,
+            "model_version": self.model_version
+        }
+        self.live_log.log_data_flow("PEGASUS", "DECISION", decision_data)
 
         return prediction
 
