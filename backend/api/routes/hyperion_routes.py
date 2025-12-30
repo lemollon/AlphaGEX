@@ -10,7 +10,7 @@ Named after the Titan of Watchfulness - watching longer-term gamma setups.
 
 import logging
 from datetime import datetime, date, timedelta
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from fastapi import APIRouter, HTTPException, Query
 from zoneinfo import ZoneInfo
 import time
@@ -27,6 +27,10 @@ CENTRAL_TZ = ZoneInfo("America/Chicago")
 _cache: Dict[str, Any] = {}
 _cache_times: Dict[str, float] = {}
 CACHE_TTL_SECONDS = 60  # 60 second cache for weekly data (less volatile than 0DTE)
+
+# History for ROC calculation - maps (symbol, strike) -> [(timestamp, gamma)]
+_gamma_history: Dict[str, List[Tuple[datetime, float]]] = {}
+HISTORY_MINUTES = 30  # Keep 30 minutes of history
 
 
 def get_cached(key: str, ttl: int = CACHE_TTL_SECONDS) -> Any:
@@ -46,6 +50,105 @@ def set_cached(key: str, value: Any):
 def format_central_timestamp() -> str:
     """Get ISO formatted timestamp in Central timezone"""
     return datetime.now(CENTRAL_TZ).isoformat()
+
+
+def update_gamma_history(symbol: str, strike: float, gamma: float, timestamp: datetime = None):
+    """Update gamma history for a strike"""
+    if timestamp is None:
+        timestamp = datetime.now(CENTRAL_TZ)
+
+    history_key = f"{symbol}_{strike}"
+    if history_key not in _gamma_history:
+        _gamma_history[history_key] = []
+
+    _gamma_history[history_key].append((timestamp, gamma))
+
+    # Keep only last 30 minutes of history
+    cutoff = timestamp - timedelta(minutes=HISTORY_MINUTES)
+    _gamma_history[history_key] = [
+        (t, g) for t, g in _gamma_history[history_key] if t >= cutoff
+    ]
+
+
+def calculate_roc(symbol: str, strike: float, current_gamma: float, minutes: int = 1) -> float:
+    """
+    Calculate rate of change for a strike over specified minutes.
+
+    Args:
+        symbol: Stock symbol
+        strike: Strike price
+        current_gamma: Current gamma value
+        minutes: Number of minutes to look back (1 or 5)
+
+    Returns:
+        Rate of change as percentage
+    """
+    history_key = f"{symbol}_{strike}"
+    history = _gamma_history.get(history_key, [])
+
+    if not history or len(history) < 2:
+        return 0.0
+
+    # Find value from X minutes ago
+    now = datetime.now(CENTRAL_TZ)
+    target_time = now - timedelta(minutes=minutes)
+    old_gamma = None
+
+    for timestamp, gamma in reversed(history):
+        # Handle timezone-aware comparison
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=CENTRAL_TZ)
+        if timestamp <= target_time:
+            old_gamma = gamma
+            break
+
+    if old_gamma is None or old_gamma == 0:
+        return 0.0
+
+    roc = ((current_gamma - old_gamma) / abs(old_gamma)) * 100
+    return round(roc, 2)
+
+
+# ROC thresholds for danger zone detection
+ROC_1MIN_SPIKE_THRESHOLD = 15.0  # % for SPIKE danger type
+ROC_5MIN_BUILDING_THRESHOLD = 25.0  # % for BUILDING danger type
+ROC_5MIN_COLLAPSING_THRESHOLD = -25.0  # % for COLLAPSING danger type
+
+
+def identify_danger_zones(symbol: str, strikes: List[Dict]) -> List[Dict]:
+    """
+    Identify danger zones - strikes with rapid gamma changes.
+
+    Thresholds:
+    - BUILDING: 5-min ROC > +25%
+    - COLLAPSING: 5-min ROC < -25%
+    - SPIKE: 1-min ROC > +15%
+    """
+    danger_zones = []
+
+    for strike_data in strikes:
+        roc_1min = strike_data.get('roc_1min', 0)
+        roc_5min = strike_data.get('roc_5min', 0)
+        danger_type = None
+
+        if roc_5min >= ROC_5MIN_BUILDING_THRESHOLD:
+            danger_type = 'BUILDING'
+        elif roc_5min <= ROC_5MIN_COLLAPSING_THRESHOLD:
+            danger_type = 'COLLAPSING'
+        elif roc_1min >= ROC_1MIN_SPIKE_THRESHOLD:
+            danger_type = 'SPIKE'
+
+        if danger_type:
+            strike_data['is_danger'] = True
+            strike_data['danger_type'] = danger_type
+            danger_zones.append({
+                'strike': strike_data['strike'],
+                'danger_type': danger_type,
+                'roc_1min': roc_1min,
+                'roc_5min': roc_5min
+            })
+
+    return danger_zones
 
 
 # Try to import Tradier data fetcher
@@ -179,6 +282,7 @@ async def fetch_gamma_data(symbol: str, expiration: str) -> dict:
         unique_strikes = set(c.strike for c in contracts if c.strike)
         strikes = []
 
+        timestamp = datetime.now(CENTRAL_TZ)
         for strike in sorted(unique_strikes):
             call = options_by_key.get((strike, 'call'))
             put = options_by_key.get((strike, 'put'))
@@ -191,6 +295,11 @@ async def fetch_gamma_data(symbol: str, expiration: str) -> dict:
             # Calculate net gamma (simplified)
             net_gamma = (call_gamma * call_oi - put_gamma * put_oi) * 100 * spot_price
 
+            # Update history and calculate ROC
+            update_gamma_history(symbol, strike, net_gamma, timestamp)
+            roc_1min = calculate_roc(symbol, strike, net_gamma, minutes=1)
+            roc_5min = calculate_roc(symbol, strike, net_gamma, minutes=5)
+
             strikes.append({
                 'strike': strike,
                 'net_gamma': net_gamma,
@@ -199,9 +308,16 @@ async def fetch_gamma_data(symbol: str, expiration: str) -> dict:
                 'call_oi': call_oi,
                 'put_oi': put_oi,
                 'probability': 0,  # Would need ML model
+                'gamma_change_pct': 0,
+                'roc_1min': roc_1min,
+                'roc_5min': roc_5min,
                 'is_magnet': False,
+                'magnet_rank': None,
                 'is_pin': False,
-                'is_danger': False
+                'is_danger': False,
+                'danger_type': None,
+                'gamma_flipped': False,
+                'flip_direction': None
             })
 
         # Identify magnets (top 3 by absolute gamma)
@@ -224,6 +340,9 @@ async def fetch_gamma_data(symbol: str, expiration: str) -> dict:
         total_net_gamma = sum(s['net_gamma'] for s in strikes)
         gamma_regime = 'POSITIVE' if total_net_gamma > 0 else 'NEGATIVE' if total_net_gamma < 0 else 'NEUTRAL'
 
+        # Identify danger zones based on ROC thresholds
+        danger_zones = identify_danger_zones(symbol, strikes)
+
         result = {
             'symbol': symbol,
             'spot_price': spot_price,
@@ -232,12 +351,15 @@ async def fetch_gamma_data(symbol: str, expiration: str) -> dict:
             'expected_move': expected_move,
             'total_net_gamma': total_net_gamma,
             'gamma_regime': gamma_regime,
+            'regime_flipped': False,
+            'market_status': 'open',
             'strikes': strikes,
             'magnets': [{'rank': i+1, 'strike': s['strike'], 'net_gamma': s['net_gamma'], 'probability': 0}
                        for i, s in enumerate(sorted_strikes[:3])],
             'likely_pin': sorted_strikes[0]['strike'] if sorted_strikes else None,
             'pin_probability': 0,
-            'danger_zones': [],
+            'danger_zones': danger_zones,
+            'gamma_flips': [],
             'is_mock': False,
             'fetched_at': format_central_timestamp()
         }
@@ -269,6 +391,7 @@ def get_mock_gamma_data(symbol: str, expiration: str, spot: float = None, vix: f
 
     strikes = []
     base_strike = round(spot)
+    timestamp = datetime.now(CENTRAL_TZ)
 
     for i in range(-10, 11):
         strike = base_strike + i
@@ -280,18 +403,32 @@ def get_mock_gamma_data(symbol: str, expiration: str, spot: float = None, vix: f
         if random.random() > 0.5:
             net_gamma = -net_gamma
 
+        # Update history and calculate ROC for mock data too
+        update_gamma_history(symbol, strike, net_gamma, timestamp)
+        roc_1min = calculate_roc(symbol, strike, net_gamma, minutes=1)
+        roc_5min = calculate_roc(symbol, strike, net_gamma, minutes=5)
+
         strikes.append({
             'strike': strike,
             'net_gamma': net_gamma,
             'probability': max(0, 20 - distance * 2),
+            'gamma_change_pct': 0,
+            'roc_1min': roc_1min,
+            'roc_5min': roc_5min,
             'is_magnet': distance <= 1,
             'magnet_rank': distance + 1 if distance <= 2 else None,
             'is_pin': i == 0,
-            'is_danger': random.random() > 0.9
+            'is_danger': False,
+            'danger_type': None,
+            'gamma_flipped': False,
+            'flip_direction': None
         })
 
     # Sort by strike
     strikes.sort(key=lambda s: s['strike'], reverse=True)
+
+    # Identify danger zones based on ROC thresholds
+    danger_zones = identify_danger_zones(symbol, strikes)
 
     return {
         'symbol': symbol,
@@ -301,12 +438,15 @@ def get_mock_gamma_data(symbol: str, expiration: str, spot: float = None, vix: f
         'expected_move': spot * 0.02,  # ~2% move
         'total_net_gamma': sum(s['net_gamma'] for s in strikes),
         'gamma_regime': 'POSITIVE' if sum(s['net_gamma'] for s in strikes) > 0 else 'NEGATIVE',
+        'regime_flipped': False,
+        'market_status': 'closed',
         'strikes': strikes,
         'magnets': [{'rank': i+1, 'strike': s['strike'], 'net_gamma': s['net_gamma'], 'probability': s['probability']}
                    for i, s in enumerate(strikes[:3])],
         'likely_pin': base_strike,
         'pin_probability': 25.0,
-        'danger_zones': [],
+        'danger_zones': danger_zones,
+        'gamma_flips': [],
         'is_mock': True,
         'fetched_at': format_central_timestamp()
     }
