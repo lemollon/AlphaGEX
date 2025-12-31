@@ -428,8 +428,13 @@ export default function ArgusPage() {
           setGammaData(prev => {
             if (!prev) return newData
 
+            // Guard against missing strikes array
+            if (!newData.strikes || !Array.isArray(newData.strikes)) {
+              return newData
+            }
+
             // Create a map of previous strikes for quick lookup
-            const prevStrikesMap = new Map(prev.strikes.map(s => [s.strike, s]))
+            const prevStrikesMap = new Map(prev.strikes?.map(s => [s.strike, s]) || [])
 
             // Merge strikes: update existing, add new ones
             const mergedStrikes = newData.strikes.map((newStrike: StrikeData) => {
