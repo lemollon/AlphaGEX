@@ -375,9 +375,41 @@ class AutonomousTraderScheduler:
         if now.weekday() >= 5:  # Saturday=5, Sunday=6
             return False
 
-        # Market hours: 8:30 AM - 3:00 PM CT (same as 9:30 AM - 4:00 PM ET)
+        # Check for market holidays (full closure)
+        # Using holidays from trading/market_calendar.py
+        market_holidays = {
+            # 2024
+            '2024-01-01', '2024-01-15', '2024-02-19', '2024-03-29',
+            '2024-05-27', '2024-06-19', '2024-07-04', '2024-09-02',
+            '2024-11-28', '2024-12-25',
+            # 2025
+            '2025-01-01', '2025-01-20', '2025-02-17', '2025-04-18',
+            '2025-05-26', '2025-06-19', '2025-07-04', '2025-09-01',
+            '2025-11-27', '2025-12-25',
+        }
+        today_str = now.strftime('%Y-%m-%d')
+        if today_str in market_holidays:
+            return False
+
+        # Check for early close days (1 PM ET = 12 PM CT)
+        # - Day before Independence Day (July 3 if weekday)
+        # - Day after Thanksgiving (Black Friday)
+        # - Christmas Eve (Dec 24 if weekday)
+        # - New Year's Eve (Dec 31)
+        early_close_dates = {
+            # 2024
+            '2024-07-03', '2024-11-29', '2024-12-24', '2024-12-31',
+            # 2025
+            '2025-07-03', '2025-11-28', '2025-12-24', '2025-12-31',
+        }
+
+        # Market hours: 8:30 AM - 3:00 PM CT (or 12:00 PM CT on early close days)
         market_open = now.replace(hour=8, minute=30, second=0, microsecond=0)
-        market_close = now.replace(hour=15, minute=0, second=0, microsecond=0)
+        if today_str in early_close_dates:
+            market_close = now.replace(hour=12, minute=0, second=0, microsecond=0)
+            logger.debug(f"Early close day: market closes at 12:00 PM CT")
+        else:
+            market_close = now.replace(hour=15, minute=0, second=0, microsecond=0)
 
         return market_open <= now < market_close
 
