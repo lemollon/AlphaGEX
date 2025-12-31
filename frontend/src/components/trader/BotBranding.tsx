@@ -556,6 +556,7 @@ interface PageHeaderProps {
   lastHeartbeat?: string
   onRefresh?: () => void
   isRefreshing?: boolean
+  scanIntervalMinutes?: number  // How often the bot scans (in minutes)
 }
 
 export function BotPageHeader({
@@ -564,6 +565,7 @@ export function BotPageHeader({
   lastHeartbeat,
   onRefresh,
   isRefreshing,
+  scanIntervalMinutes = 5,  // Default to 5 minutes for most bots
 }: PageHeaderProps) {
   const brand = BOT_BRANDS[botName]
   const Icon = brand.icon
@@ -590,6 +592,7 @@ export function BotPageHeader({
           {lastHeartbeat && (
             <DataFreshnessIndicator
               lastUpdated={lastHeartbeat}
+              refreshInterval={scanIntervalMinutes * 60}  // Convert minutes to seconds
               onRefresh={onRefresh}
               isRefreshing={isRefreshing}
               className="text-white/70"

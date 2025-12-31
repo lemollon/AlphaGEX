@@ -197,6 +197,51 @@ def _get_heartbeat(bot_name: str) -> dict:
         }
 
 
+def _is_bot_actually_active(heartbeat: dict, scan_interval_minutes: int = 5) -> tuple[bool, str]:
+    """
+    Determine if a bot is actually active based on heartbeat status and recency.
+
+    Returns:
+        (is_active, reason) tuple
+    """
+    status = heartbeat.get('status', 'UNKNOWN')
+
+    # These statuses indicate the bot is NOT active/healthy
+    inactive_statuses = {
+        'UNAVAILABLE': 'Trader not initialized',
+        'ERROR': 'Encountered an error',
+        'KILLED': 'Stopped by kill switch',
+        'NEVER_RUN': 'Has never run',
+        'UNKNOWN': 'Status unknown'
+    }
+
+    if status in inactive_statuses:
+        return False, inactive_statuses[status]
+
+    # Check heartbeat recency
+    last_scan_iso = heartbeat.get('last_scan_iso')
+    if not last_scan_iso:
+        return False, 'No heartbeat recorded'
+
+    try:
+        last_scan_time = datetime.fromisoformat(last_scan_iso)
+        now = datetime.now(last_scan_time.tzinfo)
+        age_seconds = (now - last_scan_time).total_seconds()
+
+        # If heartbeat is older than 2x scan interval, consider it stale/crashed
+        max_age_seconds = scan_interval_minutes * 60 * 2
+        if age_seconds > max_age_seconds:
+            return False, f'Heartbeat stale ({int(age_seconds)}s old, max {max_age_seconds}s)'
+    except Exception as e:
+        logger.debug(f"Could not parse heartbeat time: {e}")
+
+    # Active statuses
+    if status in ('SCAN_COMPLETE', 'TRADED', 'MARKET_CLOSED', 'BEFORE_WINDOW', 'AFTER_WINDOW'):
+        return True, f'Running ({status})'
+
+    return True, f'Running ({status})'
+
+
 @router.get("/status")
 async def get_pegasus_status():
     """
@@ -278,6 +323,10 @@ async def get_pegasus_status():
         in_window = is_weekday and start_time <= now <= end_time
         trading_window_status = "OPEN" if in_window else "CLOSED"
 
+        # Determine if PEGASUS is actually active based on heartbeat
+        scan_interval = 5
+        is_active, active_reason = _is_bot_actually_active(heartbeat, scan_interval)
+
         return {
             "success": True,
             "data": {
@@ -296,8 +345,9 @@ async def get_pegasus_status():
                 "trading_window_end": entry_end,
                 "high_water_mark": starting_capital,
                 "current_time": current_time_str,
-                "is_active": True,
-                "scan_interval_minutes": 5,
+                "is_active": is_active,
+                "active_reason": active_reason,
+                "scan_interval_minutes": scan_interval,
                 "heartbeat": heartbeat,
                 "tradier_connected": tradier_connected,
                 "tradier_for_prices": tradier_connected,
@@ -329,8 +379,11 @@ async def get_pegasus_status():
 
     try:
         status = pegasus.get_status()
-        status['is_active'] = True
-        status['scan_interval_minutes'] = 5
+        scan_interval = 5
+        is_active, active_reason = _is_bot_actually_active(heartbeat, scan_interval)
+        status['is_active'] = is_active
+        status['active_reason'] = active_reason
+        status['scan_interval_minutes'] = scan_interval
         status['heartbeat'] = heartbeat
         # Ensure all required fields are present
         status['in_trading_window'] = in_window

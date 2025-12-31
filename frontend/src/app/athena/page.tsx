@@ -344,6 +344,7 @@ export default function AthenaPage() {
             lastHeartbeat={status?.heartbeat?.last_scan_iso || undefined}
             onRefresh={handleRefresh}
             isRefreshing={statusLoading}
+            scanIntervalMinutes={status?.scan_interval_minutes || 5}
           />
 
           {/* Quick Stats */}

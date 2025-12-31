@@ -183,6 +183,55 @@ def _get_heartbeat(bot_name: str) -> dict:
         }
 
 
+def _is_ares_actually_active(heartbeat: dict, scan_interval_minutes: int = 5) -> tuple[bool, str]:
+    """
+    Determine if ARES is actually active based on heartbeat status and recency.
+
+    Returns:
+        (is_active, reason) tuple
+    """
+    # Check heartbeat status first
+    status = heartbeat.get('status', 'UNKNOWN')
+
+    # These statuses indicate ARES is NOT active/healthy
+    inactive_statuses = {
+        'UNAVAILABLE': 'ARES trader not initialized',
+        'ERROR': 'ARES encountered an error',
+        'KILLED': 'ARES stopped by kill switch',
+        'NEVER_RUN': 'ARES has never run',
+        'UNKNOWN': 'ARES status unknown'
+    }
+
+    if status in inactive_statuses:
+        return False, inactive_statuses[status]
+
+    # Check heartbeat recency
+    last_scan_iso = heartbeat.get('last_scan_iso')
+    if not last_scan_iso:
+        return False, 'No heartbeat recorded'
+
+    try:
+        from datetime import datetime
+        last_scan_time = datetime.fromisoformat(last_scan_iso)
+        now = datetime.now(last_scan_time.tzinfo)
+        age_seconds = (now - last_scan_time).total_seconds()
+
+        # If heartbeat is older than 2x scan interval, consider it stale/crashed
+        max_age_seconds = scan_interval_minutes * 60 * 2
+        if age_seconds > max_age_seconds:
+            return False, f'Heartbeat stale ({int(age_seconds)}s old, max {max_age_seconds}s)'
+    except Exception as e:
+        logger.debug(f"Could not parse heartbeat time: {e}")
+        # If we can't parse, assume it's okay
+
+    # Active statuses
+    if status in ('SCAN_COMPLETE', 'TRADED', 'MARKET_CLOSED', 'BEFORE_WINDOW', 'AFTER_WINDOW'):
+        return True, f'Running ({status})'
+
+    # Unknown but recent - assume active
+    return True, f'Running ({status})'
+
+
 def _get_tradier_account_balance() -> dict:
     """
     Get account balance from Tradier API.
@@ -376,6 +425,10 @@ async def get_ares_status():
             capital_message = f"ERROR: Not connected to Tradier - {tradier_error}"
             logger.error(f"ARES Tradier connection failed: {tradier_error}")
 
+        # Determine if ARES is actually active based on heartbeat
+        scan_interval = 5
+        is_active, active_reason = _is_ares_actually_active(heartbeat, scan_interval)
+
         return {
             "success": True,
             "data": {
@@ -395,8 +448,9 @@ async def get_ares_status():
                 "trading_window_end": entry_end,
                 "high_water_mark": capital,
                 "current_time": current_time_str,
-                "is_active": True,  # Bot is always active, just may not be trading
-                "scan_interval_minutes": 5,
+                "is_active": is_active,
+                "active_reason": active_reason,
+                "scan_interval_minutes": scan_interval,
                 "heartbeat": heartbeat,
                 "sandbox_connected": sandbox_connected,
                 "tradier_error": tradier_error,
@@ -415,8 +469,11 @@ async def get_ares_status():
 
     try:
         status = ares.get_status()
-        status['is_active'] = True
-        status['scan_interval_minutes'] = 5
+        scan_interval = 5
+        is_active, active_reason = _is_ares_actually_active(heartbeat, scan_interval)
+        status['is_active'] = is_active
+        status['active_reason'] = active_reason
+        status['scan_interval_minutes'] = scan_interval
         status['heartbeat'] = heartbeat
         # Ensure all required fields are present
         status['in_trading_window'] = in_window
@@ -436,19 +493,23 @@ async def get_ares_status():
             status['open_positions'] = 0
 
         # Add Tradier connection status (required by frontend)
-        if 'sandbox_connected' not in status:
-            tradier_balance = _get_tradier_account_balance()
-            if tradier_balance.get('connected') and tradier_balance.get('total_equity', 0) > 0:
-                status['sandbox_connected'] = True
-                status['tradier_error'] = None
-                status['tradier_account_id'] = tradier_balance.get('account_id')
-                # Update capital from Tradier if not already set from instance
-                if status.get('capital', 0) <= 0:
-                    status['capital'] = round(tradier_balance['total_equity'], 2)
-            else:
-                status['sandbox_connected'] = False
-                status['tradier_error'] = tradier_balance.get('error', 'Unknown connection error')
-                status['tradier_account_id'] = None
+        # ALWAYS fetch Tradier balance to ensure we have the real account balance
+        tradier_balance = _get_tradier_account_balance()
+        if tradier_balance.get('connected') and tradier_balance.get('total_equity', 0) > 0:
+            status['sandbox_connected'] = True
+            status['tradier_error'] = None
+            status['tradier_account_id'] = tradier_balance.get('account_id')
+            # ALWAYS update capital from Tradier when connected - this is the real balance
+            status['capital'] = round(tradier_balance['total_equity'], 2)
+            status['capital_source'] = 'tradier'
+            status['message'] = f"Connected to Tradier {'sandbox' if tradier_balance.get('sandbox') else 'production'}"
+        else:
+            status['sandbox_connected'] = False
+            status['tradier_error'] = tradier_balance.get('error', 'Unknown connection error')
+            status['tradier_account_id'] = None
+            status['capital_source'] = 'paper_fallback'
+            status['message'] = f"ERROR: Not connected to Tradier - {status['tradier_error']}"
+            logger.warning(f"ARES Tradier connection failed: {status['tradier_error']}")
 
         return {
             "success": True,

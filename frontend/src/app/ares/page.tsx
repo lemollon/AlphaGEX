@@ -560,6 +560,7 @@ export default function AresPage() {
             lastHeartbeat={status?.heartbeat?.last_scan_iso || undefined}
             onRefresh={handleRefresh}
             isRefreshing={statusLoading}
+            scanIntervalMinutes={status?.scan_interval_minutes || 5}
           />
 
           {/* Tradier Connection Error Banner */}
