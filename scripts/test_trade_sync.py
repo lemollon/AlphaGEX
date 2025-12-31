@@ -209,7 +209,8 @@ class TradeSyncValidator:
             cursor = conn.cursor()
 
             # Get daily P&L from closed positions
-            # Use explicit cast for timezone conversion (PostgreSQL compatibility)
+            # ARES stores close_time as TEXT - cast to timestamp for comparison
+            # Use Central Time for all comparisons (America/Chicago)
             cursor.execute("""
                 SELECT
                     DATE(close_time::timestamp AT TIME ZONE 'America/Chicago') as trade_date,
@@ -217,7 +218,7 @@ class TradeSyncValidator:
                     SUM(realized_pnl) as daily_pnl
                 FROM ares_positions
                 WHERE status IN ('closed', 'expired')
-                AND close_time >= NOW() - INTERVAL '30 days'
+                AND close_time::timestamp >= (NOW() AT TIME ZONE 'America/Chicago') - INTERVAL '30 days'
                 GROUP BY DATE(close_time::timestamp AT TIME ZONE 'America/Chicago')
                 ORDER BY trade_date
             """)
@@ -365,7 +366,7 @@ class TradeSyncValidator:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            # Use explicit cast for timezone conversion (PostgreSQL compatibility)
+            # Use Central Time for all comparisons (America/Chicago)
             cursor.execute("""
                 SELECT
                     DATE(exit_time::timestamp AT TIME ZONE 'America/Chicago') as trade_date,
@@ -373,7 +374,7 @@ class TradeSyncValidator:
                     SUM(realized_pnl) as daily_pnl
                 FROM apache_positions
                 WHERE status IN ('closed', 'expired')
-                AND exit_time >= NOW() - INTERVAL '30 days'
+                AND exit_time >= (NOW() AT TIME ZONE 'America/Chicago') - INTERVAL '30 days'
                 GROUP BY DATE(exit_time::timestamp AT TIME ZONE 'America/Chicago')
                 ORDER BY trade_date
             """)
@@ -496,7 +497,7 @@ class TradeSyncValidator:
             conn = self.get_connection()
             cursor = conn.cursor()
 
-            # Use explicit cast for timezone conversion (PostgreSQL compatibility)
+            # Use Central Time for all comparisons (America/Chicago)
             cursor.execute("""
                 SELECT
                     DATE(close_time::timestamp AT TIME ZONE 'America/Chicago') as trade_date,
@@ -504,7 +505,7 @@ class TradeSyncValidator:
                     SUM(realized_pnl) as daily_pnl
                 FROM pegasus_positions
                 WHERE status IN ('closed', 'expired')
-                AND close_time >= NOW() - INTERVAL '30 days'
+                AND close_time >= (NOW() AT TIME ZONE 'America/Chicago') - INTERVAL '30 days'
                 GROUP BY DATE(close_time::timestamp AT TIME ZONE 'America/Chicago')
                 ORDER BY trade_date
             """)
@@ -764,6 +765,7 @@ def cleanup_stale_positions(dry_run: bool = True):
         print(f"  ❌ ATHENA cleanup failed: {e}")
 
     # ARES (ares_positions)
+    # Note: ARES stores expiration as TEXT, need to cast for comparison
     try:
         conn = get_connection()
         cursor = conn.cursor()
@@ -771,7 +773,7 @@ def cleanup_stale_positions(dry_run: bool = True):
         cursor.execute("""
             SELECT position_id, expiration, total_credit, contracts
             FROM ares_positions
-            WHERE status = 'open' AND expiration < %s
+            WHERE status = 'open' AND expiration::date < %s
         """, (today,))
         stale_ares = cursor.fetchall()
 
