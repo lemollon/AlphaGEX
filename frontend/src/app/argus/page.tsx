@@ -354,8 +354,10 @@ export default function ArgusPage() {
   // EOD Strike Statistics
   const [eodStats, setEodStats] = useState<EODStrikeStat[]>([])
 
+  // EMA smoothed maxGamma state
+  const [smoothedMaxGamma, setSmoothedMaxGamma] = useState<number>(1)
+
   // Refs for stability improvements
-  const smoothedMaxGammaRef = useRef<number | null>(null)
   const initialLoadRef = useRef(true)
   const previousStrikesRef = useRef<Map<number, StrikeData>>(new Map())
 
@@ -366,10 +368,29 @@ export default function ArgusPage() {
     setGammaData(null)
     setTomorrowGammaData(null)
     setError(null)
-    smoothedMaxGammaRef.current = null
+    setSmoothedMaxGamma(1)
     previousStrikesRef.current = new Map()
     initialLoadRef.current = true
   }, [selectedSymbol])
+
+  // EMA smoothing for maxGamma to prevent scale jumping
+  const EMA_ALPHA = 0.3  // 30% new value, 70% previous - same as backend EM smoothing
+  const rawMaxGamma = gammaData?.strikes && gammaData.strikes.length > 0
+    ? Math.max(...gammaData.strikes.map(s => Math.abs(s.net_gamma || 0)), 1)
+    : 1
+
+  useEffect(() => {
+    if (rawMaxGamma > 0) {
+      setSmoothedMaxGamma(prev => {
+        if (prev === 1 && rawMaxGamma !== 1) {
+          // First real value - initialize immediately
+          return rawMaxGamma
+        }
+        // EMA: smoothed = alpha * new + (1 - alpha) * previous
+        return EMA_ALPHA * rawMaxGamma + (1 - EMA_ALPHA) * prev
+      })
+    }
+  }, [rawMaxGamma])
 
   // Polling intervals (in milliseconds)
   const FAST_POLL_INTERVAL = 15000  // 15 seconds for gamma data
@@ -1096,29 +1117,12 @@ export default function ArgusPage() {
     )
   }
 
-  // EMA smoothed maxGamma to prevent scale jumping
-  const EMA_ALPHA = 0.3  // 30% new value, 70% previous - same as backend EM smoothing
-  const rawMaxGamma = gammaData?.strikes
-    ? Math.max(...gammaData.strikes.map(s => Math.abs(s.net_gamma)), 1)
-    : 1
-
-  // Apply EMA smoothing to maxGamma
-  const maxGamma = useMemo(() => {
-    if (smoothedMaxGammaRef.current === null) {
-      // First load: use raw value
-      smoothedMaxGammaRef.current = rawMaxGamma
-      return rawMaxGamma
-    }
-
-    // EMA: smoothed = alpha * new + (1 - alpha) * previous
-    const smoothed = EMA_ALPHA * rawMaxGamma + (1 - EMA_ALPHA) * smoothedMaxGammaRef.current
-    smoothedMaxGammaRef.current = smoothed
-    return smoothed
-  }, [rawMaxGamma])
+  // maxGamma is smoothed via useEffect declared above, before early returns
+  const maxGamma = smoothedMaxGamma
 
   // Calculate maxGamma for tomorrow's data (independent scale)
-  const tomorrowMaxGamma = tomorrowGammaData?.strikes
-    ? Math.max(...tomorrowGammaData.strikes.map(s => Math.abs(s.net_gamma)), 1)
+  const tomorrowMaxGamma = tomorrowGammaData?.strikes && tomorrowGammaData.strikes.length > 0
+    ? Math.max(...tomorrowGammaData.strikes.map(s => Math.abs(s.net_gamma || 0)), 1)
     : 1
 
   const highPriorityAlerts = alerts.filter(a => a.priority === 'HIGH' || a.priority === 'MEDIUM')
