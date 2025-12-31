@@ -658,6 +658,146 @@ class ATHENATrader:
             'details': results
         }
 
+    def process_expired_positions(self) -> Dict[str, Any]:
+        """
+        Process expired 0DTE positions at end of day.
+
+        Called by scheduler at 3:00 PM CT to handle positions that expired
+        during the trading day. For directional spreads:
+        - Bull Call Spread: max profit if price >= long strike
+        - Bear Put Spread: max profit if price <= long strike
+        - Otherwise: calculate value based on final price
+
+        Returns dict with processing results for logging.
+        """
+        now = datetime.now(CENTRAL_TZ)
+        today = now.strftime("%Y-%m-%d")
+
+        result = {
+            'processed_count': 0,
+            'total_pnl': 0.0,
+            'positions': [],
+            'errors': []
+        }
+
+        try:
+            # Get all open positions expiring today or earlier
+            positions = self.db.get_open_positions()
+            expired_positions = [p for p in positions if p.expiration <= today]
+
+            if not expired_positions:
+                logger.info("ATHENA EOD: No expired positions to process")
+                return result
+
+            logger.info(f"ATHENA EOD: Processing {len(expired_positions)} expired position(s)")
+
+            for pos in expired_positions:
+                try:
+                    # Get final underlying price for P&L calculation
+                    current_price = self.executor._get_current_price()
+                    if not current_price:
+                        current_price = pos.underlying_at_entry
+                        logger.warning(f"Could not get current price, using entry: ${current_price}")
+
+                    # Calculate final P&L based on where price ended
+                    final_pnl = self._calculate_expiration_pnl(pos, current_price)
+
+                    # Mark position as expired in database
+                    self.db.expire_position(pos.position_id, final_pnl)
+
+                    # Record outcome for ML feedback
+                    close_reason = "EXPIRED_PROFIT" if final_pnl > 0 else "EXPIRED_LOSS"
+                    self._record_oracle_outcome(pos, close_reason, final_pnl)
+
+                    # Record to Learning Memory
+                    if pos.position_id in self._prediction_ids:
+                        self._record_learning_memory_outcome(
+                            self._prediction_ids.pop(pos.position_id),
+                            final_pnl,
+                            close_reason
+                        )
+
+                    result['processed_count'] += 1
+                    result['total_pnl'] += final_pnl
+                    result['positions'].append({
+                        'position_id': pos.position_id,
+                        'final_price': current_price,
+                        'pnl': final_pnl,
+                        'status': 'expired'
+                    })
+
+                    logger.info(
+                        f"ATHENA EOD: Expired {pos.position_id} - "
+                        f"Final price: ${current_price:.2f}, P&L: ${final_pnl:.2f}"
+                    )
+
+                except Exception as e:
+                    logger.error(f"ATHENA EOD: Failed to process {pos.position_id}: {e}")
+                    result['errors'].append(str(e))
+
+            self.db.log("INFO", f"EOD processed {result['processed_count']} positions, P&L: ${result['total_pnl']:.2f}")
+
+        except Exception as e:
+            logger.error(f"ATHENA EOD processing failed: {e}")
+            result['errors'].append(str(e))
+
+        return result
+
+    def _calculate_expiration_pnl(self, pos: SpreadPosition, final_price: float) -> float:
+        """
+        Calculate P&L at expiration based on final underlying price.
+
+        For directional debit spreads:
+        - Bull Call Spread: Long lower strike call, short higher strike call
+          - Max profit when price >= long strike + spread_width
+          - Max loss when price <= long strike
+        - Bear Put Spread: Long higher strike put, short lower strike put
+          - Max profit when price <= long strike - spread_width
+          - Max loss when price >= long strike
+        """
+        contracts = pos.contracts
+        entry_cost = pos.entry_debit * 100 * contracts  # Total cost paid
+        spread_width = pos.spread_width  # Max value the spread can reach
+
+        # Determine spread type from direction
+        is_bullish = pos.direction.lower() in ('bull', 'bullish', 'call')
+
+        if is_bullish:
+            # Bull Call Spread: long_strike is lower, short_strike is higher
+            # Value at expiration depends on where price is relative to strikes
+            long_strike = pos.long_strike
+            short_strike = pos.short_strike
+
+            if final_price >= short_strike:
+                # Max profit: spread is worth full width
+                spread_value = spread_width
+            elif final_price <= long_strike:
+                # Max loss: spread is worthless
+                spread_value = 0
+            else:
+                # Partial value: spread is worth (price - long_strike)
+                spread_value = final_price - long_strike
+        else:
+            # Bear Put Spread: long_strike is higher, short_strike is lower
+            long_strike = pos.long_strike
+            short_strike = pos.short_strike
+
+            if final_price <= short_strike:
+                # Max profit: spread is worth full width
+                spread_value = spread_width
+            elif final_price >= long_strike:
+                # Max loss: spread is worthless
+                spread_value = 0
+            else:
+                # Partial value: spread is worth (long_strike - price)
+                spread_value = long_strike - final_price
+
+        # P&L = spread value at expiration - entry cost
+        final_value = spread_value * 100 * contracts
+        realized_pnl = final_value - entry_cost
+
+        return realized_pnl
+
 
 def run_athena_v2(config: Optional[ATHENAConfig] = None) -> ATHENATrader:
     """Factory function to create and return ATHENA trader"""
