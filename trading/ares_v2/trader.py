@@ -780,6 +780,130 @@ class ARESTrader:
             'details': results
         }
 
+    def process_expired_positions(self) -> Dict[str, Any]:
+        """
+        Process expired 0DTE positions at end of day.
+
+        Called by scheduler at 3:05 PM CT to handle positions that expired
+        during the trading day. For 0DTE options:
+        - If price stayed within IC wings → max profit (credit received)
+        - If price breached a wing → calculate loss based on final price
+
+        Returns dict with processing results for logging.
+        """
+        now = datetime.now(CENTRAL_TZ)
+        today = now.strftime("%Y-%m-%d")
+
+        result = {
+            'processed_count': 0,
+            'total_pnl': 0.0,
+            'positions': [],
+            'errors': []
+        }
+
+        try:
+            # Get all open positions expiring today
+            positions = self.db.get_open_positions()
+            expired_positions = [p for p in positions if p.expiration <= today]
+
+            if not expired_positions:
+                logger.info("ARES EOD: No expired positions to process")
+                return result
+
+            logger.info(f"ARES EOD: Processing {len(expired_positions)} expired position(s)")
+
+            for pos in expired_positions:
+                try:
+                    # Get final underlying price for P&L calculation
+                    current_price = self.executor._get_current_price()
+                    if not current_price:
+                        current_price = pos.underlying_at_entry
+                        logger.warning(f"Could not get current price, using entry: ${current_price}")
+
+                    # Calculate final P&L based on where price ended
+                    final_pnl = self._calculate_expiration_pnl(pos, current_price)
+
+                    # Mark position as expired in database
+                    self.db.expire_position(pos.position_id, final_pnl)
+
+                    # Record outcome for ML feedback
+                    close_reason = "EXPIRED_MAX_PROFIT" if final_pnl > 0 else "EXPIRED_LOSS"
+                    self._record_oracle_outcome(pos, close_reason, final_pnl)
+
+                    # Record to Learning Memory
+                    if pos.position_id in self._prediction_ids:
+                        self._record_learning_memory_outcome(
+                            self._prediction_ids.pop(pos.position_id),
+                            final_pnl,
+                            close_reason
+                        )
+
+                    result['processed_count'] += 1
+                    result['total_pnl'] += final_pnl
+                    result['positions'].append({
+                        'position_id': pos.position_id,
+                        'final_price': current_price,
+                        'pnl': final_pnl,
+                        'status': 'expired'
+                    })
+
+                    logger.info(
+                        f"ARES EOD: Expired {pos.position_id} - "
+                        f"Final price: ${current_price:.2f}, P&L: ${final_pnl:.2f}"
+                    )
+
+                except Exception as e:
+                    logger.error(f"ARES EOD: Failed to process {pos.position_id}: {e}")
+                    result['errors'].append(str(e))
+
+            self.db.log("INFO", f"EOD processed {result['processed_count']} positions, P&L: ${result['total_pnl']:.2f}")
+
+        except Exception as e:
+            logger.error(f"ARES EOD processing failed: {e}")
+            result['errors'].append(str(e))
+
+        return result
+
+    def _calculate_expiration_pnl(self, pos: IronCondorPosition, final_price: float) -> float:
+        """
+        Calculate P&L at expiration based on final underlying price.
+
+        For 0DTE Iron Condors:
+        - If price between short strikes → max profit (keep full credit)
+        - If price outside long strikes → max loss
+        - If price between short and long → partial loss
+        """
+        contracts = pos.contracts
+        credit_received = pos.total_credit * 100 * contracts
+
+        # Check if price stayed in the "safe zone"
+        if pos.put_short_strike <= final_price <= pos.call_short_strike:
+            # Max profit - IC expired worthless
+            return credit_received
+
+        # Check put side breach
+        if final_price < pos.put_short_strike:
+            if final_price <= pos.put_long_strike:
+                # Max loss on put side
+                put_loss = pos.spread_width * 100 * contracts
+            else:
+                # Partial loss on put side
+                put_loss = (pos.put_short_strike - final_price) * 100 * contracts
+            return credit_received - put_loss
+
+        # Check call side breach
+        if final_price > pos.call_short_strike:
+            if final_price >= pos.call_long_strike:
+                # Max loss on call side
+                call_loss = pos.spread_width * 100 * contracts
+            else:
+                # Partial loss on call side
+                call_loss = (final_price - pos.call_short_strike) * 100 * contracts
+            return credit_received - call_loss
+
+        # Should not reach here
+        return credit_received
+
 
 def run_ares_v2(config: Optional[ARESConfig] = None) -> ARESTrader:
     """Factory function to create ARES trader"""
