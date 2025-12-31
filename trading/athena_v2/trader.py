@@ -54,6 +54,14 @@ except ImportError:
     OracleBotName = None
     OracleTradeOutcome = None
 
+# Learning Memory for self-improvement tracking
+try:
+    from ai.gexis_learning_memory import get_learning_memory
+    LEARNING_MEMORY_AVAILABLE = True
+except ImportError:
+    LEARNING_MEMORY_AVAILABLE = False
+    get_learning_memory = None
+
 
 class ATHENATrader:
     """
@@ -79,6 +87,9 @@ class ATHENATrader:
         # Initialize components
         self.signals = SignalGenerator(self.config)
         self.executor = OrderExecutor(self.config)
+
+        # Learning Memory prediction tracking (position_id -> prediction_id)
+        self._prediction_ids: Dict[str, str] = {}
 
         logger.info(
             f"ATHENA V2 initialized: mode={self.config.mode.value}, "
@@ -262,6 +273,14 @@ class ATHENATrader:
                     # Record outcome to Oracle for ML feedback loop
                     self._record_oracle_outcome(pos, reason, pnl)
 
+                    # Record outcome to Learning Memory for self-improvement
+                    if pos.position_id in self._prediction_ids:
+                        self._record_learning_memory_outcome(
+                            self._prediction_ids.pop(pos.position_id),
+                            pnl,
+                            reason
+                        )
+
                     # Record to circuit breaker
                     if CIRCUIT_BREAKER_AVAILABLE and record_trade_pnl:
                         try:
@@ -306,6 +325,69 @@ class ATHENATrader:
 
         except Exception as e:
             logger.warning(f"ATHENA: Oracle outcome recording failed: {e}")
+
+    def _record_learning_memory_prediction(self, pos: SpreadPosition, signal) -> Optional[str]:
+        """
+        Record trade prediction to Learning Memory for self-improvement tracking.
+
+        Returns prediction_id if recorded, None otherwise.
+        """
+        if not LEARNING_MEMORY_AVAILABLE or not get_learning_memory:
+            return None
+
+        try:
+            memory = get_learning_memory()
+
+            # Build context from signal and position
+            context = {
+                "gex_regime": signal.gex_regime if hasattr(signal, 'gex_regime') else "unknown",
+                "vix": signal.vix if hasattr(signal, 'vix') else 20.0,
+                "spot_price": signal.spot_price if hasattr(signal, 'spot_price') else 590.0,
+                "direction": signal.direction if hasattr(signal, 'direction') else "unknown",
+                "call_wall": signal.call_wall if hasattr(signal, 'call_wall') else 0,
+                "put_wall": signal.put_wall if hasattr(signal, 'put_wall') else 0,
+                "flip_point": getattr(signal, 'flip_point', 0),
+                "day_of_week": datetime.now(CENTRAL_TZ).weekday()
+            }
+
+            # Record directional prediction
+            prediction = f"{signal.direction if hasattr(signal, 'direction') else 'directional'} spread profitable"
+            prediction_id = memory.record_prediction(
+                prediction_type="directional_spread_outcome",
+                prediction=prediction,
+                confidence=signal.confidence / 100 if hasattr(signal, 'confidence') else 0.7,
+                context=context
+            )
+
+            logger.info(f"ATHENA: Learning Memory prediction recorded: {prediction_id}")
+            return prediction_id
+
+        except Exception as e:
+            logger.warning(f"ATHENA: Learning Memory prediction failed: {e}")
+            return None
+
+    def _record_learning_memory_outcome(self, prediction_id: str, pnl: float, close_reason: str):
+        """Record trade outcome to Learning Memory for accuracy tracking."""
+        if not LEARNING_MEMORY_AVAILABLE or not get_learning_memory or not prediction_id:
+            return
+
+        try:
+            memory = get_learning_memory()
+
+            # Determine if prediction was correct (profitable = correct)
+            was_correct = pnl > 0
+
+            memory.record_outcome(
+                prediction_id=prediction_id,
+                outcome=f"{close_reason}: ${pnl:.2f}",
+                was_correct=was_correct,
+                notes=f"P&L: ${pnl:.2f}, Reason: {close_reason}"
+            )
+
+            logger.info(f"ATHENA: Learning Memory outcome recorded: correct={was_correct}, P&L=${pnl:.2f}")
+
+        except Exception as e:
+            logger.warning(f"ATHENA: Learning Memory outcome recording failed: {e}")
 
     def _check_exit_conditions(
         self,
@@ -405,6 +487,11 @@ class ATHENATrader:
             logger.error(f"Position {position.position_id} executed but not saved to DB!")
 
         self.db.log("INFO", f"Opened: {position.position_id}", position.to_dict())
+
+        # Record prediction to Learning Memory for self-improvement tracking
+        prediction_id = self._record_learning_memory_prediction(position, signal)
+        if prediction_id:
+            self._prediction_ids[position.position_id] = prediction_id
 
         return position, signal
 
@@ -551,6 +638,13 @@ class ATHENATrader:
                 )
                 # Record outcome to Oracle for ML feedback
                 self._record_oracle_outcome(pos, reason, pnl)
+                # Record outcome to Learning Memory for self-improvement
+                if pos.position_id in self._prediction_ids:
+                    self._record_learning_memory_outcome(
+                        self._prediction_ids.pop(pos.position_id),
+                        pnl,
+                        reason
+                    )
             results.append({
                 'position_id': pos.position_id,
                 'success': success,
