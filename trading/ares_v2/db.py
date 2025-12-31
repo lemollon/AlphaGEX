@@ -377,6 +377,20 @@ class ARESDatabase:
         except Exception:
             return False
 
+    def get_trades_today_count(self, date: str) -> int:
+        """Get count of trades opened today (for multi-trade-per-day support)"""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    SELECT COUNT(*)
+                    FROM ares_positions
+                    WHERE DATE(open_time AT TIME ZONE 'America/Chicago') = %s
+                """, (date,))
+                return c.fetchone()[0]
+        except Exception:
+            return 0
+
     # =========================================================================
     # SIGNAL LOGGING
     # =========================================================================

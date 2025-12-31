@@ -91,8 +91,9 @@ class ARESTrader:
         """
         Run a single trading cycle.
 
-        ARES only trades once per day.
-        This method is called by the scheduler.
+        ARES can trade up to max_trades_per_day (default: 3).
+        Allows re-entry after a position closes profitably.
+        This method is called by the scheduler every 5 minutes.
         """
         now = datetime.now(CENTRAL_TZ)
         today = now.strftime("%Y-%m-%d")
@@ -119,25 +120,55 @@ class ARESTrader:
         try:
             self.db.update_heartbeat("SCANNING", f"Cycle at {now.strftime('%I:%M %p')}")
 
-            # Step 1: Check trading conditions
-            can_trade, reason = self._check_trading_conditions(now, today)
-            if not can_trade:
-                result['action'] = 'skip'
-                result['details']['skip_reason'] = reason
-                result['errors'].append(reason)
-                self.db.log("INFO", f"Skipping: {reason}")
-
-                # Log skip to scan activity
-                self._log_scan_activity(result, scan_context, reason)
-                return result
-
-            # Step 2: Check and manage existing positions
+            # Step 1: ALWAYS check and manage existing positions FIRST
+            # This ensures we monitor positions even if we can't open new ones
             closed_count, close_pnl = self._manage_positions()
             result['positions_closed'] = closed_count
             result['realized_pnl'] = close_pnl
 
-            # Step 3: Check Oracle strategy recommendation
-            # Oracle may suggest ATHENA (directional) instead of ARES (IC) in high VIX
+            if closed_count > 0:
+                result['action'] = 'closed'
+                self.db.log("INFO", f"Closed {closed_count} position(s), P&L: ${close_pnl:.2f}")
+
+            # Step 2: Check basic trading conditions (time window, weekend, circuit breaker)
+            can_trade, reason = self._check_basic_conditions(now)
+            if not can_trade:
+                if result['action'] == 'none':
+                    result['action'] = 'skip'
+                result['details']['skip_reason'] = reason
+                self.db.log("INFO", f"Entry skipped: {reason}")
+                self._log_scan_activity(result, scan_context, reason)
+                self._update_daily_summary(today, result)
+                self.db.update_heartbeat("IDLE", f"Cycle complete: {result['action']}")
+                return result
+
+            # Step 3: Check daily trade limit (max 3 trades per day)
+            trades_today = self.db.get_trades_today_count(today)
+            max_trades = getattr(self.config, 'max_trades_per_day', 3)
+            open_positions = self.db.get_position_count()
+
+            if trades_today >= max_trades:
+                if result['action'] == 'none':
+                    result['action'] = 'monitoring'
+                result['details']['skip_reason'] = f'Daily limit reached ({trades_today}/{max_trades} trades)'
+                self.db.log("DEBUG", f"Daily trade limit reached: {trades_today}/{max_trades}")
+                self._log_scan_activity(result, scan_context, result['details']['skip_reason'])
+                self._update_daily_summary(today, result)
+                self.db.update_heartbeat("IDLE", f"Cycle complete: {result['action']}")
+                return result
+
+            # Step 4: Check if we already have an open position (only 1 at a time)
+            if open_positions > 0:
+                if result['action'] == 'none':
+                    result['action'] = 'monitoring'
+                result['details']['skip_reason'] = f'Position already open ({open_positions})'
+                self.db.log("DEBUG", f"Already have {open_positions} open position(s)")
+                self._log_scan_activity(result, scan_context, result['details']['skip_reason'])
+                self._update_daily_summary(today, result)
+                self.db.update_heartbeat("IDLE", f"Cycle complete: {result['action']}")
+                return result
+
+            # Step 5: Check Oracle strategy recommendation
             strategy_rec = self._check_strategy_recommendation()
             if strategy_rec:
                 scan_context['strategy_recommendation'] = {
@@ -147,56 +178,52 @@ class ARESTrader:
                     'reasoning': strategy_rec.reasoning if hasattr(strategy_rec, 'reasoning') else ''
                 }
 
-                # If Oracle recommends SKIP or DIRECTIONAL, log and potentially skip
                 if hasattr(strategy_rec, 'recommended_strategy'):
                     if strategy_rec.recommended_strategy == StrategyType.SKIP:
-                        result['action'] = 'skip'
+                        if result['action'] == 'none':
+                            result['action'] = 'skip'
                         result['details']['skip_reason'] = f"Oracle recommends SKIP: {strategy_rec.reasoning}"
-                        self.db.log("INFO", f"Oracle SKIP recommendation: {strategy_rec.reasoning}")
-                        self._log_scan_activity(result, scan_context, f"Oracle SKIP: {strategy_rec.reasoning}")
+                        self.db.log("INFO", f"Oracle SKIP: {strategy_rec.reasoning}")
+                        self._log_scan_activity(result, scan_context, result['details']['skip_reason'])
+                        self._update_daily_summary(today, result)
+                        self.db.update_heartbeat("IDLE", f"Cycle complete: {result['action']}")
                         return result
                     elif strategy_rec.recommended_strategy == StrategyType.DIRECTIONAL:
-                        # Log that ATHENA would be better, but continue with reduced confidence
-                        self.db.log("INFO", f"Oracle suggests ATHENA (directional): {strategy_rec.reasoning}")
+                        self.db.log("INFO", f"Oracle suggests ATHENA: {strategy_rec.reasoning}")
                         result['details']['oracle_suggests_athena'] = True
-                        # Apply size reduction based on IC suitability
                         if strategy_rec.ic_suitability < 0.4:
-                            result['action'] = 'skip'
-                            result['details']['skip_reason'] = f"IC suitability too low ({strategy_rec.ic_suitability:.0%}), consider ATHENA"
-                            self._log_scan_activity(result, scan_context, f"Low IC suitability, consider ATHENA")
+                            if result['action'] == 'none':
+                                result['action'] = 'skip'
+                            result['details']['skip_reason'] = f"IC suitability too low ({strategy_rec.ic_suitability:.0%})"
+                            self._log_scan_activity(result, scan_context, result['details']['skip_reason'])
+                            self._update_daily_summary(today, result)
+                            self.db.update_heartbeat("IDLE", f"Cycle complete: {result['action']}")
                             return result
 
-            # Step 4: Try to open new position (once per day)
-            if not self.db.has_traded_today(today):
-                position, signal = self._try_new_entry_with_context()
-                if position:
-                    result['trade_opened'] = True
-                    result['action'] = 'opened'
-                    result['details']['position'] = position.to_dict()
-                    scan_context['position'] = position
-                if signal:
-                    scan_context['signal'] = signal
-                    scan_context['market_data'] = {
-                        'underlying_price': signal.spot_price,
-                        'symbol': 'SPY',
-                        'vix': signal.vix,
-                        'expected_move': signal.expected_move,
-                    }
-                    scan_context['gex_data'] = {
-                        'regime': signal.gex_regime,
-                        'call_wall': signal.call_wall,
-                        'put_wall': signal.put_wall,
-                    }
-            else:
-                # Already traded today - log this explicitly
-                result['action'] = 'monitoring'
-                result['details']['skip_reason'] = 'Already traded today (1 trade/day limit)'
-                self.db.log("DEBUG", "Skipping entry check - already traded today")
+            # Step 6: Try to open new position
+            position, signal = self._try_new_entry_with_context()
+            if position:
+                result['trade_opened'] = True
+                result['action'] = 'opened' if result['action'] == 'none' else 'both'
+                result['details']['position'] = position.to_dict()
+                result['details']['trade_number'] = trades_today + 1
+                scan_context['position'] = position
+                self.db.log("INFO", f"Opened trade #{trades_today + 1} of {max_trades} today")
+            if signal:
+                scan_context['signal'] = signal
+                scan_context['market_data'] = {
+                    'underlying_price': signal.spot_price,
+                    'symbol': 'SPY',
+                    'vix': signal.vix,
+                    'expected_move': signal.expected_move,
+                }
+                scan_context['gex_data'] = {
+                    'regime': signal.gex_regime,
+                    'call_wall': signal.call_wall,
+                    'put_wall': signal.put_wall,
+                }
 
-            if result['positions_closed'] > 0:
-                result['action'] = 'closed' if result['action'] == 'none' else 'both'
-
-            # Step 4: Update daily summary
+            # Step 7: Update daily summary
             self._update_daily_summary(today, result)
 
             self.db.update_heartbeat("IDLE", f"Cycle complete: {result['action']}")
@@ -305,12 +332,8 @@ class ARESTrader:
         except Exception as e:
             logger.warning(f"Failed to log scan activity: {e}")
 
-    def _check_trading_conditions(
-        self,
-        now: datetime,
-        today: str
-    ) -> tuple[bool, str]:
-        """Check all conditions before trading"""
+    def _check_basic_conditions(self, now: datetime) -> tuple[bool, str]:
+        """Check basic trading conditions (time window, weekend, circuit breaker)"""
         # Weekend check
         if now.weekday() >= 5:
             return False, "Weekend"
@@ -325,10 +348,6 @@ class ARESTrader:
             return False, f"Before trading window ({self.config.entry_start})"
         if now > end_time:
             return False, f"After trading window ({self.config.entry_end})"
-
-        # Already traded today (ARES = 1 trade/day)
-        if self.db.has_traded_today(today):
-            return False, "Already traded today"
 
         # Circuit breaker
         if CIRCUIT_BREAKER_AVAILABLE and is_trading_enabled:
