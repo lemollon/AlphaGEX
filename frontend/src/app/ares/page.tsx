@@ -49,6 +49,7 @@ interface ARESStatus {
   mode: string
   ticker: string
   capital: number
+  capital_source?: string
   total_pnl: number
   trade_count: number
   win_rate: number
@@ -60,6 +61,10 @@ interface ARESStatus {
   is_active: boolean
   high_water_mark: number
   sandbox_connected?: boolean
+  tradier_error?: string
+  tradier_account_id?: string
+  source?: string
+  message?: string
   scan_interval_minutes?: number
   heartbeat?: Heartbeat
   config?: {
@@ -555,6 +560,29 @@ export default function AresPage() {
             isRefreshing={statusLoading}
           />
 
+          {/* Tradier Connection Error Banner */}
+          {status && !status.sandbox_connected && (
+            <div className="bg-red-900/30 border border-red-500/50 rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-red-400 mt-0.5 flex-shrink-0" />
+                <div className="flex-1">
+                  <h3 className="text-red-400 font-semibold">Tradier Not Connected</h3>
+                  <p className="text-gray-300 text-sm mt-1">
+                    ARES requires a Tradier connection for live trading. Currently showing paper capital ($100k).
+                  </p>
+                  {status.tradier_error && (
+                    <p className="text-red-300 text-xs mt-2 font-mono bg-red-900/20 p-2 rounded">
+                      Error: {status.tradier_error}
+                    </p>
+                  )}
+                  <p className="text-gray-400 text-xs mt-2">
+                    Check that TRADIER_SANDBOX_API_KEY and TRADIER_SANDBOX_ACCOUNT_ID are set in environment variables.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Quick Stats */}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             <StatCard
@@ -697,12 +725,24 @@ export default function AresPage() {
                     </span>
                   </div>
                   <div className="bg-gray-800/50 rounded-lg p-4">
-                    <span className="text-gray-500 text-sm block">Sandbox</span>
-                    <span className={`text-xl font-bold ${status?.sandbox_connected ? 'text-green-400' : 'text-gray-400'}`}>
-                      {status?.sandbox_connected ? 'CONNECTED' : 'N/A'}
+                    <span className="text-gray-500 text-sm block">Tradier</span>
+                    <span className={`text-xl font-bold ${status?.sandbox_connected ? 'text-green-400' : 'text-yellow-400'}`}>
+                      {status?.sandbox_connected ? 'CONNECTED' : 'PAPER MODE'}
                     </span>
+                    {!status?.sandbox_connected && status?.tradier_error && (
+                      <span className="text-xs text-gray-500 block mt-1" title={status.tradier_error}>
+                        {status.tradier_error.length > 30 ? status.tradier_error.substring(0, 30) + '...' : status.tradier_error}
+                      </span>
+                    )}
                   </div>
                 </div>
+
+                {/* Capital Source Banner */}
+                {status?.message && (
+                  <div className={`mt-4 p-3 rounded-lg text-sm ${status?.sandbox_connected ? 'bg-green-500/10 border border-green-500/30 text-green-400' : 'bg-yellow-500/10 border border-yellow-500/30 text-yellow-400'}`}>
+                    {status.message}
+                  </div>
+                )}
               </BotCard>
             )}
 
