@@ -579,3 +579,35 @@ async def test_connections():
         results["connections"]["polygon"] = {"status": "not_configured"}
 
     return results
+
+
+@router.get("/api/performance-stats")
+async def get_performance_stats():
+    """Get performance statistics for caching and connection pooling."""
+    stats = {
+        "timestamp": datetime.now().isoformat(),
+        "cache": None,
+        "connection_pool": None
+    }
+
+    # Response cache stats
+    try:
+        from backend.api.response_cache import response_cache
+        stats["cache"] = {
+            "enabled": True,
+            **response_cache.get_stats()
+        }
+    except ImportError:
+        stats["cache"] = {"enabled": False, "reason": "Module not loaded"}
+    except Exception as e:
+        stats["cache"] = {"enabled": False, "error": str(e)}
+
+    # Connection pool stats
+    try:
+        from database_adapter import get_db_adapter
+        adapter = get_db_adapter()
+        stats["connection_pool"] = adapter.get_pool_stats()
+    except Exception as e:
+        stats["connection_pool"] = {"error": str(e)}
+
+    return stats
