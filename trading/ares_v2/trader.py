@@ -187,6 +187,11 @@ class ARESTrader:
                         'call_wall': signal.call_wall,
                         'put_wall': signal.put_wall,
                     }
+            else:
+                # Already traded today - log this explicitly
+                result['action'] = 'monitoring'
+                result['details']['skip_reason'] = 'Already traded today (1 trade/day limit)'
+                self.db.log("DEBUG", "Skipping entry check - already traded today")
 
             if result['positions_closed'] > 0:
                 result['action'] = 'closed' if result['action'] == 'none' else 'both'
