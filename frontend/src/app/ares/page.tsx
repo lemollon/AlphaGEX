@@ -60,6 +60,9 @@ interface ARESStatus {
   is_active: boolean
   high_water_mark: number
   sandbox_connected?: boolean
+  tradier_error?: string
+  source?: string
+  message?: string
   scan_interval_minutes?: number
   heartbeat?: Heartbeat
   config?: {
@@ -697,12 +700,24 @@ export default function AresPage() {
                     </span>
                   </div>
                   <div className="bg-gray-800/50 rounded-lg p-4">
-                    <span className="text-gray-500 text-sm block">Sandbox</span>
-                    <span className={`text-xl font-bold ${status?.sandbox_connected ? 'text-green-400' : 'text-gray-400'}`}>
-                      {status?.sandbox_connected ? 'CONNECTED' : 'N/A'}
+                    <span className="text-gray-500 text-sm block">Tradier</span>
+                    <span className={`text-xl font-bold ${status?.sandbox_connected ? 'text-green-400' : 'text-yellow-400'}`}>
+                      {status?.sandbox_connected ? 'CONNECTED' : 'PAPER MODE'}
                     </span>
+                    {!status?.sandbox_connected && status?.tradier_error && (
+                      <span className="text-xs text-gray-500 block mt-1" title={status.tradier_error}>
+                        {status.tradier_error.length > 30 ? status.tradier_error.substring(0, 30) + '...' : status.tradier_error}
+                      </span>
+                    )}
                   </div>
                 </div>
+
+                {/* Capital Source Banner */}
+                {status?.message && (
+                  <div className={`mt-4 p-3 rounded-lg text-sm ${status?.sandbox_connected ? 'bg-green-500/10 border border-green-500/30 text-green-400' : 'bg-yellow-500/10 border border-yellow-500/30 text-yellow-400'}`}>
+                    {status.message}
+                  </div>
+                )}
               </BotCard>
             )}
 

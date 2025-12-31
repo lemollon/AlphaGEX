@@ -328,6 +328,7 @@ async def get_ares_status():
 
         # Get actual Tradier account balance instead of hardcoded value
         tradier_balance = _get_tradier_account_balance()
+        tradier_error = None
         if tradier_balance.get('connected') and tradier_balance.get('total_equity', 0) > 0:
             # Use actual Tradier balance
             capital = round(tradier_balance['total_equity'], 2)
@@ -336,6 +337,15 @@ async def get_ares_status():
             # Fallback to default if Tradier unavailable
             capital = 100000  # Consistent default with frontend
             sandbox_connected = False
+            tradier_error = tradier_balance.get('error', 'Unknown connection error')
+
+        # Build message explaining capital source
+        if sandbox_connected:
+            capital_message = f"Capital synced with Tradier {'sandbox' if tradier_balance.get('sandbox') else 'production'}"
+        elif tradier_error:
+            capital_message = f"Using paper capital ($100k) - Tradier: {tradier_error}"
+        else:
+            capital_message = "Using paper capital - Stats loaded from database"
 
         return {
             "success": True,
@@ -357,6 +367,7 @@ async def get_ares_status():
                 "scan_interval_minutes": 5,
                 "heartbeat": heartbeat,
                 "sandbox_connected": sandbox_connected,
+                "tradier_error": tradier_error,
                 "config": {
                     "risk_per_trade": 10.0,
                     "spread_width": 10.0,
@@ -364,8 +375,8 @@ async def get_ares_status():
                     "ticker": stored_ticker,
                     "target_return": "10% monthly"
                 },
-                "source": "tradier" if sandbox_connected else "database",
-                "message": "Capital synced with Tradier sandbox" if sandbox_connected else "Stats loaded from database - ARES worker running separately"
+                "source": "tradier" if sandbox_connected else "paper",
+                "message": capital_message
             }
         }
 
@@ -389,46 +400,118 @@ async def get_ares_positions():
     """
     Get ARES open and recently closed positions.
 
-    Returns Iron Condor positions with full details.
+    Returns Iron Condor positions with full details including GEX and Oracle context.
+    Field names match frontend IronCondorPosition interface.
     """
     # Always read from database for reliability
     try:
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Get open positions
-        cursor.execute('''
-            SELECT
-                position_id, open_time, expiration,
-                put_long_strike, put_short_strike, call_short_strike, call_long_strike,
-                put_credit, call_credit, total_credit,
-                contracts, spread_width, max_loss, status
-            FROM ares_positions
-            WHERE status = 'open'
-            ORDER BY open_time DESC
-        ''')
-        open_rows = cursor.fetchall()
+        # Try to get positions with extended columns first
+        # Falls back to basic columns if migration hasn't run yet
+        use_extended_columns = True
+        try:
+            cursor.execute('''
+                SELECT
+                    position_id, open_time, expiration,
+                    put_long_strike, put_short_strike, call_short_strike, call_long_strike,
+                    put_credit, call_credit, total_credit,
+                    contracts, spread_width, max_loss, status,
+                    underlying_price_at_entry, vix_at_entry,
+                    COALESCE(ticker, CASE WHEN spread_width <= 5 THEN 'SPY' ELSE 'SPX' END) as ticker,
+                    gex_regime, call_wall, put_wall, flip_point, net_gex,
+                    oracle_confidence, oracle_win_probability, oracle_advice, oracle_reasoning, oracle_top_factors
+                FROM ares_positions
+                WHERE status = 'open'
+                ORDER BY open_time DESC
+            ''')
+            open_rows = cursor.fetchall()
 
-        # Get closed positions (last 100)
-        cursor.execute('''
-            SELECT
-                position_id, open_time, close_time, expiration,
-                put_long_strike, put_short_strike, call_short_strike, call_long_strike,
-                put_credit, call_credit, total_credit,
-                contracts, spread_width, max_loss, close_price, realized_pnl, status
-            FROM ares_positions
-            WHERE status IN ('closed', 'expired')
-            ORDER BY close_time DESC
-            LIMIT 100
-        ''')
-        closed_rows = cursor.fetchall()
+            # Get closed positions (last 100) with all columns
+            cursor.execute('''
+                SELECT
+                    position_id, open_time, close_time, expiration,
+                    put_long_strike, put_short_strike, call_short_strike, call_long_strike,
+                    put_credit, call_credit, total_credit,
+                    contracts, spread_width, max_loss, close_price, realized_pnl, status,
+                    underlying_price_at_entry, vix_at_entry,
+                    COALESCE(ticker, CASE WHEN spread_width <= 5 THEN 'SPY' ELSE 'SPX' END) as ticker,
+                    gex_regime, call_wall, put_wall, flip_point, net_gex,
+                    oracle_confidence, oracle_win_probability, oracle_advice, oracle_reasoning, oracle_top_factors,
+                    close_reason
+                FROM ares_positions
+                WHERE status IN ('closed', 'expired')
+                ORDER BY close_time DESC
+                LIMIT 100
+            ''')
+            closed_rows = cursor.fetchall()
+        except Exception as col_err:
+            # Fallback: Extended columns don't exist yet - use basic query
+            logger.info(f"Using basic columns (extended columns not yet migrated): {col_err}")
+            use_extended_columns = False
+
+            cursor.execute('''
+                SELECT
+                    position_id, open_time, expiration,
+                    put_long_strike, put_short_strike, call_short_strike, call_long_strike,
+                    put_credit, call_credit, total_credit,
+                    contracts, spread_width, max_loss, status,
+                    underlying_price_at_entry, vix_at_entry
+                FROM ares_positions
+                WHERE status = 'open'
+                ORDER BY open_time DESC
+            ''')
+            open_rows = cursor.fetchall()
+
+            cursor.execute('''
+                SELECT
+                    position_id, open_time, close_time, expiration,
+                    put_long_strike, put_short_strike, call_short_strike, call_long_strike,
+                    put_credit, call_credit, total_credit,
+                    contracts, spread_width, max_loss, close_price, realized_pnl, status,
+                    underlying_price_at_entry, vix_at_entry
+                FROM ares_positions
+                WHERE status IN ('closed', 'expired')
+                ORDER BY close_time DESC
+                LIMIT 100
+            ''')
+            closed_rows = cursor.fetchall()
+
         conn.close()
 
-        # Format open positions
+        def _format_time_iso(time_str):
+            """Convert time string to ISO format."""
+            if not time_str:
+                return None
+            try:
+                # Try parsing various formats
+                for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%dT%H:%M:%S']:
+                    try:
+                        dt = datetime.strptime(str(time_str), fmt)
+                        return dt.replace(tzinfo=ZoneInfo("America/Chicago")).isoformat()
+                    except ValueError:
+                        continue
+                return str(time_str)
+            except:
+                return str(time_str) if time_str else None
+
+        # Format open positions - field names match frontend IronCondorPosition interface
         open_positions = []
         for row in open_rows:
-            pos_id, open_date, exp, put_long, put_short, call_short, call_long, \
-                put_cr, call_cr, total_cr, contracts, spread_w, max_loss, status = row
+            if use_extended_columns:
+                (pos_id, open_time, exp, put_long, put_short, call_short, call_long,
+                 put_cr, call_cr, total_cr, contracts, spread_w, max_loss, status,
+                 underlying_price, vix, ticker, gex_regime, call_wall, put_wall, flip_point, net_gex,
+                 oracle_conf, oracle_win_prob, oracle_advice, oracle_reasoning, oracle_factors) = row
+            else:
+                # Basic columns only
+                (pos_id, open_time, exp, put_long, put_short, call_short, call_long,
+                 put_cr, call_cr, total_cr, contracts, spread_w, max_loss, status,
+                 underlying_price, vix) = row
+                ticker = "SPY" if spread_w and spread_w <= 5 else "SPX"
+                gex_regime = call_wall = put_wall = flip_point = net_gex = None
+                oracle_conf = oracle_win_prob = oracle_advice = oracle_reasoning = oracle_factors = None
 
             # Calculate DTE
             dte = 0
@@ -440,67 +523,133 @@ async def get_ares_positions():
                 except:
                     pass
 
-            ticker = "SPY" if spread_w and spread_w <= 5 else "SPX"
             open_positions.append({
                 "position_id": pos_id,
-                "ticker": ticker,
-                "open_date": str(open_date) if open_date else None,
+                "ticker": ticker or "SPY",
+                # Time fields - use open_time (frontend expects this name)
+                "open_time": str(open_time) if open_time else None,
+                "open_time_iso": _format_time_iso(open_time),
                 "expiration": str(exp) if exp else None,
                 "dte": dte,
                 "is_0dte": dte == 0,
+                # Strike prices
                 "put_long_strike": float(put_long) if put_long else 0,
                 "put_short_strike": float(put_short) if put_short else 0,
                 "call_short_strike": float(call_short) if call_short else 0,
                 "call_long_strike": float(call_long) if call_long else 0,
+                # Spread descriptions
                 "put_spread": f"{put_long}/{put_short}P",
                 "call_spread": f"{call_short}/{call_long}C",
+                # Credits
                 "put_credit": float(put_cr) if put_cr else 0,
                 "call_credit": float(call_cr) if call_cr else 0,
                 "total_credit": float(total_cr) if total_cr else 0,
                 "contracts": contracts or 0,
                 "spread_width": float(spread_w) if spread_w else 0,
                 "max_loss": float(max_loss) if max_loss else 0,
+                "max_profit": float(total_cr or 0) * 100 * (contracts or 0),
                 "premium_collected": float(total_cr or 0) * 100 * (contracts or 0),
+                # Market data at entry
+                "underlying_at_entry": float(underlying_price) if underlying_price else None,
+                "vix_at_entry": float(vix) if vix else None,
+                # GEX Context (audit trail)
+                "gex_regime": gex_regime or "NEUTRAL",
+                "call_wall": float(call_wall) if call_wall else None,
+                "put_wall": float(put_wall) if put_wall else None,
+                "flip_point": float(flip_point) if flip_point else None,
+                "net_gex": float(net_gex) if net_gex else None,
+                # Oracle Context (audit trail)
+                "oracle_confidence": float(oracle_conf) if oracle_conf else None,
+                "oracle_win_probability": float(oracle_win_prob) if oracle_win_prob else None,
+                "oracle_advice": oracle_advice,
+                "oracle_reasoning": oracle_reasoning,
+                "oracle_top_factors": oracle_factors,
                 "status": status
             })
 
         # Format closed positions
         closed_positions = []
         for row in closed_rows:
-            pos_id, open_date, close_date, exp, put_long, put_short, call_short, call_long, \
-                put_cr, call_cr, total_cr, contracts, spread_w, max_loss, close_price, realized_pnl, \
-                status = row
+            if use_extended_columns:
+                (pos_id, open_time, close_time, exp, put_long, put_short, call_short, call_long,
+                 put_cr, call_cr, total_cr, contracts, spread_w, max_loss, close_price, realized_pnl, status,
+                 underlying_price, vix, ticker, gex_regime, call_wall, put_wall, flip_point, net_gex,
+                 oracle_conf, oracle_win_prob, oracle_advice, oracle_reasoning, oracle_factors,
+                 close_reason) = row
+            else:
+                # Basic columns only
+                (pos_id, open_time, close_time, exp, put_long, put_short, call_short, call_long,
+                 put_cr, call_cr, total_cr, contracts, spread_w, max_loss, close_price, realized_pnl, status,
+                 underlying_price, vix) = row
+                ticker = "SPY" if spread_w and spread_w <= 5 else "SPX"
+                gex_regime = call_wall = put_wall = flip_point = net_gex = None
+                oracle_conf = oracle_win_prob = oracle_advice = oracle_reasoning = oracle_factors = None
+                close_reason = None
 
             max_profit = float(total_cr or 0) * 100 * (contracts or 0)
             return_pct = round((float(realized_pnl or 0) / max_profit) * 100, 1) if max_profit else 0
-            ticker = "SPY" if spread_w and spread_w <= 5 else "SPX"
+
+            # Calculate DTE at close (for historical context)
+            dte = 0
+            if exp:
+                try:
+                    exp_date = datetime.strptime(str(exp), "%Y-%m-%d").date()
+                    close_date = datetime.strptime(str(close_time)[:10], "%Y-%m-%d").date() if close_time else datetime.now(ZoneInfo("America/Chicago")).date()
+                    dte = (exp_date - close_date).days
+                except:
+                    pass
 
             closed_positions.append({
                 "position_id": pos_id,
-                "ticker": ticker,
-                "open_date": str(open_date) if open_date else None,
-                "close_date": str(close_date) if close_date else None,
+                "ticker": ticker or "SPY",
+                # Time fields - match frontend interface
+                "open_time": str(open_time) if open_time else None,
+                "open_time_iso": _format_time_iso(open_time),
+                "close_time": str(close_time) if close_time else None,
+                "close_time_iso": _format_time_iso(close_time),
                 "expiration": str(exp) if exp else None,
+                "dte": dte,
+                "is_0dte": dte == 0,
+                # Strike prices
                 "put_long_strike": float(put_long) if put_long else 0,
                 "put_short_strike": float(put_short) if put_short else 0,
                 "call_short_strike": float(call_short) if call_short else 0,
                 "call_long_strike": float(call_long) if call_long else 0,
+                # Spread descriptions
                 "put_spread": f"{put_long}/{put_short}P",
                 "call_spread": f"{call_short}/{call_long}C",
                 "contracts": contracts or 0,
                 "spread_width": float(spread_w) if spread_w else 0,
                 "total_credit": float(total_cr) if total_cr else 0,
                 "max_profit": max_profit,
+                "premium_collected": max_profit,
                 "max_loss": float(max_loss) if max_loss else 0,
                 "close_price": float(close_price) if close_price else 0,
                 "realized_pnl": float(realized_pnl) if realized_pnl else 0,
                 "return_pct": return_pct,
+                "close_reason": close_reason or "unknown",
+                # Market data at entry
+                "underlying_at_entry": float(underlying_price) if underlying_price else None,
+                "vix_at_entry": float(vix) if vix else None,
+                # GEX Context (audit trail)
+                "gex_regime": gex_regime or "NEUTRAL",
+                "call_wall": float(call_wall) if call_wall else None,
+                "put_wall": float(put_wall) if put_wall else None,
+                "flip_point": float(flip_point) if flip_point else None,
+                "net_gex": float(net_gex) if net_gex else None,
+                # Oracle Context (audit trail)
+                "oracle_confidence": float(oracle_conf) if oracle_conf else None,
+                "oracle_win_probability": float(oracle_win_prob) if oracle_win_prob else None,
+                "oracle_advice": oracle_advice,
+                "oracle_reasoning": oracle_reasoning,
+                "oracle_top_factors": oracle_factors,
                 "status": status
             })
 
         return {
             "success": True,
             "data": {
+                "positions": open_positions,  # Also use 'positions' key for compatibility
                 "open_positions": open_positions,
                 "closed_positions": closed_positions,
                 "open_count": len(open_positions),
@@ -509,9 +658,12 @@ async def get_ares_positions():
         }
     except Exception as e:
         logger.error(f"Error getting ARES positions: {e}")
+        import traceback
+        traceback.print_exc()
         return {
             "success": True,
             "data": {
+                "positions": [],
                 "open_positions": [],
                 "closed_positions": [],
                 "message": f"Could not load positions: {str(e)}"
@@ -2122,22 +2274,43 @@ async def reset_ares_data(confirm: bool = False):
         cursor.execute("DELETE FROM ares_positions")
         deleted_positions = cursor.rowcount
 
+        # Also delete ARES daily performance
+        deleted_performance = 0
+        try:
+            cursor.execute("DELETE FROM ares_daily_performance")
+            deleted_performance = cursor.rowcount
+        except Exception:
+            pass
+
         # Also delete ARES scan activity logs
+        deleted_scans = 0
         try:
             cursor.execute("DELETE FROM ares_scan_activity")
             deleted_scans = cursor.rowcount
         except Exception:
-            deleted_scans = 0
+            pass
+
+        # Reset ARES config to defaults
+        deleted_config = 0
+        try:
+            cursor.execute("DELETE FROM autonomous_config WHERE key LIKE 'ares_%'")
+            deleted_config = cursor.rowcount
+        except Exception:
+            pass
 
         conn.commit()
         conn.close()
+
+        logger.info(f"ARES reset complete: {deleted_positions} positions, {deleted_performance} performance records, {deleted_scans} scan logs, {deleted_config} config entries deleted")
 
         return {
             "success": True,
             "message": "ARES data has been reset successfully",
             "deleted": {
                 "positions": deleted_positions,
-                "scan_activity": deleted_scans
+                "daily_performance": deleted_performance,
+                "scan_activity": deleted_scans,
+                "config_entries": deleted_config
             }
         }
     except Exception as e:
