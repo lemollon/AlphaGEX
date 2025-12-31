@@ -2107,6 +2107,21 @@ const SOLAR_SYSTEMS = [
       { name: 'Gauss', color: '#10b981', size: 0.14, orbit: 4.0, speed: 0.3, effect: 'glow' as const, moons: 0 },
     ]
   },
+  {
+    id: 'pegasus',
+    name: 'PEGASUS',
+    subtitle: 'Winged Guardian',
+    route: '/pegasus',
+    position: [35, 20, -35] as [number, number, number],  // Upper right - opposite from HYPERION
+    sunColor: '#14b8a6',  // Teal - protection/stability
+    glowColor: '#2dd4bf',
+    flareType: 'wings' as const,
+    planets: [
+      { name: 'Shield', color: '#06b6d4', size: 0.20, orbit: 2.0, speed: 0.55, effect: 'rings' as const, moons: 1 },
+      { name: 'Premium', color: '#f59e0b', size: 0.17, orbit: 3.0, speed: 0.4, effect: 'fire' as const, moons: 2 },
+      { name: 'Wings', color: '#e2e8f0', size: 0.15, orbit: 4.0, speed: 0.3, effect: 'glow' as const, moons: 0 },
+    ]
+  },
 ]
 
 // =============================================================================
@@ -4015,6 +4030,8 @@ function SystemAmbientEffects({
         return <ApolloEffects color={color} sunColor={sunColor} paused={paused} />
       case 'hyperion':
         return <HyperionEffects color={color} sunColor={sunColor} paused={paused} />
+      case 'pegasus':
+        return <PegasusEffects color={color} sunColor={sunColor} paused={paused} />
       default:
         return null
     }
@@ -4365,7 +4382,7 @@ function OracleEffects({ color, sunColor, paused }: { color: string, sunColor: s
       {/* Mystical mist effect */}
       <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, -0.5, 0]}>
         <ringGeometry args={[3, 8, 32]} />
-        <meshBasicMaterial color={color} transparent opacity={0.08} side={THREE.DoubleSide} />
+        <meshBasicMaterial color={color} transparent opacity={0.15} side={THREE.DoubleSide} />
       </mesh>
 
       {/* Floating tarot-like cards */}
@@ -5009,8 +5026,8 @@ function HyperionEffects({ color, sunColor, paused }: { color: string, sunColor:
   const concentricRings = useMemo(() => {
     return Array.from({ length: 12 }, (_, i) => ({
       radius: 0.5 + i * 0.4,
-      thickness: 0.008 + (12 - i) * 0.002,
-      opacity: 0.3 - i * 0.02,
+      thickness: 0.015 + (12 - i) * 0.003,
+      opacity: 0.4 - i * 0.025,
       speed: 0.1 + i * 0.02
     }))
   }, [])
@@ -5107,11 +5124,11 @@ function HyperionEffects({ color, sunColor, paused }: { color: string, sunColor:
           const z = Math.sin(ring.rotation) * 1.5
           return (
             <mesh key={i} position={[x, 0, z]} rotation={[PI / 2, 0, 0]}>
-              <torusGeometry args={[1.5, 0.012, 16, 64]} />
+              <torusGeometry args={[1.5, 0.02, 16, 64]} />
               <meshBasicMaterial
                 color={i % 2 === 0 ? sunColor : color}
                 transparent
-                opacity={0.12}
+                opacity={0.25}
                 blending={THREE.AdditiveBlending}
               />
             </mesh>
@@ -5119,17 +5136,18 @@ function HyperionEffects({ color, sunColor, paused }: { color: string, sunColor:
         })}
       </group>
 
-      {/* Ethereal Aura Spheres */}
+      {/* Ethereal Aura - Very subtle ring glow */}
       <group ref={auraRef}>
-        {[3, 4.5, 6].map((radius, i) => (
-          <Sphere key={i} args={[radius, 64, 64]}>
+        {[3, 4, 5].map((radius, i) => (
+          <mesh key={i} rotation={[PI / 2, 0, 0]}>
+            <torusGeometry args={[radius, 0.02, 16, 64]} />
             <meshBasicMaterial
               color={i === 0 ? sunColor : i === 1 ? color : '#a855f7'}
               transparent
-              opacity={0.03 - i * 0.008}
-              side={THREE.BackSide}
+              opacity={0.08 - i * 0.02}
+              blending={THREE.AdditiveBlending}
             />
-          </Sphere>
+          </mesh>
         ))}
       </group>
 
@@ -5207,6 +5225,270 @@ function HyperionEffects({ color, sunColor, paused }: { color: string, sunColor:
       </Sphere>
       <Sphere args={[0.4, 32, 32]}>
         <meshBasicMaterial color={sunColor} transparent opacity={0.4} />
+      </Sphere>
+    </group>
+  )
+}
+
+// PEGASUS - Winged Guardian with Iron Condor wings, shield dome, and feather particles
+function PegasusEffects({ color, sunColor, paused }: { color: string, sunColor: string, paused: boolean }) {
+  const groupRef = useRef<THREE.Group>(null)
+  const wingsRef = useRef<THREE.Group>(null)
+  const shieldRef = useRef<THREE.Group>(null)
+  const feathersRef = useRef<THREE.Points>(null)
+  const rangeRef = useRef<THREE.Group>(null)
+  const auraRef = useRef<THREE.Group>(null)
+
+  const PI = Math.PI
+
+  // Generate feather particle field - ethereal floating feathers
+  const featherGeometry = useMemo(() => {
+    const count = 1500
+    const positions = new Float32Array(count * 3)
+    const colors = new Float32Array(count * 3)
+    const sizes = new Float32Array(count)
+
+    for (let i = 0; i < count; i++) {
+      // Spread feathers in wing-like pattern
+      const side = i < count / 2 ? -1 : 1
+      const t = (i % (count / 2)) / (count / 2)
+      const wingSpread = t * 6
+      const wingHeight = Math.sin(t * PI) * 2
+      const drift = (Math.random() - 0.5) * 2
+
+      positions[i * 3] = side * wingSpread + drift * 0.3
+      positions[i * 3 + 1] = wingHeight + (Math.random() - 0.5) * 1.5
+      positions[i * 3 + 2] = (Math.random() - 0.5) * 3
+
+      // Color gradient - teal to white to gold
+      const c = new THREE.Color(i % 3 === 0 ? sunColor : i % 3 === 1 ? '#ffffff' : '#f59e0b')
+      colors[i * 3] = c.r
+      colors[i * 3 + 1] = c.g
+      colors[i * 3 + 2] = c.b
+
+      sizes[i] = 0.03 + Math.random() * 0.04
+    }
+
+    const geom = new THREE.BufferGeometry()
+    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+    geom.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+    geom.setAttribute('size', new THREE.BufferAttribute(sizes, 1))
+    return geom
+  }, [sunColor])
+
+  // Iron Condor range bands (the protected zone)
+  const rangeBands = useMemo(() => {
+    return [
+      { y: 1.5, width: 8, opacity: 0.25, color: '#22c55e' },   // Upper call spread
+      { y: 0.5, width: 6, opacity: 0.35, color: sunColor },    // Safe zone upper
+      { y: 0, width: 5, opacity: 0.45, color: '#ffffff' },     // Center - max profit
+      { y: -0.5, width: 6, opacity: 0.35, color: sunColor },   // Safe zone lower
+      { y: -1.5, width: 8, opacity: 0.25, color: '#ef4444' },  // Lower put spread
+    ]
+  }, [sunColor])
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    // Gentle rotation of entire system
+    if (groupRef.current) {
+      groupRef.current.rotation.y = t * 0.015
+    }
+
+    // Wing flapping motion
+    if (wingsRef.current) {
+      wingsRef.current.children.forEach((wing, i) => {
+        const side = i === 0 ? 1 : -1
+        wing.rotation.z = side * (Math.sin(t * 0.8) * 0.15 + 0.3)
+        wing.rotation.y = side * Math.sin(t * 0.5) * 0.05
+      })
+    }
+
+    // Animate feather particles - gentle drift
+    if (feathersRef.current) {
+      const positions = feathersRef.current.geometry.attributes.position.array as Float32Array
+      for (let i = 0; i < 1500; i++) {
+        const side = i < 750 ? -1 : 1
+        positions[i * 3 + 1] += Math.sin(t * 2 + i * 0.05) * 0.002
+        positions[i * 3] += Math.cos(t * 1.5 + i * 0.03) * 0.001 * side
+      }
+      feathersRef.current.geometry.attributes.position.needsUpdate = true
+    }
+
+    // Shield breathing effect
+    if (shieldRef.current) {
+      const breathe = 1 + Math.sin(t * 0.6) * 0.03
+      shieldRef.current.scale.setScalar(breathe)
+      shieldRef.current.rotation.y = t * 0.02
+    }
+
+    // Range bands pulse
+    if (rangeRef.current) {
+      rangeRef.current.children.forEach((band, i) => {
+        const pulse = 1 + Math.sin(t * 0.8 + i * 0.5) * 0.05
+        band.scale.x = pulse
+      })
+    }
+
+    // Aura rotation
+    if (auraRef.current) {
+      auraRef.current.rotation.y = t * 0.03
+      auraRef.current.rotation.x = Math.sin(t * 0.2) * 0.05
+    }
+  })
+
+  return (
+    <group ref={groupRef}>
+      {/* Feather Particle Field */}
+      <points ref={feathersRef} geometry={featherGeometry}>
+        <pointsMaterial
+          size={0.06}
+          transparent
+          opacity={0.85}
+          vertexColors
+          blending={THREE.AdditiveBlending}
+          sizeAttenuation
+        />
+      </points>
+
+      {/* Majestic Wings - Two symmetric wing structures */}
+      <group ref={wingsRef}>
+        {/* Left Wing */}
+        <group position={[-0.5, 0, 0]}>
+          {Array.from({ length: 12 }).map((_, i) => {
+            const t = i / 12
+            const length = 1 + t * 4
+            const angle = -t * PI * 0.4
+            return (
+              <mesh key={`left-${i}`} position={[-t * 3, Math.sin(t * PI) * 1.5, 0]} rotation={[0, 0, angle]}>
+                <boxGeometry args={[length, 0.08, 0.15]} />
+                <meshBasicMaterial
+                  color={i % 2 === 0 ? sunColor : '#ffffff'}
+                  transparent
+                  opacity={0.6 - t * 0.3}
+                  blending={THREE.AdditiveBlending}
+                />
+              </mesh>
+            )
+          })}
+        </group>
+        {/* Right Wing */}
+        <group position={[0.5, 0, 0]}>
+          {Array.from({ length: 12 }).map((_, i) => {
+            const t = i / 12
+            const length = 1 + t * 4
+            const angle = t * PI * 0.4
+            return (
+              <mesh key={`right-${i}`} position={[t * 3, Math.sin(t * PI) * 1.5, 0]} rotation={[0, 0, angle]}>
+                <boxGeometry args={[length, 0.08, 0.15]} />
+                <meshBasicMaterial
+                  color={i % 2 === 0 ? sunColor : '#ffffff'}
+                  transparent
+                  opacity={0.6 - t * 0.3}
+                  blending={THREE.AdditiveBlending}
+                />
+              </mesh>
+            )
+          })}
+        </group>
+      </group>
+
+      {/* Iron Condor Range Bands - The Protected Zone */}
+      <group ref={rangeRef}>
+        {rangeBands.map((band, i) => (
+          <mesh key={i} position={[0, band.y, 0]} rotation={[PI / 2, 0, 0]}>
+            <planeGeometry args={[band.width, 0.15]} />
+            <meshBasicMaterial
+              color={band.color}
+              transparent
+              opacity={band.opacity}
+              blending={THREE.AdditiveBlending}
+              side={THREE.DoubleSide}
+            />
+          </mesh>
+        ))}
+      </group>
+
+      {/* Shield Dome - Protection aura */}
+      <group ref={shieldRef}>
+        {/* Outer shield dome */}
+        <Sphere args={[4, 32, 32]}>
+          <meshBasicMaterial
+            color={sunColor}
+            transparent
+            opacity={0.08}
+            side={THREE.BackSide}
+            blending={THREE.AdditiveBlending}
+          />
+        </Sphere>
+        {/* Shield grid lines */}
+        {Array.from({ length: 8 }).map((_, i) => (
+          <mesh key={i} rotation={[0, (i / 8) * PI * 2, 0]}>
+            <torusGeometry args={[3.5, 0.02, 8, 64]} />
+            <meshBasicMaterial
+              color={sunColor}
+              transparent
+              opacity={0.2}
+              blending={THREE.AdditiveBlending}
+            />
+          </mesh>
+        ))}
+        {/* Horizontal shield rings */}
+        {[-2, -1, 0, 1, 2].map((y, i) => (
+          <mesh key={`h-${i}`} position={[0, y, 0]} rotation={[PI / 2, 0, 0]}>
+            <torusGeometry args={[Math.sqrt(16 - y * y) * 0.9, 0.015, 8, 64]} />
+            <meshBasicMaterial
+              color={y === 0 ? '#ffffff' : sunColor}
+              transparent
+              opacity={y === 0 ? 0.35 : 0.15}
+              blending={THREE.AdditiveBlending}
+            />
+          </mesh>
+        ))}
+      </group>
+
+      {/* Orbiting Premium Sparks - Gold sparkles */}
+      {Array.from({ length: 20 }).map((_, i) => {
+        const angle = (i / 20) * PI * 2
+        const radius = 3 + Math.sin(i * 1.5) * 0.5
+        const height = Math.cos(i * 0.8) * 1.5
+        return (
+          <Sphere
+            key={i}
+            args={[0.06 + (i % 3) * 0.02, 8, 8]}
+            position={[Math.cos(angle) * radius, height, Math.sin(angle) * radius]}
+          >
+            <meshBasicMaterial
+              color={i % 2 === 0 ? '#f59e0b' : '#fbbf24'}
+              transparent
+              opacity={0.7}
+              blending={THREE.AdditiveBlending}
+            />
+          </Sphere>
+        )
+      })}
+
+      {/* Aura layers - very subtle */}
+      <group ref={auraRef}>
+        {[2.5, 3.5].map((radius, i) => (
+          <Sphere key={i} args={[radius, 32, 32]}>
+            <meshBasicMaterial
+              color={i === 0 ? sunColor : color}
+              transparent
+              opacity={0.02}
+              side={THREE.BackSide}
+            />
+          </Sphere>
+        ))}
+      </group>
+
+      {/* Central bright core */}
+      <Sphere args={[0.35, 32, 32]}>
+        <meshBasicMaterial color="#ffffff" transparent opacity={0.9} />
+      </Sphere>
+      <Sphere args={[0.5, 32, 32]}>
+        <meshBasicMaterial color={sunColor} transparent opacity={0.5} />
       </Sphere>
     </group>
   )
@@ -5333,17 +5615,17 @@ function SolarSystem({
     >
       {/* Far-distance beacon glow - always visible from afar */}
       <Sphere args={[8, 16, 16]}>
-        <meshBasicMaterial color={system.glowColor} transparent opacity={0.05} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+        <meshBasicMaterial color={system.glowColor} transparent opacity={0.02} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
       </Sphere>
 
       {/* Outer glow halo */}
       <Sphere ref={glowRef} args={[5, 32, 32]}>
-        <meshBasicMaterial color={system.glowColor} transparent opacity={0.10} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+        <meshBasicMaterial color={system.glowColor} transparent opacity={0.04} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
       </Sphere>
 
       {/* Secondary glow */}
       <Sphere args={[3.5, 32, 32]}>
-        <meshBasicMaterial color={system.glowColor} transparent opacity={0.08} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+        <meshBasicMaterial color={system.glowColor} transparent opacity={0.03} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
       </Sphere>
 
       {/* Central sun with distortion */}
@@ -5519,9 +5801,9 @@ function OrbitingPlanet({
 
       {/* Planet with effects */}
       <group ref={groupRef}>
-        {/* Planet atmosphere glow - always visible from all angles (85-90% transparent) */}
+        {/* Planet atmosphere glow - always visible from all angles (95-97% transparent) */}
         <Sphere ref={atmosphereRef} args={[scaledSize * 1.5, 16, 16]}>
-          <meshBasicMaterial color={planet.color} transparent opacity={isHovered ? 0.15 : 0.10} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+          <meshBasicMaterial color={planet.color} transparent opacity={isHovered ? 0.05 : 0.03} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
         </Sphere>
 
         {/* Planet sphere */}
