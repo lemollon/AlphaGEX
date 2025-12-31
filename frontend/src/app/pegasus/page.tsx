@@ -58,12 +58,13 @@ interface PEGASUSStatus {
   closed_positions: number
   traded_today: boolean
   in_trading_window: boolean
+  trading_window_status?: string
+  trading_window_end?: string
   current_time: string
   is_active: boolean
   high_water_mark: number
-  sandbox_connected?: boolean
-  tradier_error?: string
-  tradier_account_id?: string
+  tradier_connected?: boolean
+  tradier_for_prices?: boolean
   source?: string
   message?: string
   scan_interval_minutes?: number
@@ -574,24 +575,21 @@ export default function PegasusPage() {
             isRefreshing={statusLoading}
           />
 
-          {/* Tradier Connection Error Banner */}
-          {status && !status.sandbox_connected && (
-            <div className="bg-red-900/30 border border-red-500/50 rounded-lg p-4">
+          {/* Paper Trading Info Banner */}
+          {status && status.source === 'paper' && (
+            <div className="bg-blue-900/30 border border-blue-500/50 rounded-lg p-4">
               <div className="flex items-start gap-3">
-                <AlertTriangle className="w-5 h-5 text-red-400 mt-0.5 flex-shrink-0" />
+                <Wallet className="w-5 h-5 text-blue-400 mt-0.5 flex-shrink-0" />
                 <div className="flex-1">
-                  <h3 className="text-red-400 font-semibold">Tradier Not Connected</h3>
+                  <h3 className="text-blue-400 font-semibold">Paper Trading Mode</h3>
                   <p className="text-gray-300 text-sm mt-1">
-                    PEGASUS requires a Tradier connection for live trading. Currently showing paper capital ($200k).
+                    {status.message || 'PEGASUS is paper trading with $200k simulated capital.'}
                   </p>
-                  {status.tradier_error && (
-                    <p className="text-red-300 text-xs mt-2 font-mono bg-red-900/20 p-2 rounded">
-                      Error: {status.tradier_error}
+                  {!status.tradier_connected && (
+                    <p className="text-gray-400 text-xs mt-2">
+                      Tradier connection optional for live SPX prices. Paper trading works without it.
                     </p>
                   )}
-                  <p className="text-gray-400 text-xs mt-2">
-                    Check that TRADIER_SANDBOX_API_KEY and TRADIER_SANDBOX_ACCOUNT_ID are set in environment variables.
-                  </p>
                 </div>
               </div>
             </div>

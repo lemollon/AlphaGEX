@@ -243,50 +243,67 @@ async def get_pegasus_status():
 
         win_rate = round((win_count / closed_count) * 100, 1) if closed_count > 0 else 0
 
-        # Get Tradier account balance - PEGASUS should be connected
+        # PEGASUS paper trades with $200k - Tradier is only for SPX prices, not required
         tradier_balance = _get_tradier_account_balance()
+        tradier_connected = tradier_balance.get('connected', False)
 
-        if tradier_balance.get('connected') and tradier_balance.get('total_equity', 0) > 0:
-            capital = round(tradier_balance['total_equity'], 2)
-            sandbox_connected = True
-            tradier_error = None
-            capital_message = f"Connected to Tradier {'sandbox' if tradier_balance.get('sandbox') else 'production'}"
-        else:
-            tradier_error = tradier_balance.get('error', 'Unknown connection error')
-            sandbox_connected = False
-            capital = 200000  # Paper capital for display
-            capital_message = f"ERROR: Not connected to Tradier - {tradier_error}"
-            logger.error(f"PEGASUS Tradier connection failed: {tradier_error}")
+        # PEGASUS always uses paper capital - Tradier is optional for price data
+        capital = 200000 + total_pnl  # Paper capital + P&L
+        capital_message = "Paper trading with $200k capital"
+        if tradier_connected:
+            capital_message += " (Tradier connected for live prices)"
+
+        # Calculate trading window status
+        now = datetime.now(ZoneInfo("America/Chicago"))
+        current_time_str = now.strftime('%Y-%m-%d %H:%M:%S CT')
+
+        # PEGASUS trading window: 8:30 AM - 3:30 PM CT
+        entry_start = "08:30"
+        entry_end = "15:30"
+
+        # Dec 31 early close
+        if now.month == 12 and now.day == 31:
+            entry_end = "11:30"
+
+        start_parts = entry_start.split(':')
+        end_parts = entry_end.split(':')
+        start_time = now.replace(hour=int(start_parts[0]), minute=int(start_parts[1]), second=0, microsecond=0)
+        end_time = now.replace(hour=int(end_parts[0]), minute=int(end_parts[1]), second=0, microsecond=0)
+
+        is_weekday = now.weekday() < 5
+        in_window = is_weekday and start_time <= now <= end_time
+        trading_window_status = "OPEN" if in_window else "CLOSED"
 
         return {
             "success": True,
             "data": {
-                "mode": "paper" if not sandbox_connected else "sandbox",
+                "mode": "paper",
                 "ticker": "SPX",
                 "capital": capital,
-                "capital_source": "tradier" if sandbox_connected else "paper_fallback",
+                "capital_source": "paper",
                 "total_pnl": round(total_pnl, 2),
                 "trade_count": trade_count,
                 "win_rate": win_rate,
                 "open_positions": open_count,
                 "closed_positions": closed_count,
                 "traded_today": traded_today,
-                "in_trading_window": False,
-                "high_water_mark": capital,
-                "current_time": datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d %H:%M:%S CT'),
-                "is_active": False,
+                "in_trading_window": in_window,
+                "trading_window_status": trading_window_status,
+                "trading_window_end": entry_end,
+                "high_water_mark": starting_capital,
+                "current_time": current_time_str,
+                "is_active": True,
                 "scan_interval_minutes": 5,
                 "heartbeat": heartbeat,
-                "sandbox_connected": sandbox_connected,
-                "tradier_error": tradier_error,
-                "tradier_account_id": tradier_balance.get('account_id') if sandbox_connected else None,
+                "tradier_connected": tradier_connected,
+                "tradier_for_prices": tradier_connected,
                 "config": {
                     "risk_per_trade": 10.0,
                     "spread_width": 10.0,
                     "sd_multiplier": 1.0,
                     "ticker": "SPX"
                 },
-                "source": "tradier" if sandbox_connected else "error",
+                "source": "paper",
                 "message": capital_message
             }
         }
