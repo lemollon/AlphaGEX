@@ -202,23 +202,32 @@ def _get_tradier_account_balance() -> dict:
         # Try to get API config
         from unified_config import APIConfig
 
-        # Check for credentials - try multiple sources
-        # Priority: SANDBOX_* > PROD_* > generic TRADIER_*
-        api_key = (
-            getattr(APIConfig, 'TRADIER_SANDBOX_API_KEY', None) or
-            getattr(APIConfig, 'TRADIER_PROD_API_KEY', None) or
-            getattr(APIConfig, 'TRADIER_API_KEY', None)
-        )
-        account_id = (
-            getattr(APIConfig, 'TRADIER_SANDBOX_ACCOUNT_ID', None) or
-            getattr(APIConfig, 'TRADIER_PROD_ACCOUNT_ID', None) or
-            getattr(APIConfig, 'TRADIER_ACCOUNT_ID', None)
-        )
+        # Check sandbox mode FIRST (defaults to False = production in unified_config.py)
+        use_sandbox = getattr(APIConfig, 'TRADIER_SANDBOX', False)
 
-        # Check if sandbox mode is enabled (defaults to True for safety)
-        use_sandbox = getattr(APIConfig, 'TRADIER_SANDBOX', True)
+        # Select credentials based on mode - production credentials first in production mode
+        if use_sandbox:
+            # Sandbox mode: prefer sandbox credentials, fall back to generic
+            api_key = (
+                getattr(APIConfig, 'TRADIER_SANDBOX_API_KEY', None) or
+                getattr(APIConfig, 'TRADIER_API_KEY', None)
+            )
+            account_id = (
+                getattr(APIConfig, 'TRADIER_SANDBOX_ACCOUNT_ID', None) or
+                getattr(APIConfig, 'TRADIER_ACCOUNT_ID', None)
+            )
+        else:
+            # Production mode: prefer production credentials, fall back to generic
+            api_key = (
+                getattr(APIConfig, 'TRADIER_PROD_API_KEY', None) or
+                getattr(APIConfig, 'TRADIER_API_KEY', None)
+            )
+            account_id = (
+                getattr(APIConfig, 'TRADIER_PROD_ACCOUNT_ID', None) or
+                getattr(APIConfig, 'TRADIER_ACCOUNT_ID', None)
+            )
 
-        logger.info(f"Tradier balance fetch: api_key={'SET' if api_key else 'NOT SET'}, account_id={account_id}, sandbox={use_sandbox}")
+        logger.info(f"Tradier balance fetch: mode={'SANDBOX' if use_sandbox else 'PRODUCTION'}, api_key={'SET' if api_key else 'NOT SET'}, account_id={account_id}")
 
         if not api_key or not account_id:
             logger.warning("No Tradier credentials available for balance fetch")
@@ -344,6 +353,29 @@ async def get_ares_status():
             capital_message = f"ERROR: Not connected to Tradier - {tradier_error}"
             logger.error(f"ARES Tradier connection failed: {tradier_error}")
 
+        # Calculate trading window status based on actual time
+        now = datetime.now(ZoneInfo("America/Chicago"))
+        current_time_str = now.strftime('%Y-%m-%d %H:%M:%S CT')
+
+        # ARES trading window: 8:30 AM - 3:30 PM CT (configurable)
+        # Note: Dec 31 market closes at 12:00 PM CT
+        entry_start = "08:30"
+        entry_end = "15:30"
+
+        # Check for early close days (Dec 24, Dec 31, day before Thanksgiving, etc.)
+        if now.month == 12 and now.day == 31:
+            entry_end = "11:30"  # Dec 31 early close
+
+        start_parts = entry_start.split(':')
+        end_parts = entry_end.split(':')
+        start_time = now.replace(hour=int(start_parts[0]), minute=int(start_parts[1]), second=0, microsecond=0)
+        end_time = now.replace(hour=int(end_parts[0]), minute=int(end_parts[1]), second=0, microsecond=0)
+
+        # Check if it's a weekday
+        is_weekday = now.weekday() < 5
+        in_window = is_weekday and start_time <= now <= end_time
+        trading_window_status = "OPEN" if in_window else "CLOSED"
+
         return {
             "success": True,
             "data": {
@@ -358,10 +390,12 @@ async def get_ares_status():
                 "open_positions": open_count,
                 "closed_positions": closed_count,
                 "traded_today": traded_today,
-                "in_trading_window": False,
+                "in_trading_window": in_window,
+                "trading_window_status": trading_window_status,
+                "trading_window_end": entry_end,
                 "high_water_mark": capital,
-                "current_time": datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d %H:%M:%S CT'),
-                "is_active": False,
+                "current_time": current_time_str,
+                "is_active": True,  # Bot is always active, just may not be trading
                 "scan_interval_minutes": 5,
                 "heartbeat": heartbeat,
                 "sandbox_connected": sandbox_connected,
@@ -1608,8 +1642,13 @@ async def check_tradier_connection():
 
         # Try to connect and get balance
         if TRADIER_AVAILABLE and TradierDataFetcher:
-            api_key = sandbox_key or prod_key
-            account_id = sandbox_account or prod_account
+            # Select credentials based on mode
+            if use_sandbox:
+                api_key = sandbox_key or prod_key
+                account_id = sandbox_account or prod_account
+            else:
+                api_key = prod_key or sandbox_key
+                account_id = prod_account or sandbox_account
 
             if api_key and account_id:
                 try:

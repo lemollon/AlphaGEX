@@ -57,6 +57,8 @@ interface ARESStatus {
   closed_positions: number
   traded_today: boolean
   in_trading_window: boolean
+  trading_window_status?: string
+  trading_window_end?: string
   current_time: string
   is_active: boolean
   high_water_mark: number
@@ -697,8 +699,11 @@ export default function AresPage() {
                   <div className="bg-gray-800/50 rounded-lg p-4">
                     <span className="text-gray-500 text-sm block">Trading Window</span>
                     <span className={`text-xl font-bold ${status?.in_trading_window ? 'text-green-400' : 'text-gray-400'}`}>
-                      {status?.in_trading_window ? 'ACTIVE' : 'CLOSED'}
+                      {status?.trading_window_status || (status?.in_trading_window ? 'OPEN' : 'CLOSED')}
                     </span>
+                    {status?.trading_window_end && (
+                      <span className="text-gray-500 text-xs block">ends {status.trading_window_end} CT</span>
+                    )}
                   </div>
                   <div className="bg-gray-800/50 rounded-lg p-4">
                     <span className="text-gray-500 text-sm block">Last Scan</span>
