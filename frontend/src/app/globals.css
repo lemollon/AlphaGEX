@@ -7,6 +7,11 @@
     @apply border-gray-700;
   }
 
+  html, body {
+    @apply overflow-x-hidden;
+    max-width: 100vw;
+  }
+
   body {
     @apply antialiased;
   }
