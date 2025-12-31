@@ -2025,28 +2025,27 @@ export default function ArgusPage() {
 
               {/* Chart */}
               <div className="relative h-52 flex items-end justify-center gap-1 border-b border-gray-700 mb-2">
-                {/* Tomorrow's bars (faded, behind today's) */}
-                {tomorrowGammaData && (
+                {/* Tomorrow's bars (faded, behind today's) - aligned with today's strikes */}
+                {tomorrowGammaData && gammaData?.strikes && (
                   <div className="absolute inset-0 flex items-end justify-center gap-1 pointer-events-none">
-                    {tomorrowGammaData.strikes.map((strike) => {
-                      // Find matching strike position in today's data for alignment
-                      const todayStrikes = gammaData?.strikes || []
-                      const strikeIndex = todayStrikes.findIndex(s => s.strike === strike.strike)
-                      if (strikeIndex === -1 && todayStrikes.length > 0) {
-                        // Strike not in today's range, skip
-                        return null
-                      }
+                    {gammaData.strikes.map((todayStrike) => {
+                      // Find matching strike in tomorrow's data
+                      const tomorrowStrike = tomorrowGammaData.strikes.find(s => s.strike === todayStrike.strike)
                       return (
                         <div
-                          key={`tomorrow-${strike.strike}`}
+                          key={`tomorrow-${todayStrike.strike}`}
                           className="flex flex-col items-center"
                           style={{ flex: '1 1 0', maxWidth: '60px' }}
                         >
                           <div className="text-[10px] text-transparent mb-1">&nbsp;</div>
-                          <div
-                            className="w-6 rounded-t bg-cyan-500/30 border border-cyan-500/40 transition-all"
-                            style={{ height: `${getBarHeightPx(strike.net_gamma, Math.max(maxGamma, tomorrowMaxGamma))}px` }}
-                          />
+                          {tomorrowStrike ? (
+                            <div
+                              className="w-6 rounded-t bg-cyan-500/30 border border-cyan-500/40 transition-all"
+                              style={{ height: `${getBarHeightPx(tomorrowStrike.net_gamma, maxGamma)}px` }}
+                            />
+                          ) : (
+                            <div className="w-6" /> // Empty placeholder for alignment
+                          )}
                         </div>
                       )
                     })}
