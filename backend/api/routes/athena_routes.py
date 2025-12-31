@@ -172,21 +172,101 @@ async def get_athena_status():
     # Get heartbeat info
     heartbeat = _get_heartbeat('ATHENA')
 
+    # Calculate trading window status based on actual time
+    now = datetime.now(ZoneInfo("America/Chicago"))
+    current_time_str = now.strftime('%Y-%m-%d %H:%M:%S CT')
+
+    # ATHENA trading window: 8:35 AM - 2:30 PM CT
+    entry_start = "08:35"
+    entry_end = "14:30"
+
+    # Check for early close days (Dec 24, Dec 31, etc.)
+    if now.month == 12 and now.day == 31:
+        entry_end = "11:00"  # Dec 31 early close
+
+    start_parts = entry_start.split(':')
+    end_parts = entry_end.split(':')
+    start_time = now.replace(hour=int(start_parts[0]), minute=int(start_parts[1]), second=0, microsecond=0)
+    end_time = now.replace(hour=int(end_parts[0]), minute=int(end_parts[1]), second=0, microsecond=0)
+
+    is_weekday = now.weekday() < 5
+    in_window = is_weekday and start_time <= now <= end_time
+    trading_window_status = "OPEN" if in_window else "CLOSED"
+
     if not athena:
-        # Return default status when ATHENA not initialized
+        # ATHENA not running - read stats from database
+        total_pnl = 0
+        trade_count = 0
+        win_count = 0
+        open_count = 0
+        closed_count = 0
+        traded_today = False
+        today = now.strftime('%Y-%m-%d')
+
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Get summary stats from athena_positions or apache_positions
+            try:
+                cursor.execute('''
+                    SELECT
+                        COUNT(*) as total,
+                        SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_count,
+                        SUM(CASE WHEN status IN ('closed', 'expired') THEN 1 ELSE 0 END) as closed_count,
+                        SUM(CASE WHEN status IN ('closed', 'expired') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                        COALESCE(SUM(CASE WHEN status IN ('closed', 'expired') THEN realized_pnl ELSE 0 END), 0) as total_pnl,
+                        SUM(CASE WHEN DATE(created_at) = %s THEN 1 ELSE 0 END) as traded_today
+                    FROM athena_positions
+                ''', (today,))
+                row = cursor.fetchone()
+            except Exception:
+                # Try legacy apache_positions table
+                cursor.execute('''
+                    SELECT
+                        COUNT(*) as total,
+                        SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_count,
+                        SUM(CASE WHEN status IN ('closed', 'expired') THEN 1 ELSE 0 END) as closed_count,
+                        SUM(CASE WHEN status IN ('closed', 'expired') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                        COALESCE(SUM(CASE WHEN status IN ('closed', 'expired') THEN realized_pnl ELSE 0 END), 0) as total_pnl,
+                        SUM(CASE WHEN DATE(created_at) = %s THEN 1 ELSE 0 END) as traded_today
+                    FROM apache_positions
+                ''', (today,))
+                row = cursor.fetchone()
+
+            if row:
+                trade_count = row[0] or 0
+                open_count = row[1] or 0
+                closed_count = row[2] or 0
+                win_count = row[3] or 0
+                total_pnl = float(row[4] or 0)
+                traded_today = (row[5] or 0) > 0
+
+            conn.close()
+        except Exception as db_err:
+            logger.debug(f"Could not read ATHENA stats from database: {db_err}")
+
+        win_rate = round((win_count / closed_count) * 100, 1) if closed_count > 0 else 0
+
         return {
             "success": True,
             "data": {
                 "mode": "paper",
+                "ticker": "SPY",
                 "capital": 100000,
-                "total_pnl": 0,
-                "trade_count": 0,
-                "win_rate": 0,
-                "open_positions": 0,
-                "closed_positions": 0,
-                "traded_today": False,
-                "current_time": datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d %H:%M:%S CT'),
-                "is_active": False,
+                "total_pnl": round(total_pnl, 2),
+                "trade_count": trade_count,
+                "win_rate": win_rate,
+                "open_positions": open_count,
+                "closed_positions": closed_count,
+                "traded_today": traded_today,
+                "daily_trades": 0,
+                "daily_pnl": 0,
+                "in_trading_window": in_window,
+                "trading_window_status": trading_window_status,
+                "trading_window_end": entry_end,
+                "current_time": current_time_str,
+                "is_active": True,
                 "scan_interval_minutes": 5,
                 "heartbeat": heartbeat,
                 "oracle_available": False,
@@ -199,7 +279,7 @@ async def get_athena_status():
                     "ticker": "SPY",
                     "max_daily_trades": 5
                 },
-                "message": "ATHENA not yet initialized"
+                "message": "ATHENA reading from database"
             }
         }
 
@@ -208,6 +288,10 @@ async def get_athena_status():
         status['is_active'] = True
         status['scan_interval_minutes'] = 5
         status['heartbeat'] = heartbeat
+        status['in_trading_window'] = in_window
+        status['trading_window_status'] = trading_window_status
+        status['trading_window_end'] = entry_end
+        status['current_time'] = current_time_str
 
         return {
             "success": True,
@@ -658,9 +742,40 @@ async def get_athena_config():
     """
     Get ATHENA configuration settings.
     """
+    # Default ATHENA configuration
+    default_config = {
+        "risk_per_trade": {"value": "2.0", "description": "Risk per trade as percentage of capital"},
+        "spread_width": {"value": "2", "description": "Width of spread in strikes"},
+        "max_daily_trades": {"value": "5", "description": "Maximum trades per day"},
+        "ticker": {"value": "SPY", "description": "Trading ticker symbol"},
+        "wall_filter_pct": {"value": "1.0", "description": "GEX wall filter percentage"},
+        "min_oracle_confidence": {"value": "0.6", "description": "Minimum Oracle confidence to trade"},
+        "stop_loss_pct": {"value": "50", "description": "Stop loss percentage of max loss"},
+        "take_profit_pct": {"value": "50", "description": "Take profit percentage of max profit"},
+        "entry_start_time": {"value": "08:35", "description": "Trading window start time CT"},
+        "entry_end_time": {"value": "14:30", "description": "Trading window end time CT"},
+    }
+
     try:
         conn = get_connection()
         c = conn.cursor()
+
+        # Check if apache_config table exists
+        c.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'apache_config'
+            )
+        """)
+        table_exists = c.fetchone()[0]
+
+        if not table_exists:
+            conn.close()
+            return {
+                "success": True,
+                "data": default_config,
+                "source": "defaults"
+            }
 
         c.execute("""
             SELECT setting_name, setting_value, description
@@ -671,6 +786,13 @@ async def get_athena_config():
         rows = c.fetchall()
         conn.close()
 
+        if not rows:
+            return {
+                "success": True,
+                "data": default_config,
+                "source": "defaults"
+            }
+
         config = {}
         for row in rows:
             config[row[0]] = {
@@ -680,12 +802,19 @@ async def get_athena_config():
 
         return {
             "success": True,
-            "data": config
+            "data": config,
+            "source": "database"
         }
 
     except Exception as e:
         logger.error(f"Error getting ATHENA config: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # Return defaults on error instead of failing
+        return {
+            "success": True,
+            "data": default_config,
+            "source": "defaults",
+            "error": str(e)
+        }
 
 
 @router.post("/config/{setting_name}")
