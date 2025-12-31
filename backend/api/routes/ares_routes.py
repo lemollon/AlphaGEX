@@ -283,9 +283,11 @@ async def get_ares_status():
     entry_start = "08:30"
     entry_end = "15:30"
 
-    # Check for early close days (Dec 24, Dec 31, etc.)
-    if now.month == 12 and now.day == 31:
-        entry_end = "11:30"  # Dec 31 early close
+    # Check for early close days (typically day before Thanksgiving, Christmas Eve)
+    # Dec 24 is typically 1 PM ET = 12 PM CT early close
+    # Dec 31 is a NORMAL trading day (closes at 3 PM CT)
+    if now.month == 12 and now.day == 24:
+        entry_end = "12:00"  # Christmas Eve early close
 
     start_parts = entry_start.split(':')
     end_parts = entry_end.split(':')
@@ -430,6 +432,23 @@ async def get_ares_status():
             status['trade_count'] = 0
         if 'win_rate' not in status:
             status['win_rate'] = 0
+        if 'open_positions' not in status:
+            status['open_positions'] = 0
+
+        # Add Tradier connection status (required by frontend)
+        if 'sandbox_connected' not in status:
+            tradier_balance = _get_tradier_account_balance()
+            if tradier_balance.get('connected') and tradier_balance.get('total_equity', 0) > 0:
+                status['sandbox_connected'] = True
+                status['tradier_error'] = None
+                status['tradier_account_id'] = tradier_balance.get('account_id')
+                # Update capital from Tradier if not already set from instance
+                if status.get('capital', 0) <= 0:
+                    status['capital'] = round(tradier_balance['total_equity'], 2)
+            else:
+                status['sandbox_connected'] = False
+                status['tradier_error'] = tradier_balance.get('error', 'Unknown connection error')
+                status['tradier_account_id'] = None
 
         return {
             "success": True,
