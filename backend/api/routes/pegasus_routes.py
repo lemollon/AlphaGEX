@@ -265,9 +265,9 @@ async def get_pegasus_status():
         entry_start = "08:30"
         entry_end = "15:30"
 
-        # Dec 31 early close
-        if now.month == 12 and now.day == 31:
-            entry_end = "11:30"
+        # Check for early close days (Christmas Eve - Dec 31 is normal)
+        if now.month == 12 and now.day == 24:
+            entry_end = "12:00"  # Christmas Eve early close
 
         start_parts = entry_start.split(':')
         end_parts = entry_end.split(':')
@@ -317,8 +317,8 @@ async def get_pegasus_status():
     current_time_str = now.strftime('%Y-%m-%d %H:%M:%S CT')
     entry_start = "08:30"
     entry_end = "15:30"
-    if now.month == 12 and now.day == 31:
-        entry_end = "11:30"
+    if now.month == 12 and now.day == 24:
+        entry_end = "12:00"  # Christmas Eve early close
     start_parts = entry_start.split(':')
     end_parts = entry_end.split(':')
     start_time = now.replace(hour=int(start_parts[0]), minute=int(start_parts[1]), second=0, microsecond=0)

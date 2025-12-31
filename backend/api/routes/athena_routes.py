@@ -180,9 +180,10 @@ async def get_athena_status():
     entry_start = "08:35"
     entry_end = "14:30"
 
-    # Check for early close days (Dec 24, Dec 31, etc.)
-    if now.month == 12 and now.day == 31:
-        entry_end = "11:00"  # Dec 31 early close
+    # Check for early close days (Christmas Eve typically 1 PM ET = 12 PM CT)
+    # Dec 31 is a NORMAL trading day
+    if now.month == 12 and now.day == 24:
+        entry_end = "11:00"  # Christmas Eve early close
 
     start_parts = entry_start.split(':')
     end_parts = entry_end.split(':')
