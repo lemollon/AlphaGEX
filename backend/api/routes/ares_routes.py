@@ -275,6 +275,27 @@ async def get_ares_status():
     # Get heartbeat info
     heartbeat = _get_heartbeat('ARES')
 
+    # Calculate trading window status based on actual time (needed for both code paths)
+    now = datetime.now(ZoneInfo("America/Chicago"))
+    current_time_str = now.strftime('%Y-%m-%d %H:%M:%S CT')
+
+    # ARES trading window: 8:30 AM - 3:30 PM CT (configurable)
+    entry_start = "08:30"
+    entry_end = "15:30"
+
+    # Check for early close days (Dec 24, Dec 31, etc.)
+    if now.month == 12 and now.day == 31:
+        entry_end = "11:30"  # Dec 31 early close
+
+    start_parts = entry_start.split(':')
+    end_parts = entry_end.split(':')
+    start_time = now.replace(hour=int(start_parts[0]), minute=int(start_parts[1]), second=0, microsecond=0)
+    end_time = now.replace(hour=int(end_parts[0]), minute=int(end_parts[1]), second=0, microsecond=0)
+
+    is_weekday = now.weekday() < 5
+    in_window = is_weekday and start_time <= now <= end_time
+    trading_window_status = "OPEN" if in_window else "CLOSED"
+
     if not ares:
         # ARES not running in this process - read stats from database
         total_pnl = 0
@@ -352,29 +373,6 @@ async def get_ares_status():
             capital = 100000  # Paper capital for display only
             capital_message = f"ERROR: Not connected to Tradier - {tradier_error}"
             logger.error(f"ARES Tradier connection failed: {tradier_error}")
-
-        # Calculate trading window status based on actual time
-        now = datetime.now(ZoneInfo("America/Chicago"))
-        current_time_str = now.strftime('%Y-%m-%d %H:%M:%S CT')
-
-        # ARES trading window: 8:30 AM - 3:30 PM CT (configurable)
-        # Note: Dec 31 market closes at 12:00 PM CT
-        entry_start = "08:30"
-        entry_end = "15:30"
-
-        # Check for early close days (Dec 24, Dec 31, day before Thanksgiving, etc.)
-        if now.month == 12 and now.day == 31:
-            entry_end = "11:30"  # Dec 31 early close
-
-        start_parts = entry_start.split(':')
-        end_parts = entry_end.split(':')
-        start_time = now.replace(hour=int(start_parts[0]), minute=int(start_parts[1]), second=0, microsecond=0)
-        end_time = now.replace(hour=int(end_parts[0]), minute=int(end_parts[1]), second=0, microsecond=0)
-
-        # Check if it's a weekday
-        is_weekday = now.weekday() < 5
-        in_window = is_weekday and start_time <= now <= end_time
-        trading_window_status = "OPEN" if in_window else "CLOSED"
 
         return {
             "success": True,
