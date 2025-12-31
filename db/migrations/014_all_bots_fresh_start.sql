@@ -44,7 +44,12 @@ BEGIN
 EXCEPTION WHEN undefined_table THEN NULL;
 END $$;
 
-DELETE FROM bot_scan_activity WHERE bot_name = 'ATHENA';
+DO $$
+BEGIN
+    DELETE FROM bot_scan_activity WHERE bot_name = 'ATHENA';
+EXCEPTION WHEN undefined_table THEN NULL;
+END $$;
+
 DELETE FROM autonomous_config WHERE key LIKE 'athena_%';
 
 -- =============================================================================
@@ -65,7 +70,12 @@ BEGIN
 EXCEPTION WHEN undefined_table THEN NULL;
 END $$;
 
-DELETE FROM bot_scan_activity WHERE bot_name = 'PEGASUS';
+DO $$
+BEGIN
+    DELETE FROM bot_scan_activity WHERE bot_name = 'PEGASUS';
+EXCEPTION WHEN undefined_table THEN NULL;
+END $$;
+
 DELETE FROM autonomous_config WHERE key LIKE 'pegasus_%';
 
 -- =============================================================================
@@ -73,10 +83,18 @@ DELETE FROM autonomous_config WHERE key LIKE 'pegasus_%';
 -- =============================================================================
 
 -- Clear unified bot heartbeats (they'll regenerate on next scan)
-DELETE FROM bot_heartbeats WHERE bot_name IN ('ARES', 'ATHENA', 'PEGASUS');
+DO $$
+BEGIN
+    DELETE FROM bot_heartbeats WHERE bot_name IN ('ARES', 'ATHENA', 'PEGASUS');
+EXCEPTION WHEN undefined_table THEN NULL;
+END $$;
 
 -- Clear unified scan activity for all bots
-DELETE FROM bot_scan_activity WHERE bot_name IN ('ARES', 'ATHENA', 'PEGASUS');
+DO $$
+BEGIN
+    DELETE FROM bot_scan_activity WHERE bot_name IN ('ARES', 'ATHENA', 'PEGASUS');
+EXCEPTION WHEN undefined_table THEN NULL;
+END $$;
 
 -- =============================================================================
 -- CONFIRMATION
