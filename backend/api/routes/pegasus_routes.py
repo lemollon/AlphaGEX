@@ -26,6 +26,33 @@ except ImportError:
 router = APIRouter(prefix="/api/pegasus", tags=["PEGASUS"])
 logger = logging.getLogger(__name__)
 
+# Try to import Tradier for account balance (same pattern as ARES)
+TradierDataFetcher = None
+TRADIER_AVAILABLE = False
+
+try:
+    from data.tradier_data_fetcher import TradierDataFetcher
+    TRADIER_AVAILABLE = True
+    logger.info("TradierDataFetcher loaded for PEGASUS")
+except ImportError as e:
+    logger.debug(f"TradierDataFetcher import failed: {e}")
+
+if not TRADIER_AVAILABLE:
+    try:
+        import importlib.util
+        from pathlib import Path
+        project_root = Path(__file__).parent.parent.parent.parent
+        tradier_path = project_root / 'data' / 'tradier_data_fetcher.py'
+        if tradier_path.exists():
+            spec = importlib.util.spec_from_file_location("tradier_direct", str(tradier_path))
+            tradier_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(tradier_module)
+            TradierDataFetcher = tradier_module.TradierDataFetcher
+            TRADIER_AVAILABLE = True
+            logger.info(f"TradierDataFetcher loaded via direct import for PEGASUS")
+    except Exception as e:
+        logger.warning(f"Direct Tradier import failed for PEGASUS: {e}")
+
 
 def _resolve_query_param(param, default=None):
     """
@@ -67,6 +94,51 @@ def get_pegasus_instance():
         return pegasus_trader
     except Exception:
         return None
+
+
+def _get_tradier_account_balance() -> dict:
+    """
+    Get account balance from Tradier API for PEGASUS.
+    Same pattern as ARES for consistency.
+    """
+    if not TRADIER_AVAILABLE or not TradierDataFetcher:
+        return {'connected': False, 'total_equity': 0, 'sandbox': True, 'error': 'TradierDataFetcher not imported'}
+
+    try:
+        from unified_config import APIConfig
+
+        api_key = (
+            getattr(APIConfig, 'TRADIER_SANDBOX_API_KEY', None) or
+            getattr(APIConfig, 'TRADIER_PROD_API_KEY', None) or
+            getattr(APIConfig, 'TRADIER_API_KEY', None)
+        )
+        account_id = (
+            getattr(APIConfig, 'TRADIER_SANDBOX_ACCOUNT_ID', None) or
+            getattr(APIConfig, 'TRADIER_PROD_ACCOUNT_ID', None) or
+            getattr(APIConfig, 'TRADIER_ACCOUNT_ID', None)
+        )
+        use_sandbox = getattr(APIConfig, 'TRADIER_SANDBOX', True)
+
+        if not api_key or not account_id:
+            return {'connected': False, 'total_equity': 0, 'sandbox': use_sandbox, 'error': 'No credentials configured'}
+
+        tradier = TradierDataFetcher(api_key=api_key, account_id=account_id, sandbox=use_sandbox)
+        balance = tradier.get_account_balance()
+
+        if balance:
+            return {
+                'connected': True,
+                'total_equity': balance.get('total_equity', 0),
+                'option_buying_power': balance.get('option_buying_power', 0),
+                'sandbox': use_sandbox,
+                'account_id': account_id
+            }
+
+        return {'connected': False, 'total_equity': 0, 'sandbox': use_sandbox, 'error': 'Empty response from Tradier'}
+
+    except Exception as e:
+        logger.error(f"PEGASUS Tradier balance fetch ERROR: {e}")
+        return {'connected': False, 'total_equity': 0, 'sandbox': True, 'error': str(e)}
 
 
 def _get_heartbeat(bot_name: str) -> dict:
@@ -171,12 +243,28 @@ async def get_pegasus_status():
 
         win_rate = round((win_count / closed_count) * 100, 1) if closed_count > 0 else 0
 
+        # Get Tradier account balance - PEGASUS should be connected
+        tradier_balance = _get_tradier_account_balance()
+
+        if tradier_balance.get('connected') and tradier_balance.get('total_equity', 0) > 0:
+            capital = round(tradier_balance['total_equity'], 2)
+            sandbox_connected = True
+            tradier_error = None
+            capital_message = f"Connected to Tradier {'sandbox' if tradier_balance.get('sandbox') else 'production'}"
+        else:
+            tradier_error = tradier_balance.get('error', 'Unknown connection error')
+            sandbox_connected = False
+            capital = 200000  # Paper capital for display
+            capital_message = f"ERROR: Not connected to Tradier - {tradier_error}"
+            logger.error(f"PEGASUS Tradier connection failed: {tradier_error}")
+
         return {
             "success": True,
             "data": {
-                "mode": "paper",
+                "mode": "paper" if not sandbox_connected else "sandbox",
                 "ticker": "SPX",
-                "capital": round(starting_capital + total_pnl, 2),
+                "capital": capital,
+                "capital_source": "tradier" if sandbox_connected else "paper_fallback",
                 "total_pnl": round(total_pnl, 2),
                 "trade_count": trade_count,
                 "win_rate": win_rate,
@@ -184,19 +272,22 @@ async def get_pegasus_status():
                 "closed_positions": closed_count,
                 "traded_today": traded_today,
                 "in_trading_window": False,
-                "high_water_mark": round(max(starting_capital, starting_capital + total_pnl), 2),
+                "high_water_mark": capital,
                 "current_time": datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d %H:%M:%S CT'),
                 "is_active": False,
                 "scan_interval_minutes": 5,
                 "heartbeat": heartbeat,
+                "sandbox_connected": sandbox_connected,
+                "tradier_error": tradier_error,
+                "tradier_account_id": tradier_balance.get('account_id') if sandbox_connected else None,
                 "config": {
                     "risk_per_trade": 10.0,
                     "spread_width": 10.0,
                     "sd_multiplier": 1.0,
                     "ticker": "SPX"
                 },
-                "source": "database",
-                "message": "Stats loaded from database - PEGASUS worker running separately"
+                "source": "tradier" if sandbox_connected else "error",
+                "message": capital_message
             }
         }
 
@@ -1051,6 +1142,14 @@ async def reset_pegasus_data(confirm: bool = False):
         cursor.execute("DELETE FROM pegasus_positions")
         deleted_positions = cursor.rowcount
 
+        # Also delete PEGASUS daily performance
+        deleted_performance = 0
+        try:
+            cursor.execute("DELETE FROM pegasus_daily_perf")
+            deleted_performance = cursor.rowcount
+        except Exception:
+            pass
+
         # Also delete PEGASUS scan activity logs if table exists
         deleted_scans = 0
         try:
@@ -1066,15 +1165,27 @@ async def reset_pegasus_data(confirm: bool = False):
         except Exception:
             pass
 
+        # Reset PEGASUS config to defaults
+        deleted_config = 0
+        try:
+            cursor.execute("DELETE FROM autonomous_config WHERE key LIKE 'pegasus_%'")
+            deleted_config = cursor.rowcount
+        except Exception:
+            pass
+
         conn.commit()
         conn.close()
+
+        logger.info(f"PEGASUS reset complete: {deleted_positions} positions, {deleted_performance} performance records, {deleted_scans} scan logs, {deleted_config} config entries deleted")
 
         return {
             "success": True,
             "message": "PEGASUS data has been reset successfully",
             "deleted": {
                 "positions": deleted_positions,
-                "scan_activity": deleted_scans
+                "daily_performance": deleted_performance,
+                "scan_activity": deleted_scans,
+                "config_entries": deleted_config
             }
         }
     except Exception as e:

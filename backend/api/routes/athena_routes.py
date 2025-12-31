@@ -1749,15 +1749,26 @@ async def reset_athena_data(confirm: bool = False):
         except Exception:
             pass
 
+        # Reset ATHENA config to defaults
+        deleted_config = 0
+        try:
+            cursor.execute("DELETE FROM autonomous_config WHERE key LIKE 'athena_%'")
+            deleted_config = cursor.rowcount
+        except Exception:
+            pass
+
         conn.commit()
         conn.close()
+
+        logger.info(f"ATHENA reset complete: {deleted_positions} positions, {deleted_scans} scan logs, {deleted_config} config entries deleted")
 
         return {
             "success": True,
             "message": "ATHENA data has been reset successfully",
             "deleted": {
                 "positions": deleted_positions,
-                "scan_activity": deleted_scans
+                "scan_activity": deleted_scans,
+                "config_entries": deleted_config
             }
         }
     except Exception as e:
