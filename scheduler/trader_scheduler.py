@@ -132,6 +132,21 @@ except ImportError:
     run_feedback_loop = None
     print("Warning: Solomon not available. Feedback loop will be disabled.")
 
+# Import scan activity logger for comprehensive scan visibility
+try:
+    from trading.scan_activity_logger import (
+        log_ares_scan, log_athena_scan, log_pegasus_scan,
+        ScanOutcome
+    )
+    SCAN_ACTIVITY_LOGGER_AVAILABLE = True
+except ImportError:
+    SCAN_ACTIVITY_LOGGER_AVAILABLE = False
+    log_ares_scan = None
+    log_athena_scan = None
+    log_pegasus_scan = None
+    ScanOutcome = None
+    print("Warning: Scan activity logger not available.")
+
 # Setup logging
 LOG_DIR = Path("logs")
 LOG_DIR.mkdir(exist_ok=True)
@@ -565,11 +580,25 @@ class AutonomousTraderScheduler:
         if not self.ares_trader:
             logger.warning("ARES V2 trader not available - skipping")
             self._save_heartbeat('ARES', 'UNAVAILABLE')
+            # Log to scan_activity for visibility
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_ares_scan:
+                log_ares_scan(
+                    outcome=ScanOutcome.UNAVAILABLE,
+                    decision_summary="ARES trader not initialized",
+                    generate_ai_explanation=False
+                )
             return
 
         if not self.is_market_open():
             logger.info("Market is CLOSED. Skipping ARES logic.")
             self._save_heartbeat('ARES', 'MARKET_CLOSED')
+            # Log to scan_activity for visibility
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_ares_scan:
+                log_ares_scan(
+                    outcome=ScanOutcome.MARKET_CLOSED,
+                    decision_summary="Market is closed",
+                    generate_ai_explanation=False
+                )
             return
 
         # Check Solomon kill switch before trading
@@ -579,6 +608,13 @@ class AutonomousTraderScheduler:
                 if solomon.is_bot_killed('ARES'):
                     logger.warning("ARES: Kill switch is ACTIVE - skipping")
                     self._save_heartbeat('ARES', 'KILLED', {'reason': 'Solomon kill switch'})
+                    # Log to scan_activity for visibility
+                    if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_ares_scan:
+                        log_ares_scan(
+                            outcome=ScanOutcome.SKIP,
+                            decision_summary="Kill switch is active (Solomon)",
+                            generate_ai_explanation=False
+                        )
                     logger.info(f"=" * 80)
                     return
             except Exception as e:
@@ -822,11 +858,25 @@ class AutonomousTraderScheduler:
         if not self.athena_trader:
             logger.warning("ATHENA V2 trader not available - skipping")
             self._save_heartbeat('ATHENA', 'UNAVAILABLE')
+            # Log to scan_activity for visibility
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_athena_scan:
+                log_athena_scan(
+                    outcome=ScanOutcome.UNAVAILABLE,
+                    decision_summary="ATHENA trader not initialized",
+                    generate_ai_explanation=False
+                )
             return
 
         if not self.is_market_open():
             logger.info("Market is CLOSED. Skipping ATHENA logic.")
             self._save_heartbeat('ATHENA', 'MARKET_CLOSED')
+            # Log to scan_activity for visibility
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_athena_scan:
+                log_athena_scan(
+                    outcome=ScanOutcome.MARKET_CLOSED,
+                    decision_summary="Market is closed",
+                    generate_ai_explanation=False
+                )
             return
 
         # Check Solomon kill switch before trading
@@ -836,6 +886,13 @@ class AutonomousTraderScheduler:
                 if solomon.is_bot_killed('ATHENA'):
                     logger.warning("ATHENA: Kill switch is ACTIVE - skipping")
                     self._save_heartbeat('ATHENA', 'KILLED', {'reason': 'Solomon kill switch'})
+                    # Log to scan_activity for visibility
+                    if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_athena_scan:
+                        log_athena_scan(
+                            outcome=ScanOutcome.SKIP,
+                            decision_summary="Kill switch is active (Solomon)",
+                            generate_ai_explanation=False
+                        )
                     logger.info(f"=" * 80)
                     return
             except Exception as e:
@@ -893,11 +950,25 @@ class AutonomousTraderScheduler:
         if not self.pegasus_trader:
             logger.warning("PEGASUS trader not available - skipping")
             self._save_heartbeat('PEGASUS', 'UNAVAILABLE')
+            # Log to scan_activity for visibility
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_pegasus_scan:
+                log_pegasus_scan(
+                    outcome=ScanOutcome.UNAVAILABLE,
+                    decision_summary="PEGASUS trader not initialized",
+                    generate_ai_explanation=False
+                )
             return
 
         if not self.is_market_open():
             logger.info("Market is CLOSED. Skipping PEGASUS logic.")
             self._save_heartbeat('PEGASUS', 'MARKET_CLOSED')
+            # Log to scan_activity for visibility
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_pegasus_scan:
+                log_pegasus_scan(
+                    outcome=ScanOutcome.MARKET_CLOSED,
+                    decision_summary="Market is closed",
+                    generate_ai_explanation=False
+                )
             return
 
         # Check Solomon kill switch before trading
@@ -907,6 +978,13 @@ class AutonomousTraderScheduler:
                 if solomon.is_bot_killed('PEGASUS'):
                     logger.warning("PEGASUS: Kill switch is ACTIVE - skipping")
                     self._save_heartbeat('PEGASUS', 'KILLED', {'reason': 'Solomon kill switch'})
+                    # Log to scan_activity for visibility
+                    if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_pegasus_scan:
+                        log_pegasus_scan(
+                            outcome=ScanOutcome.SKIP,
+                            decision_summary="Kill switch is active (Solomon)",
+                            generate_ai_explanation=False
+                        )
                     logger.info(f"=" * 80)
                     return
             except Exception as e:
