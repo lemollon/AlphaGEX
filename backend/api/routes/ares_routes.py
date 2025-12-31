@@ -202,23 +202,32 @@ def _get_tradier_account_balance() -> dict:
         # Try to get API config
         from unified_config import APIConfig
 
-        # Check for credentials - try multiple sources
-        # Priority: SANDBOX_* > PROD_* > generic TRADIER_*
-        api_key = (
-            getattr(APIConfig, 'TRADIER_SANDBOX_API_KEY', None) or
-            getattr(APIConfig, 'TRADIER_PROD_API_KEY', None) or
-            getattr(APIConfig, 'TRADIER_API_KEY', None)
-        )
-        account_id = (
-            getattr(APIConfig, 'TRADIER_SANDBOX_ACCOUNT_ID', None) or
-            getattr(APIConfig, 'TRADIER_PROD_ACCOUNT_ID', None) or
-            getattr(APIConfig, 'TRADIER_ACCOUNT_ID', None)
-        )
+        # Check sandbox mode FIRST (defaults to False = production in unified_config.py)
+        use_sandbox = getattr(APIConfig, 'TRADIER_SANDBOX', False)
 
-        # Check if sandbox mode is enabled (defaults to True for safety)
-        use_sandbox = getattr(APIConfig, 'TRADIER_SANDBOX', True)
+        # Select credentials based on mode - production credentials first in production mode
+        if use_sandbox:
+            # Sandbox mode: prefer sandbox credentials, fall back to generic
+            api_key = (
+                getattr(APIConfig, 'TRADIER_SANDBOX_API_KEY', None) or
+                getattr(APIConfig, 'TRADIER_API_KEY', None)
+            )
+            account_id = (
+                getattr(APIConfig, 'TRADIER_SANDBOX_ACCOUNT_ID', None) or
+                getattr(APIConfig, 'TRADIER_ACCOUNT_ID', None)
+            )
+        else:
+            # Production mode: prefer production credentials, fall back to generic
+            api_key = (
+                getattr(APIConfig, 'TRADIER_PROD_API_KEY', None) or
+                getattr(APIConfig, 'TRADIER_API_KEY', None)
+            )
+            account_id = (
+                getattr(APIConfig, 'TRADIER_PROD_ACCOUNT_ID', None) or
+                getattr(APIConfig, 'TRADIER_ACCOUNT_ID', None)
+            )
 
-        logger.info(f"Tradier balance fetch: api_key={'SET' if api_key else 'NOT SET'}, account_id={account_id}, sandbox={use_sandbox}")
+        logger.info(f"Tradier balance fetch: mode={'SANDBOX' if use_sandbox else 'PRODUCTION'}, api_key={'SET' if api_key else 'NOT SET'}, account_id={account_id}")
 
         if not api_key or not account_id:
             logger.warning("No Tradier credentials available for balance fetch")
@@ -1633,8 +1642,13 @@ async def check_tradier_connection():
 
         # Try to connect and get balance
         if TRADIER_AVAILABLE and TradierDataFetcher:
-            api_key = sandbox_key or prod_key
-            account_id = sandbox_account or prod_account
+            # Select credentials based on mode
+            if use_sandbox:
+                api_key = sandbox_key or prod_key
+                account_id = sandbox_account or prod_account
+            else:
+                api_key = prod_key or sandbox_key
+                account_id = prod_account or sandbox_account
 
             if api_key and account_id:
                 try:

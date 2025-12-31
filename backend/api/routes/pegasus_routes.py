@@ -107,17 +107,32 @@ def _get_tradier_account_balance() -> dict:
     try:
         from unified_config import APIConfig
 
-        api_key = (
-            getattr(APIConfig, 'TRADIER_SANDBOX_API_KEY', None) or
-            getattr(APIConfig, 'TRADIER_PROD_API_KEY', None) or
-            getattr(APIConfig, 'TRADIER_API_KEY', None)
-        )
-        account_id = (
-            getattr(APIConfig, 'TRADIER_SANDBOX_ACCOUNT_ID', None) or
-            getattr(APIConfig, 'TRADIER_PROD_ACCOUNT_ID', None) or
-            getattr(APIConfig, 'TRADIER_ACCOUNT_ID', None)
-        )
-        use_sandbox = getattr(APIConfig, 'TRADIER_SANDBOX', True)
+        # Check sandbox mode FIRST (defaults to False = production in unified_config.py)
+        use_sandbox = getattr(APIConfig, 'TRADIER_SANDBOX', False)
+
+        # Select credentials based on mode - production credentials first in production mode
+        if use_sandbox:
+            # Sandbox mode: prefer sandbox credentials, fall back to generic
+            api_key = (
+                getattr(APIConfig, 'TRADIER_SANDBOX_API_KEY', None) or
+                getattr(APIConfig, 'TRADIER_API_KEY', None)
+            )
+            account_id = (
+                getattr(APIConfig, 'TRADIER_SANDBOX_ACCOUNT_ID', None) or
+                getattr(APIConfig, 'TRADIER_ACCOUNT_ID', None)
+            )
+        else:
+            # Production mode: prefer production credentials, fall back to generic
+            api_key = (
+                getattr(APIConfig, 'TRADIER_PROD_API_KEY', None) or
+                getattr(APIConfig, 'TRADIER_API_KEY', None)
+            )
+            account_id = (
+                getattr(APIConfig, 'TRADIER_PROD_ACCOUNT_ID', None) or
+                getattr(APIConfig, 'TRADIER_ACCOUNT_ID', None)
+            )
+
+        logger.info(f"PEGASUS Tradier: mode={'SANDBOX' if use_sandbox else 'PRODUCTION'}, api_key={'SET' if api_key else 'NOT SET'}, account_id={account_id}")
 
         if not api_key or not account_id:
             return {'connected': False, 'total_equity': 0, 'sandbox': use_sandbox, 'error': 'No credentials configured'}
