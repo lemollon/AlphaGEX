@@ -1166,7 +1166,7 @@ export default function PsychologyTrapDetection() {
                     </div>
 
                     <div className="space-y-3">
-                      {liberationSetups.slice(0, 3).map((setup, idx) => (
+                      {liberationSetups.slice(0, 3).map((setup: { liberation_target_strike?: number; liberation_expiry_date?: string }, idx: number) => (
                         <div key={idx} className="bg-green-500/10 border border-green-500/30 rounded-lg p-4">
                           <div className="flex items-center justify-between mb-2">
                             <div className="font-semibold">
@@ -1197,7 +1197,7 @@ export default function PsychologyTrapDetection() {
                     </div>
 
                     <div className="space-y-3">
-                      {falseFloors.slice(0, 3).map((floor, idx) => (
+                      {falseFloors.slice(0, 3).map((floor: { false_floor_strike?: number; false_floor_expiry_date?: string }, idx: number) => (
                         <div key={idx} className="bg-orange-500/10 border border-orange-500/30 rounded-lg p-4">
                           <div className="flex items-center justify-between mb-2">
                             <div className="font-semibold">
