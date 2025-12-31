@@ -223,6 +223,7 @@ class ARESConfig:
     risk_per_trade_pct: float = 10.0
     max_contracts: int = 50
     min_credit: float = 0.02  # Min credit per spread
+    max_trades_per_day: int = 3  # Allow up to 3 trades per day with re-entry
 
     # Stop loss / Profit target
     use_stop_loss: bool = False
