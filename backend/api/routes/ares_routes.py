@@ -436,19 +436,23 @@ async def get_ares_status():
             status['open_positions'] = 0
 
         # Add Tradier connection status (required by frontend)
-        if 'sandbox_connected' not in status:
-            tradier_balance = _get_tradier_account_balance()
-            if tradier_balance.get('connected') and tradier_balance.get('total_equity', 0) > 0:
-                status['sandbox_connected'] = True
-                status['tradier_error'] = None
-                status['tradier_account_id'] = tradier_balance.get('account_id')
-                # Update capital from Tradier if not already set from instance
-                if status.get('capital', 0) <= 0:
-                    status['capital'] = round(tradier_balance['total_equity'], 2)
-            else:
-                status['sandbox_connected'] = False
-                status['tradier_error'] = tradier_balance.get('error', 'Unknown connection error')
-                status['tradier_account_id'] = None
+        # ALWAYS fetch Tradier balance to ensure we have the real account balance
+        tradier_balance = _get_tradier_account_balance()
+        if tradier_balance.get('connected') and tradier_balance.get('total_equity', 0) > 0:
+            status['sandbox_connected'] = True
+            status['tradier_error'] = None
+            status['tradier_account_id'] = tradier_balance.get('account_id')
+            # ALWAYS update capital from Tradier when connected - this is the real balance
+            status['capital'] = round(tradier_balance['total_equity'], 2)
+            status['capital_source'] = 'tradier'
+            status['message'] = f"Connected to Tradier {'sandbox' if tradier_balance.get('sandbox') else 'production'}"
+        else:
+            status['sandbox_connected'] = False
+            status['tradier_error'] = tradier_balance.get('error', 'Unknown connection error')
+            status['tradier_account_id'] = None
+            status['capital_source'] = 'paper_fallback'
+            status['message'] = f"ERROR: Not connected to Tradier - {status['tradier_error']}"
+            logger.warning(f"ARES Tradier connection failed: {status['tradier_error']}")
 
         return {
             "success": True,
