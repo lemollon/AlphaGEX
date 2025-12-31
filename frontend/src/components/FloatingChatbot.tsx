@@ -769,7 +769,7 @@ export default function FloatingChatbot() {
   // Full chat window
   return (
     <div
-      className="fixed bottom-6 right-6 z-50 w-96 h-[520px] bg-background-card border border-border rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+      className="fixed bottom-0 right-0 sm:bottom-6 sm:right-6 z-50 w-full sm:w-96 h-[100dvh] sm:h-[520px] max-w-full bg-background-card border border-border sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden"
       style={{ boxShadow: '0 0 40px rgba(99, 102, 241, 0.2), 0 25px 50px -12px rgba(0, 0, 0, 0.5)' }}
       onDrop={handleDrop}
       onDragOver={handleDragOver}

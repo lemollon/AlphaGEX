@@ -71,6 +71,14 @@ const fetchers = {
     const response = await apiClient.getPsychologyCurrentRegime(symbol)
     return response.data
   },
+  liberationSetups: async () => {
+    const response = await apiClient.getLiberationSetups()
+    return response.data
+  },
+  falseFloors: async () => {
+    const response = await apiClient.getFalseFloors()
+    return response.data
+  },
 
   // ARES Bot
   aresStatus: async () => {
@@ -354,6 +362,22 @@ const fetchers = {
   systemHealth: async () => {
     try {
       const response = await api.get('/api/health')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  dataCollectionStatus: async () => {
+    try {
+      const response = await apiClient.getDataCollectionStatus()
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  watchdogStatus: async () => {
+    try {
+      const response = await apiClient.getWatchdogStatus()
       return response.data
     } catch {
       return { success: false, data: null }
@@ -708,6 +732,22 @@ export function usePsychologyRegime(symbol: string = 'SPY', options?: SWRConfigu
     () => fetchers.psychologyRegime(symbol),
     { ...swrConfig, refreshInterval: 60 * 1000, ...options }
   )
+}
+
+export function useLiberationSetups(options?: SWRConfiguration) {
+  return useSWR('liberation-setups', fetchers.liberationSetups, {
+    ...swrConfig,
+    refreshInterval: 2 * 60 * 1000,
+    ...options,
+  })
+}
+
+export function useFalseFloors(options?: SWRConfiguration) {
+  return useSWR('false-floors', fetchers.falseFloors, {
+    ...swrConfig,
+    refreshInterval: 2 * 60 * 1000,
+    ...options,
+  })
 }
 
 // =============================================================================
@@ -1183,6 +1223,22 @@ export function useSystemLogs(limit: number = 50, options?: SWRConfiguration) {
     () => fetchers.systemLogs(limit),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
+}
+
+export function useDataCollectionStatus(options?: SWRConfiguration) {
+  return useSWR('data-collection-status', fetchers.dataCollectionStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useWatchdogStatus(options?: SWRConfiguration) {
+  return useSWR('watchdog-status', fetchers.watchdogStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
 }
 
 // =============================================================================
