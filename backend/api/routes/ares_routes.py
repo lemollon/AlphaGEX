@@ -326,26 +326,23 @@ async def get_ares_status():
         except:
             pass
 
-        # Get actual Tradier account balance instead of hardcoded value
+        # Get actual Tradier account balance - ARES MUST be connected to Tradier
         tradier_balance = _get_tradier_account_balance()
-        tradier_error = None
+
         if tradier_balance.get('connected') and tradier_balance.get('total_equity', 0) > 0:
             # Use actual Tradier balance
             capital = round(tradier_balance['total_equity'], 2)
             sandbox_connected = True
+            tradier_error = None
+            capital_message = f"Connected to Tradier {'sandbox' if tradier_balance.get('sandbox') else 'production'}"
         else:
-            # Fallback to default if Tradier unavailable
-            capital = 100000  # Consistent default with frontend
-            sandbox_connected = False
+            # NOT connected to Tradier - this is an error state, not fallback
             tradier_error = tradier_balance.get('error', 'Unknown connection error')
-
-        # Build message explaining capital source
-        if sandbox_connected:
-            capital_message = f"Capital synced with Tradier {'sandbox' if tradier_balance.get('sandbox') else 'production'}"
-        elif tradier_error:
-            capital_message = f"Using paper capital ($100k) - Tradier: {tradier_error}"
-        else:
-            capital_message = "Using paper capital - Stats loaded from database"
+            sandbox_connected = False
+            # Still show paper capital for display, but clearly indicate error
+            capital = 100000  # Paper capital for display only
+            capital_message = f"ERROR: Not connected to Tradier - {tradier_error}"
+            logger.error(f"ARES Tradier connection failed: {tradier_error}")
 
         return {
             "success": True,
@@ -353,7 +350,8 @@ async def get_ares_status():
                 "mode": stored_mode,
                 "ticker": stored_ticker,
                 "is_spy_sandbox": stored_ticker == "SPY",
-                "capital": capital,  # Now uses actual Tradier balance when available
+                "capital": capital,
+                "capital_source": "tradier" if sandbox_connected else "paper_fallback",
                 "total_pnl": round(total_pnl, 2),
                 "trade_count": trade_count,
                 "win_rate": win_rate,
@@ -361,13 +359,14 @@ async def get_ares_status():
                 "closed_positions": closed_count,
                 "traded_today": traded_today,
                 "in_trading_window": False,
-                "high_water_mark": capital,  # High water mark = current capital
+                "high_water_mark": capital,
                 "current_time": datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d %H:%M:%S CT'),
                 "is_active": False,
                 "scan_interval_minutes": 5,
                 "heartbeat": heartbeat,
                 "sandbox_connected": sandbox_connected,
                 "tradier_error": tradier_error,
+                "tradier_account_id": tradier_balance.get('account_id') if sandbox_connected else None,
                 "config": {
                     "risk_per_trade": 10.0,
                     "spread_width": 10.0,
@@ -375,7 +374,7 @@ async def get_ares_status():
                     "ticker": stored_ticker,
                     "target_return": "10% monthly"
                 },
-                "source": "tradier" if sandbox_connected else "paper",
+                "source": "tradier" if sandbox_connected else "error",
                 "message": capital_message
             }
         }
@@ -1564,6 +1563,108 @@ async def get_tradier_account_status():
     except Exception as e:
         logger.error(f"Error getting Tradier account status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/tradier-connection")
+async def check_tradier_connection():
+    """
+    Direct Tradier connection check - diagnose connection issues.
+
+    This endpoint checks if ARES can connect to Tradier API directly,
+    without needing the ARES trading bot to be running.
+
+    Returns detailed diagnostic info about:
+    - Credentials configuration
+    - API connection status
+    - Account balance
+    - Any errors encountered
+    """
+    diagnostics = {
+        "timestamp": datetime.now(ZoneInfo("America/Chicago")).isoformat(),
+        "tradier_fetcher_available": TRADIER_AVAILABLE,
+        "credentials": {},
+        "connection": {},
+        "balance": {}
+    }
+
+    # Check credentials
+    try:
+        from unified_config import APIConfig
+
+        sandbox_key = getattr(APIConfig, 'TRADIER_SANDBOX_API_KEY', None)
+        sandbox_account = getattr(APIConfig, 'TRADIER_SANDBOX_ACCOUNT_ID', None)
+        prod_key = getattr(APIConfig, 'TRADIER_PROD_API_KEY', None)
+        prod_account = getattr(APIConfig, 'TRADIER_PROD_ACCOUNT_ID', None)
+        use_sandbox = getattr(APIConfig, 'TRADIER_SANDBOX', True)
+
+        diagnostics["credentials"] = {
+            "sandbox_api_key_set": bool(sandbox_key),
+            "sandbox_account_id": sandbox_account or "NOT SET",
+            "prod_api_key_set": bool(prod_key),
+            "prod_account_id": prod_account or "NOT SET",
+            "use_sandbox": use_sandbox,
+            "effective_account": sandbox_account or prod_account or "NONE"
+        }
+
+        # Try to connect and get balance
+        if TRADIER_AVAILABLE and TradierDataFetcher:
+            api_key = sandbox_key or prod_key
+            account_id = sandbox_account or prod_account
+
+            if api_key and account_id:
+                try:
+                    tradier = TradierDataFetcher(
+                        api_key=api_key,
+                        account_id=account_id,
+                        sandbox=use_sandbox
+                    )
+                    balance = tradier.get_account_balance()
+
+                    if balance:
+                        diagnostics["connection"] = {
+                            "status": "CONNECTED",
+                            "api_reachable": True,
+                            "account_valid": True
+                        }
+                        diagnostics["balance"] = {
+                            "total_equity": balance.get('total_equity', 0),
+                            "option_buying_power": balance.get('option_buying_power', 0),
+                            "total_cash": balance.get('total_cash', 0)
+                        }
+                    else:
+                        diagnostics["connection"] = {
+                            "status": "ERROR",
+                            "error": "Empty response from Tradier API"
+                        }
+                except Exception as conn_err:
+                    diagnostics["connection"] = {
+                        "status": "ERROR",
+                        "error": str(conn_err)
+                    }
+            else:
+                diagnostics["connection"] = {
+                    "status": "NO_CREDENTIALS",
+                    "error": "API key or account ID not configured"
+                }
+        else:
+            diagnostics["connection"] = {
+                "status": "IMPORT_ERROR",
+                "error": "TradierDataFetcher module not available"
+            }
+
+    except Exception as e:
+        diagnostics["credentials"]["error"] = str(e)
+        diagnostics["connection"] = {"status": "CONFIG_ERROR", "error": str(e)}
+
+    # Determine overall status
+    is_connected = diagnostics["connection"].get("status") == "CONNECTED"
+
+    return {
+        "success": is_connected,
+        "connected": is_connected,
+        "message": "Tradier connected successfully" if is_connected else f"Connection failed: {diagnostics['connection'].get('error', 'Unknown error')}",
+        "diagnostics": diagnostics
+    }
 
 
 @router.get("/live-pnl")

@@ -49,6 +49,7 @@ interface ARESStatus {
   mode: string
   ticker: string
   capital: number
+  capital_source?: string
   total_pnl: number
   trade_count: number
   win_rate: number
@@ -61,6 +62,7 @@ interface ARESStatus {
   high_water_mark: number
   sandbox_connected?: boolean
   tradier_error?: string
+  tradier_account_id?: string
   source?: string
   message?: string
   scan_interval_minutes?: number
@@ -557,6 +559,29 @@ export default function AresPage() {
             onRefresh={handleRefresh}
             isRefreshing={statusLoading}
           />
+
+          {/* Tradier Connection Error Banner */}
+          {status && !status.sandbox_connected && (
+            <div className="bg-red-900/30 border border-red-500/50 rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-red-400 mt-0.5 flex-shrink-0" />
+                <div className="flex-1">
+                  <h3 className="text-red-400 font-semibold">Tradier Not Connected</h3>
+                  <p className="text-gray-300 text-sm mt-1">
+                    ARES requires a Tradier connection for live trading. Currently showing paper capital ($100k).
+                  </p>
+                  {status.tradier_error && (
+                    <p className="text-red-300 text-xs mt-2 font-mono bg-red-900/20 p-2 rounded">
+                      Error: {status.tradier_error}
+                    </p>
+                  )}
+                  <p className="text-gray-400 text-xs mt-2">
+                    Check that TRADIER_SANDBOX_API_KEY and TRADIER_SANDBOX_ACCOUNT_ID are set in environment variables.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Quick Stats */}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
