@@ -209,8 +209,8 @@ class TradeSyncValidator:
             cursor = conn.cursor()
 
             # Get daily P&L from closed positions
-            # ARES stores close_time as TEXT - cast to timestamp for comparison
-            # Use Central Time for all comparisons (America/Chicago)
+            # ARES stores close_time as TEXT - some entries may be time-only or invalid
+            # Use a safer query that filters out invalid timestamps
             cursor.execute("""
                 SELECT
                     DATE(close_time::timestamp AT TIME ZONE 'America/Chicago') as trade_date,
@@ -218,6 +218,8 @@ class TradeSyncValidator:
                     SUM(realized_pnl) as daily_pnl
                 FROM ares_positions
                 WHERE status IN ('closed', 'expired')
+                AND close_time IS NOT NULL
+                AND close_time ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
                 AND close_time::timestamp >= (NOW() AT TIME ZONE 'America/Chicago') - INTERVAL '30 days'
                 GROUP BY DATE(close_time::timestamp AT TIME ZONE 'America/Chicago')
                 ORDER BY trade_date
@@ -852,15 +854,82 @@ def cleanup_stale_positions(dry_run: bool = True):
     print("=" * 70)
 
 
+def reset_bot_account(bot_name: str, confirm: bool = False):
+    """
+    Reset a bot's trading account - delete all positions and start fresh.
+
+    Args:
+        bot_name: ARES, ATHENA, or PEGASUS
+        confirm: Must be True to actually delete (safety check)
+    """
+    from database_adapter import get_connection
+
+    bot_name = bot_name.upper()
+
+    table_map = {
+        'ATHENA': 'apache_positions',
+        'ARES': 'ares_positions',
+        'PEGASUS': 'pegasus_positions'
+    }
+
+    if bot_name not in table_map:
+        print(f"❌ Unknown bot: {bot_name}. Use ARES, ATHENA, or PEGASUS")
+        return
+
+    table = table_map[bot_name]
+
+    print_header(f"RESET {bot_name} ACCOUNT")
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Count current positions
+        cursor.execute(f"SELECT COUNT(*), SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) FROM {table}")
+        total, open_count = cursor.fetchone()
+
+        print(f"\n  Table: {table}")
+        print(f"  Total positions: {total or 0}")
+        print(f"  Open positions: {open_count or 0}")
+
+        if not confirm:
+            print(f"\n  ⚠️  This will DELETE all {total or 0} positions!")
+            print(f"  Run with --reset {bot_name} --confirm to proceed")
+            conn.close()
+            return
+
+        # Delete all positions
+        cursor.execute(f"DELETE FROM {table}")
+        deleted = cursor.rowcount
+        conn.commit()
+        conn.close()
+
+        print(f"\n  ✅ Deleted {deleted} positions from {table}")
+        print(f"  {bot_name} account is now reset to 0 trades, 0 P&L")
+
+    except Exception as e:
+        print(f"  ❌ Reset failed: {e}")
+
+    print("\n" + "=" * 70)
+
+
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Trade Sync Validation and Cleanup")
     parser.add_argument("--fix", action="store_true", help="Fix stale positions (mark expired)")
     parser.add_argument("--cleanup-only", action="store_true", help="Only run cleanup, skip validation")
+    parser.add_argument("--reset", type=str, help="Reset bot account (ARES, ATHENA, PEGASUS, or ALL)")
+    parser.add_argument("--confirm", action="store_true", help="Confirm destructive operations")
     args = parser.parse_args()
 
-    if args.cleanup_only:
+    if args.reset:
+        if args.reset.upper() == 'ALL':
+            for bot in ['ATHENA', 'ARES', 'PEGASUS']:
+                reset_bot_account(bot, confirm=args.confirm)
+        else:
+            reset_bot_account(args.reset, confirm=args.confirm)
+    elif args.cleanup_only:
         cleanup_stale_positions(dry_run=not args.fix)
     else:
         validator = TradeSyncValidator()
