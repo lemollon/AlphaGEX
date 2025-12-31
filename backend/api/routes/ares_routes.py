@@ -202,8 +202,8 @@ def _get_tradier_account_balance() -> dict:
         # Try to get API config
         from unified_config import APIConfig
 
-        # Check sandbox mode FIRST (defaults to False = production in unified_config.py)
-        use_sandbox = getattr(APIConfig, 'TRADIER_SANDBOX', False)
+        # Check sandbox mode FIRST (ARES uses sandbox mode)
+        use_sandbox = getattr(APIConfig, 'TRADIER_SANDBOX', True)
 
         # Select credentials based on mode - production credentials first in production mode
         if use_sandbox:
