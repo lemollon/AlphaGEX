@@ -919,12 +919,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Trade Sync Validation and Cleanup")
     parser.add_argument("--fix", action="store_true", help="Fix stale positions (mark expired)")
     parser.add_argument("--cleanup-only", action="store_true", help="Only run cleanup, skip validation")
-    parser.add_argument("--reset", type=str, help="Reset bot account (ARES, ATHENA, or PEGASUS)")
+    parser.add_argument("--reset", type=str, help="Reset bot account (ARES, ATHENA, PEGASUS, or ALL)")
     parser.add_argument("--confirm", action="store_true", help="Confirm destructive operations")
     args = parser.parse_args()
 
     if args.reset:
-        reset_bot_account(args.reset, confirm=args.confirm)
+        if args.reset.upper() == 'ALL':
+            for bot in ['ATHENA', 'ARES', 'PEGASUS']:
+                reset_bot_account(bot, confirm=args.confirm)
+        else:
+            reset_bot_account(args.reset, confirm=args.confirm)
     elif args.cleanup_only:
         cleanup_stale_positions(dry_run=not args.fix)
     else:
