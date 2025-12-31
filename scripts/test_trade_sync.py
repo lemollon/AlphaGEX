@@ -209,8 +209,8 @@ class TradeSyncValidator:
             cursor = conn.cursor()
 
             # Get daily P&L from closed positions
-            # ARES stores close_time as TEXT - cast to timestamp for comparison
-            # Use Central Time for all comparisons (America/Chicago)
+            # ARES stores close_time as TEXT - some entries may be time-only or invalid
+            # Use a safer query that filters out invalid timestamps
             cursor.execute("""
                 SELECT
                     DATE(close_time::timestamp AT TIME ZONE 'America/Chicago') as trade_date,
@@ -218,6 +218,8 @@ class TradeSyncValidator:
                     SUM(realized_pnl) as daily_pnl
                 FROM ares_positions
                 WHERE status IN ('closed', 'expired')
+                AND close_time IS NOT NULL
+                AND close_time ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
                 AND close_time::timestamp >= (NOW() AT TIME ZONE 'America/Chicago') - INTERVAL '30 days'
                 GROUP BY DATE(close_time::timestamp AT TIME ZONE 'America/Chicago')
                 ORDER BY trade_date
