@@ -2074,3 +2074,72 @@ async def get_ares_scan_activity_today():
     """Get all ARES scans from today with summary."""
     today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
     return await get_ares_scan_activity(date=today, limit=200)
+
+
+@router.post("/reset")
+async def reset_ares_data(confirm: bool = False):
+    """
+    Reset ARES trading data - delete all positions and start fresh.
+
+    Args:
+        confirm: Must be True to actually delete data (safety check)
+
+    WARNING: This will permanently delete ALL ARES trading history.
+    """
+    if not confirm:
+        # Get current counts for preview
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM ares_positions")
+            total = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM ares_positions WHERE status = 'open'")
+            open_count = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM ares_positions WHERE status IN ('closed', 'expired')")
+            closed_count = cursor.fetchone()[0]
+            conn.close()
+
+            return {
+                "success": False,
+                "message": "Set confirm=true to reset ARES data. This action cannot be undone.",
+                "preview": {
+                    "total_positions": total,
+                    "open_positions": open_count,
+                    "closed_positions": closed_count
+                }
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Could not preview data: {e}"
+            }
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Delete all ARES positions
+        cursor.execute("DELETE FROM ares_positions")
+        deleted_positions = cursor.rowcount
+
+        # Also delete ARES scan activity logs
+        try:
+            cursor.execute("DELETE FROM ares_scan_activity")
+            deleted_scans = cursor.rowcount
+        except Exception:
+            deleted_scans = 0
+
+        conn.commit()
+        conn.close()
+
+        return {
+            "success": True,
+            "message": "ARES data has been reset successfully",
+            "deleted": {
+                "positions": deleted_positions,
+                "scan_activity": deleted_scans
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error resetting ARES data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -349,6 +349,7 @@ export const apiClient = {
   getARESDecisions: (limit: number = 50) => api.get('/api/ares/decisions', { params: { limit } }),
   getARESLogs: (level?: string, limit: number = 100) => api.get('/api/ares/logs', { params: { level, limit } }),
   getARESConfig: () => api.get('/api/ares/config'),
+  resetARESData: (confirm: boolean = false) => api.post('/api/ares/reset', null, { params: { confirm } }),
 
   // ATHENA - Directional Spread Bot
   getATHENAStatus: () => api.get('/api/athena/status'),
