@@ -312,11 +312,42 @@ async def get_pegasus_status():
             }
         }
 
+    # Calculate trading window for when instance returns status
+    now = datetime.now(ZoneInfo("America/Chicago"))
+    current_time_str = now.strftime('%Y-%m-%d %H:%M:%S CT')
+    entry_start = "08:30"
+    entry_end = "15:30"
+    if now.month == 12 and now.day == 31:
+        entry_end = "11:30"
+    start_parts = entry_start.split(':')
+    end_parts = entry_end.split(':')
+    start_time = now.replace(hour=int(start_parts[0]), minute=int(start_parts[1]), second=0, microsecond=0)
+    end_time = now.replace(hour=int(end_parts[0]), minute=int(end_parts[1]), second=0, microsecond=0)
+    is_weekday = now.weekday() < 5
+    in_window = is_weekday and start_time <= now <= end_time
+    trading_window_status = "OPEN" if in_window else "CLOSED"
+
     try:
         status = pegasus.get_status()
         status['is_active'] = True
         status['scan_interval_minutes'] = 5
         status['heartbeat'] = heartbeat
+        # Ensure all required fields are present
+        status['in_trading_window'] = in_window
+        status['trading_window_status'] = trading_window_status
+        status['trading_window_end'] = entry_end
+        status['current_time'] = current_time_str
+        # Ensure capital fields exist
+        if 'capital' not in status:
+            status['capital'] = 200000
+        if 'capital_source' not in status:
+            status['capital_source'] = 'paper'
+        if 'total_pnl' not in status:
+            status['total_pnl'] = 0
+        if 'trade_count' not in status:
+            status['trade_count'] = 0
+        if 'win_rate' not in status:
+            status['win_rate'] = 0
 
         return {
             "success": True,

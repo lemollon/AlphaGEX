@@ -418,6 +418,20 @@ async def get_ares_status():
         status['is_active'] = True
         status['scan_interval_minutes'] = 5
         status['heartbeat'] = heartbeat
+        # Ensure all required fields are present
+        status['in_trading_window'] = in_window
+        status['trading_window_status'] = trading_window_status
+        status['trading_window_end'] = entry_end
+        status['current_time'] = current_time_str
+        # Ensure capital fields exist
+        if 'capital' not in status:
+            status['capital'] = 100000
+        if 'total_pnl' not in status:
+            status['total_pnl'] = 0
+        if 'trade_count' not in status:
+            status['trade_count'] = 0
+        if 'win_rate' not in status:
+            status['win_rate'] = 0
 
         return {
             "success": True,
