@@ -5136,15 +5136,15 @@ function HyperionEffects({ color, sunColor, paused }: { color: string, sunColor:
         })}
       </group>
 
-      {/* Ethereal Aura - Subtle ring glow instead of hazy spheres */}
+      {/* Ethereal Aura - Very subtle ring glow */}
       <group ref={auraRef}>
         {[3, 4, 5].map((radius, i) => (
           <mesh key={i} rotation={[PI / 2, 0, 0]}>
-            <torusGeometry args={[radius, 0.03, 16, 64]} />
+            <torusGeometry args={[radius, 0.02, 16, 64]} />
             <meshBasicMaterial
               color={i === 0 ? sunColor : i === 1 ? color : '#a855f7'}
               transparent
-              opacity={0.25 - i * 0.05}
+              opacity={0.08 - i * 0.02}
               blending={THREE.AdditiveBlending}
             />
           </mesh>
@@ -5469,14 +5469,14 @@ function PegasusEffects({ color, sunColor, paused }: { color: string, sunColor: 
         )
       })}
 
-      {/* Aura layers */}
+      {/* Aura layers - very subtle */}
       <group ref={auraRef}>
         {[2.5, 3.5].map((radius, i) => (
           <Sphere key={i} args={[radius, 32, 32]}>
             <meshBasicMaterial
               color={i === 0 ? sunColor : color}
               transparent
-              opacity={0.06}
+              opacity={0.02}
               side={THREE.BackSide}
             />
           </Sphere>
@@ -5615,17 +5615,17 @@ function SolarSystem({
     >
       {/* Far-distance beacon glow - always visible from afar */}
       <Sphere args={[8, 16, 16]}>
-        <meshBasicMaterial color={system.glowColor} transparent opacity={0.05} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+        <meshBasicMaterial color={system.glowColor} transparent opacity={0.02} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
       </Sphere>
 
       {/* Outer glow halo */}
       <Sphere ref={glowRef} args={[5, 32, 32]}>
-        <meshBasicMaterial color={system.glowColor} transparent opacity={0.10} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+        <meshBasicMaterial color={system.glowColor} transparent opacity={0.04} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
       </Sphere>
 
       {/* Secondary glow */}
       <Sphere args={[3.5, 32, 32]}>
-        <meshBasicMaterial color={system.glowColor} transparent opacity={0.08} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+        <meshBasicMaterial color={system.glowColor} transparent opacity={0.03} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
       </Sphere>
 
       {/* Central sun with distortion */}
@@ -5801,9 +5801,9 @@ function OrbitingPlanet({
 
       {/* Planet with effects */}
       <group ref={groupRef}>
-        {/* Planet atmosphere glow - always visible from all angles (85-90% transparent) */}
+        {/* Planet atmosphere glow - always visible from all angles (95-97% transparent) */}
         <Sphere ref={atmosphereRef} args={[scaledSize * 1.5, 16, 16]}>
-          <meshBasicMaterial color={planet.color} transparent opacity={isHovered ? 0.15 : 0.10} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+          <meshBasicMaterial color={planet.color} transparent opacity={isHovered ? 0.05 : 0.03} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
         </Sphere>
 
         {/* Planet sphere */}
