@@ -402,8 +402,7 @@ async def get_ares_positions():
                 position_id, open_time, expiration,
                 put_long_strike, put_short_strike, call_short_strike, call_long_strike,
                 put_credit, call_credit, total_credit,
-                contracts, spread_width, max_loss,
-                underlying_at_entry, vix_at_entry, status
+                contracts, spread_width, max_loss, status
             FROM ares_positions
             WHERE status = 'open'
             ORDER BY open_time DESC
@@ -416,8 +415,7 @@ async def get_ares_positions():
                 position_id, open_time, close_time, expiration,
                 put_long_strike, put_short_strike, call_short_strike, call_long_strike,
                 put_credit, call_credit, total_credit,
-                contracts, spread_width, max_loss, close_price, realized_pnl,
-                underlying_at_entry, vix_at_entry, status
+                contracts, spread_width, max_loss, close_price, realized_pnl, status
             FROM ares_positions
             WHERE status IN ('closed', 'expired')
             ORDER BY close_time DESC
@@ -430,8 +428,7 @@ async def get_ares_positions():
         open_positions = []
         for row in open_rows:
             pos_id, open_date, exp, put_long, put_short, call_short, call_long, \
-                put_cr, call_cr, total_cr, contracts, spread_w, max_loss, \
-                underlying, vix, status = row
+                put_cr, call_cr, total_cr, contracts, spread_w, max_loss, status = row
 
             # Calculate DTE
             dte = 0
@@ -464,8 +461,6 @@ async def get_ares_positions():
                 "spread_width": float(spread_w) if spread_w else 0,
                 "max_loss": float(max_loss) if max_loss else 0,
                 "premium_collected": float(total_cr or 0) * 100 * (contracts or 0),
-                "underlying_at_entry": float(underlying) if underlying else 0,
-                "vix_at_entry": float(vix) if vix else 0,
                 "status": status
             })
 
@@ -474,7 +469,7 @@ async def get_ares_positions():
         for row in closed_rows:
             pos_id, open_date, close_date, exp, put_long, put_short, call_short, call_long, \
                 put_cr, call_cr, total_cr, contracts, spread_w, max_loss, close_price, realized_pnl, \
-                underlying, vix, status = row
+                status = row
 
             max_profit = float(total_cr or 0) * 100 * (contracts or 0)
             return_pct = round((float(realized_pnl or 0) / max_profit) * 100, 1) if max_profit else 0
@@ -500,8 +495,6 @@ async def get_ares_positions():
                 "close_price": float(close_price) if close_price else 0,
                 "realized_pnl": float(realized_pnl) if realized_pnl else 0,
                 "return_pct": return_pct,
-                "underlying_at_entry": float(underlying) if underlying else 0,
-                "vix_at_entry": float(vix) if vix else 0,
                 "status": status
             })
 
@@ -1450,7 +1443,6 @@ async def get_ares_live_pnl():
                     put_long_strike, put_short_strike,
                     call_short_strike, call_long_strike,
                     total_credit, contracts, max_loss, spread_width,
-                    underlying_price_at_entry, vix_at_entry, expected_move,
                     status
                 FROM ares_positions
                 WHERE status = 'open'
@@ -1474,7 +1466,7 @@ async def get_ares_live_pnl():
 
             for row in open_rows:
                 (pos_id, open_date, exp, put_long, put_short, call_short, call_long,
-                 credit, contracts, max_loss, spread_width, entry_price, vix_entry, exp_move, status) = row
+                 credit, contracts, max_loss, spread_width, status) = row
 
                 credit_received = float(credit or 0) * 100 * (contracts or 0)
 
@@ -1501,12 +1493,8 @@ async def get_ares_live_pnl():
                     'contracts': contracts or 0,
                     'max_loss': round(float(max_loss or 0) * 100 * (contracts or 0), 2),
                     'spread_width': float(spread_width) if spread_width else 0,
-                    'underlying_at_entry': float(entry_price) if entry_price else 0,
-                    # Entry context for transparency
                     'dte': dte,
                     'is_0dte': is_0dte,
-                    'vix_at_entry': float(vix_entry) if vix_entry else 0,
-                    'expected_move': float(exp_move) if exp_move else 0,
                     'max_profit': round(credit_received, 2),
                     'strategy': 'IRON_CONDOR',
                     'direction': 'NEUTRAL',
@@ -1557,8 +1545,7 @@ async def get_ares_live_pnl():
                     position_id, open_date, expiration,
                     put_long_strike, put_short_strike,
                     call_short_strike, call_long_strike,
-                    total_credit, contracts, max_loss, spread_width,
-                    underlying_price_at_entry, vix_at_entry, status
+                    total_credit, contracts, max_loss, spread_width, status
                 FROM ares_positions
                 WHERE status = 'open'
             ''')
@@ -1581,7 +1568,7 @@ async def get_ares_live_pnl():
 
             for row in open_rows:
                 (pos_id, open_date, exp, put_long, put_short, call_short, call_long,
-                 credit, contracts, max_loss, spread_width, entry_price, vix_entry, status) = row
+                 credit, contracts, max_loss, spread_width, status) = row
 
                 credit_received = float(credit or 0) * 100 * (contracts or 0)
                 positions.append({
