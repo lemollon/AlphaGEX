@@ -69,7 +69,54 @@ except ImportError:
     GEXIS_KNOWLEDGE_AVAILABLE = False
     GEXIS_COMMANDS = ""
 
+# Import Extended Thinking for complex analysis
+try:
+    from ai.gexis_extended_thinking import (
+        analyze_with_extended_thinking,
+        analyze_strike_selection,
+        evaluate_trade_setup,
+        ThinkingResult
+    )
+    EXTENDED_THINKING_AVAILABLE = True
+except ImportError:
+    EXTENDED_THINKING_AVAILABLE = False
+    analyze_with_extended_thinking = None
+
+# Import Learning Memory for self-improvement
+try:
+    from ai.gexis_learning_memory import (
+        GEXISLearningMemory,
+        get_learning_memory,
+        record_prediction as lm_record_prediction,
+        record_outcome as lm_record_outcome,
+        get_accuracy_statement as lm_get_accuracy_statement
+    )
+    LEARNING_MEMORY_AVAILABLE = True
+except ImportError:
+    LEARNING_MEMORY_AVAILABLE = False
+    get_learning_memory = None
+
 router = APIRouter(prefix="/api/ai", tags=["AI Copilot"])
+
+# Keywords that trigger Extended Thinking (complex queries)
+COMPLEX_QUERY_KEYWORDS = {
+    'why', 'analyze', 'explain', 'compare', 'evaluate', 'assess',
+    'strike selection', 'optimal', 'best strike', 'trade setup',
+    'risk assessment', 'should i', 'recommend', 'probability',
+    'deep analysis', 'think through', 'reasoning'
+}
+
+def requires_extended_thinking(query: str) -> bool:
+    """Detect if query needs extended thinking (complex reasoning)."""
+    query_lower = query.lower()
+    # Check for complex query patterns
+    for keyword in COMPLEX_QUERY_KEYWORDS:
+        if keyword in query_lower:
+            return True
+    # Long queries with questions often need deep reasoning
+    if len(query) > 200 and '?' in query:
+        return True
+    return False
 
 # Known stock symbols for extraction from queries
 KNOWN_SYMBOLS = {
@@ -2126,6 +2173,40 @@ async def gexis_agentic_chat(request: dict):
         if not query:
             raise HTTPException(status_code=400, detail="Query is required")
 
+        # Check if this is a complex query that benefits from Extended Thinking
+        use_extended_thinking = False
+        extended_thinking_result = None
+
+        if EXTENDED_THINKING_AVAILABLE and analyze_with_extended_thinking and requires_extended_thinking(query):
+            # Complex query detected - use Extended Thinking for deep reasoning
+            use_extended_thinking = True
+
+            # Get market context for Extended Thinking
+            market_context = request.get('market_data', {})
+            if not market_context:
+                # Try to fetch basic market context
+                try:
+                    from core_classes_and_engines import TradingVolatilityAPI
+                    api = TradingVolatilityAPI()
+                    gex_data = api.get_gex_levels('SPY')
+                    market_context = {
+                        "spot_price": gex_data.get('spot_price', 590),
+                        "vix": gex_data.get('vix', 20),
+                        "gex_regime": gex_data.get('gex_regime', 'NEUTRAL'),
+                        "call_wall": gex_data.get('call_wall', 0),
+                        "put_wall": gex_data.get('put_wall', 0),
+                        "flip_point": gex_data.get('flip_point', 0)
+                    }
+                except Exception:
+                    market_context = {"note": "Market data not available"}
+
+            # Run Extended Thinking analysis
+            extended_thinking_result = analyze_with_extended_thinking(
+                prompt=query,
+                context=market_context,
+                thinking_budget=6000  # Moderate budget for chat queries
+            )
+
         # Get conversation context
         context_result = await get_conversation_context(session_id, limit=5)
         conversation_history = context_result.get("messages", [])
@@ -2246,16 +2327,33 @@ IMPORTANT RULES:
             "context": {"tools_used": tools_used, "agentic": True}
         })
 
+        # Build response with Extended Thinking if used
+        response_data = {
+            "analysis": final_response,
+            "query": query,
+            "session_id": session_id,
+            "tools_used": tools_used,
+            "agentic": True,
+            "pending_confirmation": pending_confirmation
+        }
+
+        # Include Extended Thinking results if available
+        if use_extended_thinking and extended_thinking_result:
+            response_data["extended_thinking"] = {
+                "used": True,
+                "confidence": extended_thinking_result.confidence,
+                "factors_considered": extended_thinking_result.factors_considered,
+                "duration_ms": extended_thinking_result.duration_ms
+            }
+            # Prepend deep reasoning conclusion to the response
+            if extended_thinking_result.conclusion:
+                response_data["deep_reasoning"] = extended_thinking_result.conclusion
+        elif use_extended_thinking:
+            response_data["extended_thinking"] = {"used": True, "status": "completed"}
+
         return {
             "success": True,
-            "data": {
-                "analysis": final_response,
-                "query": query,
-                "session_id": session_id,
-                "tools_used": tools_used,
-                "agentic": True,
-                "pending_confirmation": pending_confirmation
-            },
+            "data": response_data,
             "timestamp": datetime.now().isoformat()
         }
 
@@ -2695,3 +2793,347 @@ async def export_conversation(session_id: str, format: str = "json"):
 
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+# =============================================================================
+# EXTENDED THINKING ENDPOINTS
+# =============================================================================
+
+@router.post("/gexis/extended-thinking")
+async def gexis_extended_thinking_analysis(request: dict):
+    """
+    GEXIS Extended Thinking - Deep reasoning for complex trading decisions.
+    
+    Uses Claude's Extended Thinking capability for:
+    - Complex strike selection analysis
+    - Multi-factor trade evaluation  
+    - Risk assessment with detailed reasoning
+    
+    Request:
+    {
+        "query": "Should I enter this iron condor given current conditions?",
+        "context": {
+            "symbol": "SPY",
+            "spot_price": 585.50,
+            "vix": 15.5,
+            "gex_regime": "POSITIVE",
+            "proposed_trade": {...}
+        },
+        "thinking_budget": 5000  // optional, default 5000
+    }
+    """
+    if not EXTENDED_THINKING_AVAILABLE:
+        return {
+            "success": False,
+            "error": "Extended Thinking not available - check ai/gexis_extended_thinking.py"
+        }
+    
+    try:
+        query = request.get('query', '')
+        context = request.get('context', {})
+        thinking_budget = request.get('thinking_budget', 5000)
+        
+        if not query:
+            return {"success": False, "error": "Query is required"}
+        
+        result = analyze_with_extended_thinking(
+            prompt=query,
+            context=context,
+            thinking_budget=thinking_budget
+        )
+        
+        if result:
+            return {
+                "success": True,
+                "data": {
+                    "thinking": result.thinking,
+                    "conclusion": result.conclusion,
+                    "confidence": result.confidence,
+                    "factors_considered": result.factors_considered,
+                    "duration_ms": result.duration_ms,
+                    "tokens_used": result.tokens_used
+                },
+                "extended_thinking": True
+            }
+        else:
+            return {
+                "success": False,
+                "error": "Extended thinking analysis failed"
+            }
+            
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/gexis/analyze-strike")
+async def gexis_analyze_strike_selection(request: dict):
+    """
+    Analyze strike selection using Extended Thinking.
+    
+    Request:
+    {
+        "symbol": "SPY",
+        "spot_price": 585.50,
+        "target_delta": 0.16,
+        "strategy": "iron_condor",
+        "expiration": "2024-12-31",
+        "vix": 15.5,
+        "gex_data": {...}
+    }
+    """
+    if not EXTENDED_THINKING_AVAILABLE:
+        return {"success": False, "error": "Extended Thinking not available"}
+    
+    try:
+        result = analyze_strike_selection(
+            symbol=request.get('symbol', 'SPY'),
+            spot_price=request.get('spot_price'),
+            target_delta=request.get('target_delta', 0.16),
+            strategy=request.get('strategy', 'iron_condor'),
+            expiration=request.get('expiration'),
+            vix=request.get('vix'),
+            gex_data=request.get('gex_data', {})
+        )
+        
+        if result:
+            return {
+                "success": True,
+                "data": {
+                    "thinking": result.thinking,
+                    "recommendation": result.conclusion,
+                    "confidence": result.confidence,
+                    "factors": result.factors_considered
+                }
+            }
+        return {"success": False, "error": "Strike analysis failed"}
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/gexis/evaluate-trade")
+async def gexis_evaluate_trade_setup(request: dict):
+    """
+    Evaluate a trade setup using Extended Thinking.
+    
+    Request:
+    {
+        "trade": {
+            "symbol": "SPY",
+            "strategy": "iron_condor",
+            "put_spread": {"short": 575, "long": 570},
+            "call_spread": {"short": 595, "long": 600},
+            "credit": 2.50,
+            "expiration": "2024-12-31"
+        },
+        "market_context": {
+            "spot_price": 585.50,
+            "vix": 15.5,
+            "gex_regime": "POSITIVE"
+        }
+    }
+    """
+    if not EXTENDED_THINKING_AVAILABLE:
+        return {"success": False, "error": "Extended Thinking not available"}
+    
+    try:
+        result = evaluate_trade_setup(
+            trade=request.get('trade', {}),
+            market_context=request.get('market_context', {})
+        )
+        
+        if result:
+            return {
+                "success": True,
+                "data": {
+                    "thinking": result.thinking,
+                    "verdict": result.conclusion,
+                    "confidence": result.confidence,
+                    "factors": result.factors_considered
+                }
+            }
+        return {"success": False, "error": "Trade evaluation failed"}
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# =============================================================================
+# LEARNING MEMORY ENDPOINTS
+# =============================================================================
+
+@router.get("/gexis/learning-memory/stats")
+async def get_learning_memory_stats():
+    """Get GEXIS learning memory statistics and accuracy by regime."""
+    if not LEARNING_MEMORY_AVAILABLE or not get_learning_memory:
+        return {
+            "success": False,
+            "error": "Learning Memory not available"
+        }
+
+    try:
+        memory = get_learning_memory()
+        insights = memory.get_learning_insights()
+
+        return {
+            "success": True,
+            "data": {
+                "total_predictions": insights.get('total_predictions', 0),
+                "predictions_with_outcomes": insights.get('predictions_with_outcomes', 0),
+                "overall_accuracy_pct": insights.get('overall_accuracy_pct', 0),
+                "best_regimes": insights.get('best_regimes', []),
+                "worst_regimes": insights.get('worst_regimes', []),
+                "accuracy_by_regime": insights.get('accuracy_by_regime', {}),
+                "accuracy_by_type": insights.get('accuracy_by_type', {})
+            }
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/gexis/learning-memory/record-prediction")
+async def record_gexis_prediction(request: dict):
+    """
+    Record a GEXIS prediction for tracking.
+
+    Request:
+    {
+        "prediction_type": "direction",  // direction, trade_quality, strike_selection
+        "prediction": "bullish",
+        "confidence": 0.75,
+        "context": {
+            "gex_regime": "POSITIVE",
+            "vix": 15.5,
+            "spot_price": 585.50,
+            "flip_point": 580.00
+        }
+    }
+    """
+    if not LEARNING_MEMORY_AVAILABLE or not get_learning_memory:
+        return {"success": False, "error": "Learning Memory not available"}
+
+    try:
+        memory = get_learning_memory()
+        prediction_id = memory.record_prediction(
+            prediction_type=request.get('prediction_type', 'direction'),
+            prediction=request.get('prediction'),
+            confidence=request.get('confidence', 0.5),
+            context=request.get('context', {})
+        )
+
+        return {
+            "success": True,
+            "data": {
+                "prediction_id": prediction_id,
+                "message": "Prediction recorded for tracking"
+            }
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@router.post("/gexis/learning-memory/record-outcome")
+async def record_gexis_outcome(request: dict):
+    """
+    Record the outcome of a prediction.
+
+    Request:
+    {
+        "prediction_id": "pred_abc123",
+        "outcome": "bullish",  // What actually happened
+        "was_correct": true,   // Whether prediction was correct
+        "notes": "Trade closed at profit target"  // optional
+    }
+    """
+    if not LEARNING_MEMORY_AVAILABLE or not get_learning_memory:
+        return {"success": False, "error": "Learning Memory not available"}
+
+    try:
+        memory = get_learning_memory()
+        success = memory.record_outcome(
+            prediction_id=request.get('prediction_id'),
+            outcome=request.get('outcome'),
+            was_correct=request.get('was_correct', False),
+            notes=request.get('notes')
+        )
+
+        if success:
+            insights = memory.get_learning_insights()
+            return {
+                "success": True,
+                "data": {
+                    "message": "Outcome recorded",
+                    "updated_accuracy_pct": insights.get('overall_accuracy_pct', 0),
+                    "total_predictions": insights.get('predictions_with_outcomes', 0)
+                }
+            }
+        return {"success": False, "error": "Prediction ID not found"}
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# =============================================================================
+# AI CAPABILITIES STATUS
+# =============================================================================
+
+@router.get("/gexis/capabilities")
+async def get_gexis_capabilities():
+    """Get status of all GEXIS AI capabilities."""
+    return {
+        "success": True,
+        "capabilities": {
+            "gexis_personality": GEXIS_AVAILABLE,
+            "agentic_tools": GEXIS_TOOLS_AVAILABLE,
+            "knowledge_base": GEXIS_KNOWLEDGE_AVAILABLE,
+            "extended_thinking": EXTENDED_THINKING_AVAILABLE,
+            "learning_memory": LEARNING_MEMORY_AVAILABLE,
+            "tool_count": len(GEXIS_TOOLS) if GEXIS_TOOLS_AVAILABLE else 0
+        },
+        "features": {
+            "deep_reasoning": EXTENDED_THINKING_AVAILABLE,
+            "self_improvement": LEARNING_MEMORY_AVAILABLE,
+            "tool_use": GEXIS_TOOLS_AVAILABLE,
+            "slash_commands": GEXIS_KNOWLEDGE_AVAILABLE
+        },
+        "models": {
+            "primary": "claude-sonnet-4-5-20250514",
+            "extended_thinking": "claude-sonnet-4-5-20250514" if EXTENDED_THINKING_AVAILABLE else None,
+            "fast": "claude-haiku-4-5-20251101"
+        }
+    }
+
+
+@router.get("/gexis/health")
+async def gexis_health_check():
+    """Health check for GEXIS AI system."""
+    import os
+    
+    # Check API key
+    api_key = os.getenv("CLAUDE_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
+    api_key_configured = bool(api_key)
+    
+    # Count available features
+    available_features = sum([
+        GEXIS_AVAILABLE,
+        GEXIS_TOOLS_AVAILABLE,
+        GEXIS_KNOWLEDGE_AVAILABLE,
+        EXTENDED_THINKING_AVAILABLE,
+        LEARNING_MEMORY_AVAILABLE
+    ])
+    
+    health_status = "healthy" if available_features >= 3 and api_key_configured else "degraded"
+    
+    return {
+        "status": health_status,
+        "api_key_configured": api_key_configured,
+        "available_features": available_features,
+        "total_features": 5,
+        "details": {
+            "personality": "ok" if GEXIS_AVAILABLE else "missing",
+            "tools": "ok" if GEXIS_TOOLS_AVAILABLE else "missing",
+            "knowledge": "ok" if GEXIS_KNOWLEDGE_AVAILABLE else "missing",
+            "extended_thinking": "ok" if EXTENDED_THINKING_AVAILABLE else "missing",
+            "learning_memory": "ok" if LEARNING_MEMORY_AVAILABLE else "missing"
+        }
+    }
