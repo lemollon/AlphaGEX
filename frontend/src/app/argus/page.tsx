@@ -924,6 +924,63 @@ export default function ArgusPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoRefresh, activeDay]) // Intentionally minimal deps - fetch functions are stable, avoid re-creating intervals
 
+  // Compute EOD Strike Statistics from danger zone logs and strike trends
+  // MUST be before early returns to satisfy React hooks rules
+  const computedEodStats = useMemo((): EODStrikeStat[] => {
+    if (!gammaData?.strikes) return []
+
+    const strikeStats = new Map<number, EODStrikeStat>()
+
+    // Initialize with all current strikes
+    gammaData.strikes.forEach(strike => {
+      strikeStats.set(strike.strike, {
+        strike: strike.strike,
+        spikeCount: 0,
+        flipCount: 0,
+        peakRoc: Math.max(Math.abs(strike.roc_1min), Math.abs(strike.roc_5min)),
+        timeAsMagnet: 0,
+        trend: 'STABLE'
+      })
+    })
+
+    // Count spikes from danger zone logs
+    dangerZoneLogs.forEach(log => {
+      const stat = strikeStats.get(log.strike)
+      if (stat) {
+        if (log.danger_type === 'SPIKE') {
+          stat.spikeCount++
+        }
+        stat.peakRoc = Math.max(stat.peakRoc, Math.abs(log.roc_5min))
+      }
+    })
+
+    // Count flips from gamma flips data
+    gammaFlips30m.forEach(flip => {
+      const stat = strikeStats.get(flip.strike)
+      if (stat) {
+        stat.flipCount++
+      }
+    })
+
+    // Get trends from strike trends data
+    Object.entries(strikeTrends).forEach(([strikeKey, trend]) => {
+      const strikeNum = parseFloat(strikeKey)
+      const stat = strikeStats.get(strikeNum)
+      if (stat) {
+        stat.timeAsMagnet = trend.status_durations?.BUILDING || 0
+        if (trend.dominant_status === 'BUILDING') stat.trend = 'BUILDING'
+        else if (trend.dominant_status === 'COLLAPSING') stat.trend = 'COLLAPSING'
+        else if (trend.total_events > 5) stat.trend = 'VOLATILE'
+        else stat.trend = 'STABLE'
+      }
+    })
+
+    // Sort by activity (spikes + flips) and return top 5
+    return Array.from(strikeStats.values())
+      .sort((a, b) => (b.spikeCount + b.flipCount + b.peakRoc) - (a.spikeCount + a.flipCount + a.peakRoc))
+      .slice(0, 5)
+  }, [gammaData?.strikes, dangerZoneLogs, gammaFlips30m, strikeTrends])
+
   const handleDayChange = (day: string) => {
     setActiveDay(day)
     fetchGammaData(day)
@@ -1126,62 +1183,6 @@ export default function ArgusPage() {
     : 1
 
   const highPriorityAlerts = alerts.filter(a => a.priority === 'HIGH' || a.priority === 'MEDIUM')
-
-  // Compute EOD Strike Statistics from danger zone logs and strike trends
-  const computedEodStats = useMemo((): EODStrikeStat[] => {
-    if (!gammaData?.strikes) return []
-
-    const strikeStats = new Map<number, EODStrikeStat>()
-
-    // Initialize with all current strikes
-    gammaData.strikes.forEach(strike => {
-      strikeStats.set(strike.strike, {
-        strike: strike.strike,
-        spikeCount: 0,
-        flipCount: 0,
-        peakRoc: Math.max(Math.abs(strike.roc_1min), Math.abs(strike.roc_5min)),
-        timeAsMagnet: 0,
-        trend: 'STABLE'
-      })
-    })
-
-    // Count spikes from danger zone logs
-    dangerZoneLogs.forEach(log => {
-      const stat = strikeStats.get(log.strike)
-      if (stat) {
-        if (log.danger_type === 'SPIKE') {
-          stat.spikeCount++
-        }
-        stat.peakRoc = Math.max(stat.peakRoc, Math.abs(log.roc_5min))
-      }
-    })
-
-    // Count flips from gamma flips data
-    gammaFlips30m.forEach(flip => {
-      const stat = strikeStats.get(flip.strike)
-      if (stat) {
-        stat.flipCount++
-      }
-    })
-
-    // Get trends from strike trends data
-    Object.entries(strikeTrends).forEach(([strikeKey, trend]) => {
-      const strikeNum = parseFloat(strikeKey)
-      const stat = strikeStats.get(strikeNum)
-      if (stat) {
-        stat.timeAsMagnet = trend.status_durations?.BUILDING || 0
-        if (trend.dominant_status === 'BUILDING') stat.trend = 'BUILDING'
-        else if (trend.dominant_status === 'COLLAPSING') stat.trend = 'COLLAPSING'
-        else if (trend.total_events > 5) stat.trend = 'VOLATILE'
-        else stat.trend = 'STABLE'
-      }
-    })
-
-    // Sort by activity (spikes + flips) and return top 5
-    return Array.from(strikeStats.values())
-      .sort((a, b) => (b.spikeCount + b.flipCount + b.peakRoc) - (a.spikeCount + a.flipCount + a.peakRoc))
-      .slice(0, 5)
-  }, [gammaData?.strikes, dangerZoneLogs, gammaFlips30m, strikeTrends])
 
   // Danger zones for MAIN DISPLAY - use ONLY current snapshot (real-time, not stale)
   // Event Log shows history with timestamps separately
