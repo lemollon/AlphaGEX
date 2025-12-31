@@ -2963,14 +2963,10 @@ function EnergyShields({ paused }: { paused: boolean }) {
     if (shield1Ref.current) {
       shield1Ref.current.rotation.y = t * 0.2
       shield1Ref.current.rotation.x = Math.sin(t * 0.5) * 0.1
-      const mat = shield1Ref.current.material as THREE.MeshBasicMaterial
-      mat.opacity = 0.05 + Math.sin(t * 2) * 0.02
     }
     if (shield2Ref.current) {
       shield2Ref.current.rotation.y = -t * 0.15
       shield2Ref.current.rotation.z = Math.cos(t * 0.3) * 0.1
-      const mat = shield2Ref.current.material as THREE.MeshBasicMaterial
-      mat.opacity = 0.03 + Math.sin(t * 3 + 1) * 0.02
     }
   })
 
@@ -5571,11 +5567,9 @@ function SolarSystem({
       sunRef.current.scale.setScalar(pulse)
     }
 
-    // Glow breathing
+    // Glow - constant opacity, no animation
     if (glowRef.current) {
-      const glowPulse = 0.4 + Math.sin(t * 1.5) * 0.15 + pulseIntensity * 0.5
-      ;(glowRef.current.material as THREE.MeshBasicMaterial).opacity = glowPulse
-      glowRef.current.scale.setScalar(1.5 + pulseIntensity * 0.5)
+      ;(glowRef.current.material as THREE.MeshBasicMaterial).opacity = 0.05
     }
 
     // Orbital rings rotation
@@ -8960,10 +8954,6 @@ function BreathingCore({ gexValue = 0, vixValue = 15, paused = false }: { gexVal
     if (groupRef.current) {
       groupRef.current.scale.setScalar(breathe)
     }
-    if (rimRef.current) {
-      const rimPulse = 0.2 + Math.sin(t * pulseSpeed * 2) * 0.1
-      ;(rimRef.current.material as THREE.MeshBasicMaterial).opacity = rimPulse
-    }
     if (innerRef.current) {
       innerRef.current.rotation.y = t * 0.15
       innerRef.current.rotation.x = Math.sin(t * 0.3) * 0.1
@@ -9511,21 +9501,19 @@ function LensFlare({ paused = false }: { paused?: boolean }) {
     const t = state.clock.elapsedTime
     if (flare1Ref.current) {
       flare1Ref.current.scale.setScalar(2 + Math.sin(t * 2) * 0.3)
-      ;(flare1Ref.current.material as THREE.MeshBasicMaterial).opacity = 0.08 + Math.sin(t * 3) * 0.03
     }
     if (flare2Ref.current) {
       flare2Ref.current.scale.setScalar(3 + Math.sin(t * 1.5) * 0.5)
-      ;(flare2Ref.current.material as THREE.MeshBasicMaterial).opacity = 0.04 + Math.sin(t * 2) * 0.02
     }
   })
 
   return (
     <group>
       <Sphere ref={flare1Ref} args={[1, 32, 32]}>
-        <meshBasicMaterial color={COLORS.flare} transparent opacity={0.08} />
+        <meshBasicMaterial color={COLORS.flare} transparent opacity={0.05} />
       </Sphere>
       <Sphere ref={flare2Ref} args={[1, 32, 32]}>
-        <meshBasicMaterial color={COLORS.particleBright} transparent opacity={0.04} />
+        <meshBasicMaterial color={COLORS.particleBright} transparent opacity={0.03} />
       </Sphere>
     </group>
   )
@@ -9785,7 +9773,6 @@ function BotNodeWithFlare({
     if (flareRef.current && isActive) {
       const pulse = Math.sin(t * 4) * 0.5 + 0.5
       flareRef.current.scale.setScalar(0.5 + pulse * 0.3)
-      ;(flareRef.current.material as THREE.MeshBasicMaterial).opacity = 0.08 + pulse * 0.07
     }
   })
 
@@ -9793,12 +9780,12 @@ function BotNodeWithFlare({
     <group ref={groupRef} position={[x, 0, z]}>
       {isActive && (
         <Sphere ref={flareRef} args={[1, 16, 16]}>
-          <meshBasicMaterial color={color} transparent opacity={0.12} />
+          <meshBasicMaterial color={color} transparent opacity={0.05} />
         </Sphere>
       )}
 
       <Sphere args={[0.35, 16, 16]}>
-        <meshBasicMaterial color={color} transparent opacity={hovered ? 0.2 : 0.1} />
+        <meshBasicMaterial color={color} transparent opacity={hovered ? 0.08 : 0.05} />
       </Sphere>
 
       <Sphere
