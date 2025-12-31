@@ -2,9 +2,10 @@
 
 import { logger } from '@/lib/logger'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
+import { useAlerts, useAlertHistory } from '@/lib/hooks/useMarketData'
 import {
   Bell,
   Plus,
@@ -43,8 +44,6 @@ interface AlertHistory {
 }
 
 export default function AlertsPage() {
-  const [activeAlerts, setActiveAlerts] = useState<Alert[]>([])
-  const [alertHistory, setAlertHistory] = useState<AlertHistory[]>([])
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [loading, setLoading] = useState(false)
   const [checking, setChecking] = useState(false)
@@ -58,44 +57,22 @@ export default function AlertsPage() {
 
   const popularSymbols = ['SPY', 'QQQ', 'IWM', 'AAPL', 'TSLA', 'NVDA', 'META', 'AMZN']
 
-  useEffect(() => {
-    fetchActiveAlerts()
-    fetchAlertHistory()
+  // SWR hooks for data fetching with caching
+  const { data: alertsResponse, mutate: mutateAlerts, isValidating: alertsValidating } = useAlerts()
+  const { data: historyResponse, mutate: mutateHistory } = useAlertHistory(20)
 
-    // No auto-check - protects API rate limit (20 calls/min shared across all users)
-    // Users can manually check alerts with the "Check Now" button
-  }, [])
-
-  const fetchActiveAlerts = async () => {
-    try {
-      const response = await apiClient.getAlerts('active')
-      if (response.data.success) {
-        setActiveAlerts(response.data.data)
-      }
-    } catch (error) {
-      logger.error('Error fetching alerts:', error)
-    }
-  }
-
-  const fetchAlertHistory = async () => {
-    try {
-      const response = await apiClient.getAlertHistory(20)
-      if (response.data.success) {
-        setAlertHistory(response.data.data)
-      }
-    } catch (error) {
-      logger.error('Error fetching alert history:', error)
-    }
-  }
+  // Extract data from SWR responses
+  const activeAlerts = alertsResponse?.success ? (alertsResponse.data as Alert[]) : []
+  const alertHistory = historyResponse?.success ? (historyResponse.data as AlertHistory[]) : []
 
   const checkAlerts = async () => {
     setChecking(true)
     try {
       const response = await apiClient.checkAlerts()
       if (response.data.success && response.data.triggered > 0) {
-        // Refresh alerts if any were triggered
-        await fetchActiveAlerts()
-        await fetchAlertHistory()
+        // Refresh alerts using SWR mutate
+        mutateAlerts()
+        mutateHistory()
 
         // Show notification
         alert(`${response.data.triggered} alert(s) triggered!`)
@@ -124,7 +101,7 @@ export default function AlertsPage() {
         alert('Alert created successfully!')
         setShowCreateModal(false)
         resetForm()
-        await fetchActiveAlerts()
+        mutateAlerts() // Use SWR mutate instead of manual fetch
       }
     } catch (error) {
       logger.error('Error creating alert:', error)
@@ -140,7 +117,7 @@ export default function AlertsPage() {
     try {
       const response = await apiClient.deleteAlert(alertId)
       if (response.data.success) {
-        await fetchActiveAlerts()
+        mutateAlerts() // Use SWR mutate instead of manual fetch
       }
     } catch (error) {
       logger.error('Error deleting alert:', error)

@@ -2,7 +2,7 @@
 
 import { logger } from '@/lib/logger'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { Brain, AlertTriangle, TrendingUp, TrendingDown, Target, Clock, Shield, Zap, RefreshCw, Activity, Calendar, Sparkles, BarChart3, Eye, EyeOff, PlayCircle, TrendingUpIcon } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import TradingGuide from '@/components/TradingGuide'
@@ -16,7 +16,7 @@ import AdjustmentStrategiesSection from '@/components/AdjustmentStrategiesSectio
 import WhyTheyLoseWhyWeWin from '@/components/WhyTheyLoseWhyWeWin'
 import RedFlagsSection from '@/components/RedFlagsSection'
 import DealerMechanicsDeepDive from '@/components/DealerMechanicsDeepDive'
-import { apiClient } from '@/lib/api'
+import { usePsychologyRegime, useLiberationSetups, useFalseFloors } from '@/lib/hooks/useMarketData'
 
 // API_URL kept for potential direct fetch fallback only
 
@@ -140,90 +140,45 @@ interface BacktestStats {
 
 export default function PsychologyTrapDetection() {
   const [symbol, setSymbol] = useState('SPY')
-  const [analysis, setAnalysis] = useState<RegimeAnalysis | null>(null)
-  const [tradingGuide, setTradingGuide] = useState<any | null>(null)
-  const [aiRecommendation, setAiRecommendation] = useState<AIRecommendation | null>(null)
-  const [marketStatus, setMarketStatus] = useState<MarketStatus | null>(null)
-  const [historicalComparison, setHistoricalComparison] = useState<HistoricalComparison | null>(null)
-  const [backtestStats, setBacktestStats] = useState<BacktestStats | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [isRefreshing, setIsRefreshing] = useState(false)
-  const [history, setHistory] = useState<any[]>([])
-  const [liberationSetups, setLiberationSetups] = useState<any[]>([])
-  const [falseFloors, setFalseFloors] = useState<any[]>([])
   const [isAdvancedView, setIsAdvancedView] = useState(false)
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true)
   const [nextRefreshIn, setNextRefreshIn] = useState(60)
 
-  // Fetch current regime analysis
-  const fetchAnalysis = useCallback(async (forceRefresh = false) => {
-    try {
-      forceRefresh ? setIsRefreshing(true) : setLoading(true)
-      setError(null)
+  // SWR hooks for data fetching with caching
+  const {
+    data: regimeResponse,
+    error: regimeError,
+    isLoading: regimeLoading,
+    isValidating: isRefreshing,
+    mutate: mutateRegime
+  } = usePsychologyRegime(symbol, {
+    refreshInterval: autoRefreshEnabled ? 60 * 1000 : 0
+  })
 
-      const response = await apiClient.getPsychologyCurrentRegime(symbol)
+  const { data: liberationResponse } = useLiberationSetups()
+  const { data: falseFloorsResponse } = useFalseFloors()
 
-      // Handle response - apiClient returns axios response
-      if (response.data) {
-        const data = response.data.data || response.data
-        setAnalysis(data.analysis)
-        setTradingGuide(data.trading_guide || null)
-        setAiRecommendation(data.ai_recommendation || null)
-        setMarketStatus(data.market_status || null)
-        setHistoricalComparison(data.historical_comparison || null)
-        setBacktestStats(data.backtest_stats || null)
+  // Extract data from SWR responses
+  const regimeData = regimeResponse?.data || regimeResponse
+  const analysis = regimeData?.analysis as RegimeAnalysis | null
+  const tradingGuide = regimeData?.trading_guide || null
+  const aiRecommendation = regimeData?.ai_recommendation as AIRecommendation | null
+  const marketStatus = regimeData?.market_status as MarketStatus | null
+  const historicalComparison = regimeData?.historical_comparison as HistoricalComparison | null
+  const backtestStats = regimeData?.backtest_stats as BacktestStats | null
 
-        // Fetch liberation setups and false floors after main analysis
-        // These are important trading signals that should be visible on page load
-        fetchLiberationSetups()
-        fetchFalseFloors()
-      } else {
-        throw new Error('No data received from API')
-      }
+  const liberationSetups = liberationResponse?.data?.liberation_setups || []
+  const falseFloors = falseFloorsResponse?.data?.false_floors || []
 
-    } catch (err: any) {
-      const errorMsg = err.message || 'Failed to fetch analysis'
-      logger.error('Psychology API Error:', errorMsg, err)
-      setError(errorMsg)
-    } finally {
-      setLoading(false)
-      setIsRefreshing(false)
-    }
-  }, [symbol])
+  const loading = regimeLoading && !analysis
+  const error = regimeError ? regimeError.message || 'Failed to fetch analysis' : null
 
-  // Fetch liberation setups
-  const fetchLiberationSetups = useCallback(async () => {
-    try {
-      const response = await apiClient.getLiberationSetups()
-      if (response.data) {
-        const data = response.data.data || response.data
-        setLiberationSetups(data.liberation_setups || [])
-      }
-    } catch (err) {
-      logger.error('Failed to fetch liberation setups:', err)
-    }
-  }, [])
+  // Manual refresh function
+  const handleRefresh = () => {
+    mutateRegime()
+  }
 
-  // Fetch false floors
-  const fetchFalseFloors = useCallback(async () => {
-    try {
-      const response = await apiClient.getFalseFloors()
-      if (response.data) {
-        const data = response.data.data || response.data
-        setFalseFloors(data.false_floors || [])
-      }
-    } catch (err) {
-      logger.error('Failed to fetch false floors:', err)
-    }
-  }, [])
-
-  // Initial load
-  useEffect(() => {
-    fetchAnalysis()
-  }, [fetchAnalysis])
-
-  // Auto-refresh timer
+  // Auto-refresh countdown timer (visual only - SWR handles actual refresh)
   useEffect(() => {
     if (!autoRefreshEnabled || !marketStatus?.is_open) {
       setNextRefreshIn(60)
@@ -233,7 +188,6 @@ export default function PsychologyTrapDetection() {
     const interval = setInterval(() => {
       setNextRefreshIn((prev) => {
         if (prev <= 1) {
-          fetchAnalysis(true)
           return 60
         }
         return prev - 1
@@ -241,7 +195,7 @@ export default function PsychologyTrapDetection() {
     }, 1000)
 
     return () => clearInterval(interval)
-  }, [autoRefreshEnabled, marketStatus, fetchAnalysis])
+  }, [autoRefreshEnabled, marketStatus])
 
   // Get regime color
   const getRegimeColor = (type: string) => {
@@ -400,7 +354,7 @@ export default function PsychologyTrapDetection() {
 
             {/* Manual refresh */}
             <button
-              onClick={() => fetchAnalysis(true)}
+              onClick={handleRefresh}
               disabled={isRefreshing}
               className="px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded-lg flex items-center gap-2 disabled:opacity-50"
             >

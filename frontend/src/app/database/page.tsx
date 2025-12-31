@@ -1,7 +1,7 @@
 'use client'
 
 import { logger } from '@/lib/logger'
-import { useState, useEffect, useCallback } from 'react'
+import { useState } from 'react'
 import {
   Database, RefreshCw, CheckCircle, AlertCircle, Info, Table2,
   Wifi, WifiOff, Activity, Clock, Trash2, AlertTriangle,
@@ -11,6 +11,14 @@ import {
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
+import {
+  useDatabaseStats,
+  useSystemHealth,
+  useTableFreshness,
+  useSystemLogs,
+  useDataCollectionStatus,
+  useWatchdogStatus
+} from '@/lib/hooks/useMarketData'
 
 // Types
 interface Column {
@@ -117,66 +125,40 @@ interface WatchdogStatus {
 }
 
 export default function DatabaseAdminPage() {
-  // State
-  const [stats, setStats] = useState<DatabaseStats | null>(null)
-  const [health, setHealth] = useState<SystemHealth | null>(null)
-  const [freshness, setFreshness] = useState<TableFreshness | null>(null)
-  const [dataCollection, setDataCollection] = useState<DataCollectionStatus | null>(null)
-  const [watchdog, setWatchdog] = useState<WatchdogStatus | null>(null)
-  const [errorLogs, setErrorLogs] = useState<LogEntry[]>([])
-  const [activityLogs, setActivityLogs] = useState<LogEntry[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  // UI State
   const [expandedTables, setExpandedTables] = useState<Set<string>>(new Set())
   const [activeTab, setActiveTab] = useState<'tables' | 'health' | 'logs' | 'freshness' | 'collection' | 'threads'>('health')
   const [showCredentials, setShowCredentials] = useState(false)
-  const [refreshing, setRefreshing] = useState(false)
   const [restartingThread, setRestartingThread] = useState<string | null>(null)
 
-  // Fetch all data
-  const fetchAllData = useCallback(async (showLoader = true) => {
-    if (showLoader) setLoading(true)
-    setError(null)
+  // SWR hooks for data fetching with caching
+  const { data: statsData, isLoading: statsLoading, mutate: mutateStats } = useDatabaseStats()
+  const { data: healthData, mutate: mutateHealth } = useSystemHealth()
+  const { data: freshnessData, mutate: mutateFreshness } = useTableFreshness()
+  const { data: logsData, mutate: mutateLogs } = useSystemLogs(100)
+  const { data: collectionData, mutate: mutateCollection } = useDataCollectionStatus()
+  const { data: watchdogData, isValidating: refreshing, mutate: mutateWatchdog } = useWatchdogStatus()
 
-    try {
-      const [statsRes, healthRes, freshnessRes, logsRes, collectionRes, watchdogRes] = await Promise.all([
-        apiClient.getDatabaseStats().catch(e => ({ data: null, error: e })),
-        apiClient.getSystemHealth().catch(e => ({ data: null, error: e })),
-        apiClient.getTableFreshness().catch(e => ({ data: null, error: e })),
-        apiClient.getSystemLogs(100, 'all').catch(e => ({ data: null, error: e })),
-        apiClient.getDataCollectionStatus().catch(e => ({ data: null, error: e })),
-        apiClient.getWatchdogStatus().catch(e => ({ data: null, error: e }))
-      ])
+  // Extract data from SWR responses
+  const stats = statsData as DatabaseStats | null
+  const health = healthData as SystemHealth | null
+  const freshness = freshnessData as TableFreshness | null
+  const dataCollection = collectionData as DataCollectionStatus | null
+  const watchdog = watchdogData as WatchdogStatus | null
+  const errorLogs = (logsData?.errors || []) as LogEntry[]
+  const activityLogs = (logsData?.activity || []) as LogEntry[]
 
-      if (statsRes.data) setStats(statsRes.data)
-      if (healthRes.data) setHealth(healthRes.data)
-      if (freshnessRes.data) setFreshness(freshnessRes.data)
-      if (logsRes.data) {
-        setErrorLogs(logsRes.data.errors || [])
-        setActivityLogs(logsRes.data.activity || [])
-      }
-      if (collectionRes.data) setDataCollection(collectionRes.data)
-      if (watchdogRes.data) setWatchdog(watchdogRes.data)
-    } catch (err: any) {
-      logger.error('Failed to fetch admin data:', err)
-      setError(err.message || 'Failed to fetch data')
-    } finally {
-      setLoading(false)
-      setRefreshing(false)
-    }
-  }, [])
+  const loading = statsLoading && !stats
+  const error = null // SWR handles errors gracefully
 
-  // Initial fetch and auto-refresh
-  useEffect(() => {
-    fetchAllData()
-    const interval = setInterval(() => fetchAllData(false), 30000) // Refresh every 30s
-    return () => clearInterval(interval)
-  }, [fetchAllData])
-
-  // Actions
+  // Manual refresh function
   const handleRefresh = () => {
-    setRefreshing(true)
-    fetchAllData(false)
+    mutateStats()
+    mutateHealth()
+    mutateFreshness()
+    mutateLogs()
+    mutateCollection()
+    mutateWatchdog()
   }
 
   const handleClearCache = async () => {
@@ -186,7 +168,7 @@ export default function DatabaseAdminPage() {
       localStorage.clear()
       sessionStorage.clear()
       alert('All caches cleared successfully!')
-      fetchAllData(false)
+      handleRefresh()
     } catch (err: any) {
       logger.error('Failed to clear cache:', err)
       alert('Failed to clear cache: ' + err.message)
@@ -197,8 +179,7 @@ export default function DatabaseAdminPage() {
     if (!confirm('Are you sure you want to clear all system logs?')) return
     try {
       await apiClient.clearSystemLogs('all')
-      setErrorLogs([])
-      setActivityLogs([])
+      mutateLogs() // Refresh logs via SWR
     } catch (err: any) {
       logger.error('Failed to clear logs:', err)
     }
@@ -208,7 +189,7 @@ export default function DatabaseAdminPage() {
     try {
       await apiClient.triggerDataCollection()
       alert('Data collection triggered successfully!')
-      fetchAllData(false)
+      mutateCollection()
     } catch (err: any) {
       logger.error('Failed to trigger data collection:', err)
       alert('Failed to trigger data collection: ' + err.message)
@@ -221,7 +202,7 @@ export default function DatabaseAdminPage() {
     try {
       await apiClient.restartThread(threadName)
       alert(`Thread ${threadName} restart initiated!`)
-      fetchAllData(false)
+      mutateWatchdog() // Refresh watchdog status via SWR
     } catch (err: any) {
       logger.error(`Failed to restart thread ${threadName}:`, err)
       alert(`Failed to restart thread: ${err.message}`)
