@@ -5,7 +5,7 @@
  * Premium design with actionable insights
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   Eye,
   RefreshCw,
@@ -47,7 +47,9 @@ import {
   DollarSign,
   Percent,
   ArrowUpRight,
-  ArrowDownRight
+  ArrowDownRight,
+  Calendar,
+  Sun
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
@@ -295,6 +297,17 @@ interface EMTrendPoint {
   pct_change: number
 }
 
+// EOD Strike Statistics for summary table
+interface EODStrikeStat {
+  strike: number
+  spikeCount: number
+  flipCount: number
+  peakRoc: number
+  timeAsMagnet: number  // minutes
+  trend: 'BUILDING' | 'COLLAPSING' | 'STABLE' | 'VOLATILE'
+  yesterdaySpikes?: number  // for comparison
+}
+
 // 0DTE symbols supported by ARGUS (all have daily expirations Mon-Fri)
 const AVAILABLE_SYMBOLS = [
   { symbol: 'SPY', name: 'S&P 500 ETF', supported: true },
@@ -335,12 +348,27 @@ export default function ArgusPage() {
   const [showAccuracyPanel, setShowAccuracyPanel] = useState(true)
   const [showTradeIdeas, setShowTradeIdeas] = useState(true)
 
+  // Next-day gamma data (tomorrow's expiration)
+  const [tomorrowGammaData, setTomorrowGammaData] = useState<GammaData | null>(null)
+
+  // EOD Strike Statistics
+  const [eodStats, setEodStats] = useState<EODStrikeStat[]>([])
+
+  // Refs for stability improvements
+  const smoothedMaxGammaRef = useRef<number | null>(null)
+  const initialLoadRef = useRef(true)
+  const previousStrikesRef = useRef<Map<number, StrikeData>>(new Map())
+
   // Reset data when symbol changes
   useEffect(() => {
     // Clear cached data when switching symbols
     setLastLiveData(null)
     setGammaData(null)
+    setTomorrowGammaData(null)
     setError(null)
+    smoothedMaxGammaRef.current = null
+    previousStrikesRef.current = new Map()
+    initialLoadRef.current = true
   }, [selectedSymbol])
 
   // Polling intervals (in milliseconds)
@@ -372,23 +400,62 @@ export default function ArgusPage() {
   const [selectedReplayTime, setSelectedReplayTime] = useState<string>('')
 
   // Removed single refreshIntervalRef - now using separate refs for different polling speeds
+  // Ref to access lastLiveData without adding to deps (prevents circular dependency)
+  const lastLiveDataRef = useRef<GammaData | null>(null)
+  useEffect(() => {
+    lastLiveDataRef.current = lastLiveData
+  }, [lastLiveData])
 
   // Fetch functions
   const fetchGammaData = useCallback(async (day?: string) => {
     try {
-      setLoading(true)
+      // Only show loading on initial load, not on refresh
+      if (initialLoadRef.current) {
+        setLoading(true)
+      }
       const expiration = day && day !== 'today' ? day.toLowerCase() : undefined
       const response = await apiClient.getArgusGamma(selectedSymbol, expiration)
       if (response.data?.success && response.data?.data) {
         const newData = response.data.data
 
         // If we receive mock data during market hours and have last live data, use last live data
-        if (newData.is_mock && isMarketOpen() && lastLiveData) {
+        if (newData.is_mock && isMarketOpen() && lastLiveDataRef.current) {
           console.log('[ARGUS] Mock data received during market hours, using last live data')
           // Keep displaying last live data but mark it as stale
-          setGammaData({ ...lastLiveData, is_stale: true })
+          setGammaData(prev => prev ? { ...prev, is_stale: true } : lastLiveDataRef.current ? { ...lastLiveDataRef.current, is_stale: true } : null)
         } else {
-          setGammaData(newData)
+          // MERGE STRATEGY: Only update strikes that changed, preserving array reference stability
+          setGammaData(prev => {
+            if (!prev) return newData
+
+            // Create a map of previous strikes for quick lookup
+            const prevStrikesMap = new Map(prev.strikes.map(s => [s.strike, s]))
+
+            // Merge strikes: update existing, add new ones
+            const mergedStrikes = newData.strikes.map((newStrike: StrikeData) => {
+              const prevStrike = prevStrikesMap.get(newStrike.strike)
+              if (!prevStrike) return newStrike
+
+              // Check if anything actually changed
+              const hasChanged =
+                prevStrike.net_gamma !== newStrike.net_gamma ||
+                prevStrike.probability !== newStrike.probability ||
+                prevStrike.is_magnet !== newStrike.is_magnet ||
+                prevStrike.is_pin !== newStrike.is_pin ||
+                prevStrike.is_danger !== newStrike.is_danger
+
+              // Only return new object if something changed
+              return hasChanged ? newStrike : prevStrike
+            })
+
+            // Update previous strikes ref for EOD tracking
+            newData.strikes.forEach((s: StrikeData) => {
+              previousStrikesRef.current.set(s.strike, s)
+            })
+
+            return { ...newData, strikes: mergedStrikes }
+          })
+
           // Store live data for fallback during market hours
           if (!newData.is_mock) {
             setLastLiveData(newData)
@@ -406,13 +473,49 @@ export default function ArgusPage() {
           ? new Date(newData.fetched_at)
           : new Date()
         setLastUpdated(fetchedAt)
+        setError(null)
       }
     } catch (err: any) {
       setError(err.message || 'Failed to fetch data')
     } finally {
       setLoading(false)
+      initialLoadRef.current = false
     }
-  }, [selectedSymbol, isMarketOpen, lastLiveData])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSymbol, isMarketOpen])  // Removed lastLiveData - accessed via ref to prevent circular dependency
+
+  // Helper to get tomorrow's expiration date (handles weekends and holidays)
+  const getTomorrowExpiration = useCallback((): string => {
+    const now = new Date()
+    const ct = new Date(now.toLocaleString('en-US', { timeZone: 'America/Chicago' }))
+    const tomorrow = new Date(ct)
+    tomorrow.setDate(tomorrow.getDate() + 1)
+
+    // If tomorrow is Saturday, skip to Monday
+    if (tomorrow.getDay() === 6) {
+      tomorrow.setDate(tomorrow.getDate() + 2)
+    }
+    // If tomorrow is Sunday, skip to Monday
+    else if (tomorrow.getDay() === 0) {
+      tomorrow.setDate(tomorrow.getDate() + 1)
+    }
+
+    return tomorrow.toISOString().split('T')[0]
+  }, [])
+
+  // Fetch tomorrow's gamma data for next-day overlay
+  const fetchTomorrowGammaData = useCallback(async () => {
+    try {
+      const tomorrowDate = getTomorrowExpiration()
+      const response = await apiClient.getArgusGamma(selectedSymbol, tomorrowDate)
+      if (response.data?.success && response.data?.data) {
+        setTomorrowGammaData(response.data.data)
+      }
+    } catch (err) {
+      console.error('[ARGUS] Error fetching tomorrow gamma data:', err)
+      // Don't show error to user - tomorrow's data is optional enhancement
+    }
+  }, [selectedSymbol, getTomorrowExpiration])
 
   const fetchDangerZoneLogs = useCallback(async () => {
     try {
@@ -720,6 +823,7 @@ export default function ArgusPage() {
         await Promise.all([
           fetchExpirations(),
           fetchGammaData(),
+          fetchTomorrowGammaData(),  // Fetch next-day data
           fetchAlerts(),
           fetchCommentary(),
           fetchContext(),
@@ -735,7 +839,8 @@ export default function ArgusPage() {
       }
     }
     fetchAllData()
-  }, [fetchExpirations, fetchGammaData, fetchAlerts, fetchCommentary, fetchContext, fetchDangerZoneLogs, fetchStrikeTrends, fetchGammaFlips30m, fetchAccuracyMetrics, fetchBotPositions, fetchPatternMatches])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSymbol])  // Simplified deps - fetch on mount and symbol change only
 
   // Check if market is closed or holiday
   const isMarketClosed = gammaData?.market_status === 'closed' || gammaData?.market_status === 'holiday'
@@ -776,11 +881,12 @@ export default function ArgusPage() {
         fetchBotPositions()
       }, 30000)
 
-      // Slow polling: Commentary, accuracy, patterns every 60 seconds
+      // Slow polling: Commentary, accuracy, patterns, tomorrow's data every 60 seconds
       slowPollRef.current = setInterval(() => {
         fetchCommentary()
         fetchAccuracyMetrics()
         fetchPatternMatches()
+        fetchTomorrowGammaData()
       }, 60000)
     }
 
@@ -985,11 +1091,88 @@ export default function ArgusPage() {
     )
   }
 
-  const maxGamma = gammaData?.strikes
+  // EMA smoothed maxGamma to prevent scale jumping
+  const EMA_ALPHA = 0.3  // 30% new value, 70% previous - same as backend EM smoothing
+  const rawMaxGamma = gammaData?.strikes
     ? Math.max(...gammaData.strikes.map(s => Math.abs(s.net_gamma)), 1)
     : 1
 
+  // Apply EMA smoothing to maxGamma
+  const maxGamma = useMemo(() => {
+    if (smoothedMaxGammaRef.current === null) {
+      // First load: use raw value
+      smoothedMaxGammaRef.current = rawMaxGamma
+      return rawMaxGamma
+    }
+
+    // EMA: smoothed = alpha * new + (1 - alpha) * previous
+    const smoothed = EMA_ALPHA * rawMaxGamma + (1 - EMA_ALPHA) * smoothedMaxGammaRef.current
+    smoothedMaxGammaRef.current = smoothed
+    return smoothed
+  }, [rawMaxGamma])
+
+  // Calculate maxGamma for tomorrow's data (independent scale)
+  const tomorrowMaxGamma = tomorrowGammaData?.strikes
+    ? Math.max(...tomorrowGammaData.strikes.map(s => Math.abs(s.net_gamma)), 1)
+    : 1
+
   const highPriorityAlerts = alerts.filter(a => a.priority === 'HIGH' || a.priority === 'MEDIUM')
+
+  // Compute EOD Strike Statistics from danger zone logs and strike trends
+  const computedEodStats = useMemo((): EODStrikeStat[] => {
+    if (!gammaData?.strikes) return []
+
+    const strikeStats = new Map<number, EODStrikeStat>()
+
+    // Initialize with all current strikes
+    gammaData.strikes.forEach(strike => {
+      strikeStats.set(strike.strike, {
+        strike: strike.strike,
+        spikeCount: 0,
+        flipCount: 0,
+        peakRoc: Math.max(Math.abs(strike.roc_1min), Math.abs(strike.roc_5min)),
+        timeAsMagnet: 0,
+        trend: 'STABLE'
+      })
+    })
+
+    // Count spikes from danger zone logs
+    dangerZoneLogs.forEach(log => {
+      const stat = strikeStats.get(log.strike)
+      if (stat) {
+        if (log.danger_type === 'SPIKE') {
+          stat.spikeCount++
+        }
+        stat.peakRoc = Math.max(stat.peakRoc, Math.abs(log.roc_5min))
+      }
+    })
+
+    // Count flips from gamma flips data
+    gammaFlips30m.forEach(flip => {
+      const stat = strikeStats.get(flip.strike)
+      if (stat) {
+        stat.flipCount++
+      }
+    })
+
+    // Get trends from strike trends data
+    Object.entries(strikeTrends).forEach(([strikeKey, trend]) => {
+      const strikeNum = parseFloat(strikeKey)
+      const stat = strikeStats.get(strikeNum)
+      if (stat) {
+        stat.timeAsMagnet = trend.status_durations?.BUILDING || 0
+        if (trend.dominant_status === 'BUILDING') stat.trend = 'BUILDING'
+        else if (trend.dominant_status === 'COLLAPSING') stat.trend = 'COLLAPSING'
+        else if (trend.total_events > 5) stat.trend = 'VOLATILE'
+        else stat.trend = 'STABLE'
+      }
+    })
+
+    // Sort by activity (spikes + flips) and return top 5
+    return Array.from(strikeStats.values())
+      .sort((a, b) => (b.spikeCount + b.flipCount + b.peakRoc) - (a.spikeCount + a.flipCount + a.peakRoc))
+      .slice(0, 5)
+  }, [gammaData?.strikes, dangerZoneLogs, gammaFlips30m, strikeTrends])
 
   // Danger zones for MAIN DISPLAY - use ONLY current snapshot (real-time, not stale)
   // Event Log shows history with timestamps separately
@@ -1831,15 +2014,55 @@ export default function ArgusPage() {
                     <div className="w-4 h-0 border-t border-dashed border-gray-500"></div>
                     <span className="text-gray-400">EM'</span>
                   </div>
+                  {tomorrowGammaData && (
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-3 h-3 rounded bg-cyan-500/40 border border-cyan-500/60"></div>
+                      <span className="text-gray-400">Tomorrow</span>
+                    </div>
+                  )}
                 </div>
               </div>
 
               {/* Chart */}
               <div className="relative h-52 flex items-end justify-center gap-1 border-b border-gray-700 mb-2">
+                {/* Tomorrow's bars (faded, behind today's) */}
+                {tomorrowGammaData && (
+                  <div className="absolute inset-0 flex items-end justify-center gap-1 pointer-events-none">
+                    {tomorrowGammaData.strikes.map((strike) => {
+                      // Find matching strike position in today's data for alignment
+                      const todayStrikes = gammaData?.strikes || []
+                      const strikeIndex = todayStrikes.findIndex(s => s.strike === strike.strike)
+                      if (strikeIndex === -1 && todayStrikes.length > 0) {
+                        // Strike not in today's range, skip
+                        return null
+                      }
+                      return (
+                        <div
+                          key={`tomorrow-${strike.strike}`}
+                          className="flex flex-col items-center"
+                          style={{ flex: '1 1 0', maxWidth: '60px' }}
+                        >
+                          <div className="text-[10px] text-transparent mb-1">&nbsp;</div>
+                          <div
+                            className="w-6 rounded-t bg-cyan-500/30 border border-cyan-500/40 transition-all"
+                            style={{ height: `${getBarHeightPx(strike.net_gamma, Math.max(maxGamma, tomorrowMaxGamma))}px` }}
+                          />
+                        </div>
+                      )
+                    })}
+                    {/* Tomorrow badge */}
+                    <div className="absolute top-2 right-2 px-2 py-1 bg-cyan-500/20 border border-cyan-500/40 rounded text-[10px] text-cyan-400 font-medium">
+                      <Calendar className="w-3 h-3 inline mr-1" />
+                      Tomorrow
+                    </div>
+                  </div>
+                )}
+
+                {/* Today's bars (solid, on top) */}
                 {gammaData?.strikes.map((strike) => (
                   <div
                     key={strike.strike}
-                    className="flex flex-col items-center group cursor-pointer"
+                    className="flex flex-col items-center group cursor-pointer z-10"
                     style={{ flex: '1 1 0', maxWidth: '60px' }}
                     onClick={() => setSelectedStrike(strike)}
                   >
@@ -1954,6 +2177,76 @@ export default function ArgusPage() {
                 ))}
               </div>
             </div>
+
+            {/* EOD Strike Summary Table */}
+            {computedEodStats.length > 0 && (
+              <div className="bg-gray-800/50 rounded-xl p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-bold text-white flex items-center gap-2">
+                    <Sun className="w-5 h-5 text-orange-400" />
+                    Daily Strike Activity
+                    <span className="text-[10px] text-gray-500 font-normal ml-2">Top 5 most active</span>
+                  </h3>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-700">
+                        <th className="text-left py-2 px-2 text-gray-500 font-medium">Strike</th>
+                        <th className="text-center py-2 px-2 text-gray-500 font-medium">Spikes</th>
+                        <th className="text-center py-2 px-2 text-gray-500 font-medium">Flips</th>
+                        <th className="text-right py-2 px-2 text-gray-500 font-medium">Peak ROC</th>
+                        <th className="text-right py-2 px-2 text-gray-500 font-medium">Magnet Time</th>
+                        <th className="text-center py-2 px-2 text-gray-500 font-medium">Trend</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {computedEodStats.map((stat, idx) => (
+                        <tr
+                          key={stat.strike}
+                          className="border-b border-gray-700/50 hover:bg-gray-700/30"
+                        >
+                          <td className="py-2 px-2">
+                            <span className="font-mono font-bold text-white">
+                              ${stat.strike}
+                              {idx === 0 && <span className="ml-1 text-orange-400">🔥</span>}
+                            </span>
+                          </td>
+                          <td className="py-2 px-2 text-center">
+                            <span className={`font-mono ${stat.spikeCount > 0 ? 'text-orange-400' : 'text-gray-600'}`}>
+                              {stat.spikeCount}
+                            </span>
+                          </td>
+                          <td className="py-2 px-2 text-center">
+                            <span className={`font-mono ${stat.flipCount > 0 ? 'text-purple-400' : 'text-gray-600'}`}>
+                              {stat.flipCount}
+                            </span>
+                          </td>
+                          <td className={`py-2 px-2 text-right font-mono ${
+                            stat.peakRoc > 10 ? 'text-rose-400' : stat.peakRoc > 5 ? 'text-yellow-400' : 'text-gray-400'
+                          }`}>
+                            {stat.peakRoc.toFixed(1)}%
+                          </td>
+                          <td className="py-2 px-2 text-right text-gray-400">
+                            {stat.timeAsMagnet > 0 ? `${stat.timeAsMagnet}m` : '-'}
+                          </td>
+                          <td className="py-2 px-2 text-center">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-medium ${
+                              stat.trend === 'BUILDING' ? 'bg-emerald-500/20 text-emerald-400' :
+                              stat.trend === 'COLLAPSING' ? 'bg-rose-500/20 text-rose-400' :
+                              stat.trend === 'VOLATILE' ? 'bg-orange-500/20 text-orange-400' :
+                              'bg-gray-500/20 text-gray-400'
+                            }`}>
+                              {stat.trend}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
 
             {/* Strike Details Table */}
             <div className="bg-gray-800/50 rounded-xl p-5">
