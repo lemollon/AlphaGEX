@@ -99,45 +99,34 @@ def get_pegasus_instance():
 def _get_tradier_account_balance() -> dict:
     """
     Get account balance from Tradier API for PEGASUS.
-    Same pattern as ARES for consistency.
+
+    PEGASUS always uses PRODUCTION Tradier because:
+    - Sandbox doesn't support SPX quotes
+    - PEGASUS needs SPX prices for trading
     """
     if not TRADIER_AVAILABLE or not TradierDataFetcher:
-        return {'connected': False, 'total_equity': 0, 'sandbox': True, 'error': 'TradierDataFetcher not imported'}
+        return {'connected': False, 'total_equity': 0, 'sandbox': False, 'error': 'TradierDataFetcher not imported'}
 
     try:
         from unified_config import APIConfig
 
-        # Check sandbox mode FIRST (defaults to True to match ARES sandbox mode)
-        use_sandbox = getattr(APIConfig, 'TRADIER_SANDBOX', True)
+        # PEGASUS always uses PRODUCTION Tradier for SPX quotes (sandbox doesn't have SPX)
+        api_key = (
+            getattr(APIConfig, 'TRADIER_PROD_API_KEY', None) or
+            getattr(APIConfig, 'TRADIER_API_KEY', None)
+        )
+        account_id = (
+            getattr(APIConfig, 'TRADIER_PROD_ACCOUNT_ID', None) or
+            getattr(APIConfig, 'TRADIER_ACCOUNT_ID', None)
+        )
 
-        # Select credentials based on mode - production credentials first in production mode
-        if use_sandbox:
-            # Sandbox mode: prefer sandbox credentials, fall back to generic
-            api_key = (
-                getattr(APIConfig, 'TRADIER_SANDBOX_API_KEY', None) or
-                getattr(APIConfig, 'TRADIER_API_KEY', None)
-            )
-            account_id = (
-                getattr(APIConfig, 'TRADIER_SANDBOX_ACCOUNT_ID', None) or
-                getattr(APIConfig, 'TRADIER_ACCOUNT_ID', None)
-            )
-        else:
-            # Production mode: prefer production credentials, fall back to generic
-            api_key = (
-                getattr(APIConfig, 'TRADIER_PROD_API_KEY', None) or
-                getattr(APIConfig, 'TRADIER_API_KEY', None)
-            )
-            account_id = (
-                getattr(APIConfig, 'TRADIER_PROD_ACCOUNT_ID', None) or
-                getattr(APIConfig, 'TRADIER_ACCOUNT_ID', None)
-            )
-
-        logger.info(f"PEGASUS Tradier: mode={'SANDBOX' if use_sandbox else 'PRODUCTION'}, api_key={'SET' if api_key else 'NOT SET'}, account_id={account_id}")
+        logger.info(f"PEGASUS Tradier: mode=PRODUCTION (SPX requires prod), api_key={'SET' if api_key else 'NOT SET'}, account_id={account_id}")
 
         if not api_key or not account_id:
-            return {'connected': False, 'total_equity': 0, 'sandbox': use_sandbox, 'error': 'No credentials configured'}
+            return {'connected': False, 'total_equity': 0, 'sandbox': False, 'error': 'No credentials configured'}
 
-        tradier = TradierDataFetcher(api_key=api_key, account_id=account_id, sandbox=use_sandbox)
+        # PEGASUS uses production (sandbox=False) for SPX quotes
+        tradier = TradierDataFetcher(api_key=api_key, account_id=account_id, sandbox=False)
         balance = tradier.get_account_balance()
 
         if balance:
@@ -145,15 +134,15 @@ def _get_tradier_account_balance() -> dict:
                 'connected': True,
                 'total_equity': balance.get('total_equity', 0),
                 'option_buying_power': balance.get('option_buying_power', 0),
-                'sandbox': use_sandbox,
+                'sandbox': False,
                 'account_id': account_id
             }
 
-        return {'connected': False, 'total_equity': 0, 'sandbox': use_sandbox, 'error': 'Empty response from Tradier'}
+        return {'connected': False, 'total_equity': 0, 'sandbox': False, 'error': 'Empty response from Tradier'}
 
     except Exception as e:
         logger.error(f"PEGASUS Tradier balance fetch ERROR: {e}")
-        return {'connected': False, 'total_equity': 0, 'sandbox': True, 'error': str(e)}
+        return {'connected': False, 'total_equity': 0, 'sandbox': False, 'error': str(e)}
 
 
 def _get_heartbeat(bot_name: str) -> dict:
