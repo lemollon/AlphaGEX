@@ -365,6 +365,7 @@ export const apiClient = {
   getATHENALivePnL: () => api.get('/api/athena/live-pnl'),
   processATHENAExpired: () => api.post('/api/athena/process-expired'),
   skipATHENAToday: () => api.post('/api/athena/skip-today'),
+  resetATHENAData: (confirm: boolean = false) => api.post('/api/athena/reset', null, { params: { confirm } }),
 
   // PEGASUS - SPX Iron Condor Bot
   getPEGASUSStatus: () => api.get('/api/pegasus/status'),
@@ -377,6 +378,7 @@ export const apiClient = {
   getPEGASUSLivePnL: () => api.get('/api/pegasus/live-pnl'),
   processPEGASUSExpired: () => api.post('/api/pegasus/process-expired'),
   skipPEGASUSToday: () => api.post('/api/pegasus/skip-today'),
+  resetPEGASUSData: (confirm: boolean = false) => api.post('/api/pegasus/reset', null, { params: { confirm } }),
 
   // ARES - Live P&L
   getARESLivePnL: () => api.get('/api/ares/live-pnl'),
