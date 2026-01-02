@@ -161,7 +161,7 @@ class PEGASUSDatabase:
             ("flip_point", "DECIMAL(10, 2)"),
             ("net_gex", "DECIMAL(15, 2)"),
             # Oracle context
-            ("oracle_win_probability", "DECIMAL(5, 4)"),
+            ("oracle_win_probability", "DECIMAL(8, 4)"),  # DECIMAL(8,4) for proper precision
             ("oracle_advice", "VARCHAR(20)"),
             ("oracle_top_factors", "TEXT"),
             ("oracle_use_gex_walls", "BOOLEAN DEFAULT FALSE"),
@@ -270,17 +270,22 @@ class PEGASUSDatabase:
                     )
                 """, (
                     pos.position_id, pos.ticker, pos.expiration,
-                    pos.put_short_strike, pos.put_long_strike, pos.put_credit,
-                    pos.call_short_strike, pos.call_long_strike, pos.call_credit,
-                    pos.contracts, pos.spread_width, pos.total_credit, pos.max_loss, pos.max_profit,
-                    pos.underlying_at_entry, pos.vix_at_entry or None, pos.expected_move or None,
-                    pos.call_wall or None, pos.put_wall or None, pos.gex_regime or None,
+                    _to_python(pos.put_short_strike), _to_python(pos.put_long_strike), _to_python(pos.put_credit),
+                    _to_python(pos.call_short_strike), _to_python(pos.call_long_strike), _to_python(pos.call_credit),
+                    _to_python(pos.contracts), _to_python(pos.spread_width), _to_python(pos.total_credit),
+                    _to_python(pos.max_loss), _to_python(pos.max_profit),
+                    _to_python(pos.underlying_at_entry), _to_python(pos.vix_at_entry) if pos.vix_at_entry else None,
+                    _to_python(pos.expected_move) if pos.expected_move else None,
+                    _to_python(pos.call_wall) if pos.call_wall else None,
+                    _to_python(pos.put_wall) if pos.put_wall else None, pos.gex_regime or None,
                     # Kronos context
-                    pos.flip_point or None, pos.net_gex or None,
+                    _to_python(pos.flip_point) if pos.flip_point else None,
+                    _to_python(pos.net_gex) if pos.net_gex else None,
                     # Oracle context (FULL audit trail)
-                    pos.oracle_confidence or None, pos.oracle_win_probability or None,
+                    _to_python(pos.oracle_confidence) if pos.oracle_confidence else None,
+                    _to_python(pos.oracle_win_probability) if pos.oracle_win_probability else None,
                     pos.oracle_advice or None, pos.oracle_reasoning or None,
-                    pos.oracle_top_factors or None, pos.oracle_use_gex_walls,
+                    pos.oracle_top_factors or None, bool(pos.oracle_use_gex_walls),
                     pos.put_order_id or None, pos.call_order_id or None,
                     pos.status.value, pos.open_time,
                 ))
@@ -409,9 +414,9 @@ class PEGASUSDatabase:
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                 """, (
-                    spot_price, vix, expected_move,
-                    put_short, put_long, call_short, call_long,
-                    total_credit, confidence, was_executed, skip_reason
+                    _to_python(spot_price), _to_python(vix), _to_python(expected_move),
+                    _to_python(put_short), _to_python(put_long), _to_python(call_short), _to_python(call_long),
+                    _to_python(total_credit), _to_python(confidence), was_executed, skip_reason
                 ))
                 signal_id = c.fetchone()[0]
                 conn.commit()

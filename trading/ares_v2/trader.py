@@ -543,8 +543,8 @@ class ARESTrader(MathOptimizerMixin):
                 bot_name=OracleBotName.ARES,
                 outcome=outcome,
                 actual_pnl=pnl,
-                put_strike=pos.put_short if hasattr(pos, 'put_short') else None,
-                call_strike=pos.call_short if hasattr(pos, 'call_short') else None,
+                put_strike=pos.put_short_strike if hasattr(pos, 'put_short_strike') else None,
+                call_strike=pos.call_short_strike if hasattr(pos, 'call_short_strike') else None,
             )
 
             if success:
@@ -580,10 +580,11 @@ class ARESTrader(MathOptimizerMixin):
             }
 
             # Record prediction: IC will be profitable (price stays within wings)
+            # Note: signal.confidence is already 0-1 from Oracle, not 0-100
             prediction_id = memory.record_prediction(
                 prediction_type="iron_condor_outcome",
                 prediction=f"IC profitable: {pos.put_short_strike}/{pos.call_short_strike}",
-                confidence=signal.confidence / 100 if hasattr(signal, 'confidence') else 0.7,
+                confidence=signal.confidence if hasattr(signal, 'confidence') else 0.7,
                 context=context
             )
 
@@ -649,8 +650,8 @@ class ARESTrader(MathOptimizerMixin):
                 # Get expiry time (end of day)
                 expiry_time = now.replace(hour=16, minute=0, second=0)  # Market close
 
-                # Get entry time from position
-                entry_time = pos.entry_time if hasattr(pos, 'entry_time') else now - timedelta(hours=2)
+                # Get entry time from position (field is 'open_time' not 'entry_time')
+                entry_time = pos.open_time if hasattr(pos, 'open_time') and pos.open_time else now - timedelta(hours=2)
 
                 # Check HJB exit signal
                 hjb_result = self.math_should_exit(
