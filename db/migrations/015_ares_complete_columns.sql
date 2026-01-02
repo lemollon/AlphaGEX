@@ -95,6 +95,24 @@ EXCEPTION WHEN OTHERS THEN
     RAISE NOTICE 'signal_win_probability already correct or table missing';
 END $$;
 
+-- Fix ares_signals confidence precision
+DO $$
+BEGIN
+    ALTER TABLE ares_signals ALTER COLUMN confidence TYPE DECIMAL(8, 4);
+    RAISE NOTICE 'Fixed ares_signals.confidence precision';
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'ares_signals.confidence already correct or table missing';
+END $$;
+
+-- Fix pegasus_signals confidence precision
+DO $$
+BEGIN
+    ALTER TABLE pegasus_signals ALTER COLUMN confidence TYPE DECIMAL(8, 4);
+    RAISE NOTICE 'Fixed pegasus_signals.confidence precision';
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'pegasus_signals.confidence already correct or table missing';
+END $$;
+
 -- Also fix oracle_confidence in ares_positions if it was created with wrong precision
 DO $$
 BEGIN

@@ -209,9 +209,13 @@ def fix_precision(cursor):
         # ares_positions
         ("ares_positions", "oracle_confidence", "DECIMAL(8, 4)"),
         ("ares_positions", "oracle_win_probability", "DECIMAL(8, 4)"),
+        # ares_signals
+        ("ares_signals", "confidence", "DECIMAL(8, 4)"),
         # pegasus_positions
         ("pegasus_positions", "oracle_confidence", "DECIMAL(8, 4)"),
         ("pegasus_positions", "oracle_win_probability", "DECIMAL(8, 4)"),
+        # pegasus_signals
+        ("pegasus_signals", "confidence", "DECIMAL(8, 4)"),
         # athena_positions
         ("athena_positions", "oracle_confidence", "DECIMAL(8, 4)"),
         ("athena_positions", "ml_confidence", "DECIMAL(8, 4)"),
