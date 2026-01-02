@@ -693,6 +693,160 @@ async def full_market_analysis(
 
 
 # =============================================================================
+# DIAGNOSTIC ENDPOINT - For debugging initialization issues
+# =============================================================================
+
+@router.get("/api/math-optimizer/diagnose")
+async def diagnose_math_optimizer():
+    """
+    Diagnostic endpoint to test math optimizer initialization step by step.
+    Use this to identify exactly where the initialization fails.
+    """
+    results = {
+        "steps": [],
+        "success": False,
+        "final_error": None
+    }
+
+    # Step 1: Test numpy import
+    try:
+        import numpy as np
+        results["steps"].append({
+            "step": 1,
+            "name": "Import numpy",
+            "success": True,
+            "version": np.__version__
+        })
+    except Exception as e:
+        results["steps"].append({
+            "step": 1,
+            "name": "Import numpy",
+            "success": False,
+            "error": str(e)
+        })
+        results["final_error"] = f"Step 1 failed: {e}"
+        return results
+
+    # Step 2: Test sys.path includes parent directory
+    try:
+        import sys
+        from pathlib import Path
+        parent_in_path = any('AlphaGEX' in p for p in sys.path)
+        results["steps"].append({
+            "step": 2,
+            "name": "Check sys.path",
+            "success": True,
+            "parent_in_path": parent_in_path,
+            "paths": sys.path[:5]  # First 5 paths
+        })
+    except Exception as e:
+        results["steps"].append({
+            "step": 2,
+            "name": "Check sys.path",
+            "success": False,
+            "error": str(e)
+        })
+
+    # Step 3: Test core module import
+    try:
+        import core
+        results["steps"].append({
+            "step": 3,
+            "name": "Import core module",
+            "success": True
+        })
+    except Exception as e:
+        results["steps"].append({
+            "step": 3,
+            "name": "Import core module",
+            "success": False,
+            "error": str(e)
+        })
+        results["final_error"] = f"Step 3 failed: {e}"
+        return results
+
+    # Step 4: Test math_optimizers module import
+    try:
+        from core import math_optimizers
+        results["steps"].append({
+            "step": 4,
+            "name": "Import core.math_optimizers",
+            "success": True
+        })
+    except Exception as e:
+        results["steps"].append({
+            "step": 4,
+            "name": "Import core.math_optimizers",
+            "success": False,
+            "error": str(e)
+        })
+        results["final_error"] = f"Step 4 failed: {e}"
+        return results
+
+    # Step 5: Test get_math_optimizer function
+    try:
+        from core.math_optimizers import get_math_optimizer
+        results["steps"].append({
+            "step": 5,
+            "name": "Import get_math_optimizer function",
+            "success": True
+        })
+    except Exception as e:
+        results["steps"].append({
+            "step": 5,
+            "name": "Import get_math_optimizer function",
+            "success": False,
+            "error": str(e)
+        })
+        results["final_error"] = f"Step 5 failed: {e}"
+        return results
+
+    # Step 6: Test MathOptimizerOrchestrator instantiation
+    try:
+        optimizer = get_math_optimizer()
+        results["steps"].append({
+            "step": 6,
+            "name": "Instantiate MathOptimizerOrchestrator",
+            "success": True,
+            "type": str(type(optimizer))
+        })
+    except Exception as e:
+        import traceback
+        results["steps"].append({
+            "step": 6,
+            "name": "Instantiate MathOptimizerOrchestrator",
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        })
+        results["final_error"] = f"Step 6 failed: {e}"
+        return results
+
+    # Step 7: Test getting status
+    try:
+        status = optimizer.get_status()
+        results["steps"].append({
+            "step": 7,
+            "name": "Get optimizer status",
+            "success": True,
+            "status_keys": list(status.keys())
+        })
+    except Exception as e:
+        results["steps"].append({
+            "step": 7,
+            "name": "Get optimizer status",
+            "success": False,
+            "error": str(e)
+        })
+        results["final_error"] = f"Step 7 failed: {e}"
+        return results
+
+    results["success"] = True
+    results["message"] = "All diagnostic steps passed successfully!"
+    return results
+
+
+# =============================================================================
 # STATUS ENDPOINT
 # =============================================================================
 
