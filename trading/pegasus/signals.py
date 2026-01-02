@@ -167,7 +167,7 @@ class SignalGenerator:
                 gex_regime=gex_regime,
                 gex_flip_point=market_data.get('flip_point', 0),
                 gex_net=market_data.get('net_gex', 0),
-                expected_move_pct=market_data.get('expected_move', 0) / market_data['spot_price'] * 100 if market_data['spot_price'] else 0,
+                expected_move_pct=(market_data.get('expected_move', 0) / market_data.get('spot_price', 1) * 100) if market_data.get('spot_price') else 0,
             )
 
             # Call PEGASUS-specific advice method
