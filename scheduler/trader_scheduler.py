@@ -201,14 +201,14 @@ class AutonomousTraderScheduler:
                 self.atlas_trader = None
 
         # ARES V2 - SPY Iron Condors (10% monthly target)
-        # Capital: $200,000 (20% of total)
-        # PAPER mode: Uses real SPY data, paper trades internally
+        # Capital: Uses actual Tradier account balance
+        # LIVE mode: Executes real trades on Tradier
         self.ares_trader = None
         if ARES_AVAILABLE:
             try:
-                config = ARESConfig(mode=ARESTradingMode.PAPER)
+                config = ARESConfig(mode=ARESTradingMode.LIVE)
                 self.ares_trader = ARESTrader(config=config)
-                logger.info(f"✅ ARES V2 initialized (SPY Iron Condors, PAPER mode)")
+                logger.info(f"✅ ARES V2 initialized (SPY Iron Condors, LIVE mode - Tradier)")
             except Exception as e:
                 logger.warning(f"ARES V2 initialization failed: {e}")
                 self.ares_trader = None
