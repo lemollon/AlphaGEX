@@ -649,19 +649,27 @@ class AutonomousTraderScheduler:
 
         is_open, market_status = self.get_market_status()
         if not is_open:
-            # Map market status to appropriate scan outcome and message
-            status_mapping = {
-                'BEFORE_WINDOW': (ScanOutcome.BEFORE_WINDOW, "Before trading window (8:30 AM CT)"),
-                'AFTER_WINDOW': (ScanOutcome.AFTER_WINDOW, "After trading window (3:00 PM CT)"),
-                'WEEKEND': (ScanOutcome.MARKET_CLOSED, "Weekend - market closed"),
-                'HOLIDAY': (ScanOutcome.MARKET_CLOSED, "Holiday - market closed"),
+            # Map market status to appropriate message
+            message_mapping = {
+                'BEFORE_WINDOW': "Before trading window (8:30 AM CT)",
+                'AFTER_WINDOW': "After trading window (3:00 PM CT)",
+                'WEEKEND': "Weekend - market closed",
+                'HOLIDAY': "Holiday - market closed",
             }
-            outcome, message = status_mapping.get(market_status, (ScanOutcome.MARKET_CLOSED, "Market is closed"))
+            message = message_mapping.get(market_status, "Market is closed")
 
             logger.info(f"Market not open ({market_status}). Skipping ARES logic.")
             self._save_heartbeat('ARES', market_status)
             # Log to scan_activity for visibility
-            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_ares_scan:
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_ares_scan and ScanOutcome:
+                # Map market status to scan outcome
+                outcome_mapping = {
+                    'BEFORE_WINDOW': ScanOutcome.BEFORE_WINDOW,
+                    'AFTER_WINDOW': ScanOutcome.AFTER_WINDOW,
+                    'WEEKEND': ScanOutcome.MARKET_CLOSED,
+                    'HOLIDAY': ScanOutcome.MARKET_CLOSED,
+                }
+                outcome = outcome_mapping.get(market_status, ScanOutcome.MARKET_CLOSED)
                 log_ares_scan(
                     outcome=outcome,
                     decision_summary=message,
@@ -937,19 +945,27 @@ class AutonomousTraderScheduler:
 
         is_open, market_status = self.get_market_status()
         if not is_open:
-            # Map market status to appropriate scan outcome and message
-            status_mapping = {
-                'BEFORE_WINDOW': (ScanOutcome.BEFORE_WINDOW, "Before trading window (8:30 AM CT)"),
-                'AFTER_WINDOW': (ScanOutcome.AFTER_WINDOW, "After trading window (3:00 PM CT)"),
-                'WEEKEND': (ScanOutcome.MARKET_CLOSED, "Weekend - market closed"),
-                'HOLIDAY': (ScanOutcome.MARKET_CLOSED, "Holiday - market closed"),
+            # Map market status to appropriate message
+            message_mapping = {
+                'BEFORE_WINDOW': "Before trading window (8:30 AM CT)",
+                'AFTER_WINDOW': "After trading window (3:00 PM CT)",
+                'WEEKEND': "Weekend - market closed",
+                'HOLIDAY': "Holiday - market closed",
             }
-            outcome, message = status_mapping.get(market_status, (ScanOutcome.MARKET_CLOSED, "Market is closed"))
+            message = message_mapping.get(market_status, "Market is closed")
 
             logger.info(f"Market not open ({market_status}). Skipping ATHENA logic.")
             self._save_heartbeat('ATHENA', market_status)
             # Log to scan_activity for visibility
-            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_athena_scan:
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_athena_scan and ScanOutcome:
+                # Map market status to scan outcome
+                outcome_mapping = {
+                    'BEFORE_WINDOW': ScanOutcome.BEFORE_WINDOW,
+                    'AFTER_WINDOW': ScanOutcome.AFTER_WINDOW,
+                    'WEEKEND': ScanOutcome.MARKET_CLOSED,
+                    'HOLIDAY': ScanOutcome.MARKET_CLOSED,
+                }
+                outcome = outcome_mapping.get(market_status, ScanOutcome.MARKET_CLOSED)
                 log_athena_scan(
                     outcome=outcome,
                     decision_summary=message,
@@ -1039,19 +1055,27 @@ class AutonomousTraderScheduler:
 
         is_open, market_status = self.get_market_status()
         if not is_open:
-            # Map market status to appropriate scan outcome and message
-            status_mapping = {
-                'BEFORE_WINDOW': (ScanOutcome.BEFORE_WINDOW, "Before trading window (8:30 AM CT)"),
-                'AFTER_WINDOW': (ScanOutcome.AFTER_WINDOW, "After trading window (3:00 PM CT)"),
-                'WEEKEND': (ScanOutcome.MARKET_CLOSED, "Weekend - market closed"),
-                'HOLIDAY': (ScanOutcome.MARKET_CLOSED, "Holiday - market closed"),
+            # Map market status to appropriate message
+            message_mapping = {
+                'BEFORE_WINDOW': "Before trading window (8:30 AM CT)",
+                'AFTER_WINDOW': "After trading window (3:00 PM CT)",
+                'WEEKEND': "Weekend - market closed",
+                'HOLIDAY': "Holiday - market closed",
             }
-            outcome, message = status_mapping.get(market_status, (ScanOutcome.MARKET_CLOSED, "Market is closed"))
+            message = message_mapping.get(market_status, "Market is closed")
 
             logger.info(f"Market not open ({market_status}). Skipping PEGASUS logic.")
             self._save_heartbeat('PEGASUS', market_status)
             # Log to scan_activity for visibility
-            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_pegasus_scan:
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_pegasus_scan and ScanOutcome:
+                # Map market status to scan outcome
+                outcome_mapping = {
+                    'BEFORE_WINDOW': ScanOutcome.BEFORE_WINDOW,
+                    'AFTER_WINDOW': ScanOutcome.AFTER_WINDOW,
+                    'WEEKEND': ScanOutcome.MARKET_CLOSED,
+                    'HOLIDAY': ScanOutcome.MARKET_CLOSED,
+                }
+                outcome = outcome_mapping.get(market_status, ScanOutcome.MARKET_CLOSED)
                 log_pegasus_scan(
                     outcome=outcome,
                     decision_summary=message,
