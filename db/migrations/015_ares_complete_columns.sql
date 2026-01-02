@@ -7,6 +7,9 @@
 -- MISSING CORE COLUMNS (required for INSERT to succeed)
 -- =============================================================================
 
+-- Ticker symbol (not in original schema)
+ALTER TABLE ares_positions ADD COLUMN IF NOT EXISTS ticker VARCHAR(10) DEFAULT 'SPY';
+
 -- Market context at entry (REQUIRED by save_position)
 ALTER TABLE ares_positions ADD COLUMN IF NOT EXISTS underlying_at_entry DECIMAL(10, 2);
 ALTER TABLE ares_positions ADD COLUMN IF NOT EXISTS vix_at_entry DECIMAL(6, 2);

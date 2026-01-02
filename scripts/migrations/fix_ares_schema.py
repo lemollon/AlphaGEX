@@ -21,6 +21,9 @@ def fix_ares_schema(cursor):
     print("  " + "-"*40)
 
     columns_to_add = [
+        # Ticker symbol (not in original schema)
+        ("ticker", "VARCHAR(10) DEFAULT 'SPY'"),
+
         # Market context at entry
         ("underlying_at_entry", "DECIMAL(10, 2)"),
         ("vix_at_entry", "DECIMAL(6, 2)"),
