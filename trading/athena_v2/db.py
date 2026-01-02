@@ -173,7 +173,7 @@ class ATHENADatabase:
             ("net_gex", "DECIMAL(15, 2)"),
             # ML model context
             ("ml_model_name", "VARCHAR(100)"),
-            ("ml_win_probability", "DECIMAL(5, 4)"),
+            ("ml_win_probability", "DECIMAL(8, 4)"),  # DECIMAL(8,4) for proper precision
             ("ml_top_features", "TEXT"),
             # Wall proximity context
             ("wall_type", "VARCHAR(20)"),
@@ -301,31 +301,31 @@ class ATHENADatabase:
                     pos.position_id,
                     pos.spread_type.value,
                     pos.ticker,
-                    pos.long_strike,
-                    pos.short_strike,
+                    _to_python(pos.long_strike),
+                    _to_python(pos.short_strike),
                     pos.expiration,
-                    pos.entry_debit,
-                    pos.contracts,
-                    pos.max_profit,
-                    pos.max_loss,
-                    pos.underlying_at_entry,
-                    pos.call_wall if pos.call_wall else None,
-                    pos.put_wall if pos.put_wall else None,
+                    _to_python(pos.entry_debit),
+                    _to_python(pos.contracts),
+                    _to_python(pos.max_profit),
+                    _to_python(pos.max_loss),
+                    _to_python(pos.underlying_at_entry),
+                    _to_python(pos.call_wall) if pos.call_wall else None,
+                    _to_python(pos.put_wall) if pos.put_wall else None,
                     pos.gex_regime or None,
-                    pos.vix_at_entry if pos.vix_at_entry else None,
+                    _to_python(pos.vix_at_entry) if pos.vix_at_entry else None,
                     # Kronos context
-                    pos.flip_point if pos.flip_point else None,
-                    pos.net_gex if pos.net_gex else None,
+                    _to_python(pos.flip_point) if pos.flip_point else None,
+                    _to_python(pos.net_gex) if pos.net_gex else None,
                     # ML context (FULL audit trail)
-                    pos.oracle_confidence if pos.oracle_confidence else None,
+                    _to_python(pos.oracle_confidence) if pos.oracle_confidence else None,
                     pos.ml_direction or None,
-                    pos.ml_confidence if pos.ml_confidence else None,
+                    _to_python(pos.ml_confidence) if pos.ml_confidence else None,
                     pos.ml_model_name or None,
-                    pos.ml_win_probability if pos.ml_win_probability else None,
+                    _to_python(pos.ml_win_probability) if pos.ml_win_probability else None,
                     pos.ml_top_features or None,
                     # Wall proximity context
                     pos.wall_type or None,
-                    pos.wall_distance_pct if pos.wall_distance_pct else None,
+                    _to_python(pos.wall_distance_pct) if pos.wall_distance_pct else None,
                     pos.trade_reasoning or None,
                     pos.order_id or None,
                     pos.status.value,
@@ -486,8 +486,8 @@ class ATHENADatabase:
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                 """, (
-                    direction, spread_type, confidence, spot_price,
-                    call_wall, put_wall, gex_regime, vix, rr_ratio,
+                    direction, spread_type, _to_python(confidence), _to_python(spot_price),
+                    _to_python(call_wall), _to_python(put_wall), gex_regime, _to_python(vix), _to_python(rr_ratio),
                     was_executed, skip_reason, reasoning
                 ))
                 signal_id = c.fetchone()[0]

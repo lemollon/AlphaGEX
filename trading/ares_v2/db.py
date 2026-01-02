@@ -198,7 +198,9 @@ class ARESDatabase:
                         contracts, spread_width, total_credit, max_loss, max_profit,
                         underlying_at_entry, vix_at_entry, expected_move,
                         call_wall, put_wall, gex_regime,
-                        oracle_confidence, oracle_reasoning,
+                        flip_point, net_gex,
+                        oracle_confidence, oracle_win_probability, oracle_advice,
+                        oracle_reasoning, oracle_top_factors, oracle_use_gex_walls,
                         put_order_id, call_order_id,
                         status, open_time, close_time, close_price, close_reason, realized_pnl
                     FROM ares_positions
@@ -228,16 +230,24 @@ class ARESDatabase:
                         call_wall=float(row[17] or 0),
                         put_wall=float(row[18] or 0),
                         gex_regime=row[19] or "",
-                        oracle_confidence=float(row[20] or 0),
-                        oracle_reasoning=row[21] or "",
-                        put_order_id=row[22] or "",
-                        call_order_id=row[23] or "",
-                        status=PositionStatus(row[24]),
-                        open_time=row[25],
-                        close_time=row[26],
-                        close_price=float(row[27] or 0),
-                        close_reason=row[28] or "",
-                        realized_pnl=float(row[29] or 0),
+                        # Kronos context
+                        flip_point=float(row[20] or 0),
+                        net_gex=float(row[21] or 0),
+                        # Oracle context (FULL audit trail)
+                        oracle_confidence=float(row[22] or 0),
+                        oracle_win_probability=float(row[23] or 0),
+                        oracle_advice=row[24] or "",
+                        oracle_reasoning=row[25] or "",
+                        oracle_top_factors=row[26] or "",
+                        oracle_use_gex_walls=bool(row[27]),
+                        put_order_id=row[28] or "",
+                        call_order_id=row[29] or "",
+                        status=PositionStatus(row[30]),
+                        open_time=row[31],
+                        close_time=row[32],
+                        close_price=float(row[33] or 0),
+                        close_reason=row[34] or "",
+                        realized_pnl=float(row[35] or 0),
                     )
                     positions.append(pos)
 
@@ -303,7 +313,7 @@ class ARESDatabase:
         columns_to_add = [
             ("flip_point", "DECIMAL(10, 2)"),
             ("net_gex", "DECIMAL(15, 2)"),
-            ("oracle_win_probability", "DECIMAL(5, 4)"),
+            ("oracle_win_probability", "DECIMAL(8, 4)"),  # DECIMAL(8,4) for proper precision
             ("oracle_advice", "VARCHAR(20)"),
             ("oracle_top_factors", "TEXT"),
             ("oracle_use_gex_walls", "BOOLEAN DEFAULT FALSE"),
