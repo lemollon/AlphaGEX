@@ -296,6 +296,209 @@ def _get_tradier_account_balance() -> dict:
         return {'connected': False, 'total_equity': 0, 'sandbox': True, 'error': str(e)}
 
 
+def _get_tradier_positions() -> dict:
+    """
+    Get positions directly from Tradier SANDBOX account.
+
+    ARES uses SANDBOX Tradier - this shows actual positions in the broker.
+
+    Returns dict with:
+    - connected: Whether API call succeeded
+    - positions: List of position dicts from Tradier
+    - orders: List of recent orders from Tradier
+    - error: Error message if connection failed
+    """
+    if not TRADIER_AVAILABLE or not TradierDataFetcher:
+        return {'connected': False, 'positions': [], 'orders': [], 'error': 'TradierDataFetcher not imported'}
+
+    try:
+        from unified_config import APIConfig
+
+        # ARES uses SANDBOX Tradier account
+        api_key = APIConfig.TRADIER_SANDBOX_API_KEY
+        account_id = APIConfig.TRADIER_SANDBOX_ACCOUNT_ID
+
+        if not api_key or not account_id:
+            return {'connected': False, 'positions': [], 'orders': [], 'error': 'No SANDBOX credentials configured'}
+
+        tradier = TradierDataFetcher(
+            api_key=api_key,
+            account_id=account_id,
+            sandbox=True  # ARES uses SANDBOX
+        )
+
+        # Get positions from Tradier
+        positions = tradier.get_positions()
+        position_list = []
+        for pos in positions:
+            position_list.append({
+                'symbol': pos.symbol,
+                'quantity': pos.quantity,
+                'cost_basis': pos.cost_basis,
+                'date_acquired': str(pos.date_acquired) if pos.date_acquired else None,
+            })
+
+        # Get recent orders from Tradier
+        orders = tradier.get_orders(status='all')
+        order_list = []
+        for order in orders[:20]:  # Last 20 orders
+            order_list.append({
+                'id': order.id,
+                'symbol': order.symbol,
+                'side': order.side,
+                'quantity': order.quantity,
+                'status': order.status,
+                'type': order.type,
+                'price': order.price,
+                'avg_fill_price': order.avg_fill_price,
+                'create_date': str(order.create_date) if order.create_date else None,
+            })
+
+        logger.info(f"Tradier positions: {len(position_list)} positions, {len(order_list)} orders")
+
+        return {
+            'connected': True,
+            'positions': position_list,
+            'orders': order_list,
+            'account_id': account_id,
+            'sandbox': True
+        }
+
+    except Exception as e:
+        logger.error(f"Tradier positions fetch ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        return {'connected': False, 'positions': [], 'orders': [], 'error': str(e)}
+
+
+@router.get("/tradier-positions")
+async def get_tradier_positions():
+    """
+    Get positions directly from Tradier SANDBOX account.
+
+    Shows actual positions in the broker - the source of truth.
+    ARES database should match these positions.
+    """
+    result = _get_tradier_positions()
+
+    if not result.get('connected'):
+        return {
+            "success": False,
+            "error": result.get('error', 'Failed to connect to Tradier'),
+            "data": {
+                "positions": [],
+                "orders": [],
+                "sandbox": True
+            }
+        }
+
+    return {
+        "success": True,
+        "data": {
+            "positions": result['positions'],
+            "orders": result['orders'],
+            "account_id": result.get('account_id'),
+            "sandbox": result.get('sandbox', True),
+            "message": f"Connected to Tradier SANDBOX - {len(result['positions'])} positions, {len(result['orders'])} orders"
+        }
+    }
+
+
+@router.post("/sync-tradier")
+async def sync_with_tradier():
+    """
+    Sync ARES database with Tradier SANDBOX account.
+
+    Compares positions in Tradier with ARES database and reconciles:
+    - Positions in Tradier but not in DB → logs warning (manual trade?)
+    - Positions in DB but not in Tradier → may have been closed
+
+    Returns sync status and any discrepancies.
+    """
+    result = {
+        "success": False,
+        "tradier_connected": False,
+        "tradier_positions": 0,
+        "db_positions": 0,
+        "synced": False,
+        "discrepancies": [],
+        "balance": None
+    }
+
+    # Get Tradier data
+    tradier_data = _get_tradier_positions()
+    tradier_balance = _get_tradier_account_balance()
+
+    if not tradier_data.get('connected'):
+        result['error'] = tradier_data.get('error', 'Failed to connect to Tradier')
+        return result
+
+    result['tradier_connected'] = True
+    result['tradier_positions'] = len(tradier_data.get('positions', []))
+
+    if tradier_balance.get('connected'):
+        result['balance'] = {
+            'total_equity': tradier_balance.get('total_equity', 0),
+            'option_buying_power': tradier_balance.get('option_buying_power', 0),
+            'account_id': tradier_balance.get('account_id')
+        }
+
+    # Get ARES database positions
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT position_id, status, ticker, expiration,
+                   put_short_strike, put_long_strike, call_short_strike, call_long_strike,
+                   contracts, put_order_id, call_order_id
+            FROM ares_positions
+            WHERE status = 'open'
+        ''')
+        db_rows = cursor.fetchall()
+        conn.close()
+
+        result['db_positions'] = len(db_rows)
+
+        # Compare positions
+        tradier_symbols = set()
+        for pos in tradier_data.get('positions', []):
+            tradier_symbols.add(pos['symbol'])
+
+        db_order_ids = set()
+        for row in db_rows:
+            if row[9]:  # put_order_id
+                db_order_ids.add(str(row[9]))
+            if row[10]:  # call_order_id
+                db_order_ids.add(str(row[10]))
+
+        # Check for discrepancies
+        if result['tradier_positions'] == 0 and result['db_positions'] > 0:
+            result['discrepancies'].append({
+                'type': 'db_has_positions_tradier_empty',
+                'message': f"ARES DB has {result['db_positions']} open positions but Tradier has none",
+                'suggestion': 'Positions may have expired or been closed in Tradier'
+            })
+
+        if result['tradier_positions'] > 0 and result['db_positions'] == 0:
+            result['discrepancies'].append({
+                'type': 'tradier_has_positions_db_empty',
+                'message': f"Tradier has {result['tradier_positions']} positions but ARES DB has none",
+                'suggestion': 'Positions may have been opened manually or DB not synced'
+            })
+
+        result['success'] = True
+        result['synced'] = len(result['discrepancies']) == 0
+        result['tradier_positions_detail'] = tradier_data.get('positions', [])
+        result['tradier_orders'] = tradier_data.get('orders', [])
+
+    except Exception as e:
+        logger.error(f"Sync error: {e}")
+        result['error'] = str(e)
+
+    return result
+
+
 @router.get("/tradier-diagnose")
 async def diagnose_tradier_connection():
     """
@@ -583,8 +786,9 @@ async def get_ares_status():
         except:
             pass
 
-        # Get actual Tradier account balance - ARES MUST be connected to Tradier
+        # Get actual Tradier account balance and positions - ARES MUST be connected to Tradier
         tradier_balance = _get_tradier_account_balance()
+        tradier_positions_data = _get_tradier_positions()
 
         if tradier_balance.get('connected') and tradier_balance.get('total_equity', 0) > 0:
             # Use actual Tradier balance
@@ -600,6 +804,10 @@ async def get_ares_status():
             capital = 100000  # Paper capital for display only
             capital_message = f"ERROR: Not connected to Tradier - {tradier_error}"
             logger.error(f"ARES Tradier connection failed: {tradier_error}")
+
+        # Get Tradier position counts for sync check
+        tradier_open_positions = len(tradier_positions_data.get('positions', []))
+        tradier_recent_orders = len(tradier_positions_data.get('orders', []))
 
         # Determine if ARES is actually active based on heartbeat
         scan_interval = 5
@@ -618,6 +826,9 @@ async def get_ares_status():
                 "win_rate": win_rate,
                 "open_positions": open_count,
                 "closed_positions": closed_count,
+                "tradier_open_positions": tradier_open_positions,
+                "tradier_recent_orders": tradier_recent_orders,
+                "positions_synced": open_count == tradier_open_positions,
                 "traded_today": traded_today,
                 "in_trading_window": in_window,
                 "trading_window_status": trading_window_status,
@@ -631,6 +842,7 @@ async def get_ares_status():
                 "sandbox_connected": sandbox_connected,
                 "tradier_error": tradier_error,
                 "tradier_account_id": tradier_balance.get('account_id') if sandbox_connected else None,
+                "option_buying_power": tradier_balance.get('option_buying_power', 0) if sandbox_connected else 0,
                 "config": {
                     "risk_per_trade": 10.0,
                     "spread_width": 10.0,
@@ -669,12 +881,22 @@ async def get_ares_status():
             status['open_positions'] = 0
 
         # Add Tradier connection status (required by frontend)
-        # ALWAYS fetch Tradier balance to ensure we have the real account balance
+        # ALWAYS fetch Tradier balance and positions to ensure we have real data
         tradier_balance = _get_tradier_account_balance()
+        tradier_positions_data = _get_tradier_positions()
+
+        # Add Tradier position counts for sync check
+        tradier_open_positions = len(tradier_positions_data.get('positions', []))
+        tradier_recent_orders = len(tradier_positions_data.get('orders', []))
+        status['tradier_open_positions'] = tradier_open_positions
+        status['tradier_recent_orders'] = tradier_recent_orders
+        status['positions_synced'] = status.get('open_positions', 0) == tradier_open_positions
+
         if tradier_balance.get('connected') and tradier_balance.get('total_equity', 0) > 0:
             status['sandbox_connected'] = True
             status['tradier_error'] = None
             status['tradier_account_id'] = tradier_balance.get('account_id')
+            status['option_buying_power'] = tradier_balance.get('option_buying_power', 0)
             # ALWAYS update capital from Tradier when connected - this is the real balance
             status['capital'] = round(tradier_balance['total_equity'], 2)
             status['capital_source'] = 'tradier'
@@ -683,6 +905,7 @@ async def get_ares_status():
             status['sandbox_connected'] = False
             status['tradier_error'] = tradier_balance.get('error', 'Unknown connection error')
             status['tradier_account_id'] = None
+            status['option_buying_power'] = 0
             status['capital_source'] = 'paper_fallback'
             status['message'] = f"ERROR: Not connected to Tradier - {status['tradier_error']}"
             logger.warning(f"ARES Tradier connection failed: {status['tradier_error']}")
