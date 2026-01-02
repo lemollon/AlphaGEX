@@ -317,6 +317,7 @@ class ARESDatabase:
             ("oracle_advice", "VARCHAR(20)"),
             ("oracle_top_factors", "TEXT"),
             ("oracle_use_gex_walls", "BOOLEAN DEFAULT FALSE"),
+            ("open_date", "DATE"),  # Extracted date from open_time for easier queries
         ]
 
         for col_name, col_type in columns_to_add:

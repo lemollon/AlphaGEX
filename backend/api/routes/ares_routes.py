@@ -1042,12 +1042,12 @@ async def get_ares_live_equity_curve():
 
         # Get historical closed positions (excluding today for separate handling)
         cursor.execute('''
-            SELECT close_date, realized_pnl, position_id
+            SELECT DATE(close_time AT TIME ZONE 'America/Chicago') as close_date, realized_pnl, position_id
             FROM ares_positions
             WHERE status IN ('closed', 'expired')
-            AND close_date IS NOT NULL
-            AND close_date < %s
-            ORDER BY close_date ASC
+            AND close_time IS NOT NULL
+            AND DATE(close_time AT TIME ZONE 'America/Chicago') < %s
+            ORDER BY close_time ASC
         ''', (today,))
         historical_rows = cursor.fetchall()
 
@@ -1056,7 +1056,7 @@ async def get_ares_live_equity_curve():
             SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
             FROM ares_positions
             WHERE status IN ('closed', 'expired')
-            AND close_date = %s
+            AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
         ''', (today,))
         today_row = cursor.fetchone()
         today_realized = float(today_row[0]) if today_row else 0
@@ -1838,7 +1838,7 @@ async def get_ares_live_pnl():
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM ares_positions
                 WHERE status IN ('closed', 'expired')
-                AND close_date = %s
+                AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
             ''', (today,))
             realized_row = cursor.fetchone()
             today_realized = float(realized_row[0]) if realized_row else 0
@@ -1940,7 +1940,7 @@ async def get_ares_live_pnl():
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM ares_positions
                 WHERE status IN ('closed', 'expired')
-                AND close_date = %s
+                AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
             ''', (today,))
             realized_row = cursor.fetchone()
             today_realized = float(realized_row[0]) if realized_row else 0
