@@ -257,15 +257,15 @@ def _get_tradier_account_balance() -> dict:
         # This ensures the dashboard shows the same balance ARES is trading with
         use_sandbox = False  # ARES LIVE mode = production Tradier
 
-        # Production mode: use production credentials
-        api_key = (
-            getattr(APIConfig, 'TRADIER_API_KEY', None) or
-            getattr(APIConfig, 'TRADIER_PROD_API_KEY', None)
-        )
-        account_id = (
-            getattr(APIConfig, 'TRADIER_ACCOUNT_ID', None) or
-            getattr(APIConfig, 'TRADIER_PROD_ACCOUNT_ID', None)
-        )
+        # Production mode: use TRADIER_PROD_* credentials (the ones set on Render)
+        # Use the helper method which checks TRADIER_PROD_* first
+        api_key, account_id = APIConfig.get_tradier_prod_credentials()
+
+        # Double-check: directly read TRADIER_PROD_* if helper returned None
+        if not api_key:
+            api_key = APIConfig.TRADIER_PROD_API_KEY
+        if not account_id:
+            account_id = APIConfig.TRADIER_PROD_ACCOUNT_ID
 
         logger.info(f"Tradier balance fetch: mode=PRODUCTION (ARES LIVE), api_key={'SET' if api_key else 'NOT SET'}, account_id={account_id}")
 
@@ -360,9 +360,9 @@ async def diagnose_tradier_connection():
         "TRADIER_PROD_ACCOUNT_ID": prod_account_id[:4] + "..." if prod_account_id else "NOT SET"
     })
 
-    # Use whichever is available
-    final_api_key = api_key or prod_api_key
-    final_account_id = account_id or prod_account_id
+    # Use PROD credentials first (the ones set on Render), then fallback to generic
+    final_api_key = prod_api_key or api_key
+    final_account_id = prod_account_id or account_id
 
     if not final_api_key or not final_account_id:
         results["final_error"] = "No Tradier credentials configured"
