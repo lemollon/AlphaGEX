@@ -544,6 +544,7 @@ def fetch_vvix_from_polygon() -> Optional[float]:
 
 def get_vix_fallback_data() -> Dict[str, Any]:
     """Get VIX data."""
+    start_time = time.time()
     from data.vix_fetcher import get_vix_with_source
 
     vix_spot, vix_source = get_vix_with_source()
