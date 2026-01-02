@@ -367,13 +367,23 @@ class AutonomousTraderScheduler:
         except Exception as e:
             logger.error(f"Error clearing auto-restart: {str(e)}")
 
-    def is_market_open(self) -> bool:
-        """Check if US market is currently open (8:30 AM - 3:00 PM CT, Mon-Fri)"""
+    def get_market_status(self) -> tuple[bool, str]:
+        """
+        Check market status with detailed reason.
+
+        Returns:
+            tuple: (is_open, status) where status is one of:
+                - 'OPEN' - Market is open
+                - 'BEFORE_WINDOW' - Before trading window (8:30 AM CT)
+                - 'AFTER_WINDOW' - After trading window (3:00 PM CT)
+                - 'WEEKEND' - Saturday or Sunday
+                - 'HOLIDAY' - Market holiday
+        """
         now = datetime.now(CENTRAL_TZ)
 
         # Check if weekend
         if now.weekday() >= 5:  # Saturday=5, Sunday=6
-            return False
+            return False, 'WEEKEND'
 
         # Check for market holidays (full closure)
         # Using holidays from trading/market_calendar.py
@@ -386,10 +396,14 @@ class AutonomousTraderScheduler:
             '2025-01-01', '2025-01-20', '2025-02-17', '2025-04-18',
             '2025-05-26', '2025-06-19', '2025-07-04', '2025-09-01',
             '2025-11-27', '2025-12-25',
+            # 2026
+            '2026-01-01', '2026-01-19', '2026-02-16', '2026-04-03',
+            '2026-05-25', '2026-06-19', '2026-07-03', '2026-09-07',
+            '2026-11-26', '2026-12-25',
         }
         today_str = now.strftime('%Y-%m-%d')
         if today_str in market_holidays:
-            return False
+            return False, 'HOLIDAY'
 
         # Check for early close days (1 PM ET = 12 PM CT)
         # - Day before Independence Day (July 3 if weekday)
@@ -401,6 +415,8 @@ class AutonomousTraderScheduler:
             '2024-07-03', '2024-11-29', '2024-12-24', '2024-12-31',
             # 2025
             '2025-07-03', '2025-11-28', '2025-12-24', '2025-12-31',
+            # 2026
+            '2026-07-02', '2026-11-27', '2026-12-24', '2026-12-31',
         }
 
         # Market hours: 8:30 AM - 3:00 PM CT (or 12:00 PM CT on early close days)
@@ -411,7 +427,17 @@ class AutonomousTraderScheduler:
         else:
             market_close = now.replace(hour=15, minute=0, second=0, microsecond=0)
 
-        return market_open <= now < market_close
+        if now < market_open:
+            return False, 'BEFORE_WINDOW'
+        elif now >= market_close:
+            return False, 'AFTER_WINDOW'
+
+        return True, 'OPEN'
+
+    def is_market_open(self) -> bool:
+        """Check if US market is currently open (8:30 AM - 3:00 PM CT, Mon-Fri)"""
+        is_open, _ = self.get_market_status()
+        return is_open
 
     def scheduled_trade_logic(self):
         """
@@ -621,14 +647,24 @@ class AutonomousTraderScheduler:
                 )
             return
 
-        if not self.is_market_open():
-            logger.info("Market is CLOSED. Skipping ARES logic.")
-            self._save_heartbeat('ARES', 'MARKET_CLOSED')
+        is_open, market_status = self.get_market_status()
+        if not is_open:
+            # Map market status to appropriate scan outcome and message
+            status_mapping = {
+                'BEFORE_WINDOW': (ScanOutcome.BEFORE_WINDOW, "Before trading window (8:30 AM CT)"),
+                'AFTER_WINDOW': (ScanOutcome.AFTER_WINDOW, "After trading window (3:00 PM CT)"),
+                'WEEKEND': (ScanOutcome.MARKET_CLOSED, "Weekend - market closed"),
+                'HOLIDAY': (ScanOutcome.MARKET_CLOSED, "Holiday - market closed"),
+            }
+            outcome, message = status_mapping.get(market_status, (ScanOutcome.MARKET_CLOSED, "Market is closed"))
+
+            logger.info(f"Market not open ({market_status}). Skipping ARES logic.")
+            self._save_heartbeat('ARES', market_status)
             # Log to scan_activity for visibility
             if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_ares_scan:
                 log_ares_scan(
-                    outcome=ScanOutcome.MARKET_CLOSED,
-                    decision_summary="Market is closed",
+                    outcome=outcome,
+                    decision_summary=message,
                     generate_ai_explanation=False
                 )
             return
@@ -899,14 +935,24 @@ class AutonomousTraderScheduler:
                 )
             return
 
-        if not self.is_market_open():
-            logger.info("Market is CLOSED. Skipping ATHENA logic.")
-            self._save_heartbeat('ATHENA', 'MARKET_CLOSED')
+        is_open, market_status = self.get_market_status()
+        if not is_open:
+            # Map market status to appropriate scan outcome and message
+            status_mapping = {
+                'BEFORE_WINDOW': (ScanOutcome.BEFORE_WINDOW, "Before trading window (8:30 AM CT)"),
+                'AFTER_WINDOW': (ScanOutcome.AFTER_WINDOW, "After trading window (3:00 PM CT)"),
+                'WEEKEND': (ScanOutcome.MARKET_CLOSED, "Weekend - market closed"),
+                'HOLIDAY': (ScanOutcome.MARKET_CLOSED, "Holiday - market closed"),
+            }
+            outcome, message = status_mapping.get(market_status, (ScanOutcome.MARKET_CLOSED, "Market is closed"))
+
+            logger.info(f"Market not open ({market_status}). Skipping ATHENA logic.")
+            self._save_heartbeat('ATHENA', market_status)
             # Log to scan_activity for visibility
             if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_athena_scan:
                 log_athena_scan(
-                    outcome=ScanOutcome.MARKET_CLOSED,
-                    decision_summary="Market is closed",
+                    outcome=outcome,
+                    decision_summary=message,
                     generate_ai_explanation=False
                 )
             return
@@ -991,14 +1037,24 @@ class AutonomousTraderScheduler:
                 )
             return
 
-        if not self.is_market_open():
-            logger.info("Market is CLOSED. Skipping PEGASUS logic.")
-            self._save_heartbeat('PEGASUS', 'MARKET_CLOSED')
+        is_open, market_status = self.get_market_status()
+        if not is_open:
+            # Map market status to appropriate scan outcome and message
+            status_mapping = {
+                'BEFORE_WINDOW': (ScanOutcome.BEFORE_WINDOW, "Before trading window (8:30 AM CT)"),
+                'AFTER_WINDOW': (ScanOutcome.AFTER_WINDOW, "After trading window (3:00 PM CT)"),
+                'WEEKEND': (ScanOutcome.MARKET_CLOSED, "Weekend - market closed"),
+                'HOLIDAY': (ScanOutcome.MARKET_CLOSED, "Holiday - market closed"),
+            }
+            outcome, message = status_mapping.get(market_status, (ScanOutcome.MARKET_CLOSED, "Market is closed"))
+
+            logger.info(f"Market not open ({market_status}). Skipping PEGASUS logic.")
+            self._save_heartbeat('PEGASUS', market_status)
             # Log to scan_activity for visibility
             if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_pegasus_scan:
                 log_pegasus_scan(
-                    outcome=ScanOutcome.MARKET_CLOSED,
-                    decision_summary="Market is closed",
+                    outcome=outcome,
+                    decision_summary=message,
                     generate_ai_explanation=False
                 )
             return
