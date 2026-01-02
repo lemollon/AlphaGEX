@@ -723,6 +723,39 @@ async def get_live_dashboard():
     """
     try:
         optimizer = get_optimizer()
+    except HTTPException as e:
+        # Return degraded response instead of error so frontend can display something
+        logger.warning(f"Math optimizer not available, returning fallback: {e.detail}")
+        return {
+            "status": "degraded",
+            "error": e.detail,
+            "timestamp": datetime.now().isoformat(),
+            "regime": {
+                "current": "Unknown",
+                "probability": 0,
+                "is_favorable": False,
+                "all_probabilities": {},
+                "observations_processed": 0
+            },
+            "thompson": {
+                "bot_stats": {bot: {"expected_win_rate": 0.5, "uncertainty": 0.5, "allocation_pct": 0.2, "integrated": False}
+                             for bot in ['ARES', 'ATHENA', 'ATLAS', 'PHOENIX', 'PEGASUS']},
+                "allocation": None,
+                "total_outcomes_recorded": 0
+            },
+            "kalman": {"smoothed_greeks": {}, "active": False},
+            "optimization_counts": {},
+            "algorithms": {
+                "hmm": {"status": "ERROR", "description": "Hidden Markov Regime Detection"},
+                "kalman": {"status": "ERROR", "description": "Greeks Smoothing Filter"},
+                "thompson": {"status": "ERROR", "description": "Dynamic Capital Allocation"},
+                "hjb": {"status": "ERROR", "description": "Optimal Exit Timing"},
+                "convex": {"status": "ERROR", "description": "Strike Optimization"},
+                "mdp": {"status": "ERROR", "description": "Trade Sequencing"}
+            }
+        }
+
+    try:
 
         # Get Thompson allocation for default capital
         try:
