@@ -84,8 +84,9 @@ class PositionMonitor:
         self.broker = None
 
         if mode == "live" and BROKER_AVAILABLE:
-            self.broker = TradierDataFetcher()
-            logger.info("Broker connected for live monitoring")
+            # CRITICAL: Pass sandbox=False for live mode to use production Tradier
+            self.broker = TradierDataFetcher(sandbox=False)
+            logger.info("Broker connected for live monitoring (PRODUCTION)")
 
         # Load parameters
         self.params = self._load_parameters()

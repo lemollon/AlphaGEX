@@ -236,6 +236,8 @@ def _get_tradier_account_balance() -> dict:
     """
     Get account balance from Tradier API.
 
+    ARES is in LIVE mode - always fetch PRODUCTION account balance.
+
     Returns dict with:
     - total_equity: Account total value
     - option_buying_power: Available for options trading
@@ -251,32 +253,21 @@ def _get_tradier_account_balance() -> dict:
         # Try to get API config
         from unified_config import APIConfig
 
-        # Check sandbox mode FIRST (ARES uses sandbox mode)
-        use_sandbox = getattr(APIConfig, 'TRADIER_SANDBOX', True)
+        # ARES is in LIVE mode - ALWAYS use production Tradier account
+        # This ensures the dashboard shows the same balance ARES is trading with
+        use_sandbox = False  # ARES LIVE mode = production Tradier
 
-        # Select credentials based on mode - production credentials first in production mode
-        if use_sandbox:
-            # Sandbox mode: prefer sandbox credentials, fall back to generic
-            api_key = (
-                getattr(APIConfig, 'TRADIER_SANDBOX_API_KEY', None) or
-                getattr(APIConfig, 'TRADIER_API_KEY', None)
-            )
-            account_id = (
-                getattr(APIConfig, 'TRADIER_SANDBOX_ACCOUNT_ID', None) or
-                getattr(APIConfig, 'TRADIER_ACCOUNT_ID', None)
-            )
-        else:
-            # Production mode: prefer production credentials, fall back to generic
-            api_key = (
-                getattr(APIConfig, 'TRADIER_PROD_API_KEY', None) or
-                getattr(APIConfig, 'TRADIER_API_KEY', None)
-            )
-            account_id = (
-                getattr(APIConfig, 'TRADIER_PROD_ACCOUNT_ID', None) or
-                getattr(APIConfig, 'TRADIER_ACCOUNT_ID', None)
-            )
+        # Production mode: use production credentials
+        api_key = (
+            getattr(APIConfig, 'TRADIER_API_KEY', None) or
+            getattr(APIConfig, 'TRADIER_PROD_API_KEY', None)
+        )
+        account_id = (
+            getattr(APIConfig, 'TRADIER_ACCOUNT_ID', None) or
+            getattr(APIConfig, 'TRADIER_PROD_ACCOUNT_ID', None)
+        )
 
-        logger.info(f"Tradier balance fetch: mode={'SANDBOX' if use_sandbox else 'PRODUCTION'}, api_key={'SET' if api_key else 'NOT SET'}, account_id={account_id}")
+        logger.info(f"Tradier balance fetch: mode=PRODUCTION (ARES LIVE), api_key={'SET' if api_key else 'NOT SET'}, account_id={account_id}")
 
         if not api_key or not account_id:
             logger.warning("No Tradier credentials available for balance fetch")

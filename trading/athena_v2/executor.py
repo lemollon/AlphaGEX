@@ -57,8 +57,9 @@ class OrderExecutor:
 
         if TRADIER_AVAILABLE and config.mode != TradingMode.PAPER:
             try:
-                self.tradier = TradierDataFetcher()
-                logger.info("OrderExecutor: Tradier initialized for LIVE trading")
+                # CRITICAL: Pass sandbox=False for LIVE mode to use production Tradier account
+                self.tradier = TradierDataFetcher(sandbox=False)
+                logger.info("OrderExecutor: Tradier initialized for LIVE trading (PRODUCTION)")
             except Exception as e:
                 logger.error(f"OrderExecutor: Tradier init failed: {e}")
 

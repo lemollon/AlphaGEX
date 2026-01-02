@@ -606,7 +606,8 @@ class SPXWheelTrader(MathOptimizerMixin):
                     "LIVE mode requires Tradier broker. "
                     "Set TRADIER_API_KEY and TRADIER_ACCOUNT_ID."
                 )
-            self.broker = TradierDataFetcher()
+            # CRITICAL: Pass sandbox=False for LIVE mode to use production Tradier
+            self.broker = TradierDataFetcher(sandbox=False)
             if self.broker.sandbox:
                 print("⚠️  WARNING: Tradier is in SANDBOX mode (paper trading via broker)")
             else:

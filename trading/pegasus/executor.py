@@ -41,8 +41,9 @@ class OrderExecutor:
 
         if TRADIER_AVAILABLE and config.mode == TradingMode.LIVE:
             try:
-                self.tradier = TradierDataFetcher()
-                logger.info("PEGASUS: Tradier initialized")
+                # CRITICAL: Pass sandbox=False for LIVE mode to use production Tradier account
+                self.tradier = TradierDataFetcher(sandbox=False)
+                logger.info("PEGASUS: Tradier initialized (PRODUCTION)")
             except Exception as e:
                 logger.error(f"Tradier init failed: {e}")
 
