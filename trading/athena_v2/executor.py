@@ -45,6 +45,10 @@ class OrderExecutor:
 
     Handles both paper (simulated) and live execution.
     Returns SpreadPosition on success, None on failure.
+
+    MATH OPTIMIZER INTEGRATION:
+    - Thompson Sampling weight scales position size based on bot performance
+    - Higher allocation = larger positions when bot is performing well
     """
 
     def __init__(self, config: ATHENAConfig):
@@ -58,18 +62,26 @@ class OrderExecutor:
             except Exception as e:
                 logger.error(f"OrderExecutor: Tradier init failed: {e}")
 
-    def execute_spread(self, signal: TradeSignal) -> Optional[SpreadPosition]:
+    def execute_spread(
+        self,
+        signal: TradeSignal,
+        thompson_weight: float = 1.0
+    ) -> Optional[SpreadPosition]:
         """
         Execute a spread trade based on the signal.
+
+        Args:
+            signal: The trade signal to execute
+            thompson_weight: Thompson Sampling allocation weight (0.5-2.0)
 
         Returns SpreadPosition on success, None on failure.
         """
         if self.config.mode == TradingMode.PAPER:
-            return self._execute_paper(signal)
+            return self._execute_paper(signal, thompson_weight)
         else:
-            return self._execute_live(signal)
+            return self._execute_live(signal, thompson_weight)
 
-    def _execute_paper(self, signal: TradeSignal) -> Optional[SpreadPosition]:
+    def _execute_paper(self, signal: TradeSignal, thompson_weight: float = 1.0) -> Optional[SpreadPosition]:
         """
         Execute paper trade (simulation).
 
@@ -79,8 +91,8 @@ class OrderExecutor:
             now = datetime.now(CENTRAL_TZ)
             position_id = f"ATHENA-{now.strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
 
-            # Calculate contracts based on risk
-            contracts = self._calculate_position_size(signal.max_loss)
+            # Calculate contracts based on risk, scaled by Thompson allocation
+            contracts = self._calculate_position_size(signal.max_loss, thompson_weight)
 
             # Recalculate P&L based on contracts
             max_loss = signal.max_loss * contracts
@@ -134,7 +146,7 @@ class OrderExecutor:
             logger.error(f"Paper execution failed: {e}")
             return None
 
-    def _execute_live(self, signal: TradeSignal) -> Optional[SpreadPosition]:
+    def _execute_live(self, signal: TradeSignal, thompson_weight: float = 1.0) -> Optional[SpreadPosition]:
         """
         Execute live trade via Tradier.
 
@@ -164,8 +176,8 @@ class OrderExecutor:
 
             actual_debit = spread_quote['mid_price']
 
-            # Calculate contracts
-            contracts = self._calculate_position_size(actual_debit * 100)
+            # Calculate contracts with Thompson allocation weight
+            contracts = self._calculate_position_size(actual_debit * 100, thompson_weight)
 
             # Place the order
             order_result = self.tradier.place_vertical_spread(
@@ -347,16 +359,38 @@ class OrderExecutor:
             logger.error(f"Live close failed: {e}")
             return False, 0, 0
 
-    def _calculate_position_size(self, max_loss_per_contract: float) -> int:
-        """Calculate position size based on risk settings"""
+    def _calculate_position_size(self, max_loss_per_contract: float, thompson_weight: float = 1.0) -> int:
+        """
+        Calculate position size based on risk settings and Thompson allocation.
+
+        Args:
+            max_loss_per_contract: Maximum loss per contract in dollars
+            thompson_weight: Thompson Sampling allocation weight (0.5-2.0)
+                            - 1.0 = neutral (standard sizing)
+                            - 1.5 = bot is performing well, increase size 50%
+                            - 0.7 = bot is underperforming, reduce size 30%
+
+        Returns:
+            Number of contracts to trade (minimum 1)
+        """
         # This should use current capital, but for simplicity using default
         max_risk = 100_000 * (self.config.risk_per_trade_pct / 100)
 
         if max_loss_per_contract <= 0:
             return 1
 
-        contracts = int(max_risk / max_loss_per_contract)
-        return max(1, min(contracts, 50))  # Min 1, max 50
+        # Base position size from risk calculation
+        base_contracts = max_risk / max_loss_per_contract
+
+        # Apply Thompson Sampling weight (clamped to reasonable bounds)
+        clamped_weight = max(0.5, min(2.0, thompson_weight))
+        adjusted_contracts = int(base_contracts * clamped_weight)
+
+        # Log if Thompson made a difference
+        if abs(thompson_weight - 1.0) > 0.05:
+            logger.info(f"Thompson allocation: weight={thompson_weight:.2f}, base={base_contracts:.1f}, adjusted={adjusted_contracts}")
+
+        return max(1, min(adjusted_contracts, 50))  # Min 1, max 50
 
     def _get_current_price(self) -> Optional[float]:
         """Get current underlying price"""

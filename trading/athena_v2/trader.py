@@ -542,8 +542,21 @@ class ATHENATrader(MathOptimizerMixin):
             reasoning=signal.reasoning
         )
 
-        # Execute the trade
-        position = self.executor.execute_spread(signal)
+        # MATH OPTIMIZER: Get Thompson Sampling allocation weight
+        thompson_weight = 1.0  # Default neutral weight
+        if MATH_OPTIMIZER_AVAILABLE and hasattr(self, 'math_get_allocation'):
+            try:
+                allocation = self.math_get_allocation()
+                # Convert allocation percentage to weight (20% baseline = 1.0)
+                # So 30% = 1.5x, 10% = 0.5x
+                athena_alloc = allocation.get('allocations', {}).get('ATHENA', 0.2)
+                thompson_weight = athena_alloc / 0.2  # Normalize to 20% baseline
+                logger.info(f"ATHENA Thompson weight: {thompson_weight:.2f} (allocation: {athena_alloc:.1%})")
+            except Exception as e:
+                logger.debug(f"Thompson allocation skipped: {e}")
+
+        # Execute the trade with Thompson-adjusted position sizing
+        position = self.executor.execute_spread(signal, thompson_weight=thompson_weight)
         if not position:
             self.db.log("ERROR", "Execution failed", {'signal': signal.reasoning})
             return None, signal
