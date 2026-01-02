@@ -163,8 +163,8 @@ const LiveOptimizerStatus = () => {
     const fetchData = async () => {
       try {
         const [dashRes, decisionsRes] = await Promise.all([
-          apiClient.get('/api/math-optimizer/live-dashboard'),
-          apiClient.get('/api/math-optimizer/decisions?limit=10')
+          apiClient.getMathOptimizerLiveDashboard(),
+          apiClient.getMathOptimizerDecisions(10)
         ])
         setDashboard(dashRes.data)
         setDecisions(decisionsRes.data?.decisions || [])

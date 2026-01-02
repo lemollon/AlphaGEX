@@ -967,6 +967,13 @@ export const apiClient = {
   getSolomonValidationStatus: () => api.get('/api/solomon/validation/status'),
   getSolomonProposalReasoning: (proposalId: string) => api.get(`/api/solomon/validation/reasoning/${proposalId}`),
   getSolomonValidationCanApply: (proposalId: string) => api.get(`/api/solomon/validation/can-apply/${proposalId}`),
+
+  // Math Optimizer
+  getMathOptimizerStatus: () => api.get('/api/math-optimizer/status'),
+  getMathOptimizerLiveDashboard: () => api.get('/api/math-optimizer/live-dashboard'),
+  getMathOptimizerDecisions: (limit: number = 20) => api.get(`/api/math-optimizer/decisions?limit=${limit}`),
+  getMathOptimizerBotStats: (botName: string) => api.get(`/api/math-optimizer/bot/${botName}`),
+  getMathOptimizerDocumentation: () => api.get('/api/math-optimizer/documentation'),
 }
 
 // WebSocket connection
