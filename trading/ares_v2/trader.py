@@ -741,8 +741,21 @@ class ARESTrader(MathOptimizerMixin):
             reasoning=signal.reasoning,
         )
 
-        # Execute the trade
-        position = self.executor.execute_iron_condor(signal)
+        # MATH OPTIMIZER: Get Thompson Sampling allocation weight
+        thompson_weight = 1.0  # Default neutral weight
+        if MATH_OPTIMIZER_AVAILABLE and hasattr(self, 'math_get_allocation'):
+            try:
+                allocation = self.math_get_allocation()
+                # Convert allocation percentage to weight (20% baseline = 1.0)
+                # So 30% = 1.5x, 10% = 0.5x
+                ares_alloc = allocation.get('allocations', {}).get('ARES', 0.2)
+                thompson_weight = ares_alloc / 0.2  # Normalize to 20% baseline
+                logger.info(f"ARES Thompson weight: {thompson_weight:.2f} (allocation: {ares_alloc:.1%})")
+            except Exception as e:
+                logger.debug(f"Thompson allocation skipped: {e}")
+
+        # Execute the trade with Thompson-adjusted position sizing
+        position = self.executor.execute_iron_condor(signal, thompson_weight=thompson_weight)
         if not position:
             self.db.log("ERROR", "Execution failed", {'signal': signal.reasoning})
             return None, signal

@@ -126,97 +126,311 @@ const AlgorithmCard = ({ name, icon, purpose, formula, improvement, color, detai
 }
 
 // =============================================================================
-// LIVE STATUS COMPONENT
+// LIVE DASHBOARD COMPONENT - Enhanced with full data
 // =============================================================================
 
+interface BotStat {
+  expected_win_rate: number
+  uncertainty: number
+  allocation_pct: number
+  integrated: boolean
+}
+
+interface RegimeData {
+  current: string
+  probability: number
+  is_favorable: boolean
+  all_probabilities: Record<string, { probability: number; is_favorable: boolean }>
+  observations_processed: number
+}
+
+interface Decision {
+  timestamp: string
+  bot: string
+  action_type: string
+  description: string
+  details: Record<string, any>
+  success: boolean
+}
+
 const LiveOptimizerStatus = () => {
-  const [status, setStatus] = useState<any>(null)
+  const [dashboard, setDashboard] = useState<any>(null)
+  const [decisions, setDecisions] = useState<Decision[]>([])
   const [loading, setLoading] = useState(true)
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
 
   useEffect(() => {
-    const fetchStatus = async () => {
+    const fetchData = async () => {
       try {
-        const response = await apiClient.get('/api/math-optimizer/status')
-        setStatus(response.data)
+        const [dashRes, decisionsRes] = await Promise.all([
+          apiClient.getMathOptimizerLiveDashboard(),
+          apiClient.getMathOptimizerDecisions(10)
+        ])
+        setDashboard(dashRes.data)
+        setDecisions(decisionsRes.data?.decisions || [])
+        setLastUpdate(new Date())
       } catch (error) {
-        console.error('Failed to fetch optimizer status:', error)
+        console.error('Failed to fetch optimizer data:', error)
       }
       setLoading(false)
     }
 
-    fetchStatus()
-    const interval = setInterval(fetchStatus, 30000)
+    fetchData()
+    const interval = setInterval(fetchData, 15000) // Refresh every 15s
     return () => clearInterval(interval)
   }, [])
 
   if (loading) {
     return (
-      <div className="bg-gray-800 rounded-lg p-6 flex items-center justify-center">
-        <RefreshCw className="w-6 h-6 text-purple-400 animate-spin" />
+      <div className="bg-gray-800 rounded-lg p-8 flex items-center justify-center">
+        <RefreshCw className="w-8 h-8 text-purple-400 animate-spin" />
+        <span className="ml-3 text-gray-400">Loading live optimizer data...</span>
       </div>
     )
   }
 
-  if (!status?.optimizers) {
-    return null
+  if (!dashboard) {
+    return (
+      <div className="bg-gray-800 rounded-lg border border-red-500/30 p-6">
+        <div className="flex items-center gap-3 text-red-400">
+          <AlertTriangle className="w-6 h-6" />
+          <span>Unable to connect to math optimizer backend</span>
+        </div>
+      </div>
+    )
   }
 
-  const { hmm_regime, kalman, thompson } = status.optimizers
+  const { regime, thompson, kalman, algorithms, optimization_counts } = dashboard
 
   return (
-    <div className="bg-gray-800 rounded-lg border border-purple-500/30 p-6">
-      <h3 className="text-lg font-bold text-white mb-4 flex items-center gap-2">
-        <Activity className="w-5 h-5 text-green-400" />
-        Live Optimizer Status
-      </h3>
+    <div className="space-y-6">
+      {/* Header with refresh indicator */}
+      <div className="flex items-center justify-between">
+        <h3 className="text-xl font-bold text-white flex items-center gap-2">
+          <Activity className="w-6 h-6 text-green-400" />
+          Live Optimizer Dashboard
+        </h3>
+        <div className="flex items-center gap-2 text-sm text-gray-500">
+          <RefreshCw className="w-4 h-4" />
+          {lastUpdate && `Updated ${lastUpdate.toLocaleTimeString()}`}
+        </div>
+      </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* HMM Regime */}
-        <div className="bg-gray-900/50 rounded-lg p-4">
-          <h4 className="text-sm font-bold text-yellow-400 mb-2">HMM Regime</h4>
-          {hmm_regime?.current_belief && (
-            <div className="space-y-1">
-              {Object.entries(hmm_regime.current_belief).slice(0, 3).map(([regime, prob]: [string, any]) => (
-                <div key={regime} className="flex items-center justify-between text-sm">
-                  <span className="text-gray-400">{regime.replace(/_/g, ' ')}</span>
-                  <span className={`font-bold ${prob > 0.5 ? 'text-green-400' : 'text-gray-500'}`}>
-                    {(prob * 100).toFixed(0)}%
-                  </span>
+      {/* Main Stats Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Current Regime Card */}
+        <div className="bg-gray-800 rounded-lg border border-yellow-500/30 p-6">
+          <h4 className="text-sm font-bold text-yellow-400 mb-4 flex items-center gap-2">
+            <Brain className="w-5 h-5" />
+            HMM Market Regime
+          </h4>
+
+          {/* Current Regime Highlight */}
+          <div className={`p-4 rounded-lg mb-4 ${regime?.is_favorable ? 'bg-green-500/10 border border-green-500/30' : 'bg-red-500/10 border border-red-500/30'}`}>
+            <div className="flex items-center justify-between">
+              <span className="text-white font-bold text-lg">{regime?.current || 'Unknown'}</span>
+              <span className={`text-2xl font-bold ${regime?.is_favorable ? 'text-green-400' : 'text-red-400'}`}>
+                {((regime?.probability || 0) * 100).toFixed(0)}%
+              </span>
+            </div>
+            <div className={`text-sm mt-1 ${regime?.is_favorable ? 'text-green-400' : 'text-red-400'}`}>
+              {regime?.is_favorable ? '✓ Favorable for trading' : '⚠ Caution advised'}
+            </div>
+          </div>
+
+          {/* All Regime Probabilities */}
+          <div className="space-y-2">
+            <div className="text-xs text-gray-500 mb-2">All Regime Probabilities:</div>
+            {regime?.all_probabilities && Object.entries(regime.all_probabilities)
+              .sort(([, a]: any, [, b]: any) => b.probability - a.probability)
+              .slice(0, 5)
+              .map(([name, data]: [string, any]) => (
+                <div key={name} className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <div className="flex justify-between text-xs mb-1">
+                      <span className="text-gray-400">{name}</span>
+                      <span className={data.is_favorable ? 'text-green-400' : 'text-gray-500'}>
+                        {(data.probability * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                    <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full rounded-full ${data.is_favorable ? 'bg-green-500' : 'bg-gray-500'}`}
+                        style={{ width: `${data.probability * 100}%` }}
+                      />
+                    </div>
+                  </div>
                 </div>
               ))}
-            </div>
-          )}
+          </div>
+
+          <div className="mt-4 text-xs text-gray-500">
+            {regime?.observations_processed || 0} observations processed
+          </div>
         </div>
 
-        {/* Kalman Smoothed */}
-        <div className="bg-gray-900/50 rounded-lg p-4">
-          <h4 className="text-sm font-bold text-blue-400 mb-2">Smoothed Greeks</h4>
-          {kalman?.smoothed_greeks && (
-            <div className="space-y-1">
-              {Object.entries(kalman.smoothed_greeks).slice(0, 3).map(([greek, value]: [string, any]) => (
-                <div key={greek} className="flex items-center justify-between text-sm">
-                  <span className="text-gray-400 capitalize">{greek}</span>
-                  <span className="text-white font-mono">{typeof value === 'number' ? value.toFixed(4) : '-'}</span>
-                </div>
-              ))}
+        {/* Thompson Sampling Bot Stats */}
+        <div className="bg-gray-800 rounded-lg border border-green-500/30 p-6">
+          <h4 className="text-sm font-bold text-green-400 mb-4 flex items-center gap-2">
+            <Layers className="w-5 h-5" />
+            Thompson Sampling Allocations
+          </h4>
+
+          {thompson?.bot_stats && (
+            <div className="space-y-3">
+              {Object.entries(thompson.bot_stats as Record<string, BotStat>)
+                .sort(([, a], [, b]) => b.allocation_pct - a.allocation_pct)
+                .map(([bot, stats]) => (
+                  <div key={bot} className="bg-gray-900/50 rounded-lg p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="font-bold text-white">{bot}</span>
+                      <span className={`px-2 py-0.5 rounded text-xs ${stats.integrated ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'}`}>
+                        {stats.integrated ? 'ACTIVE' : 'PENDING'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-xs">
+                      <div>
+                        <div className="text-gray-500">Win Rate</div>
+                        <div className="text-green-400 font-bold">{(stats.expected_win_rate * 100).toFixed(0)}%</div>
+                      </div>
+                      <div>
+                        <div className="text-gray-500">Allocation</div>
+                        <div className="text-blue-400 font-bold">{(stats.allocation_pct * 100).toFixed(0)}%</div>
+                      </div>
+                      <div>
+                        <div className="text-gray-500">Uncertainty</div>
+                        <div className="text-yellow-400 font-bold">±{(stats.uncertainty * 100).toFixed(0)}%</div>
+                      </div>
+                    </div>
+                    {/* Allocation Bar */}
+                    <div className="mt-2 h-2 bg-gray-700 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-green-500 to-blue-500 rounded-full"
+                        style={{ width: `${stats.allocation_pct * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                ))}
             </div>
           )}
+
+          <div className="mt-4 text-xs text-gray-500">
+            {thompson?.total_outcomes_recorded || 0} total outcomes recorded
+          </div>
         </div>
 
-        {/* Thompson Allocation */}
-        <div className="bg-gray-900/50 rounded-lg p-4">
-          <h4 className="text-sm font-bold text-green-400 mb-2">Bot Allocation</h4>
-          {thompson?.expected_win_rates && (
-            <div className="space-y-1">
-              {Object.entries(thompson.expected_win_rates).map(([bot, rate]: [string, any]) => (
-                <div key={bot} className="flex items-center justify-between text-sm">
-                  <span className="text-gray-400">{bot}</span>
-                  <span className="text-white font-bold">{(rate * 100).toFixed(0)}%</span>
-                </div>
-              ))}
-            </div>
-          )}
+        {/* Algorithm Status & Kalman */}
+        <div className="space-y-6">
+          {/* Algorithm Status */}
+          <div className="bg-gray-800 rounded-lg border border-purple-500/30 p-6">
+            <h4 className="text-sm font-bold text-purple-400 mb-4 flex items-center gap-2">
+              <Settings className="w-5 h-5" />
+              Algorithm Status
+            </h4>
+
+            {algorithms && (
+              <div className="grid grid-cols-2 gap-2">
+                {Object.entries(algorithms as Record<string, { status: string; description: string }>).map(([key, algo]) => (
+                  <div key={key} className="flex items-center gap-2">
+                    {algo.status === 'ACTIVE' ? (
+                      <CheckCircle className="w-4 h-4 text-green-400" />
+                    ) : (
+                      <PauseCircle className="w-4 h-4 text-yellow-400" />
+                    )}
+                    <span className="text-xs text-gray-400 uppercase">{key}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Kalman Smoothed Greeks */}
+          <div className="bg-gray-800 rounded-lg border border-blue-500/30 p-6">
+            <h4 className="text-sm font-bold text-blue-400 mb-4 flex items-center gap-2">
+              <LineChart className="w-5 h-5" />
+              Kalman Smoothed Greeks
+            </h4>
+
+            {kalman?.smoothed_greeks && Object.keys(kalman.smoothed_greeks).length > 0 ? (
+              <div className="space-y-2">
+                {Object.entries(kalman.smoothed_greeks).map(([greek, value]: [string, any]) => (
+                  <div key={greek} className="flex items-center justify-between">
+                    <span className="text-gray-400 capitalize text-sm">{greek}</span>
+                    <span className="text-white font-mono text-sm">
+                      {typeof value === 'number' ? value.toFixed(4) : '-'}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-gray-500 text-sm">Waiting for Greeks data...</div>
+            )}
+          </div>
+
+          {/* Optimization Counts */}
+          <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
+            <h4 className="text-sm font-bold text-gray-400 mb-4 flex items-center gap-2">
+              <BarChart2 className="w-5 h-5" />
+              Optimization Counts
+            </h4>
+
+            {optimization_counts && Object.keys(optimization_counts).length > 0 ? (
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                {Object.entries(optimization_counts).map(([key, count]: [string, any]) => (
+                  <div key={key} className="flex justify-between">
+                    <span className="text-gray-500">{key.replace(/_/g, ' ')}</span>
+                    <span className="text-white font-mono">{count}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-gray-500 text-sm">No optimizations yet</div>
+            )}
+          </div>
         </div>
+      </div>
+
+      {/* Recent Decisions Log */}
+      <div className="bg-gray-800 rounded-lg border border-gray-700 p-6">
+        <h4 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+          <Activity className="w-5 h-5 text-purple-400" />
+          Recent Optimizer Decisions
+        </h4>
+
+        {decisions.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-gray-500 border-b border-gray-700">
+                  <th className="pb-2 pr-4">Time</th>
+                  <th className="pb-2 pr-4">Bot</th>
+                  <th className="pb-2 pr-4">Action</th>
+                  <th className="pb-2">Description</th>
+                </tr>
+              </thead>
+              <tbody>
+                {decisions.map((decision, i) => (
+                  <tr key={i} className="border-b border-gray-800">
+                    <td className="py-2 pr-4 text-gray-500 text-xs">
+                      {decision.timestamp ? new Date(decision.timestamp).toLocaleTimeString() : '-'}
+                    </td>
+                    <td className="py-2 pr-4">
+                      <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs">
+                        {decision.bot}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-4 text-gray-400 text-xs">{decision.action_type}</td>
+                    <td className="py-2 text-gray-300 text-xs">{decision.description}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="text-gray-500 text-sm text-center py-4">
+            No recent decisions recorded
+          </div>
+        )}
       </div>
     </div>
   )

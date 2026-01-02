@@ -42,6 +42,10 @@ class OrderExecutor:
     Executes Iron Condor orders via Tradier.
 
     Handles both paper (simulated) and live execution.
+
+    MATH OPTIMIZER INTEGRATION:
+    - Thompson Sampling weight scales position size based on bot performance
+    - Higher allocation = larger positions when bot is performing well
     """
 
     def __init__(self, config: ARESConfig):
@@ -55,25 +59,35 @@ class OrderExecutor:
             except Exception as e:
                 logger.error(f"Tradier init failed: {e}")
 
-    def execute_iron_condor(self, signal: IronCondorSignal) -> Optional[IronCondorPosition]:
+    def execute_iron_condor(
+        self,
+        signal: IronCondorSignal,
+        thompson_weight: float = 1.0
+    ) -> Optional[IronCondorPosition]:
         """
         Execute an Iron Condor trade.
+
+        Args:
+            signal: The trade signal to execute
+            thompson_weight: Thompson Sampling allocation weight (0.5-2.0)
+                            Values > 1.0 increase position size for hot bots
+                            Values < 1.0 decrease position size for cold bots
 
         Returns IronCondorPosition on success, None on failure.
         """
         if self.config.mode == TradingMode.PAPER:
-            return self._execute_paper(signal)
+            return self._execute_paper(signal, thompson_weight)
         else:
-            return self._execute_live(signal)
+            return self._execute_live(signal, thompson_weight)
 
-    def _execute_paper(self, signal: IronCondorSignal) -> Optional[IronCondorPosition]:
+    def _execute_paper(self, signal: IronCondorSignal, thompson_weight: float = 1.0) -> Optional[IronCondorPosition]:
         """Execute paper trade (simulation)"""
         try:
             now = datetime.now(CENTRAL_TZ)
             position_id = f"ARES-{now.strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
 
-            # Calculate contracts based on risk
-            contracts = self._calculate_position_size(signal.max_loss)
+            # Calculate contracts based on risk, scaled by Thompson allocation
+            contracts = self._calculate_position_size(signal.max_loss, thompson_weight)
 
             # Calculate actual P&L values
             spread_width = signal.put_short - signal.put_long
@@ -133,7 +147,7 @@ class OrderExecutor:
             logger.error(f"Paper execution failed: {e}")
             return None
 
-    def _execute_live(self, signal: IronCondorSignal) -> Optional[IronCondorPosition]:
+    def _execute_live(self, signal: IronCondorSignal, thompson_weight: float = 1.0) -> Optional[IronCondorPosition]:
         """Execute live Iron Condor via Tradier"""
         if not self.tradier:
             logger.error("Live execution requested but Tradier not available")
@@ -149,7 +163,8 @@ class OrderExecutor:
                 return None
 
             actual_credit = ic_quote['total_credit']
-            contracts = self._calculate_position_size(ic_quote['max_loss_per_contract'] * 100)
+            # Apply Thompson allocation weight to position size
+            contracts = self._calculate_position_size(ic_quote['max_loss_per_contract'] * 100, thompson_weight)
 
             # Execute as two spreads (put spread + call spread)
             # Bull Put Spread (credit)
@@ -356,16 +371,40 @@ class OrderExecutor:
             logger.error(f"Live close failed: {e}")
             return False, 0, 0
 
-    def _calculate_position_size(self, max_loss_per_contract: float) -> int:
-        """Calculate position size based on risk settings"""
+    def _calculate_position_size(self, max_loss_per_contract: float, thompson_weight: float = 1.0) -> int:
+        """
+        Calculate position size based on risk settings and Thompson allocation.
+
+        Args:
+            max_loss_per_contract: Maximum loss per contract in dollars
+            thompson_weight: Thompson Sampling allocation weight (0.5-2.0)
+                            - 1.0 = neutral (standard sizing)
+                            - 1.5 = bot is performing well, increase size 50%
+                            - 0.7 = bot is underperforming, reduce size 30%
+
+        Returns:
+            Number of contracts to trade (minimum 1)
+        """
         capital = 100_000  # Default
         max_risk = capital * (self.config.risk_per_trade_pct / 100)
 
         if max_loss_per_contract <= 0:
             return 1
 
-        contracts = int(max_risk / max_loss_per_contract)
-        return max(1, min(contracts, self.config.max_contracts))
+        # Base position size from risk calculation
+        base_contracts = max_risk / max_loss_per_contract
+
+        # Apply Thompson Sampling weight (clamped to reasonable bounds)
+        # Weight is normalized so 20% allocation (1/5 bots) = 1.0
+        # Higher allocation = larger positions, lower = smaller
+        clamped_weight = max(0.5, min(2.0, thompson_weight))
+        adjusted_contracts = int(base_contracts * clamped_weight)
+
+        # Log if Thompson made a difference
+        if abs(thompson_weight - 1.0) > 0.05:
+            logger.info(f"Thompson allocation: weight={thompson_weight:.2f}, base={base_contracts:.1f}, adjusted={adjusted_contracts}")
+
+        return max(1, min(adjusted_contracts, self.config.max_contracts))
 
     def _get_current_price(self) -> Optional[float]:
         """Get current underlying price"""
