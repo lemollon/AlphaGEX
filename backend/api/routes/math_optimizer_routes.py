@@ -30,18 +30,31 @@ router = APIRouter(tags=["Math Optimizers"])
 
 # Lazy import to avoid circular dependencies
 _optimizer = None
+_optimizer_error = None
 
 
 def get_optimizer():
     """Lazy load the math optimizer orchestrator"""
-    global _optimizer
-    if _optimizer is None:
+    global _optimizer, _optimizer_error
+    if _optimizer is None and _optimizer_error is None:
         try:
             from core.math_optimizers import get_math_optimizer
             _optimizer = get_math_optimizer()
+            logger.info("Math optimizer loaded successfully")
         except ImportError as e:
+            _optimizer_error = f"Import error: {e}"
             logger.error(f"Could not import math optimizer: {e}")
-            raise HTTPException(status_code=500, detail="Math optimizer not available")
+        except Exception as e:
+            _optimizer_error = f"Initialization error: {e}"
+            logger.error(f"Math optimizer initialization failed: {e}")
+            import traceback
+            traceback.print_exc()
+
+    if _optimizer is None:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Math optimizer not available: {_optimizer_error or 'Unknown error'}"
+        )
     return _optimizer
 
 
