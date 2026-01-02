@@ -1421,24 +1421,19 @@ async def get_ares_equity_curve(days: int = 30):
 @router.get("/equity-curve/live")
 async def get_ares_live_equity_curve():
     """
-    Get ARES equity curve with live intraday progress.
+    Get ARES equity curve with LIVE intraday tracking from Tradier SANDBOX.
 
-    Returns historical equity curve plus today's current P&L including:
-    - Historical realized P&L from closed positions
-    - Today's realized P&L from positions closed today
-    - Today's unrealized P&L from open positions (if ARES worker running)
+    This endpoint provides real-time equity tracking:
+    - Historical data: From closed positions in database
+    - Live data: DIRECTLY from Tradier SANDBOX account balance
 
-    This gives a complete picture of intraday performance.
+    The Tradier balance IS the current equity - it reflects all:
+    - Realized P&L from closed positions
+    - Unrealized P&L from open positions
+    - Cash balance
+
+    Returns equity curve with live intraday points.
     """
-    ares = get_ares_instance()
-
-    # Get starting capital from Tradier balance when available
-    tradier_balance = _get_tradier_account_balance()
-    if tradier_balance.get('connected') and tradier_balance.get('total_equity', 0) > 0:
-        starting_capital = round(tradier_balance['total_equity'], 2)
-    else:
-        starting_capital = 100000  # Default fallback
-
     now = datetime.now(ZoneInfo("America/Chicago"))
     today = now.strftime('%Y-%m-%d')
     current_time = now.strftime('%H:%M:%S')
@@ -1450,54 +1445,100 @@ async def get_ares_live_equity_curve():
         (now.hour > 8 or now.minute >= 30)
     )
 
+    # Get LIVE data from Tradier SANDBOX - this is the source of truth
+    tradier_balance = _get_tradier_account_balance()
+    tradier_positions = _get_tradier_positions()
+
+    tradier_connected = tradier_balance.get('connected', False)
+    current_equity = tradier_balance.get('total_equity', 0) if tradier_connected else 0
+    option_buying_power = tradier_balance.get('option_buying_power', 0) if tradier_connected else 0
+
+    # Get open positions from Tradier for unrealized P&L context
+    tradier_open_positions = tradier_positions.get('positions', []) if tradier_positions.get('connected') else []
+    tradier_orders = tradier_positions.get('orders', []) if tradier_positions.get('connected') else []
+
     try:
         from database_adapter import get_connection
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Get historical closed positions (excluding today for separate handling)
+        # Get or create starting capital record
+        # This stores the initial balance when ARES started trading
         cursor.execute('''
-            SELECT DATE(close_time AT TIME ZONE 'America/Chicago') as close_date, realized_pnl, position_id
+            SELECT value FROM autonomous_config
+            WHERE key = 'ares_starting_capital'
+        ''')
+        row = cursor.fetchone()
+
+        if row and float(row[0]) > 0:
+            starting_capital = float(row[0])
+        else:
+            # First time - use current Tradier balance as starting capital
+            # Or fallback to 100k if not connected
+            starting_capital = current_equity if current_equity > 0 else 100000
+            # Store it for future reference
+            cursor.execute('''
+                INSERT INTO autonomous_config (key, value)
+                VALUES ('ares_starting_capital', %s)
+                ON CONFLICT (key) DO UPDATE SET value = %s
+            ''', (str(starting_capital), str(starting_capital)))
+            conn.commit()
+
+        # Get historical closed positions for the equity curve
+        cursor.execute('''
+            SELECT DATE(close_time AT TIME ZONE 'America/Chicago') as close_date,
+                   realized_pnl, position_id, close_time
             FROM ares_positions
             WHERE status IN ('closed', 'expired')
             AND close_time IS NOT NULL
-            AND DATE(close_time AT TIME ZONE 'America/Chicago') < %s
             ORDER BY close_time ASC
-        ''', (today,))
+        ''')
         historical_rows = cursor.fetchall()
 
-        # Get today's realized P&L
+        # Get today's activity
         cursor.execute('''
-            SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
+            SELECT
+                COALESCE(SUM(CASE WHEN status IN ('closed', 'expired') THEN realized_pnl ELSE 0 END), 0) as today_realized,
+                SUM(CASE WHEN status IN ('closed', 'expired') THEN 1 ELSE 0 END) as today_closed,
+                SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as today_open
             FROM ares_positions
-            WHERE status IN ('closed', 'expired')
-            AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
-        ''', (today,))
+            WHERE DATE(open_time AT TIME ZONE 'America/Chicago') = %s
+               OR DATE(close_time AT TIME ZONE 'America/Chicago') = %s
+        ''', (today, today))
         today_row = cursor.fetchone()
-        today_realized = float(today_row[0]) if today_row else 0
-        today_closed_count = today_row[1] if today_row else 0
+        today_realized = float(today_row[0]) if today_row and today_row[0] else 0
+        today_closed_count = int(today_row[1]) if today_row and today_row[1] else 0
+        today_open_count = int(today_row[2]) if today_row and today_row[2] else 0
 
-        # Get open positions count
+        # Get intraday snapshots if they exist
         cursor.execute('''
-            SELECT COUNT(*), COALESCE(SUM(total_credit * 100 * contracts), 0)
-            FROM ares_positions
-            WHERE status = 'open'
+            SELECT timestamp, balance, note
+            FROM ares_equity_snapshots
+            WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+            ORDER BY timestamp ASC
         ''')
-        open_row = cursor.fetchone()
-        open_count = open_row[0] if open_row else 0
-        open_credit = float(open_row[1]) if open_row else 0
+        # This table may not exist yet - handle gracefully
+        intraday_snapshots = []
+        try:
+            intraday_snapshots = cursor.fetchall()
+        except Exception:
+            pass
+
         conn.close()
 
-        # Build historical equity curve
+        # Build equity curve
         equity_curve = []
         positions_by_date = {}
+
         for row in historical_rows:
-            close_date, pnl, pos_id = row
+            close_date, pnl, pos_id, close_time = row
             date_key = str(close_date) if close_date else None
             if date_key:
                 if date_key not in positions_by_date:
-                    positions_by_date[date_key] = []
-                positions_by_date[date_key].append(float(pnl or 0))
+                    positions_by_date[date_key] = {'pnl': 0, 'count': 0, 'positions': []}
+                positions_by_date[date_key]['pnl'] += float(pnl or 0)
+                positions_by_date[date_key]['count'] += 1
+                positions_by_date[date_key]['positions'].append(pos_id)
 
         sorted_dates = sorted(positions_by_date.keys())
         cumulative_pnl = 0
@@ -1506,16 +1547,19 @@ async def get_ares_live_equity_curve():
         if sorted_dates:
             equity_curve.append({
                 "date": sorted_dates[0],
-                "time": "09:30:00",
-                "equity": starting_capital,
+                "time": "08:30:00",
+                "equity": round(starting_capital, 2),
                 "pnl": 0,
                 "daily_pnl": 0,
                 "return_pct": 0,
-                "is_live": False
+                "is_live": False,
+                "source": "historical"
             })
 
+        # Add historical points
         for date_str in sorted_dates:
-            daily_pnl = sum(positions_by_date[date_str])
+            daily_data = positions_by_date[date_str]
+            daily_pnl = daily_data['pnl']
             cumulative_pnl += daily_pnl
 
             equity_curve.append({
@@ -1524,98 +1568,201 @@ async def get_ares_live_equity_curve():
                 "equity": round(starting_capital + cumulative_pnl, 2),
                 "pnl": round(cumulative_pnl, 2),
                 "daily_pnl": round(daily_pnl, 2),
-                "return_pct": round((cumulative_pnl / starting_capital) * 100, 2),
-                "is_live": False
+                "trades_closed": daily_data['count'],
+                "return_pct": round((cumulative_pnl / starting_capital) * 100, 2) if starting_capital > 0 else 0,
+                "is_live": False,
+                "source": "historical"
             })
 
-        # Get live unrealized P&L if ARES is running
-        unrealized_pnl = 0
-        has_live_data = False
-        if ares:
-            try:
-                live_pnl = ares.get_live_pnl()
-                unrealized_pnl = live_pnl.get('total_unrealized_pnl', 0) or 0
-                has_live_data = True
-            except Exception:
-                pass
+        # Calculate total P&L from Tradier balance
+        total_pnl = current_equity - starting_capital if current_equity > 0 else cumulative_pnl
+        today_unrealized = total_pnl - cumulative_pnl - today_realized if current_equity > 0 else 0
 
-        # Add today's live point
-        today_total_pnl = today_realized + unrealized_pnl
-        current_cumulative = cumulative_pnl + today_total_pnl
-        current_equity = starting_capital + current_cumulative
-
-        # Add market open point for today if we have any activity
-        if is_market_hours or today_realized != 0 or unrealized_pnl != 0:
-            # Opening point
+        # Add TODAY's live points
+        if tradier_connected and current_equity > 0:
+            # Market open point (start of day = yesterday's close)
             equity_curve.append({
                 "date": today,
                 "time": "08:30:00",
                 "equity": round(starting_capital + cumulative_pnl, 2),
                 "pnl": round(cumulative_pnl, 2),
                 "daily_pnl": 0,
-                "return_pct": round((cumulative_pnl / starting_capital) * 100, 2),
+                "return_pct": round((cumulative_pnl / starting_capital) * 100, 2) if starting_capital > 0 else 0,
                 "is_live": False,
+                "source": "market_open",
                 "label": "Market Open"
             })
 
-            # Current live point
+            # Add intraday snapshots if available
+            for snapshot in intraday_snapshots:
+                snap_time, snap_balance, snap_note = snapshot
+                snap_pnl = float(snap_balance) - starting_capital
+                equity_curve.append({
+                    "date": today,
+                    "time": snap_time.strftime('%H:%M:%S') if hasattr(snap_time, 'strftime') else str(snap_time),
+                    "equity": round(float(snap_balance), 2),
+                    "pnl": round(snap_pnl, 2),
+                    "daily_pnl": round(snap_pnl - cumulative_pnl, 2),
+                    "return_pct": round((snap_pnl / starting_capital) * 100, 2) if starting_capital > 0 else 0,
+                    "is_live": False,
+                    "source": "snapshot",
+                    "note": snap_note
+                })
+
+            # LIVE current point from Tradier
             equity_curve.append({
                 "date": today,
                 "time": current_time,
                 "equity": round(current_equity, 2),
-                "pnl": round(current_cumulative, 2),
-                "daily_pnl": round(today_total_pnl, 2),
+                "pnl": round(total_pnl, 2),
+                "daily_pnl": round(total_pnl - cumulative_pnl, 2),
                 "daily_realized": round(today_realized, 2),
-                "daily_unrealized": round(unrealized_pnl, 2) if has_live_data else None,
-                "return_pct": round((current_cumulative / starting_capital) * 100, 2),
+                "daily_unrealized": round(today_unrealized, 2),
+                "return_pct": round((total_pnl / starting_capital) * 100, 2) if starting_capital > 0 else 0,
                 "is_live": True,
-                "label": "Current"
+                "source": "tradier_live",
+                "label": "LIVE"
             })
 
         return {
             "success": True,
             "data": {
                 "equity_curve": equity_curve,
-                "starting_capital": starting_capital,
-                "current_equity": round(current_equity, 2),
-                "total_pnl": round(current_cumulative, 2),
-                "total_return_pct": round((current_cumulative / starting_capital) * 100, 2),
+                "starting_capital": round(starting_capital, 2),
+                "current_equity": round(current_equity, 2) if tradier_connected else round(starting_capital + cumulative_pnl, 2),
+                "total_pnl": round(total_pnl, 2) if tradier_connected else round(cumulative_pnl, 2),
+                "total_return_pct": round((total_pnl / starting_capital) * 100, 2) if starting_capital > 0 and tradier_connected else round((cumulative_pnl / starting_capital) * 100, 2) if starting_capital > 0 else 0,
                 "today": {
                     "date": today,
                     "time": current_time,
                     "realized_pnl": round(today_realized, 2),
-                    "unrealized_pnl": round(unrealized_pnl, 2) if has_live_data else None,
-                    "total_pnl": round(today_total_pnl, 2),
+                    "unrealized_pnl": round(today_unrealized, 2) if tradier_connected else None,
+                    "total_pnl": round(total_pnl - cumulative_pnl, 2) if tradier_connected else round(today_realized, 2),
                     "positions_closed": today_closed_count,
-                    "positions_open": open_count,
-                    "open_credit": round(open_credit, 2)
+                    "positions_open": len(tradier_open_positions),
+                    "db_positions_open": today_open_count
+                },
+                "tradier": {
+                    "connected": tradier_connected,
+                    "account_id": tradier_balance.get('account_id'),
+                    "total_equity": round(current_equity, 2) if tradier_connected else None,
+                    "option_buying_power": round(option_buying_power, 2) if tradier_connected else None,
+                    "open_positions": len(tradier_open_positions),
+                    "recent_orders": len(tradier_orders),
+                    "error": tradier_balance.get('error') if not tradier_connected else None
                 },
                 "is_market_open": is_market_hours,
-                "has_live_data": has_live_data,
                 "last_updated": now.isoformat()
             }
         }
 
     except Exception as e:
         logger.error(f"Error getting live equity curve: {e}")
-        # Fallback
+        import traceback
+        traceback.print_exc()
+
+        # Fallback with Tradier data if available
         return {
             "success": True,
             "data": {
                 "equity_curve": [{
                     "date": today,
                     "time": current_time,
-                    "equity": starting_capital,
+                    "equity": round(current_equity, 2) if tradier_connected else 100000,
                     "pnl": 0,
                     "daily_pnl": 0,
                     "return_pct": 0,
-                    "is_live": True
+                    "is_live": True,
+                    "source": "tradier_live" if tradier_connected else "fallback"
                 }],
-                "starting_capital": starting_capital,
-                "current_equity": starting_capital,
+                "starting_capital": round(current_equity, 2) if tradier_connected else 100000,
+                "current_equity": round(current_equity, 2) if tradier_connected else 100000,
                 "total_pnl": 0,
+                "tradier": {
+                    "connected": tradier_connected,
+                    "total_equity": round(current_equity, 2) if tradier_connected else None,
+                    "error": tradier_balance.get('error') if not tradier_connected else None
+                },
                 "error": str(e)
             }
+        }
+
+
+@router.post("/equity-snapshot")
+async def save_equity_snapshot():
+    """
+    Save current equity snapshot for intraday tracking.
+
+    Call this periodically (e.g., every 5-15 minutes) during market hours
+    to build detailed intraday equity curve.
+    """
+    now = datetime.now(ZoneInfo("America/Chicago"))
+
+    # Get current Tradier balance
+    tradier_balance = _get_tradier_account_balance()
+
+    if not tradier_balance.get('connected'):
+        return {
+            "success": False,
+            "error": "Tradier not connected",
+            "details": tradier_balance.get('error')
+        }
+
+    current_equity = tradier_balance.get('total_equity', 0)
+
+    try:
+        from database_adapter import get_connection
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Create table if not exists
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ares_equity_snapshots (
+                id SERIAL PRIMARY KEY,
+                timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+                balance DECIMAL(12, 2) NOT NULL,
+                option_buying_power DECIMAL(12, 2),
+                open_positions INTEGER,
+                note TEXT,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+        ''')
+
+        # Get open position count from Tradier
+        tradier_positions = _get_tradier_positions()
+        open_count = len(tradier_positions.get('positions', []))
+
+        # Insert snapshot
+        cursor.execute('''
+            INSERT INTO ares_equity_snapshots
+            (timestamp, balance, option_buying_power, open_positions, note)
+            VALUES (%s, %s, %s, %s, %s)
+        ''', (
+            now,
+            current_equity,
+            tradier_balance.get('option_buying_power', 0),
+            open_count,
+            f"Auto snapshot at {now.strftime('%H:%M:%S')}"
+        ))
+
+        conn.commit()
+        conn.close()
+
+        return {
+            "success": True,
+            "data": {
+                "timestamp": now.isoformat(),
+                "equity": round(current_equity, 2),
+                "option_buying_power": round(tradier_balance.get('option_buying_power', 0), 2),
+                "open_positions": open_count
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error saving equity snapshot: {e}")
+        return {
+            "success": False,
+            "error": str(e)
         }
 
 
