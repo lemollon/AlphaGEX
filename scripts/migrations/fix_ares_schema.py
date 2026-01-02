@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Quick fix for ARES positions table schema.
+Quick fix for ALL bot positions table schemas.
 Run in Render shell: python scripts/migrations/fix_ares_schema.py
 
-This adds all missing columns that prevent ARES from saving positions.
+This adds all missing columns that prevent ARES, PEGASUS, and ATHENA from saving positions.
 """
 
 import os
@@ -15,11 +15,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 from database_adapter import get_connection
 
 
-def fix_ares_schema():
+def fix_ares_schema(cursor):
     """Add all missing columns to ares_positions table"""
-    print("\n" + "="*60)
-    print("  ARES Schema Fix - Adding Missing Columns")
-    print("="*60 + "\n")
+    print("\n  ARES Iron Condor Positions")
+    print("  " + "-"*40)
 
     columns_to_add = [
         # Market context at entry
@@ -74,50 +73,196 @@ def fix_ares_schema():
         ("updated_at", "TIMESTAMP WITH TIME ZONE DEFAULT NOW()"),
     ]
 
+    added = 0
+    for col_name, col_type in columns_to_add:
+        try:
+            sql = f"ALTER TABLE ares_positions ADD COLUMN IF NOT EXISTS {col_name} {col_type}"
+            cursor.execute(sql)
+            added += 1
+        except Exception as e:
+            if "already exists" not in str(e).lower():
+                print(f"    ✗ {col_name}: {e}")
+
+    print(f"    ✓ Added/verified {added} columns")
+    return added
+
+
+def fix_pegasus_schema(cursor):
+    """Add all missing columns to pegasus_positions table"""
+    print("\n  PEGASUS SPX Iron Condor Positions")
+    print("  " + "-"*40)
+
+    columns_to_add = [
+        ("underlying_at_entry", "DECIMAL(10, 2)"),
+        ("vix_at_entry", "DECIMAL(6, 2)"),
+        ("expected_move", "DECIMAL(10, 2)"),
+        ("max_profit", "DECIMAL(10, 2)"),
+        ("max_loss", "DECIMAL(10, 2)"),
+        ("spread_width", "DECIMAL(10, 2)"),
+        ("contracts", "INTEGER"),
+        ("put_credit", "DECIMAL(10, 4)"),
+        ("call_credit", "DECIMAL(10, 4)"),
+        ("total_credit", "DECIMAL(10, 4)"),
+        ("put_short_strike", "DECIMAL(10, 2)"),
+        ("put_long_strike", "DECIMAL(10, 2)"),
+        ("call_short_strike", "DECIMAL(10, 2)"),
+        ("call_long_strike", "DECIMAL(10, 2)"),
+        ("gex_regime", "VARCHAR(30)"),
+        ("call_wall", "DECIMAL(10, 2)"),
+        ("put_wall", "DECIMAL(10, 2)"),
+        ("flip_point", "DECIMAL(10, 2)"),
+        ("net_gex", "DECIMAL(15, 2)"),
+        ("oracle_confidence", "DECIMAL(8, 4)"),
+        ("oracle_win_probability", "DECIMAL(8, 4)"),
+        ("oracle_advice", "VARCHAR(20)"),
+        ("oracle_reasoning", "TEXT"),
+        ("oracle_top_factors", "TEXT"),
+        ("oracle_use_gex_walls", "BOOLEAN DEFAULT FALSE"),
+        ("put_order_id", "VARCHAR(50)"),
+        ("call_order_id", "VARCHAR(50)"),
+        ("status", "VARCHAR(20) DEFAULT 'open'"),
+        ("open_time", "TIMESTAMP WITH TIME ZONE"),
+        ("close_time", "TIMESTAMP WITH TIME ZONE"),
+        ("close_price", "DECIMAL(10, 4)"),
+        ("close_reason", "VARCHAR(100)"),
+        ("realized_pnl", "DECIMAL(10, 2)"),
+        ("created_at", "TIMESTAMP WITH TIME ZONE DEFAULT NOW()"),
+    ]
+
+    added = 0
+    for col_name, col_type in columns_to_add:
+        try:
+            sql = f"ALTER TABLE pegasus_positions ADD COLUMN IF NOT EXISTS {col_name} {col_type}"
+            cursor.execute(sql)
+            added += 1
+        except Exception as e:
+            if "already exists" not in str(e).lower() and "does not exist" not in str(e).lower():
+                print(f"    ✗ {col_name}: {e}")
+
+    print(f"    ✓ Added/verified {added} columns")
+    return added
+
+
+def fix_athena_schema(cursor):
+    """Add all missing columns to athena_positions table"""
+    print("\n  ATHENA Directional Spreads Positions")
+    print("  " + "-"*40)
+
+    columns_to_add = [
+        ("underlying_at_entry", "DECIMAL(10, 2)"),
+        ("vix_at_entry", "DECIMAL(6, 2)"),
+        ("max_profit", "DECIMAL(10, 2)"),
+        ("max_loss", "DECIMAL(10, 2)"),
+        ("entry_debit", "DECIMAL(10, 4)"),
+        ("long_strike", "DECIMAL(10, 2)"),
+        ("short_strike", "DECIMAL(10, 2)"),
+        ("spread_type", "VARCHAR(30)"),
+        ("contracts", "INTEGER"),
+        ("gex_regime", "VARCHAR(30)"),
+        ("call_wall", "DECIMAL(10, 2)"),
+        ("put_wall", "DECIMAL(10, 2)"),
+        ("flip_point", "DECIMAL(10, 2)"),
+        ("net_gex", "DECIMAL(15, 2)"),
+        ("oracle_confidence", "DECIMAL(8, 4)"),
+        ("ml_direction", "VARCHAR(20)"),
+        ("ml_confidence", "DECIMAL(8, 4)"),
+        ("ml_model_name", "VARCHAR(100)"),
+        ("ml_win_probability", "DECIMAL(8, 4)"),
+        ("ml_top_features", "TEXT"),
+        ("wall_type", "VARCHAR(20)"),
+        ("wall_distance_pct", "DECIMAL(6, 4)"),
+        ("trade_reasoning", "TEXT"),
+        ("order_id", "VARCHAR(50)"),
+        ("status", "VARCHAR(20) DEFAULT 'open'"),
+        ("open_time", "TIMESTAMP WITH TIME ZONE"),
+        ("close_time", "TIMESTAMP WITH TIME ZONE"),
+        ("close_price", "DECIMAL(10, 4)"),
+        ("close_reason", "VARCHAR(100)"),
+        ("realized_pnl", "DECIMAL(10, 2)"),
+        ("created_at", "TIMESTAMP WITH TIME ZONE DEFAULT NOW()"),
+        ("updated_at", "TIMESTAMP WITH TIME ZONE DEFAULT NOW()"),
+    ]
+
+    added = 0
+    for col_name, col_type in columns_to_add:
+        try:
+            sql = f"ALTER TABLE athena_positions ADD COLUMN IF NOT EXISTS {col_name} {col_type}"
+            cursor.execute(sql)
+            added += 1
+        except Exception as e:
+            if "already exists" not in str(e).lower() and "does not exist" not in str(e).lower():
+                print(f"    ✗ {col_name}: {e}")
+
+    print(f"    ✓ Added/verified {added} columns")
+    return added
+
+
+def fix_precision(cursor):
+    """Fix DECIMAL(5,4) precision issues across all tables"""
+    print("\n  Fixing Numeric Precision")
+    print("  " + "-"*40)
+
+    precision_fixes = [
+        # scan_activity
+        ("scan_activity", "signal_confidence", "DECIMAL(8, 4)"),
+        ("scan_activity", "signal_win_probability", "DECIMAL(8, 4)"),
+        # ares_positions
+        ("ares_positions", "oracle_confidence", "DECIMAL(8, 4)"),
+        ("ares_positions", "oracle_win_probability", "DECIMAL(8, 4)"),
+        # pegasus_positions
+        ("pegasus_positions", "oracle_confidence", "DECIMAL(8, 4)"),
+        ("pegasus_positions", "oracle_win_probability", "DECIMAL(8, 4)"),
+        # athena_positions
+        ("athena_positions", "oracle_confidence", "DECIMAL(8, 4)"),
+        ("athena_positions", "ml_confidence", "DECIMAL(8, 4)"),
+        ("athena_positions", "ml_win_probability", "DECIMAL(8, 4)"),
+        # athena_signals
+        ("athena_signals", "confidence", "DECIMAL(8, 4)"),
+    ]
+
+    fixed = 0
+    for table, column, new_type in precision_fixes:
+        try:
+            cursor.execute(f"ALTER TABLE {table} ALTER COLUMN {column} TYPE {new_type}")
+            print(f"    ✓ {table}.{column} -> {new_type}")
+            fixed += 1
+        except Exception as e:
+            if "does not exist" in str(e).lower():
+                pass  # Table or column doesn't exist, skip
+            else:
+                print(f"    - {table}.{column}: already correct")
+
+    return fixed
+
+
+def main():
+    print("\n" + "="*60)
+    print("  ALL BOTS Schema Fix - ARES, PEGASUS, ATHENA")
+    print("="*60)
+
     try:
         conn = get_connection()
-        c = conn.cursor()
+        cursor = conn.cursor()
 
-        added = 0
-        skipped = 0
-
-        for col_name, col_type in columns_to_add:
-            try:
-                sql = f"ALTER TABLE ares_positions ADD COLUMN IF NOT EXISTS {col_name} {col_type}"
-                c.execute(sql)
-                print(f"  ✓ Added: {col_name} ({col_type})")
-                added += 1
-            except Exception as e:
-                if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
-                    print(f"  - Exists: {col_name}")
-                    skipped += 1
-                else:
-                    print(f"  ✗ Error: {col_name} - {e}")
-
+        # Fix each bot's schema
+        fix_ares_schema(cursor)
         conn.commit()
-        print(f"\n  Summary: {added} added, {skipped} already existed")
 
-        # Fix numeric precision issues
-        print("\n  Fixing numeric precision...")
-        precision_fixes = [
-            ("scan_activity", "signal_confidence", "DECIMAL(8, 4)"),
-            ("scan_activity", "signal_win_probability", "DECIMAL(8, 4)"),
-            ("ares_positions", "oracle_confidence", "DECIMAL(8, 4)"),
-            ("ares_positions", "oracle_win_probability", "DECIMAL(8, 4)"),
-        ]
-
-        for table, column, new_type in precision_fixes:
-            try:
-                c.execute(f"ALTER TABLE {table} ALTER COLUMN {column} TYPE {new_type}")
-                print(f"  ✓ Fixed: {table}.{column} -> {new_type}")
-            except Exception as e:
-                print(f"  - Skip: {table}.{column} ({e})")
-
+        fix_pegasus_schema(cursor)
         conn.commit()
+
+        fix_athena_schema(cursor)
+        conn.commit()
+
+        # Fix precision issues
+        fix_precision(cursor)
+        conn.commit()
+
         conn.close()
 
         print("\n" + "="*60)
-        print("  ARES schema fix complete!")
+        print("  ALL bot schemas fixed successfully!")
+        print("  Restart the scheduler for changes to take effect.")
         print("="*60 + "\n")
         return True
 
@@ -129,4 +274,4 @@ def fix_ares_schema():
 
 
 if __name__ == "__main__":
-    fix_ares_schema()
+    main()
