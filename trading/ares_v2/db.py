@@ -268,12 +268,12 @@ class ARESDatabase:
                         oracle_confidence, oracle_win_probability, oracle_advice,
                         oracle_reasoning, oracle_top_factors, oracle_use_gex_walls,
                         put_order_id, call_order_id,
-                        status, open_time
+                        status, open_time, open_date
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s
+                        %s, %s, %s
                     )
                 """, (
                     pos.position_id, pos.ticker, pos.expiration,
@@ -287,7 +287,7 @@ class ARESDatabase:
                     _to_python(pos.oracle_confidence), _to_python(pos.oracle_win_probability), pos.oracle_advice or None,
                     pos.oracle_reasoning or None, pos.oracle_top_factors or None, bool(pos.oracle_use_gex_walls),
                     pos.put_order_id or None, pos.call_order_id or None,
-                    pos.status.value, pos.open_time,
+                    pos.status.value, pos.open_time, pos.open_time.date() if pos.open_time else datetime.now(CENTRAL_TZ).date(),
                 ))
                 conn.commit()
                 logger.info(f"{self.bot_name}: Saved position {pos.position_id}")
