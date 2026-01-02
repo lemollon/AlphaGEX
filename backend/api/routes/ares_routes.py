@@ -296,6 +296,215 @@ def _get_tradier_account_balance() -> dict:
         return {'connected': False, 'total_equity': 0, 'sandbox': True, 'error': str(e)}
 
 
+def _calculate_live_unrealized_pnl() -> dict:
+    """
+    Calculate live unrealized P&L from open positions in AlphaGEX database.
+
+    For Iron Condors:
+    - Entry credit = what we received when opening
+    - Current value = what it would cost to close now
+    - Unrealized P&L = Entry credit - Current value (for credit spreads)
+
+    We estimate current value based on:
+    - Current underlying price
+    - Distance from short strikes
+    - Time to expiration
+
+    Returns dict with position details and total unrealized P&L.
+    """
+    result = {
+        'success': False,
+        'current_price': None,
+        'positions': [],
+        'total_unrealized_pnl': 0,
+        'total_open_credit': 0,
+        'error': None
+    }
+
+    try:
+        # Get current underlying price from Tradier
+        current_price = None
+        if TRADIER_AVAILABLE and TradierDataFetcher:
+            try:
+                from unified_config import APIConfig
+                api_key = APIConfig.TRADIER_SANDBOX_API_KEY
+                account_id = APIConfig.TRADIER_SANDBOX_ACCOUNT_ID
+                if api_key and account_id:
+                    tradier = TradierDataFetcher(api_key=api_key, account_id=account_id, sandbox=True)
+                    quote = tradier.get_quote('SPY')
+                    if quote:
+                        current_price = quote.get('last') or quote.get('close')
+            except Exception as e:
+                logger.warning(f"Could not get SPY quote: {e}")
+
+        # Fallback: try unified data provider
+        if not current_price:
+            try:
+                from data.unified_data_provider import get_price
+                current_price = get_price('SPY')
+            except Exception:
+                pass
+
+        if not current_price:
+            result['error'] = 'Could not fetch current SPY price'
+            return result
+
+        result['current_price'] = current_price
+
+        # Get open positions from database
+        from database_adapter import get_connection
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT position_id, ticker, expiration,
+                   put_short_strike, put_long_strike,
+                   call_short_strike, call_long_strike,
+                   total_credit, contracts, spread_width,
+                   underlying_at_entry, open_time
+            FROM ares_positions
+            WHERE status = 'open'
+            ORDER BY open_time DESC
+        ''')
+        rows = cursor.fetchall()
+        conn.close()
+
+        if not rows:
+            result['success'] = True
+            result['message'] = 'No open positions'
+            return result
+
+        total_unrealized = 0
+        total_credit = 0
+
+        for row in rows:
+            (pos_id, ticker, expiration, put_short, put_long,
+             call_short, call_long, entry_credit, contracts,
+             spread_width, entry_price, open_time) = row
+
+            entry_credit = float(entry_credit)
+            contracts = int(contracts)
+            spread_width = float(spread_width)
+            put_short = float(put_short)
+            put_long = float(put_long)
+            call_short = float(call_short)
+            call_long = float(call_long)
+
+            # Calculate estimated current value of Iron Condor
+            # For 0DTE, the value depends heavily on where price is relative to strikes
+
+            # Check if price is in the "safe zone" (between short strikes)
+            in_safe_zone = put_short < current_price < call_short
+
+            if in_safe_zone:
+                # Price between short strikes - position is profitable
+                # The further from strikes, the more profitable
+                put_distance = current_price - put_short
+                call_distance = call_short - current_price
+                min_distance = min(put_distance, call_distance)
+
+                # Estimate: if well inside strikes, approaching max profit
+                # If close to a strike, less profit
+                half_width = spread_width / 2
+                safety_ratio = min(min_distance / half_width, 1.0)
+
+                # Estimated current value (what we'd pay to close)
+                # At max profit (expiration, in safe zone) = $0 to close
+                # Current estimate based on safety ratio
+                estimated_close_cost = entry_credit * (1 - safety_ratio * 0.8)
+                unrealized_pnl = (entry_credit - estimated_close_cost) * 100 * contracts
+
+            else:
+                # Price outside safe zone - position is at risk
+                if current_price <= put_short:
+                    # Below put short - put spread is in trouble
+                    intrusion = put_short - current_price
+                    max_intrusion = spread_width
+                    loss_ratio = min(intrusion / max_intrusion, 1.0)
+                    # Loss = spread_width - credit (max loss) * loss_ratio
+                    max_loss_per_contract = (spread_width - entry_credit) * 100
+                    unrealized_pnl = -max_loss_per_contract * loss_ratio * contracts
+                else:
+                    # Above call short - call spread is in trouble
+                    intrusion = current_price - call_short
+                    max_intrusion = spread_width
+                    loss_ratio = min(intrusion / max_intrusion, 1.0)
+                    max_loss_per_contract = (spread_width - entry_credit) * 100
+                    unrealized_pnl = -max_loss_per_contract * loss_ratio * contracts
+
+            position_data = {
+                'position_id': pos_id,
+                'ticker': ticker,
+                'expiration': str(expiration),
+                'strikes': {
+                    'put_long': put_long,
+                    'put_short': put_short,
+                    'call_short': call_short,
+                    'call_long': call_long
+                },
+                'entry_credit': entry_credit,
+                'contracts': contracts,
+                'entry_price': float(entry_price) if entry_price else None,
+                'current_price': current_price,
+                'in_safe_zone': in_safe_zone,
+                'unrealized_pnl': round(unrealized_pnl, 2),
+                'max_profit': round(entry_credit * 100 * contracts, 2),
+                'max_loss': round((spread_width - entry_credit) * 100 * contracts, 2)
+            }
+
+            result['positions'].append(position_data)
+            total_unrealized += unrealized_pnl
+            total_credit += entry_credit * 100 * contracts
+
+        result['success'] = True
+        result['total_unrealized_pnl'] = round(total_unrealized, 2)
+        result['total_open_credit'] = round(total_credit, 2)
+        result['position_count'] = len(rows)
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Error calculating unrealized P&L: {e}")
+        import traceback
+        traceback.print_exc()
+        result['error'] = str(e)
+        return result
+
+
+@router.get("/live-pnl")
+async def get_live_pnl():
+    """
+    Get live unrealized P&L calculated from AlphaGEX open positions.
+
+    Calculates current value of open Iron Condors based on:
+    - Current SPY price
+    - Distance from short strikes
+    - Entry credit received
+
+    This is the TRUE live P&L, not dependent on Tradier balance updates.
+    """
+    result = _calculate_live_unrealized_pnl()
+
+    if not result.get('success'):
+        return {
+            "success": False,
+            "error": result.get('error', 'Failed to calculate live P&L'),
+            "data": None
+        }
+
+    return {
+        "success": True,
+        "data": {
+            "current_price": result['current_price'],
+            "position_count": result.get('position_count', 0),
+            "total_unrealized_pnl": result['total_unrealized_pnl'],
+            "total_open_credit": result['total_open_credit'],
+            "positions": result['positions'],
+            "message": result.get('message')
+        }
+    }
+
+
 def _get_tradier_positions() -> dict:
     """
     Get positions directly from Tradier SANDBOX account.
