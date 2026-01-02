@@ -419,6 +419,86 @@ async def diagnose_tradier_connection():
     return results
 
 
+@router.get("/db-diagnose")
+async def diagnose_database_state():
+    """
+    Diagnostic endpoint to check ares_positions database state.
+    Shows why equity curve might be empty.
+    """
+    results = {
+        "total_positions": 0,
+        "by_status": {},
+        "positions": [],
+        "equity_curve_eligible": 0,
+        "issues": []
+    }
+
+    try:
+        from database_adapter import get_connection
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Get all positions with their key fields
+        cursor.execute('''
+            SELECT position_id, status, open_time, close_time, realized_pnl,
+                   put_short_strike, call_short_strike, contracts, total_credit
+            FROM ares_positions
+            ORDER BY open_time DESC
+            LIMIT 20
+        ''')
+        rows = cursor.fetchall()
+
+        for row in rows:
+            pos = {
+                "position_id": row[0],
+                "status": row[1],
+                "open_time": str(row[2]) if row[2] else None,
+                "close_time": str(row[3]) if row[3] else None,
+                "realized_pnl": float(row[4]) if row[4] else 0,
+                "put_short": float(row[5]) if row[5] else None,
+                "call_short": float(row[6]) if row[6] else None,
+                "contracts": row[7],
+                "total_credit": float(row[8]) if row[8] else None
+            }
+            results["positions"].append(pos)
+
+            # Track by status
+            status = row[1] or "unknown"
+            results["by_status"][status] = results["by_status"].get(status, 0) + 1
+
+            # Check if eligible for equity curve
+            if status in ('closed', 'expired') and row[3] is not None:
+                results["equity_curve_eligible"] += 1
+
+            # Identify issues
+            if status in ('closed', 'expired') and row[3] is None:
+                results["issues"].append(f"{row[0]}: closed but no close_time")
+            if row[4] is None and status in ('closed', 'expired'):
+                results["issues"].append(f"{row[0]}: closed but no realized_pnl")
+
+        results["total_positions"] = len(rows)
+
+        # Count total in table
+        cursor.execute("SELECT COUNT(*) FROM ares_positions")
+        total = cursor.fetchone()[0]
+        results["total_in_table"] = total
+
+        conn.close()
+
+        # Summary
+        if results["equity_curve_eligible"] == 0:
+            results["diagnosis"] = "No positions eligible for equity curve - all are open or missing close_time"
+        else:
+            results["diagnosis"] = f"{results['equity_curve_eligible']} positions should appear in equity curve"
+
+    except Exception as e:
+        import traceback
+        results["error"] = str(e)
+        results["traceback"] = traceback.format_exc()
+
+    return results
+
+
 @router.get("/status")
 async def get_ares_status():
     """
