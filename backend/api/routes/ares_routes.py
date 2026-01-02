@@ -798,7 +798,14 @@ async def get_ares_equity_curve(days: int = 30):
     Returns equity curve built from closed positions.
     """
     ares = get_ares_instance()
-    starting_capital = 200000  # ARES allocated capital
+
+    # Get starting capital from Tradier balance when available
+    tradier_balance = _get_tradier_account_balance()
+    if tradier_balance.get('connected') and tradier_balance.get('total_equity', 0) > 0:
+        starting_capital = round(tradier_balance['total_equity'], 2)
+    else:
+        starting_capital = 100000  # Default fallback
+
     today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
 
     if not ares:
@@ -809,12 +816,14 @@ async def get_ares_equity_curve(days: int = 30):
             cursor = conn.cursor()
 
             # Get closed positions from database
+            # NOTE: Use DATE(close_time) since close_date column doesn't exist
             cursor.execute('''
-                SELECT close_date, realized_pnl, position_id
+                SELECT DATE(close_time AT TIME ZONE 'America/Chicago') as close_date,
+                       realized_pnl, position_id
                 FROM ares_positions
                 WHERE status IN ('closed', 'expired')
-                AND close_date IS NOT NULL
-                ORDER BY close_date ASC
+                AND close_time IS NOT NULL
+                ORDER BY close_time ASC
             ''')
             rows = cursor.fetchall()
             conn.close()
@@ -1014,7 +1023,14 @@ async def get_ares_live_equity_curve():
     This gives a complete picture of intraday performance.
     """
     ares = get_ares_instance()
-    starting_capital = 200000
+
+    # Get starting capital from Tradier balance when available
+    tradier_balance = _get_tradier_account_balance()
+    if tradier_balance.get('connected') and tradier_balance.get('total_equity', 0) > 0:
+        starting_capital = round(tradier_balance['total_equity'], 2)
+    else:
+        starting_capital = 100000  # Default fallback
+
     now = datetime.now(ZoneInfo("America/Chicago"))
     today = now.strftime('%Y-%m-%d')
     current_time = now.strftime('%H:%M:%S')
@@ -1204,6 +1220,13 @@ async def get_ares_performance():
     """
     ares = get_ares_instance()
 
+    # Get starting capital from Tradier balance when available
+    tradier_balance = _get_tradier_account_balance()
+    if tradier_balance.get('connected') and tradier_balance.get('total_equity', 0) > 0:
+        starting_capital = round(tradier_balance['total_equity'], 2)
+    else:
+        starting_capital = 100000  # Default fallback
+
     if not ares:
         return {
             "success": True,
@@ -1216,9 +1239,9 @@ async def get_ares_performance():
                 "avg_pnl_per_trade": 0,
                 "best_trade": 0,
                 "worst_trade": 0,
-                "current_capital": 200000,
+                "current_capital": starting_capital,
                 "return_pct": 0,
-                "high_water_mark": 200000,
+                "high_water_mark": starting_capital,
                 "max_drawdown": 0,
                 "monthly_target": "10%",
                 "message": "ARES not yet initialized"
@@ -1236,8 +1259,6 @@ async def get_ares_performance():
 
         best_trade = max((pos.realized_pnl for pos in ares.closed_positions), default=0)
         worst_trade = min((pos.realized_pnl for pos in ares.closed_positions), default=0)
-
-        starting_capital = 200000
         current_capital = starting_capital + total_pnl
         return_pct = (total_pnl / starting_capital) * 100 if starting_capital > 0 else 0
 
