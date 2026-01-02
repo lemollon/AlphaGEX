@@ -371,11 +371,12 @@ class ATHENATrader(MathOptimizerMixin):
             }
 
             # Record directional prediction
+            # Note: signal.confidence is already 0-1 from ML, not 0-100
             prediction = f"{signal.direction if hasattr(signal, 'direction') else 'directional'} spread profitable"
             prediction_id = memory.record_prediction(
                 prediction_type="directional_spread_outcome",
                 prediction=prediction,
-                confidence=signal.confidence / 100 if hasattr(signal, 'confidence') else 0.7,
+                confidence=signal.confidence if hasattr(signal, 'confidence') else 0.7,
                 context=context
             )
 
@@ -448,7 +449,8 @@ class ATHENATrader(MathOptimizerMixin):
                 max_profit = pos.spread_width - entry_cost
 
                 expiry_time = now.replace(hour=16, minute=0, second=0)
-                entry_time = pos.entry_time if hasattr(pos, 'entry_time') else now - timedelta(hours=2)
+                # Field is 'open_time' not 'entry_time'
+                entry_time = pos.open_time if hasattr(pos, 'open_time') and pos.open_time else now - timedelta(hours=2)
 
                 hjb_result = self.math_should_exit(
                     current_pnl=current_pnl,

@@ -407,8 +407,8 @@ class PEGASUSTrader(MathOptimizerMixin):
                 bot_name=OracleBotName.PEGASUS,
                 outcome=outcome,
                 actual_pnl=pnl,
-                put_strike=pos.put_short if hasattr(pos, 'put_short') else None,
-                call_strike=pos.call_short if hasattr(pos, 'call_short') else None,
+                put_strike=pos.put_short_strike if hasattr(pos, 'put_short_strike') else None,
+                call_strike=pos.call_short_strike if hasattr(pos, 'call_short_strike') else None,
             )
 
             if success:
@@ -438,10 +438,11 @@ class PEGASUSTrader(MathOptimizerMixin):
                 "day_of_week": datetime.now(CENTRAL_TZ).weekday()
             }
 
+            # Note: signal.confidence is already 0-1 from Oracle, not 0-100
             prediction_id = memory.record_prediction(
                 prediction_type="spx_iron_condor_outcome",
                 prediction=f"SPX IC profitable: {pos.put_short_strike}/{pos.call_short_strike}",
-                confidence=signal.confidence / 100 if hasattr(signal, 'confidence') else 0.7,
+                confidence=signal.confidence if hasattr(signal, 'confidence') else 0.7,
                 context=context
             )
 
