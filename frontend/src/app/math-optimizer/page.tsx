@@ -8,7 +8,7 @@ import {
   CheckCircle, Info, BookOpen, Code, Play, PauseCircle
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
-import { apiClient } from '@/lib/api'
+import { api } from '@/lib/api'
 
 // =============================================================================
 // ALGORITHM CARD COMPONENT
@@ -136,7 +136,7 @@ const LiveOptimizerStatus = () => {
   useEffect(() => {
     const fetchStatus = async () => {
       try {
-        const response = await apiClient.get('/api/math-optimizer/status')
+        const response = await api.get('/api/math-optimizer/status')
         setStatus(response.data)
       } catch (error) {
         console.error('Failed to fetch optimizer status:', error)
