@@ -303,6 +303,122 @@ def _get_tradier_account_balance() -> dict:
         return {'connected': False, 'total_equity': 0, 'sandbox': True, 'error': str(e)}
 
 
+@router.get("/tradier-diagnose")
+async def diagnose_tradier_connection():
+    """
+    Diagnostic endpoint to debug Tradier connection issues.
+    Tests each step of the balance fetch process.
+    """
+    results = {
+        "steps": [],
+        "success": False,
+        "final_balance": None
+    }
+
+    # Step 1: Check TradierDataFetcher availability
+    results["steps"].append({
+        "step": 1,
+        "name": "TradierDataFetcher available",
+        "success": TRADIER_AVAILABLE,
+        "value": str(TradierDataFetcher) if TradierDataFetcher else "None"
+    })
+    if not TRADIER_AVAILABLE:
+        results["final_error"] = "TradierDataFetcher not available"
+        return results
+
+    # Step 2: Check unified_config import
+    try:
+        from unified_config import APIConfig
+        results["steps"].append({
+            "step": 2,
+            "name": "Import unified_config.APIConfig",
+            "success": True
+        })
+    except Exception as e:
+        results["steps"].append({
+            "step": 2,
+            "name": "Import unified_config.APIConfig",
+            "success": False,
+            "error": str(e)
+        })
+        results["final_error"] = f"Step 2 failed: {e}"
+        return results
+
+    # Step 3: Check credentials
+    api_key = getattr(APIConfig, 'TRADIER_API_KEY', None)
+    account_id = getattr(APIConfig, 'TRADIER_ACCOUNT_ID', None)
+    prod_api_key = getattr(APIConfig, 'TRADIER_PROD_API_KEY', None)
+    prod_account_id = getattr(APIConfig, 'TRADIER_PROD_ACCOUNT_ID', None)
+
+    results["steps"].append({
+        "step": 3,
+        "name": "Check credentials",
+        "success": bool(api_key or prod_api_key),
+        "TRADIER_API_KEY": "SET" if api_key else "NOT SET",
+        "TRADIER_ACCOUNT_ID": account_id[:4] + "..." if account_id else "NOT SET",
+        "TRADIER_PROD_API_KEY": "SET" if prod_api_key else "NOT SET",
+        "TRADIER_PROD_ACCOUNT_ID": prod_account_id[:4] + "..." if prod_account_id else "NOT SET"
+    })
+
+    # Use whichever is available
+    final_api_key = api_key or prod_api_key
+    final_account_id = account_id or prod_account_id
+
+    if not final_api_key or not final_account_id:
+        results["final_error"] = "No Tradier credentials configured"
+        return results
+
+    # Step 4: Create TradierDataFetcher with production mode
+    try:
+        tradier = TradierDataFetcher(
+            api_key=final_api_key,
+            account_id=final_account_id,
+            sandbox=False  # Production mode
+        )
+        results["steps"].append({
+            "step": 4,
+            "name": "Create TradierDataFetcher (production)",
+            "success": True,
+            "sandbox_mode": tradier.sandbox if hasattr(tradier, 'sandbox') else "unknown"
+        })
+    except Exception as e:
+        results["steps"].append({
+            "step": 4,
+            "name": "Create TradierDataFetcher (production)",
+            "success": False,
+            "error": str(e)
+        })
+        results["final_error"] = f"Step 4 failed: {e}"
+        return results
+
+    # Step 5: Fetch account balance
+    try:
+        balance = tradier.get_account_balance()
+        results["steps"].append({
+            "step": 5,
+            "name": "Fetch account balance",
+            "success": bool(balance),
+            "balance": balance
+        })
+        if balance:
+            results["success"] = True
+            results["final_balance"] = balance.get('total_equity', 0)
+        else:
+            results["final_error"] = "Empty balance response"
+    except Exception as e:
+        import traceback
+        results["steps"].append({
+            "step": 5,
+            "name": "Fetch account balance",
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        })
+        results["final_error"] = f"Step 5 failed: {e}"
+
+    return results
+
+
 @router.get("/status")
 async def get_ares_status():
     """
