@@ -21,6 +21,22 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 
+def _to_python(val):
+    """Convert numpy types to native Python types for database insertion"""
+    if val is None:
+        return None
+    type_name = type(val).__name__
+    if 'float' in type_name or 'Float' in type_name:
+        return float(val)
+    if 'int' in type_name or 'Int' in type_name:
+        return int(val)
+    if 'bool' in type_name:
+        return bool(val)
+    if hasattr(val, 'item'):
+        return val.item()
+    return val
+
+
 @contextmanager
 def db_connection():
     conn = None

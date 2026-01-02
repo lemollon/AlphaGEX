@@ -25,6 +25,26 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 
+def _to_python(val):
+    """Convert numpy types to native Python types for database insertion"""
+    if val is None:
+        return None
+    # Handle numpy types
+    type_name = type(val).__name__
+    if 'float' in type_name or 'Float' in type_name:
+        return float(val)
+    if 'int' in type_name or 'Int' in type_name:
+        return int(val)
+    if 'bool' in type_name:
+        return bool(val)
+    if 'str' in type_name:
+        return str(val)
+    # Check for numpy array scalar
+    if hasattr(val, 'item'):
+        return val.item()
+    return val
+
+
 @contextmanager
 def db_connection():
     """Context manager for database connections"""
@@ -257,14 +277,15 @@ class ARESDatabase:
                     )
                 """, (
                     pos.position_id, pos.ticker, pos.expiration,
-                    pos.put_short_strike, pos.put_long_strike, pos.put_credit,
-                    pos.call_short_strike, pos.call_long_strike, pos.call_credit,
-                    pos.contracts, pos.spread_width, pos.total_credit, pos.max_loss, pos.max_profit,
-                    pos.underlying_at_entry, pos.vix_at_entry or None, pos.expected_move or None,
-                    pos.call_wall or None, pos.put_wall or None, pos.gex_regime or None,
-                    pos.flip_point or None, pos.net_gex or None,
-                    pos.oracle_confidence or None, pos.oracle_win_probability or None, pos.oracle_advice or None,
-                    pos.oracle_reasoning or None, pos.oracle_top_factors or None, pos.oracle_use_gex_walls,
+                    _to_python(pos.put_short_strike), _to_python(pos.put_long_strike), _to_python(pos.put_credit),
+                    _to_python(pos.call_short_strike), _to_python(pos.call_long_strike), _to_python(pos.call_credit),
+                    _to_python(pos.contracts), _to_python(pos.spread_width), _to_python(pos.total_credit),
+                    _to_python(pos.max_loss), _to_python(pos.max_profit),
+                    _to_python(pos.underlying_at_entry), _to_python(pos.vix_at_entry), _to_python(pos.expected_move),
+                    _to_python(pos.call_wall), _to_python(pos.put_wall), pos.gex_regime or None,
+                    _to_python(pos.flip_point), _to_python(pos.net_gex),
+                    _to_python(pos.oracle_confidence), _to_python(pos.oracle_win_probability), pos.oracle_advice or None,
+                    pos.oracle_reasoning or None, pos.oracle_top_factors or None, bool(pos.oracle_use_gex_walls),
                     pos.put_order_id or None, pos.call_order_id or None,
                     pos.status.value, pos.open_time,
                 ))
@@ -425,9 +446,12 @@ class ARESDatabase:
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                 """, (
-                    spot_price, vix, expected_move, call_wall, put_wall,
-                    gex_regime, put_short, put_long, call_short, call_long,
-                    total_credit, confidence, was_executed, skip_reason, reasoning
+                    _to_python(spot_price), _to_python(vix), _to_python(expected_move),
+                    _to_python(call_wall), _to_python(put_wall),
+                    gex_regime, _to_python(put_short), _to_python(put_long),
+                    _to_python(call_short), _to_python(call_long),
+                    _to_python(total_credit), _to_python(confidence),
+                    was_executed, skip_reason, reasoning
                 ))
                 signal_id = c.fetchone()[0]
                 conn.commit()
