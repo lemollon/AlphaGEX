@@ -62,8 +62,16 @@ except ImportError:
     LEARNING_MEMORY_AVAILABLE = False
     get_learning_memory = None
 
+# Math Optimizer integration for enhanced trading decisions
+try:
+    from trading.mixins.math_optimizer_mixin import MathOptimizerMixin
+    MATH_OPTIMIZER_AVAILABLE = True
+except ImportError:
+    MATH_OPTIMIZER_AVAILABLE = False
+    MathOptimizerMixin = object  # Fallback to empty base class
 
-class ATHENATrader:
+
+class ATHENATrader(MathOptimizerMixin):
     """
     ATHENA V2 - Clean, modular directional spread trader.
 
@@ -90,6 +98,11 @@ class ATHENATrader:
 
         # Learning Memory prediction tracking (position_id -> prediction_id)
         self._prediction_ids: Dict[str, str] = {}
+
+        # Initialize Math Optimizers (HMM, Kalman, Thompson, Convex, HJB, MDP)
+        if MATH_OPTIMIZER_AVAILABLE:
+            self._init_math_optimizers("ATHENA", enabled=True)
+            logger.info("ATHENA: Math optimizers enabled (HMM, Kalman, Thompson, Convex, HJB, MDP)")
 
         logger.info(
             f"ATHENA V2 initialized: mode={self.config.mode.value}, "
@@ -288,6 +301,13 @@ class ATHENATrader:
                         except Exception:
                             pass
 
+                    # MATH OPTIMIZER: Record outcome for Thompson Sampling
+                    if MATH_OPTIMIZER_AVAILABLE and hasattr(self, 'math_record_outcome'):
+                        try:
+                            self.math_record_outcome(win=(pnl > 0), pnl=pnl)
+                        except Exception as e:
+                            logger.debug(f"Thompson outcome recording skipped: {e}")
+
                     self.db.log("INFO", f"Closed {pos.position_id}: {reason}, P&L=${pnl:.2f}")
 
         return closed_count, total_pnl
@@ -400,6 +420,8 @@ class ATHENATrader:
 
         Returns (should_close, reason).
         """
+        from datetime import timedelta
+
         # Expiration check
         if pos.expiration <= today:
             return True, "EXPIRED"
@@ -419,7 +441,32 @@ class ATHENATrader:
         entry_cost = pos.entry_debit
         pnl_pct = ((current_value - entry_cost) / entry_cost) * 100 if entry_cost > 0 else 0
 
-        # Profit target (50% of max profit)
+        # MATH OPTIMIZER: Use HJB for dynamic exit timing
+        if MATH_OPTIMIZER_AVAILABLE and hasattr(self, '_math_enabled') and self._math_enabled:
+            try:
+                current_pnl = current_value - entry_cost
+                max_profit = pos.spread_width - entry_cost
+
+                expiry_time = now.replace(hour=16, minute=0, second=0)
+                entry_time = pos.entry_time if hasattr(pos, 'entry_time') else now - timedelta(hours=2)
+
+                hjb_result = self.math_should_exit(
+                    current_pnl=current_pnl,
+                    max_profit=max_profit,
+                    entry_time=entry_time,
+                    expiry_time=expiry_time,
+                    current_volatility=0.15
+                )
+
+                if hjb_result.get('should_exit') and hjb_result.get('optimized'):
+                    reason = hjb_result.get('reason', 'HJB_OPTIMAL_EXIT')
+                    self.db.log("INFO", f"HJB exit signal: {reason}")
+                    return True, f"HJB_OPTIMAL_{hjb_result.get('pnl_pct', 0)*100:.0f}%"
+
+            except Exception as e:
+                logger.debug(f"HJB exit check skipped: {e}")
+
+        # Fallback: Standard profit target (50% of max profit)
         max_profit_value = pos.spread_width  # Max value at expiration
         profit_target = entry_cost + (max_profit_value - entry_cost) * (self.config.profit_target_pct / 100)
         if current_value >= profit_target:
@@ -449,6 +496,18 @@ class ATHENATrader:
         """
         from typing import Any
 
+        # MATH OPTIMIZER: Check regime before generating signal
+        if MATH_OPTIMIZER_AVAILABLE and hasattr(self, '_math_enabled') and self._math_enabled:
+            try:
+                market_data = self.signals.get_market_snapshot() if hasattr(self.signals, 'get_market_snapshot') else {}
+                if market_data:
+                    should_trade, regime_reason = self.math_should_trade_regime(market_data)
+                    if not should_trade:
+                        self.db.log("INFO", f"Math optimizer regime gate: {regime_reason}")
+                        return None, None
+            except Exception as e:
+                logger.debug(f"Regime check skipped: {e}")
+
         # Generate signal
         signal = self.signals.generate_signal()
         if not signal:
@@ -458,6 +517,15 @@ class ATHENATrader:
         if not signal.is_valid:
             self.db.log("INFO", f"Signal invalid: {signal.reasoning}")
             return None, signal  # Return signal for logging even if invalid
+
+        # MATH OPTIMIZER: Smooth Greeks if available
+        if MATH_OPTIMIZER_AVAILABLE and hasattr(self, '_math_enabled') and self._math_enabled:
+            try:
+                if hasattr(signal, 'greeks') and signal.greeks:
+                    smoothed = self.math_smooth_greeks(signal.greeks)
+                    logger.debug(f"ATHENA: Smoothed Greeks applied")
+            except Exception as e:
+                logger.debug(f"Greeks smoothing skipped: {e}")
 
         # Log the signal
         self.db.log_signal(

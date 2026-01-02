@@ -145,6 +145,14 @@ except ImportError:
     TradeOutcome = None
     OracleBotName = None
 
+# Math Optimizer integration for enhanced trading decisions
+try:
+    from trading.mixins.math_optimizer_mixin import MathOptimizerMixin
+    MATH_OPTIMIZER_AVAILABLE = True
+except ImportError:
+    MATH_OPTIMIZER_AVAILABLE = False
+    MathOptimizerMixin = object
+
 logger = logging.getLogger(__name__)
 
 
@@ -551,7 +559,7 @@ class SPXWheelOptimizer:
             return {'is_robust': True, 'degradation_pct': 0, 'recommendation': 'ERROR'}
 
 
-class SPXWheelTrader:
+class SPXWheelTrader(MathOptimizerMixin):
     """
     SPX wheel trader using calibrated parameters.
 
@@ -564,6 +572,11 @@ class SPXWheelTrader:
     - Executes trades on SPX (paper or live)
     - Manages positions
     - Tracks performance vs backtest
+
+    MATH OPTIMIZER INTEGRATION:
+    - HMM Regime Detection: Bayesian regime filtering
+    - Thompson Sampling: Dynamic capital allocation
+    - HJB Exit Optimizer: Optimal exit timing
     """
 
     def __init__(
@@ -612,6 +625,14 @@ class SPXWheelTrader:
                 logger.info("ATLAS: Oracle AI advisor initialized")
             except Exception as e:
                 logger.warning(f"ATLAS: Failed to initialize Oracle AI: {e}")
+
+        # Initialize Math Optimizers (HMM, Thompson Sampling, HJB Exit, etc.)
+        if MATH_OPTIMIZER_AVAILABLE:
+            try:
+                self._init_math_optimizers("ATLAS", enabled=True)
+                logger.info("ATLAS: Math optimizers initialized (HMM, Thompson, HJB)")
+            except Exception as e:
+                logger.warning(f"ATLAS: Math optimizer init failed: {e}")
 
         self._ensure_tables()
 
@@ -1017,6 +1038,33 @@ class SPXWheelTrader:
                     vix=vix
                 )
                 return False, reason
+
+        # =========================================================================
+        # MATH OPTIMIZER: HMM REGIME CHECK - Bayesian market regime detection
+        # =========================================================================
+        if MATH_OPTIMIZER_AVAILABLE and hasattr(self, '_math_enabled') and self._math_enabled:
+            try:
+                market_data = {
+                    'spot_price': spot,
+                    'vix': vix,
+                    'symbol': 'SPX'
+                }
+                should_trade, regime_reason = self.math_should_trade_regime(market_data)
+                if not should_trade:
+                    reason = f"Math optimizer regime gate: {regime_reason}"
+                    print(f"  📊 {reason}")
+                    self._log_decision(
+                        decision_type="NO_TRADE",
+                        action="SKIP",
+                        what="NO TRADE - HMM regime unfavorable",
+                        why=f"Hidden Markov Model detected unfavorable regime. {regime_reason}",
+                        how="Bayesian regime detection via HMM indicated high-risk market conditions.",
+                        spot_price=spot,
+                        vix=vix
+                    )
+                    return False, reason
+            except Exception as e:
+                logger.debug(f"ATLAS: HMM regime check skipped: {e}")
 
         # Check market calendar (includes earnings & FOMC)
         if CALENDAR_AVAILABLE and self.params.avoid_earnings:
@@ -1843,6 +1891,14 @@ class SPXWheelTrader:
             if CIRCUIT_BREAKER_AVAILABLE:
                 record_trade_pnl(pnl)
                 logger.info(f"Recorded P&L ${pnl:.2f} to circuit breaker (reason: {reason})")
+
+            # MATH OPTIMIZER: Record outcome for Thompson Sampling
+            if MATH_OPTIMIZER_AVAILABLE and hasattr(self, 'math_record_outcome'):
+                try:
+                    self.math_record_outcome(win=(pnl > 0), pnl=pnl)
+                    logger.debug(f"ATLAS: Thompson outcome recorded: win={pnl > 0}, pnl=${pnl:.2f}")
+                except Exception as e:
+                    logger.debug(f"ATLAS: Thompson outcome recording skipped: {e}")
 
             # Log decision with COMPLETE trade data
             spot = self._get_spx_price() or 0

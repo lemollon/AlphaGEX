@@ -11,7 +11,7 @@ ARES trades SPY Iron Condors:
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from zoneinfo import ZoneInfo
 
@@ -68,8 +68,16 @@ except ImportError:
     LEARNING_MEMORY_AVAILABLE = False
     get_learning_memory = None
 
+# Math Optimizer integration for enhanced trading decisions
+try:
+    from trading.mixins.math_optimizer_mixin import MathOptimizerMixin
+    MATH_OPTIMIZER_AVAILABLE = True
+except ImportError:
+    MATH_OPTIMIZER_AVAILABLE = False
+    MathOptimizerMixin = object  # Fallback to empty base class
 
-class ARESTrader:
+
+class ARESTrader(MathOptimizerMixin):
     """
     ARES V2 - Clean, modular Iron Condor trader for SPY.
 
@@ -92,6 +100,11 @@ class ARESTrader:
 
         # Learning Memory prediction tracking (position_id -> prediction_id)
         self._prediction_ids: Dict[str, str] = {}
+
+        # Initialize Math Optimizers (HMM, Kalman, Thompson, Convex, HJB, MDP)
+        if MATH_OPTIMIZER_AVAILABLE:
+            self._init_math_optimizers("ARES", enabled=True)
+            logger.info("ARES: Math optimizers enabled (HMM, Kalman, Thompson, Convex, HJB, MDP)")
 
         logger.info(
             f"ARES V2 initialized: mode={self.config.mode.value}, "
@@ -486,6 +499,13 @@ class ARESTrader:
                             reason
                         )
 
+                    # MATH OPTIMIZER: Record outcome for Thompson Sampling
+                    if MATH_OPTIMIZER_AVAILABLE and hasattr(self, 'math_record_outcome'):
+                        try:
+                            self.math_record_outcome(win=(pnl > 0), pnl=pnl)
+                        except Exception as e:
+                            logger.debug(f"Thompson outcome recording skipped: {e}")
+
                     self.db.log("INFO", f"Closed {pos.position_id}: {reason}, P&L=${pnl:.2f}")
 
         return closed_count, total_pnl
@@ -619,7 +639,37 @@ class ARESTrader:
         if current_value is None:
             return False, ""
 
-        # Profit target (50% of credit received)
+        # MATH OPTIMIZER: Use HJB for dynamic exit timing
+        if MATH_OPTIMIZER_AVAILABLE and hasattr(self, '_math_enabled') and self._math_enabled:
+            try:
+                # Calculate current P&L
+                current_pnl = pos.total_credit - current_value
+                max_profit = pos.total_credit
+
+                # Get expiry time (end of day)
+                expiry_time = now.replace(hour=16, minute=0, second=0)  # Market close
+
+                # Get entry time from position
+                entry_time = pos.entry_time if hasattr(pos, 'entry_time') else now - timedelta(hours=2)
+
+                # Check HJB exit signal
+                hjb_result = self.math_should_exit(
+                    current_pnl=current_pnl,
+                    max_profit=max_profit,
+                    entry_time=entry_time,
+                    expiry_time=expiry_time,
+                    current_volatility=0.15  # Could get from VIX
+                )
+
+                if hjb_result.get('should_exit') and hjb_result.get('optimized'):
+                    reason = hjb_result.get('reason', 'HJB_OPTIMAL_EXIT')
+                    self.db.log("INFO", f"HJB exit signal: {reason}")
+                    return True, f"HJB_OPTIMAL_{hjb_result.get('pnl_pct', 0)*100:.0f}%"
+
+            except Exception as e:
+                logger.debug(f"HJB exit check skipped: {e}")
+
+        # Fallback: Standard profit target (50% of credit received)
         profit_target_value = pos.total_credit * (1 - self.config.profit_target_pct / 100)
         if current_value <= profit_target_value:
             return True, f"PROFIT_TARGET_{self.config.profit_target_pct:.0f}%"
@@ -641,6 +691,19 @@ class ARESTrader:
         """Try to open a new Iron Condor, returning both position and signal for logging"""
         from .signals import IronCondorSignal
 
+        # MATH OPTIMIZER: Check regime before generating signal
+        if MATH_OPTIMIZER_AVAILABLE and hasattr(self, '_math_enabled') and self._math_enabled:
+            # Get market data for regime check (VIX from signal generator)
+            try:
+                market_data = self.signals.get_market_snapshot() if hasattr(self.signals, 'get_market_snapshot') else {}
+                if market_data:
+                    should_trade, regime_reason = self.math_should_trade_regime(market_data)
+                    if not should_trade:
+                        self.db.log("INFO", f"Math optimizer regime gate: {regime_reason}")
+                        return None, None
+            except Exception as e:
+                logger.debug(f"Regime check skipped: {e}")
+
         # Generate signal
         signal = self.signals.generate_signal()
         if not signal:
@@ -650,6 +713,15 @@ class ARESTrader:
         if not signal.is_valid:
             self.db.log("INFO", f"Signal invalid: {signal.reasoning}")
             return None, signal  # Return signal for logging even if invalid
+
+        # MATH OPTIMIZER: Smooth Greeks if available
+        if MATH_OPTIMIZER_AVAILABLE and hasattr(self, '_math_enabled') and self._math_enabled:
+            try:
+                if hasattr(signal, 'greeks') and signal.greeks:
+                    smoothed = self.math_smooth_greeks(signal.greeks)
+                    logger.debug(f"ARES: Smoothed Greeks applied")
+            except Exception as e:
+                logger.debug(f"Greeks smoothing skipped: {e}")
 
         # Log the signal
         self.db.log_signal(

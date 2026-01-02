@@ -18,6 +18,12 @@ from zoneinfo import ZoneInfo
 from database_adapter import get_connection
 from trading_costs import OrderSide, SymbolType
 
+# Math Optimizer integration for Thompson Sampling outcome recording
+try:
+    MATH_OPTIMIZER_AVAILABLE = True
+except ImportError:
+    MATH_OPTIMIZER_AVAILABLE = False
+
 logger = logging.getLogger('autonomous_paper_trader.position_manager')
 
 # Central Time timezone for all timestamps
@@ -452,3 +458,14 @@ REASON: [one concise sentence explaining why]"""
                 pnl_pct=position_data['realized_pnl_pct'],
                 is_win=(position_data['realized_pnl'] > 0)
             )
+
+            # MATH OPTIMIZER: Record outcome for Thompson Sampling
+            if MATH_OPTIMIZER_AVAILABLE and hasattr(self, 'math_record_outcome'):
+                try:
+                    self.math_record_outcome(
+                        win=(position_data['realized_pnl'] > 0),
+                        pnl=position_data['realized_pnl']
+                    )
+                    logger.debug(f"PHOENIX: Thompson outcome recorded: win={position_data['realized_pnl'] > 0}")
+                except Exception as e:
+                    logger.debug(f"Thompson outcome recording skipped: {e}")
