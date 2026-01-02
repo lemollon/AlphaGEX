@@ -236,7 +236,7 @@ def _get_tradier_account_balance() -> dict:
     """
     Get account balance from Tradier API.
 
-    ARES is in LIVE mode - always fetch PRODUCTION account balance.
+    ARES uses SANDBOX Tradier account for trading.
 
     Returns dict with:
     - total_equity: Account total value
@@ -253,21 +253,14 @@ def _get_tradier_account_balance() -> dict:
         # Try to get API config
         from unified_config import APIConfig
 
-        # ARES is in LIVE mode - ALWAYS use production Tradier account
-        # This ensures the dashboard shows the same balance ARES is trading with
-        use_sandbox = False  # ARES LIVE mode = production Tradier
+        # ARES uses SANDBOX Tradier account
+        use_sandbox = True  # ARES uses sandbox account
 
-        # Production mode: use TRADIER_PROD_* credentials (the ones set on Render)
-        # Use the helper method which checks TRADIER_PROD_* first
-        api_key, account_id = APIConfig.get_tradier_prod_credentials()
+        # Use SANDBOX credentials (TRADIER_SANDBOX_*)
+        api_key = APIConfig.TRADIER_SANDBOX_API_KEY
+        account_id = APIConfig.TRADIER_SANDBOX_ACCOUNT_ID
 
-        # Double-check: directly read TRADIER_PROD_* if helper returned None
-        if not api_key:
-            api_key = APIConfig.TRADIER_PROD_API_KEY
-        if not account_id:
-            account_id = APIConfig.TRADIER_PROD_ACCOUNT_ID
-
-        logger.info(f"Tradier balance fetch: mode=PRODUCTION (ARES LIVE), api_key={'SET' if api_key else 'NOT SET'}, account_id={account_id}")
+        logger.info(f"Tradier balance fetch: mode=SANDBOX (ARES), api_key={'SET' if api_key else 'NOT SET'}, account_id={account_id}")
 
         if not api_key or not account_id:
             logger.warning("No Tradier credentials available for balance fetch")
@@ -344,47 +337,43 @@ async def diagnose_tradier_connection():
         results["final_error"] = f"Step 2 failed: {e}"
         return results
 
-    # Step 3: Check credentials
-    api_key = getattr(APIConfig, 'TRADIER_API_KEY', None)
-    account_id = getattr(APIConfig, 'TRADIER_ACCOUNT_ID', None)
-    prod_api_key = getattr(APIConfig, 'TRADIER_PROD_API_KEY', None)
-    prod_account_id = getattr(APIConfig, 'TRADIER_PROD_ACCOUNT_ID', None)
+    # Step 3: Check SANDBOX credentials (ARES uses sandbox account)
+    sandbox_api_key = getattr(APIConfig, 'TRADIER_SANDBOX_API_KEY', None)
+    sandbox_account_id = getattr(APIConfig, 'TRADIER_SANDBOX_ACCOUNT_ID', None)
 
     results["steps"].append({
         "step": 3,
-        "name": "Check credentials",
-        "success": bool(api_key or prod_api_key),
-        "TRADIER_API_KEY": "SET" if api_key else "NOT SET",
-        "TRADIER_ACCOUNT_ID": account_id[:4] + "..." if account_id else "NOT SET",
-        "TRADIER_PROD_API_KEY": "SET" if prod_api_key else "NOT SET",
-        "TRADIER_PROD_ACCOUNT_ID": prod_account_id[:4] + "..." if prod_account_id else "NOT SET"
+        "name": "Check SANDBOX credentials (ARES uses sandbox)",
+        "success": bool(sandbox_api_key and sandbox_account_id),
+        "TRADIER_SANDBOX_API_KEY": "SET" if sandbox_api_key else "NOT SET",
+        "TRADIER_SANDBOX_ACCOUNT_ID": sandbox_account_id[:4] + "..." if sandbox_account_id else "NOT SET"
     })
 
-    # Use PROD credentials first (the ones set on Render), then fallback to generic
-    final_api_key = prod_api_key or api_key
-    final_account_id = prod_account_id or account_id
+    # ARES uses SANDBOX credentials
+    final_api_key = sandbox_api_key
+    final_account_id = sandbox_account_id
 
     if not final_api_key or not final_account_id:
-        results["final_error"] = "No Tradier credentials configured"
+        results["final_error"] = "No SANDBOX Tradier credentials configured"
         return results
 
-    # Step 4: Create TradierDataFetcher with production mode
+    # Step 4: Create TradierDataFetcher with SANDBOX mode
     try:
         tradier = TradierDataFetcher(
             api_key=final_api_key,
             account_id=final_account_id,
-            sandbox=False  # Production mode
+            sandbox=True  # ARES uses SANDBOX
         )
         results["steps"].append({
             "step": 4,
-            "name": "Create TradierDataFetcher (production)",
+            "name": "Create TradierDataFetcher (SANDBOX)",
             "success": True,
             "sandbox_mode": tradier.sandbox if hasattr(tradier, 'sandbox') else "unknown"
         })
     except Exception as e:
         results["steps"].append({
             "step": 4,
-            "name": "Create TradierDataFetcher (production)",
+            "name": "Create TradierDataFetcher (SANDBOX)",
             "success": False,
             "error": str(e)
         })
