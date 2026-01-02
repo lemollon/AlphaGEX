@@ -74,14 +74,27 @@ except ImportError:
     LEARNING_MEMORY_AVAILABLE = False
     get_learning_memory = None
 
+# Math Optimizer integration for enhanced trading decisions
+try:
+    from trading.mixins.math_optimizer_mixin import MathOptimizerMixin
+    MATH_OPTIMIZER_AVAILABLE = True
+except ImportError:
+    MATH_OPTIMIZER_AVAILABLE = False
+    MathOptimizerMixin = object
 
-class PEGASUSTrader:
+
+class PEGASUSTrader(MathOptimizerMixin):
     """
     PEGASUS - SPX Iron Condor Trader
 
     Usage:
         trader = PEGASUSTrader()
         result = trader.run_cycle()
+
+    MATH OPTIMIZER INTEGRATION:
+    - HMM Regime Detection: Bayesian regime filtering
+    - Thompson Sampling: Dynamic capital allocation
+    - HJB Exit Optimizer: Optimal exit timing
     """
 
     def __init__(self, config: Optional[PEGASUSConfig] = None):
@@ -92,6 +105,14 @@ class PEGASUSTrader:
 
         # Learning Memory prediction tracking (position_id -> prediction_id)
         self._prediction_ids: Dict[str, str] = {}
+
+        # Initialize Math Optimizers (HMM, Thompson Sampling, HJB Exit)
+        if MATH_OPTIMIZER_AVAILABLE:
+            try:
+                self._init_math_optimizers("PEGASUS", enabled=True)
+                logger.info("PEGASUS: Math optimizers initialized (HMM, Thompson, HJB)")
+            except Exception as e:
+                logger.warning(f"PEGASUS: Math optimizer init failed: {e}")
 
         logger.info(f"PEGASUS initialized: mode={self.config.mode.value}, preset={self.config.preset.value}")
 
@@ -344,6 +365,13 @@ class PEGASUSTrader:
                             reason
                         )
 
+                    # MATH OPTIMIZER: Record outcome for Thompson Sampling
+                    if MATH_OPTIMIZER_AVAILABLE and hasattr(self, 'math_record_outcome'):
+                        try:
+                            self.math_record_outcome(win=(pnl > 0), pnl=pnl)
+                        except Exception as e:
+                            logger.debug(f"Thompson outcome recording skipped: {e}")
+
         return closed, total_pnl
 
     def _record_oracle_outcome(self, pos: IronCondorPosition, close_reason: str, pnl: float):
@@ -479,6 +507,18 @@ class PEGASUSTrader:
     def _try_entry_with_context(self) -> tuple[Optional[IronCondorPosition], Optional[Any]]:
         """Try to open a new Iron Condor, returning both position and signal for logging"""
         from typing import Any
+
+        # MATH OPTIMIZER: Check regime before generating signal
+        if MATH_OPTIMIZER_AVAILABLE and hasattr(self, '_math_enabled') and self._math_enabled:
+            try:
+                market_data = self.signals.get_market_snapshot() if hasattr(self.signals, 'get_market_snapshot') else {}
+                if market_data:
+                    should_trade, regime_reason = self.math_should_trade_regime(market_data)
+                    if not should_trade:
+                        self.db.log("INFO", f"Math optimizer regime gate: {regime_reason}")
+                        return None, None
+            except Exception as e:
+                logger.debug(f"Regime check skipped: {e}")
 
         signal = self.signals.generate_signal()
         if not signal:

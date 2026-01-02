@@ -69,6 +69,7 @@ from backend.api.routes import (
     solomon_routes,  # SOLOMON - Feedback Loop Intelligence System for bot learning
     events_routes,  # Trading Events - auto-detected events for equity curves
     oracle_routes,  # ORACLE - ML Advisory System for strategy recommendations
+    math_optimizer_routes,  # Mathematical Optimization - HMM, Kalman, Thompson, Convex, HJB, MDP algorithms
 )
 
 # ============================================================================
@@ -304,7 +305,8 @@ app.include_router(docs_routes.router)
 app.include_router(solomon_routes.router)
 app.include_router(events_routes.router)
 app.include_router(oracle_routes.router)
-print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, ares, daily-manna, prometheus, argus, docs, solomon, events, oracle")
+app.include_router(math_optimizer_routes.router)
+print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, ares, daily-manna, prometheus, argus, docs, solomon, events, oracle, math-optimizer")
 
 # Initialize existing AlphaGEX components (singleton pattern)
 # Only instantiate if import succeeded

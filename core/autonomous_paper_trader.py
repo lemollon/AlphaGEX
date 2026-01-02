@@ -45,6 +45,14 @@ from trading.mixins import (
     RiskManagerMixin
 )
 
+# Math Optimizer integration for enhanced trading decisions
+try:
+    from trading.mixins.math_optimizer_mixin import MathOptimizerMixin
+    MATH_OPTIMIZER_AVAILABLE = True
+except ImportError:
+    MATH_OPTIMIZER_AVAILABLE = False
+    MathOptimizerMixin = object
+
 # Configure structured logging for autonomous trader
 logger = logging.getLogger('autonomous_paper_trader')
 
@@ -362,6 +370,7 @@ def find_liquid_strike(symbol: str, base_strike: float, option_type: str, expira
 
 
 class AutonomousPaperTrader(
+    MathOptimizerMixin,
     PositionSizerMixin,
     TradeExecutorMixin,
     PositionManagerMixin,
@@ -373,10 +382,17 @@ class AutonomousPaperTrader(
     Finds and executes trades automatically every market day
 
     Inherits from modular mixins:
+    - MathOptimizerMixin: HMM, Thompson Sampling, HJB Exit, Kalman filters
     - PositionSizerMixin: Kelly criterion position sizing
     - TradeExecutorMixin: Strategy execution (spreads, iron condors)
     - PositionManagerMixin: Exit logic, position management
     - PerformanceTrackerMixin: Equity snapshots, statistics
+
+    MATH OPTIMIZER INTEGRATION (PHOENIX):
+    - HMM Regime Detection: Bayesian regime filtering for 0DTE entries
+    - Thompson Sampling: Dynamic capital allocation across strategies
+    - HJB Exit Optimizer: Optimal exit timing for short-dated options
+    - Kalman Filter: Smoothing noisy intraday Greeks
     """
 
     def __init__(self, symbol: str = 'SPY', capital: float = 1_000_000):
@@ -462,6 +478,14 @@ class AutonomousPaperTrader(
         else:
             self.regime_classifier = None
             self.iv_history = []
+
+        # Initialize Math Optimizers (HMM, Thompson Sampling, HJB Exit, Kalman)
+        if MATH_OPTIMIZER_AVAILABLE:
+            try:
+                self._init_math_optimizers("PHOENIX", enabled=True)
+                print("✅ Math optimizers initialized (HMM, Thompson, HJB, Kalman)")
+            except Exception as e:
+                print(f"⚠️ Math optimizer init failed: {e}")
 
         # Initialize if first run
         conn = get_connection()
@@ -732,6 +756,27 @@ class AutonomousPaperTrader(
 
         if today_pnl < -daily_loss_limit:
             return False  # Daily loss limit exceeded
+
+        # MATH OPTIMIZER: HMM Regime Check - Bayesian market regime detection
+        if MATH_OPTIMIZER_AVAILABLE and hasattr(self, '_math_enabled') and self._math_enabled:
+            try:
+                # Get current market data for regime check
+                spot = None
+                vix = None
+                if UNIFIED_DATA_AVAILABLE:
+                    try:
+                        spot = get_price(self.symbol)
+                        vix = get_vix()
+                    except Exception:
+                        pass
+                if spot and vix:
+                    market_data = {'spot_price': spot, 'vix': vix, 'symbol': self.symbol}
+                    should_trade, regime_reason = self.math_should_trade_regime(market_data)
+                    if not should_trade:
+                        logger.info(f"PHOENIX: Math optimizer regime gate: {regime_reason}")
+                        return False
+            except Exception as e:
+                logger.debug(f"PHOENIX: HMM regime check skipped: {e}")
 
         # All risk checks passed - can trade
         return True
