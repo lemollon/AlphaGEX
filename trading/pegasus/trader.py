@@ -110,7 +110,14 @@ class PEGASUSTrader(MathOptimizerMixin):
         if MATH_OPTIMIZER_AVAILABLE:
             try:
                 self._init_math_optimizers("PEGASUS", enabled=True)
-                logger.info("PEGASUS: Math optimizers initialized (HMM, Thompson, HJB)")
+                # Override regime config for Iron Condors - ICs need PINNED prices, not trending
+                # LOW_VOLATILITY and MEAN_REVERTING are ideal for ICs
+                # TRENDING regimes are BAD for ICs (price moves directionally)
+                self.math_set_config('favorable_regimes', ['LOW_VOLATILITY', 'MEAN_REVERTING'])
+                self.math_set_config('avoid_regimes', ['HIGH_VOLATILITY', 'GAMMA_SQUEEZE', 'TRENDING_BULLISH', 'TRENDING_BEARISH'])
+                # Lower regime confidence threshold to avoid over-filtering
+                self.math_set_config('min_regime_confidence', 0.50)
+                logger.info("PEGASUS: Math optimizers initialized with IC-optimized regime config")
             except Exception as e:
                 logger.warning(f"PEGASUS: Math optimizer init failed: {e}")
 
@@ -509,7 +516,8 @@ class PEGASUSTrader(MathOptimizerMixin):
         # MATH OPTIMIZER: Check regime before generating signal
         if MATH_OPTIMIZER_AVAILABLE and hasattr(self, '_math_enabled') and self._math_enabled:
             try:
-                market_data = self.signals.get_market_snapshot() if hasattr(self.signals, 'get_market_snapshot') else {}
+                # Use get_market_data() - the correct method name in SignalGenerator
+                market_data = self.signals.get_market_data()
                 if market_data:
                     should_trade, regime_reason = self.math_should_trade_regime(market_data)
                     if not should_trade:
