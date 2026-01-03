@@ -110,14 +110,16 @@ class PEGASUSTrader(MathOptimizerMixin):
         if MATH_OPTIMIZER_AVAILABLE:
             try:
                 self._init_math_optimizers("PEGASUS", enabled=True)
-                # Override regime config for Iron Condors - ICs need PINNED prices, not trending
-                # LOW_VOLATILITY and MEAN_REVERTING are ideal for ICs
-                # TRENDING regimes are BAD for ICs (price moves directionally)
-                self.math_set_config('favorable_regimes', ['LOW_VOLATILITY', 'MEAN_REVERTING'])
-                self.math_set_config('avoid_regimes', ['HIGH_VOLATILITY', 'GAMMA_SQUEEZE', 'TRENDING_BULLISH', 'TRENDING_BEARISH'])
-                # Lower regime confidence threshold to avoid over-filtering
-                self.math_set_config('min_regime_confidence', 0.50)
-                logger.info("PEGASUS: Math optimizers initialized with IC-optimized regime config")
+                # PEGASUS positions strikes OUTSIDE the expected move, so trending regimes
+                # should NOT block trades - the market can trend and still stay in profit zone
+                # Allow ALL regimes - only avoid extreme gamma squeeze conditions
+                self.math_set_config('favorable_regimes', [
+                    'LOW_VOLATILITY', 'MEAN_REVERTING', 'TRENDING_BULLISH',
+                    'TRENDING_BEARISH', 'HIGH_VOLATILITY'
+                ])
+                self.math_set_config('avoid_regimes', ['GAMMA_SQUEEZE'])  # Only avoid extreme squeeze
+                self.math_set_config('min_regime_confidence', 0.40)  # Lower threshold
+                logger.info("PEGASUS: Math optimizers initialized - regime gate relaxed for outside-EM positioning")
             except Exception as e:
                 logger.warning(f"PEGASUS: Math optimizer init failed: {e}")
 
