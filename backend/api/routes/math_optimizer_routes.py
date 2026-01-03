@@ -1049,38 +1049,47 @@ async def get_recent_decisions(limit: int = Query(20, description="Number of dec
             logger.debug(f"Could not fetch from Solomon: {db_error}")
 
             # Return simulated decisions based on current state
-            optimizer = get_optimizer()
+            try:
+                optimizer = get_optimizer()
 
-            # Generate sample decisions from current state
-            decisions = []
-            regime_probs = optimizer.hmm_regime.get_regime_probabilities()
-            current_regime = max(regime_probs, key=regime_probs.get)
+                # Generate sample decisions from current state
+                decisions = []
+                regime_probs = optimizer.hmm_regime.get_regime_probabilities()
+                current_regime = max(regime_probs, key=regime_probs.get)
 
-            decisions.append({
-                'timestamp': datetime.now().isoformat(),
-                'bot': 'SYSTEM',
-                'action_type': 'HMM_REGIME_UPDATE',
-                'description': f"Current regime: {current_regime} ({regime_probs[current_regime]:.1%})",
-                'details': {'regime': current_regime, 'probability': regime_probs[current_regime]},
-                'success': True
-            })
-
-            for bot, rate in optimizer.thompson.get_expected_win_rates().items():
                 decisions.append({
                     'timestamp': datetime.now().isoformat(),
-                    'bot': bot,
-                    'action_type': 'THOMPSON_ALLOCATION',
-                    'description': f"{bot} expected win rate: {rate:.1%}",
-                    'details': {'expected_win_rate': rate},
+                    'bot': 'SYSTEM',
+                    'action_type': 'HMM_REGIME_UPDATE',
+                    'description': f"Current regime: {current_regime} ({regime_probs[current_regime]:.1%})",
+                    'details': {'regime': current_regime, 'probability': regime_probs[current_regime]},
                     'success': True
                 })
 
-            return {
-                "status": "success",
-                "count": len(decisions),
-                "decisions": decisions,
-                "note": "Live decisions - Solomon audit log not available"
-            }
+                for bot, rate in optimizer.thompson.get_expected_win_rates().items():
+                    decisions.append({
+                        'timestamp': datetime.now().isoformat(),
+                        'bot': bot,
+                        'action_type': 'THOMPSON_ALLOCATION',
+                        'description': f"{bot} expected win rate: {rate:.1%}",
+                        'details': {'expected_win_rate': rate},
+                        'success': True
+                    })
+
+                return {
+                    "status": "success",
+                    "count": len(decisions),
+                    "decisions": decisions,
+                    "note": "Live decisions - Solomon audit log not available"
+                }
+            except HTTPException:
+                # Optimizer not available, return empty decisions
+                return {
+                    "status": "degraded",
+                    "count": 0,
+                    "decisions": [],
+                    "note": "Math optimizer not available"
+                }
 
     except Exception as e:
         logger.error(f"Decisions fetch failed: {e}")
