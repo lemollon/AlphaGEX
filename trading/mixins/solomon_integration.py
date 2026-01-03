@@ -81,9 +81,14 @@ class SolomonIntegrationMixin:
         # Log initialization
         solomon = _get_solomon()
         if solomon:
-            logger.info(f"{bot_name}: Solomon integration initialized")
+            logger.info(f"[{bot_name} SOLOMON] Integration initialized successfully")
+            logger.info(f"[{bot_name} SOLOMON]   Kill switch monitoring: ENABLED")
+            logger.info(f"[{bot_name} SOLOMON]   Outcome recording: ENABLED")
+            logger.info(f"[{bot_name} SOLOMON]   Performance tracking: ENABLED")
         else:
-            logger.debug(f"{bot_name}: Solomon not available, running without feedback loop")
+            logger.warning(f"[{bot_name} SOLOMON] Integration NOT available - running without feedback loop")
+            logger.warning(f"[{bot_name} SOLOMON]   Kill switch monitoring: DISABLED")
+            logger.warning(f"[{bot_name} SOLOMON]   Outcome recording: DISABLED")
 
     def solomon_can_trade(self, cache_seconds: int = 60) -> bool:
         """
@@ -119,11 +124,15 @@ class SolomonIntegrationMixin:
             self._solomon_kill_check_time = now
 
             if is_killed:
-                logger.warning(f"{self._solomon_bot_name}: Kill switch is ACTIVE - trading blocked")
+                logger.warning(f"[{self._solomon_bot_name} SOLOMON] Kill switch is ACTIVE - trading BLOCKED")
+                logger.warning(f"[{self._solomon_bot_name} SOLOMON]   All trade entries will be prevented")
+            else:
+                logger.debug(f"[{self._solomon_bot_name} SOLOMON] Kill switch check: CLEAR - trading allowed")
 
             return not is_killed
         except Exception as e:
-            logger.debug(f"{self._solomon_bot_name}: Could not check kill switch: {e}")
+            logger.warning(f"[{self._solomon_bot_name} SOLOMON] Could not check kill switch: {e}")
+            logger.warning(f"[{self._solomon_bot_name} SOLOMON]   Defaulting to allow trading")
             return True  # Allow trading on error
 
     def solomon_record_outcome(
@@ -168,10 +177,16 @@ class SolomonIntegrationMixin:
                 }
             )
 
-            logger.info(f"{self._solomon_bot_name}: Outcome recorded to Solomon: {outcome} ${pnl:+,.2f}")
+            logger.info(f"[{self._solomon_bot_name} SOLOMON] Trade outcome recorded to feedback loop")
+            logger.info(f"[{self._solomon_bot_name} SOLOMON]   Date: {trade_date}")
+            logger.info(f"[{self._solomon_bot_name} SOLOMON]   Outcome: {outcome}")
+            logger.info(f"[{self._solomon_bot_name} SOLOMON]   P&L: ${pnl:+,.2f}")
+            if metadata:
+                logger.info(f"[{self._solomon_bot_name} SOLOMON]   Metadata: {list(metadata.keys())}")
             return True
         except Exception as e:
-            logger.debug(f"{self._solomon_bot_name}: Could not record outcome to Solomon: {e}")
+            logger.error(f"[{self._solomon_bot_name} SOLOMON] Failed to record outcome: {e}")
+            logger.error(f"[{self._solomon_bot_name} SOLOMON]   Trade details - Date: {trade_date}, Outcome: {outcome}, P&L: ${pnl:+,.2f}")
             return False
 
     def solomon_log_decision(
@@ -210,9 +225,14 @@ class SolomonIntegrationMixin:
                 reason=reason,
                 justification=context or {}
             )
+
+            logger.info(f"[{self._solomon_bot_name} SOLOMON] Decision logged: {decision_type}")
+            logger.info(f"[{self._solomon_bot_name} SOLOMON]   Description: {description}")
+            if reason:
+                logger.info(f"[{self._solomon_bot_name} SOLOMON]   Reason: {reason}")
             return True
         except Exception as e:
-            logger.debug(f"{self._solomon_bot_name}: Could not log decision to Solomon: {e}")
+            logger.warning(f"[{self._solomon_bot_name} SOLOMON] Could not log decision: {e}")
             return False
 
     def solomon_get_active_version(self) -> Optional[str]:
@@ -267,11 +287,16 @@ def check_solomon_kill_switch(bot_name: str) -> bool:
     """
     solomon = _get_solomon()
     if not solomon:
+        logger.debug(f"[{bot_name} SOLOMON] Kill switch check skipped - Solomon not available")
         return False  # Allow trading if Solomon not available
 
     try:
-        return solomon.is_bot_killed(bot_name)
-    except Exception:
+        is_killed = solomon.is_bot_killed(bot_name)
+        if is_killed:
+            logger.warning(f"[{bot_name} SOLOMON] Kill switch is ACTIVE via convenience function")
+        return is_killed
+    except Exception as e:
+        logger.warning(f"[{bot_name} SOLOMON] Kill switch check failed: {e}")
         return False
 
 
@@ -297,6 +322,7 @@ def record_bot_outcome(
     """
     solomon = _get_solomon()
     if not solomon:
+        logger.debug(f"[{bot_name} SOLOMON] Outcome not recorded - Solomon not available")
         return False
 
     try:
@@ -314,6 +340,10 @@ def record_bot_outcome(
                 **(metadata or {})
             }
         )
+
+        logger.info(f"[{bot_name} SOLOMON] Outcome recorded via convenience function")
+        logger.info(f"[{bot_name} SOLOMON]   Date: {trade_date} | Outcome: {outcome} | P&L: ${pnl:+,.2f}")
         return True
-    except Exception:
+    except Exception as e:
+        logger.error(f"[{bot_name} SOLOMON] Failed to record outcome: {e}")
         return False
