@@ -110,7 +110,16 @@ class PEGASUSTrader(MathOptimizerMixin):
         if MATH_OPTIMIZER_AVAILABLE:
             try:
                 self._init_math_optimizers("PEGASUS", enabled=True)
-                logger.info("PEGASUS: Math optimizers initialized (HMM, Thompson, HJB)")
+                # PEGASUS positions strikes OUTSIDE the expected move, so trending regimes
+                # should NOT block trades - the market can trend and still stay in profit zone
+                # Allow ALL regimes - only avoid extreme gamma squeeze conditions
+                self.math_set_config('favorable_regimes', [
+                    'LOW_VOLATILITY', 'MEAN_REVERTING', 'TRENDING_BULLISH',
+                    'TRENDING_BEARISH', 'HIGH_VOLATILITY'
+                ])
+                self.math_set_config('avoid_regimes', ['GAMMA_SQUEEZE'])  # Only avoid extreme squeeze
+                self.math_set_config('min_regime_confidence', 0.40)  # Lower threshold
+                logger.info("PEGASUS: Math optimizers initialized - regime gate relaxed for outside-EM positioning")
             except Exception as e:
                 logger.warning(f"PEGASUS: Math optimizer init failed: {e}")
 
@@ -178,8 +187,8 @@ class PEGASUSTrader(MathOptimizerMixin):
                         # Log that ATHENA would be better, but continue with reduced confidence
                         self.db.log("INFO", f"Oracle suggests ATHENA (directional): {strategy_rec.reasoning}")
                         result['details']['oracle_suggests_athena'] = True
-                        # Apply size reduction based on IC suitability
-                        if strategy_rec.ic_suitability < 0.4:
+                        # Apply size reduction based on IC suitability (use config threshold)
+                        if strategy_rec.ic_suitability < self.config.min_ic_suitability:
                             result['action'] = 'skip'
                             result['details']['skip_reason'] = f"IC suitability too low ({strategy_rec.ic_suitability:.0%}), consider ATHENA"
                             self._log_scan_activity(result, scan_context, skip_reason=f"Low IC suitability, consider ATHENA")
@@ -190,27 +199,26 @@ class PEGASUSTrader(MathOptimizerMixin):
             result['positions_closed'] = closed
             result['realized_pnl'] = pnl
 
-            # Try new entry
-            if not self.db.has_traded_today(today):
-                position, signal = self._try_entry_with_context()
-                if position:
-                    result['trade_opened'] = True
-                    result['action'] = 'opened'
-                    result['details']['position'] = position.to_dict()
-                    scan_context['position'] = position
-                if signal:
-                    scan_context['signal'] = signal
-                    scan_context['market_data'] = {
-                        'underlying_price': signal.spot_price,
-                        'symbol': 'SPX',
-                        'vix': signal.vix,
-                        'expected_move': signal.expected_move,
-                    }
-                    scan_context['gex_data'] = {
-                        'regime': signal.gex_regime,
-                        'call_wall': signal.call_wall,
-                        'put_wall': signal.put_wall,
-                    }
+            # Try new entry (position limits already checked in _check_conditions)
+            position, signal = self._try_entry_with_context()
+            if position:
+                result['trade_opened'] = True
+                result['action'] = 'opened'
+                result['details']['position'] = position.to_dict()
+                scan_context['position'] = position
+            if signal:
+                scan_context['signal'] = signal
+                scan_context['market_data'] = {
+                    'underlying_price': signal.spot_price,
+                    'symbol': 'SPX',
+                    'vix': signal.vix,
+                    'expected_move': signal.expected_move,
+                }
+                scan_context['gex_data'] = {
+                    'regime': signal.gex_regime,
+                    'call_wall': signal.call_wall,
+                    'put_wall': signal.put_wall,
+                }
 
             if closed > 0:
                 result['action'] = 'closed' if result['action'] == 'none' else 'both'
@@ -249,8 +257,10 @@ class PEGASUSTrader(MathOptimizerMixin):
         if now > end_time:
             return False, f"After {self.config.entry_end}"
 
-        if self.db.has_traded_today(today):
-            return False, "Already traded today"
+        # Check position limits instead of once-per-day restriction
+        open_count = self.db.get_position_count()
+        if open_count >= self.config.max_open_positions:
+            return False, f"Max open positions ({self.config.max_open_positions}) reached"
 
         if CIRCUIT_BREAKER_AVAILABLE and is_trading_enabled:
             try:
@@ -280,23 +290,19 @@ class PEGASUSTrader(MathOptimizerMixin):
         try:
             oracle = get_oracle()
 
-            # Get current market data - use SPX for PEGASUS
-            try:
-                from core_classes_and_engines import TradingVolatilityAPI
-                api = TradingVolatilityAPI()
-                gex_data = api.get_gex_levels('SPX')
-
-                spot_price = gex_data.get('spot_price', 5900)
-                vix = gex_data.get('vix', 20)
-                gex_regime_str = gex_data.get('gex_regime', 'NEUTRAL')
-                call_wall = gex_data.get('call_wall', 0)
-                put_wall = gex_data.get('put_wall', 0)
-                flip_point = gex_data.get('flip_point', 0)
-                net_gex = gex_data.get('net_gex', 0)
-            except Exception as e:
-                logger.warning(f"Could not fetch market data for strategy check: {e}")
-                # Use defaults - let PEGASUS proceed
+            # Get current market data using SignalGenerator's method (proper SPX data)
+            market_data = self.signals.get_market_data()
+            if not market_data:
+                logger.warning("Could not fetch market data for strategy check")
                 return None
+
+            spot_price = market_data.get('spot_price', 5900)
+            vix = market_data.get('vix', 20)
+            gex_regime_str = market_data.get('gex_regime', 'NEUTRAL')
+            call_wall = market_data.get('call_wall', 0)
+            put_wall = market_data.get('put_wall', 0)
+            flip_point = market_data.get('flip_point', 0)
+            net_gex = market_data.get('net_gex', 0)
 
             # Convert GEX regime string to enum
             try:
@@ -512,7 +518,8 @@ class PEGASUSTrader(MathOptimizerMixin):
         # MATH OPTIMIZER: Check regime before generating signal
         if MATH_OPTIMIZER_AVAILABLE and hasattr(self, '_math_enabled') and self._math_enabled:
             try:
-                market_data = self.signals.get_market_snapshot() if hasattr(self.signals, 'get_market_snapshot') else {}
+                # Use get_market_data() - the correct method name in SignalGenerator
+                market_data = self.signals.get_market_data()
                 if market_data:
                     should_trade, regime_reason = self.math_should_trade_regime(market_data)
                     if not should_trade:
@@ -592,7 +599,7 @@ class PEGASUSTrader(MathOptimizerMixin):
                     outcome = ScanOutcome.BEFORE_WINDOW
                 elif 'After' in skip_reason:
                     outcome = ScanOutcome.AFTER_WINDOW
-                elif 'Already traded' in skip_reason:
+                elif 'Max open positions' in skip_reason:
                     outcome = ScanOutcome.SKIP
                 else:
                     outcome = ScanOutcome.NO_TRADE

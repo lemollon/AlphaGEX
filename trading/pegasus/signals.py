@@ -101,15 +101,18 @@ class SignalGenerator:
 
             expected_move = self._calculate_expected_move(spot, vix)
 
+            # Only scale GEX walls by 10 if data came from SPY (not SPX)
+            scale = 10 if (gex_data and gex_data.get('from_spy', False)) else 1
+
             return {
                 'spot_price': spot,
                 'vix': vix,
                 'expected_move': expected_move,
-                'call_wall': gex_data.get('call_wall', 0) * 10 if gex_data else 0,  # Scale to SPX
-                'put_wall': gex_data.get('put_wall', 0) * 10 if gex_data else 0,
+                'call_wall': gex_data.get('call_wall', 0) * scale if gex_data else 0,
+                'put_wall': gex_data.get('put_wall', 0) * scale if gex_data else 0,
                 'gex_regime': gex_data.get('regime', 'NEUTRAL') if gex_data else 'NEUTRAL',
-                # Kronos GEX context (scaled to SPX)
-                'flip_point': gex_data.get('flip_point', 0) * 10 if gex_data else 0,
+                # Kronos GEX context (scaled if from SPY)
+                'flip_point': gex_data.get('flip_point', 0) * scale if gex_data else 0,
                 'net_gex': gex_data.get('net_gex', 0) if gex_data else 0,
                 'timestamp': datetime.now(CENTRAL_TZ),
             }
@@ -121,11 +124,32 @@ class SignalGenerator:
         if not self.gex_calculator:
             return None
         try:
-            # Try SPX first, fallback to SPY
-            gex = self.gex_calculator.calculate_gex("SPX")
-            if not gex:
-                gex = self.gex_calculator.calculate_gex("SPY")
-            if gex:
+            gex = None
+            from_spy = False
+
+            # KronosGEXCalculator uses get_gex_for_today_or_recent() - returns SPX data
+            if KRONOS_AVAILABLE and hasattr(self.gex_calculator, 'get_gex_for_today_or_recent'):
+                gex_data, source = self.gex_calculator.get_gex_for_today_or_recent()
+                if gex_data:
+                    # KronosGEXCalculator returns GEXData dataclass, convert to dict
+                    gex = {
+                        'call_wall': getattr(gex_data, 'major_call_wall', 0) or 0,
+                        'put_wall': getattr(gex_data, 'major_put_wall', 0) or 0,
+                        'regime': getattr(gex_data, 'regime', 'NEUTRAL') or 'NEUTRAL',
+                        'flip_point': getattr(gex_data, 'gamma_flip', 0) or 0,
+                        'net_gex': getattr(gex_data, 'net_gex', 0) or 0,
+                    }
+                    from_spy = False  # Kronos uses SPX options data
+
+            # TradierGEXCalculator uses get_gex(symbol) - try SPX first, fallback to SPY
+            elif hasattr(self.gex_calculator, 'get_gex'):
+                gex = self.gex_calculator.get_gex("SPX")
+                from_spy = False
+                if not gex or gex.get('error'):
+                    gex = self.gex_calculator.get_gex("SPY")
+                    from_spy = True if gex and not gex.get('error') else False
+
+            if gex and not gex.get('error'):
                 return {
                     'call_wall': gex.get('call_wall', gex.get('major_call_wall', 0)),
                     'put_wall': gex.get('put_wall', gex.get('major_put_wall', 0)),
@@ -133,9 +157,10 @@ class SignalGenerator:
                     # Kronos GEX context for audit
                     'flip_point': gex.get('flip_point', gex.get('gamma_flip', 0)),
                     'net_gex': gex.get('net_gex', 0),
+                    'from_spy': from_spy,  # Track source for scaling
                 }
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"GEX data fetch failed: {e}")
         return None
 
     def get_oracle_advice(self, market_data: Dict) -> Optional[Dict[str, Any]]:
