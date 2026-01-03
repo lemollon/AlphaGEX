@@ -102,7 +102,15 @@ class ATHENATrader(MathOptimizerMixin):
         # Initialize Math Optimizers (HMM, Kalman, Thompson, Convex, HJB, MDP)
         if MATH_OPTIMIZER_AVAILABLE:
             self._init_math_optimizers("ATHENA", enabled=True)
-            logger.info("ATHENA: Math optimizers enabled (HMM, Kalman, Thompson, Convex, HJB, MDP)")
+            # ATHENA trades directional spreads which can work in most regimes
+            # Relax regime gate to allow trading in HIGH_VOLATILITY (good for directional moves)
+            self.math_set_config('favorable_regimes', [
+                'TRENDING_BULLISH', 'TRENDING_BEARISH', 'MEAN_REVERTING',
+                'LOW_VOLATILITY', 'HIGH_VOLATILITY'  # Allow volatility - directional spreads benefit
+            ])
+            self.math_set_config('avoid_regimes', ['GAMMA_SQUEEZE'])  # Only avoid extreme squeeze
+            self.math_set_config('min_regime_confidence', 0.40)  # Lower threshold for more trades
+            logger.info("ATHENA: Math optimizers enabled - regime gate relaxed for directional spreads")
 
         logger.info(
             f"ATHENA V2 initialized: mode={self.config.mode.value}, "

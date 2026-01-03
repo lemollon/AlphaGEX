@@ -369,13 +369,14 @@ class SignalGenerator:
         # Wall proximity is primary, ML and Oracle are confirmation
         direction = wall_direction
 
-        # If ML disagrees strongly, reduce confidence
+        # If ML disagrees strongly, reduce confidence (but wall proximity is still primary)
         confidence = 0.7  # Base confidence from wall proximity
         if ml_signal:
             if ml_direction == direction:
                 confidence = min(0.9, confidence + ml_confidence * 0.2)
             elif ml_direction and ml_direction != direction and ml_confidence > 0.7:
-                confidence -= 0.2
+                # Reduced penalty: wall proximity takes precedence
+                confidence -= 0.10
 
         # Oracle can boost or reduce confidence further
         if oracle:
@@ -383,14 +384,16 @@ class SignalGenerator:
                 confidence = min(0.95, confidence + oracle_confidence * 0.15)
                 logger.info(f"Oracle confirms direction {direction} with {oracle_confidence:.0%} confidence")
             elif oracle_direction != direction and oracle_direction != 'FLAT' and oracle_confidence > 0.7:
-                confidence -= 0.15
+                # Reduced penalty: wall proximity takes precedence over Oracle disagreement
+                confidence -= 0.08
                 logger.info(f"Oracle disagrees: {oracle_direction} vs wall {direction}")
-            # Oracle SKIP_TODAY overrides
+            # Oracle SKIP_TODAY overrides (keep this - explicit skip request)
             if oracle.get('advice') == 'SKIP_TODAY':
                 logger.info(f"Oracle advises SKIP_TODAY: {oracle.get('reasoning', '')}")
                 return None
 
-        if confidence < 0.5:
+        # Lower threshold since wall proximity is the core strategy
+        if confidence < 0.45:
             logger.info(f"Confidence too low: {confidence:.2f}")
             return None
 
