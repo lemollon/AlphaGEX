@@ -317,11 +317,12 @@ class SignalGenerator:
 
         # Estimate debit based on moneyness and VIX
         # This is a rough estimate - real pricing comes from option chain
-        time_factor = 1.0  # Assume 0DTE or 1DTE
-        vol_factor = vix / 20.0  # Normalize around VIX=20
+        # For 0DTE ATM spreads, debit is typically 35-45% of width
+        vol_factor = min(vix / 20.0, 1.5)  # Cap vol factor to prevent extreme estimates
 
-        # Base debit is roughly 40-60% of width for ATM spreads
-        base_debit_pct = 0.50 * vol_factor
+        # Base debit is roughly 35-40% of width for ATM 0DTE spreads
+        # This gives R:R of 1.5-1.86 which is more realistic
+        base_debit_pct = 0.35 + (0.05 * vol_factor)  # 35-42.5% range
         debit = width * base_debit_pct
 
         # Max profit = width - debit
@@ -369,13 +370,14 @@ class SignalGenerator:
         # Wall proximity is primary, ML and Oracle are confirmation
         direction = wall_direction
 
-        # If ML disagrees strongly, reduce confidence
+        # If ML disagrees strongly, reduce confidence (but wall proximity is still primary)
         confidence = 0.7  # Base confidence from wall proximity
         if ml_signal:
             if ml_direction == direction:
                 confidence = min(0.9, confidence + ml_confidence * 0.2)
             elif ml_direction and ml_direction != direction and ml_confidence > 0.7:
-                confidence -= 0.2
+                # Reduced penalty: wall proximity takes precedence
+                confidence -= 0.10
 
         # Oracle can boost or reduce confidence further
         if oracle:
@@ -383,14 +385,16 @@ class SignalGenerator:
                 confidence = min(0.95, confidence + oracle_confidence * 0.15)
                 logger.info(f"Oracle confirms direction {direction} with {oracle_confidence:.0%} confidence")
             elif oracle_direction != direction and oracle_direction != 'FLAT' and oracle_confidence > 0.7:
-                confidence -= 0.15
+                # Reduced penalty: wall proximity takes precedence over Oracle disagreement
+                confidence -= 0.08
                 logger.info(f"Oracle disagrees: {oracle_direction} vs wall {direction}")
-            # Oracle SKIP_TODAY overrides
+            # Oracle SKIP_TODAY overrides (keep this - explicit skip request)
             if oracle.get('advice') == 'SKIP_TODAY':
                 logger.info(f"Oracle advises SKIP_TODAY: {oracle.get('reasoning', '')}")
                 return None
 
-        if confidence < 0.5:
+        # Lower threshold since wall proximity is the core strategy
+        if confidence < 0.45:
             logger.info(f"Confidence too low: {confidence:.2f}")
             return None
 
