@@ -170,7 +170,7 @@ class ATHENAConfig:
     ticker: str = "SPY"
     spread_width: int = 2  # $2 spreads
     wall_filter_pct: float = 3.0  # Trade within 3% of GEX wall (was 0.5% - too restrictive)
-    min_rr_ratio: float = 1.5  # Min risk:reward
+    min_rr_ratio: float = 0.8  # Min risk:reward (realistic for 0DTE debit spreads)
 
     # Exit rules
     profit_target_pct: float = 50.0  # Take profit at 50% of max
@@ -253,8 +253,8 @@ class TradeSignal:
     def is_valid(self) -> bool:
         """Check if signal passes basic validation"""
         return (
-            self.confidence > 0.5 and
-            self.rr_ratio >= 1.5 and
+            self.confidence > 0.45 and  # Lowered to match signals.py threshold
+            self.rr_ratio >= 0.8 and  # Realistic for 0DTE debit spreads
             self.max_profit > 0 and
             self.long_strike > 0 and
             self.short_strike > 0

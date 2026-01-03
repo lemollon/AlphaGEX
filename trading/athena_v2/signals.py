@@ -317,11 +317,12 @@ class SignalGenerator:
 
         # Estimate debit based on moneyness and VIX
         # This is a rough estimate - real pricing comes from option chain
-        time_factor = 1.0  # Assume 0DTE or 1DTE
-        vol_factor = vix / 20.0  # Normalize around VIX=20
+        # For 0DTE ATM spreads, debit is typically 35-45% of width
+        vol_factor = min(vix / 20.0, 1.5)  # Cap vol factor to prevent extreme estimates
 
-        # Base debit is roughly 40-60% of width for ATM spreads
-        base_debit_pct = 0.50 * vol_factor
+        # Base debit is roughly 35-40% of width for ATM 0DTE spreads
+        # This gives R:R of 1.5-1.86 which is more realistic
+        base_debit_pct = 0.35 + (0.05 * vol_factor)  # 35-42.5% range
         debit = width * base_debit_pct
 
         # Max profit = width - debit
