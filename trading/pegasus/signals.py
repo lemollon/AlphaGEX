@@ -101,15 +101,18 @@ class SignalGenerator:
 
             expected_move = self._calculate_expected_move(spot, vix)
 
+            # Only scale GEX walls by 10 if data came from SPY (not SPX)
+            scale = 10 if (gex_data and gex_data.get('from_spy', False)) else 1
+
             return {
                 'spot_price': spot,
                 'vix': vix,
                 'expected_move': expected_move,
-                'call_wall': gex_data.get('call_wall', 0) * 10 if gex_data else 0,  # Scale to SPX
-                'put_wall': gex_data.get('put_wall', 0) * 10 if gex_data else 0,
+                'call_wall': gex_data.get('call_wall', 0) * scale if gex_data else 0,
+                'put_wall': gex_data.get('put_wall', 0) * scale if gex_data else 0,
                 'gex_regime': gex_data.get('regime', 'NEUTRAL') if gex_data else 'NEUTRAL',
-                # Kronos GEX context (scaled to SPX)
-                'flip_point': gex_data.get('flip_point', 0) * 10 if gex_data else 0,
+                # Kronos GEX context (scaled if from SPY)
+                'flip_point': gex_data.get('flip_point', 0) * scale if gex_data else 0,
                 'net_gex': gex_data.get('net_gex', 0) if gex_data else 0,
                 'timestamp': datetime.now(CENTRAL_TZ),
             }
@@ -123,8 +126,10 @@ class SignalGenerator:
         try:
             # Try SPX first, fallback to SPY
             gex = self.gex_calculator.calculate_gex("SPX")
+            from_spy = False
             if not gex:
                 gex = self.gex_calculator.calculate_gex("SPY")
+                from_spy = True
             if gex:
                 return {
                     'call_wall': gex.get('call_wall', gex.get('major_call_wall', 0)),
@@ -133,6 +138,7 @@ class SignalGenerator:
                     # Kronos GEX context for audit
                     'flip_point': gex.get('flip_point', gex.get('gamma_flip', 0)),
                     'net_gex': gex.get('net_gex', 0),
+                    'from_spy': from_spy,  # Track source for scaling
                 }
         except Exception:
             pass
