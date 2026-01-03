@@ -965,8 +965,8 @@ async def get_live_dashboard():
                 "bot_stats": bot_stats,
                 "allocation": allocation_data,
                 "total_outcomes_recorded": sum(
-                    s.alpha + s.beta - 2
-                    for s in optimizer.thompson.bot_stats.values()
+                    optimizer.thompson.alpha[bot] + optimizer.thompson.beta[bot] - 2
+                    for bot in optimizer.thompson.bot_names
                 )
             },
             "kalman": {
