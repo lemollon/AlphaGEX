@@ -280,23 +280,19 @@ class PEGASUSTrader(MathOptimizerMixin):
         try:
             oracle = get_oracle()
 
-            # Get current market data - use SPX for PEGASUS
-            try:
-                from core_classes_and_engines import TradingVolatilityAPI
-                api = TradingVolatilityAPI()
-                gex_data = api.get_gex_levels('SPX')
-
-                spot_price = gex_data.get('spot_price', 5900)
-                vix = gex_data.get('vix', 20)
-                gex_regime_str = gex_data.get('gex_regime', 'NEUTRAL')
-                call_wall = gex_data.get('call_wall', 0)
-                put_wall = gex_data.get('put_wall', 0)
-                flip_point = gex_data.get('flip_point', 0)
-                net_gex = gex_data.get('net_gex', 0)
-            except Exception as e:
-                logger.warning(f"Could not fetch market data for strategy check: {e}")
-                # Use defaults - let PEGASUS proceed
+            # Get current market data using SignalGenerator's method (proper SPX data)
+            market_data = self.signals.get_market_data()
+            if not market_data:
+                logger.warning("Could not fetch market data for strategy check")
                 return None
+
+            spot_price = market_data.get('spot_price', 5900)
+            vix = market_data.get('vix', 20)
+            gex_regime_str = market_data.get('gex_regime', 'NEUTRAL')
+            call_wall = market_data.get('call_wall', 0)
+            put_wall = market_data.get('put_wall', 0)
+            flip_point = market_data.get('flip_point', 0)
+            net_gex = market_data.get('net_gex', 0)
 
             # Convert GEX regime string to enum
             try:

@@ -124,13 +124,32 @@ class SignalGenerator:
         if not self.gex_calculator:
             return None
         try:
-            # Try SPX first, fallback to SPY
-            gex = self.gex_calculator.calculate_gex("SPX")
+            gex = None
             from_spy = False
-            if not gex:
-                gex = self.gex_calculator.calculate_gex("SPY")
-                from_spy = True
-            if gex:
+
+            # KronosGEXCalculator uses get_gex_for_today_or_recent() - returns SPX data
+            if KRONOS_AVAILABLE and hasattr(self.gex_calculator, 'get_gex_for_today_or_recent'):
+                gex_data, source = self.gex_calculator.get_gex_for_today_or_recent()
+                if gex_data:
+                    # KronosGEXCalculator returns GEXData dataclass, convert to dict
+                    gex = {
+                        'call_wall': getattr(gex_data, 'major_call_wall', 0) or 0,
+                        'put_wall': getattr(gex_data, 'major_put_wall', 0) or 0,
+                        'regime': getattr(gex_data, 'regime', 'NEUTRAL') or 'NEUTRAL',
+                        'flip_point': getattr(gex_data, 'gamma_flip', 0) or 0,
+                        'net_gex': getattr(gex_data, 'net_gex', 0) or 0,
+                    }
+                    from_spy = False  # Kronos uses SPX options data
+
+            # TradierGEXCalculator uses get_gex(symbol) - try SPX first, fallback to SPY
+            elif hasattr(self.gex_calculator, 'get_gex'):
+                gex = self.gex_calculator.get_gex("SPX")
+                from_spy = False
+                if not gex or gex.get('error'):
+                    gex = self.gex_calculator.get_gex("SPY")
+                    from_spy = True if gex and not gex.get('error') else False
+
+            if gex and not gex.get('error'):
                 return {
                     'call_wall': gex.get('call_wall', gex.get('major_call_wall', 0)),
                     'put_wall': gex.get('put_wall', gex.get('major_put_wall', 0)),
@@ -140,8 +159,8 @@ class SignalGenerator:
                     'net_gex': gex.get('net_gex', 0),
                     'from_spy': from_spy,  # Track source for scaling
                 }
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"GEX data fetch failed: {e}")
         return None
 
     def get_oracle_advice(self, market_data: Dict) -> Optional[Dict[str, Any]]:
