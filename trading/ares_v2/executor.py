@@ -54,9 +54,9 @@ class OrderExecutor:
 
         if TRADIER_AVAILABLE and config.mode == TradingMode.LIVE:
             try:
-                # CRITICAL: Pass sandbox=False for LIVE mode to use production Tradier account
-                self.tradier = TradierDataFetcher(sandbox=False)
-                logger.info("ARES OrderExecutor: Tradier initialized for LIVE trading (PRODUCTION)")
+                # ARES uses SANDBOX Tradier account (not production)
+                self.tradier = TradierDataFetcher(sandbox=True)
+                logger.info("ARES OrderExecutor: Tradier initialized for LIVE trading (SANDBOX account)")
             except Exception as e:
                 logger.error(f"Tradier init failed: {e}")
 
