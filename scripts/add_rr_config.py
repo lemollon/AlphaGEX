@@ -32,10 +32,10 @@ def add_rr_config():
         # Insert the new setting
         c.execute("""
             INSERT INTO apache_config (setting_name, setting_value, description)
-            VALUES ('min_rr_ratio', '1.5', 'Minimum risk:reward ratio using GEX walls (1.5 = need $1.50 reward per $1 risk)')
+            VALUES ('min_rr_ratio', '0.8', 'Minimum risk:reward ratio for debit spreads (0.8 = realistic for 0DTE)')
         """)
         conn.commit()
-        print("[add_rr_config] ✅ Added min_rr_ratio = 1.5 to apache_config")
+        print("[add_rr_config] ✅ Added min_rr_ratio = 0.8 to apache_config")
 
         conn.close()
         return True
