@@ -178,8 +178,8 @@ class PEGASUSTrader(MathOptimizerMixin):
                         # Log that ATHENA would be better, but continue with reduced confidence
                         self.db.log("INFO", f"Oracle suggests ATHENA (directional): {strategy_rec.reasoning}")
                         result['details']['oracle_suggests_athena'] = True
-                        # Apply size reduction based on IC suitability
-                        if strategy_rec.ic_suitability < 0.4:
+                        # Apply size reduction based on IC suitability (use config threshold)
+                        if strategy_rec.ic_suitability < self.config.min_ic_suitability:
                             result['action'] = 'skip'
                             result['details']['skip_reason'] = f"IC suitability too low ({strategy_rec.ic_suitability:.0%}), consider ATHENA"
                             self._log_scan_activity(result, scan_context, skip_reason=f"Low IC suitability, consider ATHENA")
@@ -190,27 +190,26 @@ class PEGASUSTrader(MathOptimizerMixin):
             result['positions_closed'] = closed
             result['realized_pnl'] = pnl
 
-            # Try new entry
-            if not self.db.has_traded_today(today):
-                position, signal = self._try_entry_with_context()
-                if position:
-                    result['trade_opened'] = True
-                    result['action'] = 'opened'
-                    result['details']['position'] = position.to_dict()
-                    scan_context['position'] = position
-                if signal:
-                    scan_context['signal'] = signal
-                    scan_context['market_data'] = {
-                        'underlying_price': signal.spot_price,
-                        'symbol': 'SPX',
-                        'vix': signal.vix,
-                        'expected_move': signal.expected_move,
-                    }
-                    scan_context['gex_data'] = {
-                        'regime': signal.gex_regime,
-                        'call_wall': signal.call_wall,
-                        'put_wall': signal.put_wall,
-                    }
+            # Try new entry (position limits already checked in _check_conditions)
+            position, signal = self._try_entry_with_context()
+            if position:
+                result['trade_opened'] = True
+                result['action'] = 'opened'
+                result['details']['position'] = position.to_dict()
+                scan_context['position'] = position
+            if signal:
+                scan_context['signal'] = signal
+                scan_context['market_data'] = {
+                    'underlying_price': signal.spot_price,
+                    'symbol': 'SPX',
+                    'vix': signal.vix,
+                    'expected_move': signal.expected_move,
+                }
+                scan_context['gex_data'] = {
+                    'regime': signal.gex_regime,
+                    'call_wall': signal.call_wall,
+                    'put_wall': signal.put_wall,
+                }
 
             if closed > 0:
                 result['action'] = 'closed' if result['action'] == 'none' else 'both'
@@ -249,8 +248,10 @@ class PEGASUSTrader(MathOptimizerMixin):
         if now > end_time:
             return False, f"After {self.config.entry_end}"
 
-        if self.db.has_traded_today(today):
-            return False, "Already traded today"
+        # Check position limits instead of once-per-day restriction
+        open_count = self.db.get_position_count()
+        if open_count >= self.config.max_open_positions:
+            return False, f"Max open positions ({self.config.max_open_positions}) reached"
 
         if CIRCUIT_BREAKER_AVAILABLE and is_trading_enabled:
             try:
@@ -588,7 +589,7 @@ class PEGASUSTrader(MathOptimizerMixin):
                     outcome = ScanOutcome.BEFORE_WINDOW
                 elif 'After' in skip_reason:
                     outcome = ScanOutcome.AFTER_WINDOW
-                elif 'Already traded' in skip_reason:
+                elif 'Max open positions' in skip_reason:
                     outcome = ScanOutcome.SKIP
                 else:
                     outcome = ScanOutcome.NO_TRADE

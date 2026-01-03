@@ -206,6 +206,8 @@ class PEGASUSConfig:
     risk_per_trade_pct: float = 10.0
     max_contracts: int = 100
     min_credit: float = 0.75  # Lowered from $1.50 to capture more opportunities
+    max_open_positions: int = 5  # Allow multiple positions per day
+    min_ic_suitability: float = 0.3  # Minimum IC suitability from Oracle (0.0-1.0)
 
     # Exit rules
     use_stop_loss: bool = False
