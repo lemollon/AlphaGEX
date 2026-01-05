@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, Component, ErrorInfo, ReactNode } from 'react'
-import { Eye, Brain, Activity, RefreshCw, Trash2, CheckCircle, XCircle, AlertCircle, AlertTriangle, ShieldAlert, Sparkles, FileText, History, TrendingUp, BarChart3, Download, Zap, Bot, MessageSquare, Settings, Play, Clock, Target, ChevronDown, ChevronUp } from 'lucide-react'
+import { Eye, Brain, Activity, RefreshCw, Trash2, CheckCircle, XCircle, AlertCircle, AlertTriangle, ShieldAlert, Sparkles, FileText, History, TrendingUp, BarChart3, Download, Zap, Bot, MessageSquare, Settings, Play, Clock, Target, ChevronDown, ChevronUp, Crosshair } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import DecisionLogViewer from '@/components/trader/DecisionLogViewer'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
@@ -383,7 +383,7 @@ export default function OraclePage() {
   const isRefreshing = statusValidating || logsValidating || transparencyValidating
 
   // Local state
-  const [activeTab, setActiveTab] = useState<'interactions' | 'performance' | 'training' | 'logs' | 'decisions' | 'dataflow'>('interactions')
+  const [activeTab, setActiveTab] = useState<'interactions' | 'performance' | 'training' | 'logs' | 'decisions' | 'dataflow' | 'formulas'>('interactions')
   const [botInteractions, setBotInteractions] = useState<BotInteraction[]>([])
   const [trainingStatus, setTrainingStatus] = useState<TrainingStatus | null>(null)
   const [performance, setPerformance] = useState<PerformanceData | null>(null)
@@ -767,6 +767,15 @@ export default function OraclePage() {
                   {dataFlows.length + claudeExchanges.length}
                 </span>
               )}
+            </button>
+            <button
+              onClick={() => setActiveTab('formulas')}
+              className={`px-4 py-2 rounded-lg font-medium flex items-center gap-2 ${
+                activeTab === 'formulas' ? 'bg-purple-600 text-white' : 'bg-background-card text-text-secondary hover:bg-background-hover'
+              }`}
+            >
+              <Sparkles className="w-4 h-4" />
+              Decision Formulas
             </button>
           </div>
 
@@ -1691,6 +1700,286 @@ export default function OraclePage() {
               )}
             </div>
             </OracleErrorBoundary>
+          )}
+
+          {/* Decision Formulas Tab */}
+          {activeTab === 'formulas' && (
+            <div className="space-y-6">
+              <div className="card">
+                <h3 className="text-lg font-semibold text-purple-400 mb-4 flex items-center gap-2">
+                  <Sparkles className="w-5 h-5" />
+                  Oracle Decision Formulas
+                </h3>
+                <p className="text-text-secondary mb-6">
+                  Complete reference of all formulas and thresholds Oracle uses to make trading decisions.
+                </p>
+
+                {/* Win Probability Thresholds */}
+                <div className="mb-8">
+                  <h4 className="text-md font-semibold text-green-400 mb-3 flex items-center gap-2">
+                    <Target className="w-4 h-4" />
+                    Win Probability → Trading Decision
+                  </h4>
+                  <div className="bg-gray-900/50 rounded-lg p-4 space-y-3">
+                    <div className="flex items-center justify-between border-b border-gray-700 pb-2">
+                      <div>
+                        <span className="text-green-400 font-bold">TRADE_FULL</span>
+                        <span className="text-gray-400 ml-2">Full position size</span>
+                      </div>
+                      <code className="bg-green-900/30 text-green-300 px-3 py-1 rounded font-mono text-sm">
+                        win_probability ≥ 70%
+                      </code>
+                    </div>
+                    <div className="flex items-center justify-between border-b border-gray-700 pb-2">
+                      <div>
+                        <span className="text-yellow-400 font-bold">TRADE_REDUCED</span>
+                        <span className="text-gray-400 ml-2">Scaled position</span>
+                      </div>
+                      <code className="bg-yellow-900/30 text-yellow-300 px-3 py-1 rounded font-mono text-sm">
+                        55% ≤ win_probability &lt; 70%
+                      </code>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-red-400 font-bold">SKIP_TODAY</span>
+                        <span className="text-gray-400 ml-2">No trade</span>
+                      </div>
+                      <code className="bg-red-900/30 text-red-300 px-3 py-1 rounded font-mono text-sm">
+                        win_probability &lt; 55%
+                      </code>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Risk Percentage Formula */}
+                <div className="mb-8">
+                  <h4 className="text-md font-semibold text-blue-400 mb-3 flex items-center gap-2">
+                    <BarChart3 className="w-4 h-4" />
+                    Risk Percentage Formula (for TRADE_REDUCED)
+                  </h4>
+                  <div className="bg-gray-900/50 rounded-lg p-4">
+                    <code className="block bg-blue-900/30 text-blue-300 p-4 rounded font-mono text-sm mb-3">
+                      risk% = 3.0 + ((win_prob - 0.55) / 0.15) × 5.0
+                    </code>
+                    <div className="text-sm text-gray-400 space-y-1">
+                      <p>• At 55% win probability → <span className="text-white">3% risk</span></p>
+                      <p>• At 62.5% win probability → <span className="text-white">5.5% risk</span></p>
+                      <p>• At 70% win probability → <span className="text-white">8% risk</span></p>
+                      <p>• Above 70% (TRADE_FULL) → <span className="text-white">10% risk</span></p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* VIX Skip Rules */}
+                <div className="mb-8">
+                  <h4 className="text-md font-semibold text-red-400 mb-3 flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4" />
+                    VIX Skip Rules (Automatic SKIP_TODAY)
+                  </h4>
+                  <div className="bg-gray-900/50 rounded-lg p-4 space-y-3">
+                    <div className="flex items-center justify-between border-b border-gray-700 pb-2">
+                      <div>
+                        <span className="text-red-400 font-bold">Hard VIX Skip</span>
+                        <span className="text-gray-400 ml-2">Any day</span>
+                      </div>
+                      <code className="bg-red-900/30 text-red-300 px-3 py-1 rounded font-mono text-sm">
+                        VIX &gt; 32 → SKIP
+                      </code>
+                    </div>
+                    <div className="flex items-center justify-between border-b border-gray-700 pb-2">
+                      <div>
+                        <span className="text-orange-400 font-bold">Monday/Friday Skip</span>
+                        <span className="text-gray-400 ml-2">Higher risk days</span>
+                      </div>
+                      <code className="bg-orange-900/30 text-orange-300 px-3 py-1 rounded font-mono text-sm">
+                        VIX &gt; 30 on Mon/Fri → SKIP
+                      </code>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-yellow-400 font-bold">Streak Skip</span>
+                        <span className="text-gray-400 ml-2">After 2+ losses</span>
+                      </div>
+                      <code className="bg-yellow-900/30 text-yellow-300 px-3 py-1 rounded font-mono text-sm">
+                        VIX &gt; 28 + recent_losses ≥ 2 → SKIP
+                      </code>
+                    </div>
+                  </div>
+                </div>
+
+                {/* GEX Adjustments */}
+                <div className="mb-8">
+                  <h4 className="text-md font-semibold text-cyan-400 mb-3 flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4" />
+                    GEX-Based Win Probability Adjustments
+                  </h4>
+                  <div className="bg-gray-900/50 rounded-lg p-4 space-y-3">
+                    <div className="flex items-center justify-between border-b border-gray-700 pb-2">
+                      <div>
+                        <span className="text-green-400 font-bold">Inside GEX Walls</span>
+                        <span className="text-gray-400 ml-2">Protected zone</span>
+                      </div>
+                      <code className="bg-green-900/30 text-green-300 px-3 py-1 rounded font-mono text-sm">
+                        win_probability += 3%
+                      </code>
+                    </div>
+                    <div className="flex items-center justify-between border-b border-gray-700 pb-2">
+                      <div>
+                        <span className="text-yellow-400 font-bold">Near Wall (&lt;0.5%)</span>
+                        <span className="text-gray-400 ml-2">Breakout risk</span>
+                      </div>
+                      <code className="bg-yellow-900/30 text-yellow-300 px-3 py-1 rounded font-mono text-sm">
+                        win_probability -= 5%
+                      </code>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-red-400 font-bold">Outside Walls</span>
+                        <span className="text-gray-400 ml-2">Unprotected</span>
+                      </div>
+                      <code className="bg-red-900/30 text-red-300 px-3 py-1 rounded font-mono text-sm">
+                        win_probability -= 3%
+                      </code>
+                    </div>
+                  </div>
+                </div>
+
+                {/* SD Multiplier Logic */}
+                <div className="mb-8">
+                  <h4 className="text-md font-semibold text-purple-400 mb-3 flex items-center gap-2">
+                    <Crosshair className="w-4 h-4" />
+                    Strike Distance (SD Multiplier)
+                  </h4>
+                  <div className="bg-gray-900/50 rounded-lg p-4 space-y-3">
+                    <div className="flex items-center justify-between border-b border-gray-700 pb-2">
+                      <div>
+                        <span className="text-green-400 font-bold">High Confidence</span>
+                        <span className="text-gray-400 ml-2">win_prob ≥ 70%</span>
+                      </div>
+                      <code className="bg-green-900/30 text-green-300 px-3 py-1 rounded font-mono text-sm">
+                        SD = 1.0 (at expected move)
+                      </code>
+                    </div>
+                    <div className="flex items-center justify-between border-b border-gray-700 pb-2">
+                      <div>
+                        <span className="text-yellow-400 font-bold">Medium Confidence</span>
+                        <span className="text-gray-400 ml-2">60% ≤ win_prob &lt; 70%</span>
+                      </div>
+                      <code className="bg-yellow-900/30 text-yellow-300 px-3 py-1 rounded font-mono text-sm">
+                        SD = 1.1 (wider strikes)
+                      </code>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-red-400 font-bold">Low Confidence</span>
+                        <span className="text-gray-400 ml-2">win_prob &lt; 60%</span>
+                      </div>
+                      <code className="bg-red-900/30 text-red-300 px-3 py-1 rounded font-mono text-sm">
+                        SD = 1.2 (widest strikes)
+                      </code>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Hallucination Risk Penalties */}
+                <div className="mb-8">
+                  <h4 className="text-md font-semibold text-orange-400 mb-3 flex items-center gap-2">
+                    <ShieldAlert className="w-4 h-4" />
+                    Claude Hallucination Risk Penalties
+                  </h4>
+                  <div className="bg-gray-900/50 rounded-lg p-4 space-y-3">
+                    <div className="flex items-center justify-between border-b border-gray-700 pb-2">
+                      <div>
+                        <span className="text-red-400 font-bold">HIGH Risk</span>
+                        <span className="text-gray-400 ml-2">Unreliable analysis</span>
+                      </div>
+                      <code className="bg-red-900/30 text-red-300 px-3 py-1 rounded font-mono text-sm">
+                        win_probability -= 10%
+                      </code>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-yellow-400 font-bold">MEDIUM Risk</span>
+                        <span className="text-gray-400 ml-2">Uncertain analysis</span>
+                      </div>
+                      <code className="bg-yellow-900/30 text-yellow-300 px-3 py-1 rounded font-mono text-sm">
+                        win_probability -= 5%
+                      </code>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ML Feature Columns */}
+                <div className="mb-8">
+                  <h4 className="text-md font-semibold text-indigo-400 mb-3 flex items-center gap-2">
+                    <Brain className="w-4 h-4" />
+                    ML Model Features
+                  </h4>
+                  <div className="bg-gray-900/50 rounded-lg p-4">
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+                      {[
+                        'vix', 'vix_percentile_30d', 'vix_change_1d',
+                        'day_of_week', 'hour', 'days_to_expiry',
+                        'gex_normalized', 'gex_regime_encoded', 'put_wall_distance',
+                        'call_wall_distance', 'is_between_walls'
+                      ].map((feature) => (
+                        <code key={feature} className="bg-indigo-900/30 text-indigo-300 px-2 py-1 rounded text-xs font-mono">
+                          {feature}
+                        </code>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* ATHENA Direction Override */}
+                <div className="mb-8">
+                  <h4 className="text-md font-semibold text-pink-400 mb-3 flex items-center gap-2">
+                    <Zap className="w-4 h-4" />
+                    ATHENA Oracle Direction Override
+                  </h4>
+                  <div className="bg-gray-900/50 rounded-lg p-4">
+                    <code className="block bg-pink-900/30 text-pink-300 p-4 rounded font-mono text-sm mb-3">
+                      IF oracle_confidence ≥ 85% AND oracle_win_prob ≥ 60%{'\n'}
+                      THEN use Oracle direction instead of wall direction
+                    </code>
+                    <p className="text-sm text-gray-400">
+                      Oracle can override wall-based direction when it has very high confidence in its prediction.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Top Factors Adjustments */}
+                <div>
+                  <h4 className="text-md font-semibold text-emerald-400 mb-3 flex items-center gap-2">
+                    <Activity className="w-4 h-4" />
+                    Top Factors Confidence Adjustments
+                  </h4>
+                  <div className="bg-gray-900/50 rounded-lg p-4 space-y-3">
+                    <div className="border-b border-gray-700 pb-2">
+                      <span className="text-emerald-400 font-bold">VIX Factor High Importance (&gt;20%)</span>
+                      <div className="text-sm text-gray-400 mt-1 space-y-1">
+                        <p>• VIX &gt; 25: <code className="bg-red-900/30 text-red-300 px-1 rounded">-up to 8%</code></p>
+                        <p>• VIX &lt; 14: <code className="bg-green-900/30 text-green-300 px-1 rounded">+up to 5%</code></p>
+                      </div>
+                    </div>
+                    <div className="border-b border-gray-700 pb-2">
+                      <span className="text-emerald-400 font-bold">GEX Regime Factor High Importance (&gt;15%)</span>
+                      <div className="text-sm text-gray-400 mt-1 space-y-1">
+                        <p>• NEGATIVE regime: <code className="bg-red-900/30 text-red-300 px-1 rounded">-5%</code> (for ICs)</p>
+                        <p>• POSITIVE regime: <code className="bg-green-900/30 text-green-300 px-1 rounded">+3%</code></p>
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-emerald-400 font-bold">Day of Week Factor High Importance (&gt;15%)</span>
+                      <div className="text-sm text-gray-400 mt-1 space-y-1">
+                        <p>• Monday/Tuesday: <code className="bg-green-900/30 text-green-300 px-1 rounded">+3%</code></p>
+                        <p>• Friday: <code className="bg-red-900/30 text-red-300 px-1 rounded">-3%</code></p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
           )}
 
           {/* Info Section */}
