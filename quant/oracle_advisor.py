@@ -550,6 +550,50 @@ class OracleClaudeEnhancer:
     def is_enabled(self) -> bool:
         return self._enabled
 
+    @staticmethod
+    def _sanitize_for_prompt(value: Any) -> str:
+        """
+        Sanitize a value before including it in a Claude prompt.
+
+        Prevents prompt injection by:
+        1. Converting to string
+        2. Removing/escaping dangerous patterns
+        3. Truncating excessively long strings
+        """
+        if value is None:
+            return "N/A"
+
+        # Convert to string
+        s = str(value)
+
+        # Remove common prompt injection patterns
+        dangerous_patterns = [
+            "ignore previous",
+            "ignore above",
+            "disregard",
+            "forget everything",
+            "new instructions",
+            "system prompt",
+            "```",
+            "SYSTEM:",
+            "USER:",
+            "ASSISTANT:",
+        ]
+
+        s_lower = s.lower()
+        for pattern in dangerous_patterns:
+            if pattern.lower() in s_lower:
+                s = s.replace(pattern, "[FILTERED]")
+                s = s.replace(pattern.lower(), "[FILTERED]")
+                s = s.replace(pattern.upper(), "[FILTERED]")
+
+        # Limit length to prevent context stuffing
+        max_len = 500
+        if len(s) > max_len:
+            s = s[:max_len] + "...[truncated]"
+
+        return s
+
     # =========================================================================
     # 1. VALIDATE/ENHANCE ML PREDICTIONS
     # =========================================================================
@@ -599,6 +643,9 @@ CRITICAL ANTI-HALLUCINATION RULES:
 
 Be concise and data-driven. Focus ONLY on data provided: GEX regime, VIX levels, and day-of-week patterns."""
 
+        # Sanitize any string values that could potentially be manipulated
+        sanitized_top_factors = self._sanitize_for_prompt(ml_prediction.get('top_factors', []))
+
         user_prompt = f"""Validate this ML prediction for {bot_name.value}:
 
 MARKET CONTEXT:
@@ -612,7 +659,7 @@ MARKET CONTEXT:
 
 ML PREDICTION:
 - Win Probability: {ml_prediction.get('win_probability', 0.68):.1%}
-- Top Factors: {ml_prediction.get('top_factors', [])}
+- Top Factors: {sanitized_top_factors}
 
 Provide your analysis in this format:
 DATA_CITATIONS: [List the exact data values you're basing your analysis on, e.g., "VIX=18.5, GEX_REGIME=POSITIVE, Day=Monday"]
@@ -909,6 +956,9 @@ Write a clear, concise explanation (3-5 sentences) that:
 
 Use a professional but approachable tone. Avoid jargon where possible."""
 
+        # Sanitize reasoning text which may contain external data
+        sanitized_reasoning = self._sanitize_for_prompt(prediction.reasoning)
+
         user_prompt = f"""Explain this Oracle prediction for {prediction.bot_name.value}:
 
 PREDICTION:
@@ -916,7 +966,7 @@ PREDICTION:
 - Win Probability: {prediction.win_probability:.1%}
 - Suggested Risk %: {prediction.suggested_risk_pct:.1f}%
 - Use GEX Walls: {"Yes" if prediction.use_gex_walls else "No"}
-- Model Reasoning: {prediction.reasoning}
+- Model Reasoning: {sanitized_reasoning}
 
 MARKET CONTEXT:
 - VIX: {context.vix:.1f}
@@ -1025,6 +1075,11 @@ Analyze the provided statistics and identify:
 
 Be specific and data-driven. Focus on actionable insights."""
 
+        # Sanitize stats that could contain manipulated data
+        sanitized_dow_stats = self._sanitize_for_prompt(dow_stats)
+        sanitized_gex_stats = self._sanitize_for_prompt(gex_stats)
+        sanitized_recent_losses = self._sanitize_for_prompt(recent_losses or "None")
+
         user_prompt = f"""Analyze these KRONOS backtest statistics:
 
 OVERALL PERFORMANCE:
@@ -1038,13 +1093,13 @@ VIX ANALYSIS:
 - Avg VIX on Losses: {vix_loss:.1f}
 
 DAY OF WEEK STATS:
-{dow_stats}
+{sanitized_dow_stats}
 
 GEX REGIME STATS:
-{gex_stats}
+{sanitized_gex_stats}
 
 RECENT LOSSES (if any):
-{recent_losses or "None"}
+{sanitized_recent_losses}
 
 Provide analysis in this format:
 PATTERNS:
