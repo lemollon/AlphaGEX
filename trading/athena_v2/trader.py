@@ -336,8 +336,8 @@ class ATHENATrader(MathOptimizerMixin):
                     if CIRCUIT_BREAKER_AVAILABLE and record_trade_pnl:
                         try:
                             record_trade_pnl(pnl)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.warning(f"[ATHENA] Failed to record P&L to circuit breaker: {e}")
 
                     # MATH OPTIMIZER: Record outcome for Thompson Sampling
                     if MATH_OPTIMIZER_AVAILABLE and hasattr(self, 'math_record_outcome'):

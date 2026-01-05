@@ -227,6 +227,9 @@ class ARESConfig:
     min_credit: float = 0.02  # Min credit per spread
     max_trades_per_day: int = 3  # Allow up to 3 trades per day with re-entry
 
+    # Oracle thresholds
+    min_win_probability: float = 0.50  # Minimum Oracle win probability to trade (50%)
+
     # Stop loss / Profit target
     use_stop_loss: bool = False
     stop_loss_multiple: float = 2.0  # Exit if loss >= 2x credit
