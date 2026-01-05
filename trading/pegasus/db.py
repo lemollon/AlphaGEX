@@ -628,7 +628,7 @@ class PEGASUSDatabase:
                         put_short_strike, put_long_strike, put_credit,
                         call_short_strike, call_long_strike, call_credit,
                         contracts, spread_width, total_credit,
-                        spot_at_entry, vix_at_entry, expected_move,
+                        underlying_at_entry, vix_at_entry, expected_move,
                         call_wall, put_wall, gex_regime,
                         order_id, status, open_time, close_time,
                         close_price, close_reason, realized_pnl
@@ -651,7 +651,7 @@ class PEGASUSDatabase:
                         contracts=int(row[9]),
                         spread_width=float(row[10]),
                         total_credit=float(row[11]),
-                        spot_at_entry=float(row[12]),
+                        underlying_at_entry=float(row[12]),
                         vix_at_entry=float(row[13]) if row[13] else None,
                         expected_move=float(row[14]) if row[14] else None,
                         call_wall=float(row[15]) if row[15] else None,

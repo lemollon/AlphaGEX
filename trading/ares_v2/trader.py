@@ -33,6 +33,15 @@ except ImportError:
     CIRCUIT_BREAKER_AVAILABLE = False
     is_trading_enabled = None
 
+# Market calendar for holiday checking
+try:
+    from trading.market_calendar import MarketCalendar
+    MARKET_CALENDAR = MarketCalendar()
+    MARKET_CALENDAR_AVAILABLE = True
+except ImportError:
+    MARKET_CALENDAR = None
+    MARKET_CALENDAR_AVAILABLE = False
+
 # Scan activity logging
 try:
     from trading.scan_activity_logger import log_ares_scan, ScanOutcome, CheckResult
@@ -93,6 +102,12 @@ class ARESTrader(MathOptimizerMixin):
 
         # Load config from DB or use provided
         self.config = config or self.db.load_config()
+
+        # Validate configuration at startup
+        is_valid, error = self.config.validate()
+        if not is_valid:
+            logger.error(f"ARES config validation failed: {error}")
+            raise ValueError(f"Invalid ARES configuration: {error}")
 
         # Initialize components
         self.signals = SignalGenerator(self.config)
@@ -357,10 +372,16 @@ class ARESTrader(MathOptimizerMixin):
             logger.warning(f"Failed to log scan activity: {e}")
 
     def _check_basic_conditions(self, now: datetime) -> tuple[bool, str]:
-        """Check basic trading conditions (time window, weekend, circuit breaker)"""
+        """Check basic trading conditions (time window, weekend, holidays, circuit breaker)"""
         # Weekend check
         if now.weekday() >= 5:
             return False, "Weekend"
+
+        # Market holiday check
+        if MARKET_CALENDAR_AVAILABLE and MARKET_CALENDAR:
+            today_str = now.strftime("%Y-%m-%d")
+            if not MARKET_CALENDAR.is_trading_day(today_str):
+                return False, "Market holiday"
 
         # Trading window
         start_parts = self.config.entry_start.split(':')
@@ -638,6 +659,30 @@ class ARESTrader(MathOptimizerMixin):
         except Exception as e:
             logger.warning(f"ARES: Learning Memory outcome recording failed: {e}")
 
+    def _get_force_exit_time(self, now: datetime, today: str) -> datetime:
+        """
+        Get the effective force exit time, accounting for early close days.
+
+        On early close days (Christmas Eve, day after Thanksgiving), market closes at 12:00 PM CT.
+        We should force exit 5 minutes before market close instead of using the normal config.
+        """
+        # Default force exit from config
+        force_parts = self.config.force_exit.split(':')
+        config_force_time = now.replace(hour=int(force_parts[0]), minute=int(force_parts[1]), second=0)
+
+        # Check if today is an early close day
+        if MARKET_CALENDAR_AVAILABLE and MARKET_CALENDAR:
+            close_hour, close_minute = MARKET_CALENDAR.get_market_close_time(today)
+            # Early close: 12:00 PM CT - force exit at 11:55 AM CT
+            early_close_force = now.replace(hour=close_hour, minute=close_minute, second=0) - timedelta(minutes=5)
+
+            # Use the earlier of config time and early close time
+            if early_close_force < config_force_time:
+                logger.info(f"ARES: Early close day - adjusting force exit from {self.config.force_exit} to {early_close_force.strftime('%H:%M')}")
+                return early_close_force
+
+        return config_force_time
+
     def _check_exit_conditions(
         self,
         pos: IronCondorPosition,
@@ -649,9 +694,8 @@ class ARESTrader(MathOptimizerMixin):
         if pos.expiration <= today:
             return True, "EXPIRED"
 
-        # Force exit time
-        force_parts = self.config.force_exit.split(':')
-        force_time = now.replace(hour=int(force_parts[0]), minute=int(force_parts[1]), second=0)
+        # Force exit time (handles early close days)
+        force_time = self._get_force_exit_time(now, today)
         if now >= force_time and pos.expiration == today:
             return True, "FORCE_EXIT_TIME"
 
