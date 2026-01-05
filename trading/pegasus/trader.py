@@ -521,6 +521,83 @@ class PEGASUSTrader(MathOptimizerMixin):
         except Exception as e:
             logger.warning(f"PEGASUS: Learning Memory outcome recording failed: {e}")
 
+    def _store_oracle_prediction(self, signal, position: IronCondorPosition):
+        """
+        Store Oracle prediction to database BEFORE trade execution.
+
+        This is CRITICAL for the ML feedback loop:
+        1. store_prediction() creates the record in oracle_predictions table
+        2. After trade closes, update_outcome() updates that record with actual results
+        3. Oracle uses this data for continuous model improvement
+
+        Without this call, update_outcome() has no record to update!
+        """
+        if not ORACLE_AVAILABLE:
+            return
+
+        try:
+            oracle = OracleAdvisor()
+
+            # Build MarketContext from signal
+            from quant.oracle_advisor import MarketContext as OracleMarketContext, GEXRegime
+
+            gex_regime_str = signal.gex_regime.upper() if signal.gex_regime else 'NEUTRAL'
+            try:
+                gex_regime = GEXRegime[gex_regime_str]
+            except (KeyError, AttributeError):
+                gex_regime = GEXRegime.NEUTRAL
+
+            context = OracleMarketContext(
+                spot_price=signal.spot_price,
+                vix=signal.vix,
+                gex_regime=gex_regime,
+                gex_call_wall=signal.call_wall,
+                gex_put_wall=signal.put_wall,
+                gex_flip_point=getattr(signal, 'flip_point', 0),
+                gex_net=getattr(signal, 'net_gex', 0),
+                day_of_week=datetime.now(CENTRAL_TZ).weekday(),
+                expected_move_pct=(signal.expected_move / signal.spot_price * 100) if signal.spot_price else 0,
+            )
+
+            # Build OraclePrediction from signal's Oracle context
+            from quant.oracle_advisor import OraclePrediction, TradingAdvice, BotName
+
+            # Determine advice from signal
+            advice_str = getattr(signal, 'oracle_advice', 'TRADE_FULL')
+            try:
+                advice = TradingAdvice[advice_str] if advice_str else TradingAdvice.TRADE_FULL
+            except (KeyError, ValueError):
+                advice = TradingAdvice.TRADE_FULL
+
+            prediction = OraclePrediction(
+                bot_name=BotName.PEGASUS,
+                advice=advice,
+                win_probability=getattr(signal, 'oracle_win_probability', 0.7),
+                confidence=signal.confidence,
+                suggested_risk_pct=10.0,
+                suggested_sd_multiplier=getattr(signal, 'oracle_suggested_sd', 1.0),
+                use_gex_walls=getattr(signal, 'oracle_use_gex_walls', False),
+                suggested_put_strike=signal.put_short,
+                suggested_call_strike=signal.call_short,
+                top_factors=[(f['factor'], f['impact']) for f in getattr(signal, 'oracle_top_factors', [])],
+                reasoning=signal.reasoning,
+                probabilities=getattr(signal, 'oracle_probabilities', {}),
+            )
+
+            # Store to database
+            trade_date = position.expiration if hasattr(position, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+            success = oracle.store_prediction(prediction, context, trade_date)
+
+            if success:
+                logger.info(f"PEGASUS: Oracle prediction stored for {trade_date} (Win Prob: {prediction.win_probability:.0%})")
+            else:
+                logger.warning(f"PEGASUS: Failed to store Oracle prediction for {trade_date}")
+
+        except Exception as e:
+            logger.warning(f"PEGASUS: Oracle prediction storage failed: {e}")
+            import traceback
+            traceback.print_exc()
+
     def _get_force_exit_time(self, now: datetime, today: str) -> datetime:
         """
         Get the effective force exit time, accounting for early close days.
@@ -653,6 +730,10 @@ class PEGASUSTrader(MathOptimizerMixin):
             logger.error(f"Position {position.position_id} executed but not saved!")
 
         self.db.log("INFO", f"Opened: {position.position_id}", position.to_dict())
+
+        # CRITICAL: Store Oracle prediction for ML feedback loop
+        # This enables update_outcome to find and update the prediction record
+        self._store_oracle_prediction(signal, position)
 
         # Record prediction to Learning Memory for self-improvement tracking
         prediction_id = self._record_learning_memory_prediction(position, signal)

@@ -56,6 +56,7 @@ from typing import Dict, List, Optional, Tuple, Any, TYPE_CHECKING
 from dataclasses import dataclass, asdict, field
 from enum import Enum
 import warnings
+import threading
 
 # Add parent to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -324,47 +325,56 @@ class OracleLiveLog:
     """
     Live logging system for Oracle - FULL TRANSPARENCY.
     Captures every piece of data flowing through Oracle for frontend visibility.
+    Thread-safe singleton implementation.
     """
     _instance = None
+    _instance_lock = threading.Lock()
     MAX_LOGS = 500  # Increased for more history
     MAX_DATA_FLOWS = 100  # Store detailed data flow records
 
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._logs = []
-            cls._instance._callbacks = []
-            cls._instance._data_flows = []  # Full data pipeline records
-            cls._instance._claude_exchanges = []  # Complete Claude prompt/response pairs
+            with cls._instance_lock:
+                # Double-check locking pattern for thread safety
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._logs = []
+                    cls._instance._callbacks = []
+                    cls._instance._data_flows = []  # Full data pipeline records
+                    cls._instance._claude_exchanges = []  # Complete Claude prompt/response pairs
+                    cls._instance._log_lock = threading.Lock()  # Lock for list operations
         return cls._instance
 
     def log(self, event_type: str, message: str, data: Optional[Dict] = None):
-        """Add a log entry"""
+        """Add a log entry (thread-safe)"""
         entry = {
             "timestamp": datetime.now().isoformat(),
             "type": event_type,
             "message": message,
             "data": data
         }
-        self._logs.append(entry)
 
-        # Keep only recent logs
-        if len(self._logs) > self.MAX_LOGS:
-            self._logs = self._logs[-self.MAX_LOGS:]
+        with self._log_lock:
+            self._logs.append(entry)
 
-        # Notify callbacks
+            # Keep only recent logs
+            if len(self._logs) > self.MAX_LOGS:
+                self._logs = self._logs[-self.MAX_LOGS:]
+
+        # Notify callbacks (outside lock to prevent deadlocks)
         for callback in self._callbacks:
             try:
                 callback(entry)
-            except:
-                pass
+            except Exception as e:
+                # Log callback errors but don't let them break the logging system
+                logger.debug(f"Oracle live log callback error: {e}")
 
         # Also log to standard logger
         logger.info(f"[ORACLE] {event_type}: {message}")
 
     def log_data_flow(self, bot_name: str, stage: str, data: Dict):
         """
-        Log a complete data flow step for full transparency.
+        Log a complete data flow step for full transparency (thread-safe).
 
         Stages: INPUT, ML_FEATURES, ML_OUTPUT, CLAUDE_PROMPT, CLAUDE_RESPONSE,
                 DECISION, SENT_TO_BOT, ANTI_HALLUCINATION_CHECK
@@ -375,11 +385,13 @@ class OracleLiveLog:
             "stage": stage,
             "data": data
         }
-        self._data_flows.append(entry)
 
-        # Keep only recent
-        if len(self._data_flows) > self.MAX_DATA_FLOWS:
-            self._data_flows = self._data_flows[-self.MAX_DATA_FLOWS:]
+        with self._log_lock:
+            self._data_flows.append(entry)
+
+            # Keep only recent
+            if len(self._data_flows) > self.MAX_DATA_FLOWS:
+                self._data_flows = self._data_flows[-self.MAX_DATA_FLOWS:]
 
         # Also add to regular logs with summary
         self.log(f"DATA_FLOW_{stage}", f"{bot_name}: {stage}", {
@@ -395,7 +407,7 @@ class OracleLiveLog:
                            hallucination_warnings: List = None,
                            data_citations: List = None):
         """
-        Log a complete Claude AI exchange with full context.
+        Log a complete Claude AI exchange with full context (thread-safe).
         This is the key for transparency - shows exactly what AI sees and says.
         Includes anti-hallucination validation results.
         """
@@ -413,11 +425,13 @@ class OracleLiveLog:
             "hallucination_warnings": hallucination_warnings or [],
             "data_citations": data_citations or []
         }
-        self._claude_exchanges.append(exchange)
 
-        # Keep only recent
-        if len(self._claude_exchanges) > self.MAX_DATA_FLOWS:
-            self._claude_exchanges = self._claude_exchanges[-self.MAX_DATA_FLOWS:]
+        with self._log_lock:
+            self._claude_exchanges.append(exchange)
+
+            # Keep only recent
+            if len(self._claude_exchanges) > self.MAX_DATA_FLOWS:
+                self._claude_exchanges = self._claude_exchanges[-self.MAX_DATA_FLOWS:]
 
         # Log summary with hallucination status
         self.log("CLAUDE_EXCHANGE", f"{bot_name}: Claude AI consulted (Hallucination Risk: {hallucination_risk})", {
@@ -630,6 +644,15 @@ OVERRIDE_ADVICE: [Only if OVERRIDE, what advice to give instead]"""
             )
             response_time_ms = int((time.time() - start_time) * 1000)
 
+            # Safe access to Claude response content
+            if not message.content or len(message.content) == 0:
+                self.live_log.log("ERROR", "Claude returned empty content array")
+                return ClaudeValidation(
+                    recommendation="PROCEED",
+                    confidence_adjustment=0.0,
+                    risk_factors=[],
+                    reasoning="Claude returned empty response"
+                )
             response = message.content[0].text
 
             # Extract token counts from response
@@ -915,6 +938,9 @@ Write a clear explanation for the trader."""
                 system=system_prompt
             )
 
+            # Safe access to Claude response content
+            if not message.content or len(message.content) == 0:
+                return f"Oracle predicts {prediction.advice.value} with {prediction.win_probability:.1%} confidence. {prediction.reasoning}"
             explanation = message.content[0].text.strip()
 
             self.live_log.log("EXPLAIN_DONE", f"Explanation generated ({len(explanation)} chars)")
@@ -1052,6 +1078,15 @@ RECOMMENDATIONS:
                 system=system_prompt
             )
 
+            # Safe access to Claude response content
+            if not message.content or len(message.content) == 0:
+                self.live_log.log("ERROR", "Claude returned empty content for pattern analysis")
+                return {
+                    "success": False,
+                    "error": "Claude returned empty response",
+                    "patterns": [],
+                    "recommendations": []
+                }
             response = message.content[0].text
             result = self._parse_pattern_response(response)
 
@@ -1371,8 +1406,8 @@ class OracleAdvisor:
                 )
             """)
 
-            # Deactivate previous models
-            cursor.execute("UPDATE oracle_trained_models SET is_active = FALSE")
+            # Deactivate previous active models (only update those that are currently active)
+            cursor.execute("UPDATE oracle_trained_models SET is_active = FALSE WHERE is_active = TRUE")
 
             # Serialize model data
             model_data = pickle.dumps({
@@ -1904,10 +1939,18 @@ class OracleAdvisor:
 
             if is_spx_trading and is_spy_gex_data:
                 # Scale SPY walls to SPX (multiply by ratio)
-                scale_factor = context.spot_price / ((gex_put_wall + gex_call_wall) / 2)
-                gex_put_wall = gex_put_wall * scale_factor
-                gex_call_wall = gex_call_wall * scale_factor
-                logger.info(f"Scaled SPY GEX walls to SPX: Put ${gex_put_wall:.0f}, Call ${gex_call_wall:.0f} (scale: {scale_factor:.2f}x)")
+                avg_wall = (gex_put_wall + gex_call_wall) / 2
+                if avg_wall > 0:
+                    scale_factor = context.spot_price / avg_wall
+                    # Validate scale_factor is reasonable (should be ~10x for SPY->SPX)
+                    if scale_factor < 5 or scale_factor > 15:
+                        logger.warning(f"GEX scale factor {scale_factor:.2f}x is unusual (expected 8-12x). "
+                                      f"Spot: ${context.spot_price:.0f}, Avg Wall: ${avg_wall:.0f}")
+                    gex_put_wall = gex_put_wall * scale_factor
+                    gex_call_wall = gex_call_wall * scale_factor
+                    logger.info(f"Scaled SPY GEX walls to SPX: Put ${gex_put_wall:.0f}, Call ${gex_call_wall:.0f} (scale: {scale_factor:.2f}x)")
+                else:
+                    logger.warning(f"Invalid GEX walls (avg={avg_wall:.2f}), skipping scale conversion")
 
             # Use proportional buffer based on expected move (0.5% of price as minimum)
             # This ensures buffer scales with the underlying
@@ -2594,16 +2637,17 @@ class OracleAdvisor:
         win_prob = base_pred['win_probability']
 
         # SPX IC thresholds (slightly more conservative than SPY 0DTE)
+        # Note: TradingAdvice only has TRADE_FULL, TRADE_REDUCED, SKIP_TODAY
         if win_prob >= 0.58:
             advice = TradingAdvice.TRADE_FULL
             risk_pct = 0.03  # 3% risk for full position
             reasoning_parts.append(f"Strong setup: {win_prob:.1%} win probability")
         elif win_prob >= 0.52:
-            advice = TradingAdvice.TRADE_HALF
-            risk_pct = 0.015  # 1.5% risk for half position
+            advice = TradingAdvice.TRADE_REDUCED  # Was TRADE_HALF (undefined)
+            risk_pct = 0.015  # 1.5% risk for reduced position
             reasoning_parts.append(f"Moderate setup: {win_prob:.1%} win probability")
         elif win_prob >= 0.48:
-            advice = TradingAdvice.TRADE_CAUTIOUS
+            advice = TradingAdvice.TRADE_REDUCED  # Was TRADE_CAUTIOUS (undefined)
             risk_pct = 0.01  # 1% risk for cautious position
             reasoning_parts.append(f"Marginal setup: {win_prob:.1%} win probability")
         else:
@@ -2623,11 +2667,12 @@ class OracleAdvisor:
             reasoning_parts.append(f"GEX walls: Put wall {context.gex_put_wall:.0f}, Call wall {context.gex_call_wall:.0f}")
 
         # Claude AI validation (optional)
+        # Fixed: Was incorrectly referencing self.claude_analyzer (doesn't exist)
         claude_analysis = None
-        if use_claude_validation and self.claude_analyzer:
+        if use_claude_validation and self.claude_available and self.claude:
             try:
-                claude_analysis = self.claude_analyzer.analyze_setup(
-                    context, "PEGASUS_IC", win_prob, reasoning_parts
+                claude_analysis = self.claude.validate_prediction(
+                    context, base_pred, BotName.PEGASUS
                 )
                 if claude_analysis:
                     reasoning_parts.append(f"Claude: {claude_analysis.recommendation}")
@@ -2635,21 +2680,26 @@ class OracleAdvisor:
                     if claude_analysis.confidence_adjustment:
                         win_prob = min(0.95, max(0.05, win_prob + claude_analysis.confidence_adjustment))
             except Exception as e:
+                logger.warning(f"PEGASUS Claude validation failed: {e}")
                 self.live_log.log("CLAUDE_ERROR", f"PEGASUS Claude validation failed: {e}")
 
         # Build final prediction
+        # Fixed: confidence should be derived from win_prob, not base_pred (which doesn't have 'confidence' key)
+        # Confidence represents certainty in the prediction itself, scaled from win_probability
+        model_confidence = min(0.95, 0.5 + abs(win_prob - 0.5) * 2)  # Higher when win_prob is far from 50%
         prediction = OraclePrediction(
             bot_name=BotName.PEGASUS,
             advice=advice,
             win_probability=win_prob,
-            confidence=base_pred.get('confidence', 0.6),
+            confidence=model_confidence,
             suggested_risk_pct=risk_pct,
             suggested_sd_multiplier=1.0,  # SPX uses fixed spread widths
             reasoning=" | ".join(reasoning_parts),
             top_factors=base_pred.get('top_factors', []),
             model_version=self.model_version,
             suggested_put_strike=suggested_put,
-            suggested_call_strike=suggested_call
+            suggested_call_strike=suggested_call,
+            claude_analysis=claude_analysis,  # Include Claude analysis for transparency
         )
 
         # Log prediction result
@@ -2719,9 +2769,16 @@ class OracleAdvisor:
         features_scaled = self.scaler.transform(features)
 
         if self.calibrated_model:
-            proba = self.calibrated_model.predict_proba(features_scaled)[0]
+            proba_result = self.calibrated_model.predict_proba(features_scaled)
         else:
-            proba = self.model.predict_proba(features_scaled)[0]
+            proba_result = self.model.predict_proba(features_scaled)
+
+        # Safe access to predict_proba results (expected shape: (1, 2) for binary classifier)
+        if proba_result is None or len(proba_result) == 0:
+            return self._fallback_prediction(context)
+        proba = proba_result[0]
+        if len(proba) < 2:
+            return self._fallback_prediction(context)
 
         win_probability = proba[1]
 
@@ -2947,8 +3004,9 @@ class OracleAdvisor:
             try:
                 dt = datetime.strptime(trade_date, '%Y-%m-%d')
                 day_of_week = dt.weekday()
-            except:
-                day_of_week = 2
+            except (ValueError, TypeError) as e:
+                logger.debug(f"Date parsing failed for {trade_date}: {e}, defaulting to Wednesday")
+                day_of_week = 2  # Default to Wednesday
 
             vix = trade.get('vix', 20.0)
             open_price = trade.get('open_price', 5000)
@@ -3309,8 +3367,9 @@ class OracleAdvisor:
             for col_name, col_type in migration_columns:
                 try:
                     cursor.execute(f"ALTER TABLE oracle_predictions ADD COLUMN IF NOT EXISTS {col_name} {col_type}")
-                except Exception:
-                    pass  # Column already exists or other error
+                except Exception as e:
+                    # Column already exists or other migration error - log but continue
+                    logger.debug(f"Migration column {col_name}: {e}")
 
             conn.commit()
 
@@ -3558,13 +3617,17 @@ class OracleAdvisor:
 # =============================================================================
 
 _oracle: Optional[OracleAdvisor] = None
+_oracle_lock = threading.Lock()
 
 
 def get_oracle() -> OracleAdvisor:
-    """Get or create Oracle singleton"""
+    """Get or create Oracle singleton (thread-safe)"""
     global _oracle
     if _oracle is None:
-        _oracle = OracleAdvisor()
+        with _oracle_lock:
+            # Double-check locking pattern
+            if _oracle is None:
+                _oracle = OracleAdvisor()
     return _oracle
 
 
@@ -3581,7 +3644,14 @@ def get_ares_advice(
     if day_of_week is None:
         day_of_week = datetime.now().weekday()
 
-    regime = GEXRegime[gex_regime] if isinstance(gex_regime, str) else gex_regime
+    # Safe enum access with fallback to NEUTRAL
+    if isinstance(gex_regime, str):
+        try:
+            regime = GEXRegime[gex_regime]
+        except (KeyError, TypeError):
+            regime = GEXRegime.NEUTRAL
+    else:
+        regime = gex_regime if isinstance(gex_regime, GEXRegime) else GEXRegime.NEUTRAL
 
     context = MarketContext(
         spot_price=kwargs.get('price', 5000),
@@ -3641,8 +3711,9 @@ def get_pending_outcomes_count() -> int:
         try:
             cursor.execute("SELECT COUNT(*) FROM oracle_training_outcomes")
             count = cursor.fetchone()[0]
-        except Exception:
+        except Exception as e:
             # Table might not exist yet
+            logger.debug(f"oracle_training_outcomes table query failed: {e}")
             count = 0
 
         conn.close()
@@ -3673,7 +3744,8 @@ def get_training_status() -> Dict[str, Any]:
             try:
                 cursor.execute("SELECT COUNT(*) FROM oracle_training_outcomes")
                 total_outcomes = cursor.fetchone()[0]
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Failed to get total outcomes: {e}")
                 conn.rollback()  # Reset transaction state
                 total_outcomes = 0
 
@@ -3686,7 +3758,8 @@ def get_training_status() -> Dict[str, Any]:
                 row = cursor.fetchone()
                 if row and row[0]:
                     last_trained = row[0].isoformat()
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Failed to get last training date: {e}")
                 conn.rollback()  # Reset transaction state
 
             # Check if model exists in database
@@ -3709,7 +3782,8 @@ def get_training_status() -> Dict[str, Any]:
                         model_source = "database"
                         if not last_trained:
                             last_trained = db_row[1].isoformat() if db_row[1] else None
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Failed to check model in database: {e}")
                 conn.rollback()
 
         except Exception as e:
@@ -3718,8 +3792,8 @@ def get_training_status() -> Dict[str, Any]:
             if conn:
                 try:
                     conn.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Failed to close connection: {e}")
 
     # Determine model source
     if oracle.is_trained and not db_model_exists:
