@@ -366,6 +366,19 @@ class SignalGenerator:
         oracle_confidence = oracle.get('confidence', 0) if oracle else 0
         oracle_win_prob = oracle.get('win_probability', 0) if oracle else 0
 
+        # Step 3.6: Validate Oracle advice - check for SKIP and win probability
+        if oracle:
+            # SKIP_TODAY from Oracle overrides everything
+            if oracle.get('advice') == 'SKIP_TODAY':
+                logger.info(f"Oracle advises SKIP_TODAY: {oracle.get('reasoning', '')}")
+                return None
+
+            # Validate win probability meets minimum threshold (50% for directional)
+            min_win_prob = getattr(self.config, 'min_win_probability', 0.50)
+            if oracle_win_prob > 0 and oracle_win_prob < min_win_prob:
+                logger.info(f"Oracle win probability {oracle_win_prob:.0%} below minimum {min_win_prob:.0%}")
+                return None
+
         # Step 4: Determine final direction
         # Wall proximity is primary, ML and Oracle are confirmation
         direction = wall_direction

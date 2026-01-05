@@ -115,6 +115,7 @@ class SignalGenerator:
             # Calculate expected move (1 SD)
             expected_move = self._calculate_expected_move(spot, vix)
 
+            now = datetime.now(CENTRAL_TZ)
             return {
                 'spot_price': spot,
                 'vix': vix,
@@ -124,7 +125,8 @@ class SignalGenerator:
                 'gex_regime': gex_data.get('regime', 'NEUTRAL') if gex_data else 'NEUTRAL',
                 'net_gex': gex_data.get('net_gex', 0) if gex_data else 0,
                 'flip_point': gex_data.get('flip_point', 0) if gex_data else 0,
-                'timestamp': datetime.now(CENTRAL_TZ),
+                'timestamp': now,
+                'data_age_seconds': 0,  # Fresh data
             }
         except Exception as e:
             logger.error(f"Error getting market data: {e}")
@@ -302,10 +304,15 @@ class SignalGenerator:
             )
 
             # Call correct method: get_ares_advice instead of get_prediction
+            # Pass all VIX filtering parameters for proper skip logic
             prediction = self.oracle.get_ares_advice(
                 context=context,
                 use_gex_walls=True,
                 use_claude_validation=False,  # Skip Claude for performance during live trading
+                vix_hard_skip=getattr(self.config, 'vix_skip', 32.0) or 32.0,
+                vix_monday_friday_skip=getattr(self.config, 'vix_monday_friday_skip', 30.0) or 0.0,
+                vix_streak_skip=getattr(self.config, 'vix_streak_skip', 28.0) or 0.0,
+                recent_losses=getattr(self, '_recent_losses', 0),
             )
 
             if prediction:
@@ -363,6 +370,20 @@ class SignalGenerator:
         vix = market_data['vix']
         expected_move = market_data['expected_move']
 
+        # Step 1.5: Validate data freshness (max 2 minutes old)
+        data_timestamp = market_data.get('timestamp')
+        if data_timestamp:
+            data_age = (datetime.now(CENTRAL_TZ) - data_timestamp).total_seconds()
+            if data_age > 120:  # 2 minutes
+                logger.warning(f"Market data is {data_age:.0f}s old (>120s), refetching...")
+                market_data = self.get_market_data()
+                if not market_data:
+                    logger.info("No fresh market data available")
+                    return None
+                spot = market_data['spot_price']
+                vix = market_data['vix']
+                expected_move = market_data['expected_move']
+
         # Step 2: Check VIX filter
         can_trade, vix_reason = self.check_vix_filter(vix)
         if not can_trade:
@@ -373,6 +394,18 @@ class SignalGenerator:
         oracle = self.get_oracle_advice(market_data)
         confidence = oracle.get('confidence', 0.7) if oracle else 0.7
         win_probability = oracle.get('win_probability', 0) if oracle else 0
+
+        # Step 3.5: Validate Oracle advice - SKIP_TODAY overrides everything
+        if oracle:
+            if oracle.get('advice') == 'SKIP_TODAY':
+                logger.info(f"Oracle advises SKIP_TODAY: {oracle.get('reasoning', '')}")
+                return None
+
+            # Validate win probability meets minimum threshold (55%)
+            min_win_prob = getattr(self.config, 'min_win_probability', 0.55)
+            if win_probability > 0 and win_probability < min_win_prob:
+                logger.info(f"Oracle win probability {win_probability:.0%} below minimum {min_win_prob:.0%}")
+                return None
 
         # Step 4: Calculate strikes (use Oracle's suggestion if available)
         use_gex_walls = oracle.get('use_gex_walls', False) if oracle else False

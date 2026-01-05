@@ -308,6 +308,19 @@ class SignalGenerator:
         # Get Oracle advice (optional but provides confidence boost)
         oracle = self.get_oracle_advice(market)
 
+        # Validate Oracle advice - SKIP_TODAY and win probability check
+        if oracle:
+            if oracle.get('advice') == 'SKIP_TODAY':
+                logger.info(f"Oracle advises SKIP_TODAY: {oracle.get('reasoning', '')}")
+                return None
+
+            # Validate win probability meets minimum threshold (55%)
+            min_win_prob = getattr(self.config, 'min_win_probability', 0.55)
+            win_prob = oracle.get('win_probability', 0)
+            if win_prob > 0 and win_prob < min_win_prob:
+                logger.info(f"Oracle win probability {win_prob:.0%} below minimum {min_win_prob:.0%}")
+                return None
+
         strikes = self.calculate_strikes(
             market['spot_price'],
             market['expected_move'],

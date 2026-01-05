@@ -356,8 +356,9 @@ class OracleLiveLog:
         for callback in self._callbacks:
             try:
                 callback(entry)
-            except:
-                pass
+            except Exception as e:
+                # Log callback errors but don't let them break the logging system
+                logger.debug(f"Oracle live log callback error: {e}")
 
         # Also log to standard logger
         logger.info(f"[ORACLE] {event_type}: {message}")
@@ -2947,8 +2948,9 @@ class OracleAdvisor:
             try:
                 dt = datetime.strptime(trade_date, '%Y-%m-%d')
                 day_of_week = dt.weekday()
-            except:
-                day_of_week = 2
+            except (ValueError, TypeError) as e:
+                logger.debug(f"Date parsing failed for {trade_date}: {e}, defaulting to Wednesday")
+                day_of_week = 2  # Default to Wednesday
 
             vix = trade.get('vix', 20.0)
             open_price = trade.get('open_price', 5000)
