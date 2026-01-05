@@ -31,6 +31,7 @@ class PositionStatus(Enum):
     OPEN = "open"
     CLOSED = "closed"
     EXPIRED = "expired"
+    PARTIAL_CLOSE = "partial_close"  # One leg closed, other failed - needs manual intervention
 
 
 class StrategyPreset(Enum):
@@ -228,6 +229,65 @@ class PEGASUSConfig:
         config = STRATEGY_PRESETS.get(preset, {})
         self.vix_skip = config.get('vix_skip')
         self.sd_multiplier = config.get('sd_multiplier', 1.0)
+
+    def validate(self) -> tuple[bool, str]:
+        """
+        Validate configuration values.
+
+        Returns: (is_valid, error_message)
+        """
+        errors = []
+
+        # Capital validation
+        if self.capital <= 0:
+            errors.append(f"capital must be > 0, got {self.capital}")
+
+        # Risk validation
+        if self.risk_per_trade_pct <= 0 or self.risk_per_trade_pct > 100:
+            errors.append(f"risk_per_trade_pct must be 0-100, got {self.risk_per_trade_pct}")
+
+        # Contract limits
+        if self.max_contracts <= 0:
+            errors.append(f"max_contracts must be > 0, got {self.max_contracts}")
+
+        # Spread width
+        if self.spread_width <= 0:
+            errors.append(f"spread_width must be > 0, got {self.spread_width}")
+
+        # Position limits
+        if self.max_open_positions <= 0:
+            errors.append(f"max_open_positions must be > 0, got {self.max_open_positions}")
+
+        # Oracle suitability
+        if self.min_ic_suitability < 0 or self.min_ic_suitability > 1:
+            errors.append(f"min_ic_suitability must be 0-1, got {self.min_ic_suitability}")
+
+        # Profit target
+        if self.profit_target_pct <= 0 or self.profit_target_pct > 100:
+            errors.append(f"profit_target_pct must be 0-100, got {self.profit_target_pct}")
+
+        # Time format validation
+        def validate_time(time_str: str, field_name: str):
+            try:
+                parts = time_str.split(':')
+                if len(parts) != 2:
+                    return f"{field_name} must be HH:MM format, got {time_str}"
+                hour, minute = int(parts[0]), int(parts[1])
+                if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                    return f"{field_name} has invalid time values: {time_str}"
+            except (ValueError, AttributeError):
+                return f"{field_name} must be HH:MM format, got {time_str}"
+            return None
+
+        for field, value in [('entry_start', self.entry_start),
+                             ('entry_end', self.entry_end),
+                             ('force_exit', self.force_exit)]:
+            if err := validate_time(value, field):
+                errors.append(err)
+
+        if errors:
+            return False, "; ".join(errors)
+        return True, ""
 
 
 @dataclass

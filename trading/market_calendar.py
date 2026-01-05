@@ -54,6 +54,23 @@ MARKET_HOLIDAYS_2024_2026 = [
 # Backwards compatibility alias
 MARKET_HOLIDAYS_2024_2025 = MARKET_HOLIDAYS_2024_2026
 
+# Early close days (market closes at 1:00 PM ET = 12:00 PM CT)
+# Includes: Day before Thanksgiving (Black Friday is closed for NYSE), Christmas Eve, July 3rd (when July 4th is on weekend)
+EARLY_CLOSE_DAYS = [
+    # 2024 - Christmas Eve
+    '2024-12-24',
+    # 2025 - Black Friday (day after Thanksgiving), Christmas Eve
+    '2025-11-28',  # Day after Thanksgiving
+    '2025-12-24',  # Christmas Eve
+    # 2026 - Black Friday, Christmas Eve
+    '2026-11-27',  # Day after Thanksgiving
+    '2026-12-24',  # Christmas Eve
+]
+
+# Early close time in Central Time (1:00 PM ET = 12:00 PM CT)
+EARLY_CLOSE_HOUR_CT = 12
+EARLY_CLOSE_MINUTE_CT = 0
+
 
 class MarketCalendar:
     """
@@ -68,6 +85,7 @@ class MarketCalendar:
 
     def __init__(self):
         self.holidays = set(MARKET_HOLIDAYS_2024_2025)
+        self.early_close_days = set(EARLY_CLOSE_DAYS)
         self.earnings_cache: Dict[str, List[Dict]] = {}
         self._cache_expiry = datetime.now(CENTRAL_TZ)
 
@@ -80,8 +98,31 @@ class MarketCalendar:
 
         self.polygon_base_url = "https://api.polygon.io"
 
+    def is_early_close_day(self, date=None) -> bool:
+        """Check if given date is an early close day (Christmas Eve, day after Thanksgiving, etc.)"""
+        if date is None:
+            date = datetime.now(CENTRAL_TZ)
+
+        if isinstance(date, str):
+            return date in self.early_close_days
+
+        date_str = date.strftime('%Y-%m-%d')
+        return date_str in self.early_close_days
+
+    def get_market_close_time(self, date=None) -> Tuple[int, int]:
+        """
+        Get market close time for a given date in Central Time.
+
+        Returns (hour, minute) tuple.
+        Normal close: (15, 0) = 3:00 PM CT
+        Early close: (12, 0) = 12:00 PM CT (1:00 PM ET)
+        """
+        if self.is_early_close_day(date):
+            return (EARLY_CLOSE_HOUR_CT, EARLY_CLOSE_MINUTE_CT)
+        return (15, 0)  # Normal close at 3:00 PM CT
+
     def is_market_open(self, dt: datetime = None) -> bool:
-        """Check if market is open at given datetime (8:30 AM - 3:00 PM CT)"""
+        """Check if market is open at given datetime (8:30 AM - 3:00 PM CT, or 12:00 PM CT on early close days)"""
         if dt is None:
             dt = datetime.now(CENTRAL_TZ)
         elif dt.tzinfo is None:
@@ -99,21 +140,47 @@ class MarketCalendar:
         if date_str in self.holidays:
             return False
 
-        # Check market hours (8:30 AM - 3:00 PM CT = 9:30 AM - 4:00 PM ET)
+        # Get close time (may be early on certain days)
+        close_hour, close_minute = self.get_market_close_time(dt)
+
+        # Check market hours (8:30 AM - close time CT)
         hour = dt.hour
         minute = dt.minute
 
-        if hour < 8 or hour >= 15:
+        # Before open check
+        if hour < 8:
             return False
         if hour == 8 and minute < 30:
             return False
 
+        # After close check (use dynamic close time)
+        if hour > close_hour:
+            return False
+        if hour == close_hour and minute >= close_minute:
+            return False
+
         return True
 
-    def is_trading_day(self, date: datetime = None) -> bool:
-        """Check if given date is a trading day"""
+    def is_trading_day(self, date = None) -> bool:
+        """
+        Check if given date is a trading day.
+
+        Args:
+            date: Can be datetime, date, or string 'YYYY-MM-DD' format
+        """
         if date is None:
             date = datetime.now(CENTRAL_TZ)
+
+        # Handle string input
+        if isinstance(date, str):
+            # Check if holiday directly
+            if date in self.holidays:
+                return False
+            # Parse to check weekend
+            try:
+                date = datetime.strptime(date, '%Y-%m-%d')
+            except ValueError:
+                return False
 
         # Check if weekend
         if date.weekday() >= 5:
@@ -284,7 +351,7 @@ class MarketCalendar:
 
     def get_known_earnings_calendar(self) -> Dict[str, List[str]]:
         """
-        Known major earnings dates for Q4 2024 and Q1 2025.
+        Known major earnings dates for Q4 2024 through 2026.
 
         This is a fallback when API is unavailable.
         Updated quarterly from public earnings calendars.
@@ -310,6 +377,32 @@ class MarketCalendar:
             '2025-04-30': ['MSFT', 'META'],
             '2025-05-01': ['AAPL', 'AMZN'],
             '2025-05-28': ['NVDA'],
+
+            # Q3 2025 Earnings (July-August 2025)
+            '2025-07-23': ['TSLA'],
+            '2025-07-29': ['GOOGL', 'GOOG', 'MSFT'],
+            '2025-07-31': ['AAPL', 'AMZN', 'META'],
+            '2025-08-20': ['NVDA'],
+
+            # Q4 2025 Earnings (October-November 2025)
+            '2025-10-22': ['TSLA'],
+            '2025-10-28': ['GOOGL', 'GOOG'],
+            '2025-10-29': ['MSFT', 'META'],
+            '2025-10-30': ['AAPL', 'AMZN'],
+            '2025-11-19': ['NVDA'],
+
+            # Q1 2026 Earnings (January-February 2026)
+            '2026-01-28': ['MSFT', 'META', 'TSLA'],
+            '2026-01-29': ['AAPL', 'AMZN'],
+            '2026-02-18': ['NVDA'],
+            '2026-02-19': ['WMT'],
+
+            # Q2 2026 Earnings (April-May 2026)
+            '2026-04-22': ['TSLA'],
+            '2026-04-28': ['GOOGL', 'GOOG'],
+            '2026-04-29': ['MSFT', 'META'],
+            '2026-04-30': ['AAPL', 'AMZN'],
+            '2026-05-27': ['NVDA'],
         }
 
     def check_known_earnings(self, days_ahead: int = 3) -> Tuple[bool, List[str]]:
@@ -372,7 +465,7 @@ class MarketCalendar:
 
         These are high-volatility events that may affect SPX trading.
         """
-        # FOMC meeting dates for 2024-2025
+        # FOMC meeting dates for 2024-2026
         fomc_dates = [
             # 2024 remaining
             '2024-12-17', '2024-12-18',
@@ -385,6 +478,15 @@ class MarketCalendar:
             '2025-09-16', '2025-09-17',
             '2025-11-04', '2025-11-05',
             '2025-12-16', '2025-12-17',
+            # 2026 (projected schedule)
+            '2026-01-27', '2026-01-28',
+            '2026-03-17', '2026-03-18',
+            '2026-05-05', '2026-05-06',
+            '2026-06-16', '2026-06-17',
+            '2026-07-28', '2026-07-29',
+            '2026-09-15', '2026-09-16',
+            '2026-11-03', '2026-11-04',
+            '2026-12-15', '2026-12-16',
         ]
         return fomc_dates
 

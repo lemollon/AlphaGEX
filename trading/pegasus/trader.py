@@ -7,7 +7,7 @@ One trade per day with $10 spreads.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 
 from .models import (
@@ -82,6 +82,15 @@ except ImportError:
     MATH_OPTIMIZER_AVAILABLE = False
     MathOptimizerMixin = object
 
+# Market calendar for holiday checking
+try:
+    from trading.market_calendar import MarketCalendar
+    MARKET_CALENDAR = MarketCalendar()
+    MARKET_CALENDAR_AVAILABLE = True
+except ImportError:
+    MARKET_CALENDAR = None
+    MARKET_CALENDAR_AVAILABLE = False
+
 
 class PEGASUSTrader(MathOptimizerMixin):
     """
@@ -100,6 +109,13 @@ class PEGASUSTrader(MathOptimizerMixin):
     def __init__(self, config: Optional[PEGASUSConfig] = None):
         self.db = PEGASUSDatabase(bot_name="PEGASUS")
         self.config = config or self.db.load_config()
+
+        # Validate configuration at startup
+        is_valid, error = self.config.validate()
+        if not is_valid:
+            logger.error(f"PEGASUS config validation failed: {error}")
+            raise ValueError(f"Invalid PEGASUS configuration: {error}")
+
         self.signals = SignalGenerator(self.config)
         self.executor = OrderExecutor(self.config, db=self.db)
 
@@ -246,6 +262,11 @@ class PEGASUSTrader(MathOptimizerMixin):
     def _check_conditions(self, now: datetime, today: str) -> tuple[bool, str]:
         if now.weekday() >= 5:
             return False, "Weekend"
+
+        # Market holiday check
+        if MARKET_CALENDAR_AVAILABLE and MARKET_CALENDAR:
+            if not MARKET_CALENDAR.is_trading_day(today):
+                return False, "Market holiday"
 
         start = self.config.entry_start.split(':')
         end = self.config.entry_end.split(':')
@@ -500,6 +521,30 @@ class PEGASUSTrader(MathOptimizerMixin):
         except Exception as e:
             logger.warning(f"PEGASUS: Learning Memory outcome recording failed: {e}")
 
+    def _get_force_exit_time(self, now: datetime, today: str) -> datetime:
+        """
+        Get the effective force exit time, accounting for early close days.
+
+        On early close days (Christmas Eve, day after Thanksgiving), market closes at 12:00 PM CT.
+        We should force exit 5 minutes before market close instead of using the normal config.
+        """
+        # Default force exit from config
+        force = self.config.force_exit.split(':')
+        config_force_time = now.replace(hour=int(force[0]), minute=int(force[1]), second=0)
+
+        # Check if today is an early close day
+        if MARKET_CALENDAR_AVAILABLE and MARKET_CALENDAR:
+            close_hour, close_minute = MARKET_CALENDAR.get_market_close_time(today)
+            # Early close: 12:00 PM CT - force exit at 11:55 AM CT
+            early_close_force = now.replace(hour=close_hour, minute=close_minute, second=0) - timedelta(minutes=5)
+
+            # Use the earlier of config time and early close time
+            if early_close_force < config_force_time:
+                logger.info(f"PEGASUS: Early close day - adjusting force exit from {self.config.force_exit} to {early_close_force.strftime('%H:%M')}")
+                return early_close_force
+
+        return config_force_time
+
     def _check_exit(self, pos: IronCondorPosition, now: datetime, today: str) -> tuple[bool, str]:
         # Convert string dates to date objects for reliable comparison
         # This handles edge cases like different date formats or timezone issues
@@ -522,14 +567,13 @@ class PEGASUSTrader(MathOptimizerMixin):
             if expiration_date <= today_date:
                 return True, "EXPIRED"
 
-            force = self.config.force_exit.split(':')
-            force_time = now.replace(hour=int(force[0]), minute=int(force[1]), second=0)
+            # Get force exit time (handles early close days)
+            force_time = self._get_force_exit_time(now, today)
             if now >= force_time and expiration_date == today_date:
                 return True, "FORCE_EXIT"
         else:
             # Fallback for string comparison
-            force = self.config.force_exit.split(':')
-            force_time = now.replace(hour=int(force[0]), minute=int(force[1]), second=0)
+            force_time = self._get_force_exit_time(now, today)
             if now >= force_time and pos.expiration == today:
                 return True, "FORCE_EXIT"
 
