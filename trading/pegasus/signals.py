@@ -56,22 +56,24 @@ class SignalGenerator:
             try:
                 self.gex_calculator = KronosGEXCalculator()
                 logger.info("PEGASUS: Kronos GEX initialized")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"PEGASUS: Kronos GEX init failed: {e}")
 
         if not self.gex_calculator and TRADIER_GEX_AVAILABLE:
             try:
                 from data.gex_calculator import get_gex_calculator
                 self.gex_calculator = get_gex_calculator()
-            except Exception:
-                pass
+                logger.info("PEGASUS: Tradier GEX initialized")
+            except Exception as e:
+                logger.warning(f"PEGASUS: Tradier GEX init failed: {e}")
 
         self.oracle = None
         if ORACLE_AVAILABLE:
             try:
                 self.oracle = OracleAdvisor()
-            except Exception:
-                pass
+                logger.info("PEGASUS: Oracle initialized")
+            except Exception as e:
+                logger.warning(f"PEGASUS: Oracle init failed: {e}")
 
     def get_market_data(self) -> Optional[Dict[str, Any]]:
         """Get SPX market data"""
@@ -93,8 +95,8 @@ class SignalGenerator:
             if DATA_AVAILABLE:
                 try:
                     vix = get_vix() or 20.0
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"VIX fetch failed, using default: {e}")
 
             # GEX data (scale from SPY if needed)
             gex_data = self._get_gex_data()

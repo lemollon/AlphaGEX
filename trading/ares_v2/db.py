@@ -519,8 +519,9 @@ class ARESDatabase:
                     VALUES (%s, %s, %s)
                 """, (level, message, json.dumps(details) if details else None))
                 conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            # Log silently but don't crash - logging failures shouldn't stop trading
+            logger.debug(f"Failed to log to database: {e}")
 
     def update_heartbeat(self, status: str, action: str) -> None:
         """Update bot heartbeat"""
@@ -536,8 +537,9 @@ class ARESDatabase:
                         last_scan_time = NOW()
                 """, (self.bot_name, status, action))
                 conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            # Heartbeat failures are non-critical
+            logger.debug(f"Failed to update heartbeat: {e}")
 
     def update_daily_performance(self, summary: DailySummary) -> bool:
         """Update daily performance record"""
