@@ -123,13 +123,18 @@ def get_ares_instance():
         from scheduler.trader_scheduler import get_ares_trader
         ares_trader = get_ares_trader()
         return ares_trader
-    except Exception:
+    except ImportError as e:
+        logger.debug(f"Could not import trader_scheduler: {e}")
+        return None
+    except Exception as e:
+        logger.debug(f"Could not get ARES trader: {e}")
         return None
 
 
 def _get_heartbeat(bot_name: str) -> dict:
     """Get heartbeat info for a bot from the database"""
     CENTRAL_TZ = ZoneInfo("America/Chicago")
+    conn = None
 
     try:
         conn = get_connection()
@@ -142,7 +147,6 @@ def _get_heartbeat(bot_name: str) -> dict:
         ''', (bot_name,))
 
         row = cursor.fetchone()
-        conn.close()
 
         if row:
             last_heartbeat, status, scan_count, details = row
@@ -181,6 +185,9 @@ def _get_heartbeat(bot_name: str) -> dict:
             'scan_count_today': 0,
             'details': {}
         }
+    finally:
+        if conn:
+            conn.close()
 
 
 def _is_ares_actually_active(heartbeat: dict, scan_interval_minutes: int = 5) -> tuple[bool, str]:
@@ -220,9 +227,11 @@ def _is_ares_actually_active(heartbeat: dict, scan_interval_minutes: int = 5) ->
         max_age_seconds = scan_interval_minutes * 60 * 2
         if age_seconds > max_age_seconds:
             return False, f'Heartbeat stale ({int(age_seconds)}s old, max {max_age_seconds}s)'
-    except Exception as e:
-        logger.debug(f"Could not parse heartbeat time: {e}")
+    except ValueError as e:
+        logger.debug(f"Could not parse heartbeat time format: {e}")
         # If we can't parse, assume it's okay
+    except Exception as e:
+        logger.warning(f"Unexpected error parsing heartbeat time: {e}")
 
     # Active statuses
     if status in ('SCAN_COMPLETE', 'TRADED', 'MARKET_CLOSED', 'BEFORE_WINDOW', 'AFTER_WINDOW'):
@@ -992,8 +1001,8 @@ async def get_ares_status():
             if row:
                 stored_ticker = row[0]
             conn.close()
-        except:
-            pass
+        except Exception as e:
+            logger.debug(f"Could not read ARES config from database: {e}")
 
         # Get actual Tradier account balance and positions - ARES MUST be connected to Tradier
         tradier_balance = _get_tradier_account_balance()
@@ -1226,7 +1235,8 @@ async def get_ares_positions():
                     except ValueError:
                         continue
                 return str(time_str)
-            except:
+            except (TypeError, AttributeError) as e:
+                logger.debug(f"Could not format time {time_str}: {e}")
                 return str(time_str) if time_str else None
 
         # Format open positions - field names match frontend IronCondorPosition interface
@@ -1253,8 +1263,8 @@ async def get_ares_positions():
                     exp_date = datetime.strptime(str(exp), "%Y-%m-%d").date()
                     today = datetime.now(ZoneInfo("America/Chicago")).date()
                     dte = (exp_date - today).days
-                except:
-                    pass
+                except (ValueError, TypeError):
+                    pass  # Keep default dte=0 if date parsing fails
 
             open_positions.append({
                 "position_id": pos_id,
@@ -1329,8 +1339,8 @@ async def get_ares_positions():
                     exp_date = datetime.strptime(str(exp), "%Y-%m-%d").date()
                     close_date = datetime.strptime(str(close_time)[:10], "%Y-%m-%d").date() if close_time else datetime.now(ZoneInfo("America/Chicago")).date()
                     dte = (exp_date - close_date).days
-                except:
-                    pass
+                except (ValueError, TypeError):
+                    pass  # Keep default dte=0 if date parsing fails
 
             closed_positions.append({
                 "position_id": pos_id,
@@ -2602,8 +2612,8 @@ async def get_ares_live_pnl():
                         exp_date = datetime.strptime(str(exp), '%Y-%m-%d').date()
                         dte = (exp_date - today_date).days
                         is_0dte = dte == 0
-                except:
-                    pass
+                except (ValueError, TypeError):
+                    pass  # Keep default dte=None if date parsing fails
 
                 positions.append({
                     'position_id': pos_id,

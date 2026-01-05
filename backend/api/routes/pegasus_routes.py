@@ -92,7 +92,11 @@ def get_pegasus_instance():
         from scheduler.trader_scheduler import get_pegasus_trader
         pegasus_trader = get_pegasus_trader()
         return pegasus_trader
-    except Exception:
+    except ImportError as e:
+        logger.debug(f"Could not import trader_scheduler: {e}")
+        return None
+    except Exception as e:
+        logger.debug(f"Could not get PEGASUS trader: {e}")
         return None
 
 
@@ -148,6 +152,7 @@ def _get_tradier_account_balance() -> dict:
 def _get_heartbeat(bot_name: str) -> dict:
     """Get heartbeat info for a bot from the database"""
     CENTRAL_TZ = ZoneInfo("America/Chicago")
+    conn = None
 
     try:
         conn = get_connection()
@@ -160,7 +165,6 @@ def _get_heartbeat(bot_name: str) -> dict:
         ''', (bot_name,))
 
         row = cursor.fetchone()
-        conn.close()
 
         if row:
             last_heartbeat, status, scan_count, details = row
@@ -195,6 +199,9 @@ def _get_heartbeat(bot_name: str) -> dict:
             'scan_count_today': 0,
             'details': {}
         }
+    finally:
+        if conn:
+            conn.close()
 
 
 def _is_bot_actually_active(heartbeat: dict, scan_interval_minutes: int = 5) -> tuple[bool, str]:
@@ -232,8 +239,10 @@ def _is_bot_actually_active(heartbeat: dict, scan_interval_minutes: int = 5) -> 
         max_age_seconds = scan_interval_minutes * 60 * 2
         if age_seconds > max_age_seconds:
             return False, f'Heartbeat stale ({int(age_seconds)}s old, max {max_age_seconds}s)'
+    except ValueError as e:
+        logger.debug(f"Could not parse heartbeat time format: {e}")
     except Exception as e:
-        logger.debug(f"Could not parse heartbeat time: {e}")
+        logger.warning(f"Unexpected error parsing heartbeat time: {e}")
 
     # Active statuses
     if status in ('SCAN_COMPLETE', 'TRADED', 'MARKET_CLOSED', 'BEFORE_WINDOW', 'AFTER_WINDOW'):
@@ -487,8 +496,8 @@ async def get_pegasus_positions():
                         exp_date = datetime.strptime(str(exp), "%Y-%m-%d").date()
                         today = datetime.now(ZoneInfo("America/Chicago")).date()
                         dte = (exp_date - today).days
-                    except:
-                        pass
+                    except (ValueError, TypeError):
+                        pass  # Keep default dte=0 if date parsing fails
 
                 # Format open_time to Central Time
                 open_time_ct = None
@@ -636,8 +645,8 @@ async def get_pegasus_positions():
                     exp_date = datetime.strptime(pos.expiration, "%Y-%m-%d").date()
                     today = datetime.now(ZoneInfo("America/Chicago")).date()
                     dte = (exp_date - today).days
-                except:
-                    pass
+                except (ValueError, TypeError, AttributeError):
+                    pass  # Keep default dte=0 if date parsing fails
 
             open_positions.append({
                 "position_id": pos.position_id,

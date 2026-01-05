@@ -89,6 +89,8 @@ def get_athena_instance():
         athena_trader = get_athena_trader()
         if athena_trader:
             return athena_trader
+    except ImportError as e:
+        logger.debug(f"Could not import trader_scheduler: {e}")
     except Exception as e:
         logger.debug(f"Could not get ATHENA from scheduler: {e}")
 
@@ -107,6 +109,7 @@ def get_athena_instance():
 def _get_heartbeat(bot_name: str) -> dict:
     """Get heartbeat info for a bot from the database"""
     CENTRAL_TZ = ZoneInfo("America/Chicago")
+    conn = None
 
     try:
         conn = get_connection()
@@ -119,7 +122,6 @@ def _get_heartbeat(bot_name: str) -> dict:
         ''', (bot_name,))
 
         row = cursor.fetchone()
-        conn.close()
 
         if row:
             last_heartbeat, status, scan_count, details = row
@@ -158,6 +160,9 @@ def _get_heartbeat(bot_name: str) -> dict:
             'scan_count_today': 0,
             'details': {}
         }
+    finally:
+        if conn:
+            conn.close()
 
 
 def _is_bot_actually_active(heartbeat: dict, scan_interval_minutes: int = 5) -> tuple[bool, str]:
@@ -195,8 +200,10 @@ def _is_bot_actually_active(heartbeat: dict, scan_interval_minutes: int = 5) -> 
         max_age_seconds = scan_interval_minutes * 60 * 2
         if age_seconds > max_age_seconds:
             return False, f'Heartbeat stale ({int(age_seconds)}s old, max {max_age_seconds}s)'
+    except ValueError as e:
+        logger.debug(f"Could not parse heartbeat time format: {e}")
     except Exception as e:
-        logger.debug(f"Could not parse heartbeat time: {e}")
+        logger.warning(f"Unexpected error parsing heartbeat time: {e}")
 
     # Active statuses
     if status in ('SCAN_COMPLETE', 'TRADED', 'MARKET_CLOSED', 'BEFORE_WINDOW', 'AFTER_WINDOW'):
@@ -518,8 +525,8 @@ async def get_athena_positions(
                     created_at = row[17]
                     if created_at:
                         is_0dte = exp_date == created_at.date()
-                except:
-                    pass
+                except (ValueError, TypeError, AttributeError):
+                    pass  # Keep default is_0dte=True if date parsing fails
 
             # Format spread string based on type
             spread_type_str = row[1] or ""
@@ -540,8 +547,8 @@ async def get_athena_positions(
                     exp_date = datetime.strptime(expiration, "%Y-%m-%d").date()
                     today = datetime.now(ZoneInfo("America/Chicago")).date()
                     dte = (exp_date - today).days
-                except:
-                    pass
+                except (ValueError, TypeError):
+                    pass  # Keep default dte=0 if date parsing fails
 
             # Calculate return percentage for closed positions
             max_profit_val = float(row[8]) if row[8] else 0
@@ -1342,8 +1349,8 @@ async def get_athena_live_pnl():
                         exp_date = datetime.strptime(str(exp), '%Y-%m-%d').date()
                         dte = (exp_date - today_date).days
                         is_0dte = dte == 0
-                except:
-                    pass
+                except (ValueError, TypeError):
+                    pass  # Keep default dte=None if date parsing fails
 
                 # Determine direction from spread type
                 direction = 'BULLISH' if spread_type and 'BULL' in spread_type.upper() else 'BEARISH'
