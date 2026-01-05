@@ -245,6 +245,84 @@ class SignalGenerator:
             logger.warning(f"ATHENA Oracle error: {e}")
             return None
 
+    def adjust_confidence_from_top_factors(
+        self,
+        confidence: float,
+        top_factors: List[Dict],
+        gex_data: Dict
+    ) -> Tuple[float, List[str]]:
+        """
+        Adjust confidence based on Oracle's top contributing factors.
+
+        ATHENA uses directional spreads, so factor adjustments are different from ICs.
+        Focus on factors that indicate directional momentum vs mean reversion.
+
+        Returns (adjusted_confidence, adjustment_reasons).
+        """
+        if not top_factors:
+            return confidence, []
+
+        adjustments = []
+        original_confidence = confidence
+        vix = gex_data.get('vix', 20)
+        gex_regime = gex_data.get('gex_regime', 'NEUTRAL')
+
+        # Extract factor names and impacts
+        factor_map = {}
+        for f in top_factors[:5]:
+            name = f.get('factor', f.get('feature', '')).lower()
+            impact = f.get('impact', f.get('importance', 0))
+            factor_map[name] = impact
+
+        # 1. VIX factor - Higher VIX can be GOOD for directional trades
+        vix_importance = factor_map.get('vix', factor_map.get('vix_level', 0))
+        if vix_importance > 0.2:
+            if 18 < vix < 28:  # Sweet spot for directional
+                boost = 0.03
+                confidence += boost
+                adjustments.append(f"VIX factor high ({vix_importance:.2f}) + VIX in sweet spot ({vix:.1f}): +{boost:.0%}")
+            elif vix > 35:  # Too volatile
+                penalty = 0.05
+                confidence -= penalty
+                adjustments.append(f"VIX factor high ({vix_importance:.2f}) + VIX extreme ({vix:.1f}): -{penalty:.0%}")
+
+        # 2. GEX regime - NEGATIVE regime favors directional trades
+        gex_importance = factor_map.get('gex_regime', factor_map.get('net_gex', 0))
+        if gex_importance > 0.15:
+            if gex_regime == 'NEGATIVE':
+                boost = 0.04  # ATHENA likes negative gamma
+                confidence += boost
+                adjustments.append(f"GEX factor high ({gex_importance:.2f}) + NEGATIVE regime (favors directional): +{boost:.0%}")
+            elif gex_regime == 'POSITIVE':
+                penalty = 0.03  # Mean reversion more likely
+                confidence -= penalty
+                adjustments.append(f"GEX factor high ({gex_importance:.2f}) + POSITIVE regime (mean reverting): -{penalty:.0%}")
+
+        # 3. Day of week - Early week better for trends
+        dow_importance = factor_map.get('day_of_week', 0)
+        if dow_importance > 0.15:
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+            day = datetime.now(ZoneInfo("America/Chicago")).weekday()
+            if day in [0, 1, 2]:  # Mon-Wed
+                boost = 0.02
+                confidence += boost
+                adjustments.append(f"Day factor high ({dow_importance:.2f}) + early week: +{boost:.0%}")
+            elif day == 4:  # Friday
+                penalty = 0.03
+                confidence -= penalty
+                adjustments.append(f"Day factor high ({dow_importance:.2f}) + Friday expiry risk: -{penalty:.0%}")
+
+        # Clamp confidence
+        confidence = max(0.4, min(0.95, confidence))
+
+        if adjustments:
+            logger.info(f"[ATHENA TOP_FACTORS ADJUSTMENTS] {original_confidence:.0%} -> {confidence:.0%}")
+            for adj in adjustments:
+                logger.info(f"  - {adj}")
+
+        return confidence, adjustments
+
     def check_wall_proximity(self, gex_data: Dict) -> Tuple[bool, str, str]:
         """
         Check if price is near a GEX wall for entry.
@@ -418,31 +496,66 @@ class SignalGenerator:
             logger.info(f"  Model: {ml_signal.get('model_name', 'unknown')}")
 
         # Step 4: Determine final direction
-        # Wall proximity is primary, ML and Oracle are confirmation
+        # IMPROVED: Oracle with very high confidence can override wall direction
         direction = wall_direction
+        direction_source = "WALL"
 
-        # If ML disagrees strongly, reduce confidence (but wall proximity is still primary)
-        confidence = 0.7  # Base confidence from wall proximity
+        # Check if Oracle should override wall direction
+        # Oracle can override when: confidence >= 85% AND win_prob >= 60% AND direction is not FLAT
+        oracle_override_threshold = 0.85
+        oracle_win_prob_threshold = 0.60
+
+        if oracle and oracle_direction != 'FLAT':
+            if oracle_confidence >= oracle_override_threshold and oracle_win_prob >= oracle_win_prob_threshold:
+                if oracle_direction != wall_direction:
+                    logger.info(f"[ATHENA ORACLE OVERRIDE] Oracle overriding wall direction!")
+                    logger.info(f"  Wall Direction: {wall_direction}")
+                    logger.info(f"  Oracle Direction: {oracle_direction}")
+                    logger.info(f"  Oracle Confidence: {oracle_confidence:.0%} (threshold: {oracle_override_threshold:.0%})")
+                    logger.info(f"  Oracle Win Prob: {oracle_win_prob:.0%} (threshold: {oracle_win_prob_threshold:.0%})")
+                    direction = oracle_direction
+                    direction_source = "ORACLE_OVERRIDE"
+
+        # Calculate confidence based on direction source
+        if direction_source == "ORACLE_OVERRIDE":
+            # Higher base confidence when Oracle is driving the direction
+            confidence = 0.75 + (oracle_confidence - oracle_override_threshold) * 0.5  # 0.75 to 0.825
+            confidence = min(0.95, confidence)
+            logger.info(f"Using Oracle-driven confidence: {confidence:.0%}")
+        else:
+            # Wall-based confidence (original logic)
+            confidence = 0.7  # Base confidence from wall proximity
+
+        # ML can boost or reduce confidence
         if ml_signal:
             if ml_direction == direction:
-                confidence = min(0.9, confidence + ml_confidence * 0.2)
+                confidence = min(0.95, confidence + ml_confidence * 0.20)
             elif ml_direction and ml_direction != direction and ml_confidence > 0.7:
-                # Reduced penalty: wall proximity takes precedence
+                # Penalty when ML disagrees
                 confidence -= 0.10
 
-        # Oracle can boost or reduce confidence further
-        if oracle:
+        # Oracle adjustments (when not overriding)
+        if oracle and direction_source != "ORACLE_OVERRIDE":
             if oracle_direction == direction and oracle_confidence > 0.6:
-                confidence = min(0.95, confidence + oracle_confidence * 0.15)
-                logger.info(f"Oracle confirms direction {direction} with {oracle_confidence:.0%} confidence")
-            elif oracle_direction != direction and oracle_direction != 'FLAT' and oracle_confidence > 0.7:
-                # Reduced penalty: wall proximity takes precedence over Oracle disagreement
-                confidence -= 0.08
-                logger.info(f"Oracle disagrees: {oracle_direction} vs wall {direction}")
+                # Oracle confirms wall direction - boost confidence more significantly
+                boost = oracle_confidence * 0.20  # Increased from 0.15
+                confidence = min(0.95, confidence + boost)
+                logger.info(f"Oracle confirms direction {direction} with {oracle_confidence:.0%} confidence (+{boost:.0%})")
+            elif oracle_direction != direction and oracle_direction != 'FLAT' and oracle_confidence > 0.6:
+                # Oracle disagrees - scale penalty by Oracle's confidence
+                penalty = (oracle_confidence - 0.6) * 0.25  # 0% to 10% penalty
+                confidence -= penalty
+                logger.info(f"Oracle disagrees: {oracle_direction} vs wall {direction} (-{penalty:.0%})")
             # Oracle SKIP_TODAY overrides (keep this - explicit skip request)
             if oracle.get('advice') == 'SKIP_TODAY':
                 logger.info(f"Oracle advises SKIP_TODAY: {oracle.get('reasoning', '')}")
                 return None
+
+            # APPLY top_factors to adjust confidence based on current conditions
+            if oracle.get('top_factors'):
+                confidence, factor_adjustments = self.adjust_confidence_from_top_factors(
+                    confidence, oracle['top_factors'], gex_data
+                )
 
         # Lower threshold since wall proximity is the core strategy
         if confidence < 0.45:
