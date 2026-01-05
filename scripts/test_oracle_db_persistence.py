@@ -48,22 +48,25 @@ def main():
     # TEST 1: Database Connection
     # ========================================
     print_header("TEST 1: Database Connection")
+    conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT 1")
         result = cursor.fetchone()
-        conn.close()
-
         print_result("Database connection", result[0] == 1, f"Query returned: {result}")
     except Exception as e:
         print_result("Database connection", False, str(e))
         all_passed = False
+    finally:
+        if conn:
+            conn.close()
 
     # ========================================
     # TEST 2: Check/Create oracle_trained_models Table
     # ========================================
     print_header("TEST 2: oracle_trained_models Table")
+    conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -107,16 +110,19 @@ def main():
         for col_name, col_type in columns:
             print(f"    - {col_name}: {col_type}")
 
-        conn.close()
         print_result("Table structure", len(columns) >= 6)
     except Exception as e:
         print_result("Table check/creation", False, str(e))
         all_passed = False
+    finally:
+        if conn:
+            conn.close()
 
     # ========================================
     # TEST 3: Check Existing Trained Models
     # ========================================
     print_header("TEST 3: Existing Trained Models")
+    conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -137,11 +143,12 @@ def main():
             print_result("Models in database", True, f"{len(models)} model(s) found")
         else:
             print_result("Models in database", False, "No models found - need to train first")
-
-        conn.close()
     except Exception as e:
         print_result("Check existing models", False, str(e))
         all_passed = False
+    finally:
+        if conn:
+            conn.close()
 
     # ========================================
     # TEST 4: Oracle Advisor Instantiation
@@ -177,6 +184,7 @@ def main():
     # TEST 5: Training Data Availability
     # ========================================
     print_header("TEST 5: Training Data Availability")
+    conn = None
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -186,7 +194,7 @@ def main():
         try:
             cursor.execute("SELECT COUNT(*) FROM oracle_live_outcomes")
             live_count = cursor.fetchone()[0]
-        except:
+        except Exception:
             pass
         print(f"  Live outcomes: {live_count}")
 
@@ -195,7 +203,7 @@ def main():
         try:
             cursor.execute("SELECT COUNT(*) FROM backtest_results")
             backtest_count = cursor.fetchone()[0]
-        except:
+        except Exception:
             pass
         print(f"  Backtest results: {backtest_count}")
 
@@ -204,7 +212,7 @@ def main():
         try:
             cursor.execute("SELECT COUNT(*) FROM kronos_memory")
             kronos_count = cursor.fetchone()[0]
-        except:
+        except Exception:
             pass
         print(f"  KRONOS memory: {kronos_count}")
 
@@ -213,11 +221,9 @@ def main():
         try:
             cursor.execute("SELECT COUNT(*) FROM zero_dte_backtest_results")
             zero_dte_count = cursor.fetchone()[0]
-        except:
+        except Exception:
             pass
         print(f"  Zero-DTE backtest results: {zero_dte_count}")
-
-        conn.close()
 
         total = live_count + backtest_count + kronos_count + zero_dte_count
         print_result("Training data available", total > 0, f"Total potential samples: {total}")
@@ -225,6 +231,9 @@ def main():
     except Exception as e:
         print_result("Training data check", False, str(e))
         all_passed = False
+    finally:
+        if conn:
+            conn.close()
 
     # ========================================
     # TEST 6: Trigger Training (if no model)

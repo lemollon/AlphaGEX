@@ -48,7 +48,7 @@ def get_day_of_week(date_str: str) -> int:
     """Get day of week (0=Monday, 4=Friday)"""
     try:
         return datetime.strptime(date_str, '%Y-%m-%d').weekday()
-    except:
+    except (ValueError, TypeError):
         return 2  # Default to Wednesday
 
 
@@ -328,7 +328,7 @@ def simulate_combined_decisions(trades: List[Dict], ml_advisor, oracle) -> Dict[
                     ml_advice = ml_advisor.predict(vix=vix, day_of_week=dow)
                     ml_prob = ml_advice.win_probability
                     ml_sd_mult = ml_advice.suggested_sd_mult
-                except:
+                except Exception:
                     pass
 
             # ========== Step 2: Get Oracle Adjustments ==========
