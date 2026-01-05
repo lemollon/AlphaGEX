@@ -6,6 +6,9 @@ from fastapi import APIRouter, HTTPException
 from datetime import datetime, timedelta
 from typing import Optional, List
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Import database adapter
 try:
@@ -14,6 +17,73 @@ except ImportError:
     from ...database_adapter import get_connection
 
 router = APIRouter(prefix="/api/events", tags=["Events"])
+
+
+# ============================================================================
+# CAPITAL FETCHERS FOR BOTS
+# ============================================================================
+
+def _get_ares_capital() -> float:
+    """
+    Get ARES starting capital from Tradier or database.
+
+    ARES represents the actual Tradier sandbox account, so we fetch the real balance.
+    Falls back to stored starting capital or $100k default.
+    """
+    try:
+        # Try to get stored starting capital from database first
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT value FROM autonomous_config
+            WHERE key = 'ares_starting_capital'
+        ''')
+        row = cursor.fetchone()
+        conn.close()
+
+        if row and float(row[0]) > 0:
+            return float(row[0])
+
+        # Fall back to fetching from Tradier
+        try:
+            from backend.api.routes.ares_routes import _get_tradier_account_balance
+            tradier_balance = _get_tradier_account_balance()
+            if tradier_balance.get('connected') and tradier_balance.get('total_equity', 0) > 0:
+                return round(tradier_balance['total_equity'], 2)
+        except ImportError:
+            pass
+
+        # Default fallback
+        return 100000
+
+    except Exception as e:
+        logger.warning(f"Could not fetch ARES capital: {e}")
+        return 100000
+
+
+def _get_bot_capital(bot_name: str) -> float:
+    """
+    Get starting capital for a bot.
+
+    - ARES: Fetched from Tradier sandbox account (real money)
+    - ATHENA: $100,000 paper trading capital
+    - PEGASUS: $200,000 paper trading capital
+    """
+    if not bot_name:
+        return 200000
+
+    bot_upper = bot_name.upper()
+
+    if bot_upper == 'ARES':
+        return _get_ares_capital()
+    elif bot_upper == 'ATHENA':
+        return 100000  # Paper trading
+    elif bot_upper == 'PEGASUS':
+        return 200000  # Paper trading SPX
+    else:
+        return 200000  # Default
+
 
 # ============================================================================
 # DATABASE SETUP
@@ -528,17 +598,18 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
         # Bot-specific table mapping for V2 bots
         # Each V2 bot stores closed trades in its own positions table
         bot_tables = {
-            'ARES': ('ares_positions', 100000),      # SPY Iron Condors, $100k capital
-            'ATHENA': ('athena_positions', 100000),  # SPY Directional, $100k capital
-            'PEGASUS': ('pegasus_positions', 200000) # SPX Iron Condors, $200k capital
+            'ARES': 'ares_positions',      # SPY Iron Condors - capital from Tradier
+            'ATHENA': 'athena_positions',  # SPY Directional - $100k paper
+            'PEGASUS': 'pegasus_positions' # SPX Iron Condors - $200k paper
         }
 
         rows = []
-        starting_capital = 200000  # Default
+        # Get starting capital dynamically (ARES fetches from Tradier)
+        starting_capital = _get_bot_capital(bot_filter)
 
         if bot_filter and bot_filter.upper() in bot_tables:
             # Use bot-specific V2 table
-            table_name, starting_capital = bot_tables[bot_filter.upper()]
+            table_name = bot_tables[bot_filter.upper()]
 
             cursor.execute(f'''
                 SELECT
@@ -686,13 +757,8 @@ async def get_equity_curve(
             except Exception as e:
                 print(f"Event sync failed (non-critical): {e}")
 
-        # Get correct starting capital for bot
-        bot_capitals = {
-            'ARES': 100000,      # SPY Iron Condors
-            'ATHENA': 100000,    # SPY Directional
-            'PEGASUS': 200000    # SPX Iron Condors
-        }
-        starting_capital = bot_capitals.get(bot.upper() if bot else '', 200000)
+        # Get correct starting capital for bot (ARES fetches from Tradier)
+        starting_capital = _get_bot_capital(bot)
 
         # Calculate summary stats
         if equity_curve:
