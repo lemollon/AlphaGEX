@@ -174,6 +174,9 @@ class ATHENAConfig:
     wall_filter_pct: float = 3.0  # Trade within 3% of GEX wall (was 0.5% - too restrictive)
     min_rr_ratio: float = 0.8  # Min risk:reward (realistic for 0DTE debit spreads)
 
+    # Oracle thresholds
+    min_win_probability: float = 0.48  # Minimum Oracle win probability to trade (48% - directional is riskier)
+
     # Exit rules
     profit_target_pct: float = 50.0  # Take profit at 50% of max
     stop_loss_pct: float = 50.0  # Stop at 50% of max loss

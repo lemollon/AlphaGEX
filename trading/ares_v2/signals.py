@@ -416,16 +416,57 @@ class SignalGenerator:
         win_probability = oracle.get('win_probability', 0) if oracle else 0
 
         # Step 3.5: Validate Oracle advice - SKIP_TODAY overrides everything
+        # Log FULL Oracle analysis for frontend visibility
         if oracle:
+            # Detailed Oracle Math Logging for Frontend
+            logger.info(f"[ARES ORACLE ANALYSIS]")
+            logger.info(f"  Win Probability: {win_probability:.1%}")
+            logger.info(f"  Confidence: {confidence:.1%}")
+            logger.info(f"  Advice: {oracle.get('advice', 'N/A')}")
+            logger.info(f"  Min Required: {self.config.min_win_probability:.1%}")
+
+            # Log top factors that influenced the prediction
+            if oracle.get('top_factors'):
+                logger.info(f"  Top Factors Influencing Prediction:")
+                for i, factor in enumerate(oracle['top_factors'][:5], 1):
+                    factor_name = factor.get('factor', 'unknown')
+                    impact = factor.get('impact', 0)
+                    direction = "+" if impact > 0 else ""
+                    logger.info(f"    {i}. {factor_name}: {direction}{impact:.3f}")
+
+            # Log probability breakdown if available
+            if oracle.get('probabilities'):
+                probs = oracle['probabilities']
+                logger.info(f"  Probability Breakdown:")
+                for outcome, prob in probs.items():
+                    logger.info(f"    {outcome}: {prob:.1%}")
+
+            # Log suggested adjustments
+            logger.info(f"  Oracle Suggestions:")
+            logger.info(f"    SD Multiplier: {oracle.get('suggested_sd_multiplier', 1.0):.2f}x")
+            logger.info(f"    Use GEX Walls: {oracle.get('use_gex_walls', False)}")
+            if oracle.get('suggested_put_strike'):
+                logger.info(f"    Suggested Put Strike: ${oracle.get('suggested_put_strike')}")
+            if oracle.get('suggested_call_strike'):
+                logger.info(f"    Suggested Call Strike: ${oracle.get('suggested_call_strike')}")
+
             if oracle.get('advice') == 'SKIP_TODAY':
-                logger.info(f"Oracle advises SKIP_TODAY: {oracle.get('reasoning', '')}")
+                logger.info(f"[ARES TRADE BLOCKED] Oracle advises SKIP_TODAY")
+                logger.info(f"  Reason: {oracle.get('reasoning', 'No reason provided')}")
                 return None
 
-            # Validate win probability meets minimum threshold (55%)
-            min_win_prob = getattr(self.config, 'min_win_probability', 0.55)
+            # Validate win probability meets minimum threshold
+            min_win_prob = self.config.min_win_probability
             if win_probability > 0 and win_probability < min_win_prob:
-                logger.info(f"Oracle win probability {win_probability:.0%} below minimum {min_win_prob:.0%}")
+                logger.info(f"[ARES TRADE BLOCKED] Win probability below threshold")
+                logger.info(f"  Oracle Win Prob: {win_probability:.1%}")
+                logger.info(f"  Minimum Required: {min_win_prob:.1%}")
+                logger.info(f"  Shortfall: {(min_win_prob - win_probability):.1%}")
                 return None
+
+            logger.info(f"[ARES ORACLE PASSED] Win Prob {win_probability:.1%} >= {min_win_prob:.1%} minimum")
+        else:
+            logger.info(f"[ARES] Oracle not available, using default confidence {confidence:.1%}")
 
         # Step 4: Calculate strikes (Oracle > GEX > SD priority)
         use_gex_walls = oracle.get('use_gex_walls', False) if oracle else False

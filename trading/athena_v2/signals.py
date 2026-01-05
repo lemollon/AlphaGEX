@@ -367,17 +367,55 @@ class SignalGenerator:
         oracle_win_prob = oracle.get('win_probability', 0) if oracle else 0
 
         # Step 3.6: Validate Oracle advice - check for SKIP and win probability
+        # Log FULL Oracle analysis for frontend visibility
         if oracle:
+            # Detailed Oracle Math Logging for Frontend
+            logger.info(f"[ATHENA ORACLE ANALYSIS]")
+            logger.info(f"  Win Probability: {oracle_win_prob:.1%}")
+            logger.info(f"  Confidence: {oracle_confidence:.1%}")
+            logger.info(f"  Direction: {oracle_direction}")
+            logger.info(f"  Advice: {oracle.get('advice', 'N/A')}")
+            logger.info(f"  Min Required: {self.config.min_win_probability:.1%}")
+
+            # Log top factors that influenced the prediction
+            if oracle.get('top_factors'):
+                logger.info(f"  Top Factors Influencing Prediction:")
+                for i, factor in enumerate(oracle['top_factors'][:5], 1):
+                    factor_name = factor.get('factor', 'unknown')
+                    impact = factor.get('impact', 0)
+                    direction_sign = "+" if impact > 0 else ""
+                    logger.info(f"    {i}. {factor_name}: {direction_sign}{impact:.3f}")
+
+            # Log reasoning
+            if oracle.get('reasoning'):
+                logger.info(f"  Oracle Reasoning: {oracle.get('reasoning')[:200]}...")
+
             # SKIP_TODAY from Oracle overrides everything
             if oracle.get('advice') == 'SKIP_TODAY':
-                logger.info(f"Oracle advises SKIP_TODAY: {oracle.get('reasoning', '')}")
+                logger.info(f"[ATHENA TRADE BLOCKED] Oracle advises SKIP_TODAY")
+                logger.info(f"  Reason: {oracle.get('reasoning', 'No reason provided')}")
                 return None
 
-            # Validate win probability meets minimum threshold (50% for directional)
-            min_win_prob = getattr(self.config, 'min_win_probability', 0.50)
+            # Validate win probability meets minimum threshold
+            min_win_prob = self.config.min_win_probability
             if oracle_win_prob > 0 and oracle_win_prob < min_win_prob:
-                logger.info(f"Oracle win probability {oracle_win_prob:.0%} below minimum {min_win_prob:.0%}")
+                logger.info(f"[ATHENA TRADE BLOCKED] Win probability below threshold")
+                logger.info(f"  Oracle Win Prob: {oracle_win_prob:.1%}")
+                logger.info(f"  Minimum Required: {min_win_prob:.1%}")
+                logger.info(f"  Shortfall: {(min_win_prob - oracle_win_prob):.1%}")
                 return None
+
+            logger.info(f"[ATHENA ORACLE PASSED] Win Prob {oracle_win_prob:.1%} >= {min_win_prob:.1%} minimum")
+        else:
+            logger.info(f"[ATHENA] Oracle not available, using wall-based confidence only")
+
+        # Log ML analysis if available
+        if ml_signal:
+            logger.info(f"[ATHENA ML ANALYSIS]")
+            logger.info(f"  Direction: {ml_direction or 'N/A'}")
+            logger.info(f"  Confidence: {ml_confidence:.1%}")
+            logger.info(f"  Win Probability: {ml_signal.get('win_probability', 0):.1%}")
+            logger.info(f"  Model: {ml_signal.get('model_name', 'unknown')}")
 
         # Step 4: Determine final direction
         # Wall proximity is primary, ML and Oracle are confirmation

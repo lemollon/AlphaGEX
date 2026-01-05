@@ -341,17 +341,57 @@ class SignalGenerator:
         oracle = self.get_oracle_advice(market)
 
         # Validate Oracle advice - SKIP_TODAY and win probability check
+        # Log FULL Oracle analysis for frontend visibility
         if oracle:
+            win_prob = oracle.get('win_probability', 0)
+            oracle_confidence = oracle.get('confidence', 0)
+
+            # Detailed Oracle Math Logging for Frontend
+            logger.info(f"[PEGASUS ORACLE ANALYSIS]")
+            logger.info(f"  Win Probability: {win_prob:.1%}")
+            logger.info(f"  Confidence: {oracle_confidence:.1%}")
+            logger.info(f"  Advice: {oracle.get('advice', 'N/A')}")
+            logger.info(f"  Min Required: {self.config.min_win_probability:.1%}")
+
+            # Log top factors that influenced the prediction
+            if oracle.get('top_factors'):
+                logger.info(f"  Top Factors Influencing Prediction:")
+                for i, factor in enumerate(oracle['top_factors'][:5], 1):
+                    factor_name = factor.get('factor', 'unknown')
+                    impact = factor.get('impact', 0)
+                    direction = "+" if impact > 0 else ""
+                    logger.info(f"    {i}. {factor_name}: {direction}{impact:.3f}")
+
+            # Log suggested adjustments
+            logger.info(f"  Oracle Suggestions:")
+            logger.info(f"    SD Multiplier: {oracle.get('suggested_sd_multiplier', 1.0):.2f}x")
+            logger.info(f"    Use GEX Walls: {oracle.get('use_gex_walls', False)}")
+            if oracle.get('suggested_put_strike'):
+                logger.info(f"    Suggested Put Strike: ${oracle.get('suggested_put_strike')}")
+            if oracle.get('suggested_call_strike'):
+                logger.info(f"    Suggested Call Strike: ${oracle.get('suggested_call_strike')}")
+
+            # Log reasoning
+            if oracle.get('reasoning'):
+                logger.info(f"  Oracle Reasoning: {oracle.get('reasoning')[:200]}...")
+
             if oracle.get('advice') == 'SKIP_TODAY':
-                logger.info(f"Oracle advises SKIP_TODAY: {oracle.get('reasoning', '')}")
+                logger.info(f"[PEGASUS TRADE BLOCKED] Oracle advises SKIP_TODAY")
+                logger.info(f"  Reason: {oracle.get('reasoning', 'No reason provided')}")
                 return None
 
-            # Validate win probability meets minimum threshold (55%)
-            min_win_prob = getattr(self.config, 'min_win_probability', 0.55)
-            win_prob = oracle.get('win_probability', 0)
+            # Validate win probability meets minimum threshold
+            min_win_prob = self.config.min_win_probability
             if win_prob > 0 and win_prob < min_win_prob:
-                logger.info(f"Oracle win probability {win_prob:.0%} below minimum {min_win_prob:.0%}")
+                logger.info(f"[PEGASUS TRADE BLOCKED] Win probability below threshold")
+                logger.info(f"  Oracle Win Prob: {win_prob:.1%}")
+                logger.info(f"  Minimum Required: {min_win_prob:.1%}")
+                logger.info(f"  Shortfall: {(min_win_prob - win_prob):.1%}")
                 return None
+
+            logger.info(f"[PEGASUS ORACLE PASSED] Win Prob {win_prob:.1%} >= {min_win_prob:.1%} minimum")
+        else:
+            logger.info(f"[PEGASUS] Oracle not available, using default confidence")
 
         # Get Oracle suggested strikes if available
         oracle_put = oracle.get('suggested_put_strike') if oracle else None

@@ -526,8 +526,8 @@ class ARESTrader(MathOptimizerMixin):
                     if CIRCUIT_BREAKER_AVAILABLE and record_trade_pnl:
                         try:
                             record_trade_pnl(pnl)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.warning(f"[ARES] Failed to record P&L to circuit breaker: {e}")
 
                     # Record outcome to Oracle for ML feedback loop
                     self._record_oracle_outcome(pos, reason, pnl)

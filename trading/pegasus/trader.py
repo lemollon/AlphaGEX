@@ -288,8 +288,8 @@ class PEGASUSTrader(MathOptimizerMixin):
                 can, cb_reason = is_trading_enabled(self.db.get_position_count(), 0)
                 if not can:
                     return False, f"Circuit breaker: {cb_reason}"
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"[PEGASUS] Circuit breaker check failed: {e}")
 
         return True, "Ready"
 
@@ -398,8 +398,8 @@ class PEGASUSTrader(MathOptimizerMixin):
                     if CIRCUIT_BREAKER_AVAILABLE and record_trade_pnl:
                         try:
                             record_trade_pnl(pnl)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.warning(f"[PEGASUS] Failed to record P&L to circuit breaker: {e}")
 
                     # Record outcome to Oracle for ML feedback loop
                     self._record_oracle_outcome(pos, reason, pnl)

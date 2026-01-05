@@ -211,6 +211,9 @@ class PEGASUSConfig:
     max_open_positions: int = 5  # Allow multiple positions per day
     min_ic_suitability: float = 0.3  # Minimum IC suitability from Oracle (0.0-1.0)
 
+    # Oracle thresholds
+    min_win_probability: float = 0.50  # Minimum Oracle win probability to trade (50%)
+
     # Exit rules
     use_stop_loss: bool = False
     stop_loss_multiple: float = 2.0
