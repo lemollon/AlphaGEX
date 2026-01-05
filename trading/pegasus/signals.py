@@ -8,7 +8,7 @@ Uses $5 strike increments and larger expected moves.
 
 import math
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, Tuple
 
 from .models import IronCondorSignal, PEGASUSConfig, CENTRAL_TZ
@@ -327,7 +327,15 @@ class SignalGenerator:
             logger.info(f"Credit ${pricing['total_credit']:.2f} < ${self.config.min_credit}")
             return None
 
-        expiration = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+        # Calculate expiration for SPXW weekly options (next Friday)
+        # SPX weeklies expire every Friday (and some days have 0DTE)
+        now = datetime.now(CENTRAL_TZ)
+        days_until_friday = (4 - now.weekday()) % 7  # Friday is weekday 4
+        if days_until_friday == 0 and now.hour >= 15:
+            # It's Friday after 3 PM, use next Friday
+            days_until_friday = 7
+        expiration_date = now + timedelta(days=days_until_friday)
+        expiration = expiration_date.strftime("%Y-%m-%d")
 
         # Build detailed reasoning (FULL audit trail)
         reasoning_parts = []

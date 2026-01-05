@@ -220,6 +220,7 @@ class ARESConfig:
     spread_width: float = 2.0   # $2 wide spreads for SPY
 
     # Risk limits
+    capital: float = 100000.0  # Starting capital - can be overridden by Tradier balance
     risk_per_trade_pct: float = 10.0
     max_contracts: int = 50
     min_credit: float = 0.02  # Min credit per spread

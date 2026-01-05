@@ -378,8 +378,8 @@ class ATHENADatabase:
             logger.error(f"{self.bot_name}: Failed to close position: {e}")
             return False
 
-    def expire_position(self, position_id: str, realized_pnl: float) -> bool:
-        """Mark a position as expired with final P&L"""
+    def expire_position(self, position_id: str, realized_pnl: float, close_price: float = None) -> bool:
+        """Mark a position as expired with final P&L and close price"""
         try:
             with db_connection() as conn:
                 c = conn.cursor()
@@ -388,11 +388,12 @@ class ATHENADatabase:
                     SET status = 'expired',
                         close_time = NOW(),
                         close_reason = 'EXPIRED',
+                        close_price = %s,
                         realized_pnl = %s,
                         updated_at = NOW()
                     WHERE position_id = %s AND status = 'open'
                     RETURNING id
-                """, (realized_pnl, position_id))
+                """, (_to_python(close_price), _to_python(realized_pnl), position_id))
 
                 result = c.fetchone()
                 conn.commit()
@@ -564,3 +565,221 @@ class ATHENADatabase:
                 conn.commit()
         except Exception:
             pass
+
+    # =========================================================================
+    # PARTIAL CLOSE AND ORPHANED ORDER TRACKING
+    # =========================================================================
+
+    def partial_close_position(
+        self,
+        position_id: str,
+        close_price: float,
+        realized_pnl: float,
+        close_reason: str,
+        closed_leg: str
+    ) -> bool:
+        """
+        Mark a position as partially closed when one leg closes but other fails.
+
+        This prevents orphaned positions where Tradier has one leg closed
+        but DB shows position as fully open.
+        """
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    UPDATE athena_positions
+                    SET status = 'partial_close',
+                        close_time = NOW(),
+                        close_price = %s,
+                        realized_pnl = %s,
+                        close_reason = %s,
+                        updated_at = NOW()
+                    WHERE position_id = %s AND status = 'open'
+                    RETURNING id
+                """, (
+                    _to_python(close_price),
+                    _to_python(realized_pnl),
+                    f"{close_reason} [PARTIAL: {closed_leg} leg closed]",
+                    position_id
+                ))
+                result = c.fetchone()
+                conn.commit()
+
+                if result:
+                    logger.warning(
+                        f"{self.bot_name}: PARTIAL CLOSE - Position {position_id}, "
+                        f"only {closed_leg} leg closed. Needs manual intervention."
+                    )
+                    return True
+                return False
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to partial_close position: {e}")
+            return False
+
+    def get_partial_close_positions(self) -> List[SpreadPosition]:
+        """
+        Get positions in partial_close state that need manual intervention.
+        """
+        positions = []
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    SELECT
+                        position_id, spread_type, ticker,
+                        long_strike, short_strike, expiration,
+                        entry_debit, contracts, max_profit, max_loss,
+                        underlying_at_entry, call_wall, put_wall,
+                        gex_regime, vix_at_entry,
+                        flip_point, net_gex,
+                        oracle_confidence, ml_direction, ml_confidence,
+                        ml_model_name, ml_win_probability, ml_top_features,
+                        wall_type, wall_distance_pct, trade_reasoning,
+                        order_id, status, open_time, close_time,
+                        close_price, close_reason, realized_pnl
+                    FROM athena_positions
+                    WHERE status = 'partial_close'
+                    ORDER BY close_time DESC
+                """)
+
+                for row in c.fetchall():
+                    pos = SpreadPosition(
+                        position_id=row[0],
+                        spread_type=SpreadType(row[1]),
+                        ticker=row[2],
+                        long_strike=float(row[3]),
+                        short_strike=float(row[4]),
+                        expiration=row[5].strftime("%Y-%m-%d") if row[5] else "",
+                        entry_debit=float(row[6]),
+                        contracts=int(row[7]),
+                        max_profit=float(row[8]),
+                        max_loss=float(row[9]),
+                        underlying_at_entry=float(row[10]),
+                        call_wall=float(row[11]) if row[11] else None,
+                        put_wall=float(row[12]) if row[12] else None,
+                        gex_regime=row[13] or "",
+                        vix_at_entry=float(row[14]) if row[14] else None,
+                        flip_point=float(row[15]) if row[15] else None,
+                        net_gex=float(row[16]) if row[16] else None,
+                        oracle_confidence=float(row[17]) if row[17] else None,
+                        ml_direction=row[18] or "",
+                        ml_confidence=float(row[19]) if row[19] else None,
+                        ml_model_name=row[20] or "",
+                        ml_win_probability=float(row[21]) if row[21] else None,
+                        ml_top_features=row[22] or "",
+                        wall_type=row[23] or "",
+                        wall_distance_pct=float(row[24]) if row[24] else None,
+                        trade_reasoning=row[25] or "",
+                        order_id=row[26] or "",
+                        status=PositionStatus(row[27]),
+                        open_time=row[28],
+                        close_time=row[29],
+                        close_price=float(row[30]) if row[30] else None,
+                        close_reason=row[31] or "",
+                        realized_pnl=float(row[32]) if row[32] else None,
+                    )
+                    positions.append(pos)
+
+                logger.info(f"{self.bot_name}: Found {len(positions)} partial_close positions")
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to get partial_close positions: {e}")
+
+        return positions
+
+    def log_orphaned_order(
+        self,
+        order_id: str,
+        position_id: str,
+        order_type: str,
+        details: str,
+        action_required: str
+    ) -> bool:
+        """
+        Log an orphaned order that requires manual intervention.
+
+        Called when:
+        - Order fills but DB update fails
+        - Rollback of orphaned spread fails
+        """
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                # Ensure table exists
+                c.execute("""
+                    CREATE TABLE IF NOT EXISTS orphaned_orders (
+                        id SERIAL PRIMARY KEY,
+                        bot_name VARCHAR(20) NOT NULL,
+                        order_id VARCHAR(50) NOT NULL,
+                        position_id VARCHAR(50),
+                        order_type VARCHAR(50) NOT NULL,
+                        details TEXT,
+                        action_required TEXT,
+                        resolved BOOLEAN DEFAULT FALSE,
+                        resolved_at TIMESTAMP,
+                        resolved_by VARCHAR(100),
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                """)
+                c.execute("""
+                    INSERT INTO orphaned_orders (
+                        bot_name, order_id, position_id, order_type, details, action_required
+                    ) VALUES (%s, %s, %s, %s, %s, %s)
+                """, (
+                    self.bot_name,
+                    order_id,
+                    position_id,
+                    order_type,
+                    details,
+                    action_required
+                ))
+                conn.commit()
+                logger.critical(
+                    f"{self.bot_name}: ORPHANED ORDER LOGGED - Order {order_id}, "
+                    f"Position {position_id}. ACTION: {action_required}"
+                )
+                return True
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to log orphaned order: {e}")
+            return False
+
+    def get_orphaned_orders(self, include_resolved: bool = False) -> List[Dict]:
+        """Get orphaned orders that need manual intervention."""
+        orders = []
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                if include_resolved:
+                    c.execute("""
+                        SELECT id, bot_name, order_id, position_id, order_type,
+                               details, action_required, resolved, resolved_at, created_at
+                        FROM orphaned_orders
+                        WHERE bot_name = %s
+                        ORDER BY created_at DESC
+                    """, (self.bot_name,))
+                else:
+                    c.execute("""
+                        SELECT id, bot_name, order_id, position_id, order_type,
+                               details, action_required, resolved, resolved_at, created_at
+                        FROM orphaned_orders
+                        WHERE bot_name = %s AND resolved = FALSE
+                        ORDER BY created_at DESC
+                    """, (self.bot_name,))
+
+                for row in c.fetchall():
+                    orders.append({
+                        'id': row[0],
+                        'bot_name': row[1],
+                        'order_id': row[2],
+                        'position_id': row[3],
+                        'order_type': row[4],
+                        'details': row[5],
+                        'action_required': row[6],
+                        'resolved': row[7],
+                        'resolved_at': row[8],
+                        'created_at': row[9]
+                    })
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to get orphaned orders: {e}")
+
+        return orders

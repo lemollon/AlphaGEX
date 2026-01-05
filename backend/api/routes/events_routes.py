@@ -6,6 +6,9 @@ from fastapi import APIRouter, HTTPException
 from datetime import datetime, timedelta
 from typing import Optional, List
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Import database adapter
 try:
@@ -14,6 +17,73 @@ except ImportError:
     from ...database_adapter import get_connection
 
 router = APIRouter(prefix="/api/events", tags=["Events"])
+
+
+# ============================================================================
+# CAPITAL FETCHERS FOR BOTS
+# ============================================================================
+
+def _get_ares_capital() -> float:
+    """
+    Get ARES starting capital from Tradier or database.
+
+    ARES represents the actual Tradier sandbox account, so we fetch the real balance.
+    Falls back to stored starting capital or $100k default.
+    """
+    try:
+        # Try to get stored starting capital from database first
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT value FROM autonomous_config
+            WHERE key = 'ares_starting_capital'
+        ''')
+        row = cursor.fetchone()
+        conn.close()
+
+        if row and float(row[0]) > 0:
+            return float(row[0])
+
+        # Fall back to fetching from Tradier
+        try:
+            from backend.api.routes.ares_routes import _get_tradier_account_balance
+            tradier_balance = _get_tradier_account_balance()
+            if tradier_balance.get('connected') and tradier_balance.get('total_equity', 0) > 0:
+                return round(tradier_balance['total_equity'], 2)
+        except ImportError:
+            pass
+
+        # Default fallback
+        return 100000
+
+    except Exception as e:
+        logger.warning(f"Could not fetch ARES capital: {e}")
+        return 100000
+
+
+def _get_bot_capital(bot_name: str) -> float:
+    """
+    Get starting capital for a bot.
+
+    - ARES: Fetched from Tradier sandbox account (real money)
+    - ATHENA: $100,000 paper trading capital
+    - PEGASUS: $200,000 paper trading capital
+    """
+    if not bot_name:
+        return 200000
+
+    bot_upper = bot_name.upper()
+
+    if bot_upper == 'ARES':
+        return _get_ares_capital()
+    elif bot_upper == 'ATHENA':
+        return 100000  # Paper trading
+    elif bot_upper == 'PEGASUS':
+        return 200000  # Paper trading SPX
+    else:
+        return 200000  # Default
+
 
 # ============================================================================
 # DATABASE SETUP
@@ -74,6 +144,9 @@ def detect_events_from_trades(days: int = 90, bot_filter: str = None) -> List[di
     """
     Auto-detect trading events from historical trade data.
 
+    IMPORTANT: V2 bots (ARES, ATHENA, PEGASUS) store trades in their own tables.
+    This function reads from the correct table based on the bot filter.
+
     Detects:
     - New equity highs
     - Winning streaks (3+)
@@ -91,29 +164,81 @@ def detect_events_from_trades(days: int = 90, bot_filter: str = None) -> List[di
     try:
         start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
 
-        # Get closed trades - use parameterized query to prevent SQL injection
-        params = [start_date]
-        bot_clause = ""
-        if bot_filter:
-            bot_clause = "AND strategy ILIKE %s"
-            params.append(f'%{bot_filter}%')
+        # V2 bot table mapping
+        v2_bot_tables = {
+            'ARES': 'ares_positions',
+            'ATHENA': 'athena_positions',
+            'PEGASUS': 'pegasus_positions'
+        }
 
-        cursor.execute(f'''
-            SELECT
-                exit_date,
-                exit_time,
-                realized_pnl,
-                strategy,
-                symbol,
-                entry_vix,
-                exit_vix,
-                gex_regime
-            FROM autonomous_closed_trades
-            WHERE exit_date >= %s {bot_clause}
-            ORDER BY exit_date ASC, exit_time ASC
-        ''', params)
+        trades = []
 
-        trades = cursor.fetchall()
+        if bot_filter and bot_filter.upper() in v2_bot_tables:
+            # Query V2 bot-specific table
+            table_name = v2_bot_tables[bot_filter.upper()]
+            bot_upper = bot_filter.upper()
+
+            cursor.execute(f'''
+                SELECT
+                    DATE(close_time AT TIME ZONE 'America/Chicago') as exit_date,
+                    close_time as exit_time,
+                    realized_pnl,
+                    %s as strategy,
+                    ticker as symbol,
+                    vix_at_entry as entry_vix,
+                    vix_at_entry as exit_vix,
+                    gex_regime
+                FROM {table_name}
+                WHERE status IN ('closed', 'expired')
+                AND close_time IS NOT NULL
+                AND DATE(close_time AT TIME ZONE 'America/Chicago') >= %s
+                ORDER BY close_time ASC
+            ''', [bot_upper, start_date])
+
+            trades = cursor.fetchall()
+
+            # Fall back to legacy table if no V2 data
+            if not trades:
+                params = [start_date, f'%{bot_filter}%']
+                cursor.execute(f'''
+                    SELECT
+                        exit_date,
+                        exit_time,
+                        realized_pnl,
+                        strategy,
+                        symbol,
+                        entry_vix,
+                        exit_vix,
+                        gex_regime
+                    FROM autonomous_closed_trades
+                    WHERE exit_date >= %s AND strategy ILIKE %s
+                    ORDER BY exit_date ASC, exit_time ASC
+                ''', params)
+                trades = cursor.fetchall()
+        else:
+            # Use legacy unified table
+            params = [start_date]
+            bot_clause = ""
+            if bot_filter:
+                bot_clause = "AND strategy ILIKE %s"
+                params.append(f'%{bot_filter}%')
+
+            cursor.execute(f'''
+                SELECT
+                    exit_date,
+                    exit_time,
+                    realized_pnl,
+                    strategy,
+                    symbol,
+                    entry_vix,
+                    exit_vix,
+                    gex_regime
+                FROM autonomous_closed_trades
+                WHERE exit_date >= %s {bot_clause}
+                ORDER BY exit_date ASC, exit_time ASC
+            ''', params)
+
+            trades = cursor.fetchall()
 
         if not trades:
             return events
@@ -444,9 +569,13 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
     """
     Get equity curve data from trades, aggregated by timeframe.
 
+    IMPORTANT: V2 bots (ARES, ATHENA, PEGASUS) store trades in their own tables,
+    not in autonomous_closed_trades. This function reads from the correct table
+    based on the bot filter to ensure proper equity curve synchronization.
+
     Args:
         days: Number of days of history
-        bot_filter: Optional bot name filter (ARES, ATHENA, etc.)
+        bot_filter: Optional bot name filter (ARES, ATHENA, PEGASUS)
         timeframe: 'daily', 'weekly', or 'monthly'
     """
     conn = get_connection()
@@ -455,33 +584,81 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
     try:
         start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
 
-        # Use parameterized query to prevent SQL injection
-        params = [start_date]
-        bot_clause = ""
-        if bot_filter:
-            bot_clause = "AND strategy ILIKE %s"
-            params.append(f'%{bot_filter}%')
-
         # Get daily aggregated trades
         if timeframe == 'daily':
-            date_format = "exit_date"
+            date_format_legacy = "exit_date"
+            date_format_v2 = "DATE(close_time AT TIME ZONE 'America/Chicago')"
         elif timeframe == 'weekly':
-            date_format = "DATE_TRUNC('week', exit_date::date)::date"
+            date_format_legacy = "DATE_TRUNC('week', exit_date::date)::date"
+            date_format_v2 = "DATE_TRUNC('week', DATE(close_time AT TIME ZONE 'America/Chicago'))::date"
         else:  # monthly
-            date_format = "DATE_TRUNC('month', exit_date::date)::date"
+            date_format_legacy = "DATE_TRUNC('month', exit_date::date)::date"
+            date_format_v2 = "DATE_TRUNC('month', DATE(close_time AT TIME ZONE 'America/Chicago'))::date"
 
-        cursor.execute(f'''
-            SELECT
-                {date_format} as period_date,
-                SUM(realized_pnl) as daily_pnl,
-                COUNT(*) as trade_count
-            FROM autonomous_closed_trades
-            WHERE exit_date >= %s {bot_clause}
-            GROUP BY {date_format}
-            ORDER BY period_date ASC
-        ''', params)
+        # Bot-specific table mapping for V2 bots
+        # Each V2 bot stores closed trades in its own positions table
+        bot_tables = {
+            'ARES': 'ares_positions',      # SPY Iron Condors - capital from Tradier
+            'ATHENA': 'athena_positions',  # SPY Directional - $100k paper
+            'PEGASUS': 'pegasus_positions' # SPX Iron Condors - $200k paper
+        }
 
-        rows = cursor.fetchall()
+        rows = []
+        # Get starting capital dynamically (ARES fetches from Tradier)
+        starting_capital = _get_bot_capital(bot_filter)
+
+        if bot_filter and bot_filter.upper() in bot_tables:
+            # Use bot-specific V2 table
+            table_name = bot_tables[bot_filter.upper()]
+
+            cursor.execute(f'''
+                SELECT
+                    {date_format_v2} as period_date,
+                    SUM(realized_pnl) as daily_pnl,
+                    COUNT(*) as trade_count
+                FROM {table_name}
+                WHERE status IN ('closed', 'expired')
+                AND close_time IS NOT NULL
+                AND DATE(close_time AT TIME ZONE 'America/Chicago') >= %s
+                GROUP BY {date_format_v2}
+                ORDER BY period_date ASC
+            ''', [start_date])
+
+            rows = cursor.fetchall()
+
+            # If no V2 data found, fall back to legacy table for backwards compatibility
+            if not rows:
+                params = [start_date, f'%{bot_filter}%']
+                cursor.execute(f'''
+                    SELECT
+                        {date_format_legacy} as period_date,
+                        SUM(realized_pnl) as daily_pnl,
+                        COUNT(*) as trade_count
+                    FROM autonomous_closed_trades
+                    WHERE exit_date >= %s AND strategy ILIKE %s
+                    GROUP BY {date_format_legacy}
+                    ORDER BY period_date ASC
+                ''', params)
+                rows = cursor.fetchall()
+        else:
+            # No bot filter or unknown bot - use legacy unified table
+            params = [start_date]
+            bot_clause = ""
+            if bot_filter:
+                bot_clause = "AND strategy ILIKE %s"
+                params.append(f'%{bot_filter}%')
+
+            cursor.execute(f'''
+                SELECT
+                    {date_format_legacy} as period_date,
+                    SUM(realized_pnl) as daily_pnl,
+                    COUNT(*) as trade_count
+                FROM autonomous_closed_trades
+                WHERE exit_date >= %s {bot_clause}
+                GROUP BY {date_format_legacy}
+                ORDER BY period_date ASC
+            ''', params)
+            rows = cursor.fetchall()
 
         if not rows:
             return []
@@ -489,8 +666,7 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
         # Build equity curve
         equity_curve = []
         cumulative_pnl = 0
-        high_water_mark = 0
-        starting_capital = 200000  # Default starting capital
+        high_water_mark = starting_capital
 
         for period_date, daily_pnl, trade_count in rows:
             daily_pnl = daily_pnl or 0
@@ -581,6 +757,9 @@ async def get_equity_curve(
             except Exception as e:
                 print(f"Event sync failed (non-critical): {e}")
 
+        # Get correct starting capital for bot (ARES fetches from Tradier)
+        starting_capital = _get_bot_capital(bot)
+
         # Calculate summary stats
         if equity_curve:
             final = equity_curve[-1]
@@ -592,15 +771,15 @@ async def get_equity_curve(
                 'final_equity': final['equity'],
                 'max_drawdown_pct': max_dd,
                 'total_trades': sum(p['trade_count'] for p in equity_curve),
-                'starting_capital': 200000
+                'starting_capital': starting_capital
             }
         else:
             summary = {
                 'total_pnl': 0,
-                'final_equity': 200000,
+                'final_equity': starting_capital,
                 'max_drawdown_pct': 0,
                 'total_trades': 0,
-                'starting_capital': 200000
+                'starting_capital': starting_capital
             }
 
         response = {

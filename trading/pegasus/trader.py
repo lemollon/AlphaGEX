@@ -101,7 +101,7 @@ class PEGASUSTrader(MathOptimizerMixin):
         self.db = PEGASUSDatabase(bot_name="PEGASUS")
         self.config = config or self.db.load_config()
         self.signals = SignalGenerator(self.config)
-        self.executor = OrderExecutor(self.config)
+        self.executor = OrderExecutor(self.config, db=self.db)
 
         # Learning Memory prediction tracking (position_id -> prediction_id)
         self._prediction_ids: Dict[str, str] = {}
@@ -349,8 +349,28 @@ class PEGASUSTrader(MathOptimizerMixin):
             should_close, reason = self._check_exit(pos, now, today)
             if should_close:
                 success, price, pnl = self.executor.close_position(pos, reason)
+
+                # Handle partial close (put closed but call failed)
+                if success == 'partial_put':
+                    self.db.partial_close_position(
+                        position_id=pos.position_id,
+                        close_price=price,
+                        realized_pnl=pnl,
+                        close_reason=reason,
+                        closed_leg='put'
+                    )
+                    logger.error(
+                        f"PARTIAL CLOSE: {pos.position_id} put leg closed but call failed. "
+                        f"Manual intervention required to close call spread."
+                    )
+                    # Don't count as fully closed, but track the partial P&L
+                    total_pnl += pnl
+                    continue
+
                 if success:
-                    self.db.close_position(pos.position_id, price, pnl, reason)
+                    db_success = self.db.close_position(pos.position_id, price, pnl, reason)
+                    if not db_success:
+                        logger.error(f"CRITICAL: Position {pos.position_id} closed but DB update failed!")
                     closed += 1
                     total_pnl += pnl
 
@@ -481,13 +501,37 @@ class PEGASUSTrader(MathOptimizerMixin):
             logger.warning(f"PEGASUS: Learning Memory outcome recording failed: {e}")
 
     def _check_exit(self, pos: IronCondorPosition, now: datetime, today: str) -> tuple[bool, str]:
-        if pos.expiration <= today:
-            return True, "EXPIRED"
+        # Convert string dates to date objects for reliable comparison
+        # This handles edge cases like different date formats or timezone issues
+        try:
+            today_date = datetime.strptime(today, "%Y-%m-%d").date()
+            # Handle both string and date object for expiration
+            if isinstance(pos.expiration, str):
+                expiration_date = datetime.strptime(pos.expiration, "%Y-%m-%d").date()
+            else:
+                expiration_date = pos.expiration if hasattr(pos.expiration, 'year') else datetime.strptime(str(pos.expiration), "%Y-%m-%d").date()
+        except ValueError as e:
+            logger.error(f"Date parsing error in _check_exit: {e}")
+            # Fall back to string comparison if parsing fails
+            if pos.expiration <= today:
+                return True, "EXPIRED"
+            expiration_date = None
+            today_date = None
 
-        force = self.config.force_exit.split(':')
-        force_time = now.replace(hour=int(force[0]), minute=int(force[1]), second=0)
-        if now >= force_time and pos.expiration == today:
-            return True, "FORCE_EXIT"
+        if expiration_date and today_date:
+            if expiration_date <= today_date:
+                return True, "EXPIRED"
+
+            force = self.config.force_exit.split(':')
+            force_time = now.replace(hour=int(force[0]), minute=int(force[1]), second=0)
+            if now >= force_time and expiration_date == today_date:
+                return True, "FORCE_EXIT"
+        else:
+            # Fallback for string comparison
+            force = self.config.force_exit.split(':')
+            force_time = now.replace(hour=int(force[0]), minute=int(force[1]), second=0)
+            if now >= force_time and pos.expiration == today:
+                return True, "FORCE_EXIT"
 
         current = self.executor.get_position_current_value(pos)
         if current is None:

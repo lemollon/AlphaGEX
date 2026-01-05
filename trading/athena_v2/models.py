@@ -162,6 +162,7 @@ class ATHENAConfig:
     Loaded from database, with sensible defaults.
     """
     # Risk limits
+    capital: float = 100000.0  # Paper trading capital
     risk_per_trade_pct: float = 2.0
     max_daily_trades: int = 5
     max_open_positions: int = 3

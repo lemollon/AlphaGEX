@@ -8,6 +8,7 @@ Uses SPXW symbols for weekly options.
 
 import logging
 import uuid
+import time
 from datetime import datetime
 from typing import Optional, Dict, Tuple
 
@@ -35,9 +36,10 @@ except ImportError:
 class OrderExecutor:
     """Executes SPX Iron Condors"""
 
-    def __init__(self, config: PEGASUSConfig):
+    def __init__(self, config: PEGASUSConfig, db=None):
         self.config = config
         self.tradier = None
+        self.db = db  # Optional DB reference for orphaned order tracking
 
         if TRADIER_AVAILABLE and config.mode == TradingMode.LIVE:
             try:
@@ -46,6 +48,70 @@ class OrderExecutor:
                 logger.info("PEGASUS: Tradier initialized (PRODUCTION)")
             except Exception as e:
                 logger.error(f"Tradier init failed: {e}")
+
+    def _tradier_place_spread_with_retry(
+        self,
+        max_retries: int = 3,
+        **kwargs
+    ) -> Optional[Dict]:
+        """
+        Place a vertical spread order with retry logic.
+
+        Args:
+            max_retries: Number of retry attempts
+            **kwargs: All arguments passed to tradier.place_vertical_spread()
+        """
+        if not self.tradier:
+            return None
+
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                result = self.tradier.place_vertical_spread(**kwargs)
+                if result:
+                    return result
+                logger.warning(f"Tradier returned empty result on attempt {attempt + 1}")
+                return None
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    delay = 1.0 * (2 ** attempt)  # 1s, 2s, 4s
+                    logger.warning(
+                        f"Tradier API error (attempt {attempt + 1}/{max_retries}): {e}. "
+                        f"Retrying in {delay:.1f}s..."
+                    )
+                    time.sleep(delay)
+                else:
+                    logger.error(f"Tradier API failed after {max_retries} attempts: {e}")
+
+        if last_error:
+            raise last_error
+        return None
+
+    def _tradier_get_quote_with_retry(
+        self,
+        symbol: str,
+        max_retries: int = 2
+    ) -> Optional[Dict]:
+        """Get option quote with retry logic."""
+        if not self.tradier:
+            return None
+
+        for attempt in range(max_retries):
+            try:
+                result = self.tradier.get_option_quote(symbol)
+                if result:
+                    return result
+                return None
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    delay = 0.5 * (2 ** attempt)
+                    logger.debug(f"Quote fetch error (attempt {attempt + 1}): {e}. Retrying...")
+                    time.sleep(delay)
+                else:
+                    logger.warning(f"Quote fetch failed after {max_retries} attempts: {e}")
+
+        return None
 
     def execute_iron_condor(self, signal: IronCondorSignal) -> Optional[IronCondorPosition]:
         """Execute SPX Iron Condor"""
@@ -129,7 +195,8 @@ class OrderExecutor:
 
             # Execute put spread (credit spread: short > long for bull put)
             # Note: place_vertical_spread automatically determines credit/debit from strikes
-            put_result = self.tradier.place_vertical_spread(
+            # Using retry wrapper for network resilience
+            put_result = self._tradier_place_spread_with_retry(
                 symbol="SPXW",  # Weekly SPX options
                 expiration=signal.expiration,
                 long_strike=signal.put_long,
@@ -147,7 +214,8 @@ class OrderExecutor:
 
             # Execute call spread (credit spread: short < long for bear call)
             # Note: place_vertical_spread automatically determines credit/debit from strikes
-            call_result = self.tradier.place_vertical_spread(
+            # Using retry wrapper
+            call_result = self._tradier_place_spread_with_retry(
                 symbol="SPXW",
                 expiration=signal.expiration,
                 long_strike=signal.call_long,
@@ -159,6 +227,49 @@ class OrderExecutor:
 
             if not call_result or not call_result.get('order'):
                 logger.error(f"Call spread failed: {call_result}")
+                # CRITICAL: Put spread was already placed - attempt to close it
+                logger.warning(f"Attempting to rollback put spread order {put_order_id}")
+                rollback_failed = False
+                rollback_error_msg = None
+                try:
+                    # Close put spread by reversing the order (swap long/short to create debit)
+                    # Extra retries for critical rollback
+                    rollback_result = self._tradier_place_spread_with_retry(
+                        max_retries=4,
+                        symbol="SPXW",
+                        expiration=signal.expiration,
+                        long_strike=signal.put_short,  # Buy back short
+                        short_strike=signal.put_long,   # Sell long
+                        option_type="put",
+                        quantity=contracts,
+                        limit_price=round(signal.estimated_put_credit * 1.1, 2),  # Allow slippage for rollback
+                    )
+                    if rollback_result and rollback_result.get('order'):
+                        logger.info(f"Successfully rolled back put spread order {put_order_id}")
+                    else:
+                        rollback_failed = True
+                        rollback_error_msg = f"Rollback returned: {rollback_result}"
+                        logger.error(f"CRITICAL: Failed to rollback put spread {put_order_id} - MANUAL INTERVENTION REQUIRED")
+                except Exception as rollback_error:
+                    rollback_failed = True
+                    rollback_error_msg = str(rollback_error)
+                    logger.error(f"CRITICAL: Rollback exception for {put_order_id}: {rollback_error} - MANUAL INTERVENTION REQUIRED")
+
+                # Log orphaned order if rollback failed
+                if rollback_failed and self.db:
+                    self.db.log_orphaned_order(
+                        order_id=put_order_id,
+                        order_type='put_spread',
+                        ticker='SPX',
+                        expiration=signal.expiration,
+                        strikes={
+                            'put_long': signal.put_long,
+                            'put_short': signal.put_short
+                        },
+                        contracts=contracts,
+                        reason='ROLLBACK_FAILED_AFTER_CALL_SPREAD_ERROR',
+                        error_details=rollback_error_msg
+                    )
                 return None
 
             call_order_id = str(call_result['order'].get('id', 'UNKNOWN'))
@@ -222,11 +333,33 @@ class OrderExecutor:
 
     def _close_paper(self, position: IronCondorPosition, reason: str) -> Tuple[bool, float, float]:
         try:
-            current_price = self._get_current_spx_price()
-            if not current_price:
-                current_price = position.underlying_at_entry
+            # For SPX European-style cash-settled options at expiration,
+            # use the settlement price (opening price) not the current intraday price
+            is_expiration = reason in ['EXPIRED', 'FORCE_EXIT']
 
-            close_value = self._estimate_ic_value(position, current_price)
+            if is_expiration:
+                # SPX options are cash-settled using AM settlement price (opening price)
+                # At expiration, the intrinsic value is calculated based on where SPX opened
+                settlement_price = self._get_spx_settlement_price(position.expiration)
+                if not settlement_price:
+                    logger.warning(
+                        f"Could not get SPX settlement price for {position.expiration}, "
+                        f"using current price instead"
+                    )
+                    settlement_price = self._get_current_spx_price() or position.underlying_at_entry
+
+                # Calculate intrinsic value at settlement for European-style cash settlement
+                close_value = self._calculate_cash_settlement_value(position, settlement_price)
+                logger.info(
+                    f"SPX CASH SETTLEMENT: {position.position_id} @ SPX {settlement_price:.2f}, "
+                    f"IC value=${close_value:.2f}"
+                )
+            else:
+                current_price = self._get_current_spx_price()
+                if not current_price:
+                    current_price = position.underlying_at_entry
+                close_value = self._estimate_ic_value(position, current_price)
+
             pnl = (position.total_credit - close_value) * 100 * position.contracts
 
             logger.info(f"PAPER CLOSE: {position.position_id} @ ${close_value:.2f}, P&L=${pnl:.2f}")
@@ -234,6 +367,65 @@ class OrderExecutor:
         except Exception as e:
             logger.error(f"Close failed: {e}")
             return False, 0, 0
+
+    def _get_spx_settlement_price(self, expiration: str) -> Optional[float]:
+        """
+        Get SPX settlement price (AM opening price) for European-style cash settlement.
+
+        For SPX weekly options (SPXW), settlement is based on the Special Opening Quotation (SOQ)
+        which is calculated from the opening prices of SPX component stocks.
+        """
+        try:
+            # For paper trading, we use the SPX open price as settlement
+            # In production, this would come from CBOE settlement data
+            if DATA_AVAILABLE:
+                from data.unified_data_provider import get_ohlcv
+                ohlcv = get_ohlcv("SPX", "1D")
+                if ohlcv and len(ohlcv) > 0:
+                    # Return today's opening price
+                    return ohlcv[-1].get('open')
+        except Exception as e:
+            logger.debug(f"Could not get SPX settlement price: {e}")
+
+        # Fallback to current price
+        return self._get_current_spx_price()
+
+    def _calculate_cash_settlement_value(
+        self,
+        position: IronCondorPosition,
+        settlement_price: float
+    ) -> float:
+        """
+        Calculate cash settlement value for SPX Iron Condor at expiration.
+
+        SPX options are European-style and cash-settled:
+        - If settlement price is between short strikes: All legs expire worthless (max profit)
+        - If settlement breaches put side: Loss = (put_short - settlement) capped at spread width
+        - If settlement breaches call side: Loss = (settlement - call_short) capped at spread width
+        """
+        put_short = position.put_short_strike
+        put_long = position.put_long_strike
+        call_short = position.call_short_strike
+        call_long = position.call_long_strike
+        spread_width = position.spread_width
+
+        # If within short strikes - max profit (IC expires worthless)
+        if put_short < settlement_price < call_short:
+            return 0.0
+
+        # If below put short strike - put spread has intrinsic value
+        if settlement_price <= put_short:
+            put_intrinsic = put_short - settlement_price
+            # Cap at spread width minus any value from call spread
+            return min(put_intrinsic, spread_width)
+
+        # If above call short strike - call spread has intrinsic value
+        if settlement_price >= call_short:
+            call_intrinsic = settlement_price - call_short
+            # Cap at spread width
+            return min(call_intrinsic, spread_width)
+
+        return 0.0
 
     def _close_live(self, position: IronCondorPosition, reason: str) -> Tuple[bool, float, float]:
         if not self.tradier:
@@ -249,7 +441,8 @@ class OrderExecutor:
 
             # Close put spread by reversing the order (buy to close short, sell to close long)
             # We swap long/short so the spread becomes a debit (we pay to close)
-            put_result = self.tradier.place_vertical_spread(
+            # Using retry wrapper for network resilience
+            put_result = self._tradier_place_spread_with_retry(
                 symbol="SPXW",
                 expiration=position.expiration,
                 long_strike=position.put_short_strike,  # Buy back short
@@ -263,8 +456,8 @@ class OrderExecutor:
                 logger.error(f"Failed to close put spread: {put_result}")
                 return False, 0, 0
 
-            # Close call spread by reversing the order
-            call_result = self.tradier.place_vertical_spread(
+            # Close call spread by reversing the order - with retry
+            call_result = self._tradier_place_spread_with_retry(
                 symbol="SPXW",
                 expiration=position.expiration,
                 long_strike=position.call_short_strike,  # Buy back short
@@ -279,7 +472,10 @@ class OrderExecutor:
                 # Note: Put spread was already closed - this is a partial close situation
                 # Calculate partial P&L for the put side only
                 partial_pnl = (position.put_credit - close_value / 2) * 100 * position.contracts
-                return False, close_value / 2, partial_pnl
+                logger.warning(f"PARTIAL CLOSE: Put side closed, P&L=${partial_pnl:.2f}")
+                # Return special tuple indicating partial close (success='partial_put')
+                # Caller should handle this by marking position as partial_close in DB
+                return 'partial_put', close_value / 2, partial_pnl
 
             # P&L = credit received - debit to close
             pnl = (position.total_credit - close_value) * 100 * position.contracts
@@ -293,8 +489,8 @@ class OrderExecutor:
             return False, 0, 0
 
     def _calculate_position_size(self, max_loss_per_contract: float) -> int:
-        # PEGASUS operates with $200,000 capital (as per API routes and database config)
-        capital = 200_000
+        # Use config capital instead of hardcoded value
+        capital = self.config.capital
         max_risk = capital * (self.config.risk_per_trade_pct / 100)
         if max_loss_per_contract <= 0:
             return 1

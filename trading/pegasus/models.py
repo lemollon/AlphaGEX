@@ -203,6 +203,7 @@ class PEGASUSConfig:
     strike_increment: float = 5.0  # SPX trades in $5 increments
 
     # Risk limits
+    capital: float = 200000.0  # Paper trading capital for SPX
     risk_per_trade_pct: float = 10.0
     max_contracts: int = 100
     min_credit: float = 0.75  # Lowered from $1.50 to capture more opportunities

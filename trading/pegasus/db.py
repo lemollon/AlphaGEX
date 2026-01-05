@@ -315,6 +315,52 @@ class PEGASUSDatabase:
             logger.error(f"{self.bot_name}: Close position failed: {e}")
             return False
 
+    def partial_close_position(
+        self,
+        position_id: str,
+        close_price: float,
+        realized_pnl: float,
+        close_reason: str,
+        closed_leg: str  # 'put' or 'call'
+    ) -> bool:
+        """
+        Mark position as partially closed when one leg closes but the other fails.
+
+        This prevents orphaned positions where Tradier has one leg closed
+        but the database still shows position as fully open.
+        """
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    UPDATE pegasus_positions
+                    SET status = 'partial_close',
+                        close_time = NOW(),
+                        close_price = %s,
+                        realized_pnl = %s,
+                        close_reason = %s
+                    WHERE position_id = %s AND status = 'open'
+                    RETURNING id
+                """, (
+                    _to_python(close_price),
+                    _to_python(realized_pnl),
+                    f"{close_reason}_{closed_leg.upper()}_ONLY",
+                    position_id
+                ))
+                result = c.fetchone()
+                conn.commit()
+
+                if result:
+                    logger.warning(
+                        f"{self.bot_name}: PARTIAL CLOSE {position_id} - "
+                        f"Only {closed_leg} leg closed, P&L=${realized_pnl:.2f}"
+                    )
+                    return True
+                return False
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to partial close position: {e}")
+            return False
+
     def get_position_count(self) -> int:
         try:
             with db_connection() as conn:
@@ -347,6 +393,79 @@ class PEGASUSDatabase:
         except Exception as e:
             # Log failures are non-critical
             logger.debug(f"Failed to log to database: {e}")
+
+    def log_orphaned_order(
+        self,
+        order_id: str,
+        order_type: str,  # 'put_spread', 'call_spread', 'position'
+        ticker: str,
+        expiration: str,
+        strikes: Dict[str, float],
+        contracts: int,
+        reason: str,
+        error_details: str = None
+    ) -> bool:
+        """
+        Log an orphaned order that requires manual intervention.
+
+        Called when:
+        - Put spread executes but call spread fails during IC open
+        - Rollback of orphaned spread fails
+        - Partial close leaves one leg in broker
+        """
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+
+                # Ensure table exists (shared with ARES)
+                c.execute("""
+                    CREATE TABLE IF NOT EXISTS orphaned_orders (
+                        id SERIAL PRIMARY KEY,
+                        bot_name VARCHAR(20) NOT NULL,
+                        order_id VARCHAR(50),
+                        order_type VARCHAR(30) NOT NULL,
+                        ticker VARCHAR(10) NOT NULL,
+                        expiration DATE,
+                        strikes JSONB,
+                        contracts INTEGER,
+                        reason VARCHAR(200) NOT NULL,
+                        error_details TEXT,
+                        resolved BOOLEAN DEFAULT FALSE,
+                        resolved_at TIMESTAMP WITH TIME ZONE,
+                        resolved_by VARCHAR(50),
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                    )
+                """)
+
+                import json
+                c.execute("""
+                    INSERT INTO orphaned_orders (
+                        bot_name, order_id, order_type, ticker, expiration,
+                        strikes, contracts, reason, error_details
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                """, (
+                    self.bot_name,
+                    order_id,
+                    order_type,
+                    ticker,
+                    expiration,
+                    json.dumps(strikes),
+                    contracts,
+                    reason,
+                    error_details
+                ))
+                orphan_id = c.fetchone()[0]
+                conn.commit()
+
+                logger.error(
+                    f"{self.bot_name}: ORPHANED ORDER #{orphan_id} logged - "
+                    f"{order_type} {order_id} ({reason}). REQUIRES MANUAL REVIEW."
+                )
+                return True
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to log orphaned order: {e}")
+            return False
 
     def update_heartbeat(self, status: str, action: str) -> None:
         try:
@@ -452,3 +571,104 @@ class PEGASUSDatabase:
         except Exception as e:
             logger.error(f"{self.bot_name}: Failed to update daily perf: {e}")
             return False
+
+    def get_orphaned_orders(self, include_resolved: bool = False) -> List[Dict]:
+        """Get orphaned orders that need manual intervention."""
+        orders = []
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                if include_resolved:
+                    c.execute("""
+                        SELECT id, bot_name, order_id, order_type, ticker, expiration, strikes,
+                               contracts, reason, error_details, resolved, resolved_at, created_at
+                        FROM orphaned_orders
+                        WHERE bot_name = %s
+                        ORDER BY created_at DESC
+                    """, (self.bot_name,))
+                else:
+                    c.execute("""
+                        SELECT id, bot_name, order_id, order_type, ticker, expiration, strikes,
+                               contracts, reason, error_details, resolved, resolved_at, created_at
+                        FROM orphaned_orders
+                        WHERE bot_name = %s AND resolved = FALSE
+                        ORDER BY created_at DESC
+                    """, (self.bot_name,))
+
+                for row in c.fetchall():
+                    orders.append({
+                        'id': row[0],
+                        'bot_name': row[1],
+                        'order_id': row[2],
+                        'order_type': row[3],
+                        'ticker': row[4],
+                        'expiration': str(row[5]) if row[5] else None,
+                        'strikes': row[6],
+                        'contracts': row[7],
+                        'reason': row[8],
+                        'error_details': row[9],
+                        'resolved': row[10],
+                        'resolved_at': row[11],
+                        'created_at': row[12]
+                    })
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to get orphaned orders: {e}")
+
+        return orders
+
+    def get_partial_close_positions(self) -> List[IronCondorPosition]:
+        """Get positions in partial_close state that need manual intervention."""
+        positions = []
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    SELECT
+                        position_id, ticker, expiration,
+                        put_short_strike, put_long_strike, put_credit,
+                        call_short_strike, call_long_strike, call_credit,
+                        contracts, spread_width, total_credit,
+                        spot_at_entry, vix_at_entry, expected_move,
+                        call_wall, put_wall, gex_regime,
+                        order_id, status, open_time, close_time,
+                        close_price, close_reason, realized_pnl
+                    FROM pegasus_positions
+                    WHERE status = 'partial_close'
+                    ORDER BY close_time DESC
+                """)
+
+                for row in c.fetchall():
+                    pos = IronCondorPosition(
+                        position_id=row[0],
+                        ticker=row[1],
+                        expiration=row[2].strftime("%Y-%m-%d") if row[2] else "",
+                        put_short_strike=float(row[3]),
+                        put_long_strike=float(row[4]),
+                        put_credit=float(row[5]),
+                        call_short_strike=float(row[6]),
+                        call_long_strike=float(row[7]),
+                        call_credit=float(row[8]),
+                        contracts=int(row[9]),
+                        spread_width=float(row[10]),
+                        total_credit=float(row[11]),
+                        spot_at_entry=float(row[12]),
+                        vix_at_entry=float(row[13]) if row[13] else None,
+                        expected_move=float(row[14]) if row[14] else None,
+                        call_wall=float(row[15]) if row[15] else None,
+                        put_wall=float(row[16]) if row[16] else None,
+                        gex_regime=row[17] or "",
+                        order_id=row[18] or "",
+                        status=PositionStatus(row[19]),
+                        open_time=row[20],
+                        close_time=row[21],
+                        close_price=float(row[22]) if row[22] else None,
+                        close_reason=row[23] or "",
+                        realized_pnl=float(row[24]) if row[24] else None,
+                    )
+                    positions.append(pos)
+
+                logger.info(f"{self.bot_name}: Found {len(positions)} partial_close positions")
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to get partial_close positions: {e}")
+
+        return positions
