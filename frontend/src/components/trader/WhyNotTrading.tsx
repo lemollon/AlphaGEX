@@ -14,6 +14,13 @@ interface SkipReason {
     oracle_advice?: string
     oracle_confidence?: number
     oracle_win_prob?: number
+    oracle_reasoning?: string
+    oracle_top_factors?: Array<{ factor: string; impact: number }>
+    oracle_thresholds?: {
+      min_win_probability?: number
+      vix_skip?: number
+    }
+    min_win_probability_threshold?: number
     vix?: number
     spot_price?: number
     gex_regime?: string
@@ -145,14 +152,49 @@ export default function WhyNotTrading({ skipReasons, isLoading = false, maxDispl
                       </div>
                     )}
                     {skip.details.oracle_advice && (
-                      <div>
+                      <div className="col-span-2">
                         <span className="text-gray-500">Oracle:</span>
                         <span className={`ml-1 ${skip.details.oracle_advice === 'SKIP_TODAY' ? 'text-red-400' : 'text-green-400'}`}>
                           {skip.details.oracle_advice}
                         </span>
-                        {skip.details.oracle_win_prob && (
-                          <span className="text-gray-400 ml-1">(Win: {(skip.details.oracle_win_prob * 100).toFixed(0)}%)</span>
+                        {skip.details.oracle_win_prob !== undefined && (
+                          <span className={`ml-2 ${
+                            skip.details.oracle_win_prob >= (skip.details.min_win_probability_threshold || 0.55)
+                              ? 'text-green-400'
+                              : 'text-red-400'
+                          }`}>
+                            Win: {(skip.details.oracle_win_prob * 100).toFixed(0)}%
+                            {skip.details.min_win_probability_threshold && (
+                              <span className="text-gray-500 ml-1">
+                                (min: {(skip.details.min_win_probability_threshold * 100).toFixed(0)}%)
+                              </span>
+                            )}
+                          </span>
                         )}
+                        {skip.details.oracle_confidence && (
+                          <span className="text-gray-400 ml-2">Conf: {(skip.details.oracle_confidence * 100).toFixed(0)}%</span>
+                        )}
+                      </div>
+                    )}
+                    {/* Oracle Top Factors */}
+                    {skip.details.oracle_top_factors && skip.details.oracle_top_factors.length > 0 && (
+                      <div className="col-span-2">
+                        <span className="text-gray-500">Top Factors:</span>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {skip.details.oracle_top_factors.slice(0, 3).map((f, i) => (
+                            <span key={i} className={`px-1.5 py-0.5 rounded text-xs ${
+                              f.impact > 0 ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                            }`}>
+                              {f.factor}: {f.impact > 0 ? '+' : ''}{(f.impact * 100).toFixed(1)}%
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {/* Oracle Reasoning */}
+                    {skip.details.oracle_reasoning && (
+                      <div className="col-span-2 text-gray-400 italic">
+                        {skip.details.oracle_reasoning}
                       </div>
                     )}
                     {skip.details.vix && (

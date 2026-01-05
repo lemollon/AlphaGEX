@@ -20,6 +20,31 @@ interface ScanActivity {
   signal_confidence?: number
   signal_win_probability?: number
   oracle_advice?: string
+  oracle_reasoning?: string
+  // NEW: Full Oracle context for visibility
+  oracle_win_probability?: number
+  oracle_confidence?: number
+  oracle_top_factors?: Array<{
+    factor: string
+    impact: number
+  }>
+  oracle_probabilities?: {
+    win?: number
+    loss?: number
+  }
+  oracle_suggested_strikes?: {
+    sd_multiplier?: number
+    use_gex_walls?: boolean
+    put_strike?: number
+    call_strike?: number
+  }
+  oracle_thresholds?: {
+    min_win_probability?: number
+    vix_skip?: number
+    vix_monday_friday_skip?: number
+    vix_streak_skip?: number
+  }
+  min_win_probability_threshold?: number
   trade_executed: boolean
   risk_reward_ratio?: number
   gex_regime?: string
@@ -293,6 +318,112 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
               )}
             </div>
 
+            {/* Oracle Analysis Section - Full visibility into Oracle decision */}
+            {(scan.oracle_win_probability !== undefined || scan.oracle_top_factors) && (
+              <details className="mt-2">
+                <summary className="text-xs text-purple-400 cursor-pointer hover:text-purple-300 flex items-center gap-1">
+                  🔮 Oracle Analysis
+                  {scan.oracle_win_probability !== undefined && (
+                    <span className={`ml-1 px-1.5 py-0.5 rounded ${
+                      scan.oracle_win_probability >= (scan.min_win_probability_threshold || 0.55)
+                        ? 'bg-green-500/20 text-green-400'
+                        : 'bg-red-500/20 text-red-400'
+                    }`}>
+                      {(scan.oracle_win_probability * 100).toFixed(0)}% win prob
+                    </span>
+                  )}
+                </summary>
+                <div className="mt-2 p-3 bg-purple-900/20 border border-purple-500/30 rounded text-xs space-y-2">
+                  {/* Win Probability vs Threshold */}
+                  {scan.oracle_win_probability !== undefined && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">Win Probability:</span>
+                      <div className="flex items-center gap-2">
+                        <span className={`font-medium ${
+                          scan.oracle_win_probability >= (scan.min_win_probability_threshold || 0.55)
+                            ? 'text-green-400'
+                            : 'text-red-400'
+                        }`}>
+                          {(scan.oracle_win_probability * 100).toFixed(1)}%
+                        </span>
+                        {scan.min_win_probability_threshold && (
+                          <span className="text-gray-500">
+                            (min: {(scan.min_win_probability_threshold * 100).toFixed(0)}%)
+                          </span>
+                        )}
+                        {scan.oracle_win_probability < (scan.min_win_probability_threshold || 0.55) && (
+                          <span className="text-red-400">
+                            ⚠️ {((scan.min_win_probability_threshold || 0.55) - scan.oracle_win_probability) * 100 > 0
+                              ? `-${(((scan.min_win_probability_threshold || 0.55) - scan.oracle_win_probability) * 100).toFixed(1)}% shortfall`
+                              : ''}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Oracle Confidence */}
+                  {scan.oracle_confidence !== undefined && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">Oracle Confidence:</span>
+                      <span className={`font-medium ${
+                        scan.oracle_confidence >= 0.7 ? 'text-green-400' :
+                        scan.oracle_confidence >= 0.5 ? 'text-yellow-400' : 'text-red-400'
+                      }`}>
+                        {(scan.oracle_confidence * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Top Factors */}
+                  {scan.oracle_top_factors && scan.oracle_top_factors.length > 0 && (
+                    <div>
+                      <span className="text-gray-400 block mb-1">Top Factors:</span>
+                      <div className="flex flex-wrap gap-1">
+                        {scan.oracle_top_factors.slice(0, 5).map((factor, i) => (
+                          <span
+                            key={i}
+                            className={`px-2 py-0.5 rounded ${
+                              factor.impact > 0 ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                            }`}
+                            title={`Impact: ${factor.impact > 0 ? '+' : ''}${(factor.impact * 100).toFixed(1)}%`}
+                          >
+                            {factor.factor}: {factor.impact > 0 ? '+' : ''}{(factor.impact * 100).toFixed(1)}%
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Thresholds Used */}
+                  {scan.oracle_thresholds && (
+                    <div>
+                      <span className="text-gray-400 block mb-1">Thresholds:</span>
+                      <div className="flex flex-wrap gap-x-4 gap-y-1 text-gray-500">
+                        {scan.oracle_thresholds.min_win_probability && (
+                          <span>Min Win: {(scan.oracle_thresholds.min_win_probability * 100).toFixed(0)}%</span>
+                        )}
+                        {scan.oracle_thresholds.vix_skip && (
+                          <span>VIX Skip: {scan.oracle_thresholds.vix_skip}</span>
+                        )}
+                        {scan.oracle_thresholds.vix_monday_friday_skip && (
+                          <span>VIX Mon/Fri: {scan.oracle_thresholds.vix_monday_friday_skip}</span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Oracle Reasoning */}
+                  {scan.oracle_reasoning && (
+                    <div className="mt-1 pt-1 border-t border-purple-500/20">
+                      <span className="text-gray-400">Reasoning: </span>
+                      <span className="text-gray-300">{scan.oracle_reasoning}</span>
+                    </div>
+                  )}
+                </div>
+              </details>
+            )}
+
             {/* Checks Summary (if available) */}
             {scan.checks_performed && scan.checks_performed.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1">
@@ -353,7 +484,7 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
         <button
           onClick={() => {
             const csv = [
-              ['Scan #', 'Time', 'Outcome', 'Summary', 'R:R', 'SPY', 'VIX', 'What Would Trigger', 'Market Insight'].join(','),
+              ['Scan #', 'Time', 'Outcome', 'Summary', 'R:R', 'SPY', 'VIX', 'GEX Regime', 'Oracle Win Prob', 'Min Threshold', 'Oracle Confidence', 'Oracle Advice', 'Top Factors', 'Oracle Reasoning', 'What Would Trigger'].join(','),
               ...scans.map(s => [
                 s.scan_number,
                 s.time_ct,
@@ -362,8 +493,14 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
                 s.risk_reward_ratio?.toFixed(2) || '',
                 s.underlying_price?.toFixed(2) || '',
                 s.vix?.toFixed(1) || '',
-                `"${(s.what_would_trigger || '').replace(/"/g, '""')}"`,
-                `"${(s.market_insight || '').replace(/"/g, '""')}"`
+                s.gex_regime || '',
+                s.oracle_win_probability ? (s.oracle_win_probability * 100).toFixed(1) + '%' : '',
+                s.min_win_probability_threshold ? (s.min_win_probability_threshold * 100).toFixed(0) + '%' : '',
+                s.oracle_confidence ? (s.oracle_confidence * 100).toFixed(0) + '%' : '',
+                s.oracle_advice || '',
+                s.oracle_top_factors ? `"${s.oracle_top_factors.map(f => `${f.factor}:${(f.impact*100).toFixed(1)}%`).join(', ')}"` : '',
+                `"${(s.oracle_reasoning || '').replace(/"/g, '""')}"`,
+                `"${(s.what_would_trigger || '').replace(/"/g, '""')}"`
               ].join(','))
             ].join('\n')
             const blob = new Blob([csv], { type: 'text/csv' })
