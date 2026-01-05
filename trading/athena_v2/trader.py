@@ -289,12 +289,14 @@ class ATHENATrader(MathOptimizerMixin):
                 success, close_price, pnl = self.executor.close_position(pos, reason)
 
                 if success:
-                    self.db.close_position(
+                    db_success = self.db.close_position(
                         position_id=pos.position_id,
                         close_price=close_price,
                         realized_pnl=pnl,
                         close_reason=reason
                     )
+                    if not db_success:
+                        logger.error(f"CRITICAL: Position {pos.position_id} closed but DB update failed!")
                     closed_count += 1
                     total_pnl += pnl
 
@@ -841,8 +843,12 @@ class ATHENATrader(MathOptimizerMixin):
                     # Calculate final P&L based on where price ended
                     final_pnl = self._calculate_expiration_pnl(pos, current_price)
 
-                    # Mark position as expired in database
-                    self.db.expire_position(pos.position_id, final_pnl)
+                    # Calculate estimated close price (spread value at expiration)
+                    # This is the intrinsic value the spread expired with
+                    close_price = (final_pnl / (100 * pos.contracts)) + pos.entry_debit if pos.contracts > 0 else 0
+
+                    # Mark position as expired in database with close price for audit trail
+                    self.db.expire_position(pos.position_id, final_pnl, close_price)
 
                     # Record outcome for ML feedback
                     close_reason = "EXPIRED_PROFIT" if final_pnl > 0 else "EXPIRED_LOSS"

@@ -350,7 +350,9 @@ class PEGASUSTrader(MathOptimizerMixin):
             if should_close:
                 success, price, pnl = self.executor.close_position(pos, reason)
                 if success:
-                    self.db.close_position(pos.position_id, price, pnl, reason)
+                    db_success = self.db.close_position(pos.position_id, price, pnl, reason)
+                    if not db_success:
+                        logger.error(f"CRITICAL: Position {pos.position_id} closed but DB update failed!")
                     closed += 1
                     total_pnl += pnl
 

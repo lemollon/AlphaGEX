@@ -473,12 +473,15 @@ class ARESTrader(MathOptimizerMixin):
                 success, close_price, pnl = self.executor.close_position(pos, reason)
 
                 if success:
-                    self.db.close_position(
+                    db_success = self.db.close_position(
                         position_id=pos.position_id,
                         close_price=close_price,
                         realized_pnl=pnl,
                         close_reason=reason
                     )
+                    if not db_success:
+                        logger.error(f"CRITICAL: Position {pos.position_id} closed in Tradier but DB update failed!")
+                        # Still count it as closed since Tradier position is closed
                     closed_count += 1
                     total_pnl += pnl
 
@@ -909,8 +912,12 @@ class ARESTrader(MathOptimizerMixin):
                     # Calculate final P&L based on where price ended
                     final_pnl = self._calculate_expiration_pnl(pos, current_price)
 
-                    # Mark position as expired in database
-                    self.db.expire_position(pos.position_id, final_pnl)
+                    # Calculate IC close price (value at expiration)
+                    # For Iron Condor: close_price = 0 if max profit, or intrinsic value if breached
+                    close_price = pos.total_credit - (final_pnl / (100 * pos.contracts)) if pos.contracts > 0 else 0
+
+                    # Mark position as expired in database with close price for audit
+                    self.db.expire_position(pos.position_id, final_pnl, close_price)
 
                     # Record outcome for ML feedback
                     close_reason = "EXPIRED_MAX_PROFIT" if final_pnl > 0 else "EXPIRED_LOSS"
