@@ -3339,8 +3339,9 @@ class OracleAdvisor:
             for col_name, col_type in migration_columns:
                 try:
                     cursor.execute(f"ALTER TABLE oracle_predictions ADD COLUMN IF NOT EXISTS {col_name} {col_type}")
-                except Exception:
-                    pass  # Column already exists or other error
+                except Exception as e:
+                    # Column already exists or other migration error - log but continue
+                    logger.debug(f"Migration column {col_name}: {e}")
 
             conn.commit()
 
@@ -3675,8 +3676,9 @@ def get_pending_outcomes_count() -> int:
         try:
             cursor.execute("SELECT COUNT(*) FROM oracle_training_outcomes")
             count = cursor.fetchone()[0]
-        except Exception:
+        except Exception as e:
             # Table might not exist yet
+            logger.debug(f"oracle_training_outcomes table query failed: {e}")
             count = 0
 
         conn.close()
@@ -3707,7 +3709,8 @@ def get_training_status() -> Dict[str, Any]:
             try:
                 cursor.execute("SELECT COUNT(*) FROM oracle_training_outcomes")
                 total_outcomes = cursor.fetchone()[0]
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Failed to get total outcomes: {e}")
                 conn.rollback()  # Reset transaction state
                 total_outcomes = 0
 
@@ -3720,7 +3723,8 @@ def get_training_status() -> Dict[str, Any]:
                 row = cursor.fetchone()
                 if row and row[0]:
                     last_trained = row[0].isoformat()
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Failed to get last training date: {e}")
                 conn.rollback()  # Reset transaction state
 
             # Check if model exists in database
@@ -3743,7 +3747,8 @@ def get_training_status() -> Dict[str, Any]:
                         model_source = "database"
                         if not last_trained:
                             last_trained = db_row[1].isoformat() if db_row[1] else None
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Failed to check model in database: {e}")
                 conn.rollback()
 
         except Exception as e:
@@ -3752,8 +3757,8 @@ def get_training_status() -> Dict[str, Any]:
             if conn:
                 try:
                     conn.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Failed to close connection: {e}")
 
     # Determine model source
     if oracle.is_trained and not db_model_exists:
