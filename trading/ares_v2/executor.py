@@ -10,9 +10,11 @@ Both are credit spreads (receive premium).
 
 import logging
 import uuid
+import time
 from datetime import datetime
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, Callable, TypeVar
 from zoneinfo import ZoneInfo
+from functools import wraps
 
 from .models import (
     IronCondorPosition, PositionStatus,
@@ -20,6 +22,46 @@ from .models import (
 )
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar('T')
+
+
+def retry_with_backoff(
+    max_retries: int = 3,
+    base_delay: float = 1.0,
+    max_delay: float = 10.0,
+    exceptions: tuple = (Exception,)
+) -> Callable:
+    """
+    Decorator for retrying Tradier API calls with exponential backoff.
+
+    Args:
+        max_retries: Maximum number of retry attempts
+        base_delay: Initial delay in seconds
+        max_delay: Maximum delay in seconds
+        exceptions: Tuple of exceptions to catch and retry
+    """
+    def decorator(func: Callable[..., T]) -> Callable[..., T]:
+        @wraps(func)
+        def wrapper(*args, **kwargs) -> T:
+            last_exception = None
+            for attempt in range(max_retries + 1):
+                try:
+                    return func(*args, **kwargs)
+                except exceptions as e:
+                    last_exception = e
+                    if attempt < max_retries:
+                        delay = min(base_delay * (2 ** attempt), max_delay)
+                        logger.warning(
+                            f"API call failed (attempt {attempt + 1}/{max_retries + 1}): {e}. "
+                            f"Retrying in {delay:.1f}s..."
+                        )
+                        time.sleep(delay)
+                    else:
+                        logger.error(f"API call failed after {max_retries + 1} attempts: {e}")
+            raise last_exception
+        return wrapper
+    return decorator
 
 # Tradier import
 try:
@@ -60,6 +102,78 @@ class OrderExecutor:
                 logger.info("ARES OrderExecutor: Tradier initialized for LIVE trading (SANDBOX account)")
             except Exception as e:
                 logger.error(f"Tradier init failed: {e}")
+
+    def _tradier_place_spread_with_retry(
+        self,
+        max_retries: int = 3,
+        **kwargs
+    ) -> Optional[Dict]:
+        """
+        Place a vertical spread order with retry logic.
+
+        Retries on network errors and transient API failures.
+
+        Args:
+            max_retries: Number of retry attempts
+            **kwargs: All arguments passed to tradier.place_vertical_spread()
+        """
+        if not self.tradier:
+            return None
+
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                result = self.tradier.place_vertical_spread(**kwargs)
+                if result:
+                    return result
+                # If result is None/falsy but no exception, don't retry
+                logger.warning(f"Tradier returned empty result on attempt {attempt + 1}")
+                return None
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    delay = 1.0 * (2 ** attempt)  # 1s, 2s, 4s
+                    logger.warning(
+                        f"Tradier API error (attempt {attempt + 1}/{max_retries}): {e}. "
+                        f"Retrying in {delay:.1f}s..."
+                    )
+                    time.sleep(delay)
+                else:
+                    logger.error(f"Tradier API failed after {max_retries} attempts: {e}")
+
+        # If we exhausted retries, raise the last error
+        if last_error:
+            raise last_error
+        return None
+
+    def _tradier_get_quote_with_retry(
+        self,
+        symbol: str,
+        max_retries: int = 2
+    ) -> Optional[Dict]:
+        """
+        Get option quote with retry logic.
+
+        Uses fewer retries than order placement since quotes are less critical.
+        """
+        if not self.tradier:
+            return None
+
+        for attempt in range(max_retries):
+            try:
+                result = self.tradier.get_option_quote(symbol)
+                if result:
+                    return result
+                return None
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    delay = 0.5 * (2 ** attempt)  # 0.5s, 1s
+                    logger.debug(f"Quote fetch error (attempt {attempt + 1}): {e}. Retrying...")
+                    time.sleep(delay)
+                else:
+                    logger.warning(f"Quote fetch failed after {max_retries} attempts: {e}")
+
+        return None
 
     def execute_iron_condor(
         self,
@@ -170,7 +284,8 @@ class OrderExecutor:
 
             # Execute as two spreads (put spread + call spread)
             # Bull Put Spread (credit) - Note: place_vertical_spread auto-detects credit/debit from strikes
-            put_result = self.tradier.place_vertical_spread(
+            # Using retry wrapper for network resilience
+            put_result = self._tradier_place_spread_with_retry(
                 symbol=self.config.ticker,
                 expiration=signal.expiration,
                 long_strike=signal.put_long,
@@ -186,8 +301,8 @@ class OrderExecutor:
 
             put_order_id = str(put_result['order'].get('id', 'UNKNOWN'))
 
-            # Bear Call Spread (credit)
-            call_result = self.tradier.place_vertical_spread(
+            # Bear Call Spread (credit) - with retry
+            call_result = self._tradier_place_spread_with_retry(
                 symbol=self.config.ticker,
                 expiration=signal.expiration,
                 long_strike=signal.call_long,
@@ -205,7 +320,9 @@ class OrderExecutor:
                 rollback_error_msg = None
                 try:
                     # Close put spread by reversing the order (swap long/short to create debit)
-                    rollback_result = self.tradier.place_vertical_spread(
+                    # Using retry wrapper for rollback - critical to succeed
+                    rollback_result = self._tradier_place_spread_with_retry(
+                        max_retries=4,  # Extra retries for critical rollback
                         symbol=self.config.ticker,
                         expiration=signal.expiration,
                         long_strike=signal.put_short,  # Buy back short
@@ -369,7 +486,8 @@ class OrderExecutor:
             close_price = ic_quote['total_value']
 
             # Close put spread by reversing (buy back short, sell long = debit spread)
-            put_result = self.tradier.place_vertical_spread(
+            # Using retry wrapper for network resilience
+            put_result = self._tradier_place_spread_with_retry(
                 symbol=position.ticker,
                 expiration=position.expiration,
                 long_strike=position.put_short_strike,  # Buy back what we sold
@@ -383,8 +501,8 @@ class OrderExecutor:
                 logger.error(f"Failed to close put spread: {put_result}")
                 return False, 0, 0
 
-            # Close call spread by reversing
-            call_result = self.tradier.place_vertical_spread(
+            # Close call spread by reversing - with retry
+            call_result = self._tradier_place_spread_with_retry(
                 symbol=position.ticker,
                 expiration=position.expiration,
                 long_strike=position.call_short_strike,  # Buy back what we sold
@@ -432,7 +550,7 @@ class OrderExecutor:
         Returns:
             Number of contracts to trade (minimum 1)
         """
-        capital = 100_000  # Default
+        capital = self.config.capital  # Use config capital instead of hardcoded
         max_risk = capital * (self.config.risk_per_trade_pct / 100)
 
         if max_loss_per_contract <= 0:
@@ -525,13 +643,14 @@ class OrderExecutor:
             return None
 
     def _get_option_quote(self, strike: float, expiration: str, option_type: str) -> Optional[Dict]:
-        """Get quote for a single option"""
+        """Get quote for a single option - with retry for network resilience"""
         if not self.tradier:
             return None
 
         try:
             symbol = self._build_option_symbol(strike, expiration, option_type)
-            quote = self.tradier.get_option_quote(symbol)
+            # Use retry wrapper for quote fetches
+            quote = self._tradier_get_quote_with_retry(symbol)
             if quote:
                 return {
                     'bid': quote.get('bid', 0),

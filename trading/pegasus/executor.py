@@ -8,6 +8,7 @@ Uses SPXW symbols for weekly options.
 
 import logging
 import uuid
+import time
 from datetime import datetime
 from typing import Optional, Dict, Tuple
 
@@ -47,6 +48,70 @@ class OrderExecutor:
                 logger.info("PEGASUS: Tradier initialized (PRODUCTION)")
             except Exception as e:
                 logger.error(f"Tradier init failed: {e}")
+
+    def _tradier_place_spread_with_retry(
+        self,
+        max_retries: int = 3,
+        **kwargs
+    ) -> Optional[Dict]:
+        """
+        Place a vertical spread order with retry logic.
+
+        Args:
+            max_retries: Number of retry attempts
+            **kwargs: All arguments passed to tradier.place_vertical_spread()
+        """
+        if not self.tradier:
+            return None
+
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                result = self.tradier.place_vertical_spread(**kwargs)
+                if result:
+                    return result
+                logger.warning(f"Tradier returned empty result on attempt {attempt + 1}")
+                return None
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    delay = 1.0 * (2 ** attempt)  # 1s, 2s, 4s
+                    logger.warning(
+                        f"Tradier API error (attempt {attempt + 1}/{max_retries}): {e}. "
+                        f"Retrying in {delay:.1f}s..."
+                    )
+                    time.sleep(delay)
+                else:
+                    logger.error(f"Tradier API failed after {max_retries} attempts: {e}")
+
+        if last_error:
+            raise last_error
+        return None
+
+    def _tradier_get_quote_with_retry(
+        self,
+        symbol: str,
+        max_retries: int = 2
+    ) -> Optional[Dict]:
+        """Get option quote with retry logic."""
+        if not self.tradier:
+            return None
+
+        for attempt in range(max_retries):
+            try:
+                result = self.tradier.get_option_quote(symbol)
+                if result:
+                    return result
+                return None
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    delay = 0.5 * (2 ** attempt)
+                    logger.debug(f"Quote fetch error (attempt {attempt + 1}): {e}. Retrying...")
+                    time.sleep(delay)
+                else:
+                    logger.warning(f"Quote fetch failed after {max_retries} attempts: {e}")
+
+        return None
 
     def execute_iron_condor(self, signal: IronCondorSignal) -> Optional[IronCondorPosition]:
         """Execute SPX Iron Condor"""
@@ -130,7 +195,8 @@ class OrderExecutor:
 
             # Execute put spread (credit spread: short > long for bull put)
             # Note: place_vertical_spread automatically determines credit/debit from strikes
-            put_result = self.tradier.place_vertical_spread(
+            # Using retry wrapper for network resilience
+            put_result = self._tradier_place_spread_with_retry(
                 symbol="SPXW",  # Weekly SPX options
                 expiration=signal.expiration,
                 long_strike=signal.put_long,
@@ -148,7 +214,8 @@ class OrderExecutor:
 
             # Execute call spread (credit spread: short < long for bear call)
             # Note: place_vertical_spread automatically determines credit/debit from strikes
-            call_result = self.tradier.place_vertical_spread(
+            # Using retry wrapper
+            call_result = self._tradier_place_spread_with_retry(
                 symbol="SPXW",
                 expiration=signal.expiration,
                 long_strike=signal.call_long,
@@ -166,7 +233,9 @@ class OrderExecutor:
                 rollback_error_msg = None
                 try:
                     # Close put spread by reversing the order (swap long/short to create debit)
-                    rollback_result = self.tradier.place_vertical_spread(
+                    # Extra retries for critical rollback
+                    rollback_result = self._tradier_place_spread_with_retry(
+                        max_retries=4,
                         symbol="SPXW",
                         expiration=signal.expiration,
                         long_strike=signal.put_short,  # Buy back short
@@ -372,7 +441,8 @@ class OrderExecutor:
 
             # Close put spread by reversing the order (buy to close short, sell to close long)
             # We swap long/short so the spread becomes a debit (we pay to close)
-            put_result = self.tradier.place_vertical_spread(
+            # Using retry wrapper for network resilience
+            put_result = self._tradier_place_spread_with_retry(
                 symbol="SPXW",
                 expiration=position.expiration,
                 long_strike=position.put_short_strike,  # Buy back short
@@ -386,8 +456,8 @@ class OrderExecutor:
                 logger.error(f"Failed to close put spread: {put_result}")
                 return False, 0, 0
 
-            # Close call spread by reversing the order
-            call_result = self.tradier.place_vertical_spread(
+            # Close call spread by reversing the order - with retry
+            call_result = self._tradier_place_spread_with_retry(
                 symbol="SPXW",
                 expiration=position.expiration,
                 long_strike=position.call_short_strike,  # Buy back short
@@ -419,8 +489,8 @@ class OrderExecutor:
             return False, 0, 0
 
     def _calculate_position_size(self, max_loss_per_contract: float) -> int:
-        # PEGASUS operates with $200,000 capital (as per API routes and database config)
-        capital = 200_000
+        # Use config capital instead of hardcoded value
+        capital = self.config.capital
         max_risk = capital * (self.config.risk_per_trade_pct / 100)
         if max_loss_per_contract <= 0:
             return 1

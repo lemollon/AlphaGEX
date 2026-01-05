@@ -471,6 +471,91 @@ class ARESDatabase:
         except Exception:
             return 0
 
+    def get_daily_realized_pnl(self, date: str) -> float:
+        """
+        Get total realized P&L for positions closed today.
+
+        Used for daily loss limit enforcement to prevent unlimited losses.
+        """
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    SELECT COALESCE(SUM(realized_pnl), 0)
+                    FROM ares_positions
+                    WHERE status IN ('closed', 'expired', 'partial_close')
+                    AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
+                """, (date,))
+                result = c.fetchone()[0]
+                return float(result) if result else 0.0
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to get daily P&L: {e}")
+            return 0.0
+
+    def get_partial_close_positions(self) -> List[IronCondorPosition]:
+        """
+        Get positions in partial_close state that need manual intervention.
+
+        These are positions where one leg closed but the other failed.
+        """
+        positions = []
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    SELECT
+                        position_id, ticker, expiration,
+                        put_short_strike, put_long_strike, put_credit,
+                        call_short_strike, call_long_strike, call_credit,
+                        contracts, spread_width, total_credit, max_loss, max_profit,
+                        underlying_at_entry, vix_at_entry, expected_move,
+                        call_wall, put_wall, gex_regime,
+                        put_order_id, call_order_id,
+                        status, open_time, close_time, close_price, close_reason, realized_pnl
+                    FROM ares_positions
+                    WHERE status = 'partial_close'
+                    ORDER BY close_time DESC
+                """)
+
+                for row in c.fetchall():
+                    pos = IronCondorPosition(
+                        position_id=row[0],
+                        ticker=row[1],
+                        expiration=str(row[2]),
+                        put_short_strike=float(row[3]),
+                        put_long_strike=float(row[4]),
+                        put_credit=float(row[5]),
+                        call_short_strike=float(row[6]),
+                        call_long_strike=float(row[7]),
+                        call_credit=float(row[8]),
+                        contracts=int(row[9]),
+                        spread_width=float(row[10]),
+                        total_credit=float(row[11]),
+                        max_loss=float(row[12]),
+                        max_profit=float(row[13]),
+                        underlying_at_entry=float(row[14]),
+                        vix_at_entry=float(row[15] or 0),
+                        expected_move=float(row[16] or 0),
+                        call_wall=float(row[17] or 0),
+                        put_wall=float(row[18] or 0),
+                        gex_regime=row[19] or "",
+                        put_order_id=row[20] or "",
+                        call_order_id=row[21] or "",
+                        status=PositionStatus(row[22]),
+                        open_time=row[23],
+                        close_time=row[24],
+                        close_price=float(row[25] or 0),
+                        close_reason=row[26] or "",
+                        realized_pnl=float(row[27] or 0),
+                    )
+                    positions.append(pos)
+
+                logger.info(f"{self.bot_name}: Found {len(positions)} partial_close positions")
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to get partial_close positions: {e}")
+
+        return positions
+
     # =========================================================================
     # SIGNAL LOGGING
     # =========================================================================
@@ -687,3 +772,46 @@ class ARESDatabase:
         except Exception as e:
             logger.error(f"{self.bot_name}: Failed to update daily perf: {e}")
             return False
+
+    def get_orphaned_orders(self, include_resolved: bool = False) -> List[Dict[str, Any]]:
+        """Get orphaned orders that need manual intervention."""
+        orders = []
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                if include_resolved:
+                    c.execute("""
+                        SELECT id, bot_name, order_id, ticker, expiration, strikes,
+                               contracts, reason, error_details, resolved, resolved_at, created_at
+                        FROM orphaned_orders
+                        WHERE bot_name = %s
+                        ORDER BY created_at DESC
+                    """, (self.bot_name,))
+                else:
+                    c.execute("""
+                        SELECT id, bot_name, order_id, ticker, expiration, strikes,
+                               contracts, reason, error_details, resolved, resolved_at, created_at
+                        FROM orphaned_orders
+                        WHERE bot_name = %s AND resolved = FALSE
+                        ORDER BY created_at DESC
+                    """, (self.bot_name,))
+
+                for row in c.fetchall():
+                    orders.append({
+                        'id': row[0],
+                        'bot_name': row[1],
+                        'order_id': row[2],
+                        'ticker': row[3],
+                        'expiration': str(row[4]) if row[4] else None,
+                        'strikes': row[5],
+                        'contracts': row[6],
+                        'reason': row[7],
+                        'error_details': row[8],
+                        'resolved': row[9],
+                        'resolved_at': row[10],
+                        'created_at': row[11]
+                    })
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to get orphaned orders: {e}")
+
+        return orders
