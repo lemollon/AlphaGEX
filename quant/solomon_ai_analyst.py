@@ -589,8 +589,9 @@ Provide analysis in JSON format:
                     else:
                         hourly_stats[hour]['losses'] += 1
                     hourly_stats[hour]['total_pnl'] += pnl
-                except:
-                    pass
+                except (ValueError, TypeError, AttributeError) as e:
+                    logger.debug(f"Could not parse entry_time for trade: {e}")
+                    continue
 
         user_prompt = f"""Analyze time-of-day performance for {bot_name}:
 
@@ -606,8 +607,8 @@ Identify optimal trading windows."""
                 json_start = response.find('{')
                 json_end = response.rfind('}') + 1
                 return json.loads(response[json_start:json_end])
-            except:
-                pass
+            except (json.JSONDecodeError, ValueError, IndexError) as e:
+                logger.debug(f"Could not parse time analysis response as JSON: {e}")
 
         return self._fallback_time_analysis(trades)
 

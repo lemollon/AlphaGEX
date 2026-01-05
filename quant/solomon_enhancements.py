@@ -1111,6 +1111,7 @@ class WeekendPreChecker:
         if not DB_AVAILABLE:
             return 15.0
 
+        conn = None
         try:
             conn = get_connection()
             cursor = conn.cursor()
@@ -1121,18 +1122,22 @@ class WeekendPreChecker:
             """)
 
             row = cursor.fetchone()
-            conn.close()
 
             return float(row[0]) if row else 15.0
 
-        except Exception:
+        except (ValueError, TypeError, AttributeError) as e:
+            logger.debug(f"Could not get VIX: {e}")
             return 15.0
+        finally:
+            if conn:
+                conn.close()
 
     def _detect_market_trend(self) -> str:
         """Detect current market trend"""
         if not DB_AVAILABLE:
             return 'UNKNOWN'
 
+        conn = None
         try:
             conn = get_connection()
             cursor = conn.cursor()
@@ -1144,7 +1149,6 @@ class WeekendPreChecker:
             """)
 
             rows = cursor.fetchall()
-            conn.close()
 
             if len(rows) >= 5:
                 closes = [r[0] for r in rows]
@@ -1157,8 +1161,12 @@ class WeekendPreChecker:
 
             return 'UNKNOWN'
 
-        except Exception:
+        except (ValueError, TypeError, AttributeError) as e:
+            logger.debug(f"Could not detect market trend: {e}")
             return 'UNKNOWN'
+        finally:
+            if conn:
+                conn.close()
 
     def _get_upcoming_events(self) -> List[str]:
         """Get upcoming market-moving events"""
