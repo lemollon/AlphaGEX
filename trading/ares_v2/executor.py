@@ -168,7 +168,7 @@ class OrderExecutor:
             contracts = self._calculate_position_size(ic_quote['max_loss_per_contract'] * 100, thompson_weight)
 
             # Execute as two spreads (put spread + call spread)
-            # Bull Put Spread (credit)
+            # Bull Put Spread (credit) - Note: place_vertical_spread auto-detects credit/debit from strikes
             put_result = self.tradier.place_vertical_spread(
                 symbol=self.config.ticker,
                 expiration=signal.expiration,
@@ -177,7 +177,6 @@ class OrderExecutor:
                 option_type="put",
                 quantity=contracts,
                 limit_price=round(ic_quote['put_credit'], 2),
-                is_credit=True,
             )
 
             if not put_result or not put_result.get('order'):
@@ -195,12 +194,29 @@ class OrderExecutor:
                 option_type="call",
                 quantity=contracts,
                 limit_price=round(ic_quote['call_credit'], 2),
-                is_credit=True,
             )
 
             if not call_result or not call_result.get('order'):
                 logger.error(f"Call spread order failed: {call_result}")
-                # Note: Put spread was already placed - should handle this
+                # CRITICAL: Put spread was already placed - attempt to close it
+                logger.warning(f"Attempting to rollback put spread order {put_order_id}")
+                try:
+                    # Close put spread by reversing the order (swap long/short to create debit)
+                    rollback_result = self.tradier.place_vertical_spread(
+                        symbol=self.config.ticker,
+                        expiration=signal.expiration,
+                        long_strike=signal.put_short,  # Buy back short
+                        short_strike=signal.put_long,   # Sell long
+                        option_type="put",
+                        quantity=contracts,
+                        limit_price=round(ic_quote['put_credit'] * 1.1, 2),  # Allow slippage for rollback
+                    )
+                    if rollback_result and rollback_result.get('order'):
+                        logger.info(f"Successfully rolled back put spread order {put_order_id}")
+                    else:
+                        logger.error(f"CRITICAL: Failed to rollback put spread {put_order_id} - MANUAL INTERVENTION REQUIRED")
+                except Exception as rollback_error:
+                    logger.error(f"CRITICAL: Rollback exception for {put_order_id}: {rollback_error} - MANUAL INTERVENTION REQUIRED")
                 return None
 
             call_order_id = str(call_result['order'].get('id', 'UNKNOWN'))
@@ -329,33 +345,38 @@ class OrderExecutor:
 
             close_price = ic_quote['total_value']
 
-            # Close put spread (buy back)
+            # Close put spread by reversing (buy back short, sell long = debit spread)
             put_result = self.tradier.place_vertical_spread(
                 symbol=position.ticker,
                 expiration=position.expiration,
-                long_strike=position.put_long_strike,
-                short_strike=position.put_short_strike,
+                long_strike=position.put_short_strike,  # Buy back what we sold
+                short_strike=position.put_long_strike,   # Sell what we bought
                 option_type="put",
                 quantity=position.contracts,
                 limit_price=round(ic_quote['put_value'], 2),
-                is_closing=True,
             )
 
-            # Close call spread (buy back)
+            if not put_result or not put_result.get('order'):
+                logger.error(f"Failed to close put spread: {put_result}")
+                return False, 0, 0
+
+            # Close call spread by reversing
             call_result = self.tradier.place_vertical_spread(
                 symbol=position.ticker,
                 expiration=position.expiration,
-                long_strike=position.call_long_strike,
-                short_strike=position.call_short_strike,
+                long_strike=position.call_short_strike,  # Buy back what we sold
+                short_strike=position.call_long_strike,   # Sell what we bought
                 option_type="call",
                 quantity=position.contracts,
                 limit_price=round(ic_quote['call_value'], 2),
-                is_closing=True,
             )
 
-            if not put_result or not call_result:
-                logger.error("Close orders failed")
-                return False, 0, 0
+            if not call_result or not call_result.get('order'):
+                logger.error(f"Failed to close call spread (put was closed!): {call_result}")
+                # Partial close - put side closed but call failed
+                partial_pnl = (position.put_credit - ic_quote['put_value']) * 100 * position.contracts
+                logger.warning(f"PARTIAL CLOSE: Put side closed, P&L=${partial_pnl:.2f}")
+                return False, ic_quote['put_value'], partial_pnl
 
             # P&L calculation
             pnl_per_contract = (position.total_credit - close_price) * 100

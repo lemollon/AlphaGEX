@@ -344,8 +344,9 @@ class PEGASUSDatabase:
                 c.execute("INSERT INTO pegasus_logs (level, message, details) VALUES (%s, %s, %s)",
                          (level, message, json.dumps(details) if details else None))
                 conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            # Log failures are non-critical
+            logger.debug(f"Failed to log to database: {e}")
 
     def update_heartbeat(self, status: str, action: str) -> None:
         try:
@@ -358,8 +359,9 @@ class PEGASUSDatabase:
                         status = EXCLUDED.status, last_action = EXCLUDED.last_action, last_scan_time = NOW()
                 """, (self.bot_name, status, action))
                 conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            # Heartbeat failures are non-critical
+            logger.debug(f"Failed to update heartbeat: {e}")
 
     def load_config(self) -> PEGASUSConfig:
         """Load config from DB"""

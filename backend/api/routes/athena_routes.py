@@ -1119,22 +1119,27 @@ async def get_athena_diagnostics():
     diagnostics["athena_available"] = athena is not None
 
     if athena:
-        # Subsystem status
+        # Subsystem status - access through proper component paths
+        kronos = getattr(athena.signals, 'gex_calculator', None) if hasattr(athena, 'signals') else None
+        oracle = getattr(athena.signals, 'oracle', None) if hasattr(athena, 'signals') else None
+        gex_ml = getattr(athena.signals, 'ml_signal', None) if hasattr(athena, 'signals') else None
+        tradier = getattr(athena.executor, 'tradier', None) if hasattr(athena, 'executor') else None
+
         diagnostics["subsystems"]["kronos"] = {
-            "available": athena.kronos is not None,
-            "type": type(athena.kronos).__name__ if athena.kronos else None
+            "available": kronos is not None,
+            "type": type(kronos).__name__ if kronos else None
         }
         diagnostics["subsystems"]["oracle"] = {
-            "available": athena.oracle is not None,
-            "type": type(athena.oracle).__name__ if athena.oracle else None
+            "available": oracle is not None,
+            "type": type(oracle).__name__ if oracle else None
         }
         diagnostics["subsystems"]["gex_ml"] = {
-            "available": athena.gex_ml is not None,
-            "type": type(athena.gex_ml).__name__ if athena.gex_ml else None
+            "available": gex_ml is not None,
+            "type": type(gex_ml).__name__ if gex_ml else None
         }
         diagnostics["subsystems"]["tradier"] = {
-            "available": athena.tradier is not None,
-            "type": type(athena.tradier).__name__ if athena.tradier else None
+            "available": tradier is not None,
+            "type": type(tradier).__name__ if tradier else None
         }
 
         # Try to get GEX data

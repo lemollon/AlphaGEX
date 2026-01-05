@@ -127,7 +127,8 @@ class OrderExecutor:
             now = datetime.now(CENTRAL_TZ)
             contracts = self._calculate_position_size(signal.max_loss)
 
-            # Execute put spread
+            # Execute put spread (credit spread: short > long for bull put)
+            # Note: place_vertical_spread automatically determines credit/debit from strikes
             put_result = self.tradier.place_vertical_spread(
                 symbol="SPXW",  # Weekly SPX options
                 expiration=signal.expiration,
@@ -136,7 +137,6 @@ class OrderExecutor:
                 option_type="put",
                 quantity=contracts,
                 limit_price=round(signal.estimated_put_credit, 2),
-                is_credit=True,
             )
 
             if not put_result or not put_result.get('order'):
@@ -145,7 +145,8 @@ class OrderExecutor:
 
             put_order_id = str(put_result['order'].get('id', 'UNKNOWN'))
 
-            # Execute call spread
+            # Execute call spread (credit spread: short < long for bear call)
+            # Note: place_vertical_spread automatically determines credit/debit from strikes
             call_result = self.tradier.place_vertical_spread(
                 symbol="SPXW",
                 expiration=signal.expiration,
@@ -154,7 +155,6 @@ class OrderExecutor:
                 option_type="call",
                 quantity=contracts,
                 limit_price=round(signal.estimated_call_credit, 2),
-                is_credit=True,
             )
 
             if not call_result or not call_result.get('order'):
@@ -240,41 +240,62 @@ class OrderExecutor:
             return False, 0, 0
 
         try:
-            # Close both spreads
+            # Get current quotes for closing
+            current_price = self._get_current_spx_price()
+            if not current_price:
+                current_price = position.underlying_at_entry
+
+            close_value = self._estimate_ic_value(position, current_price)
+
+            # Close put spread by reversing the order (buy to close short, sell to close long)
+            # We swap long/short so the spread becomes a debit (we pay to close)
             put_result = self.tradier.place_vertical_spread(
                 symbol="SPXW",
                 expiration=position.expiration,
-                long_strike=position.put_long_strike,
-                short_strike=position.put_short_strike,
+                long_strike=position.put_short_strike,  # Buy back short
+                short_strike=position.put_long_strike,   # Sell long
                 option_type="put",
                 quantity=position.contracts,
-                is_closing=True,
+                limit_price=round(close_value / 2, 2),  # Half of total close value
             )
 
+            if not put_result or not put_result.get('order'):
+                logger.error(f"Failed to close put spread: {put_result}")
+                return False, 0, 0
+
+            # Close call spread by reversing the order
             call_result = self.tradier.place_vertical_spread(
                 symbol="SPXW",
                 expiration=position.expiration,
-                long_strike=position.call_long_strike,
-                short_strike=position.call_short_strike,
+                long_strike=position.call_short_strike,  # Buy back short
+                short_strike=position.call_long_strike,   # Sell long
                 option_type="call",
                 quantity=position.contracts,
-                is_closing=True,
+                limit_price=round(close_value / 2, 2),  # Half of total close value
             )
 
-            if not put_result or not call_result:
-                return False, 0, 0
+            if not call_result or not call_result.get('order'):
+                logger.error(f"Failed to close call spread (put was closed!): {call_result}")
+                # Note: Put spread was already closed - this is a partial close situation
+                # Calculate partial P&L for the put side only
+                partial_pnl = (position.put_credit - close_value / 2) * 100 * position.contracts
+                return False, close_value / 2, partial_pnl
 
-            # Estimate P&L
-            close_value = position.total_credit * 0.3  # Assume 70% profit on close
+            # P&L = credit received - debit to close
             pnl = (position.total_credit - close_value) * 100 * position.contracts
 
+            logger.info(f"LIVE CLOSE: {position.position_id} @ ${close_value:.2f}, P&L=${pnl:.2f} [{reason}]")
             return True, close_value, pnl
         except Exception as e:
             logger.error(f"Live close failed: {e}")
+            import traceback
+            traceback.print_exc()
             return False, 0, 0
 
     def _calculate_position_size(self, max_loss_per_contract: float) -> int:
-        max_risk = 100_000 * (self.config.risk_per_trade_pct / 100)
+        # PEGASUS operates with $200,000 capital (as per API routes and database config)
+        capital = 200_000
+        max_risk = capital * (self.config.risk_per_trade_pct / 100)
         if max_loss_per_contract <= 0:
             return 1
         contracts = int(max_risk / max_loss_per_contract)
@@ -289,8 +310,8 @@ class OrderExecutor:
                 spy = get_price("SPY")
                 if spy:
                     return spy * 10
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Failed to get SPX price: {e}")
         return None
 
     def _estimate_ic_value(self, position: IronCondorPosition, current_price: float) -> float:

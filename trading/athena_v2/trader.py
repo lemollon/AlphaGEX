@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 
 from .models import (
     SpreadPosition, PositionStatus, ATHENAConfig,
-    TradingMode, DailySummary, CENTRAL_TZ
+    TradingMode, DailySummary, SpreadType, CENTRAL_TZ
 )
 from .db import ATHENADatabase
 from .signals import SignalGenerator
@@ -98,6 +98,9 @@ class ATHENATrader(MathOptimizerMixin):
 
         # Learning Memory prediction tracking (position_id -> prediction_id)
         self._prediction_ids: Dict[str, str] = {}
+
+        # Skip date functionality - set via API to skip trading for a specific day
+        self.skip_date: Optional[datetime] = None
 
         # Initialize Math Optimizers (HMM, Kalman, Thompson, Convex, HJB, MDP)
         if MATH_OPTIMIZER_AVAILABLE:
@@ -226,6 +229,10 @@ class ATHENATrader(MathOptimizerMixin):
         # Weekend check
         if now.weekday() >= 5:
             return False, "Weekend"
+
+        # Skip date check (set via API to skip trading for the day)
+        if self.skip_date and self.skip_date == now.date():
+            return False, f"Skipping by request (skip_date={self.skip_date.isoformat()})"
 
         # Trading window check
         start_parts = self.config.entry_start.split(':')
@@ -716,6 +723,47 @@ class ATHENATrader(MathOptimizerMixin):
         """Get all open positions"""
         return self.db.get_open_positions()
 
+    def get_gex_data(self) -> Optional[Dict[str, Any]]:
+        """Delegate to SignalGenerator for GEX data"""
+        return self.signals.get_gex_data()
+
+    def get_ml_signal(self, gex_data: Dict) -> Optional[Dict[str, Any]]:
+        """Delegate to SignalGenerator for ML signal"""
+        return self.signals.get_ml_signal(gex_data)
+
+    def get_oracle_advice(self) -> Optional[Dict[str, Any]]:
+        """Get Oracle advice with current GEX data"""
+        gex_data = self.signals.get_gex_data()
+        if not gex_data:
+            return None
+        return self.signals.get_oracle_advice(gex_data)
+
+    def get_live_pnl(self) -> Dict[str, Any]:
+        """Get live P&L for all open positions"""
+        positions = self.db.get_open_positions()
+        total_unrealized = 0.0
+        position_pnls = []
+
+        for pos in positions:
+            current_value = self.executor.get_position_current_value(pos)
+            if current_value:
+                pnl = (current_value - pos.entry_debit) * 100 * pos.contracts
+                total_unrealized += pnl
+                position_pnls.append({
+                    'position_id': pos.position_id,
+                    'entry_debit': pos.entry_debit,
+                    'current_value': current_value,
+                    'unrealized_pnl': pnl,
+                    'contracts': pos.contracts,
+                })
+
+        return {
+            'total_unrealized_pnl': total_unrealized,
+            'position_count': len(positions),
+            'positions': position_pnls,
+            'timestamp': datetime.now(CENTRAL_TZ).isoformat(),
+        }
+
     def force_close_all(self, reason: str = "MANUAL_CLOSE") -> Dict[str, Any]:
         """Force close all open positions"""
         positions = self.db.get_open_positions()
@@ -850,8 +898,8 @@ class ATHENATrader(MathOptimizerMixin):
         entry_cost = pos.entry_debit * 100 * contracts  # Total cost paid
         spread_width = pos.spread_width  # Max value the spread can reach
 
-        # Determine spread type from direction
-        is_bullish = pos.direction.lower() in ('bull', 'bullish', 'call')
+        # Determine spread type from spread_type enum
+        is_bullish = pos.spread_type == SpreadType.BULL_CALL
 
         if is_bullish:
             # Bull Call Spread: long_strike is lower, short_strike is higher
