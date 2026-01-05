@@ -221,7 +221,9 @@ class SignalGenerator:
                 'top_factors': top_factors,
                 'probabilities': {},
                 'suggested_sd_multiplier': prediction.suggested_sd_multiplier,
-                'use_gex_walls': True,
+                'use_gex_walls': getattr(prediction, 'use_gex_walls', True),
+                'suggested_put_strike': getattr(prediction, 'suggested_put_strike', None),
+                'suggested_call_strike': getattr(prediction, 'suggested_call_strike', None),
                 'reasoning': prediction.reasoning or '',
             }
         except Exception as e:
@@ -239,20 +241,48 @@ class SignalGenerator:
             return False, f"VIX {vix:.1f} > {self.config.vix_skip}"
         return True, "OK"
 
-    def calculate_strikes(self, spot: float, expected_move: float, call_wall: float = 0, put_wall: float = 0) -> Dict[str, float]:
-        """Calculate SPX strikes with $5 rounding"""
+    def calculate_strikes(
+        self,
+        spot: float,
+        expected_move: float,
+        call_wall: float = 0,
+        put_wall: float = 0,
+        oracle_put_strike: Optional[float] = None,
+        oracle_call_strike: Optional[float] = None,
+    ) -> Dict[str, float]:
+        """Calculate SPX strikes with $5 rounding
+
+        Priority:
+        1. Oracle suggested strikes (if provided and valid)
+        2. GEX walls (if available)
+        3. SD-based strikes (fallback)
+        """
         sd = self.config.sd_multiplier
         width = self.config.spread_width
 
         def round_to_5(x):
             return round(x / 5) * 5
 
-        use_gex = call_wall > 0 and put_wall > 0
+        use_oracle = False
+        use_gex = False
 
-        if use_gex:
+        # Priority 1: Oracle suggested strikes
+        if oracle_put_strike and oracle_call_strike:
+            put_dist = (spot - oracle_put_strike) / spot
+            call_dist = (oracle_call_strike - spot) / spot
+            if 0.005 <= put_dist <= 0.05 and 0.005 <= call_dist <= 0.05:
+                put_short = round_to_5(oracle_put_strike)
+                call_short = round_to_5(oracle_call_strike)
+                use_oracle = True
+
+        # Priority 2: GEX walls
+        if not use_oracle and call_wall > 0 and put_wall > 0:
             put_short = round_to_5(put_wall)
             call_short = round_to_5(call_wall)
-        else:
+            use_gex = True
+
+        # Priority 3: SD-based fallback
+        if not use_oracle and not use_gex:
             put_short = round_to_5(spot - sd * expected_move)
             call_short = round_to_5(spot + sd * expected_move)
 
@@ -265,6 +295,8 @@ class SignalGenerator:
             'call_short': call_short,
             'call_long': call_long,
             'using_gex': use_gex,
+            'using_oracle': use_oracle,
+            'source': 'ORACLE' if use_oracle else ('GEX' if use_gex else 'SD'),
         }
 
     def estimate_credits(self, spot: float, expected_move: float, put_short: float, call_short: float, vix: float) -> Dict[str, float]:
@@ -321,11 +353,16 @@ class SignalGenerator:
                 logger.info(f"Oracle win probability {win_prob:.0%} below minimum {min_win_prob:.0%}")
                 return None
 
+        # Get Oracle suggested strikes if available
+        oracle_put = oracle.get('suggested_put_strike') if oracle else None
+        oracle_call = oracle.get('suggested_call_strike') if oracle else None
         strikes = self.calculate_strikes(
             market['spot_price'],
             market['expected_move'],
             market['call_wall'],
             market['put_wall'],
+            oracle_put_strike=oracle_put,
+            oracle_call_strike=oracle_call,
         )
 
         pricing = self.estimate_credits(
@@ -353,7 +390,12 @@ class SignalGenerator:
         # Build detailed reasoning (FULL audit trail)
         reasoning_parts = []
         reasoning_parts.append(f"SPX VIX={market['vix']:.1f}, EM=${market['expected_move']:.0f}")
-        reasoning_parts.append("GEX-Protected" if strikes['using_gex'] else f"{self.config.sd_multiplier} SD")
+        if strikes.get('using_oracle'):
+            reasoning_parts.append(f"Oracle Strikes")
+        elif strikes['using_gex']:
+            reasoning_parts.append("GEX-Protected")
+        else:
+            reasoning_parts.append(f"{self.config.sd_multiplier} SD")
 
         # Oracle context for reasoning
         if oracle:
@@ -400,7 +442,7 @@ class SignalGenerator:
             # Signal quality
             confidence=confidence,
             reasoning=reasoning,
-            source="GEX" if strikes['using_gex'] else "SD",
+            source=strikes.get('source', 'SD'),
             # Oracle context (CRITICAL for audit)
             oracle_win_probability=oracle['win_probability'] if oracle else 0,
             oracle_advice=oracle['advice'] if oracle else '',

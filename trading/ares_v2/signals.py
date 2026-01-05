@@ -181,13 +181,17 @@ class SignalGenerator:
         spot_price: float,
         expected_move: float,
         call_wall: float = 0,
-        put_wall: float = 0
+        put_wall: float = 0,
+        oracle_put_strike: Optional[float] = None,
+        oracle_call_strike: Optional[float] = None,
     ) -> Dict[str, float]:
         """
         Calculate Iron Condor strikes.
 
-        Uses GEX walls if available (higher win rate),
-        otherwise falls back to SD-based strikes.
+        Priority:
+        1. Oracle suggested strikes (if provided and valid)
+        2. GEX walls (if available)
+        3. SD-based strikes (fallback)
         """
         sd = self.config.sd_multiplier
         width = self.config.spread_width
@@ -196,16 +200,30 @@ class SignalGenerator:
         def round_strike(x):
             return round(x)
 
-        # Determine short strikes
-        use_gex = call_wall > 0 and put_wall > 0
+        # Determine short strikes with Oracle priority
+        use_oracle = False
+        use_gex = False
 
-        if use_gex:
-            # GEX-Protected: Place shorts OUTSIDE the walls
+        # Priority 1: Oracle suggested strikes (must be reasonable distance from spot)
+        if oracle_put_strike and oracle_call_strike:
+            # Validate Oracle strikes are reasonable (between 0.5% and 5% from spot)
+            put_dist = (spot_price - oracle_put_strike) / spot_price
+            call_dist = (oracle_call_strike - spot_price) / spot_price
+            if 0.005 <= put_dist <= 0.05 and 0.005 <= call_dist <= 0.05:
+                put_short = round_strike(oracle_put_strike)
+                call_short = round_strike(oracle_call_strike)
+                use_oracle = True
+                logger.info(f"Using Oracle strikes: Put short ${put_short}, Call short ${call_short}")
+
+        # Priority 2: GEX walls (only if Oracle not used)
+        if not use_oracle and call_wall > 0 and put_wall > 0:
             put_short = round_strike(put_wall)
             call_short = round_strike(call_wall)
+            use_gex = True
             logger.info(f"Using GEX walls: Put short ${put_short}, Call short ${call_short}")
-        else:
-            # SD-based: Place shorts at expected move distance
+
+        # Priority 3: SD-based fallback (only if neither Oracle nor GEX)
+        if not use_oracle and not use_gex:
             put_short = round_strike(spot_price - sd * expected_move)
             call_short = round_strike(spot_price + sd * expected_move)
             logger.info(f"Using SD-based: Put short ${put_short}, Call short ${call_short}")
@@ -220,6 +238,8 @@ class SignalGenerator:
             'call_short': call_short,
             'call_long': call_long,
             'using_gex': use_gex,
+            'using_oracle': use_oracle,
+            'source': 'ORACLE' if use_oracle else ('GEX' if use_gex else 'SD'),
         }
 
     def estimate_credits(
@@ -407,13 +427,17 @@ class SignalGenerator:
                 logger.info(f"Oracle win probability {win_probability:.0%} below minimum {min_win_prob:.0%}")
                 return None
 
-        # Step 4: Calculate strikes (use Oracle's suggestion if available)
+        # Step 4: Calculate strikes (Oracle > GEX > SD priority)
         use_gex_walls = oracle.get('use_gex_walls', False) if oracle else False
+        oracle_put = oracle.get('suggested_put_strike') if oracle else None
+        oracle_call = oracle.get('suggested_call_strike') if oracle else None
         strikes = self.calculate_strikes(
             spot_price=spot,
             expected_move=expected_move,
             call_wall=market_data['call_wall'] if use_gex_walls else 0,
             put_wall=market_data['put_wall'] if use_gex_walls else 0,
+            oracle_put_strike=oracle_put,
+            oracle_call_strike=oracle_call,
         )
 
         # Step 5: Estimate credits
@@ -441,7 +465,9 @@ class SignalGenerator:
         reasoning_parts.append(f"VIX={vix:.1f}, Expected Move=${expected_move:.2f}")
         reasoning_parts.append(f"GEX Regime={market_data['gex_regime']}")
 
-        if strikes['using_gex']:
+        if strikes.get('using_oracle'):
+            reasoning_parts.append(f"Oracle Strikes: Put ${strikes['put_short']}, Call ${strikes['call_short']}")
+        elif strikes['using_gex']:
             reasoning_parts.append(f"GEX-Protected: Put Wall ${market_data['put_wall']}, Call Wall ${market_data['call_wall']}")
         else:
             reasoning_parts.append(f"{self.config.sd_multiplier} SD strikes")
@@ -485,7 +511,7 @@ class SignalGenerator:
             # Signal quality
             confidence=confidence,
             reasoning=reasoning,
-            source="GEX" if strikes['using_gex'] else "SD",
+            source=strikes.get('source', 'SD'),
 
             # Oracle context (FULL for audit)
             oracle_win_probability=win_probability,
