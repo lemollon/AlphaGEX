@@ -48,8 +48,11 @@ interface ScanActivity {
   trade_executed: boolean
   risk_reward_ratio?: number
   gex_regime?: string
+  net_gex?: number
   call_wall?: number
   put_wall?: number
+  distance_to_call_wall_pct?: number
+  distance_to_put_wall_pct?: number
   error_message?: string
   error_type?: string
   // Enhanced skip/no-trade explanation
@@ -294,11 +297,114 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
               )}
             </div>
 
-            {/* GEX Walls (if available) */}
+            {/* GEX Walls with Distance Indicators */}
             {(scan.call_wall || scan.put_wall) && (
-              <div className="mt-1 flex flex-wrap gap-x-4 text-xs text-gray-500">
-                {scan.put_wall && <span>Put Wall: ${scan.put_wall.toFixed(0)}</span>}
-                {scan.call_wall && <span>Call Wall: ${scan.call_wall.toFixed(0)}</span>}
+              <div className="mt-2 p-2 bg-gray-900/50 rounded border border-gray-700">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-medium text-cyan-400">📊 GEX Walls (Updated Every 5 Min)</span>
+                  {scan.net_gex !== undefined && (
+                    <span className={`text-xs px-1.5 py-0.5 rounded ${
+                      scan.net_gex > 0 ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                    }`}>
+                      Net GEX: {(scan.net_gex / 1e9).toFixed(2)}B
+                    </span>
+                  )}
+                </div>
+
+                {/* Price Position Visual */}
+                <div className="mb-2">
+                  <div className="flex items-center justify-between text-xs mb-1">
+                    <span className="text-red-400">Put Wall: ${scan.put_wall?.toFixed(0) || 'N/A'}</span>
+                    <span className="text-white font-bold">Price: ${scan.underlying_price?.toFixed(2) || 'N/A'}</span>
+                    <span className="text-green-400">Call Wall: ${scan.call_wall?.toFixed(0) || 'N/A'}</span>
+                  </div>
+
+                  {/* Visual bar showing price position between walls */}
+                  {scan.put_wall && scan.call_wall && scan.underlying_price && (
+                    <div className="relative h-2 bg-gray-700 rounded-full overflow-hidden">
+                      {/* Calculate position: 0% = at put wall, 100% = at call wall */}
+                      {(() => {
+                        const range = scan.call_wall - scan.put_wall
+                        const position = range > 0 ? ((scan.underlying_price - scan.put_wall) / range) * 100 : 50
+                        const clampedPosition = Math.max(0, Math.min(100, position))
+                        const isInside = position >= 0 && position <= 100
+                        return (
+                          <>
+                            {/* Safe zone gradient */}
+                            <div className="absolute inset-0 bg-gradient-to-r from-red-500/30 via-green-500/30 to-red-500/30" />
+                            {/* Price marker */}
+                            <div
+                              className={`absolute top-0 bottom-0 w-1 ${isInside ? 'bg-white' : 'bg-yellow-400'}`}
+                              style={{ left: `${clampedPosition}%`, transform: 'translateX(-50%)' }}
+                            />
+                          </>
+                        )
+                      })()}
+                    </div>
+                  )}
+                </div>
+
+                {/* Distance to Walls */}
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div className={`p-1.5 rounded ${
+                    (scan.distance_to_put_wall_pct || 0) < 0.5 ? 'bg-red-500/20 border border-red-500/50' :
+                    (scan.distance_to_put_wall_pct || 0) < 1.0 ? 'bg-yellow-500/20 border border-yellow-500/50' :
+                    'bg-gray-800'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">↓ To Put Wall:</span>
+                      <span className={`font-bold ${
+                        (scan.distance_to_put_wall_pct || 0) < 0.5 ? 'text-red-400' :
+                        (scan.distance_to_put_wall_pct || 0) < 1.0 ? 'text-yellow-400' : 'text-green-400'
+                      }`}>
+                        {scan.distance_to_put_wall_pct?.toFixed(2) || '0.00'}%
+                      </span>
+                    </div>
+                    {(scan.distance_to_put_wall_pct || 0) < 0.5 && (
+                      <div className="text-red-400 text-[10px] mt-0.5">⚠️ Very close to put wall!</div>
+                    )}
+                  </div>
+
+                  <div className={`p-1.5 rounded ${
+                    (scan.distance_to_call_wall_pct || 0) < 0.5 ? 'bg-red-500/20 border border-red-500/50' :
+                    (scan.distance_to_call_wall_pct || 0) < 1.0 ? 'bg-yellow-500/20 border border-yellow-500/50' :
+                    'bg-gray-800'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">↑ To Call Wall:</span>
+                      <span className={`font-bold ${
+                        (scan.distance_to_call_wall_pct || 0) < 0.5 ? 'text-red-400' :
+                        (scan.distance_to_call_wall_pct || 0) < 1.0 ? 'text-yellow-400' : 'text-green-400'
+                      }`}>
+                        {scan.distance_to_call_wall_pct?.toFixed(2) || '0.00'}%
+                      </span>
+                    </div>
+                    {(scan.distance_to_call_wall_pct || 0) < 0.5 && (
+                      <div className="text-red-400 text-[10px] mt-0.5">⚠️ Very close to call wall!</div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Trade Trigger Status */}
+                {scan.oracle_win_probability !== undefined && scan.min_win_probability_threshold !== undefined && (
+                  <div className={`mt-2 p-1.5 rounded text-xs ${
+                    scan.oracle_win_probability >= scan.min_win_probability_threshold
+                      ? 'bg-green-500/20 border border-green-500/50'
+                      : 'bg-gray-800 border border-gray-600'
+                  }`}>
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">Trade Trigger:</span>
+                      {scan.oracle_win_probability >= scan.min_win_probability_threshold ? (
+                        <span className="text-green-400 font-bold">✅ WOULD TRADE (Win Prob {(scan.oracle_win_probability * 100).toFixed(0)}% ≥ {(scan.min_win_probability_threshold * 100).toFixed(0)}%)</span>
+                      ) : (
+                        <span className="text-gray-400">
+                          Need +{((scan.min_win_probability_threshold - scan.oracle_win_probability) * 100).toFixed(1)}% win prob
+                          <span className="text-gray-500 ml-1">({(scan.oracle_win_probability * 100).toFixed(0)}% → {(scan.min_win_probability_threshold * 100).toFixed(0)}%)</span>
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -484,7 +590,7 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
         <button
           onClick={() => {
             const csv = [
-              ['Scan #', 'Time', 'Outcome', 'Summary', 'R:R', 'SPY', 'VIX', 'GEX Regime', 'Oracle Win Prob', 'Min Threshold', 'Oracle Confidence', 'Oracle Advice', 'Top Factors', 'Oracle Reasoning', 'What Would Trigger'].join(','),
+              ['Scan #', 'Time', 'Outcome', 'Summary', 'R:R', 'SPY', 'VIX', 'GEX Regime', 'Net GEX (B)', 'Put Wall', 'Call Wall', 'Dist to Put Wall %', 'Dist to Call Wall %', 'Oracle Win Prob', 'Min Threshold', 'Oracle Confidence', 'Oracle Advice', 'Top Factors', 'Oracle Reasoning', 'What Would Trigger'].join(','),
               ...scans.map(s => [
                 s.scan_number,
                 s.time_ct,
@@ -494,6 +600,11 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
                 s.underlying_price?.toFixed(2) || '',
                 s.vix?.toFixed(1) || '',
                 s.gex_regime || '',
+                s.net_gex ? (s.net_gex / 1e9).toFixed(2) : '',
+                s.put_wall?.toFixed(0) || '',
+                s.call_wall?.toFixed(0) || '',
+                s.distance_to_put_wall_pct?.toFixed(2) || '',
+                s.distance_to_call_wall_pct?.toFixed(2) || '',
                 s.oracle_win_probability ? (s.oracle_win_probability * 100).toFixed(1) + '%' : '',
                 s.min_win_probability_threshold ? (s.min_win_probability_threshold * 100).toFixed(0) + '%' : '',
                 s.oracle_confidence ? (s.oracle_confidence * 100).toFixed(0) + '%' : '',
