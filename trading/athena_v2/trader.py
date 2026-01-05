@@ -580,11 +580,25 @@ class ATHENATrader(MathOptimizerMixin):
             self.db.log("ERROR", "Execution failed", {'signal': signal.reasoning})
             return None, signal
 
-        # Save to database
-        if not self.db.save_position(position):
+        # Save to database - CRITICAL for position tracking
+        db_saved = self.db.save_position(position)
+        if not db_saved:
             self.db.log("ERROR", "Failed to save position to DB", {'pos_id': position.position_id})
-            # Still return position - it was executed
-            logger.error(f"Position {position.position_id} executed but not saved to DB!")
+            logger.error(
+                f"CRITICAL: Position {position.position_id} executed but NOT saved to DB! "
+                f"Position will NOT be managed (no stop loss, no expiration handling). "
+                f"Manual intervention required."
+            )
+            # Attempt one retry after brief pause
+            import time
+            time.sleep(0.5)
+            db_saved = self.db.save_position(position)
+            if db_saved:
+                logger.info(f"Position {position.position_id} saved to DB on retry")
+            else:
+                logger.error(f"CRITICAL: Position {position.position_id} DB save retry failed!")
+                # Mark the position as not persisted for caller awareness
+                position.db_persisted = False
 
         self.db.log("INFO", f"Opened: {position.position_id}", position.to_dict())
 

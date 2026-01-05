@@ -376,7 +376,9 @@ class OrderExecutor:
                 # Partial close - put side closed but call failed
                 partial_pnl = (position.put_credit - ic_quote['put_value']) * 100 * position.contracts
                 logger.warning(f"PARTIAL CLOSE: Put side closed, P&L=${partial_pnl:.2f}")
-                return False, ic_quote['put_value'], partial_pnl
+                # Return special tuple indicating partial close (success=False but with 'partial' marker)
+                # Caller should handle this by marking position as partial_close in DB
+                return 'partial_put', ic_quote['put_value'], partial_pnl
 
             # P&L calculation
             pnl_per_contract = (position.total_credit - close_price) * 100

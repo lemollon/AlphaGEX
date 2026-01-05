@@ -279,6 +279,11 @@ class OrderExecutor:
             # Get current underlying price
             current_price = self._get_current_price()
             if not current_price:
+                logger.warning(
+                    f"Could not fetch current price for {position.position_id}, "
+                    f"using entry price ${position.underlying_at_entry:.2f} for P&L calculation. "
+                    f"This may result in inaccurate P&L!"
+                )
                 current_price = position.underlying_at_entry
 
             # Estimate current spread value

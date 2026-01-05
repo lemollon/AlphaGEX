@@ -349,6 +349,24 @@ class PEGASUSTrader(MathOptimizerMixin):
             should_close, reason = self._check_exit(pos, now, today)
             if should_close:
                 success, price, pnl = self.executor.close_position(pos, reason)
+
+                # Handle partial close (put closed but call failed)
+                if success == 'partial_put':
+                    self.db.partial_close_position(
+                        position_id=pos.position_id,
+                        close_price=price,
+                        realized_pnl=pnl,
+                        close_reason=reason,
+                        closed_leg='put'
+                    )
+                    logger.error(
+                        f"PARTIAL CLOSE: {pos.position_id} put leg closed but call failed. "
+                        f"Manual intervention required to close call spread."
+                    )
+                    # Don't count as fully closed, but track the partial P&L
+                    total_pnl += pnl
+                    continue
+
                 if success:
                     db_success = self.db.close_position(pos.position_id, price, pnl, reason)
                     if not db_success:

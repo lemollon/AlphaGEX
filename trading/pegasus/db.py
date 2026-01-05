@@ -315,6 +315,52 @@ class PEGASUSDatabase:
             logger.error(f"{self.bot_name}: Close position failed: {e}")
             return False
 
+    def partial_close_position(
+        self,
+        position_id: str,
+        close_price: float,
+        realized_pnl: float,
+        close_reason: str,
+        closed_leg: str  # 'put' or 'call'
+    ) -> bool:
+        """
+        Mark position as partially closed when one leg closes but the other fails.
+
+        This prevents orphaned positions where Tradier has one leg closed
+        but the database still shows position as fully open.
+        """
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    UPDATE pegasus_positions
+                    SET status = 'partial_close',
+                        close_time = NOW(),
+                        close_price = %s,
+                        realized_pnl = %s,
+                        close_reason = %s
+                    WHERE position_id = %s AND status = 'open'
+                    RETURNING id
+                """, (
+                    _to_python(close_price),
+                    _to_python(realized_pnl),
+                    f"{close_reason}_{closed_leg.upper()}_ONLY",
+                    position_id
+                ))
+                result = c.fetchone()
+                conn.commit()
+
+                if result:
+                    logger.warning(
+                        f"{self.bot_name}: PARTIAL CLOSE {position_id} - "
+                        f"Only {closed_leg} leg closed, P&L=${realized_pnl:.2f}"
+                    )
+                    return True
+                return False
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to partial close position: {e}")
+            return False
+
     def get_position_count(self) -> int:
         try:
             with db_connection() as conn:

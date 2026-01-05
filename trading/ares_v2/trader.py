@@ -472,6 +472,23 @@ class ARESTrader(MathOptimizerMixin):
             if should_close:
                 success, close_price, pnl = self.executor.close_position(pos, reason)
 
+                # Handle partial close (put closed but call failed)
+                if success == 'partial_put':
+                    self.db.partial_close_position(
+                        position_id=pos.position_id,
+                        close_price=close_price,
+                        realized_pnl=pnl,
+                        close_reason=reason,
+                        closed_leg='put'
+                    )
+                    logger.error(
+                        f"PARTIAL CLOSE: {pos.position_id} put leg closed but call failed. "
+                        f"Manual intervention required to close call spread."
+                    )
+                    # Don't count as fully closed, but track the partial P&L
+                    total_pnl += pnl
+                    continue
+
                 if success:
                     db_success = self.db.close_position(
                         position_id=pos.position_id,
@@ -845,6 +862,24 @@ class ARESTrader(MathOptimizerMixin):
 
         for pos in positions:
             success, close_price, pnl = self.executor.close_position(pos, reason)
+
+            # Handle partial close (put closed but call failed)
+            if success == 'partial_put':
+                self.db.partial_close_position(
+                    position_id=pos.position_id,
+                    close_price=close_price,
+                    realized_pnl=pnl,
+                    close_reason=reason,
+                    closed_leg='put'
+                )
+                results.append({
+                    'position_id': pos.position_id,
+                    'success': 'partial',
+                    'pnl': pnl,
+                    'note': 'Put leg closed, call leg requires manual close'
+                })
+                continue
+
             if success:
                 self.db.close_position(pos.position_id, close_price, pnl, reason)
                 # Record outcome to Oracle for ML feedback
@@ -863,9 +898,10 @@ class ARESTrader(MathOptimizerMixin):
             })
 
         return {
-            'closed': len([r for r in results if r['success']]),
-            'failed': len([r for r in results if not r['success']]),
-            'total_pnl': sum(r['pnl'] for r in results if r['success']),
+            'closed': len([r for r in results if r['success'] == True]),
+            'partial': len([r for r in results if r['success'] == 'partial']),
+            'failed': len([r for r in results if r['success'] == False]),
+            'total_pnl': sum(r['pnl'] for r in results),
             'details': results
         }
 
@@ -920,7 +956,8 @@ class ARESTrader(MathOptimizerMixin):
                     self.db.expire_position(pos.position_id, final_pnl, close_price)
 
                     # Record outcome for ML feedback
-                    close_reason = "EXPIRED_MAX_PROFIT" if final_pnl > 0 else "EXPIRED_LOSS"
+                    # Zero P&L is breakeven, not a loss
+                    close_reason = "EXPIRED_PROFIT" if final_pnl >= 0 else "EXPIRED_LOSS"
                     self._record_oracle_outcome(pos, close_reason, final_pnl)
 
                     # Record to Learning Memory

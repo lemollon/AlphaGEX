@@ -159,6 +159,25 @@ class OrderExecutor:
 
             if not call_result or not call_result.get('order'):
                 logger.error(f"Call spread failed: {call_result}")
+                # CRITICAL: Put spread was already placed - attempt to close it
+                logger.warning(f"Attempting to rollback put spread order {put_order_id}")
+                try:
+                    # Close put spread by reversing the order (swap long/short to create debit)
+                    rollback_result = self.tradier.place_vertical_spread(
+                        symbol="SPXW",
+                        expiration=signal.expiration,
+                        long_strike=signal.put_short,  # Buy back short
+                        short_strike=signal.put_long,   # Sell long
+                        option_type="put",
+                        quantity=contracts,
+                        limit_price=round(signal.estimated_put_credit * 1.1, 2),  # Allow slippage for rollback
+                    )
+                    if rollback_result and rollback_result.get('order'):
+                        logger.info(f"Successfully rolled back put spread order {put_order_id}")
+                    else:
+                        logger.error(f"CRITICAL: Failed to rollback put spread {put_order_id} - MANUAL INTERVENTION REQUIRED")
+                except Exception as rollback_error:
+                    logger.error(f"CRITICAL: Rollback exception for {put_order_id}: {rollback_error} - MANUAL INTERVENTION REQUIRED")
                 return None
 
             call_order_id = str(call_result['order'].get('id', 'UNKNOWN'))
@@ -279,7 +298,10 @@ class OrderExecutor:
                 # Note: Put spread was already closed - this is a partial close situation
                 # Calculate partial P&L for the put side only
                 partial_pnl = (position.put_credit - close_value / 2) * 100 * position.contracts
-                return False, close_value / 2, partial_pnl
+                logger.warning(f"PARTIAL CLOSE: Put side closed, P&L=${partial_pnl:.2f}")
+                # Return special tuple indicating partial close (success='partial_put')
+                # Caller should handle this by marking position as partial_close in DB
+                return 'partial_put', close_value / 2, partial_pnl
 
             # P&L = credit received - debit to close
             pnl = (position.total_credit - close_value) * 100 * position.contracts
