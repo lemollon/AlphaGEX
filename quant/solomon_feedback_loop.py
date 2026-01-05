@@ -78,6 +78,36 @@ except ImportError:
     DB_AVAILABLE = False
     get_connection = None
 
+
+# Context manager for safe database connections (prevents connection leaks)
+from contextlib import contextmanager
+
+@contextmanager
+def get_db_connection():
+    """
+    Context manager for database connections.
+
+    Ensures connections are always closed, even if an exception occurs.
+
+    Usage:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(...)
+    """
+    conn = None
+    try:
+        if not DB_AVAILABLE or get_connection is None:
+            yield None
+        else:
+            conn = get_connection()
+            yield conn
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
 # Oracle integration
 try:
     from quant.oracle_advisor import (
@@ -679,15 +709,16 @@ class SolomonFeedbackLoop:
             logger.warning("Database not available - Solomon running in limited mode")
             return
 
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
-            cursor.execute(SCHEMA_SQL)
-            conn.commit()
-            conn.close()
-            logger.info("Solomon database schema verified")
-        except Exception as e:
-            logger.error(f"Failed to create Solomon schema: {e}")
+        with get_db_connection() as conn:
+            if conn is None:
+                return
+            try:
+                cursor = conn.cursor()
+                cursor.execute(SCHEMA_SQL)
+                conn.commit()
+                logger.info("Solomon database schema verified")
+            except Exception as e:
+                logger.error(f"Failed to create Solomon schema: {e}")
 
     @property
     def oracle(self):
@@ -743,59 +774,60 @@ class SolomonFeedbackLoop:
             error_message=error_message
         )
 
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
+        with get_db_connection() as conn:
+            if conn is None:
+                return None
+            try:
+                cursor = conn.cursor()
 
-            cursor.execute("""
-                INSERT INTO solomon_audit_log (
-                    timestamp, bot_name, actor, session_id, action_type,
-                    action_description, before_state, after_state, reason,
-                    justification, version_from, version_to, proposal_id,
-                    success, error_message
-                ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-                ) RETURNING id
-            """, (
-                entry.timestamp,
-                entry.bot_name,
-                entry.actor,
-                entry.session_id,
-                entry.action_type,
-                entry.action_description,
-                json.dumps(entry.before_state),
-                json.dumps(entry.after_state),
-                entry.reason,
-                json.dumps(entry.justification),
-                entry.version_from,
-                entry.version_to,
-                entry.proposal_id,
-                entry.success,
-                entry.error_message
-            ))
+                cursor.execute("""
+                    INSERT INTO solomon_audit_log (
+                        timestamp, bot_name, actor, session_id, action_type,
+                        action_description, before_state, after_state, reason,
+                        justification, version_from, version_to, proposal_id,
+                        success, error_message
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    ) RETURNING id
+                """, (
+                    entry.timestamp,
+                    entry.bot_name,
+                    entry.actor,
+                    entry.session_id,
+                    entry.action_type,
+                    entry.action_description,
+                    json.dumps(entry.before_state),
+                    json.dumps(entry.after_state),
+                    entry.reason,
+                    json.dumps(entry.justification),
+                    entry.version_from,
+                    entry.version_to,
+                    entry.proposal_id,
+                    entry.success,
+                    entry.error_message
+                ))
 
-            audit_id = cursor.fetchone()[0]
-            conn.commit()
-            conn.close()
+                audit_id = cursor.fetchone()[0]
+                conn.commit()
 
-            # Enhanced logging with more context
-            log_msg = f"[SOLOMON AUDIT #{audit_id}] {bot_name} | {action_type.value} | {description}"
-            if reason:
-                log_msg += f" | Reason: {reason}"
-            if version_from and version_to:
-                log_msg += f" | Version: {version_from} → {version_to}"
-            if proposal_id:
-                log_msg += f" | Proposal: {proposal_id}"
-            if not success:
-                log_msg += f" | FAILED: {error_message}"
+                # Enhanced logging with more context
+                log_msg = f"[SOLOMON AUDIT #{audit_id}] {bot_name} | {action_type.value} | {description}"
+                if reason:
+                    log_msg += f" | Reason: {reason}"
+                if version_from and version_to:
+                    log_msg += f" | Version: {version_from} → {version_to}"
+                if proposal_id:
+                    log_msg += f" | Proposal: {proposal_id}"
+                if not success:
+                    log_msg += f" | FAILED: {error_message}"
 
-            logger.info(log_msg)
-            return audit_id
+                logger.info(log_msg)
+                return audit_id
 
-        except Exception as e:
-            logger.error(f"[SOLOMON] Failed to log audit entry: {e}")
-            logger.error(f"[SOLOMON] Audit details - Bot: {bot_name}, Action: {action_type.value}, Description: {description}")
-            return None
+            except Exception as e:
+                logger.error(f"[SOLOMON] Failed to log audit entry: {e}")
+                logger.error(f"[SOLOMON] Audit details - Bot: {bot_name}, Action: {action_type.value}, Description: {description}")
+                return None
 
     def get_audit_log(
         self,
@@ -811,42 +843,43 @@ class SolomonFeedbackLoop:
         if not DB_AVAILABLE:
             return []
 
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
+        with get_db_connection() as conn:
+            if conn is None:
+                return []
+            try:
+                cursor = conn.cursor()
 
-            query = "SELECT * FROM solomon_audit_log WHERE 1=1"
-            params = []
+                query = "SELECT * FROM solomon_audit_log WHERE 1=1"
+                params = []
 
-            if bot_name:
-                query += " AND bot_name = %s"
-                params.append(bot_name)
+                if bot_name:
+                    query += " AND bot_name = %s"
+                    params.append(bot_name)
 
-            if action_type:
-                query += " AND action_type = %s"
-                params.append(action_type)
+                if action_type:
+                    query += " AND action_type = %s"
+                    params.append(action_type)
 
-            if start_date:
-                query += " AND timestamp >= %s"
-                params.append(start_date)
+                if start_date:
+                    query += " AND timestamp >= %s"
+                    params.append(start_date)
 
-            if end_date:
-                query += " AND timestamp <= %s"
-                params.append(end_date)
+                if end_date:
+                    query += " AND timestamp <= %s"
+                    params.append(end_date)
 
-            query += " ORDER BY timestamp DESC LIMIT %s"
-            params.append(limit)
+                query += " ORDER BY timestamp DESC LIMIT %s"
+                params.append(limit)
 
-            cursor.execute(query, params)
-            columns = [desc[0] for desc in cursor.description]
-            rows = cursor.fetchall()
-            conn.close()
+                cursor.execute(query, params)
+                columns = [desc[0] for desc in cursor.description]
+                rows = cursor.fetchall()
 
-            return [dict(zip(columns, row)) for row in rows]
+                return [dict(zip(columns, row)) for row in rows]
 
-        except Exception as e:
-            logger.error(f"Failed to get audit log: {e}")
-            return []
+            except Exception as e:
+                logger.error(f"Failed to get audit log: {e}")
+                return []
 
     # =========================================================================
     # PROPOSAL MANAGEMENT
@@ -1655,21 +1688,29 @@ class SolomonFeedbackLoop:
         if not DB_AVAILABLE:
             return {}
 
+        conn = None
         try:
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Get recent trades
-            table_map = {
+            # SECURITY: Whitelist table names to prevent SQL injection
+            # Only these exact table names are allowed
+            ALLOWED_TABLES = {
                 'ARES': 'ares_positions',
                 'ATHENA': 'athena_positions',
                 'PEGASUS': 'pegasus_positions',
-                'PHOENIX': 'autonomous_trades'
+                'PHOENIX': 'autonomous_trades',
+                'ATLAS': 'atlas_positions',
             }
 
-            table = table_map.get(bot_name, 'unified_trades')
+            # Validate bot_name against whitelist
+            table = ALLOWED_TABLES.get(bot_name.upper())
+            if not table:
+                logger.warning(f"Unknown bot_name '{bot_name}' - using unified_trades")
+                table = 'unified_trades'
 
-            cursor.execute(f"""
+            # Build query with whitelisted table name (safe from SQL injection)
+            query = f"""
                 SELECT
                     COUNT(*) as total_trades,
                     SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
@@ -1677,10 +1718,10 @@ class SolomonFeedbackLoop:
                     SUM(realized_pnl) as total_pnl
                 FROM {table}
                 WHERE created_at > NOW() - INTERVAL '30 days'
-            """)
+            """
+            cursor.execute(query)
 
             row = cursor.fetchone()
-            conn.close()
 
             if row:
                 total, wins, losses, pnl = row
@@ -1688,7 +1729,7 @@ class SolomonFeedbackLoop:
                     'total_trades': total or 0,
                     'wins': wins or 0,
                     'losses': losses or 0,
-                    'win_rate': (wins / total * 100) if total else 0,
+                    'win_rate': (wins / total * 100) if total and total > 0 else 0,
                     'total_pnl': float(pnl) if pnl else 0
                 }
             return {}
@@ -1696,6 +1737,9 @@ class SolomonFeedbackLoop:
         except Exception as e:
             logger.debug(f"Could not get performance: {e}")
             return {}
+        finally:
+            if conn:
+                conn.close()
 
     def get_rollback_history(self, bot_name: str = None, limit: int = 20) -> List[Dict]:
         """Get rollback history"""
@@ -1957,42 +2001,44 @@ class SolomonFeedbackLoop:
         if not DB_AVAILABLE:
             return False
 
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
+        with get_db_connection() as conn:
+            if conn is None:
+                return False
+            try:
+                cursor = conn.cursor()
 
-            cursor.execute("""
-                SELECT is_killed FROM solomon_kill_switch WHERE bot_name = %s
-            """, (bot_name,))
+                cursor.execute("""
+                    SELECT is_killed FROM solomon_kill_switch WHERE bot_name = %s
+                """, (bot_name,))
 
-            row = cursor.fetchone()
-            conn.close()
+                row = cursor.fetchone()
 
-            return row[0] if row else False
+                return row[0] if row else False
 
-        except Exception as e:
-            logger.error(f"Failed to check kill switch: {e}")
-            return False
+            except Exception as e:
+                logger.error(f"Failed to check kill switch: {e}")
+                return False
 
     def get_kill_switch_status(self) -> Dict[str, Dict]:
         """Get kill switch status for all bots"""
         if not DB_AVAILABLE:
             return {}
 
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
+        with get_db_connection() as conn:
+            if conn is None:
+                return {}
+            try:
+                cursor = conn.cursor()
 
-            cursor.execute("SELECT * FROM solomon_kill_switch")
-            columns = [desc[0] for desc in cursor.description]
-            rows = cursor.fetchall()
-            conn.close()
+                cursor.execute("SELECT * FROM solomon_kill_switch")
+                columns = [desc[0] for desc in cursor.description]
+                rows = cursor.fetchall()
 
-            return {row[1]: dict(zip(columns, row)) for row in rows}
+                return {row[1]: dict(zip(columns, row)) for row in rows}
 
-        except Exception as e:
-            logger.error(f"Failed to get kill switch status: {e}")
-            return {}
+            except Exception as e:
+                logger.error(f"Failed to get kill switch status: {e}")
+                return {}
 
     # =========================================================================
     # FEEDBACK LOOP EXECUTION
@@ -2037,7 +2083,7 @@ class SolomonFeedbackLoop:
         errors = []
         outcomes_processed = 0
 
-        bots = [BotName.ARES, BotName.ATHENA, BotName.PEGASUS, BotName.PHOENIX]
+        bots = [BotName.ARES, BotName.ATHENA, BotName.ATLAS, BotName.PEGASUS, BotName.PHOENIX]
 
         try:
             # Step 1: Expire old proposals
