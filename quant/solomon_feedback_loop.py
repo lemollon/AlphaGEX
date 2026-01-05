@@ -937,65 +937,66 @@ class SolomonFeedbackLoop:
             logger.info(f"[PROPOSAL] {proposal_id} | {bot_name} | {title}")
             return proposal_id
 
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
+        with get_db_connection() as conn:
+            if conn is None:
+                return None
+            try:
+                cursor = conn.cursor()
 
-            cursor.execute("""
-                INSERT INTO solomon_proposals (
-                    proposal_id, created_at, expires_at, proposal_type, bot_name,
-                    title, description, current_value, proposed_value, change_summary,
-                    reason, supporting_metrics, expected_improvement, risk_level,
-                    risk_factors, rollback_plan, status
-                ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                cursor.execute("""
+                    INSERT INTO solomon_proposals (
+                        proposal_id, created_at, expires_at, proposal_type, bot_name,
+                        title, description, current_value, proposed_value, change_summary,
+                        reason, supporting_metrics, expected_improvement, risk_level,
+                        risk_factors, rollback_plan, status
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    )
+                """, (
+                    proposal.proposal_id,
+                    proposal.created_at,
+                    proposal.expires_at,
+                    proposal.proposal_type,
+                    proposal.bot_name,
+                    proposal.title,
+                    proposal.description,
+                    json.dumps(proposal.current_value),
+                    json.dumps(proposal.proposed_value),
+                    proposal.change_summary,
+                    proposal.reason,
+                    json.dumps(proposal.supporting_metrics),
+                    json.dumps(proposal.expected_improvement),
+                    proposal.risk_level,
+                    json.dumps(proposal.risk_factors),
+                    proposal.rollback_plan,
+                    ProposalStatus.PENDING.value
+                ))
+
+                conn.commit()
+
+                # Log the proposal creation
+                self.log_action(
+                    bot_name=bot_name,
+                    action_type=ActionType.PROPOSAL_CREATED,
+                    description=f"Proposal created: {title}",
+                    reason=reason,
+                    justification=supporting_metrics,
+                    proposal_id=proposal_id
                 )
-            """, (
-                proposal.proposal_id,
-                proposal.created_at,
-                proposal.expires_at,
-                proposal.proposal_type,
-                proposal.bot_name,
-                proposal.title,
-                proposal.description,
-                json.dumps(proposal.current_value),
-                json.dumps(proposal.proposed_value),
-                proposal.change_summary,
-                proposal.reason,
-                json.dumps(proposal.supporting_metrics),
-                json.dumps(proposal.expected_improvement),
-                proposal.risk_level,
-                json.dumps(proposal.risk_factors),
-                proposal.rollback_plan,
-                ProposalStatus.PENDING.value
-            ))
 
-            conn.commit()
-            conn.close()
+                logger.info(f"[SOLOMON PROPOSAL] Created {proposal_id}")
+                logger.info(f"[SOLOMON PROPOSAL]   Bot: {bot_name} | Type: {proposal_type.value}")
+                logger.info(f"[SOLOMON PROPOSAL]   Title: {title}")
+                logger.info(f"[SOLOMON PROPOSAL]   Risk Level: {risk_level} | Expires: {expires_at.strftime('%Y-%m-%d %H:%M')} CT")
+                logger.info(f"[SOLOMON PROPOSAL]   Change: {change_summary}")
+                if expected_improvement:
+                    logger.info(f"[SOLOMON PROPOSAL]   Expected Improvement: {expected_improvement}")
+                return proposal_id
 
-            # Log the proposal creation
-            self.log_action(
-                bot_name=bot_name,
-                action_type=ActionType.PROPOSAL_CREATED,
-                description=f"Proposal created: {title}",
-                reason=reason,
-                justification=supporting_metrics,
-                proposal_id=proposal_id
-            )
-
-            logger.info(f"[SOLOMON PROPOSAL] Created {proposal_id}")
-            logger.info(f"[SOLOMON PROPOSAL]   Bot: {bot_name} | Type: {proposal_type.value}")
-            logger.info(f"[SOLOMON PROPOSAL]   Title: {title}")
-            logger.info(f"[SOLOMON PROPOSAL]   Risk Level: {risk_level} | Expires: {expires_at.strftime('%Y-%m-%d %H:%M')} CT")
-            logger.info(f"[SOLOMON PROPOSAL]   Change: {change_summary}")
-            if expected_improvement:
-                logger.info(f"[SOLOMON PROPOSAL]   Expected Improvement: {expected_improvement}")
-            return proposal_id
-
-        except Exception as e:
-            logger.error(f"[SOLOMON] Failed to create proposal: {e}")
-            logger.error(f"[SOLOMON] Proposal details - Bot: {bot_name}, Title: {title}, Type: {proposal_type.value}")
-            return None
+            except Exception as e:
+                logger.error(f"[SOLOMON] Failed to create proposal: {e}")
+                logger.error(f"[SOLOMON] Proposal details - Bot: {bot_name}, Title: {title}, Type: {proposal_type.value}")
+                return None
 
     def _build_change_summary(self, current: Dict, proposed: Dict) -> str:
         """Build human-readable summary of changes"""

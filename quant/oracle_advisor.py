@@ -96,6 +96,37 @@ try:
 except ImportError:
     DB_AVAILABLE = False
 
+# Context manager for safe database connections (prevents connection leaks)
+from contextlib import contextmanager
+
+@contextmanager
+def get_db_connection():
+    """
+    Context manager for database connections.
+
+    Ensures connections are always closed, even if an exception occurs.
+
+    Usage:
+        with get_db_connection() as conn:
+            if conn is None:
+                return  # DB not available
+            cursor = conn.cursor()
+            cursor.execute(...)
+    """
+    conn = None
+    try:
+        if not DB_AVAILABLE:
+            yield None
+        else:
+            conn = get_connection()
+            yield conn
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
 # Comprehensive bot logger
 try:
     from trading.bot_logger import (
@@ -1355,57 +1386,57 @@ class OracleAdvisor:
         if not DB_AVAILABLE:
             return False
 
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
-
-            # Check if table exists
-            cursor.execute("""
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables
-                    WHERE table_name = 'oracle_trained_models'
-                )
-            """)
-            if not cursor.fetchone()[0]:
-                conn.close()
+        with get_db_connection() as conn:
+            if conn is None:
                 return False
+            try:
+                cursor = conn.cursor()
 
-            # Get the most recent active model
-            cursor.execute("""
-                SELECT model_version, model_data, training_metrics, has_gex_features
-                FROM oracle_trained_models
-                WHERE is_active = TRUE
-                ORDER BY created_at DESC
-                LIMIT 1
-            """)
-            row = cursor.fetchone()
-            conn.close()
+                # Check if table exists
+                cursor.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_name = 'oracle_trained_models'
+                    )
+                """)
+                if not cursor.fetchone()[0]:
+                    return False
 
-            if row:
-                model_version, model_data, metrics_json, has_gex = row
+                # Get the most recent active model
+                cursor.execute("""
+                    SELECT model_version, model_data, training_metrics, has_gex_features
+                    FROM oracle_trained_models
+                    WHERE is_active = TRUE
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """)
+                row = cursor.fetchone()
 
-                # Deserialize model data
-                saved = pickle.loads(model_data)
-                self.model = saved.get('model')
-                self.calibrated_model = saved.get('calibrated_model')
-                self.scaler = saved.get('scaler')
-                self.model_version = model_version
-                self._has_gex_features = has_gex or False
-                self.is_trained = True
+                if row:
+                    model_version, model_data, metrics_json, has_gex = row
 
-                # Restore training metrics
-                if metrics_json:
-                    if isinstance(metrics_json, str):
-                        metrics_dict = json.loads(metrics_json)
-                    else:
-                        metrics_dict = metrics_json
-                    self.training_metrics = TrainingMetrics(**metrics_dict)
+                    # Deserialize model data
+                    saved = pickle.loads(model_data)
+                    self.model = saved.get('model')
+                    self.calibrated_model = saved.get('calibrated_model')
+                    self.scaler = saved.get('scaler')
+                    self.model_version = model_version
+                    self._has_gex_features = has_gex or False
+                    self.is_trained = True
 
-                logger.info(f"Loaded Oracle model v{self.model_version} from DATABASE (persistent)")
-                return True
+                    # Restore training metrics
+                    if metrics_json:
+                        if isinstance(metrics_json, str):
+                            metrics_dict = json.loads(metrics_json)
+                        else:
+                            metrics_dict = metrics_json
+                        self.training_metrics = TrainingMetrics(**metrics_dict)
 
-        except Exception as e:
-            logger.warning(f"Failed to load model from database: {e}")
+                    logger.info(f"Loaded Oracle model v{self.model_version} from DATABASE (persistent)")
+                    return True
+
+            except Exception as e:
+                logger.warning(f"Failed to load model from database: {e}")
 
         return False
 
@@ -1444,59 +1475,60 @@ class OracleAdvisor:
             logger.warning("Database not available - model will not persist across restarts")
             return False
 
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
+        with get_db_connection() as conn:
+            if conn is None:
+                return False
+            try:
+                cursor = conn.cursor()
 
-            # Create table if not exists
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS oracle_trained_models (
-                    id SERIAL PRIMARY KEY,
-                    model_version VARCHAR(20) NOT NULL,
-                    model_data BYTEA NOT NULL,
-                    training_metrics JSONB,
-                    has_gex_features BOOLEAN DEFAULT FALSE,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    is_active BOOLEAN DEFAULT TRUE
-                )
-            """)
+                # Create table if not exists
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS oracle_trained_models (
+                        id SERIAL PRIMARY KEY,
+                        model_version VARCHAR(20) NOT NULL,
+                        model_data BYTEA NOT NULL,
+                        training_metrics JSONB,
+                        has_gex_features BOOLEAN DEFAULT FALSE,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        is_active BOOLEAN DEFAULT TRUE
+                    )
+                """)
 
-            # Deactivate previous active models (only update those that are currently active)
-            cursor.execute("UPDATE oracle_trained_models SET is_active = FALSE WHERE is_active = TRUE")
+                # Deactivate previous active models (only update those that are currently active)
+                cursor.execute("UPDATE oracle_trained_models SET is_active = FALSE WHERE is_active = TRUE")
 
-            # Serialize model data
-            model_data = pickle.dumps({
-                'model': self.model,
-                'calibrated_model': self.calibrated_model,
-                'scaler': self.scaler,
-            })
+                # Serialize model data
+                model_data = pickle.dumps({
+                    'model': self.model,
+                    'calibrated_model': self.calibrated_model,
+                    'scaler': self.scaler,
+                })
 
-            # Serialize training metrics
-            metrics_json = json.dumps(self.training_metrics.__dict__) if self.training_metrics else None
+                # Serialize training metrics
+                metrics_json = json.dumps(self.training_metrics.__dict__) if self.training_metrics else None
 
-            # Insert new model
-            cursor.execute("""
-                INSERT INTO oracle_trained_models
-                (model_version, model_data, training_metrics, has_gex_features, is_active)
-                VALUES (%s, %s, %s, %s, TRUE)
-            """, (
-                self.model_version,
-                model_data,
-                metrics_json,
-                self._has_gex_features
-            ))
+                # Insert new model
+                cursor.execute("""
+                    INSERT INTO oracle_trained_models
+                    (model_version, model_data, training_metrics, has_gex_features, is_active)
+                    VALUES (%s, %s, %s, %s, TRUE)
+                """, (
+                    self.model_version,
+                    model_data,
+                    metrics_json,
+                    self._has_gex_features
+                ))
 
-            conn.commit()
-            conn.close()
+                conn.commit()
 
-            logger.info(f"Saved Oracle model v{self.model_version} to DATABASE (persists across deploys)")
-            return True
+                logger.info(f"Saved Oracle model v{self.model_version} to DATABASE (persists across deploys)")
+                return True
 
-        except Exception as e:
-            logger.error(f"Failed to save model to database: {e}")
-            import traceback
-            traceback.print_exc()
-            return False
+            except Exception as e:
+                logger.error(f"Failed to save model to database: {e}")
+                import traceback
+                traceback.print_exc()
+                return False
 
     # =========================================================================
     # STRATEGY SELECTION (IC vs DIRECTIONAL)
@@ -3355,13 +3387,15 @@ class OracleAdvisor:
             logger.warning("Database not available")
             return False
 
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
+        with get_db_connection() as conn:
+            if conn is None:
+                return False
+            try:
+                cursor = conn.cursor()
 
-            # Ensure table has all required columns (migration-safe)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS oracle_predictions (
+                # Ensure table has all required columns (migration-safe)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS oracle_predictions (
                     id SERIAL PRIMARY KEY,
                     timestamp TIMESTAMPTZ DEFAULT NOW(),
                     trade_date DATE NOT NULL,
@@ -3407,145 +3441,144 @@ class OracleAdvisor:
                     outcome_date DATE,
 
                     UNIQUE(trade_date, bot_name)
-                )
-            """)
-
-            # Migration: Add missing columns to existing tables
-            migration_columns = [
-                ("claude_analysis", "JSONB"),
-                ("prediction_used", "BOOLEAN DEFAULT FALSE"),
-                ("actual_outcome", "TEXT"),
-                ("actual_pnl", "REAL"),
-                ("outcome_date", "DATE"),
-                ("prediction_time", "TIMESTAMPTZ DEFAULT NOW()"),
-            ]
-            for col_name, col_type in migration_columns:
-                try:
-                    cursor.execute(f"ALTER TABLE oracle_predictions ADD COLUMN IF NOT EXISTS {col_name} {col_type}")
-                except Exception as e:
-                    # Column already exists or other migration error - log but continue
-                    logger.debug(f"Migration column {col_name}: {e}")
-
-            conn.commit()
-
-            # Serialize top_factors as JSON
-            top_factors_json = json.dumps([
-                {"feature": f[0], "importance": f[1]}
-                for f in (prediction.top_factors or [])
-            ]) if prediction.top_factors else None
-
-            # Serialize probabilities as JSON
-            probabilities_json = json.dumps(prediction.probabilities) if prediction.probabilities else None
-
-            # Serialize Claude analysis as JSON (full transparency)
-            claude_json = None
-            if prediction.claude_analysis:
-                ca = prediction.claude_analysis
-                claude_json = json.dumps({
-                    "analysis": ca.analysis,
-                    "confidence_adjustment": ca.confidence_adjustment,
-                    "risk_factors": ca.risk_factors,
-                    "opportunities": ca.opportunities,
-                    "recommendation": ca.recommendation,
-                    "override_advice": ca.override_advice,
-                    "tokens_used": ca.tokens_used,
-                    "input_tokens": ca.input_tokens,
-                    "output_tokens": ca.output_tokens,
-                    "response_time_ms": ca.response_time_ms,
-                    "model_used": ca.model_used,
-                    # Store raw prompt/response for full transparency
-                    "raw_prompt": ca.raw_prompt[:2000] if ca.raw_prompt else None,
-                    "raw_response": ca.raw_response[:5000] if ca.raw_response else None,
-                })
-
-            cursor.execute("""
-                INSERT INTO oracle_predictions (
-                    trade_date, bot_name, spot_price, vix, gex_net, gex_normalized, gex_regime,
-                    gex_flip_point, gex_call_wall, gex_put_wall, day_of_week,
-                    advice, win_probability, confidence, suggested_risk_pct,
-                    suggested_sd_multiplier, model_version,
-                    use_gex_walls, suggested_put_strike, suggested_call_strike,
-                    reasoning, top_factors, probabilities, claude_analysis
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (trade_date, bot_name) DO UPDATE SET
-                    advice = EXCLUDED.advice,
-                    win_probability = EXCLUDED.win_probability,
-                    confidence = EXCLUDED.confidence,
-                    reasoning = EXCLUDED.reasoning,
-                    top_factors = EXCLUDED.top_factors,
-                    probabilities = EXCLUDED.probabilities,
-                    claude_analysis = EXCLUDED.claude_analysis,
-                    timestamp = NOW()
-            """, (
-                trade_date,
-                prediction.bot_name.value,
-                context.spot_price,
-                context.vix,
-                context.gex_net,
-                context.gex_normalized,
-                context.gex_regime.value,
-                context.gex_flip_point,
-                context.gex_call_wall,
-                context.gex_put_wall,
-                context.day_of_week,
-                prediction.advice.value,
-                prediction.win_probability,
-                prediction.confidence,
-                prediction.suggested_risk_pct,
-                prediction.suggested_sd_multiplier,
-                prediction.model_version,
-                prediction.use_gex_walls,
-                prediction.suggested_put_strike,
-                prediction.suggested_call_strike,
-                prediction.reasoning,
-                top_factors_json,
-                probabilities_json,
-                claude_json
-            ))
-
-            conn.commit()
-            conn.close()
-            logger.info(f"Stored Oracle prediction for {prediction.bot_name.value}")
-
-            # === COMPREHENSIVE BOT LOGGER ===
-            if BOT_LOGGER_AVAILABLE and log_bot_decision:
-                try:
-                    comprehensive = BotDecision(
-                        bot_name="ORACLE",
-                        decision_type="ANALYSIS",
-                        action=prediction.advice.value,
-                        symbol="SPY",
-                        strategy="oracle_ml_prediction",
-                        session_id=generate_session_id(),
-                        market_context=BotLogMarketContext(
-                            spot_price=context.spot_price,
-                            vix=context.vix,
-                            net_gex=context.gex_net,
-                            gex_regime=context.gex_regime.value if hasattr(context.gex_regime, 'value') else str(context.gex_regime),
-                            flip_point=context.gex_flip_point,
-                            call_wall=context.gex_call_wall,
-                            put_wall=context.gex_put_wall,
-                        ),
-                        claude_context=ClaudeContext(
-                            response=prediction.reasoning or "",
-                            confidence=f"{prediction.win_probability:.1%}",
-                        ),
-                        entry_reasoning=f"Oracle {prediction.advice.value}: Win prob {prediction.win_probability:.1%}, Risk {prediction.suggested_risk_pct:.1%}",
-                        backtest_win_rate=prediction.win_probability * 100,
-                        kelly_pct=prediction.suggested_risk_pct,
-                        passed_all_checks=prediction.advice.value != "SKIP_TODAY",
-                        blocked_reason="" if prediction.advice.value != "SKIP_TODAY" else prediction.reasoning or "Low win probability",
                     )
-                    comp_id = log_bot_decision(comprehensive)
-                    logger.info(f"Oracle logged to bot_decision_logs: {comp_id}")
-                except Exception as comp_e:
-                    logger.warning(f"Could not log Oracle to comprehensive table: {comp_e}")
+                """)
 
-            return True
+                # Migration: Add missing columns to existing tables
+                migration_columns = [
+                    ("claude_analysis", "JSONB"),
+                    ("prediction_used", "BOOLEAN DEFAULT FALSE"),
+                    ("actual_outcome", "TEXT"),
+                    ("actual_pnl", "REAL"),
+                    ("outcome_date", "DATE"),
+                    ("prediction_time", "TIMESTAMPTZ DEFAULT NOW()"),
+                ]
+                for col_name, col_type in migration_columns:
+                    try:
+                        cursor.execute(f"ALTER TABLE oracle_predictions ADD COLUMN IF NOT EXISTS {col_name} {col_type}")
+                    except Exception as e:
+                        # Column already exists or other migration error - log but continue
+                        logger.debug(f"Migration column {col_name}: {e}")
 
-        except Exception as e:
-            logger.error(f"Failed to store prediction: {e}")
-            return False
+                conn.commit()
+
+                # Serialize top_factors as JSON
+                top_factors_json = json.dumps([
+                    {"feature": f[0], "importance": f[1]}
+                    for f in (prediction.top_factors or [])
+                ]) if prediction.top_factors else None
+
+                # Serialize probabilities as JSON
+                probabilities_json = json.dumps(prediction.probabilities) if prediction.probabilities else None
+
+                # Serialize Claude analysis as JSON (full transparency)
+                claude_json = None
+                if prediction.claude_analysis:
+                    ca = prediction.claude_analysis
+                    claude_json = json.dumps({
+                        "analysis": ca.analysis,
+                        "confidence_adjustment": ca.confidence_adjustment,
+                        "risk_factors": ca.risk_factors,
+                        "opportunities": ca.opportunities,
+                        "recommendation": ca.recommendation,
+                        "override_advice": ca.override_advice,
+                        "tokens_used": ca.tokens_used,
+                        "input_tokens": ca.input_tokens,
+                        "output_tokens": ca.output_tokens,
+                        "response_time_ms": ca.response_time_ms,
+                        "model_used": ca.model_used,
+                        # Store raw prompt/response for full transparency
+                        "raw_prompt": ca.raw_prompt[:2000] if ca.raw_prompt else None,
+                        "raw_response": ca.raw_response[:5000] if ca.raw_response else None,
+                    })
+
+                cursor.execute("""
+                    INSERT INTO oracle_predictions (
+                        trade_date, bot_name, spot_price, vix, gex_net, gex_normalized, gex_regime,
+                        gex_flip_point, gex_call_wall, gex_put_wall, day_of_week,
+                        advice, win_probability, confidence, suggested_risk_pct,
+                        suggested_sd_multiplier, model_version,
+                        use_gex_walls, suggested_put_strike, suggested_call_strike,
+                        reasoning, top_factors, probabilities, claude_analysis
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (trade_date, bot_name) DO UPDATE SET
+                        advice = EXCLUDED.advice,
+                        win_probability = EXCLUDED.win_probability,
+                        confidence = EXCLUDED.confidence,
+                        reasoning = EXCLUDED.reasoning,
+                        top_factors = EXCLUDED.top_factors,
+                        probabilities = EXCLUDED.probabilities,
+                        claude_analysis = EXCLUDED.claude_analysis,
+                        timestamp = NOW()
+                """, (
+                    trade_date,
+                    prediction.bot_name.value,
+                    context.spot_price,
+                    context.vix,
+                    context.gex_net,
+                    context.gex_normalized,
+                    context.gex_regime.value,
+                    context.gex_flip_point,
+                    context.gex_call_wall,
+                    context.gex_put_wall,
+                    context.day_of_week,
+                    prediction.advice.value,
+                    prediction.win_probability,
+                    prediction.confidence,
+                    prediction.suggested_risk_pct,
+                    prediction.suggested_sd_multiplier,
+                    prediction.model_version,
+                    prediction.use_gex_walls,
+                    prediction.suggested_put_strike,
+                    prediction.suggested_call_strike,
+                    prediction.reasoning,
+                    top_factors_json,
+                    probabilities_json,
+                    claude_json
+                ))
+
+                conn.commit()
+                logger.info(f"Stored Oracle prediction for {prediction.bot_name.value}")
+
+                # === COMPREHENSIVE BOT LOGGER ===
+                if BOT_LOGGER_AVAILABLE and log_bot_decision:
+                    try:
+                        comprehensive = BotDecision(
+                            bot_name="ORACLE",
+                            decision_type="ANALYSIS",
+                            action=prediction.advice.value,
+                            symbol="SPY",
+                            strategy="oracle_ml_prediction",
+                            session_id=generate_session_id(),
+                            market_context=BotLogMarketContext(
+                                spot_price=context.spot_price,
+                                vix=context.vix,
+                                net_gex=context.gex_net,
+                                gex_regime=context.gex_regime.value if hasattr(context.gex_regime, 'value') else str(context.gex_regime),
+                                flip_point=context.gex_flip_point,
+                                call_wall=context.gex_call_wall,
+                                put_wall=context.gex_put_wall,
+                            ),
+                            claude_context=ClaudeContext(
+                                response=prediction.reasoning or "",
+                                confidence=f"{prediction.win_probability:.1%}",
+                            ),
+                            entry_reasoning=f"Oracle {prediction.advice.value}: Win prob {prediction.win_probability:.1%}, Risk {prediction.suggested_risk_pct:.1%}",
+                            backtest_win_rate=prediction.win_probability * 100,
+                            kelly_pct=prediction.suggested_risk_pct,
+                            passed_all_checks=prediction.advice.value != "SKIP_TODAY",
+                            blocked_reason="" if prediction.advice.value != "SKIP_TODAY" else prediction.reasoning or "Low win probability",
+                        )
+                        comp_id = log_bot_decision(comprehensive)
+                        logger.info(f"Oracle logged to bot_decision_logs: {comp_id}")
+                    except Exception as comp_e:
+                        logger.warning(f"Could not log Oracle to comprehensive table: {comp_e}")
+
+                return True
+
+            except Exception as e:
+                logger.error(f"Failed to store prediction: {e}")
+                return False
 
     def update_outcome(
         self,
