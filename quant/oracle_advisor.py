@@ -644,6 +644,15 @@ OVERRIDE_ADVICE: [Only if OVERRIDE, what advice to give instead]"""
             )
             response_time_ms = int((time.time() - start_time) * 1000)
 
+            # Safe access to Claude response content
+            if not message.content or len(message.content) == 0:
+                self.live_log.log("ERROR", "Claude returned empty content array")
+                return ClaudeValidation(
+                    recommendation="PROCEED",
+                    confidence_adjustment=0.0,
+                    risk_factors=[],
+                    reasoning="Claude returned empty response"
+                )
             response = message.content[0].text
 
             # Extract token counts from response
@@ -929,6 +938,9 @@ Write a clear explanation for the trader."""
                 system=system_prompt
             )
 
+            # Safe access to Claude response content
+            if not message.content or len(message.content) == 0:
+                return f"Oracle predicts {prediction.advice.value} with {prediction.win_probability:.1%} confidence. {prediction.reasoning}"
             explanation = message.content[0].text.strip()
 
             self.live_log.log("EXPLAIN_DONE", f"Explanation generated ({len(explanation)} chars)")
@@ -1066,6 +1078,15 @@ RECOMMENDATIONS:
                 system=system_prompt
             )
 
+            # Safe access to Claude response content
+            if not message.content or len(message.content) == 0:
+                self.live_log.log("ERROR", "Claude returned empty content for pattern analysis")
+                return {
+                    "success": False,
+                    "error": "Claude returned empty response",
+                    "patterns": [],
+                    "recommendations": []
+                }
             response = message.content[0].text
             result = self._parse_pattern_response(response)
 
@@ -2748,9 +2769,16 @@ class OracleAdvisor:
         features_scaled = self.scaler.transform(features)
 
         if self.calibrated_model:
-            proba = self.calibrated_model.predict_proba(features_scaled)[0]
+            proba_result = self.calibrated_model.predict_proba(features_scaled)
         else:
-            proba = self.model.predict_proba(features_scaled)[0]
+            proba_result = self.model.predict_proba(features_scaled)
+
+        # Safe access to predict_proba results (expected shape: (1, 2) for binary classifier)
+        if proba_result is None or len(proba_result) == 0:
+            return self._fallback_prediction(context)
+        proba = proba_result[0]
+        if len(proba) < 2:
+            return self._fallback_prediction(context)
 
         win_probability = proba[1]
 
@@ -3616,7 +3644,14 @@ def get_ares_advice(
     if day_of_week is None:
         day_of_week = datetime.now().weekday()
 
-    regime = GEXRegime[gex_regime] if isinstance(gex_regime, str) else gex_regime
+    # Safe enum access with fallback to NEUTRAL
+    if isinstance(gex_regime, str):
+        try:
+            regime = GEXRegime[gex_regime]
+        except (KeyError, TypeError):
+            regime = GEXRegime.NEUTRAL
+    else:
+        regime = gex_regime if isinstance(gex_regime, GEXRegime) else GEXRegime.NEUTRAL
 
     context = MarketContext(
         spot_price=kwargs.get('price', 5000),
