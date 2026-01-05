@@ -241,6 +241,84 @@ class SignalGenerator:
             return False, f"VIX {vix:.1f} > {self.config.vix_skip}"
         return True, "OK"
 
+    def adjust_confidence_from_top_factors(
+        self,
+        confidence: float,
+        top_factors: List[Dict],
+        market_data: Dict
+    ) -> Tuple[float, List[str]]:
+        """
+        Adjust confidence based on Oracle's top contributing factors.
+
+        The top_factors reveal which features most influenced Oracle's prediction.
+        Use this insight to further calibrate confidence based on current conditions.
+
+        Returns (adjusted_confidence, adjustment_reasons).
+        """
+        if not top_factors:
+            return confidence, []
+
+        adjustments = []
+        original_confidence = confidence
+        vix = market_data.get('vix', 20)
+        gex_regime = market_data.get('gex_regime', 'NEUTRAL')
+
+        # Extract factor names and impacts
+        factor_map = {}
+        for f in top_factors[:5]:  # Only consider top 5 factors
+            name = f.get('factor', f.get('feature', '')).lower()
+            impact = f.get('impact', f.get('importance', 0))
+            factor_map[name] = impact
+
+        # 1. VIX factor adjustment - SPX is sensitive to VIX
+        vix_importance = factor_map.get('vix', factor_map.get('vix_level', 0))
+        if vix_importance > 0.2:  # VIX is significant factor
+            if vix > 25:
+                penalty = min(0.10, (vix - 25) * 0.015)  # SPX more sensitive
+                confidence -= penalty
+                adjustments.append(f"VIX factor high ({vix_importance:.2f}) + VIX elevated ({vix:.1f}): -{penalty:.0%}")
+            elif vix < 14:
+                boost = min(0.05, (14 - vix) * 0.01)
+                confidence += boost
+                adjustments.append(f"VIX factor high ({vix_importance:.2f}) + VIX low ({vix:.1f}): +{boost:.0%}")
+
+        # 2. GEX regime factor adjustment
+        gex_importance = factor_map.get('gex_regime', factor_map.get('net_gex', 0))
+        if gex_importance > 0.15:
+            if gex_regime == 'NEGATIVE':
+                penalty = 0.06
+                confidence -= penalty
+                adjustments.append(f"GEX factor high ({gex_importance:.2f}) + NEGATIVE regime: -{penalty:.0%}")
+            elif gex_regime == 'POSITIVE':
+                boost = 0.04
+                confidence += boost
+                adjustments.append(f"GEX factor high ({gex_importance:.2f}) + POSITIVE regime: +{boost:.0%}")
+
+        # 3. Day of week factor
+        dow_importance = factor_map.get('day_of_week', 0)
+        if dow_importance > 0.15:
+            from datetime import datetime
+            from zoneinfo import ZoneInfo
+            day = datetime.now(ZoneInfo("America/Chicago")).weekday()
+            if day in [0, 1]:  # Monday, Tuesday
+                boost = 0.03
+                confidence += boost
+                adjustments.append(f"Day factor high ({dow_importance:.2f}) + favorable day: +{boost:.0%}")
+            elif day == 4:  # Friday
+                penalty = 0.04
+                confidence -= penalty
+                adjustments.append(f"Day factor high ({dow_importance:.2f}) + Friday: -{penalty:.0%}")
+
+        # Clamp confidence to reasonable range
+        confidence = max(0.4, min(0.95, confidence))
+
+        if adjustments:
+            logger.info(f"[PEGASUS TOP_FACTORS ADJUSTMENTS] {original_confidence:.0%} -> {confidence:.0%}")
+            for adj in adjustments:
+                logger.info(f"  - {adj}")
+
+        return confidence, adjustments
+
     def calculate_strikes(
         self,
         spot: float,
@@ -361,6 +439,11 @@ class SignalGenerator:
                     impact = factor.get('impact', 0)
                     direction = "+" if impact > 0 else ""
                     logger.info(f"    {i}. {factor_name}: {direction}{impact:.3f}")
+
+                # APPLY top_factors to adjust confidence based on current conditions
+                oracle_confidence, factor_adjustments = self.adjust_confidence_from_top_factors(
+                    oracle_confidence, oracle['top_factors'], market
+                )
 
             # Log suggested adjustments
             logger.info(f"  Oracle Suggestions:")

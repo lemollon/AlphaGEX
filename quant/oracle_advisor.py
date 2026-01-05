@@ -2083,6 +2083,22 @@ class OracleAdvisor:
                 if claude_analysis.risk_factors:
                     logger.info(f"Claude risk factors: {claude_analysis.risk_factors}")
 
+            # VALIDATE hallucination_risk and reduce confidence if HIGH
+            hallucination_risk = getattr(claude_analysis, 'hallucination_risk', 'LOW')
+            if hallucination_risk == 'HIGH':
+                penalty = 0.10  # 10% penalty for high hallucination risk
+                base_pred['win_probability'] = max(0.40, base_pred['win_probability'] - penalty)
+                reasoning_parts.append(f"Claude hallucination risk HIGH (confidence reduced by {penalty:.0%})")
+                logger.warning(f"[ARES] Claude hallucination risk HIGH - reducing confidence by {penalty:.0%}")
+                if hasattr(claude_analysis, 'hallucination_warnings') and claude_analysis.hallucination_warnings:
+                    for warning in claude_analysis.hallucination_warnings:
+                        logger.warning(f"  - {warning}")
+            elif hallucination_risk == 'MEDIUM':
+                penalty = 0.05  # 5% penalty for medium hallucination risk
+                base_pred['win_probability'] = max(0.40, base_pred['win_probability'] - penalty)
+                reasoning_parts.append(f"Claude hallucination risk MEDIUM (confidence reduced by {penalty:.0%})")
+                logger.info(f"[ARES] Claude hallucination risk MEDIUM - reducing confidence by {penalty:.0%}")
+
         # Determine final advice
         advice, risk_pct = self._get_advice_from_probability(base_pred['win_probability'])
 
@@ -2306,6 +2322,19 @@ class OracleAdvisor:
                 ))
                 reasoning_parts.append(f"Claude: {claude_analysis.analysis}")
 
+            # VALIDATE hallucination_risk and reduce confidence if HIGH
+            hallucination_risk = getattr(claude_analysis, 'hallucination_risk', 'LOW')
+            if hallucination_risk == 'HIGH':
+                penalty = 0.10
+                base_pred['win_probability'] = max(0.30, base_pred['win_probability'] - penalty)
+                reasoning_parts.append(f"Claude hallucination risk HIGH (confidence reduced by {penalty:.0%})")
+                logger.warning(f"[PHOENIX] Claude hallucination risk HIGH - reducing confidence by {penalty:.0%}")
+            elif hallucination_risk == 'MEDIUM':
+                penalty = 0.05
+                base_pred['win_probability'] = max(0.30, base_pred['win_probability'] - penalty)
+                reasoning_parts.append(f"Claude hallucination risk MEDIUM (confidence reduced by {penalty:.0%})")
+                logger.info(f"[PHOENIX] Claude hallucination risk MEDIUM - reducing confidence by {penalty:.0%}")
+
         advice, risk_pct = self._get_advice_from_probability(base_pred['win_probability'])
 
         prediction = OraclePrediction(
@@ -2485,6 +2514,19 @@ class OracleAdvisor:
                     base_pred['win_probability'] + claude_analysis.confidence_adjustment
                 ))
                 reasoning_parts.append(f"Claude: {claude_analysis.analysis}")
+
+            # VALIDATE hallucination_risk and reduce confidence if HIGH
+            hallucination_risk = getattr(claude_analysis, 'hallucination_risk', 'LOW')
+            if hallucination_risk == 'HIGH':
+                penalty = 0.10
+                base_pred['win_probability'] = max(0.30, base_pred['win_probability'] - penalty)
+                reasoning_parts.append(f"Claude hallucination risk HIGH (confidence reduced by {penalty:.0%})")
+                logger.warning(f"[ATHENA] Claude hallucination risk HIGH - reducing confidence by {penalty:.0%}")
+            elif hallucination_risk == 'MEDIUM':
+                penalty = 0.05
+                base_pred['win_probability'] = max(0.30, base_pred['win_probability'] - penalty)
+                reasoning_parts.append(f"Claude hallucination risk MEDIUM (confidence reduced by {penalty:.0%})")
+                logger.info(f"[ATHENA] Claude hallucination risk MEDIUM - reducing confidence by {penalty:.0%}")
 
         advice, risk_pct = self._get_advice_from_probability(base_pred['win_probability'])
 
@@ -2766,6 +2808,19 @@ class OracleAdvisor:
                     # Adjust confidence based on Claude
                     if claude_analysis.confidence_adjustment:
                         win_prob = min(0.95, max(0.05, win_prob + claude_analysis.confidence_adjustment))
+
+                    # VALIDATE hallucination_risk and reduce confidence if HIGH
+                    hallucination_risk = getattr(claude_analysis, 'hallucination_risk', 'LOW')
+                    if hallucination_risk == 'HIGH':
+                        penalty = 0.10
+                        win_prob = max(0.05, win_prob - penalty)
+                        reasoning_parts.append(f"Claude hallucination risk HIGH (confidence reduced by {penalty:.0%})")
+                        logger.warning(f"[PEGASUS] Claude hallucination risk HIGH - reducing confidence by {penalty:.0%}")
+                    elif hallucination_risk == 'MEDIUM':
+                        penalty = 0.05
+                        win_prob = max(0.05, win_prob - penalty)
+                        reasoning_parts.append(f"Claude hallucination risk MEDIUM (confidence reduced by {penalty:.0%})")
+                        logger.info(f"[PEGASUS] Claude hallucination risk MEDIUM - reducing confidence by {penalty:.0%}")
             except Exception as e:
                 logger.warning(f"PEGASUS Claude validation failed: {e}")
                 self.live_log.log("CLAUDE_ERROR", f"PEGASUS Claude validation failed: {e}")
