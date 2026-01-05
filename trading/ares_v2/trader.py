@@ -318,18 +318,59 @@ class ARESTrader(MathOptimizerMixin):
                 outcome = ScanOutcome.NO_TRADE
                 decision = "No valid signal"
 
-            # Build signal context
+            # Build signal context with FULL Oracle data
             signal = context.get('signal')
             signal_source = ""
             signal_confidence = 0
+            signal_win_probability = 0
             oracle_advice = ""
             oracle_reasoning = ""
+            oracle_win_probability = 0
+            oracle_confidence = 0
+            oracle_top_factors = None
+            oracle_probabilities = None
+            oracle_suggested_strikes = None
+            oracle_thresholds = None
+            min_win_prob_threshold = self.config.min_win_probability
 
             if signal:
                 signal_source = signal.source
                 signal_confidence = signal.confidence
-                oracle_advice = "ENTER" if signal.is_valid else "SKIP"
+                signal_win_probability = getattr(signal, 'oracle_win_probability', 0)
+                oracle_advice = signal.oracle_advice if hasattr(signal, 'oracle_advice') else ("ENTER" if signal.is_valid else "SKIP")
                 oracle_reasoning = signal.reasoning
+                oracle_win_probability = getattr(signal, 'oracle_win_probability', 0)
+                oracle_confidence = getattr(signal, 'oracle_confidence', signal.confidence)
+
+                # Get top factors (may be JSON string or list)
+                top_factors_raw = getattr(signal, 'oracle_top_factors', None)
+                if top_factors_raw:
+                    if isinstance(top_factors_raw, str):
+                        try:
+                            import json
+                            oracle_top_factors = json.loads(top_factors_raw)
+                        except Exception:
+                            oracle_top_factors = [{'factor': 'parse_error', 'impact': 0}]
+                    elif isinstance(top_factors_raw, list):
+                        oracle_top_factors = top_factors_raw
+
+                # Get probabilities
+                oracle_probabilities = getattr(signal, 'oracle_probabilities', None)
+
+                # Get suggested strikes
+                if hasattr(signal, 'oracle_suggested_sd'):
+                    oracle_suggested_strikes = {
+                        'sd_multiplier': getattr(signal, 'oracle_suggested_sd', 1.0),
+                        'use_gex_walls': getattr(signal, 'oracle_use_gex_walls', False)
+                    }
+
+                # Build thresholds context (what we evaluated against)
+                oracle_thresholds = {
+                    'min_win_probability': min_win_prob_threshold,
+                    'vix_skip': getattr(self.config, 'vix_skip', 32.0),
+                    'vix_monday_friday_skip': getattr(self.config, 'vix_monday_friday_skip', 30.0),
+                    'vix_streak_skip': getattr(self.config, 'vix_streak_skip', 28.0),
+                }
 
             # Build trade details if position opened
             position = context.get('position')
@@ -357,8 +398,16 @@ class ARESTrader(MathOptimizerMixin):
                 gex_data=context.get('gex_data'),
                 signal_source=signal_source,
                 signal_confidence=signal_confidence,
+                signal_win_probability=signal_win_probability,
                 oracle_advice=oracle_advice,
                 oracle_reasoning=oracle_reasoning,
+                oracle_win_probability=oracle_win_probability,
+                oracle_confidence=oracle_confidence,
+                oracle_top_factors=oracle_top_factors,
+                oracle_probabilities=oracle_probabilities,
+                oracle_suggested_strikes=oracle_suggested_strikes,
+                oracle_thresholds=oracle_thresholds,
+                min_win_probability_threshold=min_win_prob_threshold,
                 trade_executed=result.get('trade_opened', False),
                 position_id=position.position_id if position else "",
                 strike_selection=strike_selection,

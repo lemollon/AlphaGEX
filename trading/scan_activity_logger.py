@@ -99,9 +99,16 @@ class ScanActivity:
     signal_confidence: float = 0
     signal_win_probability: float = 0
 
-    # Oracle
+    # Oracle - FULL context for frontend visibility
     oracle_advice: str = ""
     oracle_reasoning: str = ""
+    oracle_win_probability: float = 0
+    oracle_confidence: float = 0
+    oracle_top_factors: List[Dict] = field(default_factory=list)
+    oracle_probabilities: Dict = field(default_factory=dict)
+    oracle_suggested_strikes: Dict = field(default_factory=dict)
+    oracle_thresholds: Dict = field(default_factory=dict)  # What thresholds were evaluated
+    min_win_probability_threshold: float = 0  # What the bot required
 
     # Checks
     checks_performed: List[CheckResult] = field(default_factory=list)
@@ -175,9 +182,16 @@ def log_scan_activity(
     signal_direction: str = "",
     signal_confidence: float = 0,
     signal_win_probability: float = 0,
-    # Oracle data
+    # Oracle data - FULL context for frontend visibility
     oracle_advice: str = "",
     oracle_reasoning: str = "",
+    oracle_win_probability: float = 0,
+    oracle_confidence: float = 0,
+    oracle_top_factors: Optional[List[Dict]] = None,
+    oracle_probabilities: Optional[Dict] = None,
+    oracle_suggested_strikes: Optional[Dict] = None,
+    oracle_thresholds: Optional[Dict] = None,
+    min_win_probability_threshold: float = 0,
     # Risk/Reward
     risk_reward_ratio: float = 0,
     # Checks
@@ -325,6 +339,13 @@ def log_scan_activity(
                 signal_win_probability DECIMAL(5, 4),
                 oracle_advice VARCHAR(50),
                 oracle_reasoning TEXT,
+                oracle_win_probability DECIMAL(5, 4),
+                oracle_confidence DECIMAL(5, 4),
+                oracle_top_factors JSONB,
+                oracle_probabilities JSONB,
+                oracle_suggested_strikes JSONB,
+                oracle_thresholds JSONB,
+                min_win_probability_threshold DECIMAL(5, 4),
                 risk_reward_ratio DECIMAL(10, 4),
                 checks_performed JSONB,
                 all_checks_passed BOOLEAN DEFAULT TRUE,
@@ -348,6 +369,14 @@ def log_scan_activity(
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS risk_reward_ratio DECIMAL(10, 4)")
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS what_would_trigger TEXT")
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS market_insight TEXT")
+            # Oracle context columns
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS oracle_win_probability DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS oracle_confidence DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS oracle_top_factors JSONB")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS oracle_probabilities JSONB")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS oracle_suggested_strikes JSONB")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS oracle_thresholds JSONB")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS min_win_probability_threshold DECIMAL(5, 4)")
         except Exception:
             pass  # Columns may already exist
 
@@ -422,6 +451,10 @@ def log_scan_activity(
                 distance_to_call_wall_pct, distance_to_put_wall_pct,
                 signal_source, signal_direction, signal_confidence, signal_win_probability,
                 oracle_advice, oracle_reasoning,
+                oracle_win_probability, oracle_confidence,
+                oracle_top_factors, oracle_probabilities,
+                oracle_suggested_strikes, oracle_thresholds,
+                min_win_probability_threshold,
                 risk_reward_ratio,
                 checks_performed, all_checks_passed,
                 trade_executed, position_id, strike_selection, contracts,
@@ -438,6 +471,10 @@ def log_scan_activity(
                 %s, %s,
                 %s, %s, %s, %s,
                 %s, %s,
+                %s, %s,
+                %s, %s,
+                %s, %s,
+                %s,
                 %s,
                 %s, %s,
                 %s, %s, %s, %s,
@@ -455,6 +492,12 @@ def log_scan_activity(
             distance_to_call_wall_pct, distance_to_put_wall_pct,
             signal_source, signal_direction, signal_confidence, signal_win_probability,
             oracle_advice, oracle_reasoning,
+            oracle_win_probability, oracle_confidence,
+            json.dumps(oracle_top_factors) if oracle_top_factors else None,
+            json.dumps(oracle_probabilities) if oracle_probabilities else None,
+            json.dumps(oracle_suggested_strikes) if oracle_suggested_strikes else None,
+            json.dumps(oracle_thresholds) if oracle_thresholds else None,
+            min_win_probability_threshold,
             risk_reward_ratio,
             json.dumps(checks_json) if checks_json else None, all_checks_passed,
             trade_executed, position_id, json.dumps(strike_selection) if strike_selection else None, contracts,
@@ -509,6 +552,10 @@ def get_recent_scans(
                 distance_to_call_wall_pct, distance_to_put_wall_pct,
                 signal_source, signal_direction, signal_confidence, signal_win_probability,
                 oracle_advice, oracle_reasoning,
+                oracle_win_probability, oracle_confidence,
+                oracle_top_factors, oracle_probabilities,
+                oracle_suggested_strikes, oracle_thresholds,
+                min_win_probability_threshold,
                 risk_reward_ratio,
                 checks_performed, all_checks_passed,
                 trade_executed, position_id, strike_selection, contracts,
@@ -546,6 +593,10 @@ def get_recent_scans(
             'distance_to_call_wall_pct', 'distance_to_put_wall_pct',
             'signal_source', 'signal_direction', 'signal_confidence', 'signal_win_probability',
             'oracle_advice', 'oracle_reasoning',
+            'oracle_win_probability', 'oracle_confidence',
+            'oracle_top_factors', 'oracle_probabilities',
+            'oracle_suggested_strikes', 'oracle_thresholds',
+            'min_win_probability_threshold',
             'risk_reward_ratio',
             'checks_performed', 'all_checks_passed',
             'trade_executed', 'position_id', 'strike_selection', 'contracts',
@@ -567,7 +618,8 @@ def get_recent_scans(
                         'call_wall', 'put_wall', 'distance_to_call_wall_pct',
                         'distance_to_put_wall_pct', 'signal_confidence',
                         'signal_win_probability', 'premium_collected', 'max_risk',
-                        'risk_reward_ratio']:
+                        'risk_reward_ratio', 'oracle_win_probability', 'oracle_confidence',
+                        'min_win_probability_threshold']:
                 if record.get(key) is not None:
                     record[key] = float(record[key])
             results.append(record)
@@ -650,6 +702,13 @@ def log_ares_scan(
     signal_win_probability: float = 0,
     oracle_advice: str = "",
     oracle_reasoning: str = "",
+    oracle_win_probability: float = 0,
+    oracle_confidence: float = 0,
+    oracle_top_factors: Optional[List[Dict]] = None,
+    oracle_probabilities: Optional[Dict] = None,
+    oracle_suggested_strikes: Optional[Dict] = None,
+    oracle_thresholds: Optional[Dict] = None,
+    min_win_probability_threshold: float = 0,
     trade_executed: bool = False,
     error_message: str = "",
     generate_ai_explanation: bool = True,
@@ -754,6 +813,13 @@ def log_ares_scan(
         signal_win_probability=signal_win_probability,
         oracle_advice=oracle_advice,
         oracle_reasoning=oracle_reasoning,
+        oracle_win_probability=oracle_win_probability,
+        oracle_confidence=oracle_confidence,
+        oracle_top_factors=oracle_top_factors,
+        oracle_probabilities=oracle_probabilities,
+        oracle_suggested_strikes=oracle_suggested_strikes,
+        oracle_thresholds=oracle_thresholds,
+        min_win_probability_threshold=min_win_probability_threshold,
         trade_executed=trade_executed,
         error_message=error_message,
         error_type=error_type,
@@ -773,6 +839,13 @@ def log_pegasus_scan(
     signal_win_probability: float = 0,
     oracle_advice: str = "",
     oracle_reasoning: str = "",
+    oracle_win_probability: float = 0,
+    oracle_confidence: float = 0,
+    oracle_top_factors: Optional[List[Dict]] = None,
+    oracle_probabilities: Optional[Dict] = None,
+    oracle_suggested_strikes: Optional[Dict] = None,
+    oracle_thresholds: Optional[Dict] = None,
+    min_win_probability_threshold: float = 0,
     trade_executed: bool = False,
     error_message: str = "",
     generate_ai_explanation: bool = False,  # Disable by default for PEGASUS
@@ -803,6 +876,13 @@ def log_pegasus_scan(
         signal_win_probability=signal_win_probability,
         oracle_advice=oracle_advice,
         oracle_reasoning=oracle_reasoning,
+        oracle_win_probability=oracle_win_probability,
+        oracle_confidence=oracle_confidence,
+        oracle_top_factors=oracle_top_factors,
+        oracle_probabilities=oracle_probabilities,
+        oracle_suggested_strikes=oracle_suggested_strikes,
+        oracle_thresholds=oracle_thresholds,
+        min_win_probability_threshold=min_win_probability_threshold,
         trade_executed=trade_executed,
         error_message=error_message,
         error_type=error_type,
@@ -821,6 +901,15 @@ def log_athena_scan(
     signal_direction: str = "",
     signal_confidence: float = 0,
     signal_win_probability: float = 0,
+    oracle_advice: str = "",
+    oracle_reasoning: str = "",
+    oracle_win_probability: float = 0,
+    oracle_confidence: float = 0,
+    oracle_top_factors: Optional[List[Dict]] = None,
+    oracle_probabilities: Optional[Dict] = None,
+    oracle_suggested_strikes: Optional[Dict] = None,
+    oracle_thresholds: Optional[Dict] = None,
+    min_win_probability_threshold: float = 0,
     trade_executed: bool = False,
     error_message: str = "",
     risk_reward_ratio: float = 0,
@@ -924,6 +1013,16 @@ def log_athena_scan(
         signal_direction=signal_direction,
         signal_confidence=signal_confidence,
         signal_win_probability=signal_win_probability,
+        oracle_advice=oracle_advice,
+        oracle_reasoning=oracle_reasoning,
+        oracle_win_probability=oracle_win_probability,
+        oracle_confidence=oracle_confidence,
+        oracle_top_factors=oracle_top_factors,
+        oracle_probabilities=oracle_probabilities,
+        oracle_suggested_strikes=oracle_suggested_strikes,
+        oracle_thresholds=oracle_thresholds,
+        min_win_probability_threshold=min_win_probability_threshold,
+        risk_reward_ratio=risk_reward_ratio,
         trade_executed=trade_executed,
         error_message=error_message,
         error_type=error_type,
