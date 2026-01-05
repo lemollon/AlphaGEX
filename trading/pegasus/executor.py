@@ -35,9 +35,10 @@ except ImportError:
 class OrderExecutor:
     """Executes SPX Iron Condors"""
 
-    def __init__(self, config: PEGASUSConfig):
+    def __init__(self, config: PEGASUSConfig, db=None):
         self.config = config
         self.tradier = None
+        self.db = db  # Optional DB reference for orphaned order tracking
 
         if TRADIER_AVAILABLE and config.mode == TradingMode.LIVE:
             try:
@@ -161,6 +162,8 @@ class OrderExecutor:
                 logger.error(f"Call spread failed: {call_result}")
                 # CRITICAL: Put spread was already placed - attempt to close it
                 logger.warning(f"Attempting to rollback put spread order {put_order_id}")
+                rollback_failed = False
+                rollback_error_msg = None
                 try:
                     # Close put spread by reversing the order (swap long/short to create debit)
                     rollback_result = self.tradier.place_vertical_spread(
@@ -175,9 +178,29 @@ class OrderExecutor:
                     if rollback_result and rollback_result.get('order'):
                         logger.info(f"Successfully rolled back put spread order {put_order_id}")
                     else:
+                        rollback_failed = True
+                        rollback_error_msg = f"Rollback returned: {rollback_result}"
                         logger.error(f"CRITICAL: Failed to rollback put spread {put_order_id} - MANUAL INTERVENTION REQUIRED")
                 except Exception as rollback_error:
+                    rollback_failed = True
+                    rollback_error_msg = str(rollback_error)
                     logger.error(f"CRITICAL: Rollback exception for {put_order_id}: {rollback_error} - MANUAL INTERVENTION REQUIRED")
+
+                # Log orphaned order if rollback failed
+                if rollback_failed and self.db:
+                    self.db.log_orphaned_order(
+                        order_id=put_order_id,
+                        order_type='put_spread',
+                        ticker='SPX',
+                        expiration=signal.expiration,
+                        strikes={
+                            'put_long': signal.put_long,
+                            'put_short': signal.put_short
+                        },
+                        contracts=contracts,
+                        reason='ROLLBACK_FAILED_AFTER_CALL_SPREAD_ERROR',
+                        error_details=rollback_error_msg
+                    )
                 return None
 
             call_order_id = str(call_result['order'].get('id', 'UNKNOWN'))
@@ -241,11 +264,33 @@ class OrderExecutor:
 
     def _close_paper(self, position: IronCondorPosition, reason: str) -> Tuple[bool, float, float]:
         try:
-            current_price = self._get_current_spx_price()
-            if not current_price:
-                current_price = position.underlying_at_entry
+            # For SPX European-style cash-settled options at expiration,
+            # use the settlement price (opening price) not the current intraday price
+            is_expiration = reason in ['EXPIRED', 'FORCE_EXIT']
 
-            close_value = self._estimate_ic_value(position, current_price)
+            if is_expiration:
+                # SPX options are cash-settled using AM settlement price (opening price)
+                # At expiration, the intrinsic value is calculated based on where SPX opened
+                settlement_price = self._get_spx_settlement_price(position.expiration)
+                if not settlement_price:
+                    logger.warning(
+                        f"Could not get SPX settlement price for {position.expiration}, "
+                        f"using current price instead"
+                    )
+                    settlement_price = self._get_current_spx_price() or position.underlying_at_entry
+
+                # Calculate intrinsic value at settlement for European-style cash settlement
+                close_value = self._calculate_cash_settlement_value(position, settlement_price)
+                logger.info(
+                    f"SPX CASH SETTLEMENT: {position.position_id} @ SPX {settlement_price:.2f}, "
+                    f"IC value=${close_value:.2f}"
+                )
+            else:
+                current_price = self._get_current_spx_price()
+                if not current_price:
+                    current_price = position.underlying_at_entry
+                close_value = self._estimate_ic_value(position, current_price)
+
             pnl = (position.total_credit - close_value) * 100 * position.contracts
 
             logger.info(f"PAPER CLOSE: {position.position_id} @ ${close_value:.2f}, P&L=${pnl:.2f}")
@@ -253,6 +298,65 @@ class OrderExecutor:
         except Exception as e:
             logger.error(f"Close failed: {e}")
             return False, 0, 0
+
+    def _get_spx_settlement_price(self, expiration: str) -> Optional[float]:
+        """
+        Get SPX settlement price (AM opening price) for European-style cash settlement.
+
+        For SPX weekly options (SPXW), settlement is based on the Special Opening Quotation (SOQ)
+        which is calculated from the opening prices of SPX component stocks.
+        """
+        try:
+            # For paper trading, we use the SPX open price as settlement
+            # In production, this would come from CBOE settlement data
+            if DATA_AVAILABLE:
+                from data.unified_data_provider import get_ohlcv
+                ohlcv = get_ohlcv("SPX", "1D")
+                if ohlcv and len(ohlcv) > 0:
+                    # Return today's opening price
+                    return ohlcv[-1].get('open')
+        except Exception as e:
+            logger.debug(f"Could not get SPX settlement price: {e}")
+
+        # Fallback to current price
+        return self._get_current_spx_price()
+
+    def _calculate_cash_settlement_value(
+        self,
+        position: IronCondorPosition,
+        settlement_price: float
+    ) -> float:
+        """
+        Calculate cash settlement value for SPX Iron Condor at expiration.
+
+        SPX options are European-style and cash-settled:
+        - If settlement price is between short strikes: All legs expire worthless (max profit)
+        - If settlement breaches put side: Loss = (put_short - settlement) capped at spread width
+        - If settlement breaches call side: Loss = (settlement - call_short) capped at spread width
+        """
+        put_short = position.put_short_strike
+        put_long = position.put_long_strike
+        call_short = position.call_short_strike
+        call_long = position.call_long_strike
+        spread_width = position.spread_width
+
+        # If within short strikes - max profit (IC expires worthless)
+        if put_short < settlement_price < call_short:
+            return 0.0
+
+        # If below put short strike - put spread has intrinsic value
+        if settlement_price <= put_short:
+            put_intrinsic = put_short - settlement_price
+            # Cap at spread width minus any value from call spread
+            return min(put_intrinsic, spread_width)
+
+        # If above call short strike - call spread has intrinsic value
+        if settlement_price >= call_short:
+            call_intrinsic = settlement_price - call_short
+            # Cap at spread width
+            return min(call_intrinsic, spread_width)
+
+        return 0.0
 
     def _close_live(self, position: IronCondorPosition, reason: str) -> Tuple[bool, float, float]:
         if not self.tradier:

@@ -96,7 +96,7 @@ class ARESTrader(MathOptimizerMixin):
 
         # Initialize components
         self.signals = SignalGenerator(self.config)
-        self.executor = OrderExecutor(self.config)
+        self.executor = OrderExecutor(self.config, db=self.db)
 
         # Learning Memory prediction tracking (position_id -> prediction_id)
         self._prediction_ids: Dict[str, str] = {}
@@ -683,9 +683,12 @@ class ARESTrader(MathOptimizerMixin):
                 )
 
                 if hjb_result.get('should_exit') and hjb_result.get('optimized'):
-                    reason = hjb_result.get('reason', 'HJB_OPTIMAL_EXIT')
+                    # Use reason from HJB if available and non-empty, otherwise construct one
+                    raw_reason = hjb_result.get('reason', '')
+                    pnl_pct = hjb_result.get('pnl_pct', 0)
+                    reason = raw_reason if raw_reason else f"HJB_OPTIMAL_{pnl_pct*100:.0f}%"
                     self.db.log("INFO", f"HJB exit signal: {reason}")
-                    return True, f"HJB_OPTIMAL_{hjb_result.get('pnl_pct', 0)*100:.0f}%"
+                    return True, reason
 
             except Exception as e:
                 logger.debug(f"HJB exit check skipped: {e}")

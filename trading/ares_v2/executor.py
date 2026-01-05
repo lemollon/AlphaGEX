@@ -48,9 +48,10 @@ class OrderExecutor:
     - Higher allocation = larger positions when bot is performing well
     """
 
-    def __init__(self, config: ARESConfig):
+    def __init__(self, config: ARESConfig, db=None):
         self.config = config
         self.tradier = None
+        self.db = db  # Optional DB reference for orphaned order tracking
 
         if TRADIER_AVAILABLE and config.mode == TradingMode.LIVE:
             try:
@@ -200,6 +201,8 @@ class OrderExecutor:
                 logger.error(f"Call spread order failed: {call_result}")
                 # CRITICAL: Put spread was already placed - attempt to close it
                 logger.warning(f"Attempting to rollback put spread order {put_order_id}")
+                rollback_failed = False
+                rollback_error_msg = None
                 try:
                     # Close put spread by reversing the order (swap long/short to create debit)
                     rollback_result = self.tradier.place_vertical_spread(
@@ -214,9 +217,29 @@ class OrderExecutor:
                     if rollback_result and rollback_result.get('order'):
                         logger.info(f"Successfully rolled back put spread order {put_order_id}")
                     else:
+                        rollback_failed = True
+                        rollback_error_msg = f"Rollback returned: {rollback_result}"
                         logger.error(f"CRITICAL: Failed to rollback put spread {put_order_id} - MANUAL INTERVENTION REQUIRED")
                 except Exception as rollback_error:
+                    rollback_failed = True
+                    rollback_error_msg = str(rollback_error)
                     logger.error(f"CRITICAL: Rollback exception for {put_order_id}: {rollback_error} - MANUAL INTERVENTION REQUIRED")
+
+                # Log orphaned order if rollback failed
+                if rollback_failed and self.db:
+                    self.db.log_orphaned_order(
+                        order_id=put_order_id,
+                        order_type='put_spread',
+                        ticker=self.config.ticker,
+                        expiration=signal.expiration,
+                        strikes={
+                            'put_long': signal.put_long,
+                            'put_short': signal.put_short
+                        },
+                        contracts=contracts,
+                        reason='ROLLBACK_FAILED_AFTER_CALL_SPREAD_ERROR',
+                        error_details=rollback_error_msg
+                    )
                 return None
 
             call_order_id = str(call_result['order'].get('id', 'UNKNOWN'))

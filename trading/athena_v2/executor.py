@@ -198,6 +198,18 @@ class OrderExecutor:
             order_info = order_result['order']
             order_id = str(order_info.get('id', 'UNKNOWN'))
 
+            # Validate order status - check if order was actually accepted
+            order_status = order_info.get('status', 'unknown')
+            if order_status in ['rejected', 'canceled', 'error']:
+                logger.error(f"Order {order_id} was {order_status}: {order_info.get('reason', 'no reason')}")
+                return None
+
+            if order_status not in ['filled', 'pending', 'open', 'ok']:
+                logger.warning(
+                    f"Order {order_id} has unexpected status '{order_status}' - "
+                    f"proceeding but may need manual verification"
+                )
+
             # Calculate P&L
             spread_width = abs(signal.short_strike - signal.long_strike)
             max_profit = (spread_width - actual_debit) * 100 * contracts

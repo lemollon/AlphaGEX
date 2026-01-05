@@ -394,6 +394,79 @@ class PEGASUSDatabase:
             # Log failures are non-critical
             logger.debug(f"Failed to log to database: {e}")
 
+    def log_orphaned_order(
+        self,
+        order_id: str,
+        order_type: str,  # 'put_spread', 'call_spread', 'position'
+        ticker: str,
+        expiration: str,
+        strikes: Dict[str, float],
+        contracts: int,
+        reason: str,
+        error_details: str = None
+    ) -> bool:
+        """
+        Log an orphaned order that requires manual intervention.
+
+        Called when:
+        - Put spread executes but call spread fails during IC open
+        - Rollback of orphaned spread fails
+        - Partial close leaves one leg in broker
+        """
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+
+                # Ensure table exists (shared with ARES)
+                c.execute("""
+                    CREATE TABLE IF NOT EXISTS orphaned_orders (
+                        id SERIAL PRIMARY KEY,
+                        bot_name VARCHAR(20) NOT NULL,
+                        order_id VARCHAR(50),
+                        order_type VARCHAR(30) NOT NULL,
+                        ticker VARCHAR(10) NOT NULL,
+                        expiration DATE,
+                        strikes JSONB,
+                        contracts INTEGER,
+                        reason VARCHAR(200) NOT NULL,
+                        error_details TEXT,
+                        resolved BOOLEAN DEFAULT FALSE,
+                        resolved_at TIMESTAMP WITH TIME ZONE,
+                        resolved_by VARCHAR(50),
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                    )
+                """)
+
+                import json
+                c.execute("""
+                    INSERT INTO orphaned_orders (
+                        bot_name, order_id, order_type, ticker, expiration,
+                        strikes, contracts, reason, error_details
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                """, (
+                    self.bot_name,
+                    order_id,
+                    order_type,
+                    ticker,
+                    expiration,
+                    json.dumps(strikes),
+                    contracts,
+                    reason,
+                    error_details
+                ))
+                orphan_id = c.fetchone()[0]
+                conn.commit()
+
+                logger.error(
+                    f"{self.bot_name}: ORPHANED ORDER #{orphan_id} logged - "
+                    f"{order_type} {order_id} ({reason}). REQUIRES MANUAL REVIEW."
+                )
+                return True
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to log orphaned order: {e}")
+            return False
+
     def update_heartbeat(self, status: str, action: str) -> None:
         try:
             with db_connection() as conn:
