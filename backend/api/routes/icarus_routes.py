@@ -35,6 +35,125 @@ logger = logging.getLogger(__name__)
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 
+# Flag to track if database schema has been initialized
+_schema_initialized = False
+
+
+def _ensure_icarus_schema():
+    """Ensure ICARUS database tables and columns exist before queries"""
+    global _schema_initialized
+    if _schema_initialized:
+        return
+
+    conn = None
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+
+        # Create main positions table if not exists
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS icarus_positions (
+                id SERIAL PRIMARY KEY,
+                position_id VARCHAR(50) UNIQUE NOT NULL,
+                spread_type VARCHAR(30) NOT NULL,
+                ticker VARCHAR(10) NOT NULL,
+                long_strike DECIMAL(10, 2) NOT NULL,
+                short_strike DECIMAL(10, 2) NOT NULL,
+                expiration DATE NOT NULL,
+                entry_debit DECIMAL(10, 4) NOT NULL,
+                contracts INTEGER NOT NULL,
+                max_profit DECIMAL(10, 2) NOT NULL,
+                max_loss DECIMAL(10, 2) NOT NULL,
+                underlying_at_entry DECIMAL(10, 2) NOT NULL,
+                call_wall DECIMAL(10, 2),
+                put_wall DECIMAL(10, 2),
+                gex_regime VARCHAR(30),
+                vix_at_entry DECIMAL(6, 2),
+                oracle_confidence DECIMAL(5, 4),
+                ml_direction VARCHAR(20),
+                ml_confidence DECIMAL(5, 4),
+                order_id VARCHAR(50),
+                status VARCHAR(20) NOT NULL DEFAULT 'open',
+                open_time TIMESTAMP WITH TIME ZONE NOT NULL,
+                close_time TIMESTAMP WITH TIME ZONE,
+                close_price DECIMAL(10, 4),
+                close_reason VARCHAR(100),
+                realized_pnl DECIMAL(10, 2),
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+        """)
+
+        # Add ML context columns if they don't exist (migration)
+        columns_to_add = [
+            ("flip_point", "DECIMAL(10, 2)"),
+            ("net_gex", "DECIMAL(15, 2)"),
+            ("ml_model_name", "VARCHAR(100)"),
+            ("ml_win_probability", "DECIMAL(8, 4)"),
+            ("ml_top_features", "TEXT"),
+            ("wall_type", "VARCHAR(20)"),
+            ("wall_distance_pct", "DECIMAL(6, 4)"),
+            ("trade_reasoning", "TEXT"),
+        ]
+
+        for col_name, col_type in columns_to_add:
+            try:
+                c.execute(f"ALTER TABLE icarus_positions ADD COLUMN IF NOT EXISTS {col_name} {col_type}")
+            except Exception:
+                pass  # Column might already exist
+
+        # Create signals table
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS icarus_signals (
+                id SERIAL PRIMARY KEY,
+                signal_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                direction VARCHAR(20) NOT NULL,
+                spread_type VARCHAR(30),
+                confidence DECIMAL(5, 4),
+                spot_price DECIMAL(10, 2),
+                call_wall DECIMAL(10, 2),
+                put_wall DECIMAL(10, 2),
+                gex_regime VARCHAR(30),
+                vix DECIMAL(6, 2),
+                rr_ratio DECIMAL(6, 2),
+                was_executed BOOLEAN DEFAULT FALSE,
+                skip_reason VARCHAR(200),
+                reasoning TEXT
+            )
+        """)
+
+        # Create logs table
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS icarus_logs (
+                id SERIAL PRIMARY KEY,
+                log_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                level VARCHAR(10),
+                message TEXT,
+                details JSONB
+            )
+        """)
+
+        # Create daily performance table
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS icarus_daily_perf (
+                id SERIAL PRIMARY KEY,
+                trade_date DATE UNIQUE NOT NULL,
+                trades_executed INTEGER DEFAULT 0,
+                positions_closed INTEGER DEFAULT 0,
+                realized_pnl DECIMAL(10, 2) DEFAULT 0,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+        """)
+
+        conn.commit()
+        _schema_initialized = True
+        logger.info("ICARUS database schema initialized")
+    except Exception as e:
+        logger.warning(f"Could not initialize ICARUS schema: {e}")
+    finally:
+        if conn:
+            conn.close()
+
 
 def _resolve_query_param(param, default=None):
     """Resolve a FastAPI Query parameter to its actual value."""
@@ -181,6 +300,9 @@ async def get_icarus_status():
 
     Returns mode, capital, P&L, positions, configuration, and heartbeat.
     """
+    # Ensure database schema exists before querying
+    _ensure_icarus_schema()
+
     icarus = get_icarus_instance()
     heartbeat = _get_heartbeat('ICARUS')
 
@@ -315,6 +437,9 @@ async def get_icarus_positions(
     limit: int = Query(500, description="Max positions to return")
 ):
     """Get ICARUS positions from database."""
+    # Ensure database schema exists before querying
+    _ensure_icarus_schema()
+
     status_filter = _resolve_query_param(status_filter, None)
     limit = _resolve_query_param(limit, 500)
 
@@ -434,6 +559,8 @@ async def get_icarus_signals(
     limit: int = Query(50, description="Max signals to return")
 ):
     """Get ICARUS signals from database."""
+    _ensure_icarus_schema()
+
     try:
         conn = get_connection()
         c = conn.cursor()
@@ -488,6 +615,8 @@ async def get_icarus_logs(
     limit: int = Query(100, description="Max logs to return")
 ):
     """Get ICARUS logs."""
+    _ensure_icarus_schema()
+
     level = _resolve_query_param(level, None)
     limit = _resolve_query_param(limit, 100)
 
@@ -538,6 +667,8 @@ async def get_icarus_performance(
     days: int = Query(30, description="Number of days to include")
 ):
     """Get ICARUS performance metrics over time."""
+    _ensure_icarus_schema()
+
     try:
         conn = get_connection()
         c = conn.cursor()
@@ -733,11 +864,13 @@ async def reset_icarus_data(
     auth: AuthInfo = Depends(require_admin) if AUTH_AVAILABLE and require_admin else None
 ):
     """Reset all ICARUS data (positions, signals, logs)."""
+    _ensure_icarus_schema()
+
     try:
         conn = get_connection()
         c = conn.cursor()
 
-        # Delete all ICARUS data
+        # Delete all ICARUS data (tables are ensured to exist by _ensure_icarus_schema)
         c.execute("DELETE FROM icarus_positions")
         c.execute("DELETE FROM icarus_signals")
         c.execute("DELETE FROM icarus_logs")
