@@ -14,7 +14,7 @@ Key concepts:
 import math
 import logging
 from datetime import datetime
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 from zoneinfo import ZoneInfo
 
 from .models import (
