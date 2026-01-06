@@ -798,7 +798,11 @@ async def get_icarus_scan_activity(
 
         return {
             "success": True,
-            "data": scans,
+            "data": {
+                "bot_name": "ICARUS",
+                "scans": scans,
+                "count": len(scans)
+            },
             "count": len(scans)
         }
 
@@ -806,7 +810,11 @@ async def get_icarus_scan_activity(
         logger.debug(f"Scan activity table may not exist: {e}")
         return {
             "success": True,
-            "data": [],
-            "count": 0,
-            "message": "Scan activity not yet available"
+            "data": {
+                "bot_name": "ICARUS",
+                "scans": [],
+                "count": 0,
+                "message": "Scan activity not yet available"
+            },
+            "count": 0
         }
