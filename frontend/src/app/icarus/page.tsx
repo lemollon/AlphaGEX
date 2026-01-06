@@ -279,18 +279,20 @@ export default function IcarusPage() {
 
   // Extract data
   const status: ICARUSStatus | null = statusData?.data || statusData || null
-  // Handle both array (success) and object { open_positions, closed_positions } (error fallback) shapes
+  // Handle positions data - ensure we always have an array
   const rawPositions = positionsData?.data || positionsData
   const allPositions: SpreadPosition[] = Array.isArray(rawPositions)
     ? rawPositions
-    : [...(rawPositions?.open_positions || []), ...(rawPositions?.closed_positions || [])]
+    : (rawPositions?.open_positions || rawPositions?.closed_positions)
+      ? [...(rawPositions?.open_positions || []), ...(rawPositions?.closed_positions || [])]
+      : []
   const scans = scanData?.data?.scans || scanData?.scans || []
   const config = configData?.data || configData || status?.config || null
   const performance = performanceData?.data || performanceData || null
 
-  // Separate open and closed positions
-  const openPositions = allPositions.filter(p => p.status === 'open')
-  const closedPositions = allPositions.filter(p => p.status === 'closed' || p.status === 'expired')
+  // Separate open and closed positions (with defensive null checks)
+  const openPositions = allPositions.filter(p => p && p.status === 'open')
+  const closedPositions = allPositions.filter(p => p && (p.status === 'closed' || p.status === 'expired'))
 
   // Calculate stats
   const totalPnL = closedPositions.reduce((sum, p) => sum + (p.realized_pnl || 0), 0)
