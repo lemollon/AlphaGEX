@@ -904,6 +904,14 @@ class SignalGenerator:
         # Iron Condors work best in rangebound markets (FLAT prediction)
         # Strong directional signal = reduce confidence or skip
         # ============================================================
+        # Build GEX data dict from market_data for ML predictions
+        gex_data = {
+            'net_gex': market_data.get('net_gex', 0),
+            'major_pos_vol_level': market_data.get('call_wall', 0),
+            'major_neg_vol_level': market_data.get('put_wall', 0),
+            'flip_point': market_data.get('flip_point', 0),
+            'spot_price': market_data.get('spot_price', 0),
+        }
         gex_dir_prediction = self.get_gex_directional_prediction(gex_data, vix)
         if gex_dir_prediction:
             gex_dir = gex_dir_prediction.get('direction', 'FLAT')

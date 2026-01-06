@@ -843,6 +843,14 @@ class SignalGenerator:
                 confidence -= 0.2
 
         # GEX Directional ML - Check if market is too directional for IC
+        # Build GEX data dict from market for ML predictions
+        gex_data = {
+            'net_gex': market.get('net_gex', 0),
+            'major_pos_vol_level': market.get('call_wall', 0),
+            'major_neg_vol_level': market.get('put_wall', 0),
+            'flip_point': market.get('flip_point', 0),
+            'spot_price': market.get('spot_price', 0),
+        }
         gex_dir_prediction = self.get_gex_directional_prediction(gex_data, market['vix'])
         if gex_dir_prediction:
             gex_dir = gex_dir_prediction.get('direction', 'FLAT')
