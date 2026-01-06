@@ -893,7 +893,7 @@ async def get_live_dashboard():
             },
             "thompson": {
                 "bot_stats": {bot: {"expected_win_rate": 0.5, "uncertainty": 0.5, "allocation_pct": 0.2, "integrated": False}
-                             for bot in ['ARES', 'ATHENA', 'ATLAS', 'PHOENIX', 'PEGASUS']},
+                             for bot in ['ARES', 'ATHENA', 'ICARUS', 'ATLAS', 'PHOENIX', 'PEGASUS', 'TITAN']},
                 "allocation": None,
                 "total_outcomes_recorded": 0
             },
@@ -924,7 +924,7 @@ async def get_live_dashboard():
 
         # Build bot-specific stats
         bot_stats = {}
-        bots = ['ARES', 'ATHENA', 'ATLAS', 'PHOENIX', 'PEGASUS']
+        bots = ['ARES', 'ATHENA', 'ICARUS', 'ATLAS', 'PHOENIX', 'PEGASUS', 'TITAN']
         win_rates = optimizer.thompson.get_expected_win_rates()
         uncertainties = optimizer.thompson.get_uncertainty()
 

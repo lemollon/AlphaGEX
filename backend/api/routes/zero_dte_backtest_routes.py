@@ -2549,7 +2549,7 @@ async def get_oracle_full_transparency(bot_name: str = None):
 
         # Get latest flow per bot
         latest_by_bot = {}
-        for bot in ['ARES', 'ATHENA', 'PEGASUS', 'PHOENIX']:
+        for bot in ['ARES', 'ATHENA', 'ICARUS', 'PEGASUS', 'TITAN', 'PHOENIX']:
             latest = oracle_live_log.get_latest_flow_for_bot(bot)
             if latest:
                 latest_by_bot[bot] = latest

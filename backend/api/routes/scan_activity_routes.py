@@ -2,7 +2,7 @@
 Scan Activity API Routes
 
 Provides endpoints for accessing comprehensive scan activity logs
-for ARES, ATHENA, and PEGASUS trading bots.
+for ARES, ATHENA, ICARUS, PEGASUS, and TITAN trading bots.
 
 This is the key endpoint for understanding what each bot is doing
 on every single scan - whether it trades or not.
@@ -20,7 +20,7 @@ CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 @router.get("/activity")
 async def get_scan_activity(
-    bot: Optional[str] = Query(None, description="Filter by bot name (ARES, ATHENA, PEGASUS)"),
+    bot: Optional[str] = Query(None, description="Filter by bot name (ARES, ATHENA, ICARUS, PEGASUS, TITAN)"),
     date: Optional[str] = Query(None, description="Filter by date (YYYY-MM-DD)"),
     outcome: Optional[str] = Query(None, description="Filter by outcome (TRADED, NO_TRADE, ERROR, etc.)"),
     limit: int = Query(50, description="Maximum number of records to return", le=200)
@@ -125,7 +125,7 @@ async def get_bot_scan_activity(
 
 @router.get("/summary")
 async def get_scan_summary(
-    bot: Optional[str] = Query(None, description="Filter by bot name (ARES, ATHENA, PEGASUS)"),
+    bot: Optional[str] = Query(None, description="Filter by bot name (ARES, ATHENA, ICARUS, PEGASUS, TITAN)"),
     days: int = Query(7, description="Number of days to include in summary", le=30)
 ):
     """
