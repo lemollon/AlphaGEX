@@ -338,6 +338,8 @@ async def get_titan_status():
                 "heartbeat": heartbeat,
                 "tradier_connected": tradier_connected,
                 "tradier_for_prices": tradier_connected,
+                "oracle_available": False,
+                "gex_ml_available": False,
                 "config": {
                     "risk_per_trade": 15.0,  # TITAN: higher risk
                     "spread_width": 12.0,     # TITAN: wider spreads
