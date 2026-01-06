@@ -438,11 +438,13 @@ class SignalGenerator:
                     oracle_confidence, oracle['top_factors'], market
                 )
 
-            # TITAN: Only skip on explicit SKIP_TODAY advice
+            # NOTE: Oracle SKIP_TODAY is NOT a hard block - bot uses its own min_win_probability
+            # Oracle's 55% threshold is informational only; TITAN (aggressive) uses 40% threshold
             if oracle.get('advice') == 'SKIP_TODAY':
-                logger.info(f"[TITAN TRADE BLOCKED] Oracle advises SKIP_TODAY")
+                logger.info(f"[TITAN ORACLE INFO] Oracle advises SKIP_TODAY (informational only)")
                 logger.info(f"  Reason: {oracle.get('reasoning', 'No reason provided')}")
-                return None
+                logger.info(f"  Bot will use its own aggressive threshold: {self.config.min_win_probability:.1%}")
+                # Do NOT return None - let the bot's min_win_probability decide
 
             # TITAN: Lower win probability threshold (40% vs PEGASUS 50%)
             min_win_prob = self.config.min_win_probability

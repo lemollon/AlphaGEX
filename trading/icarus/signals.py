@@ -458,10 +458,12 @@ class SignalGenerator:
                     direction_sign = "+" if impact > 0 else ""
                     logger.info(f"    {i}. {factor_name}: {direction_sign}{impact:.3f}")
 
-            # SKIP_TODAY from Oracle overrides everything
+            # NOTE: Oracle SKIP_TODAY is NOT a hard block - bot uses its own min_win_probability
+            # Oracle's 55% threshold is informational only; ICARUS (aggressive) uses 40% threshold
             if oracle.get('advice') == 'SKIP_TODAY':
-                logger.info(f"[ICARUS TRADE BLOCKED] Oracle advises SKIP_TODAY")
-                return None
+                logger.info(f"[ICARUS ORACLE INFO] Oracle advises SKIP_TODAY (informational only)")
+                logger.info(f"  Bot will use its own aggressive threshold: {self.config.min_win_probability:.1%}")
+                # Do NOT return None - let the bot's min_win_probability decide
 
             # Validate win probability meets minimum threshold (40% for ICARUS)
             min_win_prob = self.config.min_win_probability
@@ -521,8 +523,7 @@ class SignalGenerator:
             elif oracle_direction != direction and oracle_direction != 'FLAT' and oracle_confidence > 0.6:
                 penalty = (oracle_confidence - 0.6) * 0.20  # Smaller penalty
                 confidence -= penalty
-            if oracle.get('advice') == 'SKIP_TODAY':
-                return None
+            # NOTE: SKIP_TODAY does NOT block here - bot uses its own min_win_probability threshold
 
             if oracle.get('top_factors'):
                 confidence, factor_adjustments = self.adjust_confidence_from_top_factors(

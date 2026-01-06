@@ -468,11 +468,13 @@ class SignalGenerator:
             if oracle.get('reasoning'):
                 logger.info(f"  Oracle Reasoning: {oracle.get('reasoning')[:200]}...")
 
-            # SKIP_TODAY from Oracle overrides everything
+            # NOTE: Oracle SKIP_TODAY is NOT a hard block - bot uses its own min_win_probability
+            # Oracle's 55% threshold is informational only; ATHENA config determines trade decisions
             if oracle.get('advice') == 'SKIP_TODAY':
-                logger.info(f"[ATHENA TRADE BLOCKED] Oracle advises SKIP_TODAY")
+                logger.info(f"[ATHENA ORACLE INFO] Oracle advises SKIP_TODAY (informational only)")
                 logger.info(f"  Reason: {oracle.get('reasoning', 'No reason provided')}")
-                return None
+                logger.info(f"  Bot will use its own threshold: {self.config.min_win_probability:.1%}")
+                # Do NOT return None - let the bot's min_win_probability decide
 
             # Validate win probability meets minimum threshold
             min_win_prob = self.config.min_win_probability
