@@ -56,6 +56,7 @@ from backend.api.routes import (
     zero_dte_backtest_routes,  # 0DTE Iron Condor hybrid scaling backtest
     ares_routes,  # ARES Aggressive Iron Condor bot endpoints
     athena_routes,  # ATHENA Directional Spread bot endpoints
+    icarus_routes,  # ICARUS Aggressive Directional Spread bot endpoints
     pegasus_routes,  # PEGASUS SPX Iron Condor bot endpoints
     logs_routes,  # Comprehensive logs API for ALL 22 logging tables
     scan_activity_routes,  # Scan Activity - EVERY scan with full reasoning for ARES/ATHENA
@@ -292,6 +293,7 @@ app.include_router(volatility_surface_routes.router)
 app.include_router(zero_dte_backtest_routes.router)
 app.include_router(ares_routes.router)
 app.include_router(athena_routes.router)
+app.include_router(icarus_routes.router)
 app.include_router(pegasus_routes.router)
 app.include_router(logs_routes.router)
 app.include_router(scan_activity_routes.router)

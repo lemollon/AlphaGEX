@@ -205,6 +205,87 @@ const fetchers = {
       return { success: false, data: null }
     }
   },
+
+  // ICARUS Bot - Aggressive Directional Spreads
+  icarusStatus: async () => {
+    try {
+      const response = await api.get('/api/icarus/status')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  icarusPositions: async () => {
+    try {
+      const response = await api.get('/api/icarus/positions')
+      return response.data
+    } catch {
+      return { success: false, data: { open_positions: [], closed_positions: [] } }
+    }
+  },
+  icarusSignals: async (limit: number) => {
+    try {
+      const response = await api.get(`/api/icarus/signals?limit=${limit}`)
+      return response.data
+    } catch {
+      return { success: false, data: [] }
+    }
+  },
+  icarusPerformance: async (days: number) => {
+    try {
+      const response = await api.get(`/api/icarus/performance?days=${days}`)
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  icarusOracleAdvice: async () => {
+    try {
+      const response = await api.get('/api/icarus/oracle-advice')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  icarusLogs: async (level?: string, limit?: number) => {
+    try {
+      const params = new URLSearchParams()
+      if (level) params.append('level', level)
+      params.append('limit', String(limit || 50))
+      const response = await api.get(`/api/icarus/logs?${params}`)
+      return response.data
+    } catch {
+      return { success: false, data: [] }
+    }
+  },
+  icarusLivePnL: async () => {
+    try {
+      const response = await api.get('/api/icarus/live-pnl')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  icarusConfig: async () => {
+    try {
+      const response = await api.get('/api/icarus/config')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  icarusScanActivity: async (limit?: number, date?: string) => {
+    try {
+      const params = new URLSearchParams()
+      params.append('limit', String(limit || 50))
+      if (date) params.append('date', date)
+      const response = await api.get(`/api/icarus/scan-activity?${params}`)
+      return response.data
+    } catch {
+      return { success: false, data: { scans: [] } }
+    }
+  },
+
   aresLivePnL: async () => {
     try {
       const response = await api.get('/api/ares/live-pnl')
@@ -922,6 +1003,82 @@ export function useARESLogs(level?: string, limit: number = 100, options?: SWRCo
   return useSWR(
     `ares-logs-${level || 'all'}-${limit}`,
     () => fetchers.aresLogs(level, limit),
+    { ...swrConfig, refreshInterval: 30 * 1000, ...options }
+  )
+}
+
+// =============================================================================
+// ICARUS BOT HOOKS - Aggressive Directional Spreads
+// =============================================================================
+
+export function useICARUSStatus(options?: SWRConfiguration) {
+  return useSWR('icarus-status', fetchers.icarusStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useICARUSPositions(options?: SWRConfiguration) {
+  return useSWR('icarus-positions', fetchers.icarusPositions, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useICARUSSignals(limit: number = 50, options?: SWRConfiguration) {
+  return useSWR(
+    `icarus-signals-${limit}`,
+    () => fetchers.icarusSignals(limit),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useICARUSPerformance(days: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `icarus-performance-${days}`,
+    () => fetchers.icarusPerformance(days),
+    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...options }
+  )
+}
+
+export function useICARUSOracleAdvice(options?: SWRConfiguration) {
+  return useSWR('icarus-oracle-advice', fetchers.icarusOracleAdvice, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useICARUSLogs(level?: string, limit: number = 50, options?: SWRConfiguration) {
+  return useSWR(
+    `icarus-logs-${level || 'all'}-${limit}`,
+    () => fetchers.icarusLogs(level, limit),
+    { ...swrConfig, refreshInterval: 30 * 1000, ...options }
+  )
+}
+
+export function useICARUSLivePnL(options?: SWRConfiguration) {
+  return useSWR(
+    'icarus-live-pnl',
+    fetchers.icarusLivePnL,
+    { ...swrConfig, refreshInterval: 10 * 1000, ...options }  // 10 second refresh for live data
+  )
+}
+
+export function useICARUSConfig(options?: SWRConfiguration) {
+  return useSWR('icarus-config', fetchers.icarusConfig, {
+    ...swrConfig,
+    refreshInterval: 5 * 60 * 1000,  // 5 minute refresh for config
+    ...options,
+  })
+}
+
+export function useICARUSScanActivity(limit: number = 50, date?: string, options?: SWRConfiguration) {
+  return useSWR(
+    `icarus-scan-activity-${limit}-${date || 'all'}`,
+    () => fetchers.icarusScanActivity(limit, date),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
 }

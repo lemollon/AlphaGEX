@@ -367,6 +367,20 @@ export const apiClient = {
   skipATHENAToday: () => api.post('/api/athena/skip-today'),
   resetATHENAData: (confirm: boolean = false) => api.post('/api/athena/reset', null, { params: { confirm } }),
 
+  // ICARUS - Aggressive Directional Spread Bot
+  getICARUSStatus: () => api.get('/api/icarus/status'),
+  getICARUSPositions: (status?: string) => api.get('/api/icarus/positions', { params: status ? { status_filter: status } : {} }),
+  getICARUSSignals: (limit: number = 50) => api.get('/api/icarus/signals', { params: { limit } }),
+  getICARUSLogs: (level?: string, limit: number = 100) => api.get('/api/icarus/logs', { params: { level, limit } }),
+  getICARUSPerformance: (days: number = 30) => api.get('/api/icarus/performance', { params: { days } }),
+  getICARUSConfig: () => api.get('/api/icarus/config'),
+  runICARUSCycle: () => api.post('/api/icarus/run'),
+  getICARUSOracleAdvice: () => api.get('/api/icarus/oracle-advice'),
+  getICARUSLivePnL: () => api.get('/api/icarus/live-pnl'),
+  getICARUSScanActivity: (limit: number = 50) => api.get('/api/icarus/scan-activity', { params: { limit } }),
+  skipICARUSToday: () => api.post('/api/icarus/skip-today'),
+  resetICARUSData: (confirm: boolean = false) => api.post('/api/icarus/reset', null, { params: { confirm } }),
+
   // PEGASUS - SPX Iron Condor Bot
   getPEGASUSStatus: () => api.get('/api/pegasus/status'),
   getPEGASUSPositions: (status?: string) => api.get('/api/pegasus/positions', { params: status ? { status_filter: status } : {} }),
