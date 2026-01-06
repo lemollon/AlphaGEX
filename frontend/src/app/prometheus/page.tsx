@@ -158,34 +158,37 @@ export default function PrometheusPage() {
     { refreshInterval: 30000 }
   )
 
-  const { data: featuresData, mutate: mutateFeatures } = useSWR<{ features: Feature[] }>(
+  // API response wrapper type
+  type ApiResponse<T> = { success: boolean; data: T }
+
+  const { data: featuresData, mutate: mutateFeatures } = useSWR<ApiResponse<{ features: Feature[] }>>(
     activeTab === 'features' ? '/api/prometheus/feature-importance' : null,
     fetcher
   )
 
-  const { data: logsData, mutate: mutateLogs } = useSWR<{ logs: Log[] }>(
+  const { data: logsData, mutate: mutateLogs } = useSWR<ApiResponse<{ logs: Log[] }>>(
     activeTab === 'logs' ? '/api/prometheus/logs?limit=100' : null,
     fetcher,
     { refreshInterval: 10000 }
   )
 
-  const { data: trainingHistoryData } = useSWR<{ history: TrainingHistory[] }>(
+  const { data: trainingHistoryData } = useSWR<ApiResponse<{ history: TrainingHistory[] }>>(
     activeTab === 'training' ? '/api/prometheus/training-history' : null,
     fetcher
   )
 
-  const { data: performanceData } = useSWR(
+  const { data: performanceData } = useSWR<ApiResponse<any>>(
     activeTab === 'performance' ? '/api/prometheus/performance' : null,
     fetcher
   )
 
-  const { data: pendingTradesData, mutate: mutatePendingTrades } = useSWR(
+  const { data: pendingTradesData, mutate: mutatePendingTrades } = useSWR<ApiResponse<{ trades: PendingTrade[] }>>(
     activeTab === 'overview' ? '/api/prometheus/pending-trades' : null,
     fetcher,
     { refreshInterval: 60000 }
   )
 
-  const { data: marketDataRes } = useSWR(
+  const { data: marketDataRes } = useSWR<ApiResponse<MarketData>>(
     activeTab === 'overview' ? '/api/prometheus/market-data' : null,
     fetcher,
     { refreshInterval: 60000 }
