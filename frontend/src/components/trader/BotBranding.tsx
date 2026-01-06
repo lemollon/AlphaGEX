@@ -419,7 +419,7 @@ interface StatCardProps {
   change?: number
   changeLabel?: string
   icon?: React.ReactNode
-  color?: 'green' | 'red' | 'yellow' | 'blue' | 'gray'
+  color?: 'green' | 'red' | 'yellow' | 'blue' | 'gray' | 'orange'
   className?: string
 }
 
@@ -438,6 +438,7 @@ export function StatCard({
     yellow: 'text-yellow-400',
     blue: 'text-blue-400',
     gray: 'text-gray-400',
+    orange: 'text-orange-400',
   }
 
   return (
