@@ -98,6 +98,17 @@ except ImportError:
     WalkForwardOptimizer = None
     WalkForwardResult = None
 
+# GEX Directional ML - predicts BULLISH/BEARISH/FLAT from GEX structure
+# Can confirm or contradict IC positioning
+GEX_DIRECTIONAL_ML_AVAILABLE = False
+try:
+    from quant.gex_directional_ml import GEXDirectionalPredictor, Direction, DirectionalPrediction
+    GEX_DIRECTIONAL_ML_AVAILABLE = True
+except ImportError:
+    GEXDirectionalPredictor = None
+    Direction = None
+    DirectionalPrediction = None
+
 
 class SignalGenerator:
     """
@@ -151,6 +162,117 @@ class SignalGenerator:
         self.ensemble_available = ENSEMBLE_AVAILABLE
         if ENSEMBLE_AVAILABLE:
             logger.info("ARES SignalGenerator: Ensemble Strategy available")
+
+        # GEX Directional ML - predicts market direction from GEX structure
+        # For Iron Condors: if strongly directional, may want to skip or adjust strikes
+        self.gex_directional_ml = None
+        if GEX_DIRECTIONAL_ML_AVAILABLE:
+            try:
+                self.gex_directional_ml = GEXDirectionalPredictor()
+                logger.info("ARES SignalGenerator: GEX Directional ML initialized")
+            except Exception as e:
+                logger.debug(f"GEX Directional ML init failed: {e}")
+
+        # ML Regime Classifier - replaces hard-coded GEX thresholds
+        # For Iron Condors: SELL_PREMIUM = good, directional = reduce confidence
+        self.ml_regime_classifier = None
+        if ML_REGIME_AVAILABLE and MLRegimeClassifier:
+            try:
+                self.ml_regime_classifier = MLRegimeClassifier(symbol=self.config.ticker)
+                logger.info("ARES SignalGenerator: ML Regime Classifier initialized")
+            except Exception as e:
+                logger.debug(f"ML Regime Classifier init failed: {e}")
+
+    def get_gex_directional_prediction(self, gex_data: Dict, vix: float = None) -> Optional[Dict]:
+        """
+        Get GEX Directional ML prediction for market direction.
+
+        For Iron Condors: Strong directional signal suggests caution.
+        - FLAT/NEUTRAL = good for IC (rangebound)
+        - BULLISH with high confidence = may want to widen call side
+        - BEARISH with high confidence = may want to widen put side
+        """
+        if not self.gex_directional_ml:
+            return None
+
+        try:
+            # Build features from GEX data
+            prediction = self.gex_directional_ml.predict(
+                net_gex=gex_data.get('net_gex', 0),
+                call_wall=gex_data.get('major_pos_vol_level', 0),
+                put_wall=gex_data.get('major_neg_vol_level', 0),
+                flip_point=gex_data.get('flip_point', 0),
+                spot_price=gex_data.get('spot_price', 0),
+                vix=vix or 20.0
+            )
+
+            if prediction:
+                return {
+                    'direction': prediction.direction.value if hasattr(prediction.direction, 'value') else str(prediction.direction),
+                    'confidence': prediction.confidence,
+                    'probabilities': prediction.probabilities if hasattr(prediction, 'probabilities') else {}
+                }
+        except Exception as e:
+            logger.debug(f"GEX Directional ML prediction failed: {e}")
+
+        return None
+
+    def get_ml_regime_prediction(self, gex_data: Dict, market_data: Dict) -> Optional[Dict]:
+        """
+        Get ML Regime Classifier prediction for market action.
+
+        For Iron Condors:
+        - SELL_PREMIUM = ideal, boost confidence
+        - BUY_CALLS/BUY_PUTS = directional, reduce IC confidence
+        - STAY_FLAT = neutral, slight boost
+        """
+        if not self.ml_regime_classifier:
+            return None
+
+        try:
+            from datetime import datetime
+            now = datetime.now()
+
+            # Extract features from market data
+            gex_normalized = gex_data.get('net_gex', 0) / 1e9 if gex_data.get('net_gex', 0) != 0 else 1.0
+            vix = market_data.get('vix', 20.0)
+            spot = market_data.get('spot_price', 0)
+            flip_point = gex_data.get('flip_point', spot)
+
+            # Calculate distance to flip as percentage
+            distance_to_flip = ((spot - flip_point) / spot * 100) if spot > 0 else 0
+
+            prediction = self.ml_regime_classifier.predict(
+                gex_normalized=gex_normalized,
+                gex_percentile=50.0,  # Use neutral if not available
+                gex_change_1d=0.0,
+                gex_change_5d=0.0,
+                vix=vix,
+                vix_percentile=50.0,
+                vix_change_1d=0.0,
+                iv_rank=market_data.get('iv_rank', 50.0),
+                iv_hv_ratio=1.1,
+                distance_to_flip=distance_to_flip,
+                momentum_1h=0.0,
+                momentum_4h=0.0,
+                above_20ma=True,
+                above_50ma=True,
+                regime_duration=1,
+                day_of_week=now.weekday(),
+                days_to_opex=market_data.get('days_to_expiry', 0)
+            )
+
+            if prediction:
+                return {
+                    'action': prediction.predicted_action.value if hasattr(prediction.predicted_action, 'value') else str(prediction.predicted_action),
+                    'confidence': prediction.confidence,
+                    'probabilities': prediction.probabilities,
+                    'is_trained': prediction.is_trained
+                }
+        except Exception as e:
+            logger.debug(f"ML Regime Classifier prediction failed: {e}")
+
+        return None
 
     def get_ensemble_boost(self, market_data: Dict, ml_prediction: Dict = None, oracle: Dict = None) -> Dict:
         """
@@ -776,6 +898,68 @@ class SignalGenerator:
             self._ml_suggested_sd = ml_prediction.get('suggested_sd_multiplier', 1.0)
 
         logger.info(f"[ARES PASSED] {prediction_source} Win Prob {win_probability:.1%} >= {min_win_prob:.1%} minimum")
+
+        # ============================================================
+        # GEX DIRECTIONAL ML - Check if market is too directional for IC
+        # Iron Condors work best in rangebound markets (FLAT prediction)
+        # Strong directional signal = reduce confidence or skip
+        # ============================================================
+        # Build GEX data dict from market_data for ML predictions
+        gex_data = {
+            'net_gex': market_data.get('net_gex', 0),
+            'major_pos_vol_level': market_data.get('call_wall', 0),
+            'major_neg_vol_level': market_data.get('put_wall', 0),
+            'flip_point': market_data.get('flip_point', 0),
+            'spot_price': market_data.get('spot_price', 0),
+        }
+        gex_dir_prediction = self.get_gex_directional_prediction(gex_data, vix)
+        if gex_dir_prediction:
+            gex_dir = gex_dir_prediction.get('direction', 'FLAT')
+            gex_dir_conf = gex_dir_prediction.get('confidence', 0)
+
+            logger.info(f"[ARES GEX DIRECTIONAL ML] Direction: {gex_dir}, Confidence: {gex_dir_conf:.1%}")
+
+            if gex_dir == 'FLAT':
+                # FLAT is ideal for Iron Condors - boost confidence
+                confidence = min(0.95, confidence + 0.05)
+                logger.info(f"  FLAT prediction = ideal for IC, confidence boosted to {confidence:.1%}")
+            elif gex_dir_conf > 0.80:
+                # Strong directional signal - reduce confidence for IC
+                penalty = (gex_dir_conf - 0.80) * 0.30  # Max 6% penalty at 100% confidence
+                confidence = max(0.40, confidence - penalty)
+                logger.info(f"  Strong {gex_dir} signal ({gex_dir_conf:.0%}) - IC confidence reduced to {confidence:.1%}")
+            elif gex_dir_conf > 0.65:
+                # Moderate directional signal - small penalty
+                penalty = (gex_dir_conf - 0.65) * 0.15  # Max 2.25% penalty
+                confidence = max(0.45, confidence - penalty)
+                logger.info(f"  Moderate {gex_dir} signal - IC confidence adjusted to {confidence:.1%}")
+
+        # ============================================================
+        # ML REGIME CLASSIFIER - Learned market regime detection
+        # For Iron Condors: SELL_PREMIUM = ideal, directional = reduce confidence
+        # ============================================================
+        regime_prediction = self.get_ml_regime_prediction(gex_data, market_data)
+        if regime_prediction:
+            regime_action = regime_prediction.get('action', 'STAY_FLAT')
+            regime_conf = regime_prediction.get('confidence', 50) / 100.0
+
+            logger.info(f"[ARES ML REGIME] Action: {regime_action}, Confidence: {regime_conf:.1%}")
+
+            if regime_action == 'SELL_PREMIUM':
+                # Perfect for Iron Condors - boost confidence
+                boost = min(0.08, regime_conf * 0.10)
+                confidence = min(0.95, confidence + boost)
+                logger.info(f"  SELL_PREMIUM regime = ideal for IC, confidence boosted to {confidence:.1%}")
+            elif regime_action in ('BUY_CALLS', 'BUY_PUTS'):
+                # Directional regime - reduce IC confidence
+                if regime_conf > 0.70:
+                    penalty = (regime_conf - 0.70) * 0.25
+                    confidence = max(0.40, confidence - penalty)
+                    logger.info(f"  {regime_action} regime ({regime_conf:.0%}) - IC confidence reduced to {confidence:.1%}")
+            elif regime_action == 'STAY_FLAT':
+                # Neutral - slight boost for IC
+                confidence = min(0.90, confidence + 0.02)
+                logger.info(f"  STAY_FLAT regime = neutral for IC, confidence: {confidence:.1%}")
 
         # ============================================================
         # Step 3.5: ENSEMBLE STRATEGY - Multi-signal confirmation

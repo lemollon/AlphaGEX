@@ -168,6 +168,15 @@ class SignalGenerator:
             except Exception as e:
                 logger.warning(f"GEX Directional ML init failed: {e}")
 
+        # ML Regime Classifier - replaces hard-coded GEX thresholds
+        self.ml_regime_classifier = None
+        if ML_REGIME_AVAILABLE and MLRegimeClassifier:
+            try:
+                self.ml_regime_classifier = MLRegimeClassifier(symbol=self.config.ticker)
+                logger.info("ICARUS SignalGenerator: ML Regime Classifier initialized")
+            except Exception as e:
+                logger.debug(f"ML Regime Classifier init failed: {e}")
+
     def get_gex_directional_prediction(self, gex_data: Dict, vix: float = 20.0) -> Optional[Dict]:
         """
         Get GEX Directional ML prediction (BULLISH/BEARISH/FLAT).
@@ -197,6 +206,107 @@ class SignalGenerator:
             logger.debug(f"GEX Directional ML prediction error: {e}")
 
         return None
+
+    def get_ml_regime_prediction(self, gex_data: Dict, direction: str = None) -> Optional[Dict]:
+        """
+        Get ML Regime Classifier prediction for market action.
+
+        For Directional Bots (ICARUS):
+        - BUY_CALLS aligns with BULLISH direction = boost confidence
+        - BUY_PUTS aligns with BEARISH direction = boost confidence
+        - SELL_PREMIUM/STAY_FLAT suggests rangebound = reduce directional confidence
+        """
+        if not self.ml_regime_classifier:
+            return None
+
+        try:
+            from datetime import datetime
+            now = datetime.now()
+
+            gex_normalized = gex_data.get('net_gex', 0) / 1e9 if gex_data.get('net_gex', 0) != 0 else 1.0
+            vix = gex_data.get('vix', 20.0)
+            spot = gex_data.get('spot_price', 0)
+            flip_point = gex_data.get('flip_point', spot)
+            distance_to_flip = ((spot - flip_point) / spot * 100) if spot > 0 else 0
+
+            prediction = self.ml_regime_classifier.predict(
+                gex_normalized=gex_normalized,
+                gex_percentile=50.0,
+                gex_change_1d=0.0,
+                gex_change_5d=0.0,
+                vix=vix,
+                vix_percentile=50.0,
+                vix_change_1d=0.0,
+                iv_rank=50.0,
+                iv_hv_ratio=1.1,
+                distance_to_flip=distance_to_flip,
+                momentum_1h=0.0,
+                momentum_4h=0.0,
+                above_20ma=True,
+                above_50ma=True,
+                regime_duration=1,
+                day_of_week=now.weekday(),
+                days_to_opex=0
+            )
+
+            if prediction:
+                return {
+                    'action': prediction.predicted_action.value if hasattr(prediction.predicted_action, 'value') else str(prediction.predicted_action),
+                    'confidence': prediction.confidence,
+                    'probabilities': prediction.probabilities,
+                    'is_trained': prediction.is_trained,
+                    'aligns_with_direction': direction and (
+                        (direction == 'BULLISH' and str(prediction.predicted_action.value) == 'BUY_CALLS') or
+                        (direction == 'BEARISH' and str(prediction.predicted_action.value) == 'BUY_PUTS')
+                    )
+                }
+        except Exception as e:
+            logger.debug(f"ML Regime Classifier prediction failed: {e}")
+
+        return None
+
+    def get_ensemble_boost(self, gex_data: Dict, direction: str, oracle: Dict = None) -> Dict:
+        """
+        Get ensemble signal boost/confirmation for directional spreads.
+        """
+        if not ENSEMBLE_AVAILABLE:
+            return {'boost': 1.0, 'should_trade': True, 'confidence': 0.7, 'reasoning': 'Ensemble not available'}
+
+        try:
+            action = 'BUY_CALLS' if direction == 'BULLISH' else 'BUY_PUTS'
+
+            gex_signal = {
+                'recommended_action': action,
+                'confidence': 70,
+                'reasoning': f"Wall direction: {direction}"
+            }
+
+            current_regime = gex_data.get('gex_regime', 'UNKNOWN')
+            if current_regime == 'POSITIVE':
+                current_regime = 'POSITIVE_GAMMA'
+            elif current_regime == 'NEGATIVE':
+                current_regime = 'NEGATIVE_GAMMA'
+
+            ensemble = get_ensemble_signal(
+                symbol=self.config.ticker,
+                gex_data=gex_signal,
+                ml_prediction=None,
+                current_regime=current_regime
+            )
+
+            if ensemble:
+                logger.info(f"[ICARUS ENSEMBLE] Confidence: {ensemble.confidence:.0f}%, Size: {ensemble.position_size_multiplier:.0%}")
+                return {
+                    'boost': ensemble.position_size_multiplier,
+                    'should_trade': ensemble.should_trade,
+                    'confidence': ensemble.confidence / 100,
+                    'reasoning': ensemble.reasoning
+                }
+
+        except Exception as e:
+            logger.debug(f"Ensemble signal error: {e}")
+
+        return {'boost': 1.0, 'should_trade': True, 'confidence': 0.7, 'reasoning': 'Ensemble fallback'}
 
     def get_gex_data(self) -> Optional[Dict[str, Any]]:
         """
@@ -513,6 +623,12 @@ class SignalGenerator:
         spot_price = gex_data['spot_price']
         vix = gex_data['vix']
 
+        # VIX filter - skip in extreme volatility (spreads too expensive, execution risk)
+        # ICARUS is aggressive so tolerates higher VIX (45 vs ATHENA's 40)
+        if vix > 45:
+            logger.info(f"[ICARUS VIX SKIP] VIX {vix:.1f} > 45 - extreme volatility, skipping")
+            return None
+
         # Step 2: Check wall proximity (10% filter for ICARUS!)
         near_wall, wall_direction, wall_reason = self.check_wall_proximity(gex_data)
         if not near_wall:
@@ -599,8 +715,9 @@ class SignalGenerator:
         direction_source = "WALL"
 
         # Check if Oracle should override wall direction
-        oracle_override_threshold = 0.85
-        oracle_win_prob_threshold = 0.60
+        # RAISED from 85%/60% to 90%/70% - GEX walls are PRIMARY, Oracle override should be rare
+        oracle_override_threshold = 0.90
+        oracle_win_prob_threshold = 0.70
 
         if oracle and oracle_direction != 'FLAT':
             if oracle_confidence >= oracle_override_threshold and oracle_win_prob >= oracle_win_prob_threshold:
@@ -608,6 +725,8 @@ class SignalGenerator:
                     logger.info(f"[ICARUS ORACLE OVERRIDE] Oracle overriding wall direction!")
                     logger.info(f"  Wall Direction: {wall_direction}")
                     logger.info(f"  Oracle Direction: {oracle_direction}")
+                    logger.info(f"  Oracle Confidence: {oracle_confidence:.0%} (threshold: {oracle_override_threshold:.0%})")
+                    logger.info(f"  Oracle Win Prob: {oracle_win_prob:.0%} (threshold: {oracle_win_prob_threshold:.0%})")
                     direction = oracle_direction
                     direction_source = "ORACLE_OVERRIDE"
 
@@ -650,6 +769,33 @@ class SignalGenerator:
                 penalty = (gex_dir_conf - 0.7) * 0.15
                 confidence -= penalty
                 logger.info(f"[GEX DIR ML DISAGREES] {gex_dir} vs {direction} (-{penalty:.1%} confidence)")
+
+        # ML Regime Classifier - Learned market regime detection
+        regime_prediction = self.get_ml_regime_prediction(gex_data, direction)
+        if regime_prediction:
+            regime_action = regime_prediction.get('action', 'STAY_FLAT')
+            regime_conf = regime_prediction.get('confidence', 50) / 100.0
+            aligns = regime_prediction.get('aligns_with_direction', False)
+
+            logger.info(f"[ICARUS ML REGIME] Action: {regime_action}, Confidence: {regime_conf:.1%}, Aligns: {aligns}")
+
+            if aligns and regime_conf > 0.60:
+                # ML Regime aligns with directional signal - boost confidence
+                boost = min(0.10, (regime_conf - 0.60) * 0.25)
+                confidence = min(0.95, confidence + boost)
+                logger.info(f"  Regime aligns with {direction} (+{boost:.1%} confidence)")
+            elif regime_action in ('SELL_PREMIUM', 'STAY_FLAT') and regime_conf > 0.70:
+                # ML thinks market is rangebound - reduce directional confidence (smaller for aggressive ICARUS)
+                penalty = (regime_conf - 0.70) * 0.10
+                confidence = max(0.40, confidence - penalty)
+                logger.info(f"  Regime suggests rangebound (-{penalty:.1%} confidence)")
+
+        # Ensemble Strategy - Multi-signal confirmation
+        ensemble_result = self.get_ensemble_boost(gex_data, direction, oracle)
+        if ensemble_result:
+            if not ensemble_result.get('should_trade', True):
+                logger.info(f"[ICARUS ENSEMBLE BLOCKED] {ensemble_result.get('reasoning', 'No reason')}")
+                return None
 
         # Oracle adjustments (when not overriding)
         if oracle and direction_source != "ORACLE_OVERRIDE":

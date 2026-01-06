@@ -87,6 +87,16 @@ except ImportError:
     WalkForwardOptimizer = None
     WalkForwardResult = None
 
+# GEX Directional ML - predicts BULLISH/BEARISH/FLAT from GEX structure
+GEX_DIRECTIONAL_ML_AVAILABLE = False
+try:
+    from quant.gex_directional_ml import GEXDirectionalPredictor, Direction, DirectionalPrediction
+    GEX_DIRECTIONAL_ML_AVAILABLE = True
+except ImportError:
+    GEXDirectionalPredictor = None
+    Direction = None
+    DirectionalPrediction = None
+
 
 class SignalGenerator:
     """Generates aggressive SPX Iron Condor signals for TITAN"""
@@ -132,6 +142,157 @@ class SignalGenerator:
                 logger.info("TITAN: Oracle initialized (BACKUP)")
             except Exception as e:
                 logger.warning(f"TITAN: Oracle init failed: {e}")
+
+        # GEX Directional ML - predicts market direction from GEX structure
+        self.gex_directional_ml = None
+        if GEX_DIRECTIONAL_ML_AVAILABLE:
+            try:
+                self.gex_directional_ml = GEXDirectionalPredictor()
+                logger.info("TITAN: GEX Directional ML initialized")
+            except Exception as e:
+                logger.debug(f"TITAN: GEX Directional ML init failed: {e}")
+
+        # ML Regime Classifier - replaces hard-coded GEX thresholds
+        self.ml_regime_classifier = None
+        if ML_REGIME_AVAILABLE and MLRegimeClassifier:
+            try:
+                self.ml_regime_classifier = MLRegimeClassifier(symbol="SPX")
+                logger.info("TITAN: ML Regime Classifier initialized")
+            except Exception as e:
+                logger.debug(f"TITAN: ML Regime Classifier init failed: {e}")
+
+    def get_gex_directional_prediction(self, gex_data: Dict, vix: float = None) -> Optional[Dict]:
+        """
+        Get GEX Directional ML prediction for market direction.
+
+        For Iron Condors: Strong directional signal suggests caution.
+        """
+        if not self.gex_directional_ml:
+            return None
+
+        try:
+            prediction = self.gex_directional_ml.predict(
+                net_gex=gex_data.get('net_gex', 0),
+                call_wall=gex_data.get('major_pos_vol_level', 0),
+                put_wall=gex_data.get('major_neg_vol_level', 0),
+                flip_point=gex_data.get('flip_point', 0),
+                spot_price=gex_data.get('spot_price', 0),
+                vix=vix or 20.0
+            )
+
+            if prediction:
+                return {
+                    'direction': prediction.direction.value if hasattr(prediction.direction, 'value') else str(prediction.direction),
+                    'confidence': prediction.confidence,
+                    'probabilities': prediction.probabilities if hasattr(prediction, 'probabilities') else {}
+                }
+        except Exception as e:
+            logger.debug(f"GEX Directional ML prediction failed: {e}")
+
+        return None
+
+    def get_ml_regime_prediction(self, gex_data: Dict, market_data: Dict) -> Optional[Dict]:
+        """
+        Get ML Regime Classifier prediction for market action.
+
+        For Iron Condors:
+        - SELL_PREMIUM = ideal, boost confidence
+        - BUY_CALLS/BUY_PUTS = directional, reduce IC confidence
+        - STAY_FLAT = neutral, slight boost
+        """
+        if not self.ml_regime_classifier:
+            return None
+
+        try:
+            from datetime import datetime
+            now = datetime.now()
+
+            gex_normalized = gex_data.get('net_gex', 0) / 1e9 if gex_data.get('net_gex', 0) != 0 else 1.0
+            vix = market_data.get('vix', 20.0)
+            spot = market_data.get('spot_price', 0)
+            flip_point = gex_data.get('flip_point', spot)
+            distance_to_flip = ((spot - flip_point) / spot * 100) if spot > 0 else 0
+
+            prediction = self.ml_regime_classifier.predict(
+                gex_normalized=gex_normalized,
+                gex_percentile=50.0,
+                gex_change_1d=0.0,
+                gex_change_5d=0.0,
+                vix=vix,
+                vix_percentile=50.0,
+                vix_change_1d=0.0,
+                iv_rank=market_data.get('iv_rank', 50.0),
+                iv_hv_ratio=1.1,
+                distance_to_flip=distance_to_flip,
+                momentum_1h=0.0,
+                momentum_4h=0.0,
+                above_20ma=True,
+                above_50ma=True,
+                regime_duration=1,
+                day_of_week=now.weekday(),
+                days_to_opex=market_data.get('days_to_expiry', 0)
+            )
+
+            if prediction:
+                return {
+                    'action': prediction.predicted_action.value if hasattr(prediction.predicted_action, 'value') else str(prediction.predicted_action),
+                    'confidence': prediction.confidence,
+                    'probabilities': prediction.probabilities,
+                    'is_trained': prediction.is_trained
+                }
+        except Exception as e:
+            logger.debug(f"ML Regime Classifier prediction failed: {e}")
+
+        return None
+
+    def get_ensemble_boost(self, market_data: Dict, ml_prediction: Dict = None, oracle: Dict = None) -> Dict:
+        """
+        Get ensemble signal boost/confirmation for Iron Condor.
+        """
+        if not ENSEMBLE_AVAILABLE:
+            return {'boost': 1.0, 'should_trade': True, 'confidence': 0.7, 'reasoning': 'Ensemble not available'}
+
+        try:
+            gex_data = {
+                'recommended_action': 'SELL_IC',
+                'confidence': 70,
+                'reasoning': f"VIX={market_data.get('vix', 20):.1f}, EM=${market_data.get('expected_move', 0):.0f}"
+            }
+
+            ml_data = None
+            if ml_prediction:
+                ml_data = {
+                    'predicted_action': 'SELL_IC',
+                    'confidence': ml_prediction.get('confidence', 0) * 100,
+                    'is_trained': True
+                }
+
+            current_regime = market_data.get('gex_regime', 'UNKNOWN')
+            if current_regime == 'POSITIVE':
+                current_regime = 'POSITIVE_GAMMA'
+            elif current_regime == 'NEGATIVE':
+                current_regime = 'NEGATIVE_GAMMA'
+
+            ensemble = get_ensemble_signal(
+                symbol="SPX",
+                gex_data=gex_data,
+                ml_prediction=ml_data,
+                current_regime=current_regime
+            )
+
+            if ensemble:
+                logger.info(f"[TITAN ENSEMBLE] Confidence: {ensemble.confidence:.0f}%, Size: {ensemble.position_size_multiplier:.0%}")
+                return {
+                    'boost': ensemble.position_size_multiplier,
+                    'should_trade': ensemble.should_trade,
+                    'confidence': ensemble.confidence / 100,
+                    'reasoning': ensemble.reasoning
+                }
+
+        except Exception as e:
+            logger.debug(f"Ensemble signal error: {e}")
+
+        return {'boost': 1.0, 'should_trade': True, 'confidence': 0.7, 'reasoning': 'Ensemble fallback'}
 
     def get_market_data(self) -> Optional[Dict[str, Any]]:
         """Get SPX market data"""
@@ -672,6 +833,55 @@ class SignalGenerator:
                 confidence = min(0.9, confidence + oracle['confidence'] * 0.25)
             elif oracle['advice'] == 'EXIT':
                 confidence -= 0.15  # Smaller penalty
+
+        # GEX Directional ML - Check if market is too directional for IC
+        # Build GEX data dict from market for ML predictions
+        gex_data = {
+            'net_gex': market.get('net_gex', 0),
+            'major_pos_vol_level': market.get('call_wall', 0),
+            'major_neg_vol_level': market.get('put_wall', 0),
+            'flip_point': market.get('flip_point', 0),
+            'spot_price': market.get('spot_price', 0),
+        }
+        gex_dir_prediction = self.get_gex_directional_prediction(gex_data, market['vix'])
+        if gex_dir_prediction:
+            gex_dir = gex_dir_prediction.get('direction', 'FLAT')
+            gex_dir_conf = gex_dir_prediction.get('confidence', 0)
+
+            logger.info(f"[TITAN GEX DIRECTIONAL ML] Direction: {gex_dir}, Confidence: {gex_dir_conf:.1%}")
+
+            if gex_dir == 'FLAT':
+                # FLAT is ideal for Iron Condors - boost confidence
+                confidence = min(0.95, confidence + 0.05)
+            elif gex_dir_conf > 0.80:
+                # Strong directional signal - reduce confidence for IC
+                penalty = (gex_dir_conf - 0.80) * 0.30
+                confidence = max(0.40, confidence - penalty)
+                logger.info(f"  Strong {gex_dir} signal - IC confidence reduced to {confidence:.1%}")
+
+        # ML Regime Classifier - Learned market regime detection
+        regime_prediction = self.get_ml_regime_prediction(gex_data, market)
+        if regime_prediction:
+            regime_action = regime_prediction.get('action', 'STAY_FLAT')
+            regime_conf = regime_prediction.get('confidence', 50) / 100.0
+
+            logger.info(f"[TITAN ML REGIME] Action: {regime_action}, Confidence: {regime_conf:.1%}")
+
+            if regime_action == 'SELL_PREMIUM':
+                boost = min(0.08, regime_conf * 0.10)
+                confidence = min(0.95, confidence + boost)
+            elif regime_action in ('BUY_CALLS', 'BUY_PUTS') and regime_conf > 0.70:
+                penalty = (regime_conf - 0.70) * 0.25
+                confidence = max(0.40, confidence - penalty)
+            elif regime_action == 'STAY_FLAT':
+                confidence = min(0.90, confidence + 0.02)
+
+        # Ensemble Strategy - Multi-signal confirmation
+        ensemble_result = self.get_ensemble_boost(market, ml_prediction, oracle)
+        if ensemble_result:
+            if not ensemble_result.get('should_trade', True):
+                logger.info(f"[TITAN ENSEMBLE BLOCKED] {ensemble_result.get('reasoning', 'No reason')}")
+                return None
 
         return IronCondorSignal(
             spot_price=market['spot_price'],
