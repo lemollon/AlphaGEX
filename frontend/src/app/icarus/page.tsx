@@ -279,7 +279,7 @@ export default function IcarusPage() {
 
   // Extract data
   const status: ICARUSStatus | null = statusData?.data || statusData || null
-  const allPositions: SpreadPosition[] = positionsData?.data?.open_positions?.concat(positionsData?.data?.closed_positions || []) || positionsData?.open_positions?.concat(positionsData?.closed_positions || []) || []
+  const allPositions: SpreadPosition[] = positionsData?.data || positionsData || []
   const scans = scanData?.data?.scans || scanData?.scans || []
   const config = configData?.data || configData || status?.config || null
   const performance = performanceData?.data || performanceData || null

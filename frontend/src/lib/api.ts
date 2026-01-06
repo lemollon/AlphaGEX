@@ -377,7 +377,7 @@ export const apiClient = {
   runICARUSCycle: () => api.post('/api/icarus/run'),
   getICARUSOracleAdvice: () => api.get('/api/icarus/oracle-advice'),
   getICARUSLivePnL: () => api.get('/api/icarus/live-pnl'),
-  getICARUSScanActivity: (limit: number = 50) => api.get('/api/icarus/scan-activity', { params: { limit } }),
+  getICARUSScanActivity: (limit: number = 50) => api.get('/api/scans/activity/ICARUS', { params: { limit } }),
   skipICARUSToday: () => api.post('/api/icarus/skip-today'),
   resetICARUSData: (confirm: boolean = false) => api.post('/api/icarus/reset', null, { params: { confirm } }),
 
