@@ -530,19 +530,30 @@ class SignalGenerator:
         if not spot or not call_wall or not put_wall:
             return False, "", "Missing price/wall data"
 
-        # Calculate distances
-        dist_to_put_wall_pct = ((spot - put_wall) / spot) * 100
-        dist_to_call_wall_pct = ((call_wall - spot) / spot) * 100
+        # Calculate distances (as percentages, always positive)
+        dist_to_put_wall_pct = abs((spot - put_wall) / spot) * 100
+        dist_to_call_wall_pct = abs((call_wall - spot) / spot) * 100
 
         # ICARUS uses 10% threshold - much more relaxed!
         threshold = self.config.wall_filter_pct
 
+        # Check which wall is within threshold
+        near_put = dist_to_put_wall_pct <= threshold
+        near_call = dist_to_call_wall_pct <= threshold
+
+        # If both walls are within threshold, use the CLOSER one
+        if near_put and near_call:
+            if dist_to_put_wall_pct <= dist_to_call_wall_pct:
+                return True, "BULLISH", f"Closer to put wall ({dist_to_put_wall_pct:.2f}% vs call {dist_to_call_wall_pct:.2f}%)"
+            else:
+                return True, "BEARISH", f"Closer to call wall ({dist_to_call_wall_pct:.2f}% vs put {dist_to_put_wall_pct:.2f}%)"
+
         # Near put wall = bullish (support bounce)
-        if abs(dist_to_put_wall_pct) <= threshold:
+        if near_put:
             return True, "BULLISH", f"Within {threshold}% of put wall (support)"
 
         # Near call wall = bearish (resistance rejection)
-        if abs(dist_to_call_wall_pct) <= threshold:
+        if near_call:
             return True, "BEARISH", f"Within {threshold}% of call wall (resistance)"
 
         return False, "", f"Not near walls (put: {dist_to_put_wall_pct:.2f}%, call: {dist_to_call_wall_pct:.2f}%)"
