@@ -130,10 +130,12 @@ export default function PrometheusPage() {
     fetcher
   )
 
+  // Status endpoint returns data at root level (not wrapped)
   const status = statusData
-  const features = featuresData?.features || []
-  const logs = logsData?.logs || []
-  const trainingHistory = trainingHistoryData?.history || []
+  // Other endpoints wrap data in { success, data: {...} } format
+  const features = featuresData?.data?.features || []
+  const logs = logsData?.data?.logs || []
+  const trainingHistory = trainingHistoryData?.data?.history || []
   const strategy = strategyData?.data
 
   const handleTrain = async () => {
@@ -444,30 +446,30 @@ export default function PrometheusPage() {
                     <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
                       <p className="text-gray-400 text-sm mb-1">Total Predictions</p>
                       <p className="text-3xl font-bold text-white">
-                        {performanceData?.total_predictions || status?.performance?.total_predictions || 0}
+                        {performanceData?.data?.total_predictions || status?.performance?.total_predictions || 0}
                       </p>
                     </div>
                     <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
                       <p className="text-gray-400 text-sm mb-1">Prediction Accuracy</p>
                       <p className="text-3xl font-bold text-green-400">
-                        {performanceData?.prediction_accuracy
-                          ? `${(performanceData.prediction_accuracy * 100).toFixed(1)}%`
+                        {performanceData?.data?.prediction_accuracy
+                          ? `${(performanceData.data.prediction_accuracy * 100).toFixed(1)}%`
                           : 'N/A'}
                       </p>
                     </div>
                     <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
                       <p className="text-gray-400 text-sm mb-1">Total P&L</p>
                       <p className={`text-3xl font-bold ${
-                        (performanceData?.total_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'
+                        (performanceData?.data?.total_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'
                       }`}>
-                        ${(performanceData?.total_pnl || status?.performance?.total_pnl || 0).toLocaleString()}
+                        ${(performanceData?.data?.total_pnl || status?.performance?.total_pnl || 0).toLocaleString()}
                       </p>
                     </div>
                     <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
                       <p className="text-gray-400 text-sm mb-1">Calibration Error</p>
                       <p className="text-3xl font-bold text-purple-400">
-                        {performanceData?.calibration_error
-                          ? `${(performanceData.calibration_error * 100).toFixed(2)}%`
+                        {performanceData?.data?.calibration_error
+                          ? `${(performanceData.data.calibration_error * 100).toFixed(2)}%`
                           : 'N/A'}
                       </p>
                     </div>
