@@ -337,8 +337,7 @@ async def get_icarus_positions(
                 gex_regime, vix_at_entry,
                 oracle_confidence, ml_direction, ml_confidence,
                 status, close_price, close_reason, realized_pnl,
-                open_time, close_time,
-                wall_type, wall_distance_pct, trade_reasoning
+                open_time, close_time
             FROM icarus_positions
             {where_clause}
             ORDER BY open_time DESC
@@ -403,9 +402,6 @@ async def get_icarus_positions(
                 "open_time": row[22].isoformat() if row[22] else None,  # Keep for backward compat
                 "exit_time": row[23].isoformat() if row[23] else None,  # Match ATHENA's field name
                 "close_time": row[23].isoformat() if row[23] else None,  # Keep for backward compat
-                "wall_type": row[24],
-                "wall_distance_pct": float(row[25]) if row[25] else 0,
-                "trade_reasoning": row[26]
             }
 
             positions.append(position_data)
