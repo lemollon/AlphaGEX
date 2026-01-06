@@ -81,6 +81,19 @@ except ImportError:
     MARKET_CALENDAR = None
     MARKET_CALENDAR_AVAILABLE = False
 
+# Bot decision logging (for bot_decision_logs table - full audit trail)
+try:
+    from trading.bot_logger import (
+        log_bot_decision, BotDecision, MarketContext as BotMarketContext,
+        ClaudeContext, Alternative, RiskCheck, ExecutionTimeline,
+        get_session_tracker, DecisionTracker
+    )
+    BOT_LOGGER_AVAILABLE = True
+except ImportError:
+    BOT_LOGGER_AVAILABLE = False
+    log_bot_decision = None
+    BotDecision = None
+
 
 class ICARUSTrader(MathOptimizerMixin):
     """
@@ -172,6 +185,7 @@ class ICARUSTrader(MathOptimizerMixin):
                 result['details']['skip_reason'] = reason
                 self.db.log("INFO", f"Skipping: {reason}")
                 self._log_scan_activity(result, scan_context, skip_reason=reason)
+                self._log_bot_decision(result, scan_context, skip_reason=reason)
                 return result
 
             # Step 2: Check and manage existing positions
@@ -209,6 +223,7 @@ class ICARUSTrader(MathOptimizerMixin):
 
             self.db.update_heartbeat("IDLE", f"Cycle complete: {result['action']}")
             self._log_scan_activity(result, scan_context)
+            self._log_bot_decision(result, scan_context)
 
         except Exception as e:
             logger.error(f"Cycle error: {e}")
@@ -218,6 +233,7 @@ class ICARUSTrader(MathOptimizerMixin):
             result['action'] = 'error'
             self.db.log("ERROR", f"Cycle error: {e}")
             self._log_scan_activity(result, scan_context, error_msg=str(e))
+            self._log_bot_decision(result, scan_context, error_msg=str(e))
 
         return result
 
@@ -698,6 +714,104 @@ class ICARUSTrader(MathOptimizerMixin):
             )
         except Exception as e:
             logger.warning(f"Failed to log scan activity: {e}")
+
+    def _log_bot_decision(
+        self,
+        result: Dict,
+        context: Dict,
+        skip_reason: str = "",
+        error_msg: str = ""
+    ):
+        """Log decision to bot_decision_logs table for full audit trail (BotLogsPage)"""
+        if not BOT_LOGGER_AVAILABLE or not log_bot_decision:
+            return
+
+        try:
+            signal = context.get('signal')
+            position = context.get('position')
+            market = context.get('market_data') or {}
+            gex = context.get('gex_data') or {}
+
+            # Determine decision type and action
+            if error_msg:
+                dec_type = "SKIP"
+                action = "ERROR"
+                reason = error_msg
+            elif result.get('trades_opened', 0) > 0:
+                dec_type = "ENTRY"
+                action = "OPEN_SPREAD"
+                reason = "Directional spread opened"
+            elif skip_reason:
+                dec_type = "SKIP"
+                action = "SKIP"
+                reason = skip_reason
+            else:
+                dec_type = "SKIP"
+                action = "NO_TRADE"
+                reason = "No valid signal"
+
+            # Build market context
+            market_ctx = BotMarketContext(
+                spot_price=market.get('underlying_price', 0),
+                vix=market.get('vix', 0),
+                net_gex=gex.get('net_gex', 0),
+                gex_regime=gex.get('regime', 'NEUTRAL'),
+                flip_point=gex.get('flip_point', 0),
+                call_wall=gex.get('call_wall', 0),
+                put_wall=gex.get('put_wall', 0),
+                trend=signal.direction if signal else "",
+            )
+
+            # Build Claude context from signal reasoning
+            claude_ctx = ClaudeContext(
+                prompt="",  # ICARUS doesn't use Claude prompts directly
+                response=signal.reasoning if signal else reason,
+                model="",
+                tokens_used=0,
+                response_time_ms=0,
+                chain_name="",
+                confidence=str(signal.confidence) if signal else "",
+                warnings=[],
+            )
+
+            # Build trade details
+            strike = 0
+            expiration = None
+            option_type = ""
+            contracts = 0
+            strategy = ""
+
+            if position:
+                strike = position.long_strike
+                expiration = position.expiration
+                option_type = "CALL" if position.spread_type == SpreadType.BULL_CALL else "PUT"
+                contracts = position.contracts
+                strategy = position.spread_type.value if position.spread_type else "SPREAD"
+
+            decision = BotDecision(
+                bot_name="ICARUS",
+                decision_type=dec_type,
+                action=action,
+                symbol=self.config.ticker,
+                strategy=strategy,
+                strike=strike,
+                expiration=expiration,
+                option_type=option_type,
+                contracts=contracts,
+                market_context=market_ctx,
+                claude_context=claude_ctx,
+                entry_reasoning=signal.reasoning if signal and dec_type == "ENTRY" else "",
+                strike_reasoning=f"Long: {position.long_strike}, Short: {position.short_strike}" if position else "",
+                size_reasoning=f"{contracts} contracts at {self.config.risk_per_trade_pct}% risk" if position else "",
+                passed_all_checks=dec_type == "ENTRY",
+                blocked_reason=reason if dec_type == "SKIP" else "",
+            )
+
+            log_bot_decision(decision)
+            logger.debug(f"Logged ICARUS decision: {action}")
+
+        except Exception as e:
+            logger.warning(f"Failed to log bot decision: {e}")
 
     def _update_daily_summary(self, today: str, cycle_result: Dict) -> None:
         """Update daily performance summary"""
