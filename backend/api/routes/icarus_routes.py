@@ -891,63 +891,78 @@ async def reset_icarus_data(
 
 @router.get("/scan-activity")
 async def get_icarus_scan_activity(
+    date: str = None,
+    outcome: str = None,
     limit: int = Query(50, description="Max scans to return")
 ):
-    """Get ICARUS scan activity feed."""
+    """
+    Get ICARUS scan activity with full decision context.
+
+    Each scan shows:
+    - Market conditions at time of scan
+    - ML signals and Oracle advice
+    - Risk/Reward ratio analysis
+    - GEX regime and wall positions
+    - Why trade was/wasn't taken
+    - All checks performed
+
+    This is the key endpoint for understanding ICARUS behavior.
+    """
     try:
-        conn = get_connection()
-        c = conn.cursor()
+        from trading.scan_activity_logger import get_recent_scans
 
-        # Try to get from scan_activity table
-        c.execute("""
-            SELECT
-                id, scan_time, outcome, decision_summary,
-                signal_direction, signal_confidence,
-                oracle_win_probability, oracle_confidence,
-                trade_executed, error_message
-            FROM scan_activity
-            WHERE bot_name = 'ICARUS'
-            ORDER BY scan_time DESC
-            LIMIT %s
-        """, (limit,))
+        scans = get_recent_scans(
+            bot_name="ICARUS",
+            date=date,
+            outcome=outcome.upper() if outcome else None,
+            limit=min(limit, 200)
+        )
 
-        rows = c.fetchall()
-        conn.close()
-
-        scans = []
-        for row in rows:
-            scans.append({
-                "id": row[0],
-                "scan_time": row[1].isoformat() if row[1] else None,
-                "outcome": row[2],
-                "decision_summary": row[3],
-                "signal_direction": row[4],
-                "signal_confidence": float(row[5]) if row[5] else 0,
-                "oracle_win_probability": float(row[6]) if row[6] else 0,
-                "oracle_confidence": float(row[7]) if row[7] else 0,
-                "trade_executed": row[8],
-                "error_message": row[9]
-            })
+        # Calculate summary stats
+        trades = sum(1 for s in scans if s.get('trade_executed'))
+        no_trades = sum(1 for s in scans if s.get('outcome') == 'NO_TRADE')
+        errors = sum(1 for s in scans if s.get('outcome') == 'ERROR')
 
         return {
             "success": True,
             "data": {
                 "bot_name": "ICARUS",
                 "scans": scans,
-                "count": len(scans)
-            },
-            "count": len(scans)
+                "count": len(scans),
+                "summary": {
+                    "total_scans": len(scans),
+                    "trades_executed": trades,
+                    "no_trade_scans": no_trades,
+                    "error_scans": errors
+                }
+            }
         }
-
-    except Exception as e:
-        logger.debug(f"Scan activity table may not exist: {e}")
+    except ImportError as e:
+        logger.debug(f"Scan activity logger not available: {e}")
         return {
             "success": True,
             "data": {
                 "bot_name": "ICARUS",
                 "scans": [],
                 "count": 0,
-                "message": "Scan activity not yet available"
-            },
-            "count": 0
+                "message": "Scan activity logger not available"
+            }
         }
+    except Exception as e:
+        logger.error(f"Error getting ICARUS scan activity: {e}")
+        return {
+            "success": True,
+            "data": {
+                "bot_name": "ICARUS",
+                "scans": [],
+                "count": 0,
+                "message": f"Scan activity error: {str(e)}"
+            }
+        }
+
+
+@router.get("/scan-activity/today")
+async def get_icarus_scan_activity_today():
+    """Get all ICARUS scans from today with summary."""
+    today = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
+    return await get_icarus_scan_activity(date=today, limit=200)
