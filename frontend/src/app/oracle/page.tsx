@@ -553,10 +553,12 @@ export default function OraclePage() {
   const getBotColor = (bot: string) => {
     switch (bot) {
       case 'ARES': return 'text-red-400 bg-red-500/20 border-red-500/30'
-      case 'ATLAS': return 'text-blue-400 bg-blue-500/20 border-blue-500/30'
-      case 'PHOENIX': return 'text-orange-400 bg-orange-500/20 border-orange-500/30'
+      case 'ATLAS': return 'text-indigo-400 bg-indigo-500/20 border-indigo-500/30'
+      case 'PHOENIX': return 'text-rose-400 bg-rose-500/20 border-rose-500/30'
       case 'ATHENA': return 'text-purple-400 bg-purple-500/20 border-purple-500/30'
-      case 'ORACLE': return 'text-indigo-400 bg-indigo-500/20 border-indigo-500/30'
+      case 'PEGASUS': return 'text-blue-400 bg-blue-500/20 border-blue-500/30'
+      case 'ICARUS': return 'text-orange-400 bg-orange-500/20 border-orange-500/30'
+      case 'ORACLE': return 'text-cyan-400 bg-cyan-500/20 border-cyan-500/30'
       default: return 'text-gray-400 bg-gray-500/20 border-gray-500/30'
     }
   }
@@ -668,7 +670,7 @@ export default function OraclePage() {
               <span className="text-xs text-gray-500">(5-min scan intervals)</span>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {['ARES', 'ATHENA', 'PEGASUS', 'PHOENIX'].map((botName) => {
+              {['ARES', 'ATHENA', 'PEGASUS', 'PHOENIX', 'ATLAS', 'ICARUS'].map((botName) => {
                 const hb = botHeartbeats[botName]
                 const statusColor = hb?.status === 'TRADED' ? 'bg-green-500' :
                                    hb?.status === 'SCAN_COMPLETE' ? 'bg-blue-500' :

@@ -8,7 +8,7 @@ import { Sword, Target, Shield, Flame, TrendingUp, TrendingDown, Clock, AlertTri
 // =============================================================================
 // Unified branding for ARES, ATHENA, and PEGASUS to ensure visual consistency
 
-export type BotName = 'ARES' | 'ATHENA' | 'ICARUS' | 'PEGASUS'
+export type BotName = 'ARES' | 'ATHENA' | 'PEGASUS' | 'PHOENIX' | 'ATLAS' | 'ICARUS'
 
 export interface BotBrand {
   name: BotName
@@ -186,6 +186,76 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     hexPrimary: '#3B82F6',
     hexLight: '#93C5FD',
     hexDark: '#1D4ED8',
+  },
+  PHOENIX: {
+    name: 'PHOENIX',
+    fullName: 'PHOENIX Momentum',
+    description: 'Momentum Continuation with GEX-Confirmed Bias',
+    strategy: 'Momentum Continuation Strategy',
+    // Primary - Rose/Red (phoenix rising from flames)
+    primaryColor: 'rose',
+    primaryBg: 'bg-rose-600',
+    primaryBorder: 'border-rose-500',
+    primaryText: 'text-rose-400',
+    // Light variants
+    lightBg: 'bg-rose-900/20',
+    lightText: 'text-rose-300',
+    lightBorder: 'border-rose-700/50',
+    // Chart colors
+    chartLine: 'stroke-rose-400',
+    chartFill: 'fill-rose-500/20',
+    chartPositive: 'text-rose-400',
+    chartNegative: 'text-rose-600',
+    // Position cards
+    positionBorder: 'border-rose-600/50',
+    positionBg: 'bg-rose-950/30',
+    positionAccent: 'bg-rose-500',
+    // Badges
+    badgeBg: 'bg-rose-900/50',
+    badgeText: 'text-rose-300',
+    // Gradient
+    icon: Zap,
+    gradientFrom: 'from-rose-500',
+    gradientTo: 'to-rose-900',
+    // Hex for Recharts
+    hexPrimary: '#F43F5E',
+    hexLight: '#FDA4AF',
+    hexDark: '#E11D48',
+  },
+  ATLAS: {
+    name: 'ATLAS',
+    fullName: 'ATLAS Mean-Reversion',
+    description: 'Mean-Reversion Trading at Key GEX Levels',
+    strategy: 'Mean-Reversion Strategy',
+    // Primary - Indigo/Deep Blue (strength, stability, holding the world)
+    primaryColor: 'indigo',
+    primaryBg: 'bg-indigo-600',
+    primaryBorder: 'border-indigo-500',
+    primaryText: 'text-indigo-400',
+    // Light variants
+    lightBg: 'bg-indigo-900/20',
+    lightText: 'text-indigo-300',
+    lightBorder: 'border-indigo-700/50',
+    // Chart colors
+    chartLine: 'stroke-indigo-400',
+    chartFill: 'fill-indigo-500/20',
+    chartPositive: 'text-indigo-400',
+    chartNegative: 'text-indigo-600',
+    // Position cards
+    positionBorder: 'border-indigo-600/50',
+    positionBg: 'bg-indigo-950/30',
+    positionAccent: 'bg-indigo-500',
+    // Badges
+    badgeBg: 'bg-indigo-900/50',
+    badgeText: 'text-indigo-300',
+    // Gradient
+    icon: Target,
+    gradientFrom: 'from-indigo-500',
+    gradientTo: 'to-indigo-900',
+    // Hex for Recharts
+    hexPrimary: '#6366F1',
+    hexLight: '#A5B4FC',
+    hexDark: '#4F46E5',
   },
 }
 
