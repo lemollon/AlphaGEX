@@ -2977,6 +2977,125 @@ def init_database():
     ''')
 
     # =========================================================================
+    # PROMETHEUS ML TABLES
+    # =========================================================================
+
+    # Prometheus predictions - stores ML predictions for trades
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS prometheus_predictions (
+            id SERIAL PRIMARY KEY,
+            trade_id VARCHAR(50) UNIQUE NOT NULL,
+            trade_date VARCHAR(20),
+            strike DECIMAL(10,2),
+            underlying_price DECIMAL(10,2),
+            dte INTEGER,
+            delta DECIMAL(6,4),
+            premium DECIMAL(10,4),
+            win_probability DECIMAL(5,4),
+            recommendation VARCHAR(20),
+            confidence DECIMAL(5,4),
+            reasoning TEXT,
+            key_factors JSONB,
+            feature_values JSONB,
+            vix DECIMAL(6,2),
+            iv_rank DECIMAL(5,2),
+            model_version VARCHAR(50),
+            session_id VARCHAR(50),
+            actual_outcome VARCHAR(10),
+            actual_pnl DECIMAL(12,2),
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # Prometheus live model - stores the active ML model binary
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS prometheus_live_model (
+            id SERIAL PRIMARY KEY,
+            model_version VARCHAR(50) NOT NULL,
+            model_binary BYTEA,
+            scaler_binary BYTEA,
+            model_type VARCHAR(50),
+            feature_names JSONB,
+            accuracy DECIMAL(5,4),
+            calibration_error DECIMAL(5,4),
+            is_active BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # Prometheus training history
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS prometheus_training_history (
+            id SERIAL PRIMARY KEY,
+            training_id VARCHAR(50) UNIQUE NOT NULL,
+            total_samples INTEGER,
+            train_samples INTEGER,
+            test_samples INTEGER,
+            win_count INTEGER,
+            loss_count INTEGER,
+            baseline_win_rate DECIMAL(5,4),
+            accuracy DECIMAL(5,4),
+            precision_score DECIMAL(5,4),
+            recall DECIMAL(5,4),
+            f1_score DECIMAL(5,4),
+            auc_roc DECIMAL(5,4),
+            brier_score DECIMAL(5,4),
+            cv_accuracy_mean DECIMAL(5,4),
+            cv_accuracy_std DECIMAL(5,4),
+            cv_scores JSONB,
+            calibration_error DECIMAL(5,4),
+            is_calibrated BOOLEAN DEFAULT FALSE,
+            feature_importance JSONB,
+            model_type VARCHAR(50),
+            model_version VARCHAR(50),
+            interpretation TEXT,
+            honest_assessment TEXT,
+            recommendation TEXT,
+            model_path VARCHAR(255),
+            model_saved_to_db BOOLEAN DEFAULT FALSE,
+            model_binary BYTEA,
+            scaler_binary BYTEA,
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # Prometheus logs
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS prometheus_logs (
+            id SERIAL PRIMARY KEY,
+            log_type VARCHAR(30) NOT NULL,
+            action VARCHAR(100),
+            ml_score DECIMAL(5,4),
+            recommendation VARCHAR(20),
+            trade_id VARCHAR(50),
+            reasoning TEXT,
+            details JSONB,
+            features JSONB,
+            execution_time_ms INTEGER,
+            session_id VARCHAR(50),
+            trace_id VARCHAR(50),
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # Prometheus models (for versioning/backup)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS prometheus_models (
+            id SERIAL PRIMARY KEY,
+            model_version VARCHAR(50) NOT NULL,
+            model_name VARCHAR(100),
+            model_binary BYTEA,
+            scaler_binary BYTEA,
+            config JSONB,
+            metrics JSONB,
+            is_production BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # =========================================================================
     # SPX WHEEL BACKTEST TABLES (from backtest/spx_premium_backtest.py)
     # =========================================================================
 
