@@ -158,7 +158,7 @@ export default function QuantPage() {
 
   const fetchStatus = useCallback(async () => {
     try {
-      const res = await apiClient.get('/api/quant/status')
+      const res = await apiClient.getQuantStatus()
       setStatus(res.data)
       setError(null)
     } catch (err) {
@@ -169,7 +169,7 @@ export default function QuantPage() {
 
   const fetchLogs = useCallback(async () => {
     try {
-      const res = await apiClient.get('/api/quant/logs', { params: { limit: 50 } })
+      const res = await apiClient.getQuantLogs(50)
       setLogs(res.data?.logs || [])
     } catch (err) {
       console.error('Failed to fetch logs:', err)
@@ -178,7 +178,7 @@ export default function QuantPage() {
 
   const fetchStats = useCallback(async () => {
     try {
-      const res = await apiClient.get('/api/quant/logs/stats', { params: { days: 7 } })
+      const res = await apiClient.getQuantLogsStats(7)
       setStats(res.data)
     } catch (err) {
       console.error('Failed to fetch stats:', err)
@@ -187,7 +187,7 @@ export default function QuantPage() {
 
   const fetchPendingOutcomes = useCallback(async () => {
     try {
-      const res = await apiClient.get('/api/quant/outcomes/pending', { params: { limit: 20 } })
+      const res = await apiClient.getQuantPendingOutcomes(20)
       setPendingOutcomes(res.data?.predictions || [])
     } catch (err) {
       console.error('Failed to fetch pending outcomes:', err)
@@ -196,7 +196,7 @@ export default function QuantPage() {
 
   const fetchAlerts = useCallback(async () => {
     try {
-      const res = await apiClient.get('/api/quant/alerts', { params: { limit: 50, unacknowledged_only: false } })
+      const res = await apiClient.getQuantAlerts(50, false)
       setAlerts(res.data?.alerts || [])
     } catch (err) {
       console.error('Failed to fetch alerts:', err)
@@ -205,7 +205,7 @@ export default function QuantPage() {
 
   const fetchPerformance = useCallback(async () => {
     try {
-      const res = await apiClient.get('/api/quant/performance/summary', { params: { days: 7 } })
+      const res = await apiClient.getQuantPerformanceSummary(7)
       setPerformanceSummary(res.data)
     } catch (err) {
       console.error('Failed to fetch performance:', err)
@@ -214,7 +214,7 @@ export default function QuantPage() {
 
   const fetchTrainingHistory = useCallback(async () => {
     try {
-      const res = await apiClient.get('/api/quant/training/history', { params: { limit: 20 } })
+      const res = await apiClient.getQuantTrainingHistory(20)
       setTrainingHistory(res.data?.history || [])
     } catch (err) {
       console.error('Failed to fetch training history:', err)
@@ -223,7 +223,7 @@ export default function QuantPage() {
 
   const fetchComparison = useCallback(async () => {
     try {
-      const res = await apiClient.get('/api/quant/compare')
+      const res = await apiClient.getQuantComparison()
       setModelComparison(res.data)
     } catch (err) {
       console.error('Failed to fetch comparison:', err)
@@ -232,7 +232,7 @@ export default function QuantPage() {
 
   const fetchBotUsage = useCallback(async () => {
     try {
-      const res = await apiClient.get('/api/quant/bot/usage', { params: { days: 7 } })
+      const res = await apiClient.getQuantBotUsage(7)
       setBotUsageStats(res.data)
     } catch (err) {
       console.error('Failed to fetch bot usage:', err)
@@ -256,7 +256,7 @@ export default function QuantPage() {
       const callWall = gexRes?.data?.data?.call_wall || spotPrice + 5
       const putWall = gexRes?.data?.data?.put_wall || spotPrice - 5
 
-      const regimeRes = await apiClient.post('/api/quant/predict/regime', {
+      const regimeRes = await apiClient.predictRegime({
         spot_price: spotPrice,
         vix: vix,
         net_gex: netGex,
@@ -268,7 +268,7 @@ export default function QuantPage() {
         setRegimePrediction(regimeRes.data)
       }
 
-      const dirRes = await apiClient.post('/api/quant/predict/direction', {
+      const dirRes = await apiClient.predictDirection({
         net_gex: netGex,
         call_wall: callWall,
         put_wall: putWall,
@@ -292,7 +292,7 @@ export default function QuantPage() {
 
   const recordOutcome = useCallback(async (predictionId: number, correct: boolean, pnl?: number) => {
     try {
-      await apiClient.post('/api/quant/outcomes/record', {
+      await apiClient.recordQuantOutcome({
         prediction_id: predictionId,
         correct: correct,
         pnl: pnl,
@@ -307,7 +307,7 @@ export default function QuantPage() {
 
   const acknowledgeAlert = useCallback(async (alertId: number) => {
     try {
-      await apiClient.post(`/api/quant/alerts/${alertId}/acknowledge`)
+      await apiClient.acknowledgeQuantAlert(alertId)
       await fetchAlerts()
     } catch (err) {
       console.error('Failed to acknowledge alert:', err)
@@ -316,7 +316,7 @@ export default function QuantPage() {
 
   const triggerTraining = useCallback(async (modelName: string) => {
     try {
-      await apiClient.post('/api/quant/training/trigger', {
+      await apiClient.triggerQuantTraining({
         model_name: modelName,
         triggered_by: 'MANUAL'
       })
