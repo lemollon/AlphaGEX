@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
-import { api } from '@/lib/api'
+import { api, apiClient } from '@/lib/api'
 import useSWR from 'swr'
 import {
   Brain,
@@ -29,7 +29,13 @@ import {
   Settings,
   ChevronRight,
   Play,
-  Pause
+  Pause,
+  Calculator,
+  Send,
+  CheckSquare,
+  Square,
+  DollarSign,
+  Loader2
 } from 'lucide-react'
 
 // API fetcher for SWR
@@ -92,10 +98,58 @@ interface TrainingHistory {
   total_samples: number
 }
 
+interface PendingTrade {
+  trade_id: string
+  trade_date: string
+  strike: number
+  underlying_price: number
+  dte: number
+  delta: number
+  premium: number
+  vix: number
+  iv_rank: number
+  created_at: string
+}
+
+interface MarketData {
+  vix: number
+  iv_rank: number
+  vix_percentile: number
+  vix_term_structure: number
+  put_wall_distance_pct: number
+  call_wall_distance_pct: number
+  net_gex: number
+  spx_20d_return: number
+  spx_5d_return: number
+  spx_distance_from_high: number
+  iv: number
+}
+
 export default function PrometheusPage() {
   const [activeTab, setActiveTab] = useState<'overview' | 'features' | 'performance' | 'logs' | 'training' | 'strategy'>('overview')
   const [training, setTraining] = useState(false)
   const [logFilter, setLogFilter] = useState<string>('')
+
+  // Quick Predict form state
+  const [quickPredictForm, setQuickPredictForm] = useState({
+    strike: '',
+    underlying_price: '',
+    dte: '0',
+    delta: '-0.15',
+    premium: '',
+    trade_id: '',
+    record_entry: false
+  })
+  const [quickPredicting, setQuickPredicting] = useState(false)
+  const [quickPredictResult, setQuickPredictResult] = useState<any>(null)
+
+  // Outcome recording state
+  const [selectedTrade, setSelectedTrade] = useState<PendingTrade | null>(null)
+  const [outcomeForm, setOutcomeForm] = useState({
+    outcome: 'WIN',
+    pnl: ''
+  })
+  const [recordingOutcome, setRecordingOutcome] = useState(false)
 
   // SWR hooks for data fetching
   const { data: statusData, isLoading: statusLoading, mutate: mutateStatus } = useSWR<MLStatus>(
@@ -125,16 +179,26 @@ export default function PrometheusPage() {
     fetcher
   )
 
-  const { data: strategyData } = useSWR(
-    activeTab === 'strategy' ? '/api/ml/strategy-explanation' : null,
-    fetcher
+  const { data: pendingTradesData, mutate: mutatePendingTrades } = useSWR(
+    activeTab === 'overview' ? '/api/prometheus/pending-trades' : null,
+    fetcher,
+    { refreshInterval: 60000 }
   )
 
+  const { data: marketDataRes } = useSWR(
+    activeTab === 'overview' ? '/api/prometheus/market-data' : null,
+    fetcher,
+    { refreshInterval: 60000 }
+  )
+
+  // Status endpoint returns data at root level (not wrapped)
   const status = statusData
-  const features = featuresData?.features || []
-  const logs = logsData?.logs || []
-  const trainingHistory = trainingHistoryData?.history || []
-  const strategy = strategyData?.data
+  // Other endpoints wrap data in { success, data: {...} } format
+  const features = featuresData?.data?.features || []
+  const logs = logsData?.data?.logs || []
+  const trainingHistory = trainingHistoryData?.data?.history || []
+  const pendingTrades: PendingTrade[] = pendingTradesData?.data?.trades || []
+  const marketData: MarketData | null = marketDataRes?.data || null
 
   const handleTrain = async () => {
     setTraining(true)
@@ -152,6 +216,66 @@ export default function PrometheusPage() {
     mutateStatus()
     if (activeTab === 'logs') mutateLogs()
     if (activeTab === 'features') mutateFeatures()
+    if (activeTab === 'overview') {
+      mutatePendingTrades()
+    }
+  }
+
+  const handleQuickPredict = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setQuickPredicting(true)
+    setQuickPredictResult(null)
+
+    try {
+      const response = await api.post('/api/prometheus/quick-predict', {
+        strike: parseFloat(quickPredictForm.strike),
+        underlying_price: parseFloat(quickPredictForm.underlying_price),
+        dte: parseInt(quickPredictForm.dte),
+        delta: parseFloat(quickPredictForm.delta),
+        premium: parseFloat(quickPredictForm.premium),
+        trade_id: quickPredictForm.trade_id || undefined,
+        record_entry: quickPredictForm.record_entry
+      })
+
+      setQuickPredictResult(response.data)
+
+      if (quickPredictForm.record_entry) {
+        mutatePendingTrades()
+      }
+    } catch (error: any) {
+      console.error('Quick predict failed:', error)
+      setQuickPredictResult({
+        success: false,
+        error: error.response?.data?.detail || error.message || 'Prediction failed'
+      })
+    }
+
+    setQuickPredicting(false)
+  }
+
+  const handleRecordOutcome = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedTrade) return
+
+    setRecordingOutcome(true)
+
+    try {
+      await api.post('/api/prometheus/record-outcome', {
+        trade_id: selectedTrade.trade_id,
+        outcome: outcomeForm.outcome,
+        pnl: parseFloat(outcomeForm.pnl),
+        was_traded: true
+      })
+
+      setSelectedTrade(null)
+      setOutcomeForm({ outcome: 'WIN', pnl: '' })
+      mutatePendingTrades()
+      mutateStatus()
+    } catch (error) {
+      console.error('Failed to record outcome:', error)
+    }
+
+    setRecordingOutcome(false)
   }
 
   const getRecommendationStyle = (rec: string) => {
@@ -194,6 +318,44 @@ export default function PrometheusPage() {
       (log.reasoning && log.reasoning.toLowerCase().includes(logFilter.toLowerCase()))
     )
   })
+
+  // Static strategy explanation (since there's no backend endpoint)
+  const strategyExplanation = {
+    strategy: 'SPX Cash-Secured Put Selling',
+    why_it_works: {
+      theta_decay: {
+        explanation: 'Options lose value as time passes (theta decay). As the seller, you collect this premium.',
+        you_benefit: 'Daily theta decay puts money in your pocket'
+      },
+      volatility_premium: {
+        explanation: 'Implied volatility often exceeds realized volatility. Sellers capture this premium.',
+        you_benefit: 'Options are typically overpriced, giving sellers an edge'
+      },
+      market_tendency: {
+        explanation: 'Markets trend upward over time, making puts expire worthless more often.',
+        you_benefit: '~68% of puts expire OTM historically'
+      }
+    },
+    why_it_can_fail: {
+      black_swan: {
+        explanation: 'Sudden market crashes can result in massive losses that wipe out months of gains.'
+      },
+      assignment_risk: {
+        explanation: 'If SPX drops below your strike, you may be assigned and face large unrealized losses.'
+      },
+      vol_expansion: {
+        explanation: 'During market stress, VIX spikes can increase option prices against you.'
+      }
+    },
+    realistic_expectations: {
+      win_rate: '65-72%',
+      avg_win: '$300-600',
+      avg_loss: '$1,000-2,500',
+      monthly_return: '2-5%',
+      max_drawdown: '15-30%'
+    },
+    bottom_line: 'This strategy works when you consistently sell puts with good premium, manage position size, and accept that occasional large losses are part of the game. ML helps identify favorable conditions but cannot eliminate the inherent risks.'
+  }
 
   return (
     <div className="flex h-screen bg-gray-900">
@@ -334,6 +496,327 @@ export default function PrometheusPage() {
                     </div>
                   </div>
 
+                  {/* Quick Predict Form */}
+                  <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                    <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                      <Calculator className="w-5 h-5 text-orange-400" />
+                      Quick Predict
+                    </h3>
+                    <p className="text-gray-400 text-sm mb-4">
+                      Enter trade parameters to get an ML prediction. Market data (VIX, GEX, etc.) is fetched automatically.
+                    </p>
+
+                    <form onSubmit={handleQuickPredict} className="space-y-4">
+                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+                        <div>
+                          <label className="block text-sm text-gray-400 mb-1">Strike</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={quickPredictForm.strike}
+                            onChange={(e) => setQuickPredictForm({...quickPredictForm, strike: e.target.value})}
+                            placeholder="5800"
+                            className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white focus:outline-none focus:border-orange-500"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm text-gray-400 mb-1">Underlying Price</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={quickPredictForm.underlying_price}
+                            onChange={(e) => setQuickPredictForm({...quickPredictForm, underlying_price: e.target.value})}
+                            placeholder="5950"
+                            className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white focus:outline-none focus:border-orange-500"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm text-gray-400 mb-1">DTE</label>
+                          <input
+                            type="number"
+                            value={quickPredictForm.dte}
+                            onChange={(e) => setQuickPredictForm({...quickPredictForm, dte: e.target.value})}
+                            placeholder="0"
+                            className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white focus:outline-none focus:border-orange-500"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm text-gray-400 mb-1">Delta</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={quickPredictForm.delta}
+                            onChange={(e) => setQuickPredictForm({...quickPredictForm, delta: e.target.value})}
+                            placeholder="-0.15"
+                            className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white focus:outline-none focus:border-orange-500"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm text-gray-400 mb-1">Premium ($)</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={quickPredictForm.premium}
+                            onChange={(e) => setQuickPredictForm({...quickPredictForm, premium: e.target.value})}
+                            placeholder="5.50"
+                            className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white focus:outline-none focus:border-orange-500"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm text-gray-400 mb-1">Trade ID (optional)</label>
+                          <input
+                            type="text"
+                            value={quickPredictForm.trade_id}
+                            onChange={(e) => setQuickPredictForm({...quickPredictForm, trade_id: e.target.value})}
+                            placeholder="MY-TRADE-001"
+                            className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white focus:outline-none focus:border-orange-500"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <label className="flex items-center gap-2 text-gray-400 cursor-pointer">
+                          <button
+                            type="button"
+                            onClick={() => setQuickPredictForm({...quickPredictForm, record_entry: !quickPredictForm.record_entry})}
+                            className="p-0.5"
+                          >
+                            {quickPredictForm.record_entry ? (
+                              <CheckSquare className="w-5 h-5 text-orange-400" />
+                            ) : (
+                              <Square className="w-5 h-5" />
+                            )}
+                          </button>
+                          Record as trade entry (for outcome tracking)
+                        </label>
+
+                        <button
+                          type="submit"
+                          disabled={quickPredicting}
+                          className="px-6 py-2 bg-orange-600 hover:bg-orange-700 disabled:bg-gray-600 text-white font-medium rounded-lg flex items-center gap-2"
+                        >
+                          {quickPredicting ? (
+                            <>
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                              Predicting...
+                            </>
+                          ) : (
+                            <>
+                              <Send className="w-4 h-4" />
+                              Get Prediction
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </form>
+
+                    {/* Prediction Result */}
+                    {quickPredictResult && (
+                      <div className={`mt-4 p-4 rounded-lg border ${
+                        quickPredictResult.success === false
+                          ? 'bg-red-900/30 border-red-700'
+                          : 'bg-gray-900 border-gray-700'
+                      }`}>
+                        {quickPredictResult.success === false ? (
+                          <p className="text-red-400">{quickPredictResult.error}</p>
+                        ) : (
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                              <span className="text-gray-400">Win Probability:</span>
+                              <span className={`text-2xl font-bold ${
+                                quickPredictResult.data?.win_probability > 0.7 ? 'text-green-400' :
+                                quickPredictResult.data?.win_probability > 0.5 ? 'text-yellow-400' : 'text-red-400'
+                              }`}>
+                                {((quickPredictResult.data?.win_probability || 0) * 100).toFixed(1)}%
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-gray-400">Recommendation:</span>
+                              <span className={`px-3 py-1 rounded text-sm font-medium border ${
+                                getRecommendationStyle(quickPredictResult.data?.recommendation || '')
+                              }`}>
+                                {quickPredictResult.data?.recommendation || 'N/A'}
+                              </span>
+                            </div>
+                            {quickPredictResult.data?.key_factors && quickPredictResult.data.key_factors.length > 0 && (
+                              <div>
+                                <span className="text-gray-400 text-sm">Key Factors:</span>
+                                <ul className="mt-1 space-y-1">
+                                  {quickPredictResult.data.key_factors.slice(0, 3).map((factor: string, i: number) => (
+                                    <li key={i} className="text-sm text-gray-300 flex items-start gap-2">
+                                      <ChevronRight className="w-4 h-4 text-orange-400 mt-0.5 flex-shrink-0" />
+                                      {factor}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                            {quickPredictResult.entry_recorded && (
+                              <p className="text-green-400 text-sm flex items-center gap-2">
+                                <CheckCircle className="w-4 h-4" />
+                                Trade entry recorded for outcome tracking
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Current Market Data */}
+                    {marketData && (
+                      <div className="mt-4 p-4 bg-gray-900 rounded-lg">
+                        <p className="text-sm text-gray-500 mb-2">Current Market Data (auto-fetched):</p>
+                        <div className="grid grid-cols-3 md:grid-cols-6 gap-3 text-sm">
+                          <div>
+                            <span className="text-gray-500">VIX:</span>
+                            <span className={`ml-1 font-medium ${
+                              marketData.vix > 25 ? 'text-red-400' : marketData.vix > 18 ? 'text-yellow-400' : 'text-green-400'
+                            }`}>
+                              {marketData.vix?.toFixed(2) || 'N/A'}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">IV Rank:</span>
+                            <span className="ml-1 text-white">{marketData.iv_rank?.toFixed(0) || 'N/A'}%</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">Net GEX:</span>
+                            <span className={`ml-1 font-medium ${
+                              (marketData.net_gex || 0) > 0 ? 'text-green-400' : 'text-red-400'
+                            }`}>
+                              {marketData.net_gex ? (marketData.net_gex / 1e9).toFixed(1) + 'B' : 'N/A'}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">Put Wall:</span>
+                            <span className="ml-1 text-white">{marketData.put_wall_distance_pct?.toFixed(1) || 'N/A'}%</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">5D Return:</span>
+                            <span className={`ml-1 ${
+                              (marketData.spx_5d_return || 0) >= 0 ? 'text-green-400' : 'text-red-400'
+                            }`}>
+                              {marketData.spx_5d_return?.toFixed(2) || 'N/A'}%
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">From High:</span>
+                            <span className="ml-1 text-white">{marketData.spx_distance_from_high?.toFixed(1) || 'N/A'}%</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Pending Trades */}
+                  <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                    <div className="flex items-center justify-between mb-4">
+                      <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+                        <Clock className="w-5 h-5 text-orange-400" />
+                        Pending Trades ({pendingTrades.length})
+                      </h3>
+                      <button
+                        onClick={() => mutatePendingTrades()}
+                        className="p-1.5 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-400"
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {pendingTrades.length > 0 ? (
+                      <div className="space-y-3">
+                        {pendingTrades.map((trade) => (
+                          <div
+                            key={trade.trade_id}
+                            className={`p-4 rounded-lg border ${
+                              selectedTrade?.trade_id === trade.trade_id
+                                ? 'bg-orange-900/30 border-orange-600'
+                                : 'bg-gray-900 border-gray-700 hover:border-gray-600'
+                            } cursor-pointer transition-colors`}
+                            onClick={() => setSelectedTrade(trade)}
+                          >
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <p className="text-white font-medium">{trade.trade_id}</p>
+                                <p className="text-sm text-gray-400">
+                                  Strike: ${trade.strike?.toFixed(0)} | Δ: {trade.delta?.toFixed(2)} | DTE: {trade.dte}
+                                </p>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-green-400 font-medium">${trade.premium?.toFixed(2)}</p>
+                                <p className="text-xs text-gray-500">
+                                  {new Date(trade.created_at).toLocaleDateString()}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+
+                        {/* Outcome Recording Form */}
+                        {selectedTrade && (
+                          <div className="mt-4 p-4 bg-gray-900 rounded-lg border border-orange-600">
+                            <h4 className="text-white font-medium mb-3">
+                              Record Outcome for {selectedTrade.trade_id}
+                            </h4>
+                            <form onSubmit={handleRecordOutcome} className="flex items-end gap-4">
+                              <div>
+                                <label className="block text-sm text-gray-400 mb-1">Outcome</label>
+                                <select
+                                  value={outcomeForm.outcome}
+                                  onChange={(e) => setOutcomeForm({...outcomeForm, outcome: e.target.value})}
+                                  className="px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:border-orange-500"
+                                >
+                                  <option value="WIN">WIN</option>
+                                  <option value="LOSS">LOSS</option>
+                                </select>
+                              </div>
+                              <div className="flex-1">
+                                <label className="block text-sm text-gray-400 mb-1">P&L ($)</label>
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={outcomeForm.pnl}
+                                  onChange={(e) => setOutcomeForm({...outcomeForm, pnl: e.target.value})}
+                                  placeholder={outcomeForm.outcome === 'WIN' ? '550' : '-1200'}
+                                  className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:border-orange-500"
+                                  required
+                                />
+                              </div>
+                              <button
+                                type="submit"
+                                disabled={recordingOutcome}
+                                className="px-4 py-2 bg-orange-600 hover:bg-orange-700 disabled:bg-gray-600 text-white font-medium rounded-lg flex items-center gap-2"
+                              >
+                                {recordingOutcome ? (
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                  <DollarSign className="w-4 h-4" />
+                                )}
+                                Record
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setSelectedTrade(null)}
+                                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg"
+                              >
+                                Cancel
+                              </button>
+                            </form>
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-gray-400 text-sm">
+                        No pending trades. Use Quick Predict with "Record as trade entry" checked to add trades.
+                      </p>
+                    )}
+                  </div>
+
                   {/* Honest Assessment */}
                   <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
                     <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
@@ -444,30 +927,30 @@ export default function PrometheusPage() {
                     <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
                       <p className="text-gray-400 text-sm mb-1">Total Predictions</p>
                       <p className="text-3xl font-bold text-white">
-                        {performanceData?.total_predictions || status?.performance?.total_predictions || 0}
+                        {performanceData?.data?.total_predictions || status?.performance?.total_predictions || 0}
                       </p>
                     </div>
                     <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
                       <p className="text-gray-400 text-sm mb-1">Prediction Accuracy</p>
                       <p className="text-3xl font-bold text-green-400">
-                        {performanceData?.prediction_accuracy
-                          ? `${(performanceData.prediction_accuracy * 100).toFixed(1)}%`
+                        {performanceData?.data?.prediction_accuracy
+                          ? `${(performanceData.data.prediction_accuracy * 100).toFixed(1)}%`
                           : 'N/A'}
                       </p>
                     </div>
                     <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
                       <p className="text-gray-400 text-sm mb-1">Total P&L</p>
                       <p className={`text-3xl font-bold ${
-                        (performanceData?.total_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'
+                        (performanceData?.data?.total_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'
                       }`}>
-                        ${(performanceData?.total_pnl || status?.performance?.total_pnl || 0).toLocaleString()}
+                        ${(performanceData?.data?.total_pnl || status?.performance?.total_pnl || 0).toLocaleString()}
                       </p>
                     </div>
                     <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
                       <p className="text-gray-400 text-sm mb-1">Calibration Error</p>
                       <p className="text-3xl font-bold text-purple-400">
-                        {performanceData?.calibration_error
-                          ? `${(performanceData.calibration_error * 100).toFixed(2)}%`
+                        {performanceData?.data?.calibration_error
+                          ? `${(performanceData.data.calibration_error * 100).toFixed(2)}%`
                           : 'N/A'}
                       </p>
                     </div>
@@ -693,76 +1176,67 @@ export default function PrometheusPage() {
               {/* Strategy Tab */}
               {activeTab === 'strategy' && (
                 <div className="space-y-6">
-                  {strategy ? (
-                    <>
-                      <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
-                        <h3 className="text-xl font-semibold text-white mb-2">{strategy.strategy}</h3>
+                  <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                    <h3 className="text-xl font-semibold text-white mb-2">{strategyExplanation.strategy}</h3>
 
-                        {/* Why It Works */}
-                        <div className="mt-6">
-                          <h4 className="text-lg font-medium text-green-400 mb-4 flex items-center gap-2">
-                            <TrendingUp className="w-5 h-5" />
-                            Why It Works
-                          </h4>
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            {Object.entries(strategy.why_it_works || {}).map(([key, value]: [string, any]) => (
-                              <div key={key} className="bg-gray-900 rounded-lg p-4 border border-green-900/30">
-                                <h5 className="text-white font-medium mb-2 capitalize">
-                                  {key.replace(/_/g, ' ')}
-                                </h5>
-                                <p className="text-gray-400 text-sm">{value.explanation}</p>
-                                <p className="text-green-400 text-sm mt-2">{value.you_benefit}</p>
-                              </div>
-                            ))}
+                    {/* Why It Works */}
+                    <div className="mt-6">
+                      <h4 className="text-lg font-medium text-green-400 mb-4 flex items-center gap-2">
+                        <TrendingUp className="w-5 h-5" />
+                        Why It Works
+                      </h4>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {Object.entries(strategyExplanation.why_it_works).map(([key, value]) => (
+                          <div key={key} className="bg-gray-900 rounded-lg p-4 border border-green-900/30">
+                            <h5 className="text-white font-medium mb-2 capitalize">
+                              {key.replace(/_/g, ' ')}
+                            </h5>
+                            <p className="text-gray-400 text-sm">{value.explanation}</p>
+                            <p className="text-green-400 text-sm mt-2">{value.you_benefit}</p>
                           </div>
-                        </div>
-
-                        {/* Why It Can Fail */}
-                        <div className="mt-6">
-                          <h4 className="text-lg font-medium text-red-400 mb-4 flex items-center gap-2">
-                            <TrendingDown className="w-5 h-5" />
-                            Why It Can Fail
-                          </h4>
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            {Object.entries(strategy.why_it_can_fail || {}).map(([key, value]: [string, any]) => (
-                              <div key={key} className="bg-gray-900 rounded-lg p-4 border border-red-900/30">
-                                <h5 className="text-white font-medium mb-2 capitalize">
-                                  {key.replace(/_/g, ' ')}
-                                </h5>
-                                <p className="text-gray-400 text-sm">{value.explanation}</p>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Realistic Expectations */}
-                        <div className="mt-6">
-                          <h4 className="text-lg font-medium text-blue-400 mb-4 flex items-center gap-2">
-                            <Target className="w-5 h-5" />
-                            Realistic Expectations
-                          </h4>
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                            {Object.entries(strategy.realistic_expectations || {}).map(([key, value]) => (
-                              <div key={key} className="bg-gray-900 rounded-lg p-4 text-center">
-                                <p className="text-gray-400 text-sm capitalize">{key.replace(/_/g, ' ')}</p>
-                                <p className="text-white font-bold text-lg mt-1">{String(value)}</p>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
-                        {/* Bottom Line */}
-                        <div className="mt-6 bg-orange-900/30 rounded-lg p-4 border border-orange-700">
-                          <p className="text-gray-200">{strategy.bottom_line}</p>
-                        </div>
+                        ))}
                       </div>
-                    </>
-                  ) : (
-                    <div className="bg-gray-800 rounded-lg p-8 border border-gray-700 text-center">
-                      <Brain className="w-12 h-12 text-gray-600 mx-auto mb-4" />
-                      <p className="text-gray-400">Loading strategy explanation...</p>
                     </div>
-                  )}
+
+                    {/* Why It Can Fail */}
+                    <div className="mt-6">
+                      <h4 className="text-lg font-medium text-red-400 mb-4 flex items-center gap-2">
+                        <TrendingDown className="w-5 h-5" />
+                        Why It Can Fail
+                      </h4>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {Object.entries(strategyExplanation.why_it_can_fail).map(([key, value]) => (
+                          <div key={key} className="bg-gray-900 rounded-lg p-4 border border-red-900/30">
+                            <h5 className="text-white font-medium mb-2 capitalize">
+                              {key.replace(/_/g, ' ')}
+                            </h5>
+                            <p className="text-gray-400 text-sm">{value.explanation}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Realistic Expectations */}
+                    <div className="mt-6">
+                      <h4 className="text-lg font-medium text-blue-400 mb-4 flex items-center gap-2">
+                        <Target className="w-5 h-5" />
+                        Realistic Expectations
+                      </h4>
+                      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                        {Object.entries(strategyExplanation.realistic_expectations).map(([key, value]) => (
+                          <div key={key} className="bg-gray-900 rounded-lg p-4 text-center">
+                            <p className="text-gray-400 text-sm capitalize">{key.replace(/_/g, ' ')}</p>
+                            <p className="text-white font-bold text-lg mt-1">{String(value)}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Bottom Line */}
+                    <div className="mt-6 bg-orange-900/30 rounded-lg p-4 border border-orange-700">
+                      <p className="text-gray-200">{strategyExplanation.bottom_line}</p>
+                    </div>
+                  </div>
                 </div>
               )}
             </>
