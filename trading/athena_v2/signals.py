@@ -56,6 +56,54 @@ try:
 except ImportError:
     DATA_PROVIDER_AVAILABLE = False
 
+# GEX Directional ML - predicts BULLISH/BEARISH/FLAT from GEX structure
+GEX_DIRECTIONAL_ML_AVAILABLE = False
+try:
+    from quant.gex_directional_ml import GEXDirectionalPredictor, Direction, DirectionalPrediction
+    GEX_DIRECTIONAL_ML_AVAILABLE = True
+except ImportError:
+    GEXDirectionalPredictor = None
+    Direction = None
+    DirectionalPrediction = None
+
+# Ensemble Strategy - combines multiple signal sources with learned weights
+ENSEMBLE_AVAILABLE = False
+try:
+    from quant.ensemble_strategy import get_ensemble_signal, EnsembleSignal, StrategySignal
+    ENSEMBLE_AVAILABLE = True
+except ImportError:
+    get_ensemble_signal = None
+    EnsembleSignal = None
+    StrategySignal = None
+
+# ML Regime Classifier - replaces hard-coded GEX thresholds with learned models
+ML_REGIME_AVAILABLE = False
+try:
+    from quant.ml_regime_classifier import MLRegimeClassifier, MLPrediction as RegimePrediction, MLRegimeAction
+    ML_REGIME_AVAILABLE = True
+except ImportError:
+    MLRegimeClassifier = None
+    RegimePrediction = None
+    MLRegimeAction = None
+
+# IV Solver - accurate implied volatility calculation
+IV_SOLVER_AVAILABLE = False
+try:
+    from quant.iv_solver import IVSolver, calculate_iv_from_price
+    IV_SOLVER_AVAILABLE = True
+except ImportError:
+    IVSolver = None
+    calculate_iv_from_price = None
+
+# Walk-Forward Optimizer - parameter validation
+WALK_FORWARD_AVAILABLE = False
+try:
+    from quant.walk_forward_optimizer import WalkForwardOptimizer, WalkForwardResult
+    WALK_FORWARD_AVAILABLE = True
+except ImportError:
+    WalkForwardOptimizer = None
+    WalkForwardResult = None
+
 
 class SignalGenerator:
     """
@@ -106,6 +154,49 @@ class SignalGenerator:
                 logger.info("SignalGenerator: Oracle initialized")
             except Exception as e:
                 logger.warning(f"Oracle init failed: {e}")
+
+        # GEX Directional ML - predicts BULLISH/BEARISH/FLAT from GEX structure
+        self.gex_directional_ml = None
+        if GEX_DIRECTIONAL_ML_AVAILABLE:
+            try:
+                self.gex_directional_ml = GEXDirectionalPredictor()
+                # Try to load pre-trained model
+                if hasattr(self.gex_directional_ml, 'load_model'):
+                    self.gex_directional_ml.load_model()
+                logger.info("SignalGenerator: GEX Directional ML initialized")
+            except Exception as e:
+                logger.warning(f"GEX Directional ML init failed: {e}")
+
+    def get_gex_directional_prediction(self, gex_data: Dict, vix: float = 20.0) -> Optional[Dict]:
+        """
+        Get GEX Directional ML prediction (BULLISH/BEARISH/FLAT).
+
+        Uses trained XGBoost model to predict market direction from GEX structure.
+        This is ADDITIONAL signal confidence for directional bots.
+        """
+        if not self.gex_directional_ml:
+            return None
+
+        try:
+            prediction = self.gex_directional_ml.predict(gex_data, vix)
+
+            if prediction:
+                result = {
+                    'direction': prediction.direction.value,  # BULLISH/BEARISH/FLAT
+                    'confidence': prediction.confidence,
+                    'probabilities': prediction.probabilities,
+                    'model_name': 'GEX_DIRECTIONAL_ML',
+                }
+
+                logger.info(f"[ATHENA GEX DIRECTIONAL ML] Direction: {prediction.direction.value}, "
+                           f"Confidence: {prediction.confidence:.1%}")
+
+                return result
+
+        except Exception as e:
+            logger.debug(f"GEX Directional ML prediction error: {e}")
+
+        return None
 
     def get_gex_data(self) -> Optional[Dict[str, Any]]:
         """
@@ -433,67 +524,82 @@ class SignalGenerator:
             logger.info(f"Wall filter failed: {wall_reason}")
             return None
 
-        # Step 3: Get ML signal (optional confirmation)
+        # Step 3: Get ML signal from 5 GEX probability models (PREFERRED SOURCE)
         ml_signal = self.get_ml_signal(gex_data)
         ml_direction = ml_signal.get('direction') if ml_signal else None
         ml_confidence = ml_signal.get('confidence', 0) if ml_signal else 0
+        ml_win_prob = ml_signal.get('win_probability', 0) if ml_signal else 0
 
-        # Step 3.5: Get Oracle advice (ATHENA-specific predictions)
+        # Step 3.5: Get Oracle advice (BACKUP SOURCE - ML takes precedence)
         oracle = self.get_oracle_advice(gex_data)
         oracle_direction = oracle.get('direction', 'FLAT') if oracle else 'FLAT'
         oracle_confidence = oracle.get('confidence', 0) if oracle else 0
         oracle_win_prob = oracle.get('win_probability', 0) if oracle else 0
 
-        # Step 3.6: Validate Oracle advice - check for SKIP and win probability
-        # Log FULL Oracle analysis for frontend visibility
+        # ============================================================
+        # ML MODEL TAKES PRECEDENCE OVER ORACLE
+        # The 5 GEX probability models were backtested with high win rates
+        # Oracle is only used as backup when ML is not available
+        # ============================================================
+
+        # Determine which source to use for win probability
+        use_ml_prediction = ml_signal is not None and ml_win_prob > 0
+        effective_win_prob = ml_win_prob if use_ml_prediction else oracle_win_prob
+        prediction_source = "ML_5_MODEL_ENSEMBLE" if use_ml_prediction else "ORACLE"
+
+        # Log ML analysis FIRST (it's the preferred source)
+        if ml_signal:
+            logger.info(f"[ATHENA ML ANALYSIS] *** PRIMARY PREDICTION SOURCE ***")
+            logger.info(f"  Direction: {ml_direction or 'N/A'}")
+            logger.info(f"  Confidence: {ml_confidence:.1%}")
+            logger.info(f"  Win Probability: {ml_win_prob:.1%}")
+            logger.info(f"  Model: {ml_signal.get('model_name', 'GEX_5_MODEL_ENSEMBLE')}")
+            if ml_signal.get('model_predictions'):
+                preds = ml_signal['model_predictions']
+                logger.info(f"  Model Breakdown:")
+                logger.info(f"    Flip Gravity: {preds.get('flip_gravity', 0):.1%}")
+                logger.info(f"    Magnet Attraction: {preds.get('magnet_attraction', 0):.1%}")
+                logger.info(f"    Pin Zone: {preds.get('pin_zone', 0):.1%}")
+        else:
+            logger.info(f"[ATHENA] ML models not available, falling back to Oracle")
+
+        # Log Oracle analysis (backup source)
         if oracle:
-            # Detailed Oracle Math Logging for Frontend
-            logger.info(f"[ATHENA ORACLE ANALYSIS]")
+            logger.info(f"[ATHENA ORACLE ANALYSIS] {'(BACKUP - ML unavailable)' if not use_ml_prediction else '(informational)'}")
             logger.info(f"  Win Probability: {oracle_win_prob:.1%}")
             logger.info(f"  Confidence: {oracle_confidence:.1%}")
             logger.info(f"  Direction: {oracle_direction}")
             logger.info(f"  Advice: {oracle.get('advice', 'N/A')}")
-            logger.info(f"  Min Required: {self.config.min_win_probability:.1%}")
 
-            # Log top factors that influenced the prediction
             if oracle.get('top_factors'):
-                logger.info(f"  Top Factors Influencing Prediction:")
-                for i, factor in enumerate(oracle['top_factors'][:5], 1):
+                logger.info(f"  Top Factors:")
+                for i, factor in enumerate(oracle['top_factors'][:3], 1):
                     factor_name = factor.get('factor', 'unknown')
                     impact = factor.get('impact', 0)
                     direction_sign = "+" if impact > 0 else ""
                     logger.info(f"    {i}. {factor_name}: {direction_sign}{impact:.3f}")
 
-            # Log reasoning
-            if oracle.get('reasoning'):
-                logger.info(f"  Oracle Reasoning: {oracle.get('reasoning')[:200]}...")
-
-            # SKIP_TODAY from Oracle overrides everything
+            # Oracle SKIP_TODAY is informational only when ML is available
             if oracle.get('advice') == 'SKIP_TODAY':
-                logger.info(f"[ATHENA TRADE BLOCKED] Oracle advises SKIP_TODAY")
-                logger.info(f"  Reason: {oracle.get('reasoning', 'No reason provided')}")
-                return None
+                if use_ml_prediction:
+                    logger.info(f"[ATHENA] Oracle advises SKIP_TODAY but ML override active")
+                    logger.info(f"  ML Win Prob: {ml_win_prob:.1%} will be used instead")
+                else:
+                    logger.info(f"[ATHENA ORACLE INFO] Oracle advises SKIP_TODAY (informational only)")
+                    logger.info(f"  Bot will use its own threshold: {self.config.min_win_probability:.1%}")
 
-            # Validate win probability meets minimum threshold
-            min_win_prob = self.config.min_win_probability
-            if oracle_win_prob > 0 and oracle_win_prob < min_win_prob:
-                logger.info(f"[ATHENA TRADE BLOCKED] Win probability below threshold")
-                logger.info(f"  Oracle Win Prob: {oracle_win_prob:.1%}")
-                logger.info(f"  Minimum Required: {min_win_prob:.1%}")
-                logger.info(f"  Shortfall: {(min_win_prob - oracle_win_prob):.1%}")
-                return None
+        # Validate win probability meets minimum threshold (using effective source)
+        min_win_prob = self.config.min_win_probability
+        logger.info(f"[ATHENA DECISION] Using {prediction_source} win probability: {effective_win_prob:.1%}")
 
-            logger.info(f"[ATHENA ORACLE PASSED] Win Prob {oracle_win_prob:.1%} >= {min_win_prob:.1%} minimum")
-        else:
-            logger.info(f"[ATHENA] Oracle not available, using wall-based confidence only")
+        if effective_win_prob > 0 and effective_win_prob < min_win_prob:
+            logger.info(f"[ATHENA TRADE BLOCKED] Win probability below threshold")
+            logger.info(f"  {prediction_source} Win Prob: {effective_win_prob:.1%}")
+            logger.info(f"  Minimum Required: {min_win_prob:.1%}")
+            logger.info(f"  Shortfall: {(min_win_prob - effective_win_prob):.1%}")
+            return None
 
-        # Log ML analysis if available
-        if ml_signal:
-            logger.info(f"[ATHENA ML ANALYSIS]")
-            logger.info(f"  Direction: {ml_direction or 'N/A'}")
-            logger.info(f"  Confidence: {ml_confidence:.1%}")
-            logger.info(f"  Win Probability: {ml_signal.get('win_probability', 0):.1%}")
-            logger.info(f"  Model: {ml_signal.get('model_name', 'unknown')}")
+        logger.info(f"[ATHENA PASSED] {prediction_source} Win Prob {effective_win_prob:.1%} >= {min_win_prob:.1%} minimum")
 
         # Step 4: Determine final direction
         # IMPROVED: Oracle with very high confidence can override wall direction
@@ -534,6 +640,32 @@ class SignalGenerator:
                 # Penalty when ML disagrees
                 confidence -= 0.10
 
+        # ============================================================
+        # GEX DIRECTIONAL ML - Additional direction confirmation layer
+        # Trained XGBoost model predicts BULLISH/BEARISH/FLAT from GEX structure
+        # ============================================================
+        gex_dir_prediction = self.get_gex_directional_prediction(gex_data, vix)
+        if gex_dir_prediction:
+            gex_dir = gex_dir_prediction.get('direction', 'FLAT')
+            gex_dir_conf = gex_dir_prediction.get('confidence', 0)
+
+            logger.info(f"[ATHENA GEX DIRECTIONAL ML] Direction: {gex_dir}, Confidence: {gex_dir_conf:.1%}")
+
+            # Map GEX direction to ATHENA direction
+            gex_direction_map = {'BULLISH': 'BULLISH', 'BEARISH': 'BEARISH', 'FLAT': None}
+            mapped_gex_dir = gex_direction_map.get(gex_dir)
+
+            if mapped_gex_dir == direction and gex_dir_conf > 0.6:
+                # GEX Directional ML confirms direction - boost confidence
+                boost = gex_dir_conf * 0.15  # Up to 15% boost
+                confidence = min(0.95, confidence + boost)
+                logger.info(f"[GEX DIR ML CONFIRMS] {gex_dir} matches {direction} (+{boost:.1%} confidence)")
+            elif mapped_gex_dir and mapped_gex_dir != direction and gex_dir_conf > 0.7:
+                # GEX Directional ML disagrees strongly - reduce confidence
+                penalty = (gex_dir_conf - 0.7) * 0.20  # Up to 6% penalty
+                confidence -= penalty
+                logger.info(f"[GEX DIR ML DISAGREES] {gex_dir} vs {direction} (-{penalty:.1%} confidence)")
+
         # Oracle adjustments (when not overriding)
         if oracle and direction_source != "ORACLE_OVERRIDE":
             if oracle_direction == direction and oracle_confidence > 0.6:
@@ -546,10 +678,8 @@ class SignalGenerator:
                 penalty = (oracle_confidence - 0.6) * 0.25  # 0% to 10% penalty
                 confidence -= penalty
                 logger.info(f"Oracle disagrees: {oracle_direction} vs wall {direction} (-{penalty:.0%})")
-            # Oracle SKIP_TODAY overrides (keep this - explicit skip request)
-            if oracle.get('advice') == 'SKIP_TODAY':
-                logger.info(f"Oracle advises SKIP_TODAY: {oracle.get('reasoning', '')}")
-                return None
+            # NOTE: Oracle SKIP_TODAY is informational only - ML win prob takes precedence
+            # See earlier logic at line 544-551 - bot uses its own min_win_probability threshold
 
             # APPLY top_factors to adjust confidence based on current conditions
             if oracle.get('top_factors'):

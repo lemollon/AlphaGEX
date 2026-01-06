@@ -407,6 +407,93 @@ class GEXSignalIntegration:
             }
         }
 
+    def get_combined_signal(
+        self,
+        ticker: str = "SPY",
+        spot_price: float = 0,
+        call_wall: float = 0,
+        put_wall: float = 0,
+        vix: float = 20.0,
+        **kwargs
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get combined ML signal from all 5 GEX probability models.
+
+        This is the method ATHENA/ICARUS call for ML predictions.
+        It runs all trained models and returns a unified signal.
+
+        Args:
+            ticker: Symbol (SPY, SPX)
+            spot_price: Current price
+            call_wall: GEX call wall (resistance)
+            put_wall: GEX put wall (support)
+            vix: Current VIX level
+            **kwargs: Additional GEX data
+
+        Returns:
+            Dict with direction, confidence, win_probability, model_name
+            or None if models not available
+        """
+        if not spot_price:
+            logger.warning("get_combined_signal called without spot_price")
+            return None
+
+        # Build GEX data dict from params
+        gex_data = {
+            'spot_price': spot_price,
+            'call_wall': call_wall or spot_price * 1.02,
+            'put_wall': put_wall or spot_price * 0.98,
+            'vix': vix,
+            'net_gex': kwargs.get('net_gex', 0),
+            'call_gex': kwargs.get('call_gex', 0),
+            'put_gex': kwargs.get('put_gex', 0),
+            'flip_point': kwargs.get('flip_point', spot_price),
+            'regime': kwargs.get('gex_regime', 'NEUTRAL'),
+        }
+
+        # Get signal from 5 probability models
+        signal = self.get_trading_signal(gex_data, vix, self._prev_gex_data)
+
+        # Update historical context
+        self._prev_gex_data = gex_data.copy()
+        self._prev_date = datetime.now().strftime("%Y-%m-%d")
+
+        # Map direction to ATHENA format
+        direction_map = {
+            'UP': 'BULLISH',
+            'DOWN': 'BEARISH',
+            'FLAT': 'NEUTRAL'
+        }
+
+        direction = direction_map.get(signal.direction, 'NEUTRAL')
+
+        # Calculate win probability from model ensemble
+        # Use overall_conviction as the base, boosted by directional confidence
+        win_probability = signal.overall_conviction
+        if signal.direction_confidence > 0.6:
+            # Boost win prob when direction is clear
+            win_probability = min(0.85, win_probability + 0.10)
+
+        logger.info(f"[GEX ML SIGNAL] Direction: {direction}, "
+                   f"Confidence: {signal.direction_confidence:.1%}, "
+                   f"Win Prob: {win_probability:.1%}")
+
+        return {
+            'direction': direction,
+            'confidence': signal.direction_confidence,
+            'win_probability': win_probability,
+            'model_name': 'GEX_5_MODEL_ENSEMBLE',
+            'advice': signal.trade_recommendation,
+            'spread_type': signal.suggested_spread,
+            'reasoning': signal.reasoning,
+            'model_predictions': {
+                'flip_gravity': signal.flip_gravity_prob,
+                'magnet_attraction': signal.magnet_attraction_prob,
+                'pin_zone': signal.pin_zone_prob,
+                'volatility': signal.expected_volatility_pct
+            }
+        }
+
 
 # Global instance for easy access
 _signal_integration = None

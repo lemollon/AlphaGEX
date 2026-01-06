@@ -33,6 +33,14 @@ except ImportError:
     OracleAdvisor = None
 
 try:
+    from quant.ares_ml_advisor import AresMLAdvisor, MLPrediction
+    ARES_ML_AVAILABLE = True
+except ImportError:
+    ARES_ML_AVAILABLE = False
+    AresMLAdvisor = None
+    MLPrediction = None
+
+try:
     from quant.kronos_gex_calculator import KronosGEXCalculator
     KRONOS_AVAILABLE = True
 except ImportError:
@@ -51,6 +59,44 @@ try:
     DATA_PROVIDER_AVAILABLE = True
 except ImportError:
     DATA_PROVIDER_AVAILABLE = False
+
+# Ensemble Strategy - combines multiple signal sources with learned weights
+ENSEMBLE_AVAILABLE = False
+try:
+    from quant.ensemble_strategy import get_ensemble_signal, EnsembleSignal, StrategySignal
+    ENSEMBLE_AVAILABLE = True
+except ImportError:
+    get_ensemble_signal = None
+    EnsembleSignal = None
+    StrategySignal = None
+
+# ML Regime Classifier - replaces hard-coded GEX thresholds with learned models
+ML_REGIME_AVAILABLE = False
+try:
+    from quant.ml_regime_classifier import MLRegimeClassifier, MLPrediction as RegimePrediction, MLRegimeAction
+    ML_REGIME_AVAILABLE = True
+except ImportError:
+    MLRegimeClassifier = None
+    RegimePrediction = None
+    MLRegimeAction = None
+
+# IV Solver - accurate implied volatility calculation
+IV_SOLVER_AVAILABLE = False
+try:
+    from quant.iv_solver import IVSolver, calculate_iv_from_price
+    IV_SOLVER_AVAILABLE = True
+except ImportError:
+    IVSolver = None
+    calculate_iv_from_price = None
+
+# Walk-Forward Optimizer - parameter validation
+WALK_FORWARD_AVAILABLE = False
+try:
+    from quant.walk_forward_optimizer import WalkForwardOptimizer, WalkForwardResult
+    WALK_FORWARD_AVAILABLE = True
+except ImportError:
+    WalkForwardOptimizer = None
+    WalkForwardResult = None
 
 
 class SignalGenerator:
@@ -80,14 +126,91 @@ class SignalGenerator:
             except Exception as e:
                 logger.warning(f"Tradier GEX init failed: {e}")
 
-        # Oracle Advisor
+        # ARES ML Advisor (PRIMARY - trained on KRONOS backtests with ~70% win rate)
+        self.ares_ml = None
+        if ARES_ML_AVAILABLE:
+            try:
+                self.ares_ml = AresMLAdvisor()
+                if self.ares_ml.is_trained:
+                    logger.info(f"ARES SignalGenerator: ML Advisor v{self.ares_ml.model_version} loaded (PRIMARY)")
+                else:
+                    logger.info("ARES SignalGenerator: ML Advisor initialized (not yet trained)")
+            except Exception as e:
+                logger.warning(f"ARES ML Advisor init failed: {e}")
+
+        # Oracle Advisor (BACKUP - used when ML not available)
         self.oracle = None
         if ORACLE_AVAILABLE:
             try:
                 self.oracle = OracleAdvisor()
-                logger.info("ARES SignalGenerator: Oracle initialized")
+                logger.info("ARES SignalGenerator: Oracle initialized (BACKUP)")
             except Exception as e:
                 logger.warning(f"Oracle init failed: {e}")
+
+        # Ensemble Strategy Weighter - combines multiple signal sources
+        self.ensemble_available = ENSEMBLE_AVAILABLE
+        if ENSEMBLE_AVAILABLE:
+            logger.info("ARES SignalGenerator: Ensemble Strategy available")
+
+    def get_ensemble_boost(self, market_data: Dict, ml_prediction: Dict = None, oracle: Dict = None) -> Dict:
+        """
+        Get ensemble signal boost/confirmation from multiple strategy sources.
+
+        The ensemble combines: GEX signals, ML predictions, and Oracle with learned weights.
+        Returns a multiplier for position sizing based on signal agreement.
+        """
+        if not ENSEMBLE_AVAILABLE:
+            return {'boost': 1.0, 'should_trade': True, 'confidence': 0.7, 'reasoning': 'Ensemble not available'}
+
+        try:
+            # Build GEX data for ensemble
+            gex_data = {
+                'recommended_action': 'SELL_IC',  # Iron Condor is neutral/range-bound
+                'confidence': 70,
+                'reasoning': f"VIX={market_data.get('vix', 20):.1f}, EM=${market_data.get('expected_move', 0):.0f}"
+            }
+
+            # Build ML prediction data
+            ml_data = None
+            if ml_prediction:
+                ml_data = {
+                    'predicted_action': 'SELL_IC',
+                    'confidence': ml_prediction.get('confidence', 0) * 100,
+                    'is_trained': True
+                }
+
+            # Get current regime from GEX
+            current_regime = market_data.get('gex_regime', 'UNKNOWN')
+            if current_regime == 'POSITIVE':
+                current_regime = 'POSITIVE_GAMMA'
+            elif current_regime == 'NEGATIVE':
+                current_regime = 'NEGATIVE_GAMMA'
+
+            # Get ensemble signal
+            ensemble = get_ensemble_signal(
+                symbol=self.config.ticker,
+                gex_data=gex_data,
+                ml_prediction=ml_data,
+                current_regime=current_regime
+            )
+
+            if ensemble:
+                logger.info(f"[ARES ENSEMBLE] Signal: {ensemble.final_signal.value}, "
+                           f"Confidence: {ensemble.confidence:.0f}%, "
+                           f"Size Multiplier: {ensemble.position_size_multiplier:.0%}")
+
+                return {
+                    'boost': ensemble.position_size_multiplier,
+                    'should_trade': ensemble.should_trade,
+                    'confidence': ensemble.confidence / 100,
+                    'signal': ensemble.final_signal.value,
+                    'reasoning': ensemble.reasoning
+                }
+
+        except Exception as e:
+            logger.debug(f"Ensemble signal error: {e}")
+
+        return {'boost': 1.0, 'should_trade': True, 'confidence': 0.7, 'reasoning': 'Ensemble fallback'}
 
     def get_market_data(self) -> Optional[Dict[str, Any]]:
         """Get current market data including price, VIX, and GEX"""
@@ -366,6 +489,81 @@ class SignalGenerator:
             'max_loss': round(max_loss, 2),
         }
 
+    def get_ml_prediction(self, market_data: Dict) -> Optional[Dict[str, Any]]:
+        """
+        Get prediction from ARES ML Advisor (PRIMARY prediction source).
+
+        This model was trained on KRONOS backtests with ~70% win rate.
+        It takes precedence over Oracle for trading decisions.
+
+        Returns dict with:
+        - win_probability: Calibrated probability of winning (key metric)
+        - confidence: Model confidence score
+        - advice: TRADE_FULL, TRADE_REDUCED, or SKIP_TODAY
+        - suggested_risk_pct: Position size recommendation
+        - suggested_sd_multiplier: Strike width recommendation
+        - top_factors: Feature importances explaining the decision
+        """
+        if not self.ares_ml:
+            return None
+
+        try:
+            now = datetime.now(CENTRAL_TZ)
+            day_of_week = now.weekday()
+
+            # Calculate GEX features
+            gex_regime_str = market_data.get('gex_regime', 'NEUTRAL').upper()
+            gex_regime_positive = 1 if gex_regime_str == 'POSITIVE' else 0
+
+            spot = market_data['spot_price']
+            flip_point = market_data.get('flip_point', spot)
+            gex_distance_to_flip_pct = abs(spot - flip_point) / spot * 100 if spot > 0 else 0
+
+            put_wall = market_data.get('put_wall', spot * 0.98)
+            call_wall = market_data.get('call_wall', spot * 1.02)
+            gex_between_walls = 1 if put_wall <= spot <= call_wall else 0
+
+            # Get ML prediction
+            prediction = self.ares_ml.predict(
+                vix=market_data['vix'],
+                day_of_week=day_of_week,
+                price=spot,
+                price_change_1d=market_data.get('price_change_1d', 0),
+                expected_move_pct=(market_data.get('expected_move', 0) / spot * 100) if spot > 0 else 1.0,
+                win_rate_30d=0.70,  # Use historical baseline
+                vix_percentile_30d=50,  # Default if not available
+                vix_change_1d=0,
+                gex_normalized=market_data.get('gex_normalized', 0),
+                gex_regime_positive=gex_regime_positive,
+                gex_distance_to_flip_pct=gex_distance_to_flip_pct,
+                gex_between_walls=gex_between_walls,
+            )
+
+            if prediction:
+                # Format top factors for logging
+                top_factors = []
+                if hasattr(prediction, 'top_factors') and prediction.top_factors:
+                    for factor_name, impact in prediction.top_factors:
+                        top_factors.append({'factor': factor_name, 'impact': impact})
+
+                return {
+                    'win_probability': prediction.win_probability,
+                    'confidence': prediction.confidence,
+                    'advice': prediction.advice.value if prediction.advice else 'SKIP_TODAY',
+                    'suggested_risk_pct': prediction.suggested_risk_pct,
+                    'suggested_sd_multiplier': prediction.suggested_sd_multiplier,
+                    'top_factors': top_factors,
+                    'probabilities': prediction.probabilities,
+                    'model_version': prediction.model_version,
+                    'model_name': 'ARES_ML_ADVISOR',
+                }
+        except Exception as e:
+            logger.warning(f"ARES ML prediction error: {e}")
+            import traceback
+            traceback.print_exc()
+
+        return None
+
     def get_oracle_advice(self, market_data: Dict) -> Optional[Dict[str, Any]]:
         """
         Get Oracle ML advice if available.
@@ -490,68 +688,108 @@ class SignalGenerator:
             logger.info(f"VIX filter blocked: {vix_reason}")
             return None
 
-        # Step 3: Get Oracle advice (FULL context)
+        # ============================================================
+        # Step 3: ML MODEL TAKES PRECEDENCE OVER ORACLE
+        # ARES ML Advisor trained on KRONOS backtests (~70% win rate)
+        # Oracle is only used as backup when ML is not available
+        # ============================================================
+
+        # Step 3a: Try ML prediction first (PRIMARY SOURCE)
+        ml_prediction = self.get_ml_prediction(market_data)
+        ml_win_prob = ml_prediction.get('win_probability', 0) if ml_prediction else 0
+        ml_confidence = ml_prediction.get('confidence', 0) if ml_prediction else 0
+
+        # Step 3b: Get Oracle advice (BACKUP SOURCE)
         oracle = self.get_oracle_advice(market_data)
-        confidence = oracle.get('confidence', 0.7) if oracle else 0.7
-        win_probability = oracle.get('win_probability', 0) if oracle else 0
+        oracle_win_prob = oracle.get('win_probability', 0) if oracle else 0
+        oracle_confidence = oracle.get('confidence', 0.7) if oracle else 0.7
 
-        # Step 3.5: Validate Oracle advice - SKIP_TODAY overrides everything
-        # Log FULL Oracle analysis for frontend visibility
+        # Determine which source to use
+        use_ml_prediction = ml_prediction is not None and ml_win_prob > 0
+        effective_win_prob = ml_win_prob if use_ml_prediction else oracle_win_prob
+        confidence = ml_confidence if use_ml_prediction else oracle_confidence
+        prediction_source = "ARES_ML_ADVISOR" if use_ml_prediction else "ORACLE"
+
+        # Log ML analysis FIRST (PRIMARY source)
+        if ml_prediction:
+            logger.info(f"[ARES ML ANALYSIS] *** PRIMARY PREDICTION SOURCE ***")
+            logger.info(f"  Win Probability: {ml_win_prob:.1%}")
+            logger.info(f"  Confidence: {ml_confidence:.1%}")
+            logger.info(f"  Advice: {ml_prediction.get('advice', 'N/A')}")
+            logger.info(f"  Model Version: {ml_prediction.get('model_version', 'unknown')}")
+            logger.info(f"  Suggested Risk: {ml_prediction.get('suggested_risk_pct', 10):.1f}%")
+            logger.info(f"  Suggested SD: {ml_prediction.get('suggested_sd_multiplier', 1.0):.2f}x")
+
+            if ml_prediction.get('top_factors'):
+                logger.info(f"  Top Factors (Feature Importance):")
+                for i, factor in enumerate(ml_prediction['top_factors'][:5], 1):
+                    factor_name = factor.get('factor', 'unknown')
+                    impact = factor.get('impact', 0)
+                    logger.info(f"    {i}. {factor_name}: {impact:.3f}")
+        else:
+            logger.info(f"[ARES] ML Advisor not available, falling back to Oracle")
+
+        # Log Oracle analysis (BACKUP source)
         if oracle:
-            # Detailed Oracle Math Logging for Frontend
-            logger.info(f"[ARES ORACLE ANALYSIS]")
-            logger.info(f"  Win Probability: {win_probability:.1%}")
-            logger.info(f"  Confidence: {confidence:.1%}")
+            logger.info(f"[ARES ORACLE ANALYSIS] {'(BACKUP)' if not use_ml_prediction else '(informational)'}")
+            logger.info(f"  Win Probability: {oracle_win_prob:.1%}")
+            logger.info(f"  Confidence: {oracle_confidence:.1%}")
             logger.info(f"  Advice: {oracle.get('advice', 'N/A')}")
-            logger.info(f"  Min Required: {self.config.min_win_probability:.1%}")
 
-            # Log top factors that influenced the prediction
             if oracle.get('top_factors'):
-                logger.info(f"  Top Factors Influencing Prediction:")
-                for i, factor in enumerate(oracle['top_factors'][:5], 1):
+                logger.info(f"  Top Factors:")
+                for i, factor in enumerate(oracle['top_factors'][:3], 1):
                     factor_name = factor.get('factor', 'unknown')
                     impact = factor.get('impact', 0)
                     direction = "+" if impact > 0 else ""
                     logger.info(f"    {i}. {factor_name}: {direction}{impact:.3f}")
 
                 # APPLY top_factors to adjust confidence based on current conditions
-                confidence, factor_adjustments = self.adjust_confidence_from_top_factors(
-                    confidence, oracle['top_factors'], market_data
-                )
+                if not use_ml_prediction:
+                    confidence, factor_adjustments = self.adjust_confidence_from_top_factors(
+                        confidence, oracle['top_factors'], market_data
+                    )
 
-            # Log probability breakdown if available
-            if oracle.get('probabilities'):
-                probs = oracle['probabilities']
-                logger.info(f"  Probability Breakdown:")
-                for outcome, prob in probs.items():
-                    logger.info(f"    {outcome}: {prob:.1%}")
-
-            # Log suggested adjustments
-            logger.info(f"  Oracle Suggestions:")
-            logger.info(f"    SD Multiplier: {oracle.get('suggested_sd_multiplier', 1.0):.2f}x")
-            logger.info(f"    Use GEX Walls: {oracle.get('use_gex_walls', False)}")
-            if oracle.get('suggested_put_strike'):
-                logger.info(f"    Suggested Put Strike: ${oracle.get('suggested_put_strike')}")
-            if oracle.get('suggested_call_strike'):
-                logger.info(f"    Suggested Call Strike: ${oracle.get('suggested_call_strike')}")
-
+            # Oracle SKIP_TODAY is informational only when ML is available
             if oracle.get('advice') == 'SKIP_TODAY':
-                logger.info(f"[ARES TRADE BLOCKED] Oracle advises SKIP_TODAY")
-                logger.info(f"  Reason: {oracle.get('reasoning', 'No reason provided')}")
+                if use_ml_prediction:
+                    logger.info(f"[ARES] Oracle advises SKIP_TODAY but ML override active")
+                    logger.info(f"  ML Win Prob: {ml_win_prob:.1%} will be used instead")
+                else:
+                    logger.info(f"[ARES ORACLE INFO] Oracle advises SKIP_TODAY (informational only)")
+                    logger.info(f"  Bot will use its own threshold: {self.config.min_win_probability:.1%}")
+
+        # Validate win probability meets minimum threshold (using effective source)
+        min_win_prob = self.config.min_win_probability
+        logger.info(f"[ARES DECISION] Using {prediction_source} win probability: {effective_win_prob:.1%}")
+
+        if effective_win_prob > 0 and effective_win_prob < min_win_prob:
+            logger.info(f"[ARES TRADE BLOCKED] Win probability below threshold")
+            logger.info(f"  {prediction_source} Win Prob: {effective_win_prob:.1%}")
+            logger.info(f"  Minimum Required: {min_win_prob:.1%}")
+            logger.info(f"  Shortfall: {(min_win_prob - effective_win_prob):.1%}")
+            return None
+
+        # Use ML's suggested SD multiplier if available
+        win_probability = effective_win_prob
+        if use_ml_prediction and ml_prediction.get('suggested_sd_multiplier'):
+            self._ml_suggested_sd = ml_prediction.get('suggested_sd_multiplier', 1.0)
+
+        logger.info(f"[ARES PASSED] {prediction_source} Win Prob {win_probability:.1%} >= {min_win_prob:.1%} minimum")
+
+        # ============================================================
+        # Step 3.5: ENSEMBLE STRATEGY - Multi-signal confirmation
+        # Combines GEX, ML, and learned regime weights for position sizing
+        # ============================================================
+        ensemble_result = self.get_ensemble_boost(market_data, ml_prediction, oracle)
+        if ensemble_result:
+            if not ensemble_result.get('should_trade', True):
+                logger.info(f"[ARES ENSEMBLE BLOCKED] Ensemble says don't trade: {ensemble_result.get('reasoning', 'No reason')}")
                 return None
 
-            # Validate win probability meets minimum threshold
-            min_win_prob = self.config.min_win_probability
-            if win_probability > 0 and win_probability < min_win_prob:
-                logger.info(f"[ARES TRADE BLOCKED] Win probability below threshold")
-                logger.info(f"  Oracle Win Prob: {win_probability:.1%}")
-                logger.info(f"  Minimum Required: {min_win_prob:.1%}")
-                logger.info(f"  Shortfall: {(min_win_prob - win_probability):.1%}")
-                return None
-
-            logger.info(f"[ARES ORACLE PASSED] Win Prob {win_probability:.1%} >= {min_win_prob:.1%} minimum")
-        else:
-            logger.info(f"[ARES] Oracle not available, using default confidence {confidence:.1%}")
+            ensemble_boost = ensemble_result.get('boost', 1.0)
+            if ensemble_boost != 1.0:
+                logger.info(f"[ARES ENSEMBLE] Position size multiplier: {ensemble_boost:.0%}")
 
         # Step 4: Calculate strikes (Oracle > GEX > SD priority)
         use_gex_walls = oracle.get('use_gex_walls', False) if oracle else False

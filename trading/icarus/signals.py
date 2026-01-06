@@ -56,6 +56,54 @@ try:
 except ImportError:
     DATA_PROVIDER_AVAILABLE = False
 
+# GEX Directional ML - predicts BULLISH/BEARISH/FLAT from GEX structure
+GEX_DIRECTIONAL_ML_AVAILABLE = False
+try:
+    from quant.gex_directional_ml import GEXDirectionalPredictor, Direction, DirectionalPrediction
+    GEX_DIRECTIONAL_ML_AVAILABLE = True
+except ImportError:
+    GEXDirectionalPredictor = None
+    Direction = None
+    DirectionalPrediction = None
+
+# Ensemble Strategy - combines multiple signal sources with learned weights
+ENSEMBLE_AVAILABLE = False
+try:
+    from quant.ensemble_strategy import get_ensemble_signal, EnsembleSignal, StrategySignal
+    ENSEMBLE_AVAILABLE = True
+except ImportError:
+    get_ensemble_signal = None
+    EnsembleSignal = None
+    StrategySignal = None
+
+# ML Regime Classifier - replaces hard-coded GEX thresholds with learned models
+ML_REGIME_AVAILABLE = False
+try:
+    from quant.ml_regime_classifier import MLRegimeClassifier, MLPrediction as RegimePrediction, MLRegimeAction
+    ML_REGIME_AVAILABLE = True
+except ImportError:
+    MLRegimeClassifier = None
+    RegimePrediction = None
+    MLRegimeAction = None
+
+# IV Solver - accurate implied volatility calculation
+IV_SOLVER_AVAILABLE = False
+try:
+    from quant.iv_solver import IVSolver, calculate_iv_from_price
+    IV_SOLVER_AVAILABLE = True
+except ImportError:
+    IVSolver = None
+    calculate_iv_from_price = None
+
+# Walk-Forward Optimizer - parameter validation
+WALK_FORWARD_AVAILABLE = False
+try:
+    from quant.walk_forward_optimizer import WalkForwardOptimizer, WalkForwardResult
+    WALK_FORWARD_AVAILABLE = True
+except ImportError:
+    WalkForwardOptimizer = None
+    WalkForwardResult = None
+
 
 class SignalGenerator:
     """
@@ -108,6 +156,47 @@ class SignalGenerator:
                 logger.info("ICARUS SignalGenerator: Oracle initialized")
             except Exception as e:
                 logger.warning(f"Oracle init failed: {e}")
+
+        # GEX Directional ML - predicts BULLISH/BEARISH/FLAT from GEX structure
+        self.gex_directional_ml = None
+        if GEX_DIRECTIONAL_ML_AVAILABLE:
+            try:
+                self.gex_directional_ml = GEXDirectionalPredictor()
+                if hasattr(self.gex_directional_ml, 'load_model'):
+                    self.gex_directional_ml.load_model()
+                logger.info("ICARUS SignalGenerator: GEX Directional ML initialized")
+            except Exception as e:
+                logger.warning(f"GEX Directional ML init failed: {e}")
+
+    def get_gex_directional_prediction(self, gex_data: Dict, vix: float = 20.0) -> Optional[Dict]:
+        """
+        Get GEX Directional ML prediction (BULLISH/BEARISH/FLAT).
+
+        Uses trained XGBoost model to predict market direction from GEX structure.
+        """
+        if not self.gex_directional_ml:
+            return None
+
+        try:
+            prediction = self.gex_directional_ml.predict(gex_data, vix)
+
+            if prediction:
+                result = {
+                    'direction': prediction.direction.value,
+                    'confidence': prediction.confidence,
+                    'probabilities': prediction.probabilities,
+                    'model_name': 'GEX_DIRECTIONAL_ML',
+                }
+
+                logger.info(f"[ICARUS GEX DIRECTIONAL ML] Direction: {prediction.direction.value}, "
+                           f"Confidence: {prediction.confidence:.1%}")
+
+                return result
+
+        except Exception as e:
+            logger.debug(f"GEX Directional ML prediction error: {e}")
+
+        return None
 
     def get_gex_data(self) -> Optional[Dict[str, Any]]:
         """
@@ -430,57 +519,80 @@ class SignalGenerator:
             logger.info(f"ICARUS wall filter failed: {wall_reason}")
             return None
 
-        # Step 3: Get ML signal (optional confirmation)
+        # Step 3: Get ML signal from 5 GEX probability models (PREFERRED SOURCE)
+        # ICARUS is AGGRESSIVE - ML models backtested with high win rates take precedence
         ml_signal = self.get_ml_signal(gex_data)
         ml_direction = ml_signal.get('direction') if ml_signal else None
         ml_confidence = ml_signal.get('confidence', 0) if ml_signal else 0
+        ml_win_prob = ml_signal.get('win_probability', 0) if ml_signal else 0
 
-        # Step 3.5: Get Oracle advice
+        # Step 3.5: Get Oracle advice (BACKUP SOURCE - ML takes precedence)
         oracle = self.get_oracle_advice(gex_data)
         oracle_direction = oracle.get('direction', 'FLAT') if oracle else 'FLAT'
         oracle_confidence = oracle.get('confidence', 0) if oracle else 0
         oracle_win_prob = oracle.get('win_probability', 0) if oracle else 0
 
-        # Step 3.6: Validate Oracle advice
+        # ============================================================
+        # ICARUS: ML MODEL TAKES PRECEDENCE OVER ORACLE
+        # ICARUS is aggressive - trusts ML models with 40% threshold
+        # Oracle's conservative 55% threshold is ignored
+        # ============================================================
+
+        use_ml_prediction = ml_signal is not None and ml_win_prob > 0
+        effective_win_prob = ml_win_prob if use_ml_prediction else oracle_win_prob
+        prediction_source = "ML_5_MODEL_ENSEMBLE" if use_ml_prediction else "ORACLE"
+
+        # Log ML analysis FIRST (it's the preferred source for ICARUS)
+        if ml_signal:
+            logger.info(f"[ICARUS ML ANALYSIS] *** PRIMARY PREDICTION SOURCE ***")
+            logger.info(f"  Direction: {ml_direction or 'N/A'}")
+            logger.info(f"  Confidence: {ml_confidence:.1%}")
+            logger.info(f"  Win Probability: {ml_win_prob:.1%}")
+            logger.info(f"  Model: {ml_signal.get('model_name', 'GEX_5_MODEL_ENSEMBLE')}")
+            if ml_signal.get('model_predictions'):
+                preds = ml_signal['model_predictions']
+                logger.info(f"  Model Breakdown:")
+                logger.info(f"    Flip Gravity: {preds.get('flip_gravity', 0):.1%}")
+                logger.info(f"    Magnet Attraction: {preds.get('magnet_attraction', 0):.1%}")
+                logger.info(f"    Pin Zone: {preds.get('pin_zone', 0):.1%}")
+        else:
+            logger.info(f"[ICARUS] ML models not available, falling back to Oracle")
+
+        # Log Oracle analysis (backup source)
         if oracle:
-            logger.info(f"[ICARUS ORACLE ANALYSIS]")
+            logger.info(f"[ICARUS ORACLE ANALYSIS] {'(BACKUP)' if not use_ml_prediction else '(informational)'}")
             logger.info(f"  Win Probability: {oracle_win_prob:.1%}")
             logger.info(f"  Confidence: {oracle_confidence:.1%}")
             logger.info(f"  Direction: {oracle_direction}")
             logger.info(f"  Advice: {oracle.get('advice', 'N/A')}")
-            logger.info(f"  Min Required: {self.config.min_win_probability:.1%}")
 
             if oracle.get('top_factors'):
                 logger.info(f"  Top Factors:")
-                for i, factor in enumerate(oracle['top_factors'][:5], 1):
+                for i, factor in enumerate(oracle['top_factors'][:3], 1):
                     factor_name = factor.get('factor', 'unknown')
                     impact = factor.get('impact', 0)
                     direction_sign = "+" if impact > 0 else ""
                     logger.info(f"    {i}. {factor_name}: {direction_sign}{impact:.3f}")
 
-            # SKIP_TODAY from Oracle overrides everything
+            # Oracle SKIP_TODAY is informational only - ICARUS trusts ML
             if oracle.get('advice') == 'SKIP_TODAY':
-                logger.info(f"[ICARUS TRADE BLOCKED] Oracle advises SKIP_TODAY")
-                return None
+                if use_ml_prediction:
+                    logger.info(f"[ICARUS] Oracle advises SKIP_TODAY but ML override active")
+                    logger.info(f"  ICARUS trusts ML: {ml_win_prob:.1%} win probability")
+                else:
+                    logger.info(f"[ICARUS] Oracle SKIP_TODAY - using aggressive 40% threshold")
 
-            # Validate win probability meets minimum threshold (40% for ICARUS)
-            min_win_prob = self.config.min_win_probability
-            if oracle_win_prob > 0 and oracle_win_prob < min_win_prob:
-                logger.info(f"[ICARUS TRADE BLOCKED] Win probability below threshold")
-                logger.info(f"  Oracle Win Prob: {oracle_win_prob:.1%}")
-                logger.info(f"  Minimum Required: {min_win_prob:.1%}")
-                return None
+        # Validate win probability (ICARUS uses aggressive 40% threshold)
+        min_win_prob = self.config.min_win_probability  # 40% for ICARUS
+        logger.info(f"[ICARUS DECISION] Using {prediction_source} win probability: {effective_win_prob:.1%}")
 
-            logger.info(f"[ICARUS ORACLE PASSED] Win Prob {oracle_win_prob:.1%} >= {min_win_prob:.1%}")
-        else:
-            logger.info(f"[ICARUS] Oracle not available, using wall-based confidence only")
+        if effective_win_prob > 0 and effective_win_prob < min_win_prob:
+            logger.info(f"[ICARUS TRADE BLOCKED] Win probability below aggressive threshold")
+            logger.info(f"  {prediction_source} Win Prob: {effective_win_prob:.1%}")
+            logger.info(f"  Minimum Required: {min_win_prob:.1%} (aggressive)")
+            return None
 
-        # Log ML analysis if available
-        if ml_signal:
-            logger.info(f"[ICARUS ML ANALYSIS]")
-            logger.info(f"  Direction: {ml_direction or 'N/A'}")
-            logger.info(f"  Confidence: {ml_confidence:.1%}")
-            logger.info(f"  Win Probability: {ml_signal.get('win_probability', 0):.1%}")
+        logger.info(f"[ICARUS PASSED] {prediction_source} Win Prob {effective_win_prob:.1%} >= {min_win_prob:.1%}")
 
         # Step 4: Determine final direction
         direction = wall_direction
@@ -513,6 +625,32 @@ class SignalGenerator:
             elif ml_direction and ml_direction != direction and ml_confidence > 0.7:
                 confidence -= 0.08  # Smaller penalty for ICARUS
 
+        # ============================================================
+        # GEX DIRECTIONAL ML - Additional direction confirmation layer
+        # Trained XGBoost model predicts BULLISH/BEARISH/FLAT from GEX structure
+        # ============================================================
+        gex_dir_prediction = self.get_gex_directional_prediction(gex_data, vix)
+        if gex_dir_prediction:
+            gex_dir = gex_dir_prediction.get('direction', 'FLAT')
+            gex_dir_conf = gex_dir_prediction.get('confidence', 0)
+
+            logger.info(f"[ICARUS GEX DIRECTIONAL ML] Direction: {gex_dir}, Confidence: {gex_dir_conf:.1%}")
+
+            # Map GEX direction to ICARUS direction
+            gex_direction_map = {'BULLISH': 'BULLISH', 'BEARISH': 'BEARISH', 'FLAT': None}
+            mapped_gex_dir = gex_direction_map.get(gex_dir)
+
+            if mapped_gex_dir == direction and gex_dir_conf > 0.6:
+                # GEX Directional ML confirms direction - boost confidence
+                boost = gex_dir_conf * 0.15
+                confidence = min(0.95, confidence + boost)
+                logger.info(f"[GEX DIR ML CONFIRMS] {gex_dir} matches {direction} (+{boost:.1%} confidence)")
+            elif mapped_gex_dir and mapped_gex_dir != direction and gex_dir_conf > 0.7:
+                # GEX Directional ML disagrees strongly - reduce confidence (smaller for aggressive ICARUS)
+                penalty = (gex_dir_conf - 0.7) * 0.15
+                confidence -= penalty
+                logger.info(f"[GEX DIR ML DISAGREES] {gex_dir} vs {direction} (-{penalty:.1%} confidence)")
+
         # Oracle adjustments (when not overriding)
         if oracle and direction_source != "ORACLE_OVERRIDE":
             if oracle_direction == direction and oracle_confidence > 0.6:
@@ -521,8 +659,7 @@ class SignalGenerator:
             elif oracle_direction != direction and oracle_direction != 'FLAT' and oracle_confidence > 0.6:
                 penalty = (oracle_confidence - 0.6) * 0.20  # Smaller penalty
                 confidence -= penalty
-            if oracle.get('advice') == 'SKIP_TODAY':
-                return None
+            # NOTE: SKIP_TODAY does NOT block here - bot uses its own min_win_probability threshold
 
             if oracle.get('top_factors'):
                 confidence, factor_adjustments = self.adjust_confidence_from_top_factors(

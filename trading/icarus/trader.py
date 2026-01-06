@@ -565,11 +565,6 @@ class ICARUSTrader(MathOptimizerMixin):
 
         return False, ""
 
-    def _try_new_entry(self) -> Optional[SpreadPosition]:
-        """Try to open a new position."""
-        position, _ = self._try_new_entry_with_context()
-        return position
-
     def _try_new_entry_with_context(self) -> tuple[Optional[SpreadPosition], Optional[Any]]:
         """Try to open a new position, returning both position and signal."""
         from typing import Any

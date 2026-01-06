@@ -17,6 +17,129 @@ from .models import (
     IronCondorSignal, TITANConfig, TradingMode, CENTRAL_TZ
 )
 
+# Monte Carlo Kelly for intelligent position sizing
+KELLY_AVAILABLE = False
+try:
+    from quant.monte_carlo_kelly import get_safe_position_size
+    KELLY_AVAILABLE = True
+except ImportError:
+    pass
+
+# Position Management Agent - tracks entry conditions and alerts on regime changes
+POSITION_MGMT_AVAILABLE = False
+try:
+    from ai.position_management_agent import PositionManagementAgent
+    POSITION_MGMT_AVAILABLE = True
+except ImportError:
+    PositionManagementAgent = None
+
+# SOLOMON Feedback Loop - continuous learning system
+SOLOMON_AVAILABLE = False
+try:
+    from quant.solomon_feedback_loop import SolomonFeedbackLoop, ProposalStatus
+    SOLOMON_AVAILABLE = True
+except ImportError:
+    SolomonFeedbackLoop = None
+    ProposalStatus = None
+
+# SOLOMON Enhancements - risk guardrails (consecutive loss kill, max daily loss)
+SOLOMON_ENHANCEMENTS_AVAILABLE = False
+try:
+    from quant.solomon_enhancements import ConsecutiveLossTracker, DailyLossTracker, ENHANCED_GUARDRAILS
+    SOLOMON_ENHANCEMENTS_AVAILABLE = True
+except ImportError:
+    ConsecutiveLossTracker = None
+    DailyLossTracker = None
+    ENHANCED_GUARDRAILS = None
+
+# SOLOMON Notifications - multi-channel alerts
+SOLOMON_NOTIFICATIONS_AVAILABLE = False
+try:
+    from quant.solomon_notifications import SolomonNotifications
+    SOLOMON_NOTIFICATIONS_AVAILABLE = True
+except ImportError:
+    SolomonNotifications = None
+
+# SOLOMON AI Analyst - Claude-powered performance analysis
+SOLOMON_AI_AVAILABLE = False
+try:
+    from quant.solomon_ai_analyst import SolomonAIAnalyst
+    SOLOMON_AI_AVAILABLE = True
+except ImportError:
+    SolomonAIAnalyst = None
+
+# AI Trade Recommendations - Claude Haiku generates entry/exit triggers
+AI_TRADE_RECOMMENDATIONS_AVAILABLE = False
+try:
+    from ai.ai_trade_recommendations import AITradeRecommendation
+    AI_TRADE_RECOMMENDATIONS_AVAILABLE = True
+except ImportError:
+    AITradeRecommendation = None
+
+# Smart Trade Advisor - self-learning trade advisor
+SMART_ADVISOR_AVAILABLE = False
+try:
+    from ai.ai_trade_advisor import SmartTradeAdvisor
+    SMART_ADVISOR_AVAILABLE = True
+except ImportError:
+    SmartTradeAdvisor = None
+
+# AI Strategy Optimizer - analyzes backtest results, suggests improvements
+STRATEGY_OPTIMIZER_AVAILABLE = False
+try:
+    from ai.ai_strategy_optimizer import StrategyOptimizerAgent
+    STRATEGY_OPTIMIZER_AVAILABLE = True
+except ImportError:
+    StrategyOptimizerAgent = None
+
+# ML Pattern Learner - pattern recognition for confidence calibration
+PATTERN_LEARNER_AVAILABLE = False
+try:
+    from ai.autonomous_ml_pattern_learner import PatternLearner
+    PATTERN_LEARNER_AVAILABLE = True
+except ImportError:
+    PatternLearner = None
+
+# LangChain Intelligence - AI decision backbone
+LANGCHAIN_INTELLIGENCE_AVAILABLE = False
+try:
+    from ai.langchain_intelligence import LangChainIntelligence
+    LANGCHAIN_INTELLIGENCE_AVAILABLE = True
+except ImportError:
+    LangChainIntelligence = None
+
+# Autonomous AI Reasoning - strike selection, sizing, exit decisions
+AI_REASONING_AVAILABLE = False
+try:
+    from ai.autonomous_ai_reasoning import AutonomousAIReasoning
+    AI_REASONING_AVAILABLE = True
+except ImportError:
+    AutonomousAIReasoning = None
+
+# GEXIS Extended Thinking - deeper reasoning for complex decisions
+GEXIS_THINKING_AVAILABLE = False
+try:
+    from ai.gexis_extended_thinking import ExtendedThinking
+    GEXIS_THINKING_AVAILABLE = True
+except ImportError:
+    ExtendedThinking = None
+
+# GEXIS Knowledge - context management for decisions
+GEXIS_KNOWLEDGE_AVAILABLE = False
+try:
+    from ai.gexis_knowledge import GEXISKnowledge
+    GEXIS_KNOWLEDGE_AVAILABLE = True
+except ImportError:
+    GEXISKnowledge = None
+
+# GEXIS Learning Memory - persistent learning
+GEXIS_MEMORY_AVAILABLE = False
+try:
+    from ai.gexis_learning_memory import GEXISLearningMemory
+    GEXIS_MEMORY_AVAILABLE = True
+except ImportError:
+    GEXISLearningMemory = None
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -48,6 +171,15 @@ class OrderExecutor:
                 logger.info("TITAN: Tradier initialized (PRODUCTION)")
             except Exception as e:
                 logger.error(f"Tradier init failed: {e}")
+
+        # Position Management Agent - tracks entry conditions for exit timing
+        self.position_mgmt = None
+        if POSITION_MGMT_AVAILABLE:
+            try:
+                self.position_mgmt = PositionManagementAgent()
+                logger.info("TITAN OrderExecutor: Position Management Agent initialized")
+            except Exception as e:
+                logger.debug(f"Position Management Agent init failed: {e}")
 
     def _tradier_place_spread_with_retry(
         self,
@@ -440,12 +572,67 @@ class OrderExecutor:
             traceback.print_exc()
             return False, 0, 0
 
+    def _get_kelly_position_size(self) -> Optional[Dict]:
+        """Get Monte Carlo Kelly-based position sizing for TITAN."""
+        if not KELLY_AVAILABLE:
+            return None
+
+        try:
+            from database_adapter import DatabaseAdapter
+            db = DatabaseAdapter()
+
+            trades = db.execute_query("""
+                SELECT pnl_realized, entry_credit, max_loss
+                FROM autonomous_closed_trades
+                WHERE bot_name = 'TITAN'
+                AND closed_at > NOW() - INTERVAL '90 days'
+                ORDER BY closed_at DESC
+                LIMIT 100
+            """)
+
+            if not trades or len(trades) < 20:
+                return None
+
+            wins = [t for t in trades if t['pnl_realized'] > 0]
+            losses = [t for t in trades if t['pnl_realized'] <= 0]
+
+            win_rate = len(wins) / len(trades)
+            avg_win_pct = sum(t['pnl_realized'] for t in wins) / len(wins) / self.config.capital * 100 if wins else 0
+            avg_loss_pct = abs(sum(t['pnl_realized'] for t in losses) / len(losses) / self.config.capital * 100) if losses else 10
+
+            kelly_result = get_safe_position_size(
+                win_rate=win_rate,
+                avg_win=avg_win_pct,
+                avg_loss=avg_loss_pct,
+                sample_size=len(trades),
+                account_size=self.config.capital,
+                max_risk_pct=self.config.risk_per_trade_pct * 2
+            )
+
+            logger.info(f"[TITAN KELLY] Win Rate: {win_rate:.1%}, Safe Kelly: {kelly_result['kelly_safe']:.1f}%")
+            return kelly_result
+
+        except Exception as e:
+            logger.debug(f"[KELLY] Error: {e}")
+            return None
+
     def _calculate_position_size(self, max_loss_per_contract: float) -> int:
-        """Calculate position size - TITAN uses higher risk per trade"""
+        """Calculate position size using Monte Carlo Kelly criterion."""
         capital = self.config.capital
-        max_risk = capital * (self.config.risk_per_trade_pct / 100)
+
         if max_loss_per_contract <= 0:
             return 1
+
+        # Try Kelly-based sizing first
+        kelly_result = self._get_kelly_position_size()
+
+        if kelly_result and kelly_result.get('kelly_safe', 0) > 0:
+            kelly_risk_pct = kelly_result['kelly_safe']
+            max_risk = capital * (kelly_risk_pct / 100)
+            logger.info(f"[TITAN] Using Kelly-safe sizing: {kelly_risk_pct:.1f}% risk")
+        else:
+            max_risk = capital * (self.config.risk_per_trade_pct / 100)
+
         contracts = int(max_risk / max_loss_per_contract)
         return max(1, min(contracts, self.config.max_contracts))
 
@@ -481,3 +668,50 @@ class OrderExecutor:
         if current_price:
             return self._estimate_ic_value(position, current_price)
         return None
+
+    def store_entry_conditions(self, position_id: int, gex_data: Dict) -> bool:
+        """
+        Store entry conditions when position is opened.
+
+        This enables the Position Management Agent to detect when market
+        conditions change significantly from entry (GEX regime flip, etc.)
+        """
+        if not self.position_mgmt:
+            return False
+
+        try:
+            self.position_mgmt.store_entry_conditions(position_id, gex_data)
+            logger.info(f"[TITAN] Entry conditions stored for position {position_id}")
+            return True
+        except Exception as e:
+            logger.debug(f"Failed to store entry conditions: {e}")
+            return False
+
+    def check_position_conditions(self, position: Dict, current_gex: Dict) -> Dict:
+        """
+        Check if current conditions differ from entry conditions.
+
+        Returns alerts if GEX regime flipped, flip point moved significantly, etc.
+        This helps with exit timing - exit early if thesis is invalidated.
+        """
+        if not self.position_mgmt:
+            return {'alerts': [], 'severity': 'info', 'should_exit_early': False}
+
+        try:
+            result = self.position_mgmt.check_position_conditions(position, current_gex)
+
+            # Add should_exit_early flag for critical alerts
+            should_exit = result.get('severity') == 'critical'
+            result['should_exit_early'] = should_exit
+
+            if result.get('alerts'):
+                for alert in result['alerts']:
+                    logger.info(f"[TITAN CONDITION ALERT] {alert['type']}: {alert['message']}")
+                    if alert.get('suggestion'):
+                        logger.info(f"  Suggestion: {alert['suggestion']}")
+
+            return result
+
+        except Exception as e:
+            logger.debug(f"Failed to check position conditions: {e}")
+            return {'alerts': [], 'severity': 'info', 'should_exit_early': False}

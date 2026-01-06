@@ -24,6 +24,13 @@ except ImportError:
     OracleAdvisor = None
 
 try:
+    from quant.ares_ml_advisor import AresMLAdvisor
+    ARES_ML_AVAILABLE = True
+except ImportError:
+    ARES_ML_AVAILABLE = False
+    AresMLAdvisor = None
+
+try:
     from quant.kronos_gex_calculator import KronosGEXCalculator
     KRONOS_AVAILABLE = True
 except ImportError:
@@ -41,6 +48,44 @@ try:
     DATA_AVAILABLE = True
 except ImportError:
     DATA_AVAILABLE = False
+
+# Ensemble Strategy - combines multiple signal sources with learned weights
+ENSEMBLE_AVAILABLE = False
+try:
+    from quant.ensemble_strategy import get_ensemble_signal, EnsembleSignal, StrategySignal
+    ENSEMBLE_AVAILABLE = True
+except ImportError:
+    get_ensemble_signal = None
+    EnsembleSignal = None
+    StrategySignal = None
+
+# ML Regime Classifier - replaces hard-coded GEX thresholds with learned models
+ML_REGIME_AVAILABLE = False
+try:
+    from quant.ml_regime_classifier import MLRegimeClassifier, MLPrediction as RegimePrediction, MLRegimeAction
+    ML_REGIME_AVAILABLE = True
+except ImportError:
+    MLRegimeClassifier = None
+    RegimePrediction = None
+    MLRegimeAction = None
+
+# IV Solver - accurate implied volatility calculation
+IV_SOLVER_AVAILABLE = False
+try:
+    from quant.iv_solver import IVSolver, calculate_iv_from_price
+    IV_SOLVER_AVAILABLE = True
+except ImportError:
+    IVSolver = None
+    calculate_iv_from_price = None
+
+# Walk-Forward Optimizer - parameter validation
+WALK_FORWARD_AVAILABLE = False
+try:
+    from quant.walk_forward_optimizer import WalkForwardOptimizer, WalkForwardResult
+    WALK_FORWARD_AVAILABLE = True
+except ImportError:
+    WalkForwardOptimizer = None
+    WalkForwardResult = None
 
 
 class SignalGenerator:
@@ -67,11 +112,24 @@ class SignalGenerator:
             except Exception as e:
                 logger.warning(f"TITAN: Tradier GEX init failed: {e}")
 
+        # ARES ML Advisor (PRIMARY - Iron Condor ML with ~70% win rate)
+        self.ares_ml = None
+        if ARES_ML_AVAILABLE:
+            try:
+                self.ares_ml = AresMLAdvisor()
+                if self.ares_ml.is_trained:
+                    logger.info(f"TITAN: ML Advisor v{self.ares_ml.model_version} loaded (PRIMARY)")
+                else:
+                    logger.info("TITAN: ML Advisor initialized (not yet trained)")
+            except Exception as e:
+                logger.warning(f"TITAN: ML Advisor init failed: {e}")
+
+        # Oracle (BACKUP - used when ML not available)
         self.oracle = None
         if ORACLE_AVAILABLE:
             try:
                 self.oracle = OracleAdvisor()
-                logger.info("TITAN: Oracle initialized")
+                logger.info("TITAN: Oracle initialized (BACKUP)")
             except Exception as e:
                 logger.warning(f"TITAN: Oracle init failed: {e}")
 
@@ -164,11 +222,73 @@ class SignalGenerator:
             logger.warning(f"GEX data fetch failed: {e}")
         return None
 
+    def get_ml_prediction(self, market_data: Dict) -> Optional[Dict[str, Any]]:
+        """
+        Get prediction from ARES ML Advisor (PRIMARY source for Iron Condors).
+
+        TITAN is aggressive - uses 40% win probability threshold.
+        ML model trained on KRONOS backtests with ~70% win rate.
+        """
+        if not self.ares_ml:
+            return None
+
+        try:
+            now = datetime.now(CENTRAL_TZ)
+            day_of_week = now.weekday()
+
+            gex_regime_str = market_data.get('gex_regime', 'NEUTRAL').upper()
+            gex_regime_positive = 1 if gex_regime_str == 'POSITIVE' else 0
+
+            spot = market_data['spot_price']
+            flip_point = market_data.get('flip_point', spot)
+            gex_distance_to_flip_pct = abs(spot - flip_point) / spot * 100 if spot > 0 else 0
+
+            put_wall = market_data.get('put_wall', spot * 0.98)
+            call_wall = market_data.get('call_wall', spot * 1.02)
+            gex_between_walls = 1 if put_wall <= spot <= call_wall else 0
+
+            prediction = self.ares_ml.predict(
+                vix=market_data['vix'],
+                day_of_week=day_of_week,
+                price=spot,
+                price_change_1d=market_data.get('price_change_1d', 0),
+                expected_move_pct=(market_data.get('expected_move', 0) / spot * 100) if spot > 0 else 1.0,
+                win_rate_30d=0.70,
+                vix_percentile_30d=50,
+                vix_change_1d=0,
+                gex_normalized=market_data.get('gex_normalized', 0),
+                gex_regime_positive=gex_regime_positive,
+                gex_distance_to_flip_pct=gex_distance_to_flip_pct,
+                gex_between_walls=gex_between_walls,
+            )
+
+            if prediction:
+                top_factors = []
+                if hasattr(prediction, 'top_factors') and prediction.top_factors:
+                    for factor_name, impact in prediction.top_factors:
+                        top_factors.append({'factor': factor_name, 'impact': impact})
+
+                return {
+                    'win_probability': prediction.win_probability,
+                    'confidence': prediction.confidence,
+                    'advice': prediction.advice.value if prediction.advice else 'SKIP_TODAY',
+                    'suggested_risk_pct': prediction.suggested_risk_pct,
+                    'suggested_sd_multiplier': prediction.suggested_sd_multiplier,
+                    'top_factors': top_factors,
+                    'probabilities': prediction.probabilities,
+                    'model_version': prediction.model_version,
+                    'model_name': 'ARES_ML_ADVISOR',
+                }
+        except Exception as e:
+            logger.warning(f"TITAN ML prediction error: {e}")
+
+        return None
+
     def get_oracle_advice(self, market_data: Dict) -> Optional[Dict[str, Any]]:
         """
-        Get Oracle prediction with FULL context for audit trail.
+        Get Oracle prediction with FULL context for audit trail (BACKUP SOURCE).
 
-        TITAN uses relaxed thresholds but still consults Oracle.
+        TITAN uses relaxed thresholds but ML takes precedence.
         """
         if not self.oracle:
             return None
@@ -409,52 +529,87 @@ class SignalGenerator:
             logger.info(f"VIX filter: {reason}")
             return None
 
-        # Get Oracle advice (optional but provides confidence boost)
+        # ============================================================
+        # ML MODEL TAKES PRECEDENCE OVER ORACLE
+        # ARES ML Advisor trained on KRONOS backtests (~70% win rate)
+        # Oracle is only used as backup when ML is not available
+        # ============================================================
+
+        # Get ML prediction first (PRIMARY SOURCE)
+        ml_prediction = self.get_ml_prediction(market)
+        ml_win_prob = ml_prediction.get('win_probability', 0) if ml_prediction else 0
+        ml_confidence = ml_prediction.get('confidence', 0) if ml_prediction else 0
+
+        # Get Oracle advice (BACKUP SOURCE)
         oracle = self.get_oracle_advice(market)
+        oracle_win_prob = oracle.get('win_probability', 0) if oracle else 0
+        oracle_confidence = oracle.get('confidence', 0.7) if oracle else 0.7
 
-        # TITAN: Relaxed Oracle validation
+        # Determine which source to use
+        use_ml_prediction = ml_prediction is not None and ml_win_prob > 0
+        effective_win_prob = ml_win_prob if use_ml_prediction else oracle_win_prob
+        confidence = ml_confidence if use_ml_prediction else oracle_confidence
+        prediction_source = "ARES_ML_ADVISOR" if use_ml_prediction else "ORACLE"
+
+        # Log ML analysis FIRST (PRIMARY source)
+        if ml_prediction:
+            logger.info(f"[TITAN ML ANALYSIS] *** PRIMARY PREDICTION SOURCE ***")
+            logger.info(f"  Win Probability: {ml_win_prob:.1%}")
+            logger.info(f"  Confidence: {ml_confidence:.1%}")
+            logger.info(f"  Advice: {ml_prediction.get('advice', 'N/A')}")
+            logger.info(f"  Model Version: {ml_prediction.get('model_version', 'unknown')}")
+            logger.info(f"  Suggested SD: {ml_prediction.get('suggested_sd_multiplier', 1.0):.2f}x")
+
+            if ml_prediction.get('top_factors'):
+                logger.info(f"  Top Factors (Feature Importance):")
+                for i, factor in enumerate(ml_prediction['top_factors'][:5], 1):
+                    factor_name = factor.get('factor', 'unknown')
+                    impact = factor.get('impact', 0)
+                    logger.info(f"    {i}. {factor_name}: {impact:.3f}")
+        else:
+            logger.info(f"[TITAN] ML Advisor not available, falling back to Oracle")
+
+        # Log Oracle analysis (BACKUP source)
         if oracle:
-            win_prob = oracle.get('win_probability', 0)
-            oracle_confidence = oracle.get('confidence', 0)
-
-            # Log Oracle analysis for frontend visibility
-            logger.info(f"[TITAN ORACLE ANALYSIS]")
-            logger.info(f"  Win Probability: {win_prob:.1%}")
+            logger.info(f"[TITAN ORACLE ANALYSIS] {'(BACKUP)' if not use_ml_prediction else '(informational)'}")
+            logger.info(f"  Win Probability: {oracle_win_prob:.1%}")
             logger.info(f"  Confidence: {oracle_confidence:.1%}")
             logger.info(f"  Advice: {oracle.get('advice', 'N/A')}")
-            logger.info(f"  Min Required: {self.config.min_win_probability:.1%}")
 
-            # Log top factors
             if oracle.get('top_factors'):
-                logger.info(f"  Top Factors Influencing Prediction:")
-                for i, factor in enumerate(oracle['top_factors'][:5], 1):
+                logger.info(f"  Top Factors:")
+                for i, factor in enumerate(oracle['top_factors'][:3], 1):
                     factor_name = factor.get('factor', 'unknown')
                     impact = factor.get('impact', 0)
                     direction = "+" if impact > 0 else ""
                     logger.info(f"    {i}. {factor_name}: {direction}{impact:.3f}")
 
-                # Apply top_factors to adjust confidence
-                oracle_confidence, factor_adjustments = self.adjust_confidence_from_top_factors(
-                    oracle_confidence, oracle['top_factors'], market
-                )
+                if not use_ml_prediction:
+                    oracle_confidence, factor_adjustments = self.adjust_confidence_from_top_factors(
+                        oracle_confidence, oracle['top_factors'], market
+                    )
+                    confidence = oracle_confidence
 
-            # TITAN: Only skip on explicit SKIP_TODAY advice
             if oracle.get('advice') == 'SKIP_TODAY':
-                logger.info(f"[TITAN TRADE BLOCKED] Oracle advises SKIP_TODAY")
-                logger.info(f"  Reason: {oracle.get('reasoning', 'No reason provided')}")
-                return None
+                if use_ml_prediction:
+                    logger.info(f"[TITAN] Oracle advises SKIP_TODAY but ML override active")
+                    logger.info(f"  ML Win Prob: {ml_win_prob:.1%} will be used instead")
+                else:
+                    logger.info(f"[TITAN ORACLE INFO] Oracle advises SKIP_TODAY (informational only)")
+                    logger.info(f"  Bot will use its own aggressive threshold: {self.config.min_win_probability:.1%}")
 
-            # TITAN: Lower win probability threshold (40% vs PEGASUS 50%)
-            min_win_prob = self.config.min_win_probability
-            if win_prob > 0 and win_prob < min_win_prob:
-                logger.info(f"[TITAN TRADE BLOCKED] Win probability below threshold")
-                logger.info(f"  Oracle Win Prob: {win_prob:.1%}")
-                logger.info(f"  Minimum Required: {min_win_prob:.1%}")
-                return None
+        # Validate win probability meets minimum threshold (using effective source)
+        min_win_prob = self.config.min_win_probability
+        logger.info(f"[TITAN DECISION] Using {prediction_source} win probability: {effective_win_prob:.1%}")
 
-            logger.info(f"[TITAN ORACLE PASSED] Win Prob {win_prob:.1%} >= {min_win_prob:.1%} minimum")
-        else:
-            logger.info(f"[TITAN] Oracle not available, using default confidence")
+        if effective_win_prob > 0 and effective_win_prob < min_win_prob:
+            logger.info(f"[TITAN TRADE BLOCKED] Win probability below threshold")
+            logger.info(f"  {prediction_source} Win Prob: {effective_win_prob:.1%}")
+            logger.info(f"  Minimum Required: {min_win_prob:.1%}")
+            logger.info(f"  Shortfall: {(min_win_prob - effective_win_prob):.1%}")
+            return None
+
+        logger.info(f"[TITAN PASSED] {prediction_source} Win Prob {effective_win_prob:.1%} >= {min_win_prob:.1%} minimum")
 
         # Get Oracle suggested strikes if available
         oracle_put = oracle.get('suggested_put_strike') if oracle else None
