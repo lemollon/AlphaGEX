@@ -12,7 +12,7 @@ Design principles:
 
 import logging
 from datetime import datetime
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 from zoneinfo import ZoneInfo
 
 from .models import TradeSignal, SpreadType, ATHENAConfig, CENTRAL_TZ
