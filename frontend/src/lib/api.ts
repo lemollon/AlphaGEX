@@ -1061,6 +1061,65 @@ export const apiClient = {
   getSolomonProposalReasoning: (proposalId: string) => api.get(`/api/solomon/validation/reasoning/${proposalId}`),
   getSolomonValidationCanApply: (proposalId: string) => api.get(`/api/solomon/validation/can-apply/${proposalId}`),
 
+  // QUANT - ML Models Dashboard
+  getQuantHealth: () => api.get('/api/quant/health'),
+  getQuantStatus: () => api.get('/api/quant/status'),
+  getQuantLogs: (limit: number = 50) => api.get('/api/quant/logs', { params: { limit } }),
+  getQuantLogsStats: (days: number = 7) => api.get('/api/quant/logs/stats', { params: { days } }),
+  predictRegime: (data: {
+    spot_price: number
+    vix: number
+    net_gex: number
+    flip_point: number
+    iv_rank?: number
+  }) => api.post('/api/quant/predict/regime', data),
+  predictDirection: (data: {
+    net_gex: number
+    call_wall: number
+    put_wall: number
+    flip_point: number
+    spot_price: number
+    vix: number
+  }) => api.post('/api/quant/predict/direction', data),
+  predictEnsemble: (data: {
+    spot_price: number
+    vix: number
+    net_gex: number
+    flip_point: number
+    call_wall: number
+    put_wall: number
+    iv_rank?: number
+  }) => api.post('/api/quant/predict/ensemble', data),
+  getQuantPendingOutcomes: (limit: number = 20) =>
+    api.get('/api/quant/outcomes/pending', { params: { limit } }),
+  recordQuantOutcome: (data: {
+    prediction_id: number
+    correct: boolean
+    pnl?: number
+    notes?: string
+  }) => api.post('/api/quant/outcomes/record', data),
+  logQuantBotUsage: (data: {
+    prediction_id: number
+    bot_name: string
+    trade_id?: string
+    session_id?: string
+  }) => api.post('/api/quant/bot/log-usage', data),
+  getQuantBotUsage: (days: number = 7) =>
+    api.get('/api/quant/bot/usage', { params: { days } }),
+  getQuantAlerts: (limit: number = 50, unacknowledgedOnly: boolean = false) =>
+    api.get('/api/quant/alerts', { params: { limit, unacknowledged_only: unacknowledgedOnly } }),
+  acknowledgeQuantAlert: (alertId: number) =>
+    api.post(`/api/quant/alerts/${alertId}/acknowledge`),
+  getQuantPerformance: (days: number = 7) =>
+    api.get('/api/quant/performance', { params: { days } }),
+  getQuantPerformanceSummary: (days: number = 7) =>
+    api.get('/api/quant/performance/summary', { params: { days } }),
+  getQuantTrainingHistory: (limit: number = 20) =>
+    api.get('/api/quant/training/history', { params: { limit } }),
+  triggerQuantTraining: (data: { model_name: string; triggered_by?: string }) =>
+    api.post('/api/quant/training/trigger', data),
+  getQuantComparison: () => api.get('/api/quant/compare'),
+
   // Math Optimizer
   getMathOptimizerStatus: () => api.get('/api/math-optimizer/status'),
   getMathOptimizerLiveDashboard: () => api.get('/api/math-optimizer/live-dashboard'),
