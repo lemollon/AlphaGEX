@@ -589,7 +589,7 @@ export default function OraclePage() {
               <h1 className="text-3xl font-bold text-text-primary">Oracle Knowledge Base</h1>
             </div>
             <p className="text-text-secondary">
-              Centralized intelligence hub for ARES, ATHENA, PEGASUS, and PHOENIX - All bot interactions, Claude AI reasoning, and ML predictions
+              Centralized intelligence hub for all trading bots (ARES, ATHENA, PEGASUS, PHOENIX, ATLAS, ICARUS) - All bot interactions, Claude AI reasoning, and ML predictions
             </p>
           </div>
 
@@ -799,6 +799,8 @@ export default function OraclePage() {
                     <option value="ATHENA">ATHENA</option>
                     <option value="PEGASUS">PEGASUS</option>
                     <option value="PHOENIX">PHOENIX</option>
+                    <option value="ATLAS">ATLAS</option>
+                    <option value="ICARUS">ICARUS</option>
                   </select>
                 </div>
                 <div className="flex items-center gap-2">
@@ -1984,14 +1986,24 @@ export default function OraclePage() {
             </div>
           )}
 
-          {/* Info Section */}
-          <div className="mt-8 grid grid-cols-1 md:grid-cols-4 gap-4">
+          {/* Info Section - All 6 Trading Bots */}
+          <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <div className="card bg-red-500/5 border border-red-500/20">
               <div className="flex items-start gap-3">
                 <Bot className="w-5 h-5 text-red-400 flex-shrink-0 mt-1" />
                 <div>
                   <h3 className="font-semibold text-text-primary mb-1">ARES</h3>
-                  <p className="text-text-secondary text-sm">0DTE Iron Condors with GEX-protected strikes</p>
+                  <p className="text-text-secondary text-sm">0DTE SPY Iron Condors with GEX-protected strikes</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="card bg-cyan-500/5 border border-cyan-500/20">
+              <div className="flex items-start gap-3">
+                <Bot className="w-5 h-5 text-cyan-400 flex-shrink-0 mt-1" />
+                <div>
+                  <h3 className="font-semibold text-text-primary mb-1">ATHENA</h3>
+                  <p className="text-text-secondary text-sm">GEX-based directional spreads trading</p>
                 </div>
               </div>
             </div>
@@ -2000,8 +2012,28 @@ export default function OraclePage() {
               <div className="flex items-start gap-3">
                 <Bot className="w-5 h-5 text-blue-400 flex-shrink-0 mt-1" />
                 <div>
+                  <h3 className="font-semibold text-text-primary mb-1">PEGASUS</h3>
+                  <p className="text-text-secondary text-sm">SPX Iron Condors with Oracle intelligence</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="card bg-rose-500/5 border border-rose-500/20">
+              <div className="flex items-start gap-3">
+                <Bot className="w-5 h-5 text-rose-400 flex-shrink-0 mt-1" />
+                <div>
+                  <h3 className="font-semibold text-text-primary mb-1">PHOENIX</h3>
+                  <p className="text-text-secondary text-sm">Momentum continuation with GEX-confirmed bias</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="card bg-indigo-500/5 border border-indigo-500/20">
+              <div className="flex items-start gap-3">
+                <Bot className="w-5 h-5 text-indigo-400 flex-shrink-0 mt-1" />
+                <div>
                   <h3 className="font-semibold text-text-primary mb-1">ATLAS</h3>
-                  <p className="text-text-secondary text-sm">Wheel strategy for consistent premium</p>
+                  <p className="text-text-secondary text-sm">Mean-reversion trading at key GEX levels</p>
                 </div>
               </div>
             </div>
@@ -2010,18 +2042,8 @@ export default function OraclePage() {
               <div className="flex items-start gap-3">
                 <Bot className="w-5 h-5 text-orange-400 flex-shrink-0 mt-1" />
                 <div>
-                  <h3 className="font-semibold text-text-primary mb-1">PHOENIX</h3>
-                  <p className="text-text-secondary text-sm">Directional calls for momentum plays</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="card bg-purple-500/5 border border-purple-500/20">
-              <div className="flex items-start gap-3">
-                <Bot className="w-5 h-5 text-purple-400 flex-shrink-0 mt-1" />
-                <div>
-                  <h3 className="font-semibold text-text-primary mb-1">ATHENA</h3>
-                  <p className="text-text-secondary text-sm">Pattern recognition and signals</p>
+                  <h3 className="font-semibold text-text-primary mb-1">ICARUS</h3>
+                  <p className="text-text-secondary text-sm">Aggressive GEX-based directional spreads</p>
                 </div>
               </div>
             </div>
