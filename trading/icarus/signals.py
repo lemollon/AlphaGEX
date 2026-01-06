@@ -430,59 +430,80 @@ class SignalGenerator:
             logger.info(f"ICARUS wall filter failed: {wall_reason}")
             return None
 
-        # Step 3: Get ML signal (optional confirmation)
+        # Step 3: Get ML signal from 5 GEX probability models (PREFERRED SOURCE)
+        # ICARUS is AGGRESSIVE - ML models backtested with high win rates take precedence
         ml_signal = self.get_ml_signal(gex_data)
         ml_direction = ml_signal.get('direction') if ml_signal else None
         ml_confidence = ml_signal.get('confidence', 0) if ml_signal else 0
+        ml_win_prob = ml_signal.get('win_probability', 0) if ml_signal else 0
 
-        # Step 3.5: Get Oracle advice
+        # Step 3.5: Get Oracle advice (BACKUP SOURCE - ML takes precedence)
         oracle = self.get_oracle_advice(gex_data)
         oracle_direction = oracle.get('direction', 'FLAT') if oracle else 'FLAT'
         oracle_confidence = oracle.get('confidence', 0) if oracle else 0
         oracle_win_prob = oracle.get('win_probability', 0) if oracle else 0
 
-        # Step 3.6: Validate Oracle advice
+        # ============================================================
+        # ICARUS: ML MODEL TAKES PRECEDENCE OVER ORACLE
+        # ICARUS is aggressive - trusts ML models with 40% threshold
+        # Oracle's conservative 55% threshold is ignored
+        # ============================================================
+
+        use_ml_prediction = ml_signal is not None and ml_win_prob > 0
+        effective_win_prob = ml_win_prob if use_ml_prediction else oracle_win_prob
+        prediction_source = "ML_5_MODEL_ENSEMBLE" if use_ml_prediction else "ORACLE"
+
+        # Log ML analysis FIRST (it's the preferred source for ICARUS)
+        if ml_signal:
+            logger.info(f"[ICARUS ML ANALYSIS] *** PRIMARY PREDICTION SOURCE ***")
+            logger.info(f"  Direction: {ml_direction or 'N/A'}")
+            logger.info(f"  Confidence: {ml_confidence:.1%}")
+            logger.info(f"  Win Probability: {ml_win_prob:.1%}")
+            logger.info(f"  Model: {ml_signal.get('model_name', 'GEX_5_MODEL_ENSEMBLE')}")
+            if ml_signal.get('model_predictions'):
+                preds = ml_signal['model_predictions']
+                logger.info(f"  Model Breakdown:")
+                logger.info(f"    Flip Gravity: {preds.get('flip_gravity', 0):.1%}")
+                logger.info(f"    Magnet Attraction: {preds.get('magnet_attraction', 0):.1%}")
+                logger.info(f"    Pin Zone: {preds.get('pin_zone', 0):.1%}")
+        else:
+            logger.info(f"[ICARUS] ML models not available, falling back to Oracle")
+
+        # Log Oracle analysis (backup source)
         if oracle:
-            logger.info(f"[ICARUS ORACLE ANALYSIS]")
+            logger.info(f"[ICARUS ORACLE ANALYSIS] {'(BACKUP)' if not use_ml_prediction else '(informational)'}")
             logger.info(f"  Win Probability: {oracle_win_prob:.1%}")
             logger.info(f"  Confidence: {oracle_confidence:.1%}")
             logger.info(f"  Direction: {oracle_direction}")
             logger.info(f"  Advice: {oracle.get('advice', 'N/A')}")
-            logger.info(f"  Min Required: {self.config.min_win_probability:.1%}")
 
             if oracle.get('top_factors'):
                 logger.info(f"  Top Factors:")
-                for i, factor in enumerate(oracle['top_factors'][:5], 1):
+                for i, factor in enumerate(oracle['top_factors'][:3], 1):
                     factor_name = factor.get('factor', 'unknown')
                     impact = factor.get('impact', 0)
                     direction_sign = "+" if impact > 0 else ""
                     logger.info(f"    {i}. {factor_name}: {direction_sign}{impact:.3f}")
 
-            # NOTE: Oracle SKIP_TODAY is NOT a hard block - bot uses its own min_win_probability
-            # Oracle's 55% threshold is informational only; ICARUS (aggressive) uses 40% threshold
+            # Oracle SKIP_TODAY is informational only - ICARUS trusts ML
             if oracle.get('advice') == 'SKIP_TODAY':
-                logger.info(f"[ICARUS ORACLE INFO] Oracle advises SKIP_TODAY (informational only)")
-                logger.info(f"  Bot will use its own aggressive threshold: {self.config.min_win_probability:.1%}")
-                # Do NOT return None - let the bot's min_win_probability decide
+                if use_ml_prediction:
+                    logger.info(f"[ICARUS] Oracle advises SKIP_TODAY but ML override active")
+                    logger.info(f"  ICARUS trusts ML: {ml_win_prob:.1%} win probability")
+                else:
+                    logger.info(f"[ICARUS] Oracle SKIP_TODAY - using aggressive 40% threshold")
 
-            # Validate win probability meets minimum threshold (40% for ICARUS)
-            min_win_prob = self.config.min_win_probability
-            if oracle_win_prob > 0 and oracle_win_prob < min_win_prob:
-                logger.info(f"[ICARUS TRADE BLOCKED] Win probability below threshold")
-                logger.info(f"  Oracle Win Prob: {oracle_win_prob:.1%}")
-                logger.info(f"  Minimum Required: {min_win_prob:.1%}")
-                return None
+        # Validate win probability (ICARUS uses aggressive 40% threshold)
+        min_win_prob = self.config.min_win_probability  # 40% for ICARUS
+        logger.info(f"[ICARUS DECISION] Using {prediction_source} win probability: {effective_win_prob:.1%}")
 
-            logger.info(f"[ICARUS ORACLE PASSED] Win Prob {oracle_win_prob:.1%} >= {min_win_prob:.1%}")
-        else:
-            logger.info(f"[ICARUS] Oracle not available, using wall-based confidence only")
+        if effective_win_prob > 0 and effective_win_prob < min_win_prob:
+            logger.info(f"[ICARUS TRADE BLOCKED] Win probability below aggressive threshold")
+            logger.info(f"  {prediction_source} Win Prob: {effective_win_prob:.1%}")
+            logger.info(f"  Minimum Required: {min_win_prob:.1%} (aggressive)")
+            return None
 
-        # Log ML analysis if available
-        if ml_signal:
-            logger.info(f"[ICARUS ML ANALYSIS]")
-            logger.info(f"  Direction: {ml_direction or 'N/A'}")
-            logger.info(f"  Confidence: {ml_confidence:.1%}")
-            logger.info(f"  Win Probability: {ml_signal.get('win_probability', 0):.1%}")
+        logger.info(f"[ICARUS PASSED] {prediction_source} Win Prob {effective_win_prob:.1%} >= {min_win_prob:.1%}")
 
         # Step 4: Determine final direction
         direction = wall_direction
