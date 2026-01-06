@@ -394,6 +394,19 @@ export const apiClient = {
   skipPEGASUSToday: () => api.post('/api/pegasus/skip-today'),
   resetPEGASUSData: (confirm: boolean = false) => api.post('/api/pegasus/reset', null, { params: { confirm } }),
 
+  // TITAN - Aggressive SPX Iron Condor Bot (Daily Trading)
+  getTITANStatus: () => api.get('/api/titan/status'),
+  getTITANPositions: (status?: string) => api.get('/api/titan/positions', { params: status ? { status_filter: status } : {} }),
+  getTITANLogs: (level?: string, limit: number = 100) => api.get('/api/titan/logs', { params: { level, limit } }),
+  getTITANPerformance: (days: number = 30) => api.get('/api/titan/performance', { params: { days } }),
+  getTITANConfig: () => api.get('/api/titan/config'),
+  updateTITANConfig: (name: string, value: string) => api.post(`/api/titan/config/${name}`, null, { params: { value } }),
+  runTITANCycle: () => api.post('/api/titan/run'),
+  getTITANLivePnL: () => api.get('/api/titan/live-pnl'),
+  processTITANExpired: () => api.post('/api/titan/process-expired'),
+  skipTITANToday: () => api.post('/api/titan/skip-today'),
+  resetTITANData: (confirm: boolean = false) => api.post('/api/titan/reset', null, { params: { confirm } }),
+
   // ARES - Live P&L
   getARESLivePnL: () => api.get('/api/ares/live-pnl'),
   processARESExpired: () => api.post('/api/ares/process-expired'),

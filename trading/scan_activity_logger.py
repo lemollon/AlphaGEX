@@ -1322,3 +1322,97 @@ def log_icarus_scan(
         error_type=error_type,
         **kwargs
     )
+
+
+def log_titan_scan(
+    outcome: ScanOutcome,
+    decision_summary: str,
+    market_data: Optional[Dict] = None,
+    gex_data: Optional[Dict] = None,
+    checks: Optional[List[CheckResult]] = None,
+    signal_source: str = "",
+    signal_direction: str = "",
+    signal_confidence: float = 0,
+    signal_win_probability: float = 0,
+    oracle_advice: str = "",
+    oracle_reasoning: str = "",
+    oracle_win_probability: float = 0,
+    oracle_confidence: float = 0,
+    oracle_top_factors: Optional[List[Dict]] = None,
+    oracle_probabilities: Optional[Dict] = None,
+    oracle_suggested_strikes: Optional[Dict] = None,
+    oracle_thresholds: Optional[Dict] = None,
+    min_win_probability_threshold: float = 0,
+    trade_executed: bool = False,
+    error_message: str = "",
+    risk_reward_ratio: float = 0,
+    generate_ai_explanation: bool = False,  # Disable by default for TITAN (similar to PEGASUS)
+    **kwargs
+) -> Optional[str]:
+    """
+    Log TITAN scan activity.
+
+    TITAN is an aggressive SPX Iron Condor bot with relaxed filters vs PEGASUS:
+    - 40% VIX skip (vs PEGASUS's 32%)
+    - 40% min win probability (vs PEGASUS's 50%)
+    - 15% risk per trade (vs PEGASUS's 10%)
+    - 10 max positions (vs PEGASUS's 5)
+    - 0.8 SD multiplier for closer strikes (vs PEGASUS's 1.0)
+    - $12 spread widths (vs PEGASUS's $10)
+    - 30-minute cooldown for multiple trades per day
+
+    Similar to PEGASUS but more aggressive, trading daily with higher frequency.
+    """
+    full_reasoning = kwargs.pop('full_reasoning', '')
+    action_taken = kwargs.pop('action_taken', '')
+    error_type = kwargs.pop('error_type', '')
+
+    # Generate action description based on outcome
+    if trade_executed:
+        action_taken = action_taken or "EXECUTED: SPX Iron Condor position opened"
+        full_reasoning = full_reasoning or f"TITAN opened IC position | {oracle_reasoning}"
+    elif outcome == ScanOutcome.NO_TRADE:
+        action_taken = action_taken or "NO_TRADE: Conditions not met"
+        full_reasoning = full_reasoning or f"TITAN scan - no trade: {decision_summary}"
+    elif outcome == ScanOutcome.SKIP:
+        action_taken = action_taken or f"SKIP: {decision_summary}"
+        full_reasoning = full_reasoning or f"TITAN skipped: {decision_summary}"
+    elif outcome == ScanOutcome.MARKET_CLOSED:
+        action_taken = "MARKET_CLOSED"
+        full_reasoning = "Market is closed"
+    elif outcome == ScanOutcome.ERROR:
+        action_taken = f"ERROR: {error_message}"
+        full_reasoning = f"TITAN error: {error_message}"
+    else:
+        action_taken = action_taken or f"{outcome.value}: {decision_summary}"
+        full_reasoning = full_reasoning or decision_summary
+
+    return log_scan_activity(
+        bot_name="TITAN",
+        outcome=outcome,
+        decision_summary=decision_summary,
+        action_taken=action_taken,
+        full_reasoning=full_reasoning,
+        market_data=market_data,
+        gex_data=gex_data,
+        checks=checks,
+        signal_source=signal_source,
+        signal_direction=signal_direction,
+        signal_confidence=signal_confidence,
+        signal_win_probability=signal_win_probability,
+        oracle_advice=oracle_advice,
+        oracle_reasoning=oracle_reasoning,
+        oracle_win_probability=oracle_win_probability,
+        oracle_confidence=oracle_confidence,
+        oracle_top_factors=oracle_top_factors,
+        oracle_probabilities=oracle_probabilities,
+        oracle_suggested_strikes=oracle_suggested_strikes,
+        oracle_thresholds=oracle_thresholds,
+        min_win_probability_threshold=min_win_probability_threshold,
+        risk_reward_ratio=risk_reward_ratio,
+        trade_executed=trade_executed,
+        error_message=error_message,
+        error_type=error_type,
+        generate_ai_explanation=generate_ai_explanation,
+        **kwargs
+    )

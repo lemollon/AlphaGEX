@@ -42,6 +42,13 @@ const getBrandColors = (botFilter?: string) => {
       dark: BOT_BRANDS.ICARUS.hexDark,        // Dark orange
     }
   }
+  if (botFilter === 'TITAN') {
+    return {
+      primary: BOT_BRANDS.TITAN.hexPrimary, // Violet #8B5CF6
+      light: BOT_BRANDS.TITAN.hexLight,      // Light violet
+      dark: BOT_BRANDS.TITAN.hexDark,        // Dark violet
+    }
+  }
   // Default green/red for combined view
   return {
     primary: '#22C55E',
