@@ -5,16 +5,34 @@ PROMETHEUS API Routes
 REST API endpoints for the Prometheus ML system.
 Provides comprehensive ML training, prediction, and monitoring capabilities.
 
+STANDALONE OPERATION:
+This API works independently without requiring ATLAS, HERMES, or any other
+trading bot. You can use these endpoints to:
+1. Get predictions for proposed trades
+2. Record trade entries manually
+3. Record trade outcomes for ML feedback
+4. Train and monitor the ML model
+
 Endpoints:
 - GET  /api/prometheus/status - Get Prometheus ML status
 - POST /api/prometheus/train - Train the ML model
-- POST /api/prometheus/predict - Get prediction for a trade
+- POST /api/prometheus/predict - Get prediction for a trade (full features)
+- POST /api/prometheus/quick-predict - Simplified prediction (auto-fetches market data)
+- POST /api/prometheus/record-entry - Record a new trade entry
+- POST /api/prometheus/record-outcome - Record trade outcome
+- GET  /api/prometheus/pending-trades - Get trades awaiting outcome
+- GET  /api/prometheus/market-data - Get current market features
 - GET  /api/prometheus/feature-importance - Get feature importance analysis
 - GET  /api/prometheus/logs - Get decision logs
 - GET  /api/prometheus/training-history - Get training history
 - GET  /api/prometheus/performance - Get performance metrics
-- POST /api/prometheus/record-outcome - Record trade outcome
 - GET  /api/prometheus/health - Health check
+
+Standalone Workflow:
+1. POST /quick-predict with trade params -> get win probability
+2. If you take the trade: POST /record-entry with trade_id
+3. When trade closes: POST /record-outcome with result
+4. When you have 30+ outcomes: POST /train to build/update model
 
 Author: AlphaGEX Quant
 """
@@ -91,6 +109,39 @@ class RecordOutcomeRequest(BaseModel):
     outcome: str  # WIN or LOSS
     pnl: float
     was_traded: bool = True
+
+
+class RecordEntryRequest(BaseModel):
+    """Request model for recording a new trade entry."""
+    trade_id: str
+    strike: float
+    underlying_price: float
+    dte: int
+    delta: float
+    premium: float
+    # Optional market data - will use defaults or fetch live if not provided
+    iv: Optional[float] = None
+    iv_rank: Optional[float] = None
+    vix: Optional[float] = None
+    vix_percentile: Optional[float] = None
+    vix_term_structure: Optional[float] = None
+    put_wall_distance_pct: Optional[float] = None
+    call_wall_distance_pct: Optional[float] = None
+    net_gex: Optional[float] = None
+    spx_20d_return: Optional[float] = None
+    spx_5d_return: Optional[float] = None
+    spx_distance_from_high: Optional[float] = None
+
+
+class QuickPredictRequest(BaseModel):
+    """Simplified prediction request - auto-fetches market data."""
+    strike: float
+    underlying_price: float
+    dte: int
+    delta: float
+    premium: float
+    trade_id: Optional[str] = None
+    record_entry: bool = False  # Optionally record this as a trade entry
 
 
 # =============================================================================
@@ -578,6 +629,264 @@ async def record_trade_outcome(request: RecordOutcomeRequest):
 
     except Exception as e:
         logger.error(f"Failed to record outcome: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# RECORD ENTRY ENDPOINT (STANDALONE)
+# =============================================================================
+
+@router.post("/record-entry")
+async def record_trade_entry(request: RecordEntryRequest):
+    """
+    Record a new trade entry for outcome tracking (STANDALONE).
+
+    This endpoint allows recording trade entries without requiring
+    integration with ATLAS, HERMES, or any other trading bot.
+
+    After the trade closes, use /record-outcome to complete the feedback loop.
+    """
+    if not PROMETHEUS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Prometheus ML system not available")
+
+    try:
+        from trading.prometheus_outcome_tracker import get_prometheus_outcome_tracker
+
+        tracker = get_prometheus_outcome_tracker()
+
+        # Build market data dict from provided values or use defaults
+        market_data = {}
+        if request.iv is not None:
+            market_data['iv'] = request.iv
+        if request.iv_rank is not None:
+            market_data['iv_rank'] = request.iv_rank
+        if request.vix is not None:
+            market_data['vix'] = request.vix
+        if request.vix_percentile is not None:
+            market_data['vix_percentile'] = request.vix_percentile
+        if request.vix_term_structure is not None:
+            market_data['vix_term_structure'] = request.vix_term_structure
+        if request.put_wall_distance_pct is not None:
+            market_data['put_wall_distance_pct'] = request.put_wall_distance_pct
+        if request.call_wall_distance_pct is not None:
+            market_data['call_wall_distance_pct'] = request.call_wall_distance_pct
+        if request.net_gex is not None:
+            market_data['net_gex'] = request.net_gex
+        if request.spx_20d_return is not None:
+            market_data['spx_20d_return'] = request.spx_20d_return
+        if request.spx_5d_return is not None:
+            market_data['spx_5d_return'] = request.spx_5d_return
+        if request.spx_distance_from_high is not None:
+            market_data['spx_distance_from_high'] = request.spx_distance_from_high
+
+        # If no market data provided, try to fetch live data
+        if not market_data:
+            market_data = tracker.get_current_market_features()
+
+        success = tracker.record_trade_entry(
+            trade_id=request.trade_id,
+            strike=request.strike,
+            underlying_price=request.underlying_price,
+            dte=request.dte,
+            delta=request.delta,
+            premium=request.premium,
+            market_data=market_data
+        )
+
+        if success:
+            return {
+                "success": True,
+                "message": f"Trade entry recorded: {request.trade_id}",
+                "trade_id": request.trade_id,
+                "market_data_used": market_data
+            }
+        else:
+            raise HTTPException(status_code=500, detail="Failed to record trade entry")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to record trade entry: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# QUICK PREDICT ENDPOINT (STANDALONE)
+# =============================================================================
+
+@router.post("/quick-predict")
+async def quick_predict(request: QuickPredictRequest):
+    """
+    Simplified prediction endpoint that auto-fetches market data (STANDALONE).
+
+    Only requires basic trade parameters - market conditions (VIX, GEX, etc.)
+    are fetched automatically from live data sources.
+
+    Optionally records the trade entry for outcome tracking.
+    """
+    if not PROMETHEUS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Prometheus ML system not available")
+
+    try:
+        from trading.prometheus_outcome_tracker import get_prometheus_outcome_tracker
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        trainer = get_prometheus_trainer()
+        tracker = get_prometheus_outcome_tracker()
+
+        # Get current market features
+        market_data = tracker.get_current_market_features()
+
+        # Calculate derived features
+        premium_to_strike_pct = (request.premium / request.strike) * 100 if request.strike > 0 else 0
+        if request.strike > 0 and request.dte > 0:
+            pct_return = (request.premium / request.strike) * 100
+            annualized_return = min(pct_return * (365 / max(request.dte, 0.5)), 500.0)
+        else:
+            annualized_return = 0
+
+        # Build features
+        CENTRAL_TZ = ZoneInfo("America/Chicago")
+        features = PrometheusFeatures(
+            trade_date=datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d'),
+            strike=request.strike,
+            underlying_price=request.underlying_price,
+            dte=request.dte,
+            delta=request.delta,
+            premium=request.premium,
+            iv=market_data.get('iv', 0.18),
+            iv_rank=market_data.get('iv_rank', 50.0),
+            vix=market_data.get('vix', 18.0),
+            vix_percentile=market_data.get('vix_percentile', 50.0),
+            vix_term_structure=market_data.get('vix_term_structure', -1.0),
+            put_wall_distance_pct=market_data.get('put_wall_distance_pct', 3.0),
+            call_wall_distance_pct=market_data.get('call_wall_distance_pct', 3.0),
+            net_gex=market_data.get('net_gex', 5e9),
+            spx_20d_return=market_data.get('spx_20d_return', 0.0),
+            spx_5d_return=market_data.get('spx_5d_return', 0.0),
+            spx_distance_from_high=market_data.get('spx_distance_from_high', 1.0),
+            premium_to_strike_pct=premium_to_strike_pct,
+            annualized_return=annualized_return
+        )
+
+        # Get prediction
+        prediction = trainer.predict(features, trade_id=request.trade_id)
+
+        # Optionally record as trade entry
+        entry_recorded = False
+        if request.record_entry and request.trade_id:
+            entry_recorded = tracker.record_trade_entry(
+                trade_id=request.trade_id,
+                strike=request.strike,
+                underlying_price=request.underlying_price,
+                dte=request.dte,
+                delta=request.delta,
+                premium=request.premium,
+                market_data=market_data
+            )
+
+        return {
+            "success": True,
+            "data": prediction.to_dict(),
+            "market_data": market_data,
+            "entry_recorded": entry_recorded
+        }
+
+    except Exception as e:
+        logger.error(f"Quick prediction failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# GET CURRENT MARKET DATA ENDPOINT
+# =============================================================================
+
+@router.get("/market-data")
+async def get_current_market_data():
+    """
+    Get current market features for manual prediction input.
+
+    Returns live VIX, GEX, and other market data that Prometheus uses
+    for predictions.
+    """
+    if not PROMETHEUS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Prometheus ML system not available")
+
+    try:
+        from trading.prometheus_outcome_tracker import get_prometheus_outcome_tracker
+
+        tracker = get_prometheus_outcome_tracker()
+        market_data = tracker.get_current_market_features()
+
+        return {
+            "success": True,
+            "data": market_data,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get market data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# PENDING TRADES ENDPOINT
+# =============================================================================
+
+@router.get("/pending-trades")
+async def get_pending_trades():
+    """
+    Get all trades that have been recorded but not yet resolved.
+
+    These are trades awaiting outcome recording.
+    """
+    if not PROMETHEUS_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Prometheus ML system not available")
+
+    try:
+        if not DB_AVAILABLE:
+            return {
+                "success": True,
+                "data": {"trades": [], "count": 0}
+            }
+
+        from database_adapter import get_connection
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute('''
+            SELECT trade_id, trade_date, strike, underlying_price, dte, delta, premium,
+                   vix, iv_rank, created_at
+            FROM spx_wheel_ml_outcomes
+            WHERE outcome IS NULL
+            ORDER BY created_at DESC
+            LIMIT 50
+        ''')
+
+        columns = [desc[0] for desc in cursor.description]
+        trades = []
+
+        for row in cursor.fetchall():
+            trade = dict(zip(columns, row))
+            # Convert datetime to string
+            for key in ['trade_date', 'created_at']:
+                if key in trade and hasattr(trade[key], 'isoformat'):
+                    trade[key] = trade[key].isoformat()
+            trades.append(trade)
+
+        conn.close()
+
+        return {
+            "success": True,
+            "data": {
+                "trades": trades,
+                "count": len(trades)
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get pending trades: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -2,12 +2,48 @@
 PROMETHEUS Outcome Tracker
 ===========================
 
-Automatically tracks trade outcomes for Prometheus ML learning.
+Tracks trade outcomes for Prometheus ML learning.
+
+STANDALONE OPERATION:
+This module works independently without requiring ATLAS, HERMES, or any other
+trading bot. Use the API endpoints or these classes directly:
+
+Via API (recommended):
+- POST /api/prometheus/record-entry - Record a new trade
+- POST /api/prometheus/record-outcome - Record trade result
+- POST /api/prometheus/quick-predict - Get prediction + optionally record entry
+
+Via Python:
+```python
+from trading.prometheus_outcome_tracker import (
+    get_prometheus_outcome_tracker,
+    record_spx_wheel_entry,
+    record_spx_wheel_outcome
+)
+
+# Record a trade entry
+record_spx_wheel_entry(
+    trade_id="my-trade-001",
+    strike=5800.0,
+    underlying_price=5850.0,
+    dte=7,
+    delta=-0.15,
+    premium=5.50
+)
+
+# Later, record the outcome
+record_spx_wheel_outcome(
+    trade_id="my-trade-001",
+    is_win=True,
+    pnl=550.0,
+    settlement_price=5870.0
+)
+```
 
 This module provides:
 1. Trade entry recording when positions are opened
 2. Outcome recording when positions are closed
-3. Integration with trading bots (ATLAS, HERMES, etc.)
+3. Optional integration with trading bots (ATLAS, HERMES, etc.)
 4. Automatic feature extraction from market data
 
 Author: AlphaGEX Quant
