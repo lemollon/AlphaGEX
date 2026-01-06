@@ -65,7 +65,7 @@ export interface EquityDataPoint {
 export type TimePeriod = '1D' | '1W' | '1M' | '3M' | 'YTD' | '1Y' | 'ALL'
 
 interface LivePortfolioProps {
-  botName: 'ATHENA' | 'ARES' | 'PEGASUS'
+  botName: 'ATHENA' | 'ARES' | 'ICARUS' | 'PEGASUS' | 'TITAN' | 'PHOENIX' | 'ATLAS'
   totalValue: number
   startingCapital: number
   livePnL: LivePnLData | null

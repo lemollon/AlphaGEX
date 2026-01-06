@@ -5,7 +5,7 @@ import { TrendingUp, TrendingDown, AlertTriangle, Clock, ChevronRight, Timer } f
 import { LivePosition } from './LivePortfolio'
 
 interface OpenPositionsLiveProps {
-  botName: 'ATHENA' | 'ARES' | 'PEGASUS'
+  botName: 'ATHENA' | 'ARES' | 'ICARUS' | 'PEGASUS' | 'TITAN' | 'PHOENIX' | 'ATLAS'
   positions: LivePosition[]
   underlyingPrice?: number
   isLoading?: boolean
