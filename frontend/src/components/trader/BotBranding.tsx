@@ -1,7 +1,7 @@
 'use client'
 
 import React from 'react'
-import { Sword, Target, Shield, Flame, TrendingUp, TrendingDown, Clock, AlertTriangle, CheckCircle, XCircle, RefreshCw } from 'lucide-react'
+import { Sword, Target, Shield, Flame, Zap, TrendingUp, TrendingDown, Clock, AlertTriangle, CheckCircle, XCircle, RefreshCw } from 'lucide-react'
 
 // =============================================================================
 // BOT BRANDING SYSTEM
