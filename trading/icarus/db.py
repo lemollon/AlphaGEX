@@ -231,7 +231,7 @@ class ICARUSDatabase:
                         ticker=row[2],
                         long_strike=float(row[3]),
                         short_strike=float(row[4]),
-                        expiration=str(row[5]),
+                        expiration=str(row[5]) if row[5] else "",
                         entry_debit=float(row[6]),
                         contracts=int(row[7]),
                         max_profit=float(row[8]),
@@ -552,16 +552,18 @@ class ICARUSDatabase:
     def update_heartbeat(self, status: str, action: str) -> None:
         """Update bot heartbeat for monitoring"""
         try:
+            import json
             with db_connection() as conn:
                 c = conn.cursor()
+                details = json.dumps({"last_action": action})
                 c.execute("""
-                    INSERT INTO bot_heartbeat (bot_name, status, last_action, last_scan_time)
-                    VALUES (%s, %s, %s, NOW())
+                    INSERT INTO bot_heartbeats (bot_name, last_heartbeat, status, details)
+                    VALUES (%s, NOW(), %s, %s)
                     ON CONFLICT (bot_name) DO UPDATE SET
                         status = EXCLUDED.status,
-                        last_action = EXCLUDED.last_action,
-                        last_scan_time = NOW()
-                """, (self.bot_name, status, action))
+                        last_heartbeat = NOW(),
+                        details = EXCLUDED.details
+                """, (self.bot_name, status, details))
                 conn.commit()
         except Exception:
             pass

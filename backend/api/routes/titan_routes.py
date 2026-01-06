@@ -1119,3 +1119,32 @@ async def get_titan_performance(
             },
             "message": "Performance data not available"
         }
+
+
+@router.post("/reset")
+async def reset_titan_data(
+    request: Request,
+    auth: AuthInfo = Depends(require_admin) if AUTH_AVAILABLE and require_admin else None
+):
+    """Reset all TITAN data (positions, signals, logs)."""
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+
+        # Delete all TITAN data
+        c.execute("DELETE FROM titan_positions")
+        c.execute("DELETE FROM titan_signals")
+        c.execute("DELETE FROM titan_logs")
+        c.execute("DELETE FROM titan_daily_perf")
+
+        conn.commit()
+        conn.close()
+
+        return {
+            "success": True,
+            "message": "All TITAN data has been reset"
+        }
+
+    except Exception as e:
+        logger.error(f"Error resetting TITAN data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

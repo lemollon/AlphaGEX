@@ -10,7 +10,7 @@ import logging
 import uuid
 import time
 from datetime import datetime
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, Union
 
 from .models import (
     IronCondorPosition, PositionStatus,
@@ -313,14 +313,14 @@ class OrderExecutor:
             logger.error(f"Live execution failed: {e}")
             return None
 
-    def close_position(self, position: IronCondorPosition, reason: str) -> Tuple[bool, float, float]:
+    def close_position(self, position: IronCondorPosition, reason: str) -> Tuple[Union[bool, str], float, float]:
         """Close SPX IC position"""
         if self.config.mode == TradingMode.PAPER:
             return self._close_paper(position, reason)
         else:
             return self._close_live(position, reason)
 
-    def _close_paper(self, position: IronCondorPosition, reason: str) -> Tuple[bool, float, float]:
+    def _close_paper(self, position: IronCondorPosition, reason: str) -> Tuple[Union[bool, str], float, float]:
         try:
             is_expiration = reason in ['EXPIRED', 'FORCE_EXIT']
 
@@ -387,7 +387,7 @@ class OrderExecutor:
 
         return 0.0
 
-    def _close_live(self, position: IronCondorPosition, reason: str) -> Tuple[bool, float, float]:
+    def _close_live(self, position: IronCondorPosition, reason: str) -> Tuple[Union[bool, str], float, float]:
         if not self.tradier:
             return False, 0, 0
 
