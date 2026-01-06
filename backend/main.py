@@ -58,6 +58,7 @@ from backend.api.routes import (
     athena_routes,  # ATHENA Directional Spread bot endpoints
     icarus_routes,  # ICARUS Aggressive Directional Spread bot endpoints
     pegasus_routes,  # PEGASUS SPX Iron Condor bot endpoints
+    titan_routes,  # TITAN Aggressive SPX Iron Condor bot endpoints
     logs_routes,  # Comprehensive logs API for ALL 22 logging tables
     scan_activity_routes,  # Scan Activity - EVERY scan with full reasoning for ARES/ATHENA
     apollo_routes,  # APOLLO ML-powered scanner
@@ -295,6 +296,7 @@ app.include_router(ares_routes.router)
 app.include_router(athena_routes.router)
 app.include_router(icarus_routes.router)
 app.include_router(pegasus_routes.router)
+app.include_router(titan_routes.router)
 app.include_router(logs_routes.router)
 app.include_router(scan_activity_routes.router)
 app.include_router(apollo_routes.router)

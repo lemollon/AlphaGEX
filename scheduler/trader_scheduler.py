@@ -39,6 +39,7 @@ CAPITAL_ALLOCATION = {
     'ATLAS': 300_000,     # SPX wheel strategy
     'ARES': 150_000,      # Aggressive Iron Condor (SPY 0DTE)
     'PEGASUS': 200_000,   # SPX Iron Condor ($10 spreads, weekly)
+    'TITAN': 200_000,     # Aggressive SPX Iron Condor ($12 spreads, daily)
     'RESERVE': 100_000,   # Emergency reserve
     'TOTAL': 1_000_000,
 }
@@ -125,6 +126,17 @@ except ImportError:
     ICARUSTradingMode = None
     print("Warning: ICARUS not available. Aggressive directional trading will be disabled.")
 
+# Import TITAN (Aggressive SPX Iron Condors - daily trading)
+try:
+    from trading.titan import TITANTrader, TITANConfig, TradingMode as TITANTradingMode
+    TITAN_AVAILABLE = True
+except ImportError:
+    TITAN_AVAILABLE = False
+    TITANTrader = None
+    TITANConfig = None
+    TITANTradingMode = None
+    print("Warning: TITAN not available. Aggressive SPX Iron Condor trading will be disabled.")
+
 # Import decision logger for comprehensive logging
 try:
     from trading.decision_logger import get_phoenix_logger, get_atlas_logger, get_ares_logger, BotName
@@ -146,7 +158,7 @@ except ImportError:
 # Import scan activity logger for comprehensive scan visibility
 try:
     from trading.scan_activity_logger import (
-        log_ares_scan, log_athena_scan, log_pegasus_scan, log_icarus_scan,
+        log_ares_scan, log_athena_scan, log_pegasus_scan, log_icarus_scan, log_titan_scan,
         ScanOutcome
     )
     SCAN_ACTIVITY_LOGGER_AVAILABLE = True
@@ -156,6 +168,7 @@ except ImportError:
     log_athena_scan = None
     log_pegasus_scan = None
     log_icarus_scan = None
+    log_titan_scan = None
     ScanOutcome = None
     print("Warning: Scan activity logger not available.")
 
@@ -261,6 +274,18 @@ class AutonomousTraderScheduler:
                 logger.warning(f"ICARUS initialization failed: {e}")
                 self.icarus_trader = None
 
+        # TITAN - Aggressive SPX Iron Condors ($12 spreads, daily trading)
+        # Multiple trades per day with relaxed filters vs PEGASUS
+        self.titan_trader = None
+        if TITAN_AVAILABLE:
+            try:
+                config = TITANConfig(mode=TITANTradingMode.PAPER)
+                self.titan_trader = TITANTrader(config=config)
+                logger.info(f"✅ TITAN initialized (Aggressive SPX Iron Condors, PAPER mode)")
+            except Exception as e:
+                logger.warning(f"TITAN initialization failed: {e}")
+                self.titan_trader = None
+
         # Log capital allocation summary
         logger.info(f"📊 CAPITAL ALLOCATION:")
         logger.info(f"   PHOENIX: ${CAPITAL_ALLOCATION['PHOENIX']:,}")
@@ -277,6 +302,7 @@ class AutonomousTraderScheduler:
         self.last_athena_check = None
         self.last_pegasus_check = None
         self.last_icarus_check = None
+        self.last_titan_check = None
         self.last_argus_check = None
         self.last_error = None
         self.execution_count = 0
@@ -285,6 +311,7 @@ class AutonomousTraderScheduler:
         self.athena_execution_count = 0
         self.pegasus_execution_count = 0
         self.icarus_execution_count = 0
+        self.titan_execution_count = 0
         self.argus_execution_count = 0
 
         # Load saved state from database
@@ -1357,6 +1384,157 @@ class AutonomousTraderScheduler:
             logger.info("ICARUS EOD will retry next trading day")
             logger.info(f"=" * 80)
 
+    def scheduled_titan_logic(self):
+        """
+        TITAN (Aggressive SPX Iron Condor) trading logic - runs every 5 minutes during market hours
+
+        TITAN is an aggressive clone of PEGASUS with relaxed filters:
+        - 40% VIX skip (vs PEGASUS's 32%)
+        - 40% min win probability (vs PEGASUS's 50%)
+        - 15% risk per trade (vs PEGASUS's 10%)
+        - 10 max positions (vs PEGASUS's 5)
+        - 0.8 SD multiplier for closer strikes (vs PEGASUS's 1.0)
+        - $12 spread widths (vs PEGASUS's $10)
+        - 30-minute cooldown for multiple trades per day
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"TITAN (Aggressive SPX IC) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.titan_trader:
+            logger.warning("TITAN trader not available - skipping")
+            self._save_heartbeat('TITAN', 'UNAVAILABLE')
+            # Log to scan_activity for visibility
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_titan_scan:
+                log_titan_scan(
+                    outcome=ScanOutcome.UNAVAILABLE,
+                    decision_summary="TITAN trader not initialized",
+                    generate_ai_explanation=False
+                )
+            return
+
+        is_open, market_status = self.get_market_status()
+        if not is_open:
+            # Map market status to appropriate message
+            message_mapping = {
+                'BEFORE_WINDOW': "Before trading window (8:30 AM CT)",
+                'AFTER_WINDOW': "After trading window (3:00 PM CT)",
+                'WEEKEND': "Weekend - market closed",
+                'HOLIDAY': "Holiday - market closed",
+            }
+            message = message_mapping.get(market_status, "Market is closed")
+
+            logger.info(f"Market not open ({market_status}). Skipping TITAN logic.")
+            self._save_heartbeat('TITAN', market_status)
+            # Log to scan_activity for visibility
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_titan_scan and ScanOutcome:
+                # Map market status to scan outcome
+                outcome_mapping = {
+                    'BEFORE_WINDOW': ScanOutcome.MARKET_CLOSED,
+                    'AFTER_WINDOW': ScanOutcome.MARKET_CLOSED,
+                    'WEEKEND': ScanOutcome.MARKET_CLOSED,
+                    'HOLIDAY': ScanOutcome.MARKET_CLOSED,
+                }
+                outcome = outcome_mapping.get(market_status, ScanOutcome.MARKET_CLOSED)
+                log_titan_scan(
+                    outcome=outcome,
+                    decision_summary=message,
+                    generate_ai_explanation=False
+                )
+            return
+
+        # Check Solomon kill switch
+        if SOLOMON_AVAILABLE:
+            try:
+                solomon = get_solomon()
+                if solomon.is_bot_killed('TITAN'):
+                    logger.warning("TITAN: Kill switch is ACTIVE - skipping")
+                    self._save_heartbeat('TITAN', 'KILLED', {'reason': 'Solomon kill switch'})
+                    # Log to scan_activity for visibility
+                    if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_titan_scan:
+                        log_titan_scan(
+                            outcome=ScanOutcome.SKIP,
+                            decision_summary="Kill switch is active (Solomon)",
+                            generate_ai_explanation=False
+                        )
+                    return
+            except Exception as e:
+                logger.debug(f"TITAN: Could not check Solomon: {e}")
+
+        try:
+            self.last_titan_check = now
+
+            # Run the cycle
+            result = self.titan_trader.run_cycle()
+
+            traded = result.get('trade_opened', False)
+            closed = result.get('positions_closed', 0)
+            action = result.get('action', 'none')
+
+            logger.info(f"TITAN cycle completed: {action}")
+            if traded:
+                logger.info(f"  NEW TRADE OPENED")
+            if closed > 0:
+                logger.info(f"  Positions closed: {closed}, P&L: ${result.get('realized_pnl', 0):.2f}")
+            if result.get('errors'):
+                for err in result['errors']:
+                    logger.warning(f"  Skip reason: {err}")
+
+            self.titan_execution_count += 1
+            self._save_heartbeat('TITAN', 'TRADED' if traded else 'SCAN_COMPLETE', {
+                'scan_number': self.titan_execution_count,
+                'traded': traded,
+                'action': action
+            })
+            logger.info(f"TITAN scan #{self.titan_execution_count} completed")
+            logger.info(f"=" * 80)
+
+        except Exception as e:
+            logger.error(f"ERROR in TITAN: {str(e)}")
+            logger.error(traceback.format_exc())
+            self._save_heartbeat('TITAN', 'ERROR', {'error': str(e)})
+            logger.info(f"=" * 80)
+
+    def scheduled_titan_eod_logic(self):
+        """
+        TITAN End-of-Day processing - runs daily at 3:17 PM CT
+
+        Processes expired SPX Iron Condor positions:
+        - Calculates realized P&L based on closing price
+        - Updates position status to 'expired'
+        - Updates daily performance metrics
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"TITAN EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.titan_trader:
+            logger.warning("TITAN trader not available - skipping EOD processing")
+            return
+
+        logger.info("Processing expired TITAN positions...")
+
+        try:
+            # Force close any remaining open positions
+            result = self.titan_trader.force_close_all("EOD_EXPIRATION")
+
+            if result:
+                logger.info(f"TITAN EOD processing completed:")
+                logger.info(f"  Closed: {result.get('closed', 0)} positions")
+                logger.info(f"  Total P&L: ${result.get('total_pnl', 0):,.2f}")
+            else:
+                logger.info("TITAN EOD: No positions to process")
+
+            logger.info(f"TITAN EOD processing completed successfully")
+            logger.info(f"=" * 80)
+
+        except Exception as e:
+            logger.error(f"ERROR in TITAN EOD: {str(e)}")
+            logger.error(traceback.format_exc())
+            logger.info(f"=" * 80)
+
     def scheduled_argus_logic(self):
         """
         ARGUS (0DTE Gamma Live) commentary generation - runs every 5 minutes during market hours
@@ -1736,6 +1914,47 @@ class AutonomousTraderScheduler:
             logger.warning("⚠️ ICARUS not available - aggressive directional trading disabled")
 
         # =================================================================
+        # TITAN JOB: Aggressive SPX Iron Condors - runs every 5 minutes during market hours
+        # Trades SPX options with $12 spread widths, multiple trades per day with cooldown
+        # =================================================================
+        if self.titan_trader:
+            # Run every 5 minutes during market hours (8:45 AM - 2:30 PM CT)
+            # Starts 5 minutes after ICARUS to stagger bot activity
+            self.scheduler.add_job(
+                self.scheduled_titan_logic,
+                trigger=IntervalTrigger(
+                    minutes=5,
+                    start_date=datetime.now(CENTRAL_TZ).replace(
+                        hour=8, minute=45, second=0, microsecond=0
+                    ),
+                    timezone='America/Chicago'
+                ),
+                id='titan_trading',
+                name='TITAN - Aggressive SPX Iron Condor (5-min intervals)',
+                replace_existing=True
+            )
+            logger.info("✅ TITAN job scheduled (every 5 min during market hours)")
+
+            # =================================================================
+            # TITAN EOD JOB: Process expired positions - runs at 3:17 PM CT
+            # =================================================================
+            self.scheduler.add_job(
+                self.scheduled_titan_eod_logic,
+                trigger=CronTrigger(
+                    hour=15,       # 3:00 PM CT - after market close
+                    minute=17,     # 3:17 PM CT (after PEGASUS EOD at 3:15)
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='titan_eod',
+                name='TITAN - EOD Position Expiration',
+                replace_existing=True
+            )
+            logger.info("✅ TITAN EOD job scheduled (3:17 PM CT daily)")
+        else:
+            logger.warning("⚠️ TITAN not available - aggressive SPX IC trading disabled")
+
+        # =================================================================
         # ARGUS JOB: Commentary Generation - runs every 5 minutes during market hours
         # Generates AI-powered gamma commentary for the Live Log
         # =================================================================
@@ -1908,6 +2127,12 @@ def get_icarus_trader():
     return scheduler.icarus_trader if scheduler else None
 
 
+def get_titan_trader():
+    """Get the TITAN trader instance from the scheduler"""
+    scheduler = get_scheduler()
+    return scheduler.titan_trader if scheduler else None
+
+
 # ============================================================================
 # STANDALONE EXECUTION MODE (for Render Background Worker)
 # ============================================================================
@@ -1967,7 +2192,7 @@ def run_standalone():
             # Log status periodically
             status = scheduler.get_status()
             if status['market_open']:
-                logger.info(f"Market OPEN - Executions: PHOENIX={scheduler.execution_count}, ATLAS={scheduler.atlas_execution_count}, ARES={scheduler.ares_execution_count}, PEGASUS={scheduler.pegasus_execution_count}, ATHENA={scheduler.athena_execution_count}, ARGUS={scheduler.argus_execution_count}")
+                logger.info(f"Market OPEN - Executions: PHOENIX={scheduler.execution_count}, ATLAS={scheduler.atlas_execution_count}, ARES={scheduler.ares_execution_count}, PEGASUS={scheduler.pegasus_execution_count}, ATHENA={scheduler.athena_execution_count}, ICARUS={scheduler.icarus_execution_count}, TITAN={scheduler.titan_execution_count}, ARGUS={scheduler.argus_execution_count}")
             else:
                 logger.debug(f"Market closed. Next run: {status.get('next_run', 'Unknown')}")
 

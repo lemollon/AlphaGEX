@@ -681,6 +681,59 @@ const fetchers = {
       return { success: false, data: { scans: [] } }
     }
   },
+
+  // TITAN Aggressive SPX Iron Condor Bot (Daily Trading)
+  titanStatus: async () => {
+    try {
+      const response = await api.get('/api/titan/status')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  titanPositions: async () => {
+    try {
+      const response = await api.get('/api/titan/positions')
+      return response.data
+    } catch {
+      return { success: false, data: { open_positions: [], closed_positions: [] } }
+    }
+  },
+  titanEquityCurve: async (days: number = 30) => {
+    try {
+      const response = await api.get(`/api/titan/equity-curve?days=${days}`)
+      return response.data
+    } catch {
+      return { success: false, data: { equity_curve: [] } }
+    }
+  },
+  titanConfig: async () => {
+    try {
+      const response = await api.get('/api/titan/config')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  titanLivePnL: async () => {
+    try {
+      const response = await api.get('/api/titan/live-pnl')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  scanActivityTitan: async (limit?: number, date?: string) => {
+    try {
+      const params = new URLSearchParams()
+      params.append('limit', String(limit || 50))
+      if (date) params.append('date', date)
+      const response = await api.get(`/api/scans/activity/TITAN?${params}`)
+      return response.data
+    } catch {
+      return { success: false, data: { scans: [] } }
+    }
+  },
 }
 
 // =============================================================================
@@ -1160,6 +1213,58 @@ export function useScanActivityPegasus(limit: number = 50, date?: string, option
   return useSWR(
     `scan-activity-pegasus-${limit}-${date || 'all'}`,
     () => fetchers.scanActivityPegasus(limit, date),
+    { ...swrConfig, refreshInterval: 30 * 1000, ...options }
+  )
+}
+
+// =============================================================================
+// TITAN AGGRESSIVE SPX IRON CONDOR HOOKS (Daily Trading)
+// =============================================================================
+
+export function useTITANStatus(options?: SWRConfiguration) {
+  return useSWR('titan-status', fetchers.titanStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useTITANPositions(options?: SWRConfiguration) {
+  return useSWR('titan-positions', fetchers.titanPositions, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useTITANEquityCurve(days: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `titan-equity-curve-${days}`,
+    () => fetchers.titanEquityCurve(days),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useTITANConfig(options?: SWRConfiguration) {
+  return useSWR('titan-config', fetchers.titanConfig, {
+    ...swrConfig,
+    refreshInterval: 5 * 60 * 1000,
+    ...options,
+  })
+}
+
+export function useTITANLivePnL(options?: SWRConfiguration) {
+  return useSWR('titan-live-pnl', fetchers.titanLivePnL, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useScanActivityTitan(limit: number = 50, date?: string, options?: SWRConfiguration) {
+  return useSWR(
+    `scan-activity-titan-${limit}-${date || 'all'}`,
+    () => fetchers.scanActivityTitan(limit, date),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
 }
