@@ -378,11 +378,13 @@ async def get_icarus_positions(
                 "spread_formatted": spread_formatted,
                 "spread_width": spread_width,
                 "expiration": str(row[5]) if row[5] else None,
-                "entry_debit": entry_debit,
+                "entry_price": entry_debit,  # Match ATHENA's field name
+                "entry_debit": entry_debit,  # Keep for backward compat
                 "contracts": row[7],
                 "max_profit": max_profit_val,
                 "max_loss": float(row[9]) if row[9] else 0,
-                "underlying_at_entry": float(row[10]) if row[10] else 0,
+                "spot_at_entry": float(row[10]) if row[10] else 0,  # Match ATHENA's field name
+                "underlying_at_entry": float(row[10]) if row[10] else 0,  # Keep for backward compat
                 "call_wall": float(row[11]) if row[11] else 0,
                 "put_wall": float(row[12]) if row[12] else 0,
                 "gex_regime": row[13],
@@ -391,12 +393,16 @@ async def get_icarus_positions(
                 "ml_direction": row[16],
                 "ml_confidence": float(row[17]) if row[17] else 0,
                 "status": row[18],
-                "close_price": float(row[19]) if row[19] else 0,
-                "close_reason": row[20],
+                "exit_price": float(row[19]) if row[19] else 0,  # Match ATHENA's field name
+                "close_price": float(row[19]) if row[19] else 0,  # Keep for backward compat
+                "exit_reason": row[20],  # Match ATHENA's field name
+                "close_reason": row[20],  # Keep for backward compat
                 "realized_pnl": realized_pnl,
                 "return_pct": return_pct,
-                "open_time": row[22].isoformat() if row[22] else None,
-                "close_time": row[23].isoformat() if row[23] else None,
+                "created_at": row[22].isoformat() if row[22] else None,  # Match ATHENA's field name
+                "open_time": row[22].isoformat() if row[22] else None,  # Keep for backward compat
+                "exit_time": row[23].isoformat() if row[23] else None,  # Match ATHENA's field name
+                "close_time": row[23].isoformat() if row[23] else None,  # Keep for backward compat
                 "wall_type": row[24],
                 "wall_distance_pct": float(row[25]) if row[25] else 0,
                 "trade_reasoning": row[26]

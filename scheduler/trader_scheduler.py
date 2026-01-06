@@ -114,6 +114,17 @@ except ImportError:
     PEGASUSTradingMode = None
     print("Warning: PEGASUS not available. SPX trading will be disabled.")
 
+# Import ICARUS (Aggressive Directional Spreads - relaxed GEX filters)
+try:
+    from trading.icarus import ICARUSTrader, ICARUSConfig, TradingMode as ICARUSTradingMode
+    ICARUS_AVAILABLE = True
+except ImportError:
+    ICARUS_AVAILABLE = False
+    ICARUSTrader = None
+    ICARUSConfig = None
+    ICARUSTradingMode = None
+    print("Warning: ICARUS not available. Aggressive directional trading will be disabled.")
+
 # Import decision logger for comprehensive logging
 try:
     from trading.decision_logger import get_phoenix_logger, get_atlas_logger, get_ares_logger, BotName
@@ -135,7 +146,7 @@ except ImportError:
 # Import scan activity logger for comprehensive scan visibility
 try:
     from trading.scan_activity_logger import (
-        log_ares_scan, log_athena_scan, log_pegasus_scan,
+        log_ares_scan, log_athena_scan, log_pegasus_scan, log_icarus_scan,
         ScanOutcome
     )
     SCAN_ACTIVITY_LOGGER_AVAILABLE = True
@@ -144,6 +155,7 @@ except ImportError:
     log_ares_scan = None
     log_athena_scan = None
     log_pegasus_scan = None
+    log_icarus_scan = None
     ScanOutcome = None
     print("Warning: Scan activity logger not available.")
 
@@ -237,6 +249,18 @@ class AutonomousTraderScheduler:
                 logger.warning(f"PEGASUS initialization failed: {e}")
                 self.pegasus_trader = None
 
+        # ICARUS - Aggressive Directional Spreads (relaxed GEX filters)
+        # Uses relaxed parameters vs ATHENA: 10% wall filter, 40% min win prob, 4% risk
+        self.icarus_trader = None
+        if ICARUS_AVAILABLE:
+            try:
+                config = ICARUSConfig(mode=ICARUSTradingMode.PAPER)
+                self.icarus_trader = ICARUSTrader(config=config)
+                logger.info(f"✅ ICARUS initialized (Aggressive Directional Spreads, PAPER mode)")
+            except Exception as e:
+                logger.warning(f"ICARUS initialization failed: {e}")
+                self.icarus_trader = None
+
         # Log capital allocation summary
         logger.info(f"📊 CAPITAL ALLOCATION:")
         logger.info(f"   PHOENIX: ${CAPITAL_ALLOCATION['PHOENIX']:,}")
@@ -252,6 +276,7 @@ class AutonomousTraderScheduler:
         self.last_ares_check = None
         self.last_athena_check = None
         self.last_pegasus_check = None
+        self.last_icarus_check = None
         self.last_argus_check = None
         self.last_error = None
         self.execution_count = 0
@@ -259,6 +284,7 @@ class AutonomousTraderScheduler:
         self.ares_execution_count = 0
         self.athena_execution_count = 0
         self.pegasus_execution_count = 0
+        self.icarus_execution_count = 0
         self.argus_execution_count = 0
 
         # Load saved state from database
@@ -1175,6 +1201,162 @@ class AutonomousTraderScheduler:
             logger.error(traceback.format_exc())
             logger.info(f"=" * 80)
 
+    def scheduled_icarus_logic(self):
+        """
+        ICARUS (Aggressive Directional Spreads) trading logic - runs every 5 minutes during market hours
+
+        ICARUS is an aggressive clone of ATHENA with relaxed GEX filters:
+        - 10% wall filter (vs ATHENA's 3%)
+        - 40% min win probability (vs ATHENA's 48%)
+        - 4% risk per trade (vs ATHENA's 2%)
+        - 10 max daily trades (vs ATHENA's 5)
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"ICARUS (Aggressive Spreads) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.icarus_trader:
+            logger.warning("ICARUS trader not available - skipping")
+            self._save_heartbeat('ICARUS', 'UNAVAILABLE')
+            # Log to scan_activity for visibility
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_icarus_scan:
+                log_icarus_scan(
+                    outcome=ScanOutcome.UNAVAILABLE,
+                    decision_summary="ICARUS trader not initialized",
+                    generate_ai_explanation=False
+                )
+            return
+
+        is_open, market_status = self.get_market_status()
+        if not is_open:
+            # Map market status to appropriate message
+            message_mapping = {
+                'BEFORE_WINDOW': "Before trading window (8:30 AM CT)",
+                'AFTER_WINDOW': "After trading window (3:00 PM CT)",
+                'WEEKEND': "Weekend - market closed",
+                'HOLIDAY': "Holiday - market closed",
+            }
+            message = message_mapping.get(market_status, "Market is closed")
+
+            logger.info(f"Market not open ({market_status}). Skipping ICARUS logic.")
+            self._save_heartbeat('ICARUS', market_status)
+            # Log to scan_activity for visibility
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_icarus_scan and ScanOutcome:
+                # Map market status to scan outcome
+                outcome_mapping = {
+                    'BEFORE_WINDOW': ScanOutcome.MARKET_CLOSED,
+                    'AFTER_WINDOW': ScanOutcome.MARKET_CLOSED,
+                    'WEEKEND': ScanOutcome.MARKET_CLOSED,
+                    'HOLIDAY': ScanOutcome.MARKET_CLOSED,
+                }
+                outcome = outcome_mapping.get(market_status, ScanOutcome.MARKET_CLOSED)
+                log_icarus_scan(
+                    outcome=outcome,
+                    decision_summary=message,
+                    generate_ai_explanation=False
+                )
+            return
+
+        # Check Solomon kill switch
+        if SOLOMON_AVAILABLE:
+            try:
+                solomon = get_solomon()
+                if solomon.is_bot_killed('ICARUS'):
+                    logger.warning("ICARUS: Kill switch is ACTIVE - skipping")
+                    self._save_heartbeat('ICARUS', 'KILLED', {'reason': 'Solomon kill switch'})
+                    # Log to scan_activity for visibility
+                    if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_icarus_scan:
+                        log_icarus_scan(
+                            outcome=ScanOutcome.SKIP,
+                            decision_summary="Kill switch is active (Solomon)",
+                            generate_ai_explanation=False
+                        )
+                    return
+            except Exception as e:
+                logger.debug(f"ICARUS: Could not check Solomon: {e}")
+
+        try:
+            self.last_icarus_check = now
+
+            # Run the cycle
+            result = self.icarus_trader.run_cycle()
+
+            traded = result.get('trade_opened', False)
+            closed = result.get('positions_closed', 0)
+            action = result.get('action', 'none')
+
+            logger.info(f"ICARUS cycle completed: {action}")
+            if traded:
+                logger.info(f"  NEW TRADE OPENED")
+            if closed > 0:
+                logger.info(f"  Positions closed: {closed}, P&L: ${result.get('realized_pnl', 0):.2f}")
+            if result.get('errors'):
+                for err in result['errors']:
+                    logger.warning(f"  Skip reason: {err}")
+
+            self.icarus_execution_count += 1
+            self._save_heartbeat('ICARUS', 'TRADED' if traded else 'SCAN_COMPLETE', {
+                'scan_number': self.icarus_execution_count,
+                'traded': traded,
+                'action': action
+            })
+            logger.info(f"ICARUS scan #{self.icarus_execution_count} completed")
+            logger.info(f"=" * 80)
+
+        except Exception as e:
+            logger.error(f"ERROR in ICARUS: {str(e)}")
+            logger.error(traceback.format_exc())
+            self._save_heartbeat('ICARUS', 'ERROR', {'error': str(e)})
+            logger.info(f"=" * 80)
+
+    def scheduled_icarus_eod_logic(self):
+        """
+        ICARUS End-of-Day processing - runs daily at 3:12 PM CT
+
+        Processes expired 0DTE directional spread positions:
+        - Calculates realized P&L based on closing price
+        - Updates position status to 'expired'
+        - Updates daily performance metrics
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"ICARUS EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.icarus_trader:
+            logger.warning("ICARUS trader not available - skipping EOD processing")
+            return
+
+        logger.info("Processing expired ICARUS positions...")
+
+        try:
+            # Run the EOD expiration processing
+            result = self.icarus_trader.process_expired_positions()
+
+            if result:
+                logger.info(f"ICARUS EOD processing completed:")
+                logger.info(f"  Processed: {result.get('processed_count', 0)} positions")
+                logger.info(f"  Total P&L: ${result.get('total_pnl', 0):,.2f}")
+
+                # Log any warnings/errors
+                if result.get('errors'):
+                    logger.warning("ICARUS EOD had errors:")
+                    for error in result['errors']:
+                        logger.warning(f"    Error: {error}")
+            else:
+                logger.info("ICARUS EOD: No positions to process")
+
+            logger.info(f"ICARUS EOD processing completed successfully")
+            logger.info(f"=" * 80)
+
+        except Exception as e:
+            error_msg = f"ERROR in ICARUS EOD processing: {str(e)}"
+            logger.error(error_msg)
+            logger.error(traceback.format_exc())
+            logger.info("ICARUS EOD will retry next trading day")
+            logger.info(f"=" * 80)
+
     def scheduled_argus_logic(self):
         """
         ARGUS (0DTE Gamma Live) commentary generation - runs every 5 minutes during market hours
@@ -1513,6 +1695,47 @@ class AutonomousTraderScheduler:
             logger.warning("⚠️ PEGASUS not available - SPX IC trading disabled")
 
         # =================================================================
+        # ICARUS JOB: Aggressive Directional Spreads - runs every 5 minutes during market hours
+        # Uses relaxed GEX filters for more aggressive trading
+        # =================================================================
+        if self.icarus_trader:
+            # Run every 5 minutes during market hours (8:40 AM - 2:30 PM CT)
+            # Starts 5 minutes after ATHENA to stagger bot activity
+            self.scheduler.add_job(
+                self.scheduled_icarus_logic,
+                trigger=IntervalTrigger(
+                    minutes=5,
+                    start_date=datetime.now(CENTRAL_TZ).replace(
+                        hour=8, minute=40, second=0, microsecond=0
+                    ),
+                    timezone='America/Chicago'
+                ),
+                id='icarus_trading',
+                name='ICARUS - Aggressive Directional Spreads (5-min intervals)',
+                replace_existing=True
+            )
+            logger.info("✅ ICARUS job scheduled (every 5 min during market hours)")
+
+            # =================================================================
+            # ICARUS EOD JOB: Process expired positions - runs at 3:12 PM CT
+            # =================================================================
+            self.scheduler.add_job(
+                self.scheduled_icarus_eod_logic,
+                trigger=CronTrigger(
+                    hour=15,       # 3:00 PM CT - after market close
+                    minute=12,     # 3:12 PM CT (after ATHENA EOD at 3:10)
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='icarus_eod',
+                name='ICARUS - EOD Position Expiration',
+                replace_existing=True
+            )
+            logger.info("✅ ICARUS EOD job scheduled (3:12 PM CT daily)")
+        else:
+            logger.warning("⚠️ ICARUS not available - aggressive directional trading disabled")
+
+        # =================================================================
         # ARGUS JOB: Commentary Generation - runs every 5 minutes during market hours
         # Generates AI-powered gamma commentary for the Live Log
         # =================================================================
@@ -1677,6 +1900,12 @@ def get_pegasus_trader():
     """Get the PEGASUS trader instance from the scheduler"""
     scheduler = get_scheduler()
     return scheduler.pegasus_trader if scheduler else None
+
+
+def get_icarus_trader():
+    """Get the ICARUS trader instance from the scheduler"""
+    scheduler = get_scheduler()
+    return scheduler.icarus_trader if scheduler else None
 
 
 # ============================================================================
