@@ -220,7 +220,7 @@ function PositionCard({ position, isOpen }: { position: SpreadPosition; isOpen: 
               </div>
               <div>
                 <span className="text-gray-500 block">Oracle Conf.</span>
-                <span className="text-white font-bold">{position.oracle_confidence?.toFixed(0)}%</span>
+                <span className="text-white font-bold">{position.oracle_confidence != null ? (position.oracle_confidence <= 1 ? (position.oracle_confidence * 100).toFixed(0) : position.oracle_confidence.toFixed(0)) : 'N/A'}%</span>
               </div>
             </div>
           </div>
