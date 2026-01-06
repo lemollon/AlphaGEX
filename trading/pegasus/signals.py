@@ -49,6 +49,16 @@ try:
 except ImportError:
     DATA_AVAILABLE = False
 
+# Ensemble Strategy - combines multiple signal sources with learned weights
+ENSEMBLE_AVAILABLE = False
+try:
+    from quant.ensemble_strategy import get_ensemble_signal, EnsembleSignal, StrategySignal
+    ENSEMBLE_AVAILABLE = True
+except ImportError:
+    get_ensemble_signal = None
+    EnsembleSignal = None
+    StrategySignal = None
+
 
 class SignalGenerator:
     """Generates SPX Iron Condor signals"""

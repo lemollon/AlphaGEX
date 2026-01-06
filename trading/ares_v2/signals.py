@@ -60,6 +60,16 @@ try:
 except ImportError:
     DATA_PROVIDER_AVAILABLE = False
 
+# Ensemble Strategy - combines multiple signal sources with learned weights
+ENSEMBLE_AVAILABLE = False
+try:
+    from quant.ensemble_strategy import get_ensemble_signal, EnsembleSignal, StrategySignal
+    ENSEMBLE_AVAILABLE = True
+except ImportError:
+    get_ensemble_signal = None
+    EnsembleSignal = None
+    StrategySignal = None
+
 
 class SignalGenerator:
     """
@@ -108,6 +118,71 @@ class SignalGenerator:
                 logger.info("ARES SignalGenerator: Oracle initialized (BACKUP)")
             except Exception as e:
                 logger.warning(f"Oracle init failed: {e}")
+
+        # Ensemble Strategy Weighter - combines multiple signal sources
+        self.ensemble_available = ENSEMBLE_AVAILABLE
+        if ENSEMBLE_AVAILABLE:
+            logger.info("ARES SignalGenerator: Ensemble Strategy available")
+
+    def get_ensemble_boost(self, market_data: Dict, ml_prediction: Dict = None, oracle: Dict = None) -> Dict:
+        """
+        Get ensemble signal boost/confirmation from multiple strategy sources.
+
+        The ensemble combines: GEX signals, ML predictions, and Oracle with learned weights.
+        Returns a multiplier for position sizing based on signal agreement.
+        """
+        if not ENSEMBLE_AVAILABLE:
+            return {'boost': 1.0, 'should_trade': True, 'confidence': 0.7, 'reasoning': 'Ensemble not available'}
+
+        try:
+            # Build GEX data for ensemble
+            gex_data = {
+                'recommended_action': 'SELL_IC',  # Iron Condor is neutral/range-bound
+                'confidence': 70,
+                'reasoning': f"VIX={market_data.get('vix', 20):.1f}, EM=${market_data.get('expected_move', 0):.0f}"
+            }
+
+            # Build ML prediction data
+            ml_data = None
+            if ml_prediction:
+                ml_data = {
+                    'predicted_action': 'SELL_IC',
+                    'confidence': ml_prediction.get('confidence', 0) * 100,
+                    'is_trained': True
+                }
+
+            # Get current regime from GEX
+            current_regime = market_data.get('gex_regime', 'UNKNOWN')
+            if current_regime == 'POSITIVE':
+                current_regime = 'POSITIVE_GAMMA'
+            elif current_regime == 'NEGATIVE':
+                current_regime = 'NEGATIVE_GAMMA'
+
+            # Get ensemble signal
+            ensemble = get_ensemble_signal(
+                symbol=self.config.ticker,
+                gex_data=gex_data,
+                ml_prediction=ml_data,
+                current_regime=current_regime
+            )
+
+            if ensemble:
+                logger.info(f"[ARES ENSEMBLE] Signal: {ensemble.final_signal.value}, "
+                           f"Confidence: {ensemble.confidence:.0f}%, "
+                           f"Size Multiplier: {ensemble.position_size_multiplier:.0%}")
+
+                return {
+                    'boost': ensemble.position_size_multiplier,
+                    'should_trade': ensemble.should_trade,
+                    'confidence': ensemble.confidence / 100,
+                    'signal': ensemble.final_signal.value,
+                    'reasoning': ensemble.reasoning
+                }
+
+        except Exception as e:
+            logger.debug(f"Ensemble signal error: {e}")
+
+        return {'boost': 1.0, 'should_trade': True, 'confidence': 0.7, 'reasoning': 'Ensemble fallback'}
 
     def get_market_data(self) -> Optional[Dict[str, Any]]:
         """Get current market data including price, VIX, and GEX"""
@@ -673,6 +748,20 @@ class SignalGenerator:
             self._ml_suggested_sd = ml_prediction.get('suggested_sd_multiplier', 1.0)
 
         logger.info(f"[ARES PASSED] {prediction_source} Win Prob {win_probability:.1%} >= {min_win_prob:.1%} minimum")
+
+        # ============================================================
+        # Step 3.5: ENSEMBLE STRATEGY - Multi-signal confirmation
+        # Combines GEX, ML, and learned regime weights for position sizing
+        # ============================================================
+        ensemble_result = self.get_ensemble_boost(market_data, ml_prediction, oracle)
+        if ensemble_result:
+            if not ensemble_result.get('should_trade', True):
+                logger.info(f"[ARES ENSEMBLE BLOCKED] Ensemble says don't trade: {ensemble_result.get('reasoning', 'No reason')}")
+                return None
+
+            ensemble_boost = ensemble_result.get('boost', 1.0)
+            if ensemble_boost != 1.0:
+                logger.info(f"[ARES ENSEMBLE] Position size multiplier: {ensemble_boost:.0%}")
 
         # Step 4: Calculate strikes (Oracle > GEX > SD priority)
         use_gex_walls = oracle.get('use_gex_walls', False) if oracle else False

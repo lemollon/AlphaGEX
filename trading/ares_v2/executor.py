@@ -29,6 +29,14 @@ try:
 except ImportError:
     pass
 
+# Position Management Agent - tracks entry conditions and alerts on regime changes
+POSITION_MGMT_AVAILABLE = False
+try:
+    from ai.position_management_agent import PositionManagementAgent
+    POSITION_MGMT_AVAILABLE = True
+except ImportError:
+    PositionManagementAgent = None
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar('T')
@@ -110,6 +118,15 @@ class OrderExecutor:
                 logger.info("ARES OrderExecutor: Tradier initialized for LIVE trading (SANDBOX account)")
             except Exception as e:
                 logger.error(f"Tradier init failed: {e}")
+
+        # Position Management Agent - tracks entry conditions for exit timing
+        self.position_mgmt = None
+        if POSITION_MGMT_AVAILABLE:
+            try:
+                self.position_mgmt = PositionManagementAgent()
+                logger.info("ARES OrderExecutor: Position Management Agent initialized")
+            except Exception as e:
+                logger.debug(f"Position Management Agent init failed: {e}")
 
     def _tradier_place_spread_with_retry(
         self,
@@ -653,6 +670,53 @@ class OrderExecutor:
             logger.info(f"[ARES {sizing_source}] Thompson: weight={thompson_weight:.2f}, base={base_contracts:.1f}, adjusted={adjusted_contracts}")
 
         return max(1, min(adjusted_contracts, self.config.max_contracts))
+
+    def store_entry_conditions(self, position_id: int, gex_data: Dict) -> bool:
+        """
+        Store entry conditions when position is opened.
+
+        This enables the Position Management Agent to detect when market
+        conditions change significantly from entry (GEX regime flip, etc.)
+        """
+        if not self.position_mgmt:
+            return False
+
+        try:
+            self.position_mgmt.store_entry_conditions(position_id, gex_data)
+            logger.info(f"[ARES] Entry conditions stored for position {position_id}")
+            return True
+        except Exception as e:
+            logger.debug(f"Failed to store entry conditions: {e}")
+            return False
+
+    def check_position_conditions(self, position: Dict, current_gex: Dict) -> Dict:
+        """
+        Check if current conditions differ from entry conditions.
+
+        Returns alerts if GEX regime flipped, flip point moved significantly, etc.
+        This helps with exit timing - exit early if thesis is invalidated.
+        """
+        if not self.position_mgmt:
+            return {'alerts': [], 'severity': 'info', 'should_exit_early': False}
+
+        try:
+            result = self.position_mgmt.check_position_conditions(position, current_gex)
+
+            # Add should_exit_early flag for critical alerts
+            should_exit = result.get('severity') == 'critical'
+            result['should_exit_early'] = should_exit
+
+            if result.get('alerts'):
+                for alert in result['alerts']:
+                    logger.info(f"[ARES CONDITION ALERT] {alert['type']}: {alert['message']}")
+                    if alert.get('suggestion'):
+                        logger.info(f"  Suggestion: {alert['suggestion']}")
+
+            return result
+
+        except Exception as e:
+            logger.debug(f"Failed to check position conditions: {e}")
+            return {'alerts': [], 'severity': 'info', 'should_exit_early': False}
 
     def _get_current_price(self) -> Optional[float]:
         """Get current underlying price"""
