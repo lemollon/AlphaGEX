@@ -570,10 +570,636 @@ async def get_quant_stats(days: int = Query(7, le=90)):
 
 
 # =============================================================================
+# OUTCOME TRACKING
+# =============================================================================
+
+class OutcomeRequest(BaseModel):
+    """Request to record prediction outcome"""
+    prediction_id: int = Field(..., description="ID of the prediction")
+    correct: bool = Field(..., description="Was the prediction correct?")
+    pnl: Optional[float] = Field(None, description="P&L if applicable")
+    notes: Optional[str] = Field(None, description="Additional notes")
+
+
+@router.post("/outcomes/record")
+async def record_outcome(request: OutcomeRequest):
+    """
+    Record the outcome of a prediction (correct/incorrect).
+    """
+    if not DB_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            UPDATE ml_predictions
+            SET outcome_correct = %s,
+                outcome_pnl = %s,
+                outcome_notes = %s,
+                outcome_recorded_at = NOW()
+            WHERE id = %s
+            RETURNING id, prediction_type, predicted_value
+        """, (request.correct, request.pnl, request.notes, request.prediction_id))
+
+        result = cursor.fetchone()
+        if not result:
+            raise HTTPException(status_code=404, detail="Prediction not found")
+
+        # Update daily performance
+        _update_model_performance(cursor, result[1], request.correct, request.pnl)
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        return {
+            "success": True,
+            "prediction_id": result[0],
+            "model": result[1],
+            "predicted_value": result[2],
+            "outcome_correct": request.correct
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to record outcome: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/outcomes/pending")
+async def get_pending_outcomes(limit: int = Query(50, le=200)):
+    """
+    Get predictions that need outcome recording.
+    """
+    if not DB_AVAILABLE:
+        return {"predictions": [], "total": 0}
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT id, timestamp, prediction_type, predicted_value, confidence,
+                   spot_price, vix, used_by_bot
+            FROM ml_predictions
+            WHERE outcome_correct IS NULL
+              AND timestamp > NOW() - INTERVAL '7 days'
+            ORDER BY timestamp DESC
+            LIMIT %s
+        """, (limit,))
+
+        predictions = []
+        for row in cursor.fetchall():
+            predictions.append({
+                "id": row[0],
+                "timestamp": row[1].isoformat() if row[1] else None,
+                "model": row[2],
+                "predicted_value": row[3],
+                "confidence": row[4],
+                "spot_price": row[5],
+                "vix": row[6],
+                "used_by_bot": row[7]
+            })
+
+        cursor.execute("""
+            SELECT COUNT(*) FROM ml_predictions
+            WHERE outcome_correct IS NULL
+              AND timestamp > NOW() - INTERVAL '7 days'
+        """)
+        total = cursor.fetchone()[0]
+
+        cursor.close()
+        conn.close()
+
+        return {"predictions": predictions, "total": total}
+
+    except Exception as e:
+        logger.error(f"Failed to get pending outcomes: {e}")
+        return {"predictions": [], "total": 0, "error": str(e)}
+
+
+# =============================================================================
+# BOT INTEGRATION
+# =============================================================================
+
+class BotPredictionRequest(BaseModel):
+    """Request to log a prediction used by a bot"""
+    bot_name: str = Field(..., description="Bot name (ARES, ATHENA, etc)")
+    prediction_type: str = Field(..., description="Model type")
+    predicted_value: str = Field(..., description="Prediction value")
+    confidence: float = Field(..., description="Confidence level")
+    trade_id: Optional[str] = Field(None, description="Associated trade ID")
+    session_id: Optional[str] = Field(None, description="Trading session ID")
+    spot_price: Optional[float] = Field(None)
+    vix: Optional[float] = Field(None)
+    gex_regime: Optional[str] = Field(None)
+
+
+@router.post("/bot/log-usage")
+async def log_bot_prediction_usage(request: BotPredictionRequest):
+    """
+    Log when a bot uses a QUANT prediction.
+    """
+    if not DB_AVAILABLE:
+        return {"success": False, "message": "Database not available"}
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            INSERT INTO ml_predictions (
+                timestamp, symbol, prediction_type, predicted_value, confidence,
+                used_by_bot, trade_id, session_id, spot_price, vix, gex_regime
+            ) VALUES (NOW(), 'SPY', %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (
+            request.prediction_type,
+            request.predicted_value,
+            request.confidence,
+            request.bot_name,
+            request.trade_id,
+            request.session_id,
+            request.spot_price,
+            request.vix,
+            request.gex_regime
+        ))
+
+        pred_id = cursor.fetchone()[0]
+
+        # Check for regime change and create alert if needed
+        _check_and_create_alerts(cursor, request.prediction_type, request.predicted_value, request.confidence)
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        return {"success": True, "prediction_id": pred_id}
+
+    except Exception as e:
+        logger.error(f"Failed to log bot usage: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@router.get("/bot/usage")
+async def get_bot_usage(
+    bot: Optional[str] = Query(None, description="Filter by bot"),
+    days: int = Query(7, le=30)
+):
+    """
+    Get prediction usage by bots.
+    """
+    if not DB_AVAILABLE:
+        return {"usage": []}
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        where_clause = "WHERE timestamp > NOW() - INTERVAL '%s days' AND used_by_bot IS NOT NULL"
+        params = [days]
+
+        if bot:
+            where_clause += " AND used_by_bot = %s"
+            params.append(bot)
+
+        cursor.execute(f"""
+            SELECT used_by_bot, prediction_type, predicted_value,
+                   COUNT(*) as usage_count,
+                   AVG(confidence) as avg_confidence,
+                   SUM(CASE WHEN outcome_correct = TRUE THEN 1 ELSE 0 END) as correct,
+                   SUM(CASE WHEN outcome_correct = FALSE THEN 1 ELSE 0 END) as incorrect
+            FROM ml_predictions
+            {where_clause}
+            GROUP BY used_by_bot, prediction_type, predicted_value
+            ORDER BY used_by_bot, usage_count DESC
+        """, params)
+
+        usage = []
+        for row in cursor.fetchall():
+            total_with_outcome = (row[5] or 0) + (row[6] or 0)
+            usage.append({
+                "bot": row[0],
+                "model": row[1],
+                "predicted_value": row[2],
+                "usage_count": row[3],
+                "avg_confidence": round(row[4], 1) if row[4] else 0,
+                "correct": row[5] or 0,
+                "incorrect": row[6] or 0,
+                "accuracy": round((row[5] or 0) / total_with_outcome * 100, 1) if total_with_outcome > 0 else None
+            })
+
+        cursor.close()
+        conn.close()
+
+        return {"usage": usage, "days": days}
+
+    except Exception as e:
+        logger.error(f"Failed to get bot usage: {e}")
+        return {"usage": [], "error": str(e)}
+
+
+# =============================================================================
+# ALERTS
+# =============================================================================
+
+@router.get("/alerts")
+async def get_alerts(
+    unacknowledged_only: bool = Query(False),
+    severity: Optional[str] = Query(None),
+    limit: int = Query(50, le=200)
+):
+    """
+    Get QUANT alerts.
+    """
+    if not DB_AVAILABLE:
+        return {"alerts": [], "total": 0}
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        where_clauses = []
+        params = []
+
+        if unacknowledged_only:
+            where_clauses.append("acknowledged = FALSE")
+
+        if severity:
+            where_clauses.append("severity = %s")
+            params.append(severity)
+
+        where_sql = ""
+        if where_clauses:
+            where_sql = "WHERE " + " AND ".join(where_clauses)
+
+        cursor.execute(f"""
+            SELECT id, timestamp, alert_type, severity, title, message,
+                   previous_value, current_value, confidence, model_name,
+                   acknowledged
+            FROM quant_alerts
+            {where_sql}
+            ORDER BY timestamp DESC
+            LIMIT %s
+        """, params + [limit])
+
+        alerts = []
+        for row in cursor.fetchall():
+            alerts.append({
+                "id": row[0],
+                "timestamp": row[1].isoformat() if row[1] else None,
+                "alert_type": row[2],
+                "severity": row[3],
+                "title": row[4],
+                "message": row[5],
+                "previous_value": row[6],
+                "current_value": row[7],
+                "confidence": row[8],
+                "model_name": row[9],
+                "acknowledged": row[10]
+            })
+
+        cursor.execute(f"SELECT COUNT(*) FROM quant_alerts {where_sql}", params)
+        total = cursor.fetchone()[0]
+
+        cursor.close()
+        conn.close()
+
+        return {"alerts": alerts, "total": total}
+
+    except Exception as e:
+        logger.error(f"Failed to get alerts: {e}")
+        return {"alerts": [], "total": 0, "error": str(e)}
+
+
+@router.post("/alerts/{alert_id}/acknowledge")
+async def acknowledge_alert(alert_id: int):
+    """
+    Acknowledge an alert.
+    """
+    if not DB_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Database not available")
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            UPDATE quant_alerts
+            SET acknowledged = TRUE, acknowledged_at = NOW()
+            WHERE id = %s
+            RETURNING id
+        """, (alert_id,))
+
+        result = cursor.fetchone()
+        if not result:
+            raise HTTPException(status_code=404, detail="Alert not found")
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        return {"success": True, "alert_id": alert_id}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to acknowledge alert: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# PERFORMANCE TRACKING
+# =============================================================================
+
+@router.get("/performance")
+async def get_model_performance(
+    model: Optional[str] = Query(None),
+    days: int = Query(30, le=90)
+):
+    """
+    Get model performance metrics.
+    """
+    if not DB_AVAILABLE:
+        return {"performance": []}
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        where_clause = "WHERE date > CURRENT_DATE - INTERVAL '%s days'"
+        params = [days]
+
+        if model:
+            where_clause += " AND model_name = %s"
+            params.append(model)
+
+        cursor.execute(f"""
+            SELECT date, model_name, total_predictions, correct_predictions,
+                   accuracy, avg_confidence, total_pnl
+            FROM quant_model_performance
+            {where_clause}
+            ORDER BY date DESC, model_name
+        """, params)
+
+        performance = []
+        for row in cursor.fetchall():
+            performance.append({
+                "date": row[0].isoformat() if row[0] else None,
+                "model": row[1],
+                "total_predictions": row[2],
+                "correct_predictions": row[3],
+                "accuracy": float(row[4]) if row[4] else None,
+                "avg_confidence": float(row[5]) if row[5] else None,
+                "total_pnl": float(row[6]) if row[6] else None
+            })
+
+        cursor.close()
+        conn.close()
+
+        return {"performance": performance, "days": days}
+
+    except Exception as e:
+        logger.error(f"Failed to get performance: {e}")
+        return {"performance": [], "error": str(e)}
+
+
+@router.get("/performance/summary")
+async def get_performance_summary(days: int = Query(30, le=90)):
+    """
+    Get overall performance summary by model.
+    """
+    if not DB_AVAILABLE:
+        return {"summary": []}
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT prediction_type,
+                   COUNT(*) as total,
+                   SUM(CASE WHEN outcome_correct = TRUE THEN 1 ELSE 0 END) as correct,
+                   SUM(CASE WHEN outcome_correct = FALSE THEN 1 ELSE 0 END) as incorrect,
+                   AVG(confidence) as avg_confidence,
+                   SUM(outcome_pnl) as total_pnl
+            FROM ml_predictions
+            WHERE timestamp > NOW() - INTERVAL '%s days'
+            GROUP BY prediction_type
+            ORDER BY total DESC
+        """, (days,))
+
+        summary = []
+        for row in cursor.fetchall():
+            total_with_outcome = (row[2] or 0) + (row[3] or 0)
+            summary.append({
+                "model": row[0],
+                "total_predictions": row[1],
+                "correct": row[2] or 0,
+                "incorrect": row[3] or 0,
+                "pending": row[1] - total_with_outcome,
+                "accuracy": round((row[2] or 0) / total_with_outcome * 100, 1) if total_with_outcome > 0 else None,
+                "avg_confidence": round(row[4], 1) if row[4] else None,
+                "total_pnl": float(row[5]) if row[5] else None
+            })
+
+        cursor.close()
+        conn.close()
+
+        return {"summary": summary, "days": days}
+
+    except Exception as e:
+        logger.error(f"Failed to get performance summary: {e}")
+        return {"summary": [], "error": str(e)}
+
+
+# =============================================================================
+# MODEL TRAINING
+# =============================================================================
+
+@router.get("/training/history")
+async def get_training_history(model: Optional[str] = Query(None), limit: int = Query(20)):
+    """
+    Get model training history.
+    """
+    if not DB_AVAILABLE:
+        return {"history": []}
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        where_clause = ""
+        params = []
+
+        if model:
+            where_clause = "WHERE model_name = %s"
+            params.append(model)
+
+        cursor.execute(f"""
+            SELECT id, timestamp, model_name, training_samples, validation_samples,
+                   accuracy_before, accuracy_after, model_version, status,
+                   duration_seconds, triggered_by
+            FROM quant_training_history
+            {where_clause}
+            ORDER BY timestamp DESC
+            LIMIT %s
+        """, params + [limit])
+
+        history = []
+        for row in cursor.fetchall():
+            history.append({
+                "id": row[0],
+                "timestamp": row[1].isoformat() if row[1] else None,
+                "model": row[2],
+                "training_samples": row[3],
+                "validation_samples": row[4],
+                "accuracy_before": float(row[5]) if row[5] else None,
+                "accuracy_after": float(row[6]) if row[6] else None,
+                "model_version": row[7],
+                "status": row[8],
+                "duration_seconds": row[9],
+                "triggered_by": row[10]
+            })
+
+        cursor.close()
+        conn.close()
+
+        return {"history": history}
+
+    except Exception as e:
+        logger.error(f"Failed to get training history: {e}")
+        return {"history": [], "error": str(e)}
+
+
+@router.post("/training/trigger")
+async def trigger_training(model: str = Query(..., description="Model to train")):
+    """
+    Trigger model retraining.
+    """
+    # TODO: Implement actual training trigger
+    # For now, just log the request
+
+    if not DB_AVAILABLE:
+        return {"success": False, "message": "Database not available"}
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            INSERT INTO quant_training_history (
+                timestamp, model_name, status, triggered_by
+            ) VALUES (NOW(), %s, 'STARTED', 'MANUAL')
+            RETURNING id
+        """, (model,))
+
+        training_id = cursor.fetchone()[0]
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        return {
+            "success": True,
+            "training_id": training_id,
+            "model": model,
+            "message": f"Training triggered for {model}"
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to trigger training: {e}")
+        return {"success": False, "error": str(e)}
+
+
+# =============================================================================
+# MODEL COMPARISON
+# =============================================================================
+
+@router.get("/compare")
+async def compare_models(days: int = Query(7, le=30)):
+    """
+    Compare predictions from different models.
+    """
+    if not DB_AVAILABLE:
+        return {"comparison": {}}
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Get latest prediction from each model
+        cursor.execute("""
+            SELECT DISTINCT ON (prediction_type)
+                prediction_type, predicted_value, confidence, timestamp
+            FROM ml_predictions
+            WHERE timestamp > NOW() - INTERVAL '24 hours'
+            ORDER BY prediction_type, timestamp DESC
+        """)
+
+        current_predictions = {}
+        for row in cursor.fetchall():
+            current_predictions[row[0]] = {
+                "value": row[1],
+                "confidence": float(row[2]) if row[2] else None,
+                "timestamp": row[3].isoformat() if row[3] else None
+            }
+
+        # Check for agreement
+        values = [p["value"] for p in current_predictions.values()]
+        all_agree = len(set(values)) <= 1 if values else False
+
+        # Get accuracy comparison
+        cursor.execute("""
+            SELECT prediction_type,
+                   COUNT(*) as total,
+                   SUM(CASE WHEN outcome_correct = TRUE THEN 1 ELSE 0 END) as correct
+            FROM ml_predictions
+            WHERE timestamp > NOW() - INTERVAL '%s days'
+              AND outcome_correct IS NOT NULL
+            GROUP BY prediction_type
+        """, (days,))
+
+        accuracy_comparison = {}
+        for row in cursor.fetchall():
+            accuracy_comparison[row[0]] = {
+                "total": row[1],
+                "correct": row[2] or 0,
+                "accuracy": round((row[2] or 0) / row[1] * 100, 1) if row[1] > 0 else None
+            }
+
+        # Get disagreement history
+        cursor.execute("""
+            SELECT COUNT(*) FROM quant_alerts
+            WHERE alert_type = 'MODEL_DISAGREE'
+              AND timestamp > NOW() - INTERVAL '%s days'
+        """, (days,))
+        disagreement_count = cursor.fetchone()[0]
+
+        cursor.close()
+        conn.close()
+
+        return {
+            "current_predictions": current_predictions,
+            "models_agree": all_agree,
+            "consensus_value": values[0] if all_agree and values else None,
+            "accuracy_comparison": accuracy_comparison,
+            "disagreement_count": disagreement_count,
+            "days": days
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to compare models: {e}")
+        return {"comparison": {}, "error": str(e)}
+
+
+# =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
 
-def _log_prediction(prediction_type: str, result: Dict, features: Dict):
+def _log_prediction(prediction_type: str, result: Dict, features: Dict, spot_price: float = None, vix: float = None):
     """Log prediction to database."""
     if not DB_AVAILABLE:
         return
@@ -582,24 +1208,127 @@ def _log_prediction(prediction_type: str, result: Dict, features: Dict):
         conn = get_connection()
         cursor = conn.cursor()
 
+        predicted_value = result.get('action') or result.get('direction') or result.get('final_signal', 'UNKNOWN')
+
         cursor.execute("""
             INSERT INTO ml_predictions (
                 timestamp, symbol, prediction_type, predicted_value,
-                confidence, features_used
-            ) VALUES (NOW(), %s, %s, %s, %s, %s)
+                confidence, features_used, spot_price, vix
+            ) VALUES (NOW(), %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
         """, (
             "SPY",
             prediction_type,
-            result.get('action') or result.get('direction') or result.get('final_signal', 'UNKNOWN'),
+            predicted_value,
             result.get('confidence', 0),
             json.dumps({
                 'input': features,
                 'output': result
-            })
+            }),
+            spot_price,
+            vix
         ))
+
+        pred_id = cursor.fetchone()[0]
+
+        # Check for regime change and create alert
+        _check_and_create_alerts(cursor, prediction_type, predicted_value, result.get('confidence', 0))
 
         conn.commit()
         cursor.close()
         conn.close()
+
+        return pred_id
     except Exception as e:
         logger.debug(f"Failed to log prediction: {e}")
+
+
+def _check_and_create_alerts(cursor, prediction_type: str, predicted_value: str, confidence: float):
+    """Check for regime changes and create alerts."""
+    try:
+        # Get last prediction for this model
+        cursor.execute("""
+            SELECT predicted_value, confidence FROM quant_last_predictions
+            WHERE model_name = %s
+        """, (prediction_type,))
+
+        row = cursor.fetchone()
+        previous_value = row[0] if row else None
+        previous_confidence = row[1] if row else None
+
+        # Update last prediction
+        cursor.execute("""
+            INSERT INTO quant_last_predictions (model_name, symbol, predicted_value, confidence, timestamp, updated_at)
+            VALUES (%s, 'SPY', %s, %s, NOW(), NOW())
+            ON CONFLICT (model_name) DO UPDATE SET
+                predicted_value = EXCLUDED.predicted_value,
+                confidence = EXCLUDED.confidence,
+                timestamp = NOW(),
+                updated_at = NOW()
+        """, (prediction_type, predicted_value, confidence))
+
+        # Check for regime change
+        if previous_value and previous_value != predicted_value:
+            severity = 'WARNING' if confidence > 70 else 'INFO'
+            cursor.execute("""
+                INSERT INTO quant_alerts (
+                    timestamp, alert_type, severity, title, message,
+                    previous_value, current_value, confidence, model_name
+                ) VALUES (
+                    NOW(), 'REGIME_CHANGE', %s, %s, %s, %s, %s, %s, %s
+                )
+            """, (
+                severity,
+                f"{prediction_type}: {previous_value} -> {predicted_value}",
+                f"Model {prediction_type} changed prediction from {previous_value} to {predicted_value} with {confidence:.0f}% confidence",
+                previous_value,
+                predicted_value,
+                confidence,
+                prediction_type
+            ))
+
+        # Check for high confidence signal
+        if confidence > 85:
+            cursor.execute("""
+                INSERT INTO quant_alerts (
+                    timestamp, alert_type, severity, title, message,
+                    current_value, confidence, model_name
+                ) VALUES (
+                    NOW(), 'HIGH_CONFIDENCE', 'INFO', %s, %s, %s, %s, %s
+                )
+            """, (
+                f"High confidence {predicted_value} signal",
+                f"{prediction_type} predicts {predicted_value} with {confidence:.0f}% confidence",
+                predicted_value,
+                confidence,
+                prediction_type
+            ))
+
+    except Exception as e:
+        logger.debug(f"Failed to check/create alerts: {e}")
+
+
+def _update_model_performance(cursor, model_name: str, correct: bool, pnl: float = None):
+    """Update daily model performance metrics."""
+    try:
+        cursor.execute("""
+            INSERT INTO quant_model_performance (
+                date, model_name, symbol, total_predictions,
+                correct_predictions, incorrect_predictions, total_pnl
+            ) VALUES (
+                CURRENT_DATE, %s, 'SPY', 1,
+                CASE WHEN %s THEN 1 ELSE 0 END,
+                CASE WHEN %s THEN 0 ELSE 1 END,
+                COALESCE(%s, 0)
+            )
+            ON CONFLICT (date, model_name, symbol) DO UPDATE SET
+                total_predictions = quant_model_performance.total_predictions + 1,
+                correct_predictions = quant_model_performance.correct_predictions + CASE WHEN %s THEN 1 ELSE 0 END,
+                incorrect_predictions = quant_model_performance.incorrect_predictions + CASE WHEN %s THEN 0 ELSE 1 END,
+                total_pnl = COALESCE(quant_model_performance.total_pnl, 0) + COALESCE(%s, 0),
+                accuracy = (quant_model_performance.correct_predictions + CASE WHEN %s THEN 1 ELSE 0 END)::DECIMAL /
+                           NULLIF(quant_model_performance.total_predictions + 1, 0) * 100,
+                updated_at = NOW()
+        """, (model_name, correct, correct, pnl, correct, correct, pnl, correct))
+    except Exception as e:
+        logger.debug(f"Failed to update model performance: {e}")
