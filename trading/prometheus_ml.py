@@ -771,7 +771,11 @@ class PrometheusMLTrainer:
         try:
             # Scale features
             X = features.to_array().reshape(1, -1)
-            X_scaled = self.scaler.transform(X)
+            if self.scaler is None:
+                logger.warning("Scaler not initialized, using unscaled features")
+                X_scaled = X
+            else:
+                X_scaled = self.scaler.transform(X)
 
             # Predict
             prob = float(self.model.predict_proba(X_scaled)[0][1])
@@ -1134,9 +1138,17 @@ class PrometheusMLTrainer:
             conn.close()
 
             if row:
-                self.model = pickle.loads(row[0])
+                # Handle PostgreSQL BYTEA which returns memoryview objects
+                model_binary = row[0]
+                if hasattr(model_binary, 'tobytes'):
+                    model_binary = model_binary.tobytes()
+                self.model = pickle.loads(model_binary)
+
                 if row[1]:
-                    self.scaler = pickle.loads(row[1])
+                    scaler_binary = row[1]
+                    if hasattr(scaler_binary, 'tobytes'):
+                        scaler_binary = scaler_binary.tobytes()
+                    self.scaler = pickle.loads(scaler_binary)
                 self.model_version = row[2]
                 self.is_calibrated = True  # Assume calibrated if from DB
 

@@ -363,26 +363,33 @@ class PrometheusOutcomeTracker:
             conn.close()
 
             if row:
+                # Helper to safely convert values with defaults
+                def safe_float(val, default=0.0):
+                    return float(val) if val is not None else default
+
+                def safe_int(val, default=0):
+                    return int(val) if val is not None else default
+
                 return PrometheusFeatures(
-                    trade_date=str(row[0]),
-                    strike=float(row[1]),
-                    underlying_price=float(row[2]),
-                    dte=int(row[3]),
-                    delta=float(row[4]),
-                    premium=float(row[5]),
-                    iv=float(row[6]),
-                    iv_rank=float(row[7]),
-                    vix=float(row[8]),
-                    vix_percentile=float(row[9]),
-                    vix_term_structure=float(row[10]),
-                    put_wall_distance_pct=float(row[11]),
-                    call_wall_distance_pct=float(row[12]),
-                    net_gex=float(row[13]),
-                    spx_20d_return=float(row[14]),
-                    spx_5d_return=float(row[15]),
-                    spx_distance_from_high=float(row[16]),
-                    premium_to_strike_pct=float(row[17]),
-                    annualized_return=float(row[18])
+                    trade_date=str(row[0]) if row[0] else datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d'),
+                    strike=safe_float(row[1]),
+                    underlying_price=safe_float(row[2]),
+                    dte=safe_int(row[3]),
+                    delta=safe_float(row[4]),
+                    premium=safe_float(row[5]),
+                    iv=safe_float(row[6], 0.18),
+                    iv_rank=safe_float(row[7], 50.0),
+                    vix=safe_float(row[8], 18.0),
+                    vix_percentile=safe_float(row[9], 50.0),
+                    vix_term_structure=safe_float(row[10], -1.0),
+                    put_wall_distance_pct=safe_float(row[11], 3.0),
+                    call_wall_distance_pct=safe_float(row[12], 3.0),
+                    net_gex=safe_float(row[13], 5e9),
+                    spx_20d_return=safe_float(row[14]),
+                    spx_5d_return=safe_float(row[15]),
+                    spx_distance_from_high=safe_float(row[16], 1.0),
+                    premium_to_strike_pct=safe_float(row[17]),
+                    annualized_return=safe_float(row[18])
                 )
             return None
         except Exception as e:

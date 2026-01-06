@@ -291,36 +291,46 @@ async def train_prometheus_model(request: TrainRequest = TrainRequest()):
             ''')
 
             for row in cursor.fetchall():
-                features = PrometheusFeatures(
-                    trade_date=str(row[1]),
-                    strike=float(row[2]),
-                    underlying_price=float(row[3]),
-                    dte=int(row[4]),
-                    delta=float(row[5]),
-                    premium=float(row[6]),
-                    iv=float(row[7]),
-                    iv_rank=float(row[8]),
-                    vix=float(row[9]),
-                    vix_percentile=float(row[10]),
-                    vix_term_structure=float(row[11]),
-                    put_wall_distance_pct=float(row[12]),
-                    call_wall_distance_pct=float(row[13]),
-                    net_gex=float(row[14]),
-                    spx_20d_return=float(row[15]),
-                    spx_5d_return=float(row[16]),
-                    spx_distance_from_high=float(row[17]),
-                    premium_to_strike_pct=float(row[18]),
-                    annualized_return=float(row[19])
-                )
+                try:
+                    # Helper to safely convert to float with default
+                    def safe_float(val, default=0.0):
+                        return float(val) if val is not None else default
 
-                outcomes.append(PrometheusOutcome(
-                    trade_id=row[0],
-                    features=features,
-                    outcome=row[20],
-                    pnl=float(row[21]) if row[21] else 0,
-                    max_drawdown=float(row[22]) if row[22] else 0,
-                    settlement_price=float(row[23]) if row[23] else 0
-                ))
+                    def safe_int(val, default=0):
+                        return int(val) if val is not None else default
+
+                    features = PrometheusFeatures(
+                        trade_date=str(row[1]) if row[1] else datetime.now().strftime('%Y-%m-%d'),
+                        strike=safe_float(row[2]),
+                        underlying_price=safe_float(row[3]),
+                        dte=safe_int(row[4]),
+                        delta=safe_float(row[5]),
+                        premium=safe_float(row[6]),
+                        iv=safe_float(row[7], 0.18),
+                        iv_rank=safe_float(row[8], 50.0),
+                        vix=safe_float(row[9], 18.0),
+                        vix_percentile=safe_float(row[10], 50.0),
+                        vix_term_structure=safe_float(row[11], -1.0),
+                        put_wall_distance_pct=safe_float(row[12], 3.0),
+                        call_wall_distance_pct=safe_float(row[13], 3.0),
+                        net_gex=safe_float(row[14], 5e9),
+                        spx_20d_return=safe_float(row[15]),
+                        spx_5d_return=safe_float(row[16]),
+                        spx_distance_from_high=safe_float(row[17], 1.0),
+                        premium_to_strike_pct=safe_float(row[18]),
+                        annualized_return=safe_float(row[19])
+                    )
+
+                    outcomes.append(PrometheusOutcome(
+                        trade_id=row[0],
+                        features=features,
+                        outcome=row[20],
+                        pnl=safe_float(row[21]),
+                        max_drawdown=safe_float(row[22]),
+                        settlement_price=safe_float(row[23])
+                    ))
+                except Exception as row_error:
+                    logger.warning(f"Skipping row due to conversion error: {row_error}")
 
             conn.close()
 
@@ -555,7 +565,7 @@ async def get_performance_metrics(period_days: int = Query(30, le=365)):
                     THEN 1 ELSE 0 END
                 ELSE NULL END) as prediction_accuracy
             FROM prometheus_predictions
-            WHERE created_at >= NOW() - INTERVAL '%s days'
+            WHERE created_at >= NOW() - INTERVAL '1 day' * %s
         ''', (period_days,))
 
         row = cursor.fetchone()
