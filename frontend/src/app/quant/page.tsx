@@ -125,7 +125,7 @@ interface ModelComparison {
   consensus_prediction?: string
 }
 
-type TabType = 'overview' | 'predictions' | 'logs' | 'outcomes' | 'alerts' | 'performance' | 'training' | 'compare'
+type TabType = 'overview' | 'predictions' | 'logs' | 'outcomes' | 'alerts' | 'performance' | 'training' | 'compare' | 'stats'
 
 // ============================================================================
 // MAIN COMPONENT
