@@ -1130,7 +1130,7 @@ class PrometheusMLTrainer:
                 SELECT model_binary, scaler_binary, model_version, accuracy
                 FROM prometheus_live_model
                 WHERE is_active = TRUE
-                ORDER BY deployed_at DESC
+                ORDER BY created_at DESC
                 LIMIT 1
             ''')
 
@@ -1237,6 +1237,115 @@ class PrometheusMLTrainer:
 
         except Exception as e:
             return {'error': str(e)}
+
+    def load_training_data_from_db(self, limit: int = 2000) -> List[PrometheusOutcome]:
+        """
+        Load training data from the spx_wheel_ml_outcomes table.
+
+        Returns:
+            List of PrometheusOutcome objects
+        """
+        if not DB_AVAILABLE:
+            logger.warning("Database not available")
+            return []
+
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                SELECT trade_id, trade_date, strike, underlying_price, dte, delta, premium,
+                       iv, iv_rank, vix, vix_percentile, vix_term_structure,
+                       put_wall_distance_pct, call_wall_distance_pct, net_gex,
+                       spx_20d_return, spx_5d_return, spx_distance_from_high,
+                       premium_to_strike_pct, annualized_return,
+                       outcome, pnl, settlement_price, max_drawdown
+                FROM spx_wheel_ml_outcomes
+                WHERE outcome IS NOT NULL
+                ORDER BY created_at DESC
+                LIMIT %s
+            ''', (limit,))
+
+            rows = cursor.fetchall()
+            conn.close()
+
+            outcomes = []
+            for row in rows:
+                try:
+                    # Helper for safe value conversion
+                    def safe_float(val, default=0.0):
+                        return float(val) if val is not None else default
+
+                    def safe_int(val, default=0):
+                        return int(val) if val is not None else default
+
+                    features = PrometheusFeatures(
+                        trade_date=str(row[1]) if row[1] else datetime.now().strftime('%Y-%m-%d'),
+                        strike=safe_float(row[2]),
+                        underlying_price=safe_float(row[3]),
+                        dte=safe_int(row[4]),
+                        delta=safe_float(row[5], -0.15),
+                        premium=safe_float(row[6]),
+                        iv=safe_float(row[7], 0.18),
+                        iv_rank=safe_float(row[8], 50.0),
+                        vix=safe_float(row[9], 18.0),
+                        vix_percentile=safe_float(row[10], 50.0),
+                        vix_term_structure=safe_float(row[11], -1.0),
+                        put_wall_distance_pct=safe_float(row[12], 3.0),
+                        call_wall_distance_pct=safe_float(row[13], 3.0),
+                        net_gex=safe_float(row[14], 5e9),
+                        spx_20d_return=safe_float(row[15]),
+                        spx_5d_return=safe_float(row[16]),
+                        spx_distance_from_high=safe_float(row[17], 1.0),
+                        premium_to_strike_pct=safe_float(row[18]),
+                        annualized_return=safe_float(row[19])
+                    )
+
+                    outcomes.append(PrometheusOutcome(
+                        trade_id=row[0] or f"DB-{len(outcomes)}",
+                        features=features,
+                        outcome=row[20] or "WIN",
+                        pnl=safe_float(row[21]),
+                        settlement_price=safe_float(row[22]),
+                        max_drawdown=safe_float(row[23])
+                    ))
+                except Exception as row_error:
+                    logger.warning(f"Failed to process row: {row_error}")
+                    continue
+
+            logger.info(f"Loaded {len(outcomes)} training outcomes from database")
+            return outcomes
+
+        except Exception as e:
+            logger.error(f"Failed to load training data: {e}")
+            return []
+
+    def train_from_database(
+        self,
+        min_samples: int = 30,
+        calibrate: bool = True,
+        limit: int = 2000
+    ) -> Dict:
+        """
+        Load training data from database and train the model.
+
+        Args:
+            min_samples: Minimum samples required
+            calibrate: Whether to apply probability calibration
+            limit: Maximum rows to load
+
+        Returns:
+            Training results dict
+        """
+        outcomes = self.load_training_data_from_db(limit=limit)
+
+        if len(outcomes) < min_samples:
+            return {
+                'success': False,
+                'error': f'Need at least {min_samples} samples, have {len(outcomes)}'
+            }
+
+        return self.train(outcomes, min_samples=min_samples, calibrate=calibrate)
 
 
 # =============================================================================
