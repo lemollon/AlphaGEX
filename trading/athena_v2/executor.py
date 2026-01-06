@@ -37,6 +37,113 @@ try:
 except ImportError:
     PositionManagementAgent = None
 
+# SOLOMON Feedback Loop - continuous learning system
+SOLOMON_AVAILABLE = False
+try:
+    from quant.solomon_feedback_loop import SolomonFeedbackLoop, ProposalStatus
+    SOLOMON_AVAILABLE = True
+except ImportError:
+    SolomonFeedbackLoop = None
+    ProposalStatus = None
+
+# SOLOMON Enhancements - risk guardrails (consecutive loss kill, max daily loss)
+SOLOMON_ENHANCEMENTS_AVAILABLE = False
+try:
+    from quant.solomon_enhancements import ConsecutiveLossTracker, DailyLossTracker, ENHANCED_GUARDRAILS
+    SOLOMON_ENHANCEMENTS_AVAILABLE = True
+except ImportError:
+    ConsecutiveLossTracker = None
+    DailyLossTracker = None
+    ENHANCED_GUARDRAILS = None
+
+# SOLOMON Notifications - multi-channel alerts
+SOLOMON_NOTIFICATIONS_AVAILABLE = False
+try:
+    from quant.solomon_notifications import SolomonNotifications
+    SOLOMON_NOTIFICATIONS_AVAILABLE = True
+except ImportError:
+    SolomonNotifications = None
+
+# SOLOMON AI Analyst - Claude-powered performance analysis
+SOLOMON_AI_AVAILABLE = False
+try:
+    from quant.solomon_ai_analyst import SolomonAIAnalyst
+    SOLOMON_AI_AVAILABLE = True
+except ImportError:
+    SolomonAIAnalyst = None
+
+# AI Trade Recommendations - Claude Haiku generates entry/exit triggers
+AI_TRADE_RECOMMENDATIONS_AVAILABLE = False
+try:
+    from ai.ai_trade_recommendations import AITradeRecommendation
+    AI_TRADE_RECOMMENDATIONS_AVAILABLE = True
+except ImportError:
+    AITradeRecommendation = None
+
+# Smart Trade Advisor - self-learning trade advisor
+SMART_ADVISOR_AVAILABLE = False
+try:
+    from ai.ai_trade_advisor import SmartTradeAdvisor
+    SMART_ADVISOR_AVAILABLE = True
+except ImportError:
+    SmartTradeAdvisor = None
+
+# AI Strategy Optimizer - analyzes backtest results, suggests improvements
+STRATEGY_OPTIMIZER_AVAILABLE = False
+try:
+    from ai.ai_strategy_optimizer import StrategyOptimizerAgent
+    STRATEGY_OPTIMIZER_AVAILABLE = True
+except ImportError:
+    StrategyOptimizerAgent = None
+
+# ML Pattern Learner - pattern recognition for confidence calibration
+PATTERN_LEARNER_AVAILABLE = False
+try:
+    from ai.autonomous_ml_pattern_learner import PatternLearner
+    PATTERN_LEARNER_AVAILABLE = True
+except ImportError:
+    PatternLearner = None
+
+# LangChain Intelligence - AI decision backbone
+LANGCHAIN_INTELLIGENCE_AVAILABLE = False
+try:
+    from ai.langchain_intelligence import LangChainIntelligence
+    LANGCHAIN_INTELLIGENCE_AVAILABLE = True
+except ImportError:
+    LangChainIntelligence = None
+
+# Autonomous AI Reasoning - strike selection, sizing, exit decisions
+AI_REASONING_AVAILABLE = False
+try:
+    from ai.autonomous_ai_reasoning import AutonomousAIReasoning
+    AI_REASONING_AVAILABLE = True
+except ImportError:
+    AutonomousAIReasoning = None
+
+# GEXIS Extended Thinking - deeper reasoning for complex decisions
+GEXIS_THINKING_AVAILABLE = False
+try:
+    from ai.gexis_extended_thinking import ExtendedThinking
+    GEXIS_THINKING_AVAILABLE = True
+except ImportError:
+    ExtendedThinking = None
+
+# GEXIS Knowledge - context management for decisions
+GEXIS_KNOWLEDGE_AVAILABLE = False
+try:
+    from ai.gexis_knowledge import GEXISKnowledge
+    GEXIS_KNOWLEDGE_AVAILABLE = True
+except ImportError:
+    GEXISKnowledge = None
+
+# GEXIS Learning Memory - persistent learning
+GEXIS_MEMORY_AVAILABLE = False
+try:
+    from ai.gexis_learning_memory import GEXISLearningMemory
+    GEXIS_MEMORY_AVAILABLE = True
+except ImportError:
+    GEXISLearningMemory = None
+
 logger = logging.getLogger(__name__)
 
 # Tradier import with fallback

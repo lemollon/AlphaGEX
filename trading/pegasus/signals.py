@@ -59,6 +59,34 @@ except ImportError:
     EnsembleSignal = None
     StrategySignal = None
 
+# ML Regime Classifier - replaces hard-coded GEX thresholds with learned models
+ML_REGIME_AVAILABLE = False
+try:
+    from quant.ml_regime_classifier import MLRegimeClassifier, MLPrediction as RegimePrediction, MLRegimeAction
+    ML_REGIME_AVAILABLE = True
+except ImportError:
+    MLRegimeClassifier = None
+    RegimePrediction = None
+    MLRegimeAction = None
+
+# IV Solver - accurate implied volatility calculation
+IV_SOLVER_AVAILABLE = False
+try:
+    from quant.iv_solver import IVSolver, calculate_iv_from_price
+    IV_SOLVER_AVAILABLE = True
+except ImportError:
+    IVSolver = None
+    calculate_iv_from_price = None
+
+# Walk-Forward Optimizer - parameter validation
+WALK_FORWARD_AVAILABLE = False
+try:
+    from quant.walk_forward_optimizer import WalkForwardOptimizer, WalkForwardResult
+    WALK_FORWARD_AVAILABLE = True
+except ImportError:
+    WalkForwardOptimizer = None
+    WalkForwardResult = None
+
 
 class SignalGenerator:
     """Generates SPX Iron Condor signals"""
