@@ -68,7 +68,9 @@ def _get_bot_capital(bot_name: str) -> float:
 
     - ARES: Fetched from Tradier sandbox account (real money)
     - ATHENA: $100,000 paper trading capital
-    - PEGASUS: $200,000 paper trading capital
+    - ICARUS: $100,000 paper trading (aggressive ATHENA clone)
+    - PEGASUS: $200,000 paper trading SPX
+    - TITAN: $200,000 paper trading (aggressive PEGASUS clone)
     """
     if not bot_name:
         return 200000
@@ -79,8 +81,12 @@ def _get_bot_capital(bot_name: str) -> float:
         return _get_ares_capital()
     elif bot_upper == 'ATHENA':
         return 100000  # Paper trading
+    elif bot_upper == 'ICARUS':
+        return 100000  # Paper trading - aggressive ATHENA clone
     elif bot_upper == 'PEGASUS':
         return 200000  # Paper trading SPX
+    elif bot_upper == 'TITAN':
+        return 200000  # Paper trading SPX - aggressive PEGASUS clone
     else:
         return 200000  # Default
 
@@ -600,7 +606,9 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
         bot_tables = {
             'ARES': 'ares_positions',      # SPY Iron Condors - capital from Tradier
             'ATHENA': 'athena_positions',  # SPY Directional - $100k paper
-            'PEGASUS': 'pegasus_positions' # SPX Iron Condors - $200k paper
+            'ICARUS': 'icarus_positions',  # SPY Aggressive Directional - $100k paper
+            'PEGASUS': 'pegasus_positions', # SPX Iron Condors - $200k paper
+            'TITAN': 'titan_positions',    # SPX Aggressive Iron Condors - $200k paper
         }
 
         rows = []

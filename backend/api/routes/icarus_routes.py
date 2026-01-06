@@ -389,6 +389,8 @@ async def get_icarus_status():
                 "active_reason": active_reason,
                 "scan_interval_minutes": scan_interval,
                 "heartbeat": heartbeat,
+                "oracle_available": False,
+                "gex_ml_available": False,
                 "config": {
                     "risk_per_trade": 4.0,
                     "spread_width": 3,
@@ -494,6 +496,18 @@ async def get_icarus_positions(
             realized_pnl = float(row[21]) if row[21] else 0
             return_pct = round((realized_pnl / max_profit_val) * 100, 1) if max_profit_val and realized_pnl else 0
 
+            # Calculate is_0dte (same as ATHENA)
+            expiration = str(row[5]) if row[5] else None
+            is_0dte = False
+            if expiration:
+                try:
+                    exp_date = datetime.strptime(expiration, "%Y-%m-%d").date()
+                    open_time = row[22]
+                    if open_time:
+                        is_0dte = exp_date == open_time.date()
+                except (ValueError, TypeError, AttributeError):
+                    pass  # Keep default is_0dte=False if date parsing fails
+
             position_data = {
                 "position_id": row[0],
                 "spread_type": row[1],
@@ -502,7 +516,8 @@ async def get_icarus_positions(
                 "short_strike": short_strike,
                 "spread_formatted": spread_formatted,
                 "spread_width": spread_width,
-                "expiration": str(row[5]) if row[5] else None,
+                "expiration": expiration,
+                "is_0dte": is_0dte,
                 "entry_price": entry_debit,  # Match ATHENA's field name
                 "entry_debit": entry_debit,  # Keep for backward compat
                 "contracts": row[7],

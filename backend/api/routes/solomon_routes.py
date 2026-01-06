@@ -160,7 +160,7 @@ async def get_bot_dashboard(bot_name: str):
         raise HTTPException(status_code=503, detail="Solomon system not available")
 
     bot_name = bot_name.upper()
-    if bot_name not in ['ARES', 'ATHENA', 'PEGASUS', 'PHOENIX']:
+    if bot_name not in ['ARES', 'ATHENA', 'ICARUS', 'PEGASUS', 'TITAN', 'PHOENIX']:
         raise HTTPException(status_code=400, detail=f"Invalid bot name: {bot_name}")
 
     try:
@@ -596,7 +596,7 @@ async def get_kill_switch_status():
         status = solomon.get_kill_switch_status()
 
         # Add bots not yet in the table
-        for bot in ['ARES', 'ATHENA', 'PEGASUS', 'PHOENIX']:
+        for bot in ['ARES', 'ATHENA', 'ICARUS', 'PEGASUS', 'TITAN', 'PHOENIX']:
             if bot not in status:
                 status[bot] = {
                     'bot_name': bot,
