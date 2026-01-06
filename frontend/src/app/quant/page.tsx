@@ -611,7 +611,7 @@ export default function QuantPage() {
                       </div>
                     </div>
                   </div>
-                  {regimePrediction.probabilities && (
+                  {(regimePrediction.probabilities as Record<string, number> | undefined) && (
                     <div className="mt-4">
                       <div className="text-gray-400 text-sm mb-2">Probabilities</div>
                       <div className="space-y-1">
