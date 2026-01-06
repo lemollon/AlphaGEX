@@ -220,7 +220,8 @@ const fetchers = {
       const response = await api.get('/api/icarus/positions')
       return response.data
     } catch {
-      return { success: false, data: { open_positions: [], closed_positions: [] } }
+      // Return consistent shape - data should always be an array like success case
+      return { success: false, data: [] }
     }
   },
   icarusSignals: async (limit: number) => {
