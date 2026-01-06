@@ -107,9 +107,9 @@ class OrderExecutor:
                 vix_at_entry=signal.vix,
                 flip_point=signal.flip_point,
                 net_gex=signal.net_gex,
-                oracle_confidence=signal.confidence,
-                ml_direction=signal.direction,
-                ml_confidence=signal.confidence,
+                oracle_confidence=signal.oracle_confidence,
+                ml_direction=signal.oracle_direction,  # Use oracle direction since ML doesn't predict direction
+                ml_confidence=signal.ml_win_probability,  # Use ML win probability as confidence proxy
                 ml_model_name=signal.ml_model_name,
                 ml_win_probability=signal.ml_win_probability,
                 ml_top_features=signal.ml_top_features,
@@ -209,9 +209,9 @@ class OrderExecutor:
                 vix_at_entry=signal.vix,
                 flip_point=signal.flip_point,
                 net_gex=signal.net_gex,
-                oracle_confidence=signal.confidence,
-                ml_direction=signal.direction,
-                ml_confidence=signal.confidence,
+                oracle_confidence=signal.oracle_confidence,
+                ml_direction=signal.oracle_direction,  # Use oracle direction since ML doesn't predict direction
+                ml_confidence=signal.ml_win_probability,  # Use ML win probability as confidence proxy
                 ml_model_name=signal.ml_model_name,
                 ml_win_probability=signal.ml_win_probability,
                 ml_top_features=signal.ml_top_features,
