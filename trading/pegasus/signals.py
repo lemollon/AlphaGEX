@@ -9,7 +9,7 @@ Uses $5 strike increments and larger expected moves.
 import math
 import logging
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 
 from .models import IronCondorSignal, PEGASUSConfig, CENTRAL_TZ
 
