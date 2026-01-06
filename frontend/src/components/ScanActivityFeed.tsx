@@ -1,6 +1,7 @@
 'use client'
 
-import { Activity, CheckCircle, XCircle, AlertTriangle, Clock, TrendingUp, TrendingDown, Ban, Zap } from 'lucide-react'
+import { useState } from 'react'
+import { Activity, CheckCircle, XCircle, AlertTriangle, Clock, TrendingUp, TrendingDown, Ban, Zap, Brain, Cpu, Shield, BarChart3, Beaker, ChevronDown, ChevronRight, Database, Timer, DollarSign, Target, Percent } from 'lucide-react'
 
 interface ScanActivity {
   id: number
@@ -15,13 +16,14 @@ interface ScanActivity {
   market_insight?: string
   underlying_price?: number
   vix?: number
+  expected_move?: number
   signal_source?: string
   signal_direction?: string
   signal_confidence?: number
   signal_win_probability?: number
   oracle_advice?: string
   oracle_reasoning?: string
-  // NEW: Full Oracle context for visibility
+  // Full Oracle context
   oracle_win_probability?: number
   oracle_confidence?: number
   oracle_top_factors?: Array<{
@@ -31,6 +33,7 @@ interface ScanActivity {
   oracle_probabilities?: {
     win?: number
     loss?: number
+    breakeven?: number
   }
   oracle_suggested_strikes?: {
     sd_multiplier?: number
@@ -51,19 +54,128 @@ interface ScanActivity {
   net_gex?: number
   call_wall?: number
   put_wall?: number
+  flip_point?: number
   distance_to_call_wall_pct?: number
   distance_to_put_wall_pct?: number
   error_message?: string
   error_type?: string
   // Enhanced skip/no-trade explanation
-  skip_reason?: string  // e.g., "MARKET_CLOSED", "VIX_TOO_HIGH", "MAX_TRADES_REACHED"
-  skip_explanation?: string  // Human-readable explanation
+  skip_reason?: string
+  skip_explanation?: string
   checks_performed?: Array<{
     check_name: string
     passed: boolean
     value?: string
+    threshold?: string
     reason?: string
   }>
+
+  // === NEW FIELDS FOR COMPLETE VISIBILITY ===
+
+  // Claude AI Context
+  claude_prompt?: string
+  claude_response?: string
+  claude_model?: string
+  claude_tokens_used?: number
+  claude_response_time_ms?: number
+  ai_confidence?: number
+  ai_warnings?: string[]
+
+  // Psychology Patterns
+  psychology_pattern?: string
+  liberation_setup?: boolean
+  false_floor_detected?: boolean
+  forward_magnets?: Array<{
+    level: number
+    strength: number
+    type?: string
+  }>
+
+  // Execution Details
+  order_submitted_at?: string
+  order_filled_at?: string
+  broker_order_id?: string
+  expected_fill_price?: number
+  actual_fill_price?: number
+  slippage_pct?: number
+  broker_status?: string
+  execution_notes?: string
+
+  // Trade Details (for executed trades)
+  position_id?: string
+  strike_selection?: {
+    put_long?: number
+    put_short?: number
+    call_short?: number
+    call_long?: number
+  }
+  contracts?: number
+  premium_collected?: number
+  max_risk?: number
+
+  // Risk Management
+  kelly_pct?: number
+  position_size_dollars?: number
+  max_risk_dollars?: number
+  passed_all_checks?: boolean
+  blocked_reason?: string
+  risk_checks_performed?: Array<{
+    check: string
+    passed: boolean
+    value?: number
+    limit?: number
+    reason?: string
+  }>
+
+  // Backtest Reference
+  backtest_win_rate?: number
+  backtest_expectancy?: number
+  backtest_sharpe?: number
+
+  // Greeks at Entry
+  entry_delta?: number
+  entry_gamma?: number
+  entry_theta?: number
+  entry_vega?: number
+  entry_iv?: number
+
+  // Reasoning Breakdown
+  entry_reasoning?: string
+  strike_reasoning?: string
+  size_reasoning?: string
+  exit_reasoning?: string
+
+  // Alternatives & Rejections
+  alternatives_considered?: Array<{
+    strategy?: string
+    reason?: string
+  }>
+  other_strategies_considered?: Array<{
+    strategy: string
+    rejected_reason?: string
+  }>
+
+  // Performance Metrics
+  processing_time_ms?: number
+  api_calls_made?: Array<{
+    api: string
+    endpoint?: string
+    time_ms?: number
+    success?: boolean
+  }>
+  errors_encountered?: Array<{
+    error: string
+    context?: string
+  }>
+
+  // Outcome (for closed trades)
+  actual_pnl?: number
+  exit_triggered_by?: string
+  exit_timestamp?: string
+  exit_price?: number
+  exit_slippage_pct?: number
+  outcome_correct?: boolean
+  outcome_notes?: string
 }
 
 // Helper to derive skip reason from outcome and checks
@@ -532,19 +644,36 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
 
             {/* Checks Summary (if available) */}
             {scan.checks_performed && scan.checks_performed.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-1">
-                {scan.checks_performed.map((check, i) => (
-                  <span
-                    key={i}
-                    className={`text-xs px-1.5 py-0.5 rounded ${
-                      check.passed ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
-                    }`}
-                    title={check.reason || `${check.value || 'N/A'}`}
-                  >
-                    {check.passed ? '✓' : '✗'} {check.check_name}
-                  </span>
-                ))}
-              </div>
+              <details className="mt-2">
+                <summary className="text-xs text-orange-400 cursor-pointer hover:text-orange-300 flex items-center gap-1">
+                  <Shield className="w-3 h-3" />
+                  Risk Checks ({scan.checks_performed.filter(c => c.passed).length}/{scan.checks_performed.length} passed)
+                  {scan.blocked_reason && (
+                    <span className="ml-1 px-1.5 py-0.5 rounded bg-red-500/20 text-red-400">
+                      Blocked: {scan.blocked_reason}
+                    </span>
+                  )}
+                </summary>
+                <div className="mt-2 p-2 bg-orange-900/20 border border-orange-500/30 rounded text-xs space-y-1">
+                  {scan.checks_performed.map((check, i) => (
+                    <div key={i} className={`flex items-center justify-between p-1.5 rounded ${
+                      check.passed ? 'bg-green-500/10' : 'bg-red-500/10'
+                    }`}>
+                      <div className="flex items-center gap-2">
+                        <span className={check.passed ? 'text-green-400' : 'text-red-400'}>
+                          {check.passed ? '✓' : '✗'}
+                        </span>
+                        <span className="text-gray-300">{check.check_name}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-gray-400">
+                        {check.value && <span>Value: {check.value}</span>}
+                        {check.threshold && <span>Limit: {check.threshold}</span>}
+                        {check.reason && <span className="text-gray-500">({check.reason})</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </details>
             )}
 
             {/* What Would Trigger Trade - KEY INFO */}
@@ -560,6 +689,611 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
               <div className="mt-1 text-xs text-gray-500 italic">
                 💡 {scan.market_insight}
               </div>
+            )}
+
+            {/* === NEW DETAILED SECTIONS === */}
+
+            {/* Psychology Patterns Section */}
+            {(scan.psychology_pattern || scan.liberation_setup || scan.false_floor_detected || (scan.forward_magnets && scan.forward_magnets.length > 0)) && (
+              <details className="mt-2">
+                <summary className="text-xs text-pink-400 cursor-pointer hover:text-pink-300 flex items-center gap-1">
+                  <Brain className="w-3 h-3" />
+                  Psychology Patterns
+                  {scan.psychology_pattern && (
+                    <span className="ml-1 px-1.5 py-0.5 rounded bg-pink-500/20 text-pink-400">
+                      {scan.psychology_pattern}
+                    </span>
+                  )}
+                </summary>
+                <div className="mt-2 p-3 bg-pink-900/20 border border-pink-500/30 rounded text-xs space-y-2">
+                  {scan.psychology_pattern && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">Detected Pattern:</span>
+                      <span className="text-pink-400 font-medium">{scan.psychology_pattern}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-4">
+                    {scan.liberation_setup !== undefined && (
+                      <div className={`flex items-center gap-1 ${scan.liberation_setup ? 'text-green-400' : 'text-gray-500'}`}>
+                        {scan.liberation_setup ? '✓' : '✗'} Liberation Setup
+                      </div>
+                    )}
+                    {scan.false_floor_detected !== undefined && (
+                      <div className={`flex items-center gap-1 ${scan.false_floor_detected ? 'text-red-400' : 'text-gray-500'}`}>
+                        {scan.false_floor_detected ? '⚠️' : '✓'} False Floor {scan.false_floor_detected ? 'Detected' : 'Clear'}
+                      </div>
+                    )}
+                  </div>
+                  {scan.forward_magnets && scan.forward_magnets.length > 0 && (
+                    <div>
+                      <span className="text-gray-400 block mb-1">Forward Magnets:</span>
+                      <div className="flex flex-wrap gap-1">
+                        {scan.forward_magnets.map((magnet, i) => (
+                          <span key={i} className="px-2 py-0.5 rounded bg-pink-500/20 text-pink-400">
+                            ${magnet.level?.toFixed(0)} (Strength: {(magnet.strength * 100).toFixed(0)}%)
+                            {magnet.type && ` - ${magnet.type}`}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </details>
+            )}
+
+            {/* Trade Execution Details (for executed trades) */}
+            {scan.trade_executed && (scan.position_id || scan.strike_selection || scan.contracts || scan.premium_collected) && (
+              <details className="mt-2">
+                <summary className="text-xs text-green-400 cursor-pointer hover:text-green-300 flex items-center gap-1">
+                  <DollarSign className="w-3 h-3" />
+                  Trade Execution Details
+                  {scan.premium_collected && (
+                    <span className="ml-1 px-1.5 py-0.5 rounded bg-green-500/20 text-green-400">
+                      +${scan.premium_collected.toFixed(0)} premium
+                    </span>
+                  )}
+                </summary>
+                <div className="mt-2 p-3 bg-green-900/20 border border-green-500/30 rounded text-xs space-y-2">
+                  {scan.position_id && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">Position ID:</span>
+                      <span className="text-green-400 font-mono">{scan.position_id}</span>
+                    </div>
+                  )}
+                  {scan.strike_selection && (
+                    <div>
+                      <span className="text-gray-400 block mb-1">Strike Selection:</span>
+                      <div className="grid grid-cols-2 gap-2">
+                        {scan.strike_selection.put_long && (
+                          <div className="p-1.5 bg-red-500/10 rounded">
+                            <span className="text-red-400">Put Long:</span> ${scan.strike_selection.put_long}
+                          </div>
+                        )}
+                        {scan.strike_selection.put_short && (
+                          <div className="p-1.5 bg-red-500/20 rounded">
+                            <span className="text-red-400">Put Short:</span> ${scan.strike_selection.put_short}
+                          </div>
+                        )}
+                        {scan.strike_selection.call_short && (
+                          <div className="p-1.5 bg-green-500/20 rounded">
+                            <span className="text-green-400">Call Short:</span> ${scan.strike_selection.call_short}
+                          </div>
+                        )}
+                        {scan.strike_selection.call_long && (
+                          <div className="p-1.5 bg-green-500/10 rounded">
+                            <span className="text-green-400">Call Long:</span> ${scan.strike_selection.call_long}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  <div className="grid grid-cols-3 gap-2">
+                    {scan.contracts && (
+                      <div className="p-1.5 bg-gray-800 rounded">
+                        <span className="text-gray-400 block text-[10px]">Contracts</span>
+                        <span className="text-white font-medium">{scan.contracts}</span>
+                      </div>
+                    )}
+                    {scan.premium_collected && (
+                      <div className="p-1.5 bg-gray-800 rounded">
+                        <span className="text-gray-400 block text-[10px]">Premium</span>
+                        <span className="text-green-400 font-medium">${scan.premium_collected.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {scan.max_risk && (
+                      <div className="p-1.5 bg-gray-800 rounded">
+                        <span className="text-gray-400 block text-[10px]">Max Risk</span>
+                        <span className="text-red-400 font-medium">${scan.max_risk.toFixed(2)}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </details>
+            )}
+
+            {/* Order Execution Timeline (slippage, fills, timing) */}
+            {(scan.order_submitted_at || scan.actual_fill_price || scan.slippage_pct !== undefined) && (
+              <details className="mt-2">
+                <summary className="text-xs text-cyan-400 cursor-pointer hover:text-cyan-300 flex items-center gap-1">
+                  <Timer className="w-3 h-3" />
+                  Execution Timeline
+                  {scan.slippage_pct !== undefined && (
+                    <span className={`ml-1 px-1.5 py-0.5 rounded ${
+                      Math.abs(scan.slippage_pct) < 0.5 ? 'bg-green-500/20 text-green-400' :
+                      Math.abs(scan.slippage_pct) < 1 ? 'bg-yellow-500/20 text-yellow-400' :
+                      'bg-red-500/20 text-red-400'
+                    }`}>
+                      {scan.slippage_pct > 0 ? '+' : ''}{scan.slippage_pct.toFixed(2)}% slippage
+                    </span>
+                  )}
+                </summary>
+                <div className="mt-2 p-3 bg-cyan-900/20 border border-cyan-500/30 rounded text-xs space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    {scan.order_submitted_at && (
+                      <div>
+                        <span className="text-gray-400 block text-[10px]">Submitted</span>
+                        <span className="text-white">{new Date(scan.order_submitted_at).toLocaleTimeString()}</span>
+                      </div>
+                    )}
+                    {scan.order_filled_at && (
+                      <div>
+                        <span className="text-gray-400 block text-[10px]">Filled</span>
+                        <span className="text-white">{new Date(scan.order_filled_at).toLocaleTimeString()}</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {scan.expected_fill_price && (
+                      <div className="p-1.5 bg-gray-800 rounded">
+                        <span className="text-gray-400 block text-[10px]">Expected</span>
+                        <span className="text-white">${scan.expected_fill_price.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {scan.actual_fill_price && (
+                      <div className="p-1.5 bg-gray-800 rounded">
+                        <span className="text-gray-400 block text-[10px]">Actual</span>
+                        <span className="text-white">${scan.actual_fill_price.toFixed(2)}</span>
+                      </div>
+                    )}
+                    {scan.slippage_pct !== undefined && (
+                      <div className="p-1.5 bg-gray-800 rounded">
+                        <span className="text-gray-400 block text-[10px]">Slippage</span>
+                        <span className={scan.slippage_pct > 0.5 ? 'text-red-400' : 'text-green-400'}>
+                          {scan.slippage_pct > 0 ? '+' : ''}{scan.slippage_pct.toFixed(2)}%
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  {scan.broker_order_id && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">Broker Order ID:</span>
+                      <span className="text-cyan-400 font-mono text-[10px]">{scan.broker_order_id}</span>
+                    </div>
+                  )}
+                  {scan.broker_status && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">Broker Status:</span>
+                      <span className={`px-1.5 py-0.5 rounded ${
+                        scan.broker_status === 'filled' ? 'bg-green-500/20 text-green-400' :
+                        scan.broker_status === 'rejected' ? 'bg-red-500/20 text-red-400' :
+                        'bg-yellow-500/20 text-yellow-400'
+                      }`}>{scan.broker_status}</span>
+                    </div>
+                  )}
+                  {scan.execution_notes && (
+                    <div className="pt-1 border-t border-cyan-500/20">
+                      <span className="text-gray-400">Notes: </span>
+                      <span className="text-gray-300">{scan.execution_notes}</span>
+                    </div>
+                  )}
+                </div>
+              </details>
+            )}
+
+            {/* Risk Management Details */}
+            {(scan.kelly_pct !== undefined || scan.position_size_dollars || scan.max_risk_dollars || scan.backtest_win_rate !== undefined) && (
+              <details className="mt-2">
+                <summary className="text-xs text-amber-400 cursor-pointer hover:text-amber-300 flex items-center gap-1">
+                  <BarChart3 className="w-3 h-3" />
+                  Risk Management
+                  {scan.kelly_pct !== undefined && (
+                    <span className="ml-1 px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-400">
+                      Kelly: {(scan.kelly_pct * 100).toFixed(1)}%
+                    </span>
+                  )}
+                </summary>
+                <div className="mt-2 p-3 bg-amber-900/20 border border-amber-500/30 rounded text-xs space-y-2">
+                  <div className="grid grid-cols-3 gap-2">
+                    {scan.kelly_pct !== undefined && (
+                      <div className="p-1.5 bg-gray-800 rounded">
+                        <span className="text-gray-400 block text-[10px]">Kelly %</span>
+                        <span className="text-amber-400 font-medium">{(scan.kelly_pct * 100).toFixed(1)}%</span>
+                      </div>
+                    )}
+                    {scan.position_size_dollars && (
+                      <div className="p-1.5 bg-gray-800 rounded">
+                        <span className="text-gray-400 block text-[10px]">Position Size</span>
+                        <span className="text-white font-medium">${scan.position_size_dollars.toLocaleString()}</span>
+                      </div>
+                    )}
+                    {scan.max_risk_dollars && (
+                      <div className="p-1.5 bg-gray-800 rounded">
+                        <span className="text-gray-400 block text-[10px]">Max Risk</span>
+                        <span className="text-red-400 font-medium">${scan.max_risk_dollars.toLocaleString()}</span>
+                      </div>
+                    )}
+                  </div>
+                  {/* Backtest Reference */}
+                  {(scan.backtest_win_rate !== undefined || scan.backtest_expectancy !== undefined || scan.backtest_sharpe !== undefined) && (
+                    <div>
+                      <span className="text-gray-400 block mb-1">Backtest Reference:</span>
+                      <div className="grid grid-cols-3 gap-2">
+                        {scan.backtest_win_rate !== undefined && (
+                          <div className="p-1.5 bg-gray-800 rounded">
+                            <span className="text-gray-400 block text-[10px]">Win Rate</span>
+                            <span className={scan.backtest_win_rate >= 0.5 ? 'text-green-400' : 'text-red-400'}>
+                              {(scan.backtest_win_rate * 100).toFixed(1)}%
+                            </span>
+                          </div>
+                        )}
+                        {scan.backtest_expectancy !== undefined && (
+                          <div className="p-1.5 bg-gray-800 rounded">
+                            <span className="text-gray-400 block text-[10px]">Expectancy</span>
+                            <span className={scan.backtest_expectancy > 0 ? 'text-green-400' : 'text-red-400'}>
+                              ${scan.backtest_expectancy.toFixed(2)}
+                            </span>
+                          </div>
+                        )}
+                        {scan.backtest_sharpe !== undefined && (
+                          <div className="p-1.5 bg-gray-800 rounded">
+                            <span className="text-gray-400 block text-[10px]">Sharpe</span>
+                            <span className={scan.backtest_sharpe >= 1 ? 'text-green-400' : scan.backtest_sharpe >= 0.5 ? 'text-yellow-400' : 'text-red-400'}>
+                              {scan.backtest_sharpe.toFixed(2)}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </details>
+            )}
+
+            {/* Greeks at Entry */}
+            {(scan.entry_delta !== undefined || scan.entry_gamma !== undefined || scan.entry_theta !== undefined || scan.entry_vega !== undefined || scan.entry_iv !== undefined) && (
+              <details className="mt-2">
+                <summary className="text-xs text-indigo-400 cursor-pointer hover:text-indigo-300 flex items-center gap-1">
+                  <Percent className="w-3 h-3" />
+                  Greeks at Entry
+                </summary>
+                <div className="mt-2 p-3 bg-indigo-900/20 border border-indigo-500/30 rounded text-xs">
+                  <div className="grid grid-cols-5 gap-2">
+                    {scan.entry_delta !== undefined && (
+                      <div className="p-1.5 bg-gray-800 rounded text-center">
+                        <span className="text-gray-400 block text-[10px]">Delta</span>
+                        <span className={scan.entry_delta > 0 ? 'text-green-400' : 'text-red-400'}>
+                          {scan.entry_delta.toFixed(3)}
+                        </span>
+                      </div>
+                    )}
+                    {scan.entry_gamma !== undefined && (
+                      <div className="p-1.5 bg-gray-800 rounded text-center">
+                        <span className="text-gray-400 block text-[10px]">Gamma</span>
+                        <span className="text-indigo-400">{scan.entry_gamma.toFixed(4)}</span>
+                      </div>
+                    )}
+                    {scan.entry_theta !== undefined && (
+                      <div className="p-1.5 bg-gray-800 rounded text-center">
+                        <span className="text-gray-400 block text-[10px]">Theta</span>
+                        <span className={scan.entry_theta < 0 ? 'text-red-400' : 'text-green-400'}>
+                          {scan.entry_theta.toFixed(3)}
+                        </span>
+                      </div>
+                    )}
+                    {scan.entry_vega !== undefined && (
+                      <div className="p-1.5 bg-gray-800 rounded text-center">
+                        <span className="text-gray-400 block text-[10px]">Vega</span>
+                        <span className="text-indigo-400">{scan.entry_vega.toFixed(3)}</span>
+                      </div>
+                    )}
+                    {scan.entry_iv !== undefined && (
+                      <div className="p-1.5 bg-gray-800 rounded text-center">
+                        <span className="text-gray-400 block text-[10px]">IV</span>
+                        <span className="text-yellow-400">{(scan.entry_iv * 100).toFixed(1)}%</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </details>
+            )}
+
+            {/* Claude AI Context */}
+            {(scan.claude_prompt || scan.claude_response || scan.claude_tokens_used) && (
+              <details className="mt-2">
+                <summary className="text-xs text-violet-400 cursor-pointer hover:text-violet-300 flex items-center gap-1">
+                  <Cpu className="w-3 h-3" />
+                  Claude AI Context
+                  {scan.claude_model && (
+                    <span className="ml-1 px-1.5 py-0.5 rounded bg-violet-500/20 text-violet-400 text-[10px]">
+                      {scan.claude_model}
+                    </span>
+                  )}
+                  {scan.claude_tokens_used && (
+                    <span className="ml-1 text-gray-500">{scan.claude_tokens_used} tokens</span>
+                  )}
+                </summary>
+                <div className="mt-2 p-3 bg-violet-900/20 border border-violet-500/30 rounded text-xs space-y-2">
+                  <div className="grid grid-cols-3 gap-2">
+                    {scan.claude_model && (
+                      <div className="p-1.5 bg-gray-800 rounded">
+                        <span className="text-gray-400 block text-[10px]">Model</span>
+                        <span className="text-violet-400">{scan.claude_model}</span>
+                      </div>
+                    )}
+                    {scan.claude_tokens_used && (
+                      <div className="p-1.5 bg-gray-800 rounded">
+                        <span className="text-gray-400 block text-[10px]">Tokens</span>
+                        <span className="text-white">{scan.claude_tokens_used.toLocaleString()}</span>
+                      </div>
+                    )}
+                    {scan.claude_response_time_ms && (
+                      <div className="p-1.5 bg-gray-800 rounded">
+                        <span className="text-gray-400 block text-[10px]">Response Time</span>
+                        <span className={scan.claude_response_time_ms > 5000 ? 'text-yellow-400' : 'text-green-400'}>
+                          {(scan.claude_response_time_ms / 1000).toFixed(2)}s
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  {scan.ai_confidence !== undefined && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">AI Confidence:</span>
+                      <span className={`font-medium ${
+                        scan.ai_confidence >= 0.8 ? 'text-green-400' :
+                        scan.ai_confidence >= 0.6 ? 'text-yellow-400' : 'text-red-400'
+                      }`}>
+                        {(scan.ai_confidence * 100).toFixed(0)}%
+                      </span>
+                    </div>
+                  )}
+                  {scan.ai_warnings && scan.ai_warnings.length > 0 && (
+                    <div>
+                      <span className="text-yellow-400 block mb-1">AI Warnings:</span>
+                      <div className="space-y-1">
+                        {scan.ai_warnings.map((warning, i) => (
+                          <div key={i} className="p-1.5 bg-yellow-500/10 rounded text-yellow-400">
+                            ⚠️ {warning}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {scan.claude_prompt && (
+                    <details className="mt-1">
+                      <summary className="text-violet-400 cursor-pointer hover:text-violet-300">
+                        View Full Prompt
+                      </summary>
+                      <div className="mt-1 p-2 bg-gray-900 rounded max-h-40 overflow-y-auto">
+                        <pre className="text-gray-300 whitespace-pre-wrap text-[10px]">{scan.claude_prompt}</pre>
+                      </div>
+                    </details>
+                  )}
+                  {scan.claude_response && (
+                    <details className="mt-1">
+                      <summary className="text-violet-400 cursor-pointer hover:text-violet-300">
+                        View Full Response
+                      </summary>
+                      <div className="mt-1 p-2 bg-gray-900 rounded max-h-40 overflow-y-auto">
+                        <pre className="text-gray-300 whitespace-pre-wrap text-[10px]">{scan.claude_response}</pre>
+                      </div>
+                    </details>
+                  )}
+                </div>
+              </details>
+            )}
+
+            {/* Detailed Reasoning Breakdown */}
+            {(scan.entry_reasoning || scan.strike_reasoning || scan.size_reasoning || scan.exit_reasoning) && (
+              <details className="mt-2">
+                <summary className="text-xs text-teal-400 cursor-pointer hover:text-teal-300 flex items-center gap-1">
+                  <Target className="w-3 h-3" />
+                  Detailed Reasoning
+                </summary>
+                <div className="mt-2 p-3 bg-teal-900/20 border border-teal-500/30 rounded text-xs space-y-2">
+                  {scan.entry_reasoning && (
+                    <div>
+                      <span className="text-teal-400 font-medium block mb-1">Entry Reasoning:</span>
+                      <p className="text-gray-300 pl-2 border-l-2 border-teal-500/30">{scan.entry_reasoning}</p>
+                    </div>
+                  )}
+                  {scan.strike_reasoning && (
+                    <div>
+                      <span className="text-teal-400 font-medium block mb-1">Strike Selection:</span>
+                      <p className="text-gray-300 pl-2 border-l-2 border-teal-500/30">{scan.strike_reasoning}</p>
+                    </div>
+                  )}
+                  {scan.size_reasoning && (
+                    <div>
+                      <span className="text-teal-400 font-medium block mb-1">Position Sizing:</span>
+                      <p className="text-gray-300 pl-2 border-l-2 border-teal-500/30">{scan.size_reasoning}</p>
+                    </div>
+                  )}
+                  {scan.exit_reasoning && (
+                    <div>
+                      <span className="text-teal-400 font-medium block mb-1">Exit Plan:</span>
+                      <p className="text-gray-300 pl-2 border-l-2 border-teal-500/30">{scan.exit_reasoning}</p>
+                    </div>
+                  )}
+                </div>
+              </details>
+            )}
+
+            {/* Alternatives Considered */}
+            {((scan.alternatives_considered && scan.alternatives_considered.length > 0) || (scan.other_strategies_considered && scan.other_strategies_considered.length > 0)) && (
+              <details className="mt-2">
+                <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-300 flex items-center gap-1">
+                  <Database className="w-3 h-3" />
+                  Alternatives Considered
+                </summary>
+                <div className="mt-2 p-3 bg-gray-800/50 border border-gray-600 rounded text-xs space-y-2">
+                  {scan.alternatives_considered && scan.alternatives_considered.length > 0 && (
+                    <div>
+                      <span className="text-gray-400 block mb-1">Alternatives:</span>
+                      {scan.alternatives_considered.map((alt, i) => (
+                        <div key={i} className="p-1.5 bg-gray-900/50 rounded mb-1">
+                          {alt.strategy && <span className="text-white">{alt.strategy}</span>}
+                          {alt.reason && <span className="text-gray-500 ml-2">- {alt.reason}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {scan.other_strategies_considered && scan.other_strategies_considered.length > 0 && (
+                    <div>
+                      <span className="text-gray-400 block mb-1">Other Strategies:</span>
+                      {scan.other_strategies_considered.map((strat, i) => (
+                        <div key={i} className="p-1.5 bg-gray-900/50 rounded mb-1 flex items-center justify-between">
+                          <span className="text-white">{strat.strategy}</span>
+                          {strat.rejected_reason && (
+                            <span className="text-red-400 text-[10px]">Rejected: {strat.rejected_reason}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </details>
+            )}
+
+            {/* Processing Metrics */}
+            {(scan.processing_time_ms || (scan.api_calls_made && scan.api_calls_made.length > 0) || (scan.errors_encountered && scan.errors_encountered.length > 0)) && (
+              <details className="mt-2">
+                <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-300 flex items-center gap-1">
+                  <Beaker className="w-3 h-3" />
+                  Processing Metrics
+                  {scan.processing_time_ms && (
+                    <span className="ml-1 text-gray-500">{scan.processing_time_ms}ms</span>
+                  )}
+                  {scan.errors_encountered && scan.errors_encountered.length > 0 && (
+                    <span className="ml-1 px-1.5 py-0.5 rounded bg-red-500/20 text-red-400">
+                      {scan.errors_encountered.length} errors
+                    </span>
+                  )}
+                </summary>
+                <div className="mt-2 p-3 bg-gray-800/50 border border-gray-600 rounded text-xs space-y-2">
+                  {scan.processing_time_ms && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">Total Processing Time:</span>
+                      <span className={scan.processing_time_ms > 10000 ? 'text-yellow-400' : 'text-green-400'}>
+                        {(scan.processing_time_ms / 1000).toFixed(2)}s
+                      </span>
+                    </div>
+                  )}
+                  {scan.api_calls_made && scan.api_calls_made.length > 0 && (
+                    <div>
+                      <span className="text-gray-400 block mb-1">API Calls:</span>
+                      <div className="space-y-1">
+                        {scan.api_calls_made.map((call, i) => (
+                          <div key={i} className="flex items-center justify-between p-1 bg-gray-900/50 rounded">
+                            <span className="text-white">{call.api}{call.endpoint ? `: ${call.endpoint}` : ''}</span>
+                            <div className="flex items-center gap-2">
+                              {call.time_ms && <span className="text-gray-500">{call.time_ms}ms</span>}
+                              <span className={call.success ? 'text-green-400' : 'text-red-400'}>
+                                {call.success ? '✓' : '✗'}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {scan.errors_encountered && scan.errors_encountered.length > 0 && (
+                    <div>
+                      <span className="text-red-400 block mb-1">Errors:</span>
+                      {scan.errors_encountered.map((err, i) => (
+                        <div key={i} className="p-1.5 bg-red-500/10 rounded mb-1">
+                          <span className="text-red-400">{err.error}</span>
+                          {err.context && <span className="text-gray-500 block text-[10px]">{err.context}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </details>
+            )}
+
+            {/* Trade Outcome (for closed positions) */}
+            {(scan.actual_pnl !== undefined || scan.exit_triggered_by || scan.outcome_notes) && (
+              <details className="mt-2" open={scan.actual_pnl !== undefined}>
+                <summary className="text-xs cursor-pointer flex items-center gap-1" style={{
+                  color: scan.actual_pnl && scan.actual_pnl > 0 ? '#4ade80' : scan.actual_pnl && scan.actual_pnl < 0 ? '#f87171' : '#9ca3af'
+                }}>
+                  <DollarSign className="w-3 h-3" />
+                  Trade Outcome
+                  {scan.actual_pnl !== undefined && (
+                    <span className={`ml-1 px-1.5 py-0.5 rounded font-medium ${
+                      scan.actual_pnl > 0 ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                    }`}>
+                      {scan.actual_pnl > 0 ? '+' : ''}${scan.actual_pnl.toFixed(2)}
+                    </span>
+                  )}
+                </summary>
+                <div className={`mt-2 p-3 rounded text-xs space-y-2 ${
+                  scan.actual_pnl && scan.actual_pnl > 0 ? 'bg-green-900/20 border border-green-500/30' :
+                  scan.actual_pnl && scan.actual_pnl < 0 ? 'bg-red-900/20 border border-red-500/30' :
+                  'bg-gray-800/50 border border-gray-600'
+                }`}>
+                  <div className="grid grid-cols-3 gap-2">
+                    {scan.actual_pnl !== undefined && (
+                      <div className="p-1.5 bg-gray-800 rounded">
+                        <span className="text-gray-400 block text-[10px]">P&L</span>
+                        <span className={`font-bold ${scan.actual_pnl > 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {scan.actual_pnl > 0 ? '+' : ''}${scan.actual_pnl.toFixed(2)}
+                        </span>
+                      </div>
+                    )}
+                    {scan.exit_triggered_by && (
+                      <div className="p-1.5 bg-gray-800 rounded">
+                        <span className="text-gray-400 block text-[10px]">Exit Trigger</span>
+                        <span className="text-white">{scan.exit_triggered_by}</span>
+                      </div>
+                    )}
+                    {scan.exit_price && (
+                      <div className="p-1.5 bg-gray-800 rounded">
+                        <span className="text-gray-400 block text-[10px]">Exit Price</span>
+                        <span className="text-white">${scan.exit_price.toFixed(2)}</span>
+                      </div>
+                    )}
+                  </div>
+                  {scan.exit_timestamp && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">Exit Time:</span>
+                      <span className="text-white">{new Date(scan.exit_timestamp).toLocaleString()}</span>
+                    </div>
+                  )}
+                  {scan.exit_slippage_pct !== undefined && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">Exit Slippage:</span>
+                      <span className={Math.abs(scan.exit_slippage_pct) < 0.5 ? 'text-green-400' : 'text-yellow-400'}>
+                        {scan.exit_slippage_pct > 0 ? '+' : ''}{scan.exit_slippage_pct.toFixed(2)}%
+                      </span>
+                    </div>
+                  )}
+                  {scan.outcome_correct !== undefined && (
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">Prediction Correct:</span>
+                      <span className={scan.outcome_correct ? 'text-green-400' : 'text-red-400'}>
+                        {scan.outcome_correct ? '✓ Yes' : '✗ No'}
+                      </span>
+                    </div>
+                  )}
+                  {scan.outcome_notes && (
+                    <div className="pt-1 border-t border-gray-700">
+                      <span className="text-gray-400">Notes: </span>
+                      <span className="text-gray-300">{scan.outcome_notes}</span>
+                    </div>
+                  )}
+                </div>
+              </details>
             )}
 
             {/* Full Reasoning - No truncation */}
@@ -579,6 +1313,9 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
               <div className="mt-2 p-2 bg-red-500/10 border border-red-500/30 rounded text-xs">
                 <span className="text-red-400 font-medium">⚠️ Error: </span>
                 <span className="text-gray-300">{scan.error_message}</span>
+                {scan.error_type && (
+                  <span className="text-gray-500 ml-2">({scan.error_type})</span>
+                )}
               </div>
             )}
           </div>
@@ -586,45 +1323,133 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
       </div>
 
       {/* Export Button */}
-      <div className="mt-4 pt-3 border-t border-gray-700 flex justify-end">
+      <div className="mt-4 pt-3 border-t border-gray-700 flex justify-end gap-2">
         <button
           onClick={() => {
-            const csv = [
-              ['Scan #', 'Time', 'Outcome', 'Summary', 'R:R', 'SPY', 'VIX', 'GEX Regime', 'Net GEX (B)', 'Put Wall', 'Call Wall', 'Dist to Put Wall %', 'Dist to Call Wall %', 'Oracle Win Prob', 'Min Threshold', 'Oracle Confidence', 'Oracle Advice', 'Top Factors', 'Oracle Reasoning', 'What Would Trigger'].join(','),
-              ...scans.map(s => [
-                s.scan_number,
-                s.time_ct,
-                s.outcome,
-                `"${(s.decision_summary || '').replace(/"/g, '""')}"`,
-                s.risk_reward_ratio?.toFixed(2) || '',
-                s.underlying_price?.toFixed(2) || '',
-                s.vix?.toFixed(1) || '',
-                s.gex_regime || '',
-                s.net_gex ? (s.net_gex / 1e9).toFixed(2) : '',
-                s.put_wall?.toFixed(0) || '',
-                s.call_wall?.toFixed(0) || '',
-                s.distance_to_put_wall_pct?.toFixed(2) || '',
-                s.distance_to_call_wall_pct?.toFixed(2) || '',
-                s.oracle_win_probability ? (s.oracle_win_probability * 100).toFixed(1) + '%' : '',
-                s.min_win_probability_threshold ? (s.min_win_probability_threshold * 100).toFixed(0) + '%' : '',
-                s.oracle_confidence ? (s.oracle_confidence * 100).toFixed(0) + '%' : '',
-                s.oracle_advice || '',
-                s.oracle_top_factors ? `"${s.oracle_top_factors.map(f => `${f.factor}:${(f.impact*100).toFixed(1)}%`).join(', ')}"` : '',
-                `"${(s.oracle_reasoning || '').replace(/"/g, '""')}"`,
-                `"${(s.what_would_trigger || '').replace(/"/g, '""')}"`
-              ].join(','))
-            ].join('\n')
+            // Comprehensive CSV export with all fields
+            const headers = [
+              'Scan #', 'Time', 'Outcome', 'Summary', 'Trade Executed',
+              // Market Data
+              'SPY', 'VIX', 'Expected Move', 'GEX Regime', 'Net GEX (B)', 'Put Wall', 'Call Wall', 'Flip Point',
+              'Dist to Put Wall %', 'Dist to Call Wall %', 'R:R',
+              // Signal
+              'Signal Source', 'Signal Direction', 'Signal Confidence', 'Signal Win Prob',
+              // Oracle
+              'Oracle Advice', 'Oracle Win Prob', 'Oracle Confidence', 'Min Threshold',
+              'Oracle Probabilities', 'Oracle Suggested Strikes', 'Oracle Reasoning', 'Top Factors',
+              // Psychology
+              'Psychology Pattern', 'Liberation Setup', 'False Floor', 'Forward Magnets',
+              // Execution
+              'Position ID', 'Contracts', 'Premium Collected', 'Max Risk',
+              'Expected Fill', 'Actual Fill', 'Slippage %', 'Broker Status',
+              // Risk Management
+              'Kelly %', 'Position Size $', 'Max Risk $', 'Blocked Reason',
+              'Backtest Win Rate', 'Backtest Expectancy', 'Backtest Sharpe',
+              // Greeks
+              'Entry Delta', 'Entry Gamma', 'Entry Theta', 'Entry Vega', 'Entry IV',
+              // AI
+              'Claude Model', 'Claude Tokens', 'Claude Response Time (ms)', 'AI Confidence',
+              // Outcome
+              'Actual P&L', 'Exit Trigger', 'Exit Price', 'Exit Slippage %', 'Outcome Correct',
+              // Processing
+              'Processing Time (ms)', 'Errors',
+              // Full Text
+              'What Would Trigger', 'Market Insight', 'Entry Reasoning', 'Full Reasoning'
+            ].join(',')
+
+            const rows = scans.map(s => [
+              s.scan_number,
+              s.time_ct,
+              s.outcome,
+              `"${(s.decision_summary || '').replace(/"/g, '""')}"`,
+              s.trade_executed ? 'Yes' : 'No',
+              // Market Data
+              s.underlying_price?.toFixed(2) || '',
+              s.vix?.toFixed(1) || '',
+              s.expected_move?.toFixed(2) || '',
+              s.gex_regime || '',
+              s.net_gex ? (s.net_gex / 1e9).toFixed(2) : '',
+              s.put_wall?.toFixed(0) || '',
+              s.call_wall?.toFixed(0) || '',
+              s.flip_point?.toFixed(0) || '',
+              s.distance_to_put_wall_pct?.toFixed(2) || '',
+              s.distance_to_call_wall_pct?.toFixed(2) || '',
+              s.risk_reward_ratio?.toFixed(2) || '',
+              // Signal
+              s.signal_source || '',
+              s.signal_direction || '',
+              s.signal_confidence ? (s.signal_confidence * 100).toFixed(1) + '%' : '',
+              s.signal_win_probability ? (s.signal_win_probability * 100).toFixed(1) + '%' : '',
+              // Oracle
+              s.oracle_advice || '',
+              s.oracle_win_probability ? (s.oracle_win_probability * 100).toFixed(1) + '%' : '',
+              s.oracle_confidence ? (s.oracle_confidence * 100).toFixed(0) + '%' : '',
+              s.min_win_probability_threshold ? (s.min_win_probability_threshold * 100).toFixed(0) + '%' : '',
+              s.oracle_probabilities ? `"Win:${((s.oracle_probabilities.win || 0) * 100).toFixed(0)}% Loss:${((s.oracle_probabilities.loss || 0) * 100).toFixed(0)}%"` : '',
+              s.oracle_suggested_strikes ? `"Put:${s.oracle_suggested_strikes.put_strike || 'N/A'} Call:${s.oracle_suggested_strikes.call_strike || 'N/A'}"` : '',
+              `"${(s.oracle_reasoning || '').replace(/"/g, '""')}"`,
+              s.oracle_top_factors ? `"${s.oracle_top_factors.map(f => `${f.factor}:${(f.impact*100).toFixed(1)}%`).join('; ')}"` : '',
+              // Psychology
+              s.psychology_pattern || '',
+              s.liberation_setup !== undefined ? (s.liberation_setup ? 'Yes' : 'No') : '',
+              s.false_floor_detected !== undefined ? (s.false_floor_detected ? 'Yes' : 'No') : '',
+              s.forward_magnets ? `"${s.forward_magnets.map(m => `$${m.level?.toFixed(0)}(${(m.strength*100).toFixed(0)}%)`).join('; ')}"` : '',
+              // Execution
+              s.position_id || '',
+              s.contracts || '',
+              s.premium_collected?.toFixed(2) || '',
+              s.max_risk?.toFixed(2) || '',
+              s.expected_fill_price?.toFixed(2) || '',
+              s.actual_fill_price?.toFixed(2) || '',
+              s.slippage_pct?.toFixed(2) || '',
+              s.broker_status || '',
+              // Risk Management
+              s.kelly_pct ? (s.kelly_pct * 100).toFixed(1) + '%' : '',
+              s.position_size_dollars?.toLocaleString() || '',
+              s.max_risk_dollars?.toLocaleString() || '',
+              s.blocked_reason || '',
+              s.backtest_win_rate ? (s.backtest_win_rate * 100).toFixed(1) + '%' : '',
+              s.backtest_expectancy?.toFixed(2) || '',
+              s.backtest_sharpe?.toFixed(2) || '',
+              // Greeks
+              s.entry_delta?.toFixed(3) || '',
+              s.entry_gamma?.toFixed(4) || '',
+              s.entry_theta?.toFixed(3) || '',
+              s.entry_vega?.toFixed(3) || '',
+              s.entry_iv ? (s.entry_iv * 100).toFixed(1) + '%' : '',
+              // AI
+              s.claude_model || '',
+              s.claude_tokens_used || '',
+              s.claude_response_time_ms || '',
+              s.ai_confidence ? (s.ai_confidence * 100).toFixed(0) + '%' : '',
+              // Outcome
+              s.actual_pnl?.toFixed(2) || '',
+              s.exit_triggered_by || '',
+              s.exit_price?.toFixed(2) || '',
+              s.exit_slippage_pct?.toFixed(2) || '',
+              s.outcome_correct !== undefined ? (s.outcome_correct ? 'Yes' : 'No') : '',
+              // Processing
+              s.processing_time_ms || '',
+              s.errors_encountered ? s.errors_encountered.length : 0,
+              // Full Text
+              `"${(s.what_would_trigger || '').replace(/"/g, '""')}"`,
+              `"${(s.market_insight || '').replace(/"/g, '""')}"`,
+              `"${(s.entry_reasoning || '').replace(/"/g, '""')}"`,
+              `"${(s.full_reasoning || '').replace(/"/g, '""').substring(0, 500)}"`
+            ].join(','))
+
+            const csv = [headers, ...rows].join('\n')
             const blob = new Blob([csv], { type: 'text/csv' })
             const url = URL.createObjectURL(blob)
             const a = document.createElement('a')
             a.href = url
-            a.download = `${botName.toLowerCase()}-scan-activity-${new Date().toISOString().split('T')[0]}.csv`
+            a.download = `${botName.toLowerCase()}-scan-activity-full-${new Date().toISOString().split('T')[0]}.csv`
             a.click()
             URL.revokeObjectURL(url)
           }}
           className="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-500 text-white rounded flex items-center gap-1"
         >
-          📥 Export CSV
+          📥 Export Full CSV
         </button>
       </div>
     </div>
