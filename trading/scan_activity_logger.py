@@ -1178,3 +1178,147 @@ def log_atlas_scan(
         error_type=error_type,
         **kwargs
     )
+
+
+def log_icarus_scan(
+    outcome: ScanOutcome,
+    decision_summary: str,
+    market_data: Optional[Dict] = None,
+    gex_data: Optional[Dict] = None,
+    checks: Optional[List[CheckResult]] = None,
+    signal_source: str = "",
+    signal_direction: str = "",
+    signal_confidence: float = 0,
+    signal_win_probability: float = 0,
+    oracle_advice: str = "",
+    oracle_reasoning: str = "",
+    oracle_win_probability: float = 0,
+    oracle_confidence: float = 0,
+    oracle_top_factors: Optional[List[Dict]] = None,
+    oracle_probabilities: Optional[Dict] = None,
+    oracle_suggested_strikes: Optional[Dict] = None,
+    oracle_thresholds: Optional[Dict] = None,
+    min_win_probability_threshold: float = 0,
+    trade_executed: bool = False,
+    error_message: str = "",
+    risk_reward_ratio: float = 0,
+    generate_ai_explanation: bool = True,
+    **kwargs
+) -> Optional[str]:
+    """
+    Log ICARUS scan activity with optional Claude AI explanation.
+
+    ICARUS is an aggressive directional spreads bot with relaxed GEX filters:
+    - 10% wall filter (vs ATHENA's 3%)
+    - 40% min win probability (vs ATHENA's 48%)
+    - 4% risk per trade (vs ATHENA's 2%)
+
+    If generate_ai_explanation is True, uses Claude to create a detailed
+    human-readable explanation of WHY this decision was made.
+    """
+    # Pop parameters from kwargs to avoid "multiple values" error when passing **kwargs
+    full_reasoning = kwargs.pop('full_reasoning', '')
+    action_taken = kwargs.pop('action_taken', '')
+    error_type = kwargs.pop('error_type', '')
+
+    # Generate AI explanation if requested and we have enough context
+    # Use ATHENA's explain function since ICARUS is similar
+    if generate_ai_explanation and market_data:
+        try:
+            from trading.scan_explainer import explain_athena_decision
+
+            # Convert checks to dict format
+            checks_list = []
+            if checks:
+                for check in checks:
+                    if isinstance(check, CheckResult):
+                        checks_list.append({
+                            'check_name': check.check_name,
+                            'passed': check.passed,
+                            'value': check.value,
+                            'threshold': check.threshold,
+                            'reason': check.reason
+                        })
+                    elif isinstance(check, dict):
+                        checks_list.append(check)
+
+            # Get scan number
+            scan_number = _get_scan_number_today("ICARUS")
+
+            # Get values from market/gex data
+            underlying_price = market_data.get('underlying_price', 0) or market_data.get('spot_price', 0)
+            vix = market_data.get('vix', 0)
+
+            net_gex = gex_data.get('net_gex', 0) if gex_data else 0
+            gex_regime = gex_data.get('regime', '') if gex_data else ''
+            call_wall = gex_data.get('call_wall', 0) if gex_data else 0
+            put_wall = gex_data.get('put_wall', 0) if gex_data else 0
+
+            # Build trade details if traded
+            trade_details = None
+            if trade_executed:
+                trade_details = {
+                    'strategy': kwargs.get('strategy', 'Aggressive Directional Spread'),
+                    'contracts': kwargs.get('contracts', 0),
+                    'premium_collected': kwargs.get('premium_collected', 0),
+                    'max_risk': kwargs.get('max_risk', 0)
+                }
+
+            # Generate explanation (reuse ATHENA's explainer)
+            explanation = explain_athena_decision(
+                scan_number=scan_number,
+                outcome=outcome.value,
+                underlying_price=underlying_price,
+                vix=vix,
+                checks=checks_list,
+                signal_source=signal_source or None,
+                signal_direction=signal_direction or None,
+                signal_confidence=signal_confidence or None,
+                signal_win_prob=signal_win_probability or None,
+                net_gex=net_gex or None,
+                gex_regime=gex_regime or None,
+                call_wall=call_wall or None,
+                put_wall=put_wall or None,
+                risk_reward_ratio=risk_reward_ratio or None,
+                trade_details=trade_details,
+                error_message=error_message or None
+            )
+
+            # Use AI-generated summary and reasoning
+            decision_summary = explanation.get('summary', decision_summary)
+            full_reasoning = explanation.get('full_explanation', full_reasoning)
+
+            logger.info(f"[ICARUS] AI explanation generated: {decision_summary}")
+
+        except Exception as e:
+            logger.warning(f"Failed to generate AI explanation for ICARUS: {e}")
+            # Fall back to provided summary
+
+    return log_scan_activity(
+        bot_name="ICARUS",
+        outcome=outcome,
+        decision_summary=decision_summary,
+        action_taken=action_taken,
+        full_reasoning=full_reasoning,
+        market_data=market_data,
+        gex_data=gex_data,
+        checks=checks,
+        signal_source=signal_source,
+        signal_direction=signal_direction,
+        signal_confidence=signal_confidence,
+        signal_win_probability=signal_win_probability,
+        oracle_advice=oracle_advice,
+        oracle_reasoning=oracle_reasoning,
+        oracle_win_probability=oracle_win_probability,
+        oracle_confidence=oracle_confidence,
+        oracle_top_factors=oracle_top_factors,
+        oracle_probabilities=oracle_probabilities,
+        oracle_suggested_strikes=oracle_suggested_strikes,
+        oracle_thresholds=oracle_thresholds,
+        min_win_probability_threshold=min_win_probability_threshold,
+        risk_reward_ratio=risk_reward_ratio,
+        trade_executed=trade_executed,
+        error_message=error_message,
+        error_type=error_type,
+        **kwargs
+    )

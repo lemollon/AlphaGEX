@@ -46,6 +46,7 @@ class BotName(Enum):
     HERMES = "HERMES"
     ORACLE = "ORACLE"
     ATHENA = "ATHENA"    # Directional Spreads (Bull Call / Bear Call)
+    ICARUS = "ICARUS"    # Aggressive Directional Spreads (relaxed GEX filters)
     PEGASUS = "PEGASUS"  # SPX Iron Condor ($10 spreads, weekly)
 
 
@@ -876,3 +877,8 @@ def get_athena_logger():
 def get_pegasus_logger():
     """Get a pre-configured logger for PEGASUS"""
     return lambda decision: log_bot_decision(decision) if decision.bot_name == "PEGASUS" else None
+
+
+def get_icarus_logger():
+    """Get a pre-configured logger for ICARUS"""
+    return lambda decision: log_bot_decision(decision) if decision.bot_name == "ICARUS" else None
