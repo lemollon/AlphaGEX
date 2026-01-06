@@ -115,7 +115,7 @@ def check_prometheus_imports():
             PrometheusFeatures,
             PrometheusOutcome,
             PrometheusPrediction,
-            PrometheusTrainer,
+            PrometheusMLTrainer,
             ML_AVAILABLE,
             DB_AVAILABLE
         )
