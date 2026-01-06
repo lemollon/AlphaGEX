@@ -360,11 +360,11 @@ class PrometheusLogger:
             cursor = conn.cursor()
 
             cursor.execute('''
-                INSERT INTO prometheus_decision_logs (
+                INSERT INTO prometheus_logs (
                     session_id, trace_id, log_type, action, reasoning,
                     trade_id, ml_score, recommendation, details, features,
-                    error_message, execution_time_ms
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    execution_time_ms
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ''', (
                 entry.get('session_id'),
                 entry.get('trace_id'),
@@ -376,7 +376,6 @@ class PrometheusLogger:
                 entry.get('recommendation'),
                 json.dumps(entry.get('details')) if entry.get('details') else None,
                 json.dumps(entry.get('features')) if entry.get('features') else None,
-                entry.get('error_message'),
                 entry.get('execution_time_ms')
             ))
 
@@ -407,7 +406,7 @@ class PrometheusLogger:
             conn = get_connection()
             cursor = conn.cursor()
 
-            query = 'SELECT * FROM prometheus_decision_logs WHERE 1=1'
+            query = 'SELECT * FROM prometheus_logs WHERE 1=1'
             params = []
 
             if log_type:
@@ -417,10 +416,10 @@ class PrometheusLogger:
                 query += ' AND session_id = %s'
                 params.append(session_id)
             if since:
-                query += ' AND timestamp >= %s'
+                query += ' AND created_at >= %s'
                 params.append(since)
 
-            query += ' ORDER BY timestamp DESC LIMIT %s'
+            query += ' ORDER BY created_at DESC LIMIT %s'
             params.append(limit)
 
             cursor.execute(query, params)
