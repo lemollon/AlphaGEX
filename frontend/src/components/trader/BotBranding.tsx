@@ -1,14 +1,14 @@
 'use client'
 
 import React from 'react'
-import { Sword, Target, Shield, Flame, TrendingUp, TrendingDown, Clock, AlertTriangle, CheckCircle, XCircle, RefreshCw } from 'lucide-react'
+import { Sword, Target, Shield, Flame, TrendingUp, TrendingDown, Clock, AlertTriangle, CheckCircle, XCircle, RefreshCw, Zap } from 'lucide-react'
 
 // =============================================================================
 // BOT BRANDING SYSTEM
 // =============================================================================
 // Unified branding for ARES, ATHENA, and PEGASUS to ensure visual consistency
 
-export type BotName = 'ARES' | 'ATHENA' | 'ICARUS' | 'PEGASUS'
+export type BotName = 'ARES' | 'ATHENA' | 'ICARUS' | 'PEGASUS' | 'TITAN'
 
 export interface BotBrand {
   name: BotName
@@ -186,6 +186,41 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     hexPrimary: '#3B82F6',
     hexLight: '#93C5FD',
     hexDark: '#1D4ED8',
+  },
+  TITAN: {
+    name: 'TITAN',
+    fullName: 'TITAN Aggressive SPX Iron Condor',
+    description: 'Aggressive Daily SPX Iron Condor Trading',
+    strategy: 'Aggressive SPX Iron Condor Strategy',
+    // Primary - Violet/Purple (powerful, aggressive, primordial)
+    primaryColor: 'violet',
+    primaryBg: 'bg-violet-600',
+    primaryBorder: 'border-violet-500',
+    primaryText: 'text-violet-400',
+    // Light variants
+    lightBg: 'bg-violet-900/20',
+    lightText: 'text-violet-300',
+    lightBorder: 'border-violet-700/50',
+    // Chart colors
+    chartLine: 'stroke-violet-400',
+    chartFill: 'fill-violet-500/20',
+    chartPositive: 'text-violet-400',
+    chartNegative: 'text-violet-600',
+    // Position cards
+    positionBorder: 'border-violet-600/50',
+    positionBg: 'bg-violet-950/30',
+    positionAccent: 'bg-violet-500',
+    // Badges
+    badgeBg: 'bg-violet-900/50',
+    badgeText: 'text-violet-300',
+    // Gradient
+    icon: Zap,
+    gradientFrom: 'from-violet-500',
+    gradientTo: 'to-violet-900',
+    // Hex for Recharts
+    hexPrimary: '#8B5CF6',
+    hexLight: '#C4B5FD',
+    hexDark: '#6D28D9',
   },
 }
 
