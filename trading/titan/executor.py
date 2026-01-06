@@ -17,6 +17,14 @@ from .models import (
     IronCondorSignal, TITANConfig, TradingMode, CENTRAL_TZ
 )
 
+# Monte Carlo Kelly for intelligent position sizing
+KELLY_AVAILABLE = False
+try:
+    from quant.monte_carlo_kelly import get_safe_position_size
+    KELLY_AVAILABLE = True
+except ImportError:
+    pass
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -440,12 +448,67 @@ class OrderExecutor:
             traceback.print_exc()
             return False, 0, 0
 
+    def _get_kelly_position_size(self) -> Optional[Dict]:
+        """Get Monte Carlo Kelly-based position sizing for TITAN."""
+        if not KELLY_AVAILABLE:
+            return None
+
+        try:
+            from database_adapter import DatabaseAdapter
+            db = DatabaseAdapter()
+
+            trades = db.execute_query("""
+                SELECT pnl_realized, entry_credit, max_loss
+                FROM autonomous_closed_trades
+                WHERE bot_name = 'TITAN'
+                AND closed_at > NOW() - INTERVAL '90 days'
+                ORDER BY closed_at DESC
+                LIMIT 100
+            """)
+
+            if not trades or len(trades) < 20:
+                return None
+
+            wins = [t for t in trades if t['pnl_realized'] > 0]
+            losses = [t for t in trades if t['pnl_realized'] <= 0]
+
+            win_rate = len(wins) / len(trades)
+            avg_win_pct = sum(t['pnl_realized'] for t in wins) / len(wins) / self.config.capital * 100 if wins else 0
+            avg_loss_pct = abs(sum(t['pnl_realized'] for t in losses) / len(losses) / self.config.capital * 100) if losses else 10
+
+            kelly_result = get_safe_position_size(
+                win_rate=win_rate,
+                avg_win=avg_win_pct,
+                avg_loss=avg_loss_pct,
+                sample_size=len(trades),
+                account_size=self.config.capital,
+                max_risk_pct=self.config.risk_per_trade_pct * 2
+            )
+
+            logger.info(f"[TITAN KELLY] Win Rate: {win_rate:.1%}, Safe Kelly: {kelly_result['kelly_safe']:.1f}%")
+            return kelly_result
+
+        except Exception as e:
+            logger.debug(f"[KELLY] Error: {e}")
+            return None
+
     def _calculate_position_size(self, max_loss_per_contract: float) -> int:
-        """Calculate position size - TITAN uses higher risk per trade"""
+        """Calculate position size using Monte Carlo Kelly criterion."""
         capital = self.config.capital
-        max_risk = capital * (self.config.risk_per_trade_pct / 100)
+
         if max_loss_per_contract <= 0:
             return 1
+
+        # Try Kelly-based sizing first
+        kelly_result = self._get_kelly_position_size()
+
+        if kelly_result and kelly_result.get('kelly_safe', 0) > 0:
+            kelly_risk_pct = kelly_result['kelly_safe']
+            max_risk = capital * (kelly_risk_pct / 100)
+            logger.info(f"[TITAN] Using Kelly-safe sizing: {kelly_risk_pct:.1f}% risk")
+        else:
+            max_risk = capital * (self.config.risk_per_trade_pct / 100)
+
         contracts = int(max_risk / max_loss_per_contract)
         return max(1, min(contracts, self.config.max_contracts))
 

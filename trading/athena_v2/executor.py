@@ -21,6 +21,14 @@ from .models import (
     TradeSignal, ATHENAConfig, TradingMode, CENTRAL_TZ
 )
 
+# Monte Carlo Kelly for intelligent position sizing
+KELLY_AVAILABLE = False
+try:
+    from quant.monte_carlo_kelly import get_safe_position_size
+    KELLY_AVAILABLE = True
+except ImportError:
+    pass
+
 logger = logging.getLogger(__name__)
 
 # Tradier import with fallback
@@ -377,38 +385,89 @@ class OrderExecutor:
             logger.error(f"Live close failed: {e}")
             return False, 0, 0
 
+    def _get_kelly_position_size(self) -> Optional[Dict]:
+        """
+        Get Monte Carlo Kelly-based position sizing recommendation.
+
+        Uses historical win rate and avg win/loss to calculate safe position size
+        that survives 95% of Monte Carlo simulations.
+        """
+        if not KELLY_AVAILABLE:
+            return None
+
+        try:
+            from database_adapter import DatabaseAdapter
+            db = DatabaseAdapter()
+
+            trades = db.execute_query("""
+                SELECT pnl_realized, entry_debit, max_loss
+                FROM autonomous_closed_trades
+                WHERE bot_name = 'ATHENA'
+                AND closed_at > NOW() - INTERVAL '90 days'
+                ORDER BY closed_at DESC
+                LIMIT 100
+            """)
+
+            if not trades or len(trades) < 20:
+                return None
+
+            wins = [t for t in trades if t['pnl_realized'] > 0]
+            losses = [t for t in trades if t['pnl_realized'] <= 0]
+            capital = 100_000
+
+            win_rate = len(wins) / len(trades)
+            avg_win_pct = sum(t['pnl_realized'] for t in wins) / len(wins) / capital * 100 if wins else 0
+            avg_loss_pct = abs(sum(t['pnl_realized'] for t in losses) / len(losses) / capital * 100) if losses else 10
+
+            kelly_result = get_safe_position_size(
+                win_rate=win_rate,
+                avg_win=avg_win_pct,
+                avg_loss=avg_loss_pct,
+                sample_size=len(trades),
+                account_size=capital,
+                max_risk_pct=self.config.risk_per_trade_pct * 2
+            )
+
+            logger.info(f"[ATHENA KELLY] Win Rate: {win_rate:.1%}, Safe Kelly: {kelly_result['kelly_safe']:.1f}%")
+            return kelly_result
+
+        except Exception as e:
+            logger.debug(f"[KELLY] Error: {e}")
+            return None
+
     def _calculate_position_size(self, max_loss_per_contract: float, thompson_weight: float = 1.0) -> int:
         """
-        Calculate position size based on risk settings and Thompson allocation.
+        Calculate position size using Monte Carlo Kelly criterion with Thompson allocation.
 
-        Args:
-            max_loss_per_contract: Maximum loss per contract in dollars
-            thompson_weight: Thompson Sampling allocation weight (0.5-2.0)
-                            - 1.0 = neutral (standard sizing)
-                            - 1.5 = bot is performing well, increase size 50%
-                            - 0.7 = bot is underperforming, reduce size 30%
-
-        Returns:
-            Number of contracts to trade (minimum 1)
+        Uses Kelly-safe sizing (survives 95% of simulations) when history available,
+        falls back to fixed risk_per_trade_pct otherwise.
         """
-        # This should use current capital, but for simplicity using default
-        max_risk = 100_000 * (self.config.risk_per_trade_pct / 100)
+        capital = 100_000
 
         if max_loss_per_contract <= 0:
             return 1
 
-        # Base position size from risk calculation
+        # Try Kelly-based sizing first
+        kelly_result = self._get_kelly_position_size()
+
+        if kelly_result and kelly_result.get('kelly_safe', 0) > 0:
+            kelly_risk_pct = kelly_result['kelly_safe']
+            max_risk = capital * (kelly_risk_pct / 100)
+            sizing_source = "KELLY"
+            logger.info(f"[ATHENA] Using Kelly-safe sizing: {kelly_risk_pct:.1f}% risk")
+        else:
+            max_risk = capital * (self.config.risk_per_trade_pct / 100)
+            sizing_source = "CONFIG"
+
         base_contracts = max_risk / max_loss_per_contract
 
-        # Apply Thompson Sampling weight (clamped to reasonable bounds)
         clamped_weight = max(0.5, min(2.0, thompson_weight))
         adjusted_contracts = int(base_contracts * clamped_weight)
 
-        # Log if Thompson made a difference
         if abs(thompson_weight - 1.0) > 0.05:
-            logger.info(f"Thompson allocation: weight={thompson_weight:.2f}, base={base_contracts:.1f}, adjusted={adjusted_contracts}")
+            logger.info(f"[ATHENA {sizing_source}] Thompson: weight={thompson_weight:.2f}, base={base_contracts:.1f}, adjusted={adjusted_contracts}")
 
-        return max(1, min(adjusted_contracts, 50))  # Min 1, max 50
+        return max(1, min(adjusted_contracts, 50))
 
     def _get_current_price(self) -> Optional[float]:
         """Get current underlying price"""

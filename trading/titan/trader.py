@@ -554,11 +554,6 @@ class TITANTrader(MathOptimizerMixin):
 
         return False, ""
 
-    def _try_entry(self) -> Optional[IronCondorPosition]:
-        """Try to open a new Iron Condor"""
-        position, _ = self._try_entry_with_context()
-        return position
-
     def _try_entry_with_context(self) -> tuple[Optional[IronCondorPosition], Optional[Any]]:
         """Try to open a new Iron Condor, returning both position and signal for logging"""
         from typing import Any

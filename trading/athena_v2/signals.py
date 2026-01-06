@@ -56,6 +56,16 @@ try:
 except ImportError:
     DATA_PROVIDER_AVAILABLE = False
 
+# GEX Directional ML - predicts BULLISH/BEARISH/FLAT from GEX structure
+GEX_DIRECTIONAL_ML_AVAILABLE = False
+try:
+    from quant.gex_directional_ml import GEXDirectionalPredictor, Direction, DirectionalPrediction
+    GEX_DIRECTIONAL_ML_AVAILABLE = True
+except ImportError:
+    GEXDirectionalPredictor = None
+    Direction = None
+    DirectionalPrediction = None
+
 
 class SignalGenerator:
     """
@@ -106,6 +116,49 @@ class SignalGenerator:
                 logger.info("SignalGenerator: Oracle initialized")
             except Exception as e:
                 logger.warning(f"Oracle init failed: {e}")
+
+        # GEX Directional ML - predicts BULLISH/BEARISH/FLAT from GEX structure
+        self.gex_directional_ml = None
+        if GEX_DIRECTIONAL_ML_AVAILABLE:
+            try:
+                self.gex_directional_ml = GEXDirectionalPredictor()
+                # Try to load pre-trained model
+                if hasattr(self.gex_directional_ml, 'load_model'):
+                    self.gex_directional_ml.load_model()
+                logger.info("SignalGenerator: GEX Directional ML initialized")
+            except Exception as e:
+                logger.warning(f"GEX Directional ML init failed: {e}")
+
+    def get_gex_directional_prediction(self, gex_data: Dict, vix: float = 20.0) -> Optional[Dict]:
+        """
+        Get GEX Directional ML prediction (BULLISH/BEARISH/FLAT).
+
+        Uses trained XGBoost model to predict market direction from GEX structure.
+        This is ADDITIONAL signal confidence for directional bots.
+        """
+        if not self.gex_directional_ml:
+            return None
+
+        try:
+            prediction = self.gex_directional_ml.predict(gex_data, vix)
+
+            if prediction:
+                result = {
+                    'direction': prediction.direction.value,  # BULLISH/BEARISH/FLAT
+                    'confidence': prediction.confidence,
+                    'probabilities': prediction.probabilities,
+                    'model_name': 'GEX_DIRECTIONAL_ML',
+                }
+
+                logger.info(f"[ATHENA GEX DIRECTIONAL ML] Direction: {prediction.direction.value}, "
+                           f"Confidence: {prediction.confidence:.1%}")
+
+                return result
+
+        except Exception as e:
+            logger.debug(f"GEX Directional ML prediction error: {e}")
+
+        return None
 
     def get_gex_data(self) -> Optional[Dict[str, Any]]:
         """
@@ -549,6 +602,32 @@ class SignalGenerator:
                 # Penalty when ML disagrees
                 confidence -= 0.10
 
+        # ============================================================
+        # GEX DIRECTIONAL ML - Additional direction confirmation layer
+        # Trained XGBoost model predicts BULLISH/BEARISH/FLAT from GEX structure
+        # ============================================================
+        gex_dir_prediction = self.get_gex_directional_prediction(gex_data, vix)
+        if gex_dir_prediction:
+            gex_dir = gex_dir_prediction.get('direction', 'FLAT')
+            gex_dir_conf = gex_dir_prediction.get('confidence', 0)
+
+            logger.info(f"[ATHENA GEX DIRECTIONAL ML] Direction: {gex_dir}, Confidence: {gex_dir_conf:.1%}")
+
+            # Map GEX direction to ATHENA direction
+            gex_direction_map = {'BULLISH': 'BULLISH', 'BEARISH': 'BEARISH', 'FLAT': None}
+            mapped_gex_dir = gex_direction_map.get(gex_dir)
+
+            if mapped_gex_dir == direction and gex_dir_conf > 0.6:
+                # GEX Directional ML confirms direction - boost confidence
+                boost = gex_dir_conf * 0.15  # Up to 15% boost
+                confidence = min(0.95, confidence + boost)
+                logger.info(f"[GEX DIR ML CONFIRMS] {gex_dir} matches {direction} (+{boost:.1%} confidence)")
+            elif mapped_gex_dir and mapped_gex_dir != direction and gex_dir_conf > 0.7:
+                # GEX Directional ML disagrees strongly - reduce confidence
+                penalty = (gex_dir_conf - 0.7) * 0.20  # Up to 6% penalty
+                confidence -= penalty
+                logger.info(f"[GEX DIR ML DISAGREES] {gex_dir} vs {direction} (-{penalty:.1%} confidence)")
+
         # Oracle adjustments (when not overriding)
         if oracle and direction_source != "ORACLE_OVERRIDE":
             if oracle_direction == direction and oracle_confidence > 0.6:
@@ -561,10 +640,8 @@ class SignalGenerator:
                 penalty = (oracle_confidence - 0.6) * 0.25  # 0% to 10% penalty
                 confidence -= penalty
                 logger.info(f"Oracle disagrees: {oracle_direction} vs wall {direction} (-{penalty:.0%})")
-            # Oracle SKIP_TODAY overrides (keep this - explicit skip request)
-            if oracle.get('advice') == 'SKIP_TODAY':
-                logger.info(f"Oracle advises SKIP_TODAY: {oracle.get('reasoning', '')}")
-                return None
+            # NOTE: Oracle SKIP_TODAY is informational only - ML win prob takes precedence
+            # See earlier logic at line 544-551 - bot uses its own min_win_probability threshold
 
             # APPLY top_factors to adjust confidence based on current conditions
             if oracle.get('top_factors'):
