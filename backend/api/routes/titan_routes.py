@@ -1119,3 +1119,64 @@ async def get_titan_performance(
             },
             "message": "Performance data not available"
         }
+
+
+@router.post("/reset")
+async def reset_titan_data(
+    request: Request,
+    confirm: bool = Query(False, description="Must be true to confirm reset"),
+    auth: AuthInfo = Depends(require_admin) if AUTH_AVAILABLE and require_admin else None
+):
+    """
+    Reset all TITAN data - positions, signals, logs, and daily performance.
+
+    PROTECTED: Requires admin authentication.
+    WARNING: This is destructive and cannot be undone.
+    """
+    if not confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="Must confirm reset by setting confirm=true"
+        )
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Delete all TITAN data
+        cursor.execute("DELETE FROM titan_positions")
+        positions_deleted = cursor.rowcount
+
+        cursor.execute("DELETE FROM titan_signals")
+        signals_deleted = cursor.rowcount
+
+        cursor.execute("DELETE FROM titan_logs")
+        logs_deleted = cursor.rowcount
+
+        cursor.execute("DELETE FROM titan_daily_perf")
+        daily_deleted = cursor.rowcount
+
+        # Also clear scan activity for TITAN
+        cursor.execute("DELETE FROM scan_activity WHERE bot_name = 'TITAN'")
+        scans_deleted = cursor.rowcount
+
+        conn.commit()
+        conn.close()
+
+        logger.warning(f"TITAN DATA RESET: {positions_deleted} positions, {signals_deleted} signals, {logs_deleted} logs, {daily_deleted} daily records, {scans_deleted} scan activities deleted")
+
+        return {
+            "success": True,
+            "message": "TITAN data reset successfully",
+            "data": {
+                "positions_deleted": positions_deleted,
+                "signals_deleted": signals_deleted,
+                "logs_deleted": logs_deleted,
+                "daily_perf_deleted": daily_deleted,
+                "scans_deleted": scans_deleted
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error resetting TITAN data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -362,7 +362,7 @@ class TITANTrader(MathOptimizerMixin):
             # Record to Oracle using TITAN bot name
             success = oracle.update_outcome(
                 trade_date=trade_date,
-                bot_name=OracleBotName.TITAN if hasattr(OracleBotName, 'TITAN') else OracleBotName.PEGASUS,
+                bot_name=OracleBotName.TITAN,
                 outcome=outcome,
                 actual_pnl=pnl,
                 put_strike=pos.put_short_strike if hasattr(pos, 'put_short_strike') else None,
@@ -469,7 +469,7 @@ class TITANTrader(MathOptimizerMixin):
                 advice = TradingAdvice.TRADE_FULL
 
             prediction = OraclePrediction(
-                bot_name=BotName.TITAN if hasattr(BotName, 'TITAN') else BotName.PEGASUS,
+                bot_name=BotName.TITAN,
                 advice=advice,
                 win_probability=getattr(signal, 'oracle_win_probability', 0.65),
                 confidence=signal.confidence,

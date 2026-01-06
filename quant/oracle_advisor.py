@@ -153,6 +153,7 @@ class BotName(Enum):
     HERMES = "HERMES"      # Manual Wheel via UI
     ATHENA = "ATHENA"      # Directional Spreads (Bull Call / Bear Call)
     PEGASUS = "PEGASUS"    # SPX Iron Condor ($10 spreads, weekly)
+    TITAN = "TITAN"        # Aggressive SPX Iron Condor ($12 spreads, daily)
 
 
 class TradeOutcome(Enum):
