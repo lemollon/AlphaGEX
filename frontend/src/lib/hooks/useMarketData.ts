@@ -280,8 +280,8 @@ const fetchers = {
       const params = new URLSearchParams()
       params.append('limit', String(limit || 50))
       if (date) params.append('date', date)
-      // Use centralized scan activity endpoint (like ATHENA) for full data
-      const response = await api.get(`/api/scans/activity/ICARUS?${params}`)
+      // Use ICARUS-specific scan activity endpoint
+      const response = await api.get(`/api/icarus/scan-activity?${params}`)
       return response.data
     } catch {
       return { success: false, data: { scans: [] } }
