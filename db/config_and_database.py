@@ -2967,6 +2967,7 @@ def init_database():
             spx_5d_return DECIMAL(6,2),
             spx_distance_from_high DECIMAL(6,2),
             premium_to_strike_pct DECIMAL(6,4),
+            annualized_return DECIMAL(8,2),
             outcome VARCHAR(10),
             pnl DECIMAL(12,2),
             settlement_price DECIMAL(10,2),
