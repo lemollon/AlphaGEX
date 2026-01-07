@@ -52,6 +52,7 @@ const navItems = [
   { href: '/hyperion', label: 'HYPERION (Weekly Gamma)', icon: Sparkles, category: 'Analysis' },
   { href: '/apollo', label: 'APOLLO (ML Scanner)', icon: Sun, category: 'Trading' },
   { href: '/zero-dte-backtest', label: 'KRONOS (0DTE Condor)', icon: Clock, category: 'AI & Testing' },
+  { href: '/sage', label: 'SAGE (ML Advisor)', icon: Brain, category: 'AI & Testing' },
   { href: '/oracle', label: 'ORACLE (AI Advisor)', icon: Eye, category: 'AI & Testing' },
   { href: '/quant', label: 'QUANT (ML Models)', icon: Calculator, category: 'AI & Testing' },
   { href: '/solomon', label: 'SOLOMON (Feedback Loop)', icon: BookOpen, category: 'AI & Testing' },
