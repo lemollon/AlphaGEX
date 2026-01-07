@@ -8,6 +8,9 @@ import BotStatusOverview from '@/components/BotStatusOverview'
 import OracleRecommendationWidget from '@/components/OracleRecommendationWidget'
 import ARGUSAlertsWidget from '@/components/ARGUSAlertsWidget'
 import DashboardScanFeed from '@/components/DashboardScanFeed'
+import SAGEStatusWidget from '@/components/SAGEStatusWidget'
+import QuantStatusWidget from '@/components/QuantStatusWidget'
+import MathOptimizerWidget from '@/components/MathOptimizerWidget'
 
 export default function Dashboard() {
   return (
@@ -34,14 +37,21 @@ export default function Dashboard() {
             <OracleRecommendationWidget />
           </div>
 
-          {/* Row 2: ARGUS, Gamma Widget, Scan Feed - Equal thirds */}
+          {/* Row 2: AI/ML Systems - SAGE, QUANT, Math Optimizer */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+            <SAGEStatusWidget />
+            <QuantStatusWidget />
+            <MathOptimizerWidget />
+          </div>
+
+          {/* Row 3: ARGUS, Gamma Widget, Scan Feed - Equal thirds */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
             <ARGUSAlertsWidget />
             <GammaExpirationWidget />
             <DashboardScanFeed />
           </div>
 
-          {/* Row 3: Intelligence Dashboard - Full width */}
+          {/* Row 4: Intelligence Dashboard - Full width */}
           <div>
             <IntelligenceDashboard />
           </div>
