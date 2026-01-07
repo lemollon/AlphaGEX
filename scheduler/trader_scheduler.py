@@ -190,6 +190,16 @@ except ImportError:
     ScanOutcome = None
     print("Warning: Scan activity logger not available.")
 
+# Import VIX Hedge Manager for scheduled signal generation
+try:
+    from core.vix_hedge_manager import get_vix_hedge_manager, VIXHedgeManager
+    VIX_HEDGE_AVAILABLE = True
+except ImportError:
+    VIX_HEDGE_AVAILABLE = False
+    get_vix_hedge_manager = None
+    VIXHedgeManager = None
+    print("Warning: VIX Hedge Manager not available. VIX signal generation will be disabled.")
+
 # Setup logging
 LOG_DIR = Path("logs")
 LOG_DIR.mkdir(exist_ok=True)
@@ -1629,6 +1639,66 @@ class AutonomousTraderScheduler:
             logger.info("ARGUS will retry next interval")
             logger.info(f"=" * 80)
 
+    def scheduled_vix_signal_logic(self):
+        """
+        VIX Hedge Signal generation - runs hourly during market hours
+
+        Generates VIX-based hedge signals and saves them to the database for:
+        - Signal history tracking on the VIX dashboard
+        - Historical analysis of volatility conditions
+        - Portfolio protection recommendations
+
+        Signals are stored in vix_hedge_signals table.
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"VIX SIGNAL triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.is_market_open():
+            logger.info("Market is CLOSED. Skipping VIX signal generation.")
+            return
+
+        logger.info("Market is OPEN. Generating VIX hedge signal...")
+
+        try:
+            if not VIX_HEDGE_AVAILABLE:
+                logger.warning("VIX Hedge Manager not available. Skipping signal generation.")
+                return
+
+            # Get the VIX hedge manager singleton
+            manager = get_vix_hedge_manager()
+
+            # Generate and save signal (save happens automatically in generate_hedge_signal)
+            signal = manager.generate_hedge_signal(
+                portfolio_delta=0,  # Default - no specific portfolio context
+                portfolio_value=100000  # Default portfolio value
+            )
+
+            logger.info(f"VIX SIGNAL: {signal.signal_type.value.upper()}")
+            logger.info(f"  VIX Spot: {signal.metrics.get('vix_spot', 0):.2f}")
+            logger.info(f"  Vol Regime: {signal.vol_regime.value}")
+            logger.info(f"  Confidence: {signal.confidence:.0f}%")
+            logger.info(f"  IV Percentile: {signal.metrics.get('iv_percentile', 0):.0f}th")
+            logger.info(f"  Term Structure: {signal.metrics.get('term_structure_pct', 0):.1f}%")
+
+            self._save_heartbeat('VIX_SIGNAL', 'GENERATED', {
+                'vix_spot': signal.metrics.get('vix_spot', 0),
+                'signal_type': signal.signal_type.value,
+                'vol_regime': signal.vol_regime.value
+            })
+
+            logger.info(f"VIX signal saved to database successfully")
+            logger.info(f"=" * 80)
+
+        except Exception as e:
+            error_msg = f"ERROR in VIX signal generation: {str(e)}"
+            logger.error(error_msg)
+            logger.error(traceback.format_exc())
+            self._save_heartbeat('VIX_SIGNAL', 'ERROR', {'error': str(e)})
+            logger.info("VIX signal will retry next interval")
+            logger.info(f"=" * 80)
+
     def scheduled_solomon_logic(self):
         """
         SOLOMON (Feedback Loop Intelligence) - runs DAILY at 4:00 PM CT
@@ -1867,7 +1937,7 @@ class AutonomousTraderScheduler:
 
         logger.info("=" * 80)
         logger.info("STARTING AUTONOMOUS TRADING SCHEDULER")
-        logger.info(f"Bots: PHOENIX, ATLAS, ARES (SPY IC), PEGASUS (SPX IC), ATHENA, ARGUS, SOLOMON, QUANT")
+        logger.info(f"Bots: PHOENIX, ATLAS, ARES (SPY IC), PEGASUS (SPX IC), ATHENA, ARGUS, VIX_SIGNAL, SOLOMON, QUANT")
         logger.info(f"Timezone: America/Chicago (Texas Central Time)")
         logger.info(f"PHOENIX Schedule: DISABLED here - handled by AutonomousTrader (every 5 min)")
         logger.info(f"ATLAS Schedule: Daily at 9:05 AM CT, Mon-Fri")
@@ -1875,6 +1945,7 @@ class AutonomousTraderScheduler:
         logger.info(f"PEGASUS Schedule: Every 5 min (8:30 AM - 3:30 PM CT), SPX Iron Condors")
         logger.info(f"ATHENA Schedule: Every 5 min (8:35 AM - 2:30 PM CT), SPY Spreads")
         logger.info(f"ARGUS Schedule: Every 5 min (8:30 AM - 3:00 PM CT), Commentary")
+        logger.info(f"VIX_SIGNAL Schedule: HOURLY (9 AM - 3 PM CT), Hedge Signal Generation")
         logger.info(f"SOLOMON Schedule: DAILY at 4:00 PM CT (after market close)")
         logger.info(f"QUANT Schedule: WEEKLY on Sunday at 5:00 PM CT (ML model training)")
         logger.info(f"Log file: {LOG_FILE}")
@@ -2145,6 +2216,30 @@ class AutonomousTraderScheduler:
             replace_existing=True
         )
         logger.info("✅ ARGUS job scheduled (every 5 min during market hours)")
+
+        # =================================================================
+        # VIX SIGNAL JOB: VIX Hedge Signal Generation - runs HOURLY during market hours
+        # Generates signals for the VIX dashboard signal history:
+        # - Tracks volatility conditions throughout the day
+        # - Provides hedge recommendations based on VIX levels
+        # - Saves signals to vix_hedge_signals table for historical analysis
+        # =================================================================
+        if VIX_HEDGE_AVAILABLE:
+            self.scheduler.add_job(
+                self.scheduled_vix_signal_logic,
+                trigger=CronTrigger(
+                    hour='9-15',   # 9 AM through 3 PM CT (market hours)
+                    minute=0,      # On the hour
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='vix_signal_generation',
+                name='VIX - Hedge Signal Generation (hourly)',
+                replace_existing=True
+            )
+            logger.info("✅ VIX SIGNAL job scheduled (hourly 9 AM - 3 PM CT)")
+        else:
+            logger.warning("⚠️ VIX Hedge Manager not available - signal generation disabled")
 
         # =================================================================
         # SOLOMON JOB: Feedback Loop Intelligence - runs DAILY after market close
