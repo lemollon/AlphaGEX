@@ -435,7 +435,7 @@ export default function SagePage() {
                             <p className="text-xs text-gray-500">
                               Min: {botStatus?.min_win_probability || (bot === 'ICARUS' || bot === 'TITAN' ? '40' : '50')}%
                             </p>
-                            {botStatus?.last_prediction && (
+                            {botStatus?.last_prediction?.win_probability && (
                               <p className="text-xs text-emerald-400 mt-1">
                                 Last: {(botStatus.last_prediction.win_probability * 100).toFixed(0)}%
                               </p>
