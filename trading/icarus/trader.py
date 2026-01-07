@@ -172,11 +172,40 @@ class ICARUSTrader(MathOptimizerMixin):
             'gex_data': None,
             'signal': None,
             'checks': [],
+            'oracle_data': None,
             'position': None
         }
 
         try:
             self.db.update_heartbeat("SCANNING", f"Cycle at {now.strftime('%I:%M %p')}")
+
+            # CRITICAL: Fetch market data FIRST for ALL scans
+            # This ensures we log comprehensive data even for skipped scans
+            try:
+                gex_data = self.signals.get_gex_data()
+                if gex_data:
+                    scan_context['market_data'] = {
+                        'underlying_price': gex_data.get('spot_price', 0),
+                        'symbol': self.config.ticker,
+                        'vix': gex_data.get('vix', 0),
+                        'expected_move': gex_data.get('expected_move', 0),
+                    }
+                    scan_context['gex_data'] = {
+                        'regime': gex_data.get('gex_regime', 'UNKNOWN'),
+                        'net_gex': gex_data.get('net_gex', 0),
+                        'call_wall': gex_data.get('call_wall', 0),
+                        'put_wall': gex_data.get('put_wall', 0),
+                        'flip_point': gex_data.get('flip_point', 0),
+                    }
+                    # Also fetch Oracle advice for visibility
+                    try:
+                        oracle_advice = self.signals.get_oracle_advice(gex_data)
+                        if oracle_advice:
+                            scan_context['oracle_data'] = oracle_advice
+                    except Exception as e:
+                        logger.debug(f"Oracle fetch skipped: {e}")
+            except Exception as e:
+                logger.warning(f"Market data fetch failed: {e}")
 
             # Step 1: Check if we should trade
             can_trade, reason = self._check_trading_conditions(now, today)
@@ -681,16 +710,29 @@ class ICARUSTrader(MathOptimizerMixin):
                 decision = "No valid signal"
 
             signal = context.get('signal')
+            oracle_data = context.get('oracle_data', {})
             signal_direction = ""
             signal_confidence = 0
             oracle_win_probability = 0
             oracle_confidence = 0
+            oracle_advice = ""
+            oracle_reasoning = ""
+            oracle_top_factors = None
 
+            # Extract signal data if available
             if signal:
-                signal_direction = signal.direction
-                signal_confidence = signal.confidence
+                signal_direction = getattr(signal, 'direction', '')
+                signal_confidence = getattr(signal, 'confidence', 0)
                 oracle_win_probability = getattr(signal, 'oracle_win_probability', 0)
-                oracle_confidence = getattr(signal, 'oracle_confidence', signal.confidence)
+                oracle_confidence = getattr(signal, 'oracle_confidence', signal_confidence)
+
+            # Extract Oracle data from context (fetched early for all scans)
+            if oracle_data:
+                oracle_advice = oracle_data.get('advice', oracle_data.get('recommendation', ''))
+                oracle_reasoning = oracle_data.get('reasoning', oracle_data.get('full_reasoning', ''))
+                oracle_win_probability = oracle_win_probability or oracle_data.get('win_probability', 0)
+                oracle_confidence = oracle_confidence or oracle_data.get('confidence', 0)
+                oracle_top_factors = oracle_data.get('top_factors', oracle_data.get('factors', []))
 
             log_icarus_scan(
                 outcome=outcome,
@@ -701,8 +743,11 @@ class ICARUSTrader(MathOptimizerMixin):
                 signal_source="ICARUS",
                 signal_direction=signal_direction,
                 signal_confidence=signal_confidence,
+                oracle_advice=oracle_advice,
+                oracle_reasoning=oracle_reasoning,
                 oracle_win_probability=oracle_win_probability,
                 oracle_confidence=oracle_confidence,
+                oracle_top_factors=oracle_top_factors,
                 min_win_probability_threshold=self.config.min_win_probability,
                 trade_executed=result.get('trades_opened', 0) > 0,
                 error_message=error_msg,
