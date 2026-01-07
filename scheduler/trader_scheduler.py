@@ -2252,21 +2252,33 @@ class AutonomousTraderScheduler:
             'last_position_check': self.last_position_check.strftime('%Y-%m-%d %H:%M:%S') if self.last_position_check else 'Never',
             'execution_count': self.execution_count,
             'last_error': self.last_error,
+            'scheduled_jobs': [],
         }
 
-        # Get next scheduled run time
+        # Get all scheduled jobs with their next run times
         if self.is_running and self.scheduler:
             jobs = self.scheduler.get_jobs()
+            for job in jobs:
+                job_info = {
+                    'id': job.id,
+                    'name': job.name,
+                    'next_run': job.next_run_time.strftime('%Y-%m-%d %H:%M:%S %Z') if job.next_run_time else 'Not scheduled'
+                }
+                status['scheduled_jobs'].append(job_info)
+
             if jobs:
-                next_run = jobs[0].next_run_time
-                if next_run:
-                    status['next_run'] = next_run.strftime('%Y-%m-%d %H:%M:%S %Z')
-                else:
-                    status['next_run'] = 'Not scheduled'
+                status['next_run'] = jobs[0].next_run_time.strftime('%Y-%m-%d %H:%M:%S %Z') if jobs[0].next_run_time else 'Not scheduled'
             else:
                 status['next_run'] = 'No jobs'
         else:
             status['next_run'] = 'Scheduler not running'
+
+        # Add QUANT training availability info
+        status['quant_training'] = {
+            'regime_classifier_available': REGIME_CLASSIFIER_AVAILABLE,
+            'gex_directional_available': GEX_DIRECTIONAL_AVAILABLE,
+            'schedule': 'Sunday 5:00 PM CT (weekly)'
+        }
 
         return status
 
