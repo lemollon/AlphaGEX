@@ -32,7 +32,7 @@ function FactorDisplay({ factors, title }: { factors: DecisionFactor[]; title: s
               </span>
             </div>
             {factor.value && (
-              <span className="text-gray-500 text-xs font-mono">{factor.value}</span>
+              <span className="text-gray-500 text-xs font-mono">{typeof factor.value === 'object' ? JSON.stringify(factor.value) : factor.value}</span>
             )}
           </div>
         ))}
@@ -178,21 +178,21 @@ function deriveSkipExplanation(outcome: string, reason: string, checks?: ScanChe
     case 'AFTER_WINDOW':
       return 'Past the bot\'s trading cutoff time. No new positions will be opened this late in the session.'
     case 'VIX_TOO_HIGH':
-      return `Volatility is too elevated for safe entry. ${failedCheck?.value ? `VIX at ${failedCheck.value}` : ''} exceeds the maximum threshold.`
+      return `Volatility is too elevated for safe entry. ${failedCheck?.value ? `VIX at ${typeof failedCheck.value === 'object' ? JSON.stringify(failedCheck.value) : failedCheck.value}` : ''} exceeds the maximum threshold.`
     case 'VIX_TOO_LOW':
-      return `Volatility is too low for profitable premium. ${failedCheck?.value ? `VIX at ${failedCheck.value}` : ''} is below the minimum threshold.`
+      return `Volatility is too low for profitable premium. ${failedCheck?.value ? `VIX at ${typeof failedCheck.value === 'object' ? JSON.stringify(failedCheck.value) : failedCheck.value}` : ''} is below the minimum threshold.`
     case 'MAX_TRADES_REACHED':
       return 'Maximum daily trade limit has been reached. No more trades will be opened today to manage risk.'
     case 'NO_SIGNAL':
       return 'No clear directional signal from ML or Oracle. The market conditions are ambiguous.'
     case 'LOW_CONFIDENCE':
-      return `Signal confidence is below the required threshold. ${failedCheck?.value ? `Current: ${failedCheck.value}` : ''}`
+      return `Signal confidence is below the required threshold. ${failedCheck?.value ? `Current: ${typeof failedCheck.value === 'object' ? JSON.stringify(failedCheck.value) : failedCheck.value}` : ''}`
     case 'ORACLE_SAYS_NO':
       return 'The Oracle advisor recommends skipping this opportunity due to unfavorable conditions.'
     case 'CONFLICTING_SIGNALS':
       return 'ML and Oracle signals are conflicting. Neither signal is strong enough to override the other.'
     case 'RISK_CHECK_FAILED':
-      return `One or more risk checks failed. ${failedCheck ? `${failedCheck.check}: ${failedCheck.value || 'failed'}` : ''}`
+      return `One or more risk checks failed. ${failedCheck ? `${failedCheck.check}: ${typeof failedCheck.value === 'object' ? JSON.stringify(failedCheck.value) : (failedCheck.value || 'failed')}` : ''}`
     case 'ERROR':
       return 'An error occurred during the scan. Check logs for details.'
     default:
