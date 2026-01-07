@@ -388,13 +388,13 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
 
             {/* Market Data Row */}
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-400">
-              {scan.underlying_price && (
+              {scan.underlying_price != null && scan.underlying_price > 0 && (
                 <span>SPY: ${scan.underlying_price.toFixed(2)}</span>
               )}
-              {scan.vix && (
+              {scan.vix != null && scan.vix > 0 && (
                 <span>VIX: {scan.vix.toFixed(1)}</span>
               )}
-              {scan.gex_regime && (
+              {scan.gex_regime && scan.gex_regime !== 'UNKNOWN' && (
                 <span className={`px-1.5 py-0.5 rounded ${
                   scan.gex_regime === 'POSITIVE' ? 'bg-green-500/20 text-green-400' :
                   scan.gex_regime === 'NEGATIVE' ? 'bg-red-500/20 text-red-400' : 'bg-gray-500/20'
@@ -402,7 +402,7 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
                   GEX: {scan.gex_regime}
                 </span>
               )}
-              {scan.risk_reward_ratio && (
+              {scan.risk_reward_ratio != null && scan.risk_reward_ratio > 0 && (
                 <span className={scan.risk_reward_ratio >= 1.5 ? 'text-green-400' : 'text-yellow-400'}>
                   R:R {scan.risk_reward_ratio.toFixed(2)}:1
                 </span>
@@ -410,7 +410,7 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
             </div>
 
             {/* GEX Walls with Distance Indicators */}
-            {(scan.call_wall || scan.put_wall) && (
+            {((scan.call_wall != null && scan.call_wall > 0) || (scan.put_wall != null && scan.put_wall > 0)) && (
               <div className="mt-2 p-2 bg-gray-900/50 rounded border border-gray-700">
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs font-medium text-cyan-400">📊 GEX Walls (Updated Every 5 Min)</span>
@@ -432,7 +432,7 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
                   </div>
 
                   {/* Visual bar showing price position between walls */}
-                  {scan.put_wall && scan.call_wall && scan.underlying_price && (
+                  {scan.put_wall != null && scan.put_wall > 0 && scan.call_wall != null && scan.call_wall > 0 && scan.underlying_price != null && scan.underlying_price > 0 && (
                     <div className="relative h-2 bg-gray-700 rounded-full overflow-hidden">
                       {/* Calculate position: 0% = at put wall, 100% = at call wall */}
                       {(() => {
@@ -525,10 +525,10 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
               {scan.signal_source && (
                 <span>Signal: {scan.signal_source}</span>
               )}
-              {scan.signal_confidence && (
+              {scan.signal_confidence != null && scan.signal_confidence > 0 && (
                 <span>Confidence: {(scan.signal_confidence * 100).toFixed(0)}%</span>
               )}
-              {scan.signal_win_probability && (
+              {scan.signal_win_probability != null && scan.signal_win_probability > 0 && (
                 <span>Win Prob: {(scan.signal_win_probability * 100).toFixed(0)}%</span>
               )}
               {scan.oracle_advice && (
@@ -618,13 +618,13 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
                     <div>
                       <span className="text-gray-400 block mb-1">Thresholds:</span>
                       <div className="flex flex-wrap gap-x-4 gap-y-1 text-gray-500">
-                        {scan.oracle_thresholds.min_win_probability && (
+                        {scan.oracle_thresholds.min_win_probability != null && scan.oracle_thresholds.min_win_probability > 0 && (
                           <span>Min Win: {(scan.oracle_thresholds.min_win_probability * 100).toFixed(0)}%</span>
                         )}
-                        {scan.oracle_thresholds.vix_skip && (
+                        {scan.oracle_thresholds.vix_skip != null && scan.oracle_thresholds.vix_skip > 0 && (
                           <span>VIX Skip: {scan.oracle_thresholds.vix_skip}</span>
                         )}
-                        {scan.oracle_thresholds.vix_monday_friday_skip && (
+                        {scan.oracle_thresholds.vix_monday_friday_skip != null && scan.oracle_thresholds.vix_monday_friday_skip > 0 && (
                           <span>VIX Mon/Fri: {scan.oracle_thresholds.vix_monday_friday_skip}</span>
                         )}
                       </div>
@@ -742,12 +742,12 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
             )}
 
             {/* Trade Execution Details (for executed trades) */}
-            {scan.trade_executed && (scan.position_id || scan.strike_selection || scan.contracts || scan.premium_collected) && (
+            {scan.trade_executed && (scan.position_id || scan.strike_selection || (scan.contracts != null && scan.contracts > 0) || (scan.premium_collected != null && scan.premium_collected > 0)) && (
               <details className="mt-2">
                 <summary className="text-xs text-green-400 cursor-pointer hover:text-green-300 flex items-center gap-1">
                   <DollarSign className="w-3 h-3" />
                   Trade Execution Details
-                  {scan.premium_collected && (
+                  {scan.premium_collected != null && scan.premium_collected > 0 && (
                     <span className="ml-1 px-1.5 py-0.5 rounded bg-green-500/20 text-green-400">
                       +${scan.premium_collected.toFixed(0)} premium
                     </span>
@@ -764,22 +764,22 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
                     <div>
                       <span className="text-gray-400 block mb-1">Strike Selection:</span>
                       <div className="grid grid-cols-2 gap-2">
-                        {scan.strike_selection.put_long && (
+                        {scan.strike_selection.put_long != null && scan.strike_selection.put_long > 0 && (
                           <div className="p-1.5 bg-red-500/10 rounded">
                             <span className="text-red-400">Put Long:</span> ${scan.strike_selection.put_long}
                           </div>
                         )}
-                        {scan.strike_selection.put_short && (
+                        {scan.strike_selection.put_short != null && scan.strike_selection.put_short > 0 && (
                           <div className="p-1.5 bg-red-500/20 rounded">
                             <span className="text-red-400">Put Short:</span> ${scan.strike_selection.put_short}
                           </div>
                         )}
-                        {scan.strike_selection.call_short && (
+                        {scan.strike_selection.call_short != null && scan.strike_selection.call_short > 0 && (
                           <div className="p-1.5 bg-green-500/20 rounded">
                             <span className="text-green-400">Call Short:</span> ${scan.strike_selection.call_short}
                           </div>
                         )}
-                        {scan.strike_selection.call_long && (
+                        {scan.strike_selection.call_long != null && scan.strike_selection.call_long > 0 && (
                           <div className="p-1.5 bg-green-500/10 rounded">
                             <span className="text-green-400">Call Long:</span> ${scan.strike_selection.call_long}
                           </div>
@@ -788,19 +788,19 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
                     </div>
                   )}
                   <div className="grid grid-cols-3 gap-2">
-                    {scan.contracts && (
+                    {scan.contracts != null && scan.contracts > 0 && (
                       <div className="p-1.5 bg-gray-800 rounded">
                         <span className="text-gray-400 block text-[10px]">Contracts</span>
                         <span className="text-white font-medium">{scan.contracts}</span>
                       </div>
                     )}
-                    {scan.premium_collected && (
+                    {scan.premium_collected != null && scan.premium_collected > 0 && (
                       <div className="p-1.5 bg-gray-800 rounded">
                         <span className="text-gray-400 block text-[10px]">Premium</span>
                         <span className="text-green-400 font-medium">${scan.premium_collected.toFixed(2)}</span>
                       </div>
                     )}
-                    {scan.max_risk && (
+                    {scan.max_risk != null && scan.max_risk > 0 && (
                       <div className="p-1.5 bg-gray-800 rounded">
                         <span className="text-gray-400 block text-[10px]">Max Risk</span>
                         <span className="text-red-400 font-medium">${scan.max_risk.toFixed(2)}</span>
@@ -910,13 +910,13 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
                         <span className="text-amber-400 font-medium">{(scan.kelly_pct * 100).toFixed(1)}%</span>
                       </div>
                     )}
-                    {scan.position_size_dollars && (
+                    {scan.position_size_dollars != null && scan.position_size_dollars > 0 && (
                       <div className="p-1.5 bg-gray-800 rounded">
                         <span className="text-gray-400 block text-[10px]">Position Size</span>
                         <span className="text-white font-medium">${scan.position_size_dollars.toLocaleString()}</span>
                       </div>
                     )}
-                    {scan.max_risk_dollars && (
+                    {scan.max_risk_dollars != null && scan.max_risk_dollars > 0 && (
                       <div className="p-1.5 bg-gray-800 rounded">
                         <span className="text-gray-400 block text-[10px]">Max Risk</span>
                         <span className="text-red-400 font-medium">${scan.max_risk_dollars.toLocaleString()}</span>
@@ -1008,7 +1008,7 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
             )}
 
             {/* Claude AI Context */}
-            {(scan.claude_prompt || scan.claude_response || scan.claude_tokens_used) && (
+            {(scan.claude_prompt || scan.claude_response || (scan.claude_tokens_used != null && scan.claude_tokens_used > 0)) && (
               <details className="mt-2">
                 <summary className="text-xs text-violet-400 cursor-pointer hover:text-violet-300 flex items-center gap-1">
                   <Cpu className="w-3 h-3" />
@@ -1018,7 +1018,7 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
                       {scan.claude_model}
                     </span>
                   )}
-                  {scan.claude_tokens_used && (
+                  {scan.claude_tokens_used != null && scan.claude_tokens_used > 0 && (
                     <span className="ml-1 text-gray-500">{scan.claude_tokens_used} tokens</span>
                   )}
                 </summary>
@@ -1030,13 +1030,13 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
                         <span className="text-violet-400">{scan.claude_model}</span>
                       </div>
                     )}
-                    {scan.claude_tokens_used && (
+                    {scan.claude_tokens_used != null && scan.claude_tokens_used > 0 && (
                       <div className="p-1.5 bg-gray-800 rounded">
                         <span className="text-gray-400 block text-[10px]">Tokens</span>
                         <span className="text-white">{scan.claude_tokens_used.toLocaleString()}</span>
                       </div>
                     )}
-                    {scan.claude_response_time_ms && (
+                    {scan.claude_response_time_ms != null && scan.claude_response_time_ms > 0 && (
                       <div className="p-1.5 bg-gray-800 rounded">
                         <span className="text-gray-400 block text-[10px]">Response Time</span>
                         <span className={scan.claude_response_time_ms > 5000 ? 'text-yellow-400' : 'text-green-400'}>
@@ -1165,12 +1165,12 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
             )}
 
             {/* Processing Metrics */}
-            {(scan.processing_time_ms || (scan.api_calls_made && scan.api_calls_made.length > 0) || (scan.errors_encountered && scan.errors_encountered.length > 0)) && (
+            {((scan.processing_time_ms != null && scan.processing_time_ms > 0) || (scan.api_calls_made && scan.api_calls_made.length > 0) || (scan.errors_encountered && scan.errors_encountered.length > 0)) && (
               <details className="mt-2">
                 <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-300 flex items-center gap-1">
                   <Beaker className="w-3 h-3" />
                   Processing Metrics
-                  {scan.processing_time_ms && (
+                  {scan.processing_time_ms != null && scan.processing_time_ms > 0 && (
                     <span className="ml-1 text-gray-500">{scan.processing_time_ms}ms</span>
                   )}
                   {scan.errors_encountered && scan.errors_encountered.length > 0 && (
@@ -1180,7 +1180,7 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
                   )}
                 </summary>
                 <div className="mt-2 p-3 bg-gray-800/50 border border-gray-600 rounded text-xs space-y-2">
-                  {scan.processing_time_ms && (
+                  {scan.processing_time_ms != null && scan.processing_time_ms > 0 && (
                     <div className="flex items-center justify-between">
                       <span className="text-gray-400">Total Processing Time:</span>
                       <span className={scan.processing_time_ms > 10000 ? 'text-yellow-400' : 'text-green-400'}>
@@ -1196,7 +1196,7 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
                           <div key={i} className="flex items-center justify-between p-1 bg-gray-900/50 rounded">
                             <span className="text-white">{call.api}{call.endpoint ? `: ${call.endpoint}` : ''}</span>
                             <div className="flex items-center gap-2">
-                              {call.time_ms && <span className="text-gray-500">{call.time_ms}ms</span>}
+                              {call.time_ms != null && call.time_ms > 0 && <span className="text-gray-500">{call.time_ms}ms</span>}
                               <span className={call.success ? 'text-green-400' : 'text-red-400'}>
                                 {call.success ? '✓' : '✗'}
                               </span>
