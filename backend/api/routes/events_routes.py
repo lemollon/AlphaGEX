@@ -619,20 +619,25 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
             # Use bot-specific V2 table
             table_name = bot_tables[bot_filter.upper()]
 
-            cursor.execute(f'''
-                SELECT
-                    {date_format_v2} as period_date,
-                    SUM(realized_pnl) as daily_pnl,
-                    COUNT(*) as trade_count
-                FROM {table_name}
-                WHERE status IN ('closed', 'expired')
-                AND close_time IS NOT NULL
-                AND DATE(close_time AT TIME ZONE 'America/Chicago') >= %s
-                GROUP BY {date_format_v2}
-                ORDER BY period_date ASC
-            ''', [start_date])
+            try:
+                cursor.execute(f'''
+                    SELECT
+                        {date_format_v2} as period_date,
+                        SUM(realized_pnl) as daily_pnl,
+                        COUNT(*) as trade_count
+                    FROM {table_name}
+                    WHERE status IN ('closed', 'expired')
+                    AND close_time IS NOT NULL
+                    AND DATE(close_time AT TIME ZONE 'America/Chicago') >= %s
+                    GROUP BY {date_format_v2}
+                    ORDER BY period_date ASC
+                ''', [start_date])
 
-            rows = cursor.fetchall()
+                rows = cursor.fetchall()
+            except Exception as table_err:
+                # Table might not exist yet (e.g., bot never run)
+                logger.debug(f"Could not query {table_name}: {table_err}")
+                rows = []
 
             # If no V2 data found, fall back to legacy table for backwards compatibility
             if not rows:
