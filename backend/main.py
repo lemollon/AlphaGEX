@@ -1675,6 +1675,21 @@ async def startup_event():
         print(f"⚠️  ARGUS initialization warning: {e}")
         print("   ARGUS will lazy-load on first request")
 
+    # Pre-check Math Optimizer availability (lazy initialization, but check dependencies)
+    print("\n🧮 Checking Math Optimizer dependencies...")
+    try:
+        import numpy as np
+        print(f"✅ NumPy version: {np.__version__}")
+        # Try to import the module (doesn't initialize singleton yet)
+        from core.math_optimizers import MathOptimizerOrchestrator
+        print("✅ Math Optimizer module loaded - will initialize on first request")
+    except ImportError as e:
+        print(f"⚠️  Math Optimizer import warning: {e}")
+        print("   Math Optimizer page will show degraded mode")
+    except Exception as e:
+        print(f"⚠️  Math Optimizer check warning: {e}")
+        print("   Math Optimizer page will show degraded mode")
+
     # Auto-run AUTONOMOUS backtests on startup IF database is empty
     print("\n🔄 Checking backtest results...")
     try:

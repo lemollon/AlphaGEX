@@ -383,6 +383,17 @@ async def get_current_regime():
     """Get current regime probabilities without update"""
     try:
         optimizer = get_optimizer()
+    except HTTPException as e:
+        # Return degraded response instead of 500
+        return {
+            "status": "degraded",
+            "error": e.detail,
+            "current_regime": "Unknown",
+            "probability": 0,
+            "all_probabilities": {}
+        }
+
+    try:
         probs = optimizer.hmm_regime.get_regime_probabilities()
 
         # Find most likely regime
@@ -395,6 +406,7 @@ async def get_current_regime():
             "all_probabilities": probs
         }
     except Exception as e:
+        logger.error(f"Regime fetch failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -443,11 +455,21 @@ async def get_smoothed_greeks():
     """Get current smoothed Greeks values"""
     try:
         optimizer = get_optimizer()
+    except HTTPException as e:
+        # Return degraded response instead of 500
+        return {
+            "status": "degraded",
+            "error": e.detail,
+            "smoothed_greeks": {}
+        }
+
+    try:
         return {
             "status": "success",
             "smoothed_greeks": optimizer.kalman_greeks.get_smoothed_greeks()
         }
     except Exception as e:
+        logger.error(f"Kalman smoothed fetch failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -518,6 +540,15 @@ async def reset_thompson_bot(bot_name: str = Query(..., description="Bot name to
     """Reset Thompson Sampling statistics for a bot"""
     try:
         optimizer = get_optimizer()
+    except HTTPException as e:
+        # Return error response for write operation
+        return {
+            "status": "error",
+            "error": e.detail,
+            "message": f"Cannot reset {bot_name} - math optimizer not available"
+        }
+
+    try:
         optimizer.thompson.reset_bot(bot_name)
 
         return {
@@ -526,6 +557,7 @@ async def reset_thompson_bot(bot_name: str = Query(..., description="Bot name to
             "new_expected_win_rate": optimizer.thompson.get_expected_win_rates().get(bot_name)
         }
     except Exception as e:
+        logger.error(f"Thompson reset failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1031,8 +1063,36 @@ async def get_live_dashboard():
             }
         }
     except Exception as e:
-        logger.error(f"Live dashboard failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # Return partial degraded response instead of 500 error
+        logger.error(f"Live dashboard failed after optimizer init: {e}")
+        return {
+            "status": "partial_error",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat(),
+            "regime": {
+                "current": "Unknown",
+                "probability": 0,
+                "is_favorable": False,
+                "all_probabilities": {},
+                "observations_processed": 0
+            },
+            "thompson": {
+                "bot_stats": {bot: {"expected_win_rate": 0.5, "uncertainty": 0.5, "allocation_pct": 0.2, "integrated": False}
+                             for bot in ['ARES', 'ATHENA', 'ICARUS', 'ATLAS', 'PHOENIX', 'PEGASUS', 'TITAN']},
+                "allocation": None,
+                "total_outcomes_recorded": 0
+            },
+            "kalman": {"smoothed_greeks": {}, "active": False},
+            "optimization_counts": {},
+            "algorithms": {
+                "hmm": {"status": "ERROR", "description": "Hidden Markov Regime Detection"},
+                "kalman": {"status": "ERROR", "description": "Greeks Smoothing Filter"},
+                "thompson": {"status": "ERROR", "description": "Dynamic Capital Allocation"},
+                "hjb": {"status": "ERROR", "description": "Optimal Exit Timing"},
+                "convex": {"status": "ERROR", "description": "Strike Optimization"},
+                "mdp": {"status": "ERROR", "description": "Trade Sequencing"}
+            }
+        }
 
 
 @router.get("/api/math-optimizer/decisions")

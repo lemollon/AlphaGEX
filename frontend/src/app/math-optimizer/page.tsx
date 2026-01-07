@@ -170,11 +170,15 @@ const LiveOptimizerStatus = () => {
         setDashboard(dashRes.data)
         setDecisions(decisionsRes.data?.decisions || [])
         setLastUpdate(new Date())
-        setConnectionError(null)
 
-        // Check if response indicates degraded state
-        if (dashRes.data?.status === 'degraded') {
+        // Check if response indicates degraded or partial error state
+        if (dashRes.data?.status === 'degraded' || dashRes.data?.status === 'partial_error') {
           setConnectionError(dashRes.data.error || 'Math optimizer running in degraded mode')
+        } else if (dashRes.data?.status === 'error') {
+          setConnectionError(dashRes.data.error || 'Math optimizer error')
+        } else {
+          // Clear error on successful response
+          setConnectionError(null)
         }
       } catch (error: any) {
         console.error('Failed to fetch optimizer data:', error)
