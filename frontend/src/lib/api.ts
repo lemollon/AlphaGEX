@@ -1116,8 +1116,7 @@ export const apiClient = {
     api.get('/api/quant/performance/summary', { params: { days } }),
   getQuantTrainingHistory: (limit: number = 20) =>
     api.get('/api/quant/training/history', { params: { limit } }),
-  triggerQuantTraining: (data: { model_name: string; triggered_by?: string }) =>
-    api.post('/api/quant/training/trigger', data),
+  getQuantTrainingSchedule: () => api.get('/api/quant/training/schedule'),
   getQuantComparison: () => api.get('/api/quant/compare'),
 
   // Math Optimizer

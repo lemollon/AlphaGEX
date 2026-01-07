@@ -1075,43 +1075,20 @@ async def get_training_history(model: Optional[str] = Query(None), limit: int = 
         return {"history": [], "error": str(e)}
 
 
-@router.post("/training/trigger")
-async def trigger_training(model: str = Query(..., description="Model to train")):
+@router.get("/training/schedule")
+async def get_training_schedule():
     """
-    Trigger model retraining.
+    Get the automated training schedule information.
+    Training runs automatically every Sunday at 5:00 PM CT.
     """
-    # TODO: Implement actual training trigger
-    # For now, just log the request
-
-    if not DB_AVAILABLE:
-        return {"success": False, "message": "Database not available"}
-
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute("""
-            INSERT INTO quant_training_history (
-                timestamp, model_name, status, triggered_by
-            ) VALUES (NOW(), %s, 'STARTED', 'MANUAL')
-            RETURNING id
-        """, (model,))
-
-        training_id = cursor.fetchone()[0]
-        conn.commit()
-        cursor.close()
-        conn.close()
-
-        return {
-            "success": True,
-            "training_id": training_id,
-            "model": model,
-            "message": f"Training triggered for {model}"
-        }
-
-    except Exception as e:
-        logger.error(f"Failed to trigger training: {e}")
-        return {"success": False, "error": str(e)}
+    return {
+        "schedule": "WEEKLY",
+        "day": "Sunday",
+        "time": "5:00 PM CT",
+        "models": ["REGIME_CLASSIFIER", "GEX_DIRECTIONAL"],
+        "note": "ENSEMBLE auto-calibrates from trade outcomes - no explicit training needed",
+        "message": "ML model training is fully automated. Models are retrained weekly on Sunday when markets are closed."
+    }
 
 
 # =============================================================================

@@ -1013,6 +1013,26 @@ export default function QuantPage() {
             </button>
           </div>
 
+          {/* Automated Training Schedule Info */}
+          <div className="bg-gradient-to-r from-purple-900/30 to-blue-900/30 border border-purple-500/30 rounded-lg p-4">
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-purple-500/20 rounded-lg">
+                <Clock className="h-5 w-5 text-purple-400" />
+              </div>
+              <div>
+                <h3 className="text-white font-semibold">Automated Training Schedule</h3>
+                <p className="text-gray-400 text-sm mt-1">
+                  ML models are automatically retrained every <span className="text-purple-400 font-medium">Sunday at 5:00 PM CT</span> when markets are closed.
+                </p>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  <span className="px-2 py-1 bg-gray-700 rounded text-xs text-gray-300">REGIME_CLASSIFIER</span>
+                  <span className="px-2 py-1 bg-gray-700 rounded text-xs text-gray-300">GEX_DIRECTIONAL</span>
+                  <span className="px-2 py-1 bg-gray-700/50 rounded text-xs text-gray-400">ENSEMBLE (auto-calibrates)</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Training History */}
           <h3 className="text-lg text-white font-semibold">Training History</h3>
 
