@@ -404,8 +404,8 @@ class HiddenMarkovRegimeDetector:
 
         return RegimeState(
             regime=current_state,
-            probability=current_prob,
-            confidence=confidence,
+            probability=float(current_prob),  # Convert numpy to native Python
+            confidence=float(confidence),  # Convert numpy to native Python
             observation_features=observation,
             transition_from=transition_from
         )
@@ -413,7 +413,7 @@ class HiddenMarkovRegimeDetector:
     def get_regime_probabilities(self) -> Dict[str, float]:
         """Get probability distribution over all regimes"""
         return {
-            state.value: prob
+            state.value: float(prob)  # Convert numpy.float64 to native Python float
             for state, prob in zip(self.states, self.state_belief)
         }
 
@@ -421,7 +421,7 @@ class HiddenMarkovRegimeDetector:
         """Get probability of transitioning between states"""
         from_idx = self.states.index(from_state)
         to_idx = self.states.index(to_state)
-        return self.transition_matrix[from_idx, to_idx]
+        return float(self.transition_matrix[from_idx, to_idx])  # Convert numpy to native Python
 
     def train_from_history(self, observations: List[Dict], labels: List[MarketRegime]):
         """
@@ -720,7 +720,7 @@ class ThompsonSamplingAllocator:
         for bot in self.bot_names:
             # Sample θ ~ Beta(α, β)
             theta = np.random.beta(self.alpha[bot], self.beta[bot])
-            sampled_rewards[bot] = theta
+            sampled_rewards[bot] = float(theta)  # Convert numpy to native Python
 
         # Calculate exploration bonus (uncertainty)
         exploration_bonus = {}
