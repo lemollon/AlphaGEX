@@ -163,11 +163,43 @@ class TITANTrader(MathOptimizerMixin):
             'gex_data': None,
             'signal': None,
             'checks': [],
+            'oracle_data': None,
             'position': None
         }
 
         try:
             self.db.update_heartbeat("SCANNING", f"Cycle at {now.strftime('%I:%M %p')}")
+
+            # CRITICAL: Fetch market data FIRST for ALL scans
+            # This ensures we log comprehensive data even for skipped scans
+            try:
+                gex_data = self.signals.get_gex_data() if hasattr(self, 'signals') else None
+                if not gex_data and hasattr(self, 'gex_calculator'):
+                    gex_data = self.gex_calculator.calculate_gex(self.config.ticker)
+                if gex_data:
+                    scan_context['market_data'] = {
+                        'underlying_price': gex_data.get('spot_price', gex_data.get('underlying_price', 0)),
+                        'symbol': self.config.ticker,
+                        'vix': gex_data.get('vix', 0),
+                        'expected_move': gex_data.get('expected_move', 0),
+                    }
+                    scan_context['gex_data'] = {
+                        'regime': gex_data.get('gex_regime', gex_data.get('regime', 'UNKNOWN')),
+                        'net_gex': gex_data.get('net_gex', 0),
+                        'call_wall': gex_data.get('call_wall', gex_data.get('major_call_wall', 0)),
+                        'put_wall': gex_data.get('put_wall', gex_data.get('major_put_wall', 0)),
+                        'flip_point': gex_data.get('flip_point', gex_data.get('gamma_flip', 0)),
+                    }
+                    # Also fetch Oracle advice for visibility
+                    try:
+                        if hasattr(self, 'signals') and hasattr(self.signals, 'get_oracle_advice'):
+                            oracle_advice = self.signals.get_oracle_advice(gex_data)
+                            if oracle_advice:
+                                scan_context['oracle_data'] = oracle_advice
+                    except Exception as e:
+                        logger.debug(f"Oracle fetch skipped: {e}")
+            except Exception as e:
+                logger.warning(f"Market data fetch failed: {e}")
 
             can_trade, reason = self._check_conditions(now, today)
             if not can_trade:
@@ -656,6 +688,7 @@ class TITANTrader(MathOptimizerMixin):
                 decision = "No valid signal"
 
             signal = context.get('signal')
+            oracle_data = context.get('oracle_data', {})
             signal_source = ""
             signal_confidence = 0
             oracle_advice = ""
@@ -664,6 +697,14 @@ class TITANTrader(MathOptimizerMixin):
             oracle_confidence = 0
             oracle_top_factors = None
             min_win_prob_threshold = self.config.min_win_probability
+
+            # Extract Oracle data from context (fetched early for all scans)
+            if oracle_data and not signal:
+                oracle_advice = oracle_data.get('advice', oracle_data.get('recommendation', ''))
+                oracle_reasoning = oracle_data.get('reasoning', oracle_data.get('full_reasoning', ''))
+                oracle_win_probability = oracle_data.get('win_probability', 0)
+                oracle_confidence = oracle_data.get('confidence', 0)
+                oracle_top_factors = oracle_data.get('top_factors', oracle_data.get('factors', []))
 
             if signal:
                 signal_source = signal.source
