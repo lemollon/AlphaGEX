@@ -666,8 +666,8 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
                         <span className="text-gray-300">{check.check_name}</span>
                       </div>
                       <div className="flex items-center gap-2 text-gray-400">
-                        {check.value && <span>Value: {check.value}</span>}
-                        {check.threshold && <span>Limit: {check.threshold}</span>}
+                        {check.value && <span>Value: {typeof check.value === 'object' ? JSON.stringify(check.value) : check.value}</span>}
+                        {check.threshold && <span>Limit: {typeof check.threshold === 'object' ? JSON.stringify(check.threshold) : check.threshold}</span>}
                         {check.reason && <span className="text-gray-500">({check.reason})</span>}
                       </div>
                     </div>
