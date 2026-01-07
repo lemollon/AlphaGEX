@@ -2263,6 +2263,95 @@ async def run_ares_cycle():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/debug/data-sources")
+async def debug_data_sources():
+    """
+    Debug endpoint to check if market data sources are working.
+    This is the FIRST thing to check if bots aren't trading.
+    """
+    result = {
+        "timestamp": datetime.now().isoformat(),
+        "data_sources": {},
+        "env_vars": {},
+        "test_results": {}
+    }
+
+    # 1. Check environment variables (masked)
+    env_vars = [
+        'TRADIER_API_KEY', 'TRADIER_ACCOUNT_ID',
+        'TRADIER_SANDBOX_API_KEY', 'TRADIER_SANDBOX_ACCOUNT_ID',
+        'POLYGON_API_KEY', 'TRADING_VOLATILITY_API_KEY', 'TV_USERNAME'
+    ]
+    for var in env_vars:
+        val = os.getenv(var, '')
+        if val:
+            result["env_vars"][var] = f"SET ({len(val)} chars, ends with ...{val[-4:]})"
+        else:
+            result["env_vars"][var] = "NOT SET"
+
+    # 2. Check data provider initialization
+    try:
+        from data.unified_data_provider import get_data_provider, TRADIER_AVAILABLE, POLYGON_AVAILABLE, TRADING_VOL_AVAILABLE
+        result["data_sources"]["tradier_module"] = TRADIER_AVAILABLE
+        result["data_sources"]["polygon_module"] = POLYGON_AVAILABLE
+        result["data_sources"]["trading_vol_module"] = TRADING_VOL_AVAILABLE
+
+        provider = get_data_provider()
+        result["data_sources"]["tradier_initialized"] = provider._tradier is not None
+        result["data_sources"]["polygon_initialized"] = provider._polygon is not None
+        result["data_sources"]["trading_vol_initialized"] = provider._trading_vol is not None
+
+        # 3. Test actual data fetch
+        try:
+            price = provider.get_price('SPY')
+            result["test_results"]["spy_price"] = price
+            result["test_results"]["spy_price_ok"] = price > 0
+        except Exception as e:
+            result["test_results"]["spy_price_error"] = str(e)
+
+        try:
+            vix = provider.get_vix()
+            result["test_results"]["vix"] = vix
+            result["test_results"]["vix_ok"] = vix > 0
+        except Exception as e:
+            result["test_results"]["vix_error"] = str(e)
+
+        try:
+            gex = provider.get_gex('SPY')
+            if gex:
+                result["test_results"]["gex"] = {
+                    "net_gex": gex.net_gex,
+                    "flip_point": gex.flip_point
+                }
+                result["test_results"]["gex_ok"] = True
+            else:
+                result["test_results"]["gex"] = None
+                result["test_results"]["gex_ok"] = False
+        except Exception as e:
+            result["test_results"]["gex_error"] = str(e)
+
+    except Exception as e:
+        result["error"] = str(e)
+
+    # 4. Summary
+    issues = []
+    if result["env_vars"].get("TRADIER_API_KEY") == "NOT SET":
+        issues.append("TRADIER_API_KEY not set")
+    if result["env_vars"].get("TRADIER_ACCOUNT_ID") == "NOT SET":
+        issues.append("TRADIER_ACCOUNT_ID not set")
+    if not result.get("data_sources", {}).get("tradier_initialized"):
+        issues.append("Tradier failed to initialize - check API key")
+    if result.get("test_results", {}).get("spy_price", 0) == 0:
+        issues.append("SPY price returned 0 - API may be down or key invalid")
+    if result.get("test_results", {}).get("vix", 0) == 0:
+        issues.append("VIX returned 0 - data source issue")
+
+    result["summary"] = issues if issues else ["All data sources working"]
+    result["trading_blocked"] = len(issues) > 0
+
+    return result
+
+
 @router.get("/debug/no-trades")
 async def debug_no_trades():
     """
