@@ -33,8 +33,9 @@ CENTRAL_TZ = ZoneInfo("America/Chicago")
 # ML Regime Classifier
 ML_REGIME_AVAILABLE = False
 MLRegimeClassifier = None
+train_regime_classifier = None
 try:
-    from quant.ml_regime_classifier import MLRegimeClassifier, MLPrediction, MLRegimeAction
+    from quant.ml_regime_classifier import MLRegimeClassifier, MLPrediction, MLRegimeAction, train_regime_classifier
     ML_REGIME_AVAILABLE = True
     logger.info("ML Regime Classifier loaded")
 except ImportError as e:
@@ -1075,43 +1076,129 @@ async def get_training_history(model: Optional[str] = Query(None), limit: int = 
         return {"history": [], "error": str(e)}
 
 
-@router.post("/training/trigger")
-async def trigger_training(model: str = Query(..., description="Model to train")):
+@router.get("/training/schedule")
+async def get_training_schedule():
     """
-    Trigger model retraining.
+    Get the automated training schedule information.
+    Training runs automatically every Sunday at 5:00 PM CT.
     """
-    # TODO: Implement actual training trigger
-    # For now, just log the request
+    return {
+        "schedule": "WEEKLY",
+        "day": "Sunday",
+        "time": "5:00 PM CT",
+        "models": ["REGIME_CLASSIFIER", "GEX_DIRECTIONAL"],
+        "note": "ENSEMBLE auto-calibrates from trade outcomes - no explicit training needed",
+        "message": "ML model training is fully automated. Models are retrained weekly on Sunday when markets are closed."
+    }
 
-    if not DB_AVAILABLE:
-        return {"success": False, "message": "Database not available"}
 
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
+@router.post("/training/run-now")
+async def run_training_now():
+    """
+    Trigger immediate training of all ML models (one-time run for testing).
+    This is the same logic that runs automatically every Sunday.
+    """
+    import traceback
 
-        cursor.execute("""
-            INSERT INTO quant_training_history (
-                timestamp, model_name, status, triggered_by
-            ) VALUES (NOW(), %s, 'STARTED', 'MANUAL')
-            RETURNING id
-        """, (model,))
+    results = {
+        "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
+        "models_trained": [],
+        "models_failed": [],
+        "details": {}
+    }
 
-        training_id = cursor.fetchone()[0]
-        conn.commit()
-        cursor.close()
-        conn.close()
+    # Train REGIME_CLASSIFIER
+    if ML_REGIME_AVAILABLE and train_regime_classifier:
+        try:
+            logger.info("Running immediate training for REGIME_CLASSIFIER...")
+            metrics = train_regime_classifier(symbol="SPY", lookback_days=365)
 
-        return {
-            "success": True,
-            "training_id": training_id,
-            "model": model,
-            "message": f"Training triggered for {model}"
-        }
+            if metrics:
+                results["models_trained"].append("REGIME_CLASSIFIER")
+                results["details"]["REGIME_CLASSIFIER"] = {
+                    "accuracy": metrics.accuracy,
+                    "f1": metrics.f1,
+                    "precision": metrics.precision,
+                    "recall": metrics.recall,
+                    "samples": metrics.samples_trained
+                }
 
-    except Exception as e:
-        logger.error(f"Failed to trigger training: {e}")
-        return {"success": False, "error": str(e)}
+                # Record to database
+                if DB_AVAILABLE:
+                    try:
+                        conn = get_connection()
+                        cursor = conn.cursor()
+                        cursor.execute("""
+                            INSERT INTO quant_training_history (
+                                timestamp, model_name, status, accuracy_after,
+                                training_samples, triggered_by
+                            ) VALUES (NOW(), %s, 'COMPLETED', %s, %s, 'MANUAL_TEST')
+                        """, ('REGIME_CLASSIFIER', metrics.accuracy * 100, metrics.samples_trained))
+                        conn.commit()
+                        cursor.close()
+                        conn.close()
+                    except Exception as db_err:
+                        logger.error(f"Failed to record REGIME_CLASSIFIER training: {db_err}")
+            else:
+                results["models_failed"].append("REGIME_CLASSIFIER")
+                results["details"]["REGIME_CLASSIFIER"] = {"error": "No metrics returned"}
+
+        except Exception as e:
+            logger.error(f"REGIME_CLASSIFIER training failed: {e}")
+            logger.error(traceback.format_exc())
+            results["models_failed"].append("REGIME_CLASSIFIER")
+            results["details"]["REGIME_CLASSIFIER"] = {"error": str(e)}
+    else:
+        results["details"]["REGIME_CLASSIFIER"] = {"error": "Not available"}
+
+    # Train GEX_DIRECTIONAL
+    if GEX_DIRECTIONAL_AVAILABLE and GEXDirectionalPredictor:
+        try:
+            logger.info("Running immediate training for GEX_DIRECTIONAL...")
+            predictor = GEXDirectionalPredictor(ticker="SPY")
+            result = predictor.train(start_date="2022-01-01", n_splits=5)
+
+            if result:
+                predictor.save_model("models/gex_directional_model.joblib")
+                results["models_trained"].append("GEX_DIRECTIONAL")
+                results["details"]["GEX_DIRECTIONAL"] = {
+                    "accuracy": result.accuracy,
+                    "training_samples": result.training_samples,
+                    "test_samples": result.test_samples
+                }
+
+                # Record to database
+                if DB_AVAILABLE:
+                    try:
+                        conn = get_connection()
+                        cursor = conn.cursor()
+                        cursor.execute("""
+                            INSERT INTO quant_training_history (
+                                timestamp, model_name, status, accuracy_after,
+                                training_samples, triggered_by
+                            ) VALUES (NOW(), %s, 'COMPLETED', %s, %s, 'MANUAL_TEST')
+                        """, ('GEX_DIRECTIONAL', result.accuracy * 100, result.training_samples))
+                        conn.commit()
+                        cursor.close()
+                        conn.close()
+                    except Exception as db_err:
+                        logger.error(f"Failed to record GEX_DIRECTIONAL training: {db_err}")
+            else:
+                results["models_failed"].append("GEX_DIRECTIONAL")
+                results["details"]["GEX_DIRECTIONAL"] = {"error": "No result returned"}
+
+        except Exception as e:
+            logger.error(f"GEX_DIRECTIONAL training failed: {e}")
+            logger.error(traceback.format_exc())
+            results["models_failed"].append("GEX_DIRECTIONAL")
+            results["details"]["GEX_DIRECTIONAL"] = {"error": str(e)}
+    else:
+        results["details"]["GEX_DIRECTIONAL"] = {"error": "Not available"}
+
+    results["success"] = len(results["models_failed"]) == 0
+    results["message"] = f"Trained {len(results['models_trained'])} models, {len(results['models_failed'])} failed"
+
+    return results
 
 
 # =============================================================================

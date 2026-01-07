@@ -155,6 +155,24 @@ except ImportError:
     run_feedback_loop = None
     print("Warning: Solomon not available. Feedback loop will be disabled.")
 
+# Import QUANT Training Modules (ML model retraining)
+try:
+    from quant.ml_regime_classifier import MLRegimeClassifier, train_regime_classifier
+    REGIME_CLASSIFIER_AVAILABLE = True
+except ImportError:
+    REGIME_CLASSIFIER_AVAILABLE = False
+    MLRegimeClassifier = None
+    train_regime_classifier = None
+    print("Warning: MLRegimeClassifier not available. Regime classifier training will be disabled.")
+
+try:
+    from quant.gex_directional_ml import GEXDirectionalPredictor
+    GEX_DIRECTIONAL_AVAILABLE = True
+except ImportError:
+    GEX_DIRECTIONAL_AVAILABLE = False
+    GEXDirectionalPredictor = None
+    print("Warning: GEXDirectionalPredictor not available. Directional ML training will be disabled.")
+
 # Import scan activity logger for comprehensive scan visibility
 try:
     from trading.scan_activity_logger import (
@@ -1682,6 +1700,160 @@ class AutonomousTraderScheduler:
             logger.info("SOLOMON will retry tomorrow at 4:00 PM CT")
             logger.info(f"=" * 80)
 
+    def scheduled_quant_training_logic(self):
+        """
+        QUANT (ML Model Training) - runs WEEKLY on Sunday at 5:00 PM CT
+
+        Retrains quantitative ML models to adapt to changing market conditions:
+        - REGIME_CLASSIFIER: Market regime classification (BULLISH/BEARISH/NEUTRAL)
+        - GEX_DIRECTIONAL: Directional prediction based on GEX analysis
+
+        Weekly training ensures models stay current without overfitting to recent data.
+        Training runs on Sunday when markets are closed to avoid interference with trading.
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"QUANT (ML Training) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        training_results = {
+            'timestamp': now.isoformat(),
+            'models_trained': [],
+            'models_failed': [],
+            'details': {}
+        }
+
+        # =================================================================
+        # REGIME_CLASSIFIER Training
+        # =================================================================
+        if REGIME_CLASSIFIER_AVAILABLE:
+            try:
+                logger.info("QUANT: Training REGIME_CLASSIFIER...")
+                metrics = train_regime_classifier(symbol="SPY", lookback_days=365)
+
+                if metrics:
+                    logger.info(f"  ✅ REGIME_CLASSIFIER trained successfully")
+                    logger.info(f"     Accuracy: {metrics.accuracy:.2%}")
+                    logger.info(f"     F1 Score: {metrics.f1:.2%}")
+                    logger.info(f"     Samples: {metrics.samples_trained}")
+
+                    training_results['models_trained'].append('REGIME_CLASSIFIER')
+                    training_results['details']['REGIME_CLASSIFIER'] = {
+                        'accuracy': metrics.accuracy,
+                        'f1': metrics.f1,
+                        'precision': metrics.precision,
+                        'recall': metrics.recall,
+                        'samples': metrics.samples_trained
+                    }
+
+                    # Record to database
+                    self._record_training_history(
+                        model_name='REGIME_CLASSIFIER',
+                        status='COMPLETED',
+                        accuracy_after=metrics.accuracy * 100,
+                        training_samples=metrics.samples_trained,
+                        triggered_by='SCHEDULED'
+                    )
+                else:
+                    logger.warning("  ⚠️ REGIME_CLASSIFIER training returned no metrics")
+                    training_results['models_failed'].append('REGIME_CLASSIFIER')
+
+            except Exception as e:
+                logger.error(f"  ❌ REGIME_CLASSIFIER training failed: {e}")
+                logger.error(traceback.format_exc())
+                training_results['models_failed'].append('REGIME_CLASSIFIER')
+                self._record_training_history(
+                    model_name='REGIME_CLASSIFIER',
+                    status='FAILED',
+                    triggered_by='SCHEDULED',
+                    error=str(e)
+                )
+        else:
+            logger.warning("QUANT: REGIME_CLASSIFIER not available - skipping")
+
+        # =================================================================
+        # GEX_DIRECTIONAL Training
+        # =================================================================
+        if GEX_DIRECTIONAL_AVAILABLE:
+            try:
+                logger.info("QUANT: Training GEX_DIRECTIONAL...")
+                predictor = GEXDirectionalPredictor(ticker="SPY")
+                result = predictor.train(start_date="2022-01-01", n_splits=5)
+
+                if result:
+                    # Save the model
+                    predictor.save_model("models/gex_directional_model.joblib")
+
+                    logger.info(f"  ✅ GEX_DIRECTIONAL trained successfully")
+                    logger.info(f"     Accuracy: {result.accuracy:.2%}")
+                    logger.info(f"     Training samples: {result.training_samples}")
+
+                    training_results['models_trained'].append('GEX_DIRECTIONAL')
+                    training_results['details']['GEX_DIRECTIONAL'] = {
+                        'accuracy': result.accuracy,
+                        'training_samples': result.training_samples,
+                        'test_samples': result.test_samples
+                    }
+
+                    # Record to database
+                    self._record_training_history(
+                        model_name='GEX_DIRECTIONAL',
+                        status='COMPLETED',
+                        accuracy_after=result.accuracy * 100,
+                        training_samples=result.training_samples,
+                        triggered_by='SCHEDULED'
+                    )
+                else:
+                    logger.warning("  ⚠️ GEX_DIRECTIONAL training returned no result")
+                    training_results['models_failed'].append('GEX_DIRECTIONAL')
+
+            except Exception as e:
+                logger.error(f"  ❌ GEX_DIRECTIONAL training failed: {e}")
+                logger.error(traceback.format_exc())
+                training_results['models_failed'].append('GEX_DIRECTIONAL')
+                self._record_training_history(
+                    model_name='GEX_DIRECTIONAL',
+                    status='FAILED',
+                    triggered_by='SCHEDULED',
+                    error=str(e)
+                )
+        else:
+            logger.warning("QUANT: GEX_DIRECTIONAL not available - skipping")
+
+        # =================================================================
+        # Summary
+        # =================================================================
+        logger.info(f"QUANT: Training complete")
+        logger.info(f"  Models trained: {len(training_results['models_trained'])}")
+        logger.info(f"  Models failed: {len(training_results['models_failed'])}")
+
+        # Save heartbeat
+        self._save_heartbeat('QUANT', 'TRAINING_COMPLETE', training_results)
+
+        logger.info(f"QUANT: Next training scheduled for next Sunday at 5:00 PM CT")
+        logger.info(f"=" * 80)
+
+    def _record_training_history(self, model_name: str, status: str, accuracy_after: float = None,
+                                  training_samples: int = None, triggered_by: str = 'SCHEDULED',
+                                  error: str = None):
+        """Record training run to quant_training_history table"""
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                INSERT INTO quant_training_history (
+                    timestamp, model_name, status, accuracy_after,
+                    training_samples, triggered_by, error_message
+                ) VALUES (NOW(), %s, %s, %s, %s, %s, %s)
+            """, (model_name, status, accuracy_after, training_samples, triggered_by, error))
+
+            conn.commit()
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            logger.error(f"Failed to record training history: {e}")
+
     def start(self):
         """Start the autonomous trading scheduler"""
         if not APSCHEDULER_AVAILABLE:
@@ -1695,7 +1867,7 @@ class AutonomousTraderScheduler:
 
         logger.info("=" * 80)
         logger.info("STARTING AUTONOMOUS TRADING SCHEDULER")
-        logger.info(f"Bots: PHOENIX, ATLAS, ARES (SPY IC), PEGASUS (SPX IC), ATHENA, ARGUS, SOLOMON")
+        logger.info(f"Bots: PHOENIX, ATLAS, ARES (SPY IC), PEGASUS (SPX IC), ATHENA, ARGUS, SOLOMON, QUANT")
         logger.info(f"Timezone: America/Chicago (Texas Central Time)")
         logger.info(f"PHOENIX Schedule: DISABLED here - handled by AutonomousTrader (every 5 min)")
         logger.info(f"ATLAS Schedule: Daily at 9:05 AM CT, Mon-Fri")
@@ -1704,6 +1876,7 @@ class AutonomousTraderScheduler:
         logger.info(f"ATHENA Schedule: Every 5 min (8:35 AM - 2:30 PM CT), SPY Spreads")
         logger.info(f"ARGUS Schedule: Every 5 min (8:30 AM - 3:00 PM CT), Commentary")
         logger.info(f"SOLOMON Schedule: DAILY at 4:00 PM CT (after market close)")
+        logger.info(f"QUANT Schedule: WEEKLY on Sunday at 5:00 PM CT (ML model training)")
         logger.info(f"Log file: {LOG_FILE}")
         logger.info("=" * 80)
 
@@ -1998,6 +2171,30 @@ class AutonomousTraderScheduler:
         else:
             logger.warning("⚠️ SOLOMON not available - Feedback loop disabled")
 
+        # =================================================================
+        # QUANT JOB: ML Model Training - runs WEEKLY on Sunday
+        # Retrains quantitative ML models to adapt to market changes:
+        # - REGIME_CLASSIFIER: Market regime classification
+        # - GEX_DIRECTIONAL: Directional prediction from GEX data
+        # Training on Sunday ensures models are fresh for the trading week
+        # =================================================================
+        if REGIME_CLASSIFIER_AVAILABLE or GEX_DIRECTIONAL_AVAILABLE:
+            self.scheduler.add_job(
+                self.scheduled_quant_training_logic,
+                trigger=CronTrigger(
+                    hour=17,       # 5:00 PM CT - markets closed
+                    minute=0,
+                    day_of_week='sun',  # Every Sunday
+                    timezone='America/Chicago'
+                ),
+                id='quant_ml_training',
+                name='QUANT - Weekly ML Model Training',
+                replace_existing=True
+            )
+            logger.info("✅ QUANT job scheduled (WEEKLY on Sunday at 5:00 PM CT)")
+        else:
+            logger.warning("⚠️ QUANT not available - ML model training disabled")
+
         self.scheduler.start()
         self.is_running = True
 
@@ -2055,21 +2252,33 @@ class AutonomousTraderScheduler:
             'last_position_check': self.last_position_check.strftime('%Y-%m-%d %H:%M:%S') if self.last_position_check else 'Never',
             'execution_count': self.execution_count,
             'last_error': self.last_error,
+            'scheduled_jobs': [],
         }
 
-        # Get next scheduled run time
+        # Get all scheduled jobs with their next run times
         if self.is_running and self.scheduler:
             jobs = self.scheduler.get_jobs()
+            for job in jobs:
+                job_info = {
+                    'id': job.id,
+                    'name': job.name,
+                    'next_run': job.next_run_time.strftime('%Y-%m-%d %H:%M:%S %Z') if job.next_run_time else 'Not scheduled'
+                }
+                status['scheduled_jobs'].append(job_info)
+
             if jobs:
-                next_run = jobs[0].next_run_time
-                if next_run:
-                    status['next_run'] = next_run.strftime('%Y-%m-%d %H:%M:%S %Z')
-                else:
-                    status['next_run'] = 'Not scheduled'
+                status['next_run'] = jobs[0].next_run_time.strftime('%Y-%m-%d %H:%M:%S %Z') if jobs[0].next_run_time else 'Not scheduled'
             else:
                 status['next_run'] = 'No jobs'
         else:
             status['next_run'] = 'Scheduler not running'
+
+        # Add QUANT training availability info
+        status['quant_training'] = {
+            'regime_classifier_available': REGIME_CLASSIFIER_AVAILABLE,
+            'gex_directional_available': GEX_DIRECTIONAL_AVAILABLE,
+            'schedule': 'Sunday 5:00 PM CT (weekly)'
+        }
 
         return status
 

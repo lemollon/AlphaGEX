@@ -23,7 +23,6 @@ import {
   ThumbsUp,
   ThumbsDown,
   Eye,
-  Play,
   Check,
   X
 } from 'lucide-react'
@@ -313,18 +312,6 @@ export default function QuantPage() {
       console.error('Failed to acknowledge alert:', err)
     }
   }, [fetchAlerts])
-
-  const triggerTraining = useCallback(async (modelName: string) => {
-    try {
-      await apiClient.triggerQuantTraining({
-        model_name: modelName,
-        triggered_by: 'MANUAL'
-      })
-      await fetchTrainingHistory()
-    } catch (err) {
-      console.error('Failed to trigger training:', err)
-    }
-  }, [fetchTrainingHistory])
 
   // ============================================================================
   // EFFECTS
@@ -1026,20 +1013,24 @@ export default function QuantPage() {
             </button>
           </div>
 
-          {/* Trigger Training Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {['REGIME_CLASSIFIER', 'GEX_DIRECTIONAL', 'ENSEMBLE'].map((model) => (
-              <div key={model} className="bg-gray-800 rounded-lg p-4">
-                <h3 className="text-white font-semibold mb-3">{model}</h3>
-                <button
-                  onClick={() => triggerTraining(model)}
-                  className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded text-white text-sm w-full justify-center"
-                >
-                  <Play className="h-4 w-4" />
-                  Trigger Training
-                </button>
+          {/* Automated Training Schedule Info */}
+          <div className="bg-gradient-to-r from-purple-900/30 to-blue-900/30 border border-purple-500/30 rounded-lg p-4">
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-purple-500/20 rounded-lg">
+                <Clock className="h-5 w-5 text-purple-400" />
               </div>
-            ))}
+              <div>
+                <h3 className="text-white font-semibold">Automated Training Schedule</h3>
+                <p className="text-gray-400 text-sm mt-1">
+                  ML models are automatically retrained every <span className="text-purple-400 font-medium">Sunday at 5:00 PM CT</span> when markets are closed.
+                </p>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  <span className="px-2 py-1 bg-gray-700 rounded text-xs text-gray-300">REGIME_CLASSIFIER</span>
+                  <span className="px-2 py-1 bg-gray-700 rounded text-xs text-gray-300">GEX_DIRECTIONAL</span>
+                  <span className="px-2 py-1 bg-gray-700/50 rounded text-xs text-gray-400">ENSEMBLE (auto-calibrates)</span>
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* Training History */}
