@@ -287,7 +287,25 @@ export default function IcarusPage() {
       ? [...(rawPositions?.open_positions || []), ...(rawPositions?.closed_positions || [])]
       : []
   const scans = scanData?.data?.scans || scanData?.scans || []
-  const config = configData?.data || configData || status?.config || null
+  // Prefer status.config (flat values) over configData (may have {value, description} objects)
+  const rawConfig = status?.config || configData?.data || configData || null
+  // Helper to extract value from config (handles both flat values and {value, description} objects)
+  const getConfigValue = (key: string, defaultValue: any) => {
+    if (!rawConfig || !(key in rawConfig)) return defaultValue
+    const val = rawConfig[key]
+    if (val && typeof val === 'object' && 'value' in val) {
+      return val.value
+    }
+    return val
+  }
+  const config = rawConfig ? {
+    ticker: getConfigValue('ticker', 'SPY'),
+    risk_per_trade: getConfigValue('risk_per_trade', 4),
+    spread_width: getConfigValue('spread_width', 3),
+    max_daily_trades: getConfigValue('max_daily_trades', 10),
+    wall_filter_pct: getConfigValue('wall_filter_pct', 10),
+    min_win_probability: getConfigValue('min_win_probability', 40),
+  } : null
   const performance = performanceData?.data || performanceData || null
 
   // Separate open and closed positions (with defensive null checks)
