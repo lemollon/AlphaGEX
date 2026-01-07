@@ -23,7 +23,6 @@ import {
   ThumbsUp,
   ThumbsDown,
   Eye,
-  Play,
   Check,
   X
 } from 'lucide-react'
@@ -313,18 +312,6 @@ export default function QuantPage() {
       console.error('Failed to acknowledge alert:', err)
     }
   }, [fetchAlerts])
-
-  const triggerTraining = useCallback(async (modelName: string) => {
-    try {
-      await apiClient.triggerQuantTraining({
-        model_name: modelName,
-        triggered_by: 'MANUAL'
-      })
-      await fetchTrainingHistory()
-    } catch (err) {
-      console.error('Failed to trigger training:', err)
-    }
-  }, [fetchTrainingHistory])
 
   // ============================================================================
   // EFFECTS
@@ -1024,22 +1011,6 @@ export default function QuantPage() {
               <RefreshCw className="h-4 w-4" />
               Refresh
             </button>
-          </div>
-
-          {/* Trigger Training Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {['REGIME_CLASSIFIER', 'GEX_DIRECTIONAL', 'ENSEMBLE'].map((model) => (
-              <div key={model} className="bg-gray-800 rounded-lg p-4">
-                <h3 className="text-white font-semibold mb-3">{model}</h3>
-                <button
-                  onClick={() => triggerTraining(model)}
-                  className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded text-white text-sm w-full justify-center"
-                >
-                  <Play className="h-4 w-4" />
-                  Trigger Training
-                </button>
-              </div>
-            ))}
           </div>
 
           {/* Training History */}
