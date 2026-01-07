@@ -126,7 +126,7 @@ export default function WhyNotTrading({ skipReasons, isLoading = false, maxDispl
                 </span>
 
                 {/* Reason */}
-                <span className="text-sm text-gray-300 flex-1">{skip.reason}</span>
+                <span className="text-sm text-gray-300 flex-1">{typeof skip.reason === 'object' ? JSON.stringify(skip.reason) : skip.reason}</span>
 
                 {/* Expand indicator if has details */}
                 {skip.details && (

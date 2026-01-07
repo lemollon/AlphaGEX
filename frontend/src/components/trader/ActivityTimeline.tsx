@@ -168,9 +168,9 @@ export default function ActivityTimeline({ activities, maxDisplay = 10, isLoadin
                         <div className="flex items-center gap-2">
                           <Target className="w-3 h-3 text-gray-400" />
                           <span className="text-gray-400">Spread:</span>
-                          <span className="text-white">{activity.details.spread_type}</span>
+                          <span className="text-white">{typeof activity.details.spread_type === 'object' ? JSON.stringify(activity.details.spread_type) : activity.details.spread_type}</span>
                           {activity.details.strikes && (
-                            <span className="text-gray-300">@ {activity.details.strikes}</span>
+                            <span className="text-gray-300">@ {typeof activity.details.strikes === 'object' ? JSON.stringify(activity.details.strikes) : activity.details.strikes}</span>
                           )}
                         </div>
                       )}
@@ -178,8 +178,8 @@ export default function ActivityTimeline({ activities, maxDisplay = 10, isLoadin
                         <div className="flex items-center gap-2">
                           <Brain className="w-3 h-3 text-gray-400" />
                           <span className="text-gray-400">Signal:</span>
-                          <span className={`${activity.details.signal_source.includes('override') ? 'text-amber-400' : 'text-blue-400'}`}>
-                            {activity.details.signal_source}
+                          <span className={`${typeof activity.details.signal_source === 'string' && activity.details.signal_source.includes('override') ? 'text-amber-400' : 'text-blue-400'}`}>
+                            {typeof activity.details.signal_source === 'object' ? JSON.stringify(activity.details.signal_source) : activity.details.signal_source}
                           </span>
                         </div>
                       )}
@@ -187,7 +187,7 @@ export default function ActivityTimeline({ activities, maxDisplay = 10, isLoadin
                         <div className="flex items-center gap-2">
                           <span className="text-gray-400">ML:</span>
                           <span className={activity.details.ml_advice === 'STAY_OUT' ? 'text-red-400' : 'text-green-400'}>
-                            {activity.details.ml_advice}
+                            {typeof activity.details.ml_advice === 'object' ? JSON.stringify(activity.details.ml_advice) : activity.details.ml_advice}
                           </span>
                           {activity.details.ml_confidence && (
                             <span className="text-gray-500">({(activity.details.ml_confidence * 100).toFixed(0)}%)</span>
@@ -198,7 +198,7 @@ export default function ActivityTimeline({ activities, maxDisplay = 10, isLoadin
                         <div className="flex items-center gap-2">
                           <span className="text-gray-400">Oracle:</span>
                           <span className={activity.details.oracle_advice === 'SKIP_TODAY' ? 'text-red-400' : 'text-green-400'}>
-                            {activity.details.oracle_advice}
+                            {typeof activity.details.oracle_advice === 'object' ? JSON.stringify(activity.details.oracle_advice) : activity.details.oracle_advice}
                           </span>
                           {activity.details.oracle_confidence && (
                             <span className="text-gray-500">({(activity.details.oracle_confidence * 100).toFixed(0)}%)</span>
@@ -208,7 +208,7 @@ export default function ActivityTimeline({ activities, maxDisplay = 10, isLoadin
                       {activity.details.exit_reason && (
                         <div className="flex items-center gap-2">
                           <span className="text-gray-400">Exit:</span>
-                          <span className="text-purple-400">{activity.details.exit_reason}</span>
+                          <span className="text-purple-400">{typeof activity.details.exit_reason === 'object' ? JSON.stringify(activity.details.exit_reason) : activity.details.exit_reason}</span>
                         </div>
                       )}
                       {activity.details.hold_time && (

@@ -417,7 +417,7 @@ function RiskChecksDisplay({ checks }: { checks?: TradeDecision['risk_checks'] }
               <XCircle className="w-3 h-3 text-red-400" />
             )}
             <span className={check.passed ? 'text-gray-400' : 'text-red-300'}>{check.check}</span>
-            {check.value && <span className="text-gray-500">({check.value})</span>}
+            {check.value && <span className="text-gray-500">({typeof check.value === 'object' ? JSON.stringify(check.value) : check.value})</span>}
           </div>
         ))}
       </div>

@@ -803,7 +803,7 @@ export default function GammaExpirationWidget() {
                     <h5 className="font-bold text-text-primary">📋 Trade Structure:</h5>
                     <div className="space-y-0.5 mt-1">
                       {recommendation.structure.map((item, idx) => (
-                        <p key={idx}><strong>{item.label}:</strong> {item.value}</p>
+                        <p key={idx}><strong>{item.label}:</strong> {typeof item.value === 'object' ? JSON.stringify(item.value) : item.value}</p>
                       ))}
                     </div>
                   </div>
