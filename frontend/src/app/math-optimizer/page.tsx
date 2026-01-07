@@ -158,6 +158,7 @@ const LiveOptimizerStatus = () => {
   const [decisions, setDecisions] = useState<Decision[]>([])
   const [loading, setLoading] = useState(true)
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
+  const [connectionError, setConnectionError] = useState<string | null>(null)
 
   useEffect(() => {
     const fetchData = async () => {
@@ -169,8 +170,34 @@ const LiveOptimizerStatus = () => {
         setDashboard(dashRes.data)
         setDecisions(decisionsRes.data?.decisions || [])
         setLastUpdate(new Date())
-      } catch (error) {
+        setConnectionError(null)
+
+        // Check if response indicates degraded state
+        if (dashRes.data?.status === 'degraded') {
+          setConnectionError(dashRes.data.error || 'Math optimizer running in degraded mode')
+        }
+      } catch (error: any) {
         console.error('Failed to fetch optimizer data:', error)
+        // Set connection error with details
+        const errorMessage = error?.message || error?.detail || 'Network error - unable to reach backend'
+        setConnectionError(errorMessage)
+        // Set a minimal degraded dashboard so UI doesn't show blank
+        setDashboard({
+          status: 'error',
+          error: errorMessage,
+          regime: { current: 'Unknown', probability: 0, is_favorable: false, all_probabilities: {}, observations_processed: 0 },
+          thompson: { bot_stats: {}, allocation: null, total_outcomes_recorded: 0 },
+          kalman: { smoothed_greeks: {}, active: false },
+          optimization_counts: {},
+          algorithms: {
+            hmm: { status: 'ERROR', description: 'Hidden Markov Regime Detection' },
+            kalman: { status: 'ERROR', description: 'Greeks Smoothing Filter' },
+            thompson: { status: 'ERROR', description: 'Dynamic Capital Allocation' },
+            hjb: { status: 'ERROR', description: 'Optimal Exit Timing' },
+            convex: { status: 'ERROR', description: 'Strike Optimization' },
+            mdp: { status: 'ERROR', description: 'Trade Sequencing' }
+          }
+        })
       }
       setLoading(false)
     }
@@ -189,6 +216,22 @@ const LiveOptimizerStatus = () => {
     )
   }
 
+  // Show error banner if there's a connection error but we still have dashboard data
+  const ErrorBanner = connectionError ? (
+    <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-4 mb-6">
+      <div className="flex items-start gap-3">
+        <AlertTriangle className="w-5 h-5 text-red-400 mt-0.5 flex-shrink-0" />
+        <div className="flex-1">
+          <div className="text-red-400 font-medium">Math Optimizer Connection Issue</div>
+          <div className="text-gray-400 text-sm mt-1">{connectionError}</div>
+          <div className="text-gray-500 text-xs mt-2">
+            The dashboard is showing cached/fallback data. Retrying every 15 seconds...
+          </div>
+        </div>
+      </div>
+    </div>
+  ) : null
+
   if (!dashboard) {
     return (
       <div className="bg-gray-800 rounded-lg border border-red-500/30 p-6">
@@ -196,6 +239,11 @@ const LiveOptimizerStatus = () => {
           <AlertTriangle className="w-6 h-6" />
           <span>Unable to connect to math optimizer backend</span>
         </div>
+        {connectionError && (
+          <div className="mt-3 text-sm text-gray-400">
+            Error details: {connectionError}
+          </div>
+        )}
       </div>
     )
   }
@@ -204,11 +252,15 @@ const LiveOptimizerStatus = () => {
 
   return (
     <div className="space-y-6">
+      {/* Show error banner if there's a connection issue */}
+      {ErrorBanner}
+
       {/* Header with refresh indicator */}
       <div className="flex items-center justify-between">
         <h3 className="text-xl font-bold text-white flex items-center gap-2">
-          <Activity className="w-6 h-6 text-green-400" />
+          <Activity className={`w-6 h-6 ${connectionError ? 'text-yellow-400' : 'text-green-400'}`} />
           Live Optimizer Dashboard
+          {connectionError && <span className="text-xs text-yellow-400 ml-2">(Degraded)</span>}
         </h3>
         <div className="flex items-center gap-2 text-sm text-gray-500">
           <RefreshCw className="w-4 h-4" />

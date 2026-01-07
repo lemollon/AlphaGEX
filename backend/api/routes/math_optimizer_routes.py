@@ -850,6 +850,48 @@ async def diagnose_math_optimizer():
 # STATUS ENDPOINT
 # =============================================================================
 
+@router.get("/api/math-optimizer/health")
+async def math_optimizer_health():
+    """
+    Quick health check for math optimizer.
+    Returns basic health status without initializing the full optimizer.
+    """
+    global _optimizer, _optimizer_error
+
+    # Check cached error first
+    if _optimizer_error:
+        return {
+            "healthy": False,
+            "status": "error",
+            "error": _optimizer_error,
+            "message": "Math optimizer failed to initialize. Check /api/math-optimizer/diagnose for details."
+        }
+
+    # Check if optimizer is already loaded
+    if _optimizer is not None:
+        return {
+            "healthy": True,
+            "status": "running",
+            "message": "Math optimizer is operational"
+        }
+
+    # Optimizer not yet loaded - try to initialize
+    try:
+        optimizer = get_optimizer()
+        return {
+            "healthy": True,
+            "status": "running",
+            "message": "Math optimizer initialized successfully"
+        }
+    except HTTPException as e:
+        return {
+            "healthy": False,
+            "status": "error",
+            "error": e.detail,
+            "message": "Math optimizer failed to initialize. Check /api/math-optimizer/diagnose for details."
+        }
+
+
 @router.get("/api/math-optimizer/status")
 async def get_optimizer_status():
     """Get status of all mathematical optimizers"""
@@ -859,8 +901,13 @@ async def get_optimizer_status():
             "status": "success",
             "optimizers": optimizer.get_status()
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException as e:
+        # Return degraded status instead of 500 error
+        return {
+            "status": "error",
+            "error": e.detail,
+            "message": "Math optimizer not available. Check /api/math-optimizer/diagnose for details."
+        }
 
 
 @router.get("/api/math-optimizer/live-dashboard")

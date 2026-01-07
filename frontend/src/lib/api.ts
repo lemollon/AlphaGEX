@@ -1121,6 +1121,8 @@ export const apiClient = {
 
   // Math Optimizer
   getMathOptimizerStatus: () => api.get('/api/math-optimizer/status'),
+  getMathOptimizerHealth: () => api.get('/api/math-optimizer/health'),
+  getMathOptimizerDiagnose: () => api.get('/api/math-optimizer/diagnose'),
   getMathOptimizerLiveDashboard: () => api.get('/api/math-optimizer/live-dashboard'),
   getMathOptimizerDecisions: (limit: number = 20) => api.get(`/api/math-optimizer/decisions?limit=${limit}`),
   getMathOptimizerBotStats: (botName: string) => api.get(`/api/math-optimizer/bot/${botName}`),
