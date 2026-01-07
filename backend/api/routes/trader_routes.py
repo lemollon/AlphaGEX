@@ -2261,3 +2261,153 @@ async def run_ares_cycle():
     except Exception as e:
         logger.error(f"Error running ARES cycle: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/debug/no-trades")
+async def debug_no_trades():
+    """
+    Debug endpoint to find exactly why bots didn't trade today.
+    Returns comprehensive diagnostic information.
+    """
+    from zoneinfo import ZoneInfo
+    CENTRAL_TZ = ZoneInfo("America/Chicago")
+    today = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
+
+    result = {
+        "date": today,
+        "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
+        "diagnostics": {}
+    }
+
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # 1. Bot Heartbeats
+        try:
+            cursor.execute('''
+                SELECT bot_name, last_heartbeat, status, scan_count, details,
+                       EXTRACT(EPOCH FROM (NOW() - last_heartbeat))/60 as minutes_ago
+                FROM bot_heartbeats
+                ORDER BY last_heartbeat DESC NULLS LAST
+            ''')
+            result["diagnostics"]["heartbeats"] = cursor.fetchall()
+        except Exception as e:
+            result["diagnostics"]["heartbeats_error"] = str(e)
+
+        # 2. Today's Scan Activity
+        try:
+            cursor.execute('''
+                SELECT bot_name, timestamp, outcome, decision_summary,
+                       oracle_advice, oracle_win_probability, oracle_confidence,
+                       underlying_price, vix, gex_regime
+                FROM scan_activity
+                WHERE date = %s
+                ORDER BY timestamp DESC
+                LIMIT 100
+            ''', (today,))
+            result["diagnostics"]["scan_activity"] = cursor.fetchall()
+        except Exception as e:
+            result["diagnostics"]["scan_activity_error"] = str(e)
+
+        # 3. Scan Outcome Summary
+        try:
+            cursor.execute('''
+                SELECT bot_name, outcome, COUNT(*) as count
+                FROM scan_activity
+                WHERE date = %s
+                GROUP BY bot_name, outcome
+                ORDER BY bot_name, count DESC
+            ''', (today,))
+            result["diagnostics"]["outcome_summary"] = cursor.fetchall()
+        except Exception as e:
+            result["diagnostics"]["outcome_summary_error"] = str(e)
+
+        # 4. Open Positions
+        open_positions = {}
+        for table, bot in [('ares_positions', 'ARES'), ('athena_positions', 'ATHENA')]:
+            try:
+                cursor.execute(f'''
+                    SELECT position_id, status, open_time, underlying_at_entry
+                    FROM {table}
+                    WHERE status = 'open'
+                ''')
+                open_positions[bot] = cursor.fetchall()
+            except:
+                open_positions[bot] = []
+        result["diagnostics"]["open_positions"] = open_positions
+
+        # 5. Scheduler State
+        try:
+            cursor.execute('''
+                SELECT is_running, last_trade_check, execution_count,
+                       should_auto_restart, updated_at
+                FROM scheduler_state WHERE id = 1
+            ''')
+            result["diagnostics"]["scheduler_state"] = cursor.fetchone()
+        except Exception as e:
+            result["diagnostics"]["scheduler_state_error"] = str(e)
+
+        # 6. Recent decision logs
+        try:
+            cursor.execute('''
+                SELECT bot_name, timestamp, decision_type, decision_value, reasoning
+                FROM decision_logs
+                WHERE DATE(timestamp) = %s
+                ORDER BY timestamp DESC
+                LIMIT 30
+            ''', (today,))
+            result["diagnostics"]["decision_logs"] = cursor.fetchall()
+        except Exception as e:
+            result["diagnostics"]["decision_logs_error"] = str(e)
+
+        # 7. Bot configs (check thresholds)
+        try:
+            cursor.execute('''
+                SELECT bot_name, config_key, config_value
+                FROM bot_config
+                WHERE config_key IN ('min_win_probability', 'vix_skip', 'wall_filter_pct', 'mode')
+            ''')
+            result["diagnostics"]["bot_configs"] = cursor.fetchall()
+        except Exception as e:
+            result["diagnostics"]["bot_configs_error"] = str(e)
+
+        conn.close()
+
+        # 8. Add analysis summary
+        summary = []
+
+        # Check heartbeats
+        heartbeats = result["diagnostics"].get("heartbeats", [])
+        if not heartbeats:
+            summary.append("❌ NO HEARTBEATS - Bots may not be running!")
+        else:
+            for hb in heartbeats:
+                if hb.get('minutes_ago') and hb['minutes_ago'] > 10:
+                    summary.append(f"⚠️ {hb['bot_name']} last heartbeat was {hb['minutes_ago']:.0f} min ago")
+
+        # Check scan activity
+        scans = result["diagnostics"].get("scan_activity", [])
+        if not scans:
+            summary.append("❌ NO SCANS TODAY - Scheduler may not be running!")
+        else:
+            # Check for NO_TRADE outcomes
+            no_trades = [s for s in scans if s.get('outcome') == 'NO_TRADE']
+            if no_trades:
+                reasons = set(s.get('decision_summary', '') for s in no_trades[:5])
+                summary.append(f"ℹ️ {len(no_trades)} NO_TRADE scans. Reasons: {reasons}")
+
+        # Check for open positions
+        for bot, positions in result["diagnostics"].get("open_positions", {}).items():
+            if positions:
+                summary.append(f"🔒 {bot} has {len(positions)} open position(s) - BLOCKING NEW ENTRIES")
+
+        result["summary"] = summary if summary else ["✅ No obvious issues detected - check scan_activity for details"]
+
+        return result
+
+    except Exception as e:
+        if conn:
+            conn.close()
+        raise HTTPException(status_code=500, detail=f"Debug failed: {str(e)}")
