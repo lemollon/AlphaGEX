@@ -628,7 +628,7 @@ export default function LastScanSummary({
                         <div className="text-right">
                           {check.value && (
                             <span className="text-gray-400 font-mono text-xs">
-                              {check.value} {check.threshold && `(need ${check.threshold})`}
+                              {typeof check.value === 'object' ? JSON.stringify(check.value) : check.value} {check.threshold && `(need ${typeof check.threshold === 'object' ? JSON.stringify(check.threshold) : check.threshold})`}
                             </span>
                           )}
                         </div>
