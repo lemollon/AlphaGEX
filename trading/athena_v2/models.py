@@ -175,7 +175,7 @@ class ATHENAConfig:
     min_rr_ratio: float = 0.8  # Min risk:reward (realistic for 0DTE debit spreads)
 
     # Oracle thresholds
-    min_win_probability: float = 0.48  # Minimum Oracle win probability to trade (48% - directional is riskier)
+    min_win_probability: float = 0.42  # Minimum Oracle win probability to trade (42%)
 
     # Exit rules
     profit_target_pct: float = 50.0  # Take profit at 50% of max

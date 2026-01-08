@@ -1333,8 +1333,8 @@ class OracleAdvisor:
         self.live_log = oracle_live_log
 
         # Thresholds
-        self.high_confidence_threshold = 0.70
-        self.low_confidence_threshold = 0.55
+        self.high_confidence_threshold = 0.65
+        self.low_confidence_threshold = 0.45
 
         # Claude AI Enhancer
         self.claude: Optional[OracleClaudeEnhancer] = None

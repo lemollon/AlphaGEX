@@ -254,14 +254,15 @@ class AutonomousTraderScheduler:
 
         # ATLAS - SPX Cash-Secured Put Wheel Trader
         # Capital: $400,000 (40% of total)
+        # LIVE mode: Executes real trades on Tradier (production API for SPX)
         self.atlas_trader = None
         if ATLAS_AVAILABLE:
             try:
                 self.atlas_trader = SPXWheelTrader(
-                    mode=TradingMode.PAPER,
+                    mode=TradingMode.LIVE,
                     initial_capital=CAPITAL_ALLOCATION['ATLAS']
                 )
-                logger.info(f"✅ ATLAS initialized with ${CAPITAL_ALLOCATION['ATLAS']:,} capital")
+                logger.info(f"✅ ATLAS initialized with ${CAPITAL_ALLOCATION['ATLAS']:,} capital (LIVE mode - Tradier)")
             except Exception as e:
                 logger.warning(f"ATLAS initialization failed: {e}")
                 self.atlas_trader = None
@@ -281,48 +282,52 @@ class AutonomousTraderScheduler:
 
         # ATHENA V2 - SPY Directional Spreads
         # Uses GEX + ML signals for directional spread trading
+        # LIVE mode: Executes real trades on Tradier
         self.athena_trader = None
         if ATHENA_AVAILABLE:
             try:
-                config = ATHENAConfig(mode=ATHENATradingMode.PAPER)
+                config = ATHENAConfig(mode=ATHENATradingMode.LIVE)
                 self.athena_trader = ATHENATrader(config=config)
-                logger.info(f"✅ ATHENA V2 initialized (SPY Directional Spreads, PAPER mode)")
+                logger.info(f"✅ ATHENA V2 initialized (SPY Directional Spreads, LIVE mode - Tradier)")
             except Exception as e:
                 logger.warning(f"ATHENA V2 initialization failed: {e}")
                 self.athena_trader = None
 
         # PEGASUS - SPX Iron Condors ($10 spreads)
         # Uses larger spread widths for SPX index options
+        # LIVE mode: Executes real trades on Tradier (production API for SPX)
         self.pegasus_trader = None
         if PEGASUS_AVAILABLE:
             try:
-                config = PEGASUSConfig(mode=PEGASUSTradingMode.PAPER)
+                config = PEGASUSConfig(mode=PEGASUSTradingMode.LIVE)
                 self.pegasus_trader = PEGASUSTrader(config=config)
-                logger.info(f"✅ PEGASUS initialized (SPX Iron Condors, PAPER mode)")
+                logger.info(f"✅ PEGASUS initialized (SPX Iron Condors, LIVE mode - Tradier)")
             except Exception as e:
                 logger.warning(f"PEGASUS initialization failed: {e}")
                 self.pegasus_trader = None
 
         # ICARUS - Aggressive Directional Spreads (relaxed GEX filters)
         # Uses relaxed parameters vs ATHENA: 10% wall filter, 40% min win prob, 4% risk
+        # LIVE mode: Executes real trades on Tradier
         self.icarus_trader = None
         if ICARUS_AVAILABLE:
             try:
-                config = ICARUSConfig(mode=ICARUSTradingMode.PAPER)
+                config = ICARUSConfig(mode=ICARUSTradingMode.LIVE)
                 self.icarus_trader = ICARUSTrader(config=config)
-                logger.info(f"✅ ICARUS initialized (Aggressive Directional Spreads, PAPER mode)")
+                logger.info(f"✅ ICARUS initialized (Aggressive Directional Spreads, LIVE mode - Tradier)")
             except Exception as e:
                 logger.warning(f"ICARUS initialization failed: {e}")
                 self.icarus_trader = None
 
         # TITAN - Aggressive SPX Iron Condors ($12 spreads, daily trading)
         # Multiple trades per day with relaxed filters vs PEGASUS
+        # LIVE mode: Executes real trades on Tradier (production API for SPX)
         self.titan_trader = None
         if TITAN_AVAILABLE:
             try:
-                config = TITANConfig(mode=TITANTradingMode.PAPER)
+                config = TITANConfig(mode=TITANTradingMode.LIVE)
                 self.titan_trader = TITANTrader(config=config)
-                logger.info(f"✅ TITAN initialized (Aggressive SPX Iron Condors, PAPER mode)")
+                logger.info(f"✅ TITAN initialized (Aggressive SPX Iron Condors, LIVE mode - Tradier)")
             except Exception as e:
                 logger.warning(f"TITAN initialization failed: {e}")
                 self.titan_trader = None

@@ -218,8 +218,8 @@ class AresMLAdvisor:
         self.model_version = "0.0.0"
 
         # Thresholds for advice
-        self.high_confidence_threshold = 0.70  # Above this = TRADE_FULL
-        self.low_confidence_threshold = 0.55   # Below this = SKIP_TODAY
+        self.high_confidence_threshold = 0.65  # Above this = TRADE_FULL
+        self.low_confidence_threshold = 0.45   # Below this = SKIP_TODAY
 
         # Create models directory
         os.makedirs(self.MODEL_PATH, exist_ok=True)

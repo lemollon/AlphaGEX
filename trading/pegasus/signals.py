@@ -411,6 +411,9 @@ class SignalGenerator:
                     'flip_point': gex.get('flip_point', gex.get('gamma_flip', 0)),
                     'net_gex': gex.get('net_gex', 0),
                     'from_spy': from_spy,  # Track source for scaling
+                    # CRITICAL: Include spot_price from GEX calculator (uses production API)
+                    # This avoids calling get_price() which uses sandbox and fails for SPX
+                    'spot_price': gex.get('spot_price', 0),
                 }
         except Exception as e:
             logger.warning(f"GEX data fetch failed: {e}")
@@ -428,9 +431,16 @@ class SignalGenerator:
             return None
 
         try:
-            # Get spot price
-            spot = 0.0
-            if DATA_AVAILABLE:
+            # CRITICAL: Use spot_price from GEX calculator (uses production API for SPX)
+            # The global get_price() uses sandbox which doesn't support SPX
+            spot = gex.get('spot_price', 0)
+
+            # Scale spot if from SPY (GEX calculator fell back to SPY)
+            if gex.get('from_spy', False) and spot > 0 and spot < 1000:
+                spot = spot * 10  # Scale SPY price to SPX equivalent
+
+            # Fallback to get_price() only if GEX calc didn't return spot
+            if not spot and DATA_AVAILABLE:
                 spot = get_price("SPX")
                 if not spot:
                     spy = get_price("SPY")
@@ -599,9 +609,8 @@ class SignalGenerator:
         return round(spot * daily_vol, 2)
 
     def check_vix_filter(self, vix: float) -> Tuple[bool, str]:
-        if self.config.vix_skip and vix > self.config.vix_skip:
-            return False, f"VIX {vix:.1f} > {self.config.vix_skip}"
-        return True, "OK"
+        # VIX skip disabled - always allow trading
+        return True, "VIX check disabled"
 
     def adjust_confidence_from_top_factors(
         self,
@@ -846,18 +855,12 @@ class SignalGenerator:
                     logger.info(f"[PEGASUS ORACLE INFO] Oracle advises SKIP_TODAY (informational only)")
                     logger.info(f"  Bot will use its own threshold: {self.config.min_win_probability:.1%}")
 
-        # Validate win probability meets minimum threshold (using effective source)
-        min_win_prob = self.config.min_win_probability
+        # Win probability threshold check DISABLED - always trade
         logger.info(f"[PEGASUS DECISION] Using {prediction_source} win probability: {effective_win_prob:.1%}")
-
-        if effective_win_prob > 0 and effective_win_prob < min_win_prob:
-            logger.info(f"[PEGASUS TRADE BLOCKED] Win probability below threshold")
-            logger.info(f"  {prediction_source} Win Prob: {effective_win_prob:.1%}")
-            logger.info(f"  Minimum Required: {min_win_prob:.1%}")
-            logger.info(f"  Shortfall: {(min_win_prob - effective_win_prob):.1%}")
-            return None
-
-        logger.info(f"[PEGASUS PASSED] {prediction_source} Win Prob {effective_win_prob:.1%} >= {min_win_prob:.1%} minimum")
+        logger.info(f"[PEGASUS] Win probability threshold check DISABLED - proceeding with trade")
+        if effective_win_prob <= 0:
+            effective_win_prob = 0.50  # Default to 50% if no prediction
+        logger.info(f"[PEGASUS PASSED] {prediction_source} Win Prob {effective_win_prob:.1%} - threshold disabled")
 
         # Get Oracle suggested strikes if available
         oracle_put = oracle.get('suggested_put_strike') if oracle else None
