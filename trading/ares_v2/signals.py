@@ -494,12 +494,8 @@ class SignalGenerator:
 
         Returns (can_trade, reason).
         """
-        vix_skip = self.config.vix_skip
-
-        if vix_skip and vix > vix_skip:
-            return False, f"VIX {vix:.1f} > {vix_skip} threshold"
-
-        return True, "VIX within range"
+        # VIX skip disabled - always allow trading
+        return True, "VIX check disabled"
 
     def adjust_confidence_from_top_factors(
         self,
@@ -961,23 +957,16 @@ class SignalGenerator:
                     logger.info(f"[ARES ORACLE INFO] Oracle advises SKIP_TODAY (informational only)")
                     logger.info(f"  Bot will use its own threshold: {self.config.min_win_probability:.1%}")
 
-        # Validate win probability meets minimum threshold (using effective source)
-        min_win_prob = self.config.min_win_probability
+        # Win probability threshold check disabled - always trade
         logger.info(f"[ARES DECISION] Using {prediction_source} win probability: {effective_win_prob:.1%}")
-
-        if effective_win_prob > 0 and effective_win_prob < min_win_prob:
-            logger.info(f"[ARES TRADE BLOCKED] Win probability below threshold")
-            logger.info(f"  {prediction_source} Win Prob: {effective_win_prob:.1%}")
-            logger.info(f"  Minimum Required: {min_win_prob:.1%}")
-            logger.info(f"  Shortfall: {(min_win_prob - effective_win_prob):.1%}")
-            return None
+        logger.info(f"[ARES] Win probability threshold check DISABLED - proceeding with trade")
 
         # Use ML's suggested SD multiplier if available
-        win_probability = effective_win_prob
+        win_probability = effective_win_prob if effective_win_prob > 0 else 0.50  # Default to 50% if no prediction
         if use_ml_prediction and ml_prediction.get('suggested_sd_multiplier'):
             self._ml_suggested_sd = ml_prediction.get('suggested_sd_multiplier', 1.0)
 
-        logger.info(f"[ARES PASSED] {prediction_source} Win Prob {win_probability:.1%} >= {min_win_prob:.1%} minimum")
+        logger.info(f"[ARES PASSED] {prediction_source} Win Prob {win_probability:.1%} - threshold disabled")
 
         # ============================================================
         # GEX DIRECTIONAL ML - Check if market is too directional for IC

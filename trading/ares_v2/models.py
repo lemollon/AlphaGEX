@@ -228,7 +228,7 @@ class ARESConfig:
     max_trades_per_day: int = 3  # Allow up to 3 trades per day with re-entry
 
     # Oracle thresholds
-    min_win_probability: float = 0.50  # Minimum Oracle win probability to trade (50%)
+    min_win_probability: float = 0.42  # Minimum Oracle win probability to trade (42%)
 
     # Stop loss / Profit target
     use_stop_loss: bool = False

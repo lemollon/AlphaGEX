@@ -607,10 +607,8 @@ class SignalGenerator:
         return round(spot * daily_vol, 2)
 
     def check_vix_filter(self, vix: float) -> Tuple[bool, str]:
-        """TITAN has relaxed VIX filter (40 vs PEGASUS's 32)"""
-        if self.config.vix_skip and vix > self.config.vix_skip:
-            return False, f"VIX {vix:.1f} > {self.config.vix_skip}"
-        return True, "OK"
+        """VIX filter disabled - always allow trading"""
+        return True, "VIX check disabled"
 
     def adjust_confidence_from_top_factors(
         self,
@@ -850,18 +848,12 @@ class SignalGenerator:
                     logger.info(f"[TITAN ORACLE INFO] Oracle advises SKIP_TODAY (informational only)")
                     logger.info(f"  Bot will use its own aggressive threshold: {self.config.min_win_probability:.1%}")
 
-        # Validate win probability meets minimum threshold (using effective source)
-        min_win_prob = self.config.min_win_probability
+        # Win probability threshold check DISABLED - always trade
         logger.info(f"[TITAN DECISION] Using {prediction_source} win probability: {effective_win_prob:.1%}")
-
-        if effective_win_prob > 0 and effective_win_prob < min_win_prob:
-            logger.info(f"[TITAN TRADE BLOCKED] Win probability below threshold")
-            logger.info(f"  {prediction_source} Win Prob: {effective_win_prob:.1%}")
-            logger.info(f"  Minimum Required: {min_win_prob:.1%}")
-            logger.info(f"  Shortfall: {(min_win_prob - effective_win_prob):.1%}")
-            return None
-
-        logger.info(f"[TITAN PASSED] {prediction_source} Win Prob {effective_win_prob:.1%} >= {min_win_prob:.1%} minimum")
+        logger.info(f"[TITAN] Win probability threshold check DISABLED - proceeding with trade")
+        if effective_win_prob <= 0:
+            effective_win_prob = 0.50  # Default to 50% if no prediction
+        logger.info(f"[TITAN PASSED] {prediction_source} Win Prob {effective_win_prob:.1%} - threshold disabled")
 
         # Get Oracle suggested strikes if available
         oracle_put = oracle.get('suggested_put_strike') if oracle else None

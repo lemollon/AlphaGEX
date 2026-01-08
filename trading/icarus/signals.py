@@ -664,17 +664,15 @@ class SignalGenerator:
         spot_price = gex_data['spot_price']
         vix = gex_data['vix']
 
-        # VIX filter - skip in extreme volatility (spreads too expensive, execution risk)
-        # ICARUS is aggressive so tolerates higher VIX (45 vs ATHENA's 40)
-        if vix > 45:
-            logger.info(f"[ICARUS VIX SKIP] VIX {vix:.1f} > 45 - extreme volatility, skipping")
-            return None
+        # VIX filter DISABLED - always allow trading
+        logger.info(f"[ICARUS] VIX {vix:.1f} - skip check DISABLED")
 
-        # Step 2: Check wall proximity (10% filter for ICARUS!)
+        # Wall proximity check - get direction but don't block
         near_wall, wall_direction, wall_reason = self.check_wall_proximity(gex_data)
         if not near_wall:
-            logger.info(f"ICARUS wall filter failed: {wall_reason}")
-            return None
+            logger.info(f"[ICARUS] Wall filter: {wall_reason} - but NOT blocking")
+            # Use FLAT direction if no wall proximity
+            wall_direction = "FLAT"
 
         # Step 3: Get ML signal from 5 GEX probability models (PREFERRED SOURCE)
         # ICARUS is AGGRESSIVE - ML models backtested with high win rates take precedence
@@ -739,17 +737,12 @@ class SignalGenerator:
                 else:
                     logger.info(f"[ICARUS] Oracle SKIP_TODAY - using aggressive 40% threshold")
 
-        # Validate win probability (ICARUS uses aggressive 40% threshold)
-        min_win_prob = self.config.min_win_probability  # 40% for ICARUS
+        # Win probability threshold check DISABLED - always trade
         logger.info(f"[ICARUS DECISION] Using {prediction_source} win probability: {effective_win_prob:.1%}")
-
-        if effective_win_prob > 0 and effective_win_prob < min_win_prob:
-            logger.info(f"[ICARUS TRADE BLOCKED] Win probability below aggressive threshold")
-            logger.info(f"  {prediction_source} Win Prob: {effective_win_prob:.1%}")
-            logger.info(f"  Minimum Required: {min_win_prob:.1%} (aggressive)")
-            return None
-
-        logger.info(f"[ICARUS PASSED] {prediction_source} Win Prob {effective_win_prob:.1%} >= {min_win_prob:.1%}")
+        logger.info(f"[ICARUS] Win probability threshold check DISABLED - proceeding with trade")
+        if effective_win_prob <= 0:
+            effective_win_prob = 0.50  # Default to 50% if no prediction
+        logger.info(f"[ICARUS PASSED] {prediction_source} Win Prob {effective_win_prob:.1%} - threshold disabled")
 
         # Step 4: Determine final direction
         direction = wall_direction

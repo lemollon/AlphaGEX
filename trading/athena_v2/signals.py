@@ -658,17 +658,15 @@ class SignalGenerator:
         spot_price = gex_data['spot_price']
         vix = gex_data['vix']
 
-        # VIX filter - skip in extreme volatility (spreads too expensive, execution risk)
-        # Directional bots can tolerate higher VIX than IC bots
-        if vix > 40:
-            logger.info(f"[ATHENA VIX SKIP] VIX {vix:.1f} > 40 - extreme volatility, skipping")
-            return None
+        # VIX filter DISABLED - always allow trading
+        logger.info(f"[ATHENA] VIX {vix:.1f} - skip check DISABLED")
 
-        # Step 2: Check wall proximity
+        # Wall proximity check - get direction but don't block
         near_wall, wall_direction, wall_reason = self.check_wall_proximity(gex_data)
         if not near_wall:
-            logger.info(f"Wall filter failed: {wall_reason}")
-            return None
+            logger.info(f"[ATHENA] Wall filter: {wall_reason} - but NOT blocking")
+            # Use FLAT direction if no wall proximity
+            wall_direction = "FLAT"
 
         # Step 3: Get ML signal from 5 GEX probability models (PREFERRED SOURCE)
         ml_signal = self.get_ml_signal(gex_data)
@@ -734,18 +732,12 @@ class SignalGenerator:
                     logger.info(f"[ATHENA ORACLE INFO] Oracle advises SKIP_TODAY (informational only)")
                     logger.info(f"  Bot will use its own threshold: {self.config.min_win_probability:.1%}")
 
-        # Validate win probability meets minimum threshold (using effective source)
-        min_win_prob = self.config.min_win_probability
+        # Win probability threshold check DISABLED - always trade
         logger.info(f"[ATHENA DECISION] Using {prediction_source} win probability: {effective_win_prob:.1%}")
-
-        if effective_win_prob > 0 and effective_win_prob < min_win_prob:
-            logger.info(f"[ATHENA TRADE BLOCKED] Win probability below threshold")
-            logger.info(f"  {prediction_source} Win Prob: {effective_win_prob:.1%}")
-            logger.info(f"  Minimum Required: {min_win_prob:.1%}")
-            logger.info(f"  Shortfall: {(min_win_prob - effective_win_prob):.1%}")
-            return None
-
-        logger.info(f"[ATHENA PASSED] {prediction_source} Win Prob {effective_win_prob:.1%} >= {min_win_prob:.1%} minimum")
+        logger.info(f"[ATHENA] Win probability threshold check DISABLED - proceeding with trade")
+        if effective_win_prob <= 0:
+            effective_win_prob = 0.50  # Default to 50% if no prediction
+        logger.info(f"[ATHENA PASSED] {prediction_source} Win Prob {effective_win_prob:.1%} - threshold disabled")
 
         # Step 4: Determine final direction
         # IMPROVED: Oracle with very high confidence can override wall direction
