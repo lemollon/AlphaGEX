@@ -189,6 +189,38 @@ class OrderExecutor:
             except Exception as e:
                 logger.debug(f"Position Management Agent init failed: {e}")
 
+    def _tradier_place_spread_with_retry(self, **kwargs) -> Optional[Dict]:
+        """
+        Place spread order with retry logic and exponential backoff.
+
+        Critical for handling transient network issues and API rate limits.
+        """
+        import time
+        max_retries = 3
+
+        if not self.tradier:
+            logger.error("Tradier not available for order placement")
+            return None
+
+        for attempt in range(max_retries):
+            try:
+                result = self.tradier.place_vertical_spread(**kwargs)
+                if result and result.get('order'):
+                    return result
+                elif result:
+                    logger.warning(f"Tradier returned empty result on attempt {attempt + 1}")
+                    return None  # Empty result = don't retry
+            except Exception as e:
+                logger.warning(f"Tradier API error (attempt {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    sleep_time = (2 ** attempt)  # 1s, 2s, 4s
+                    logger.info(f"Retrying in {sleep_time}s...")
+                    time.sleep(sleep_time)
+                else:
+                    logger.error(f"Tradier API failed after {max_retries} attempts")
+                    raise
+        return None
+
     def execute_spread(
         self,
         signal: TradeSignal,
@@ -294,8 +326,8 @@ class OrderExecutor:
             # Calculate contracts with Thompson allocation weight
             contracts = self._calculate_position_size(actual_debit * 100, thompson_weight)
 
-            # Place the order
-            order_result = self.tradier.place_vertical_spread(
+            # Place the order with retry logic
+            order_result = self._tradier_place_spread_with_retry(
                 symbol=self.config.ticker,
                 expiration=signal.expiration,
                 long_strike=signal.long_strike,
@@ -437,7 +469,8 @@ class OrderExecutor:
 
             close_price = spread_quote['mid_price']
 
-            order_result = self.tradier.place_vertical_spread(
+            # Place closing order with retry logic
+            order_result = self._tradier_place_spread_with_retry(
                 symbol=self.config.ticker,
                 expiration=position.expiration,
                 long_strike=position.long_strike,
