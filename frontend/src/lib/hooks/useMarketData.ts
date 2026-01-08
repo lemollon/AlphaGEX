@@ -109,6 +109,15 @@ const fetchers = {
       return { success: false, data: { equity_curve: [] } }
     }
   },
+  aresIntradayEquity: async (date?: string) => {
+    try {
+      const params = date ? `?date=${date}` : ''
+      const response = await api.get(`/api/ares/equity-curve/intraday${params}`)
+      return response.data
+    } catch {
+      return { success: false, data: { intraday_curve: [] } }
+    }
+  },
   aresTradierStatus: async () => {
     try {
       const response = await api.get('/api/ares/tradier-status')
@@ -205,6 +214,23 @@ const fetchers = {
       return { success: false, data: null }
     }
   },
+  athenaEquityCurve: async (days: number = 30) => {
+    try {
+      const response = await api.get(`/api/athena/equity-curve?days=${days}`)
+      return response.data
+    } catch {
+      return { success: false, data: { equity_curve: [] } }
+    }
+  },
+  athenaIntradayEquity: async (date?: string) => {
+    try {
+      const params = date ? `?date=${date}` : ''
+      const response = await api.get(`/api/athena/equity-curve/intraday${params}`)
+      return response.data
+    } catch {
+      return { success: false, data: { intraday_curve: [] } }
+    }
+  },
 
   // ICARUS Bot - Aggressive Directional Spreads
   icarusStatus: async () => {
@@ -273,6 +299,23 @@ const fetchers = {
       return response.data
     } catch {
       return { success: false, data: null }
+    }
+  },
+  icarusEquityCurve: async (days: number = 30) => {
+    try {
+      const response = await api.get(`/api/icarus/equity-curve?days=${days}`)
+      return response.data
+    } catch {
+      return { success: false, data: { equity_curve: [] } }
+    }
+  },
+  icarusIntradayEquity: async (date?: string) => {
+    try {
+      const params = date ? `?date=${date}` : ''
+      const response = await api.get(`/api/icarus/equity-curve/intraday${params}`)
+      return response.data
+    } catch {
+      return { success: false, data: { intraday_curve: [] } }
     }
   },
   icarusScanActivity: async (limit?: number, date?: string) => {
@@ -655,6 +698,15 @@ const fetchers = {
       return { success: false, data: { equity_curve: [] } }
     }
   },
+  pegasusIntradayEquity: async (date?: string) => {
+    try {
+      const params = date ? `?date=${date}` : ''
+      const response = await api.get(`/api/pegasus/equity-curve/intraday${params}`)
+      return response.data
+    } catch {
+      return { success: false, data: { intraday_curve: [] } }
+    }
+  },
   pegasusConfig: async () => {
     try {
       const response = await api.get('/api/pegasus/config')
@@ -706,6 +758,15 @@ const fetchers = {
       return response.data
     } catch {
       return { success: false, data: { equity_curve: [] } }
+    }
+  },
+  titanIntradayEquity: async (date?: string) => {
+    try {
+      const params = date ? `?date=${date}` : ''
+      const response = await api.get(`/api/titan/equity-curve/intraday${params}`)
+      return response.data
+    } catch {
+      return { success: false, data: { intraday_curve: [] } }
     }
   },
   titanConfig: async () => {
@@ -938,6 +999,14 @@ export function useARESEquityCurve(days: number = 30, options?: SWRConfiguration
   )
 }
 
+export function useARESIntradayEquity(date?: string, options?: SWRConfiguration) {
+  return useSWR(
+    `ares-intraday-equity-${date || 'today'}`,
+    () => fetchers.aresIntradayEquity(date),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
 export function useARESTradierStatus(options?: SWRConfiguration) {
   return useSWR('ares-tradier-status', fetchers.aresTradierStatus, {
     ...swrConfig,
@@ -1046,6 +1115,22 @@ export function useATHENAConfig(options?: SWRConfiguration) {
   })
 }
 
+export function useATHENAEquityCurve(days: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `athena-equity-curve-${days}`,
+    () => fetchers.athenaEquityCurve(days),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useATHENAIntradayEquity(date?: string, options?: SWRConfiguration) {
+  return useSWR(
+    `athena-intraday-equity-${date || 'today'}`,
+    () => fetchers.athenaIntradayEquity(date),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
 export function useARESLivePnL(options?: SWRConfiguration) {
   return useSWR(
     'ares-live-pnl',
@@ -1130,6 +1215,22 @@ export function useICARUSConfig(options?: SWRConfiguration) {
   })
 }
 
+export function useICARUSEquityCurve(days: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `icarus-equity-curve-${days}`,
+    () => fetchers.icarusEquityCurve(days),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useICARUSIntradayEquity(date?: string, options?: SWRConfiguration) {
+  return useSWR(
+    `icarus-intraday-equity-${date || 'today'}`,
+    () => fetchers.icarusIntradayEquity(date),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
 export function useICARUSScanActivity(limit: number = 50, date?: string, options?: SWRConfiguration) {
   return useSWR(
     `icarus-scan-activity-${limit}-${date || 'all'}`,
@@ -1194,6 +1295,14 @@ export function usePEGASUSEquityCurve(days: number = 30, options?: SWRConfigurat
   )
 }
 
+export function usePEGASUSIntradayEquity(date?: string, options?: SWRConfiguration) {
+  return useSWR(
+    `pegasus-intraday-equity-${date || 'today'}`,
+    () => fetchers.pegasusIntradayEquity(date),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
 export function usePEGASUSConfig(options?: SWRConfiguration) {
   return useSWR('pegasus-config', fetchers.pegasusConfig, {
     ...swrConfig,
@@ -1242,6 +1351,14 @@ export function useTITANEquityCurve(days: number = 30, options?: SWRConfiguratio
   return useSWR(
     `titan-equity-curve-${days}`,
     () => fetchers.titanEquityCurve(days),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useTITANIntradayEquity(date?: string, options?: SWRConfiguration) {
+  return useSWR(
+    `titan-intraday-equity-${date || 'today'}`,
+    () => fetchers.titanIntradayEquity(date),
     { ...swrConfig, refreshInterval: 60 * 1000, ...options }
   )
 }

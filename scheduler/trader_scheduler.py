@@ -2025,6 +2025,43 @@ class AutonomousTraderScheduler:
         except Exception as e:
             logger.error(f"Failed to record training history: {e}")
 
+    def scheduled_equity_snapshots_logic(self):
+        """
+        EQUITY SNAPSHOTS - runs every 5 minutes during market hours
+
+        Saves equity snapshots for all bots to enable intraday charting:
+        - ARES, ATHENA, PEGASUS, TITAN, ICARUS
+
+        These snapshots power the /equity-curve/intraday endpoints
+        showing real-time equity changes throughout the trading day.
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        # Only run during market hours
+        if not self.is_market_open():
+            return
+
+        logger.debug(f"EQUITY_SNAPSHOTS: Taking snapshots at {now.strftime('%H:%M:%S')}")
+
+        try:
+            import requests
+            base_url = "http://localhost:8000"
+
+            # Take snapshots for all bots
+            bots = ['ares', 'athena', 'titan', 'pegasus', 'icarus']
+            for bot in bots:
+                try:
+                    response = requests.post(f"{base_url}/api/{bot}/equity-snapshot", timeout=10)
+                    if response.status_code == 200:
+                        logger.debug(f"EQUITY_SNAPSHOTS: {bot.upper()} snapshot saved")
+                    else:
+                        logger.debug(f"EQUITY_SNAPSHOTS: {bot.upper()} snapshot failed: {response.status_code}")
+                except Exception as e:
+                    logger.debug(f"EQUITY_SNAPSHOTS: {bot.upper()} error: {e}")
+
+        except Exception as e:
+            logger.debug(f"EQUITY_SNAPSHOTS: Error taking snapshots: {e}")
+
     def start(self):
         """Start the autonomous trading scheduler"""
         if not APSCHEDULER_AVAILABLE:
@@ -2049,6 +2086,7 @@ class AutonomousTraderScheduler:
         logger.info(f"VIX_SIGNAL Schedule: HOURLY (9 AM - 3 PM CT), Hedge Signal Generation")
         logger.info(f"SOLOMON Schedule: DAILY at 4:00 PM CT (after market close)")
         logger.info(f"QUANT Schedule: WEEKLY on Sunday at 5:00 PM CT (ML model training)")
+        logger.info(f"EQUITY_SNAPSHOTS Schedule: Every 5 min during market hours (intraday charts)")
         logger.info(f"Log file: {LOG_FILE}")
         logger.info("=" * 80)
 
@@ -2415,6 +2453,22 @@ class AutonomousTraderScheduler:
             logger.info("✅ AUTO-VALIDATION job scheduled (WEEKLY on Saturday at 6:00 PM CT)")
         else:
             logger.warning("⚠️ AutoValidationSystem not available - ML validation disabled")
+
+        # =================================================================
+        # EQUITY SNAPSHOTS JOB: Intraday chart data - runs every 5 minutes
+        # Saves equity snapshots for all bots during market hours
+        # =================================================================
+        self.scheduler.add_job(
+            self.scheduled_equity_snapshots_logic,
+            trigger=IntervalTrigger(
+                minutes=5,
+                start_date=datetime.now(CENTRAL_TZ).replace(hour=8, minute=35, second=0)
+            ),
+            id='equity_snapshots',
+            name='EQUITY_SNAPSHOTS - Intraday Chart Data',
+            replace_existing=True
+        )
+        logger.info("✅ EQUITY_SNAPSHOTS job scheduled (every 5 min during market hours)")
 
         self.scheduler.start()
         self.is_running = True
