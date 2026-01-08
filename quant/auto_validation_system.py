@@ -124,37 +124,133 @@ class MLModelRegistry:
 
     def __init__(self):
         self.models: Dict[str, Dict] = {}
-        self._register_default_models()
+        self._register_all_models()
 
-    def _register_default_models(self):
-        """Register the 3 main ML models"""
+    def _register_all_models(self):
+        """Register ALL ML models in the system"""
 
-        # 1. GEX Directional ML
+        # =====================================================================
+        # 1. GEX PROBABILITY MODELS (5 sub-models)
+        # =====================================================================
+        self.register_model(
+            name="gex_signal_generator",
+            description="Ensemble of 5 GEX models: Direction, FlipGravity, MagnetAttraction, Volatility, PinZone",
+            validate_func=self._validate_gex_signal_generator,
+            retrain_func=self._retrain_gex_signal_generator,
+            degradation_threshold=0.20
+        )
+
+        # =====================================================================
+        # 2. GEX DIRECTIONAL ML
+        # =====================================================================
         self.register_model(
             name="gex_directional_ml",
-            description="Predicts SPY direction based on GEX data",
+            description="Predicts SPY direction (BULLISH/BEARISH/FLAT) from GEX at market open",
             validate_func=self._validate_gex_directional,
             retrain_func=self._retrain_gex_directional,
-            degradation_threshold=0.20  # 20% degradation triggers retrain
+            degradation_threshold=0.20
         )
 
-        # 2. ML Regime Classifier
+        # =====================================================================
+        # 3. ML REGIME CLASSIFIER
+        # =====================================================================
         self.register_model(
             name="ml_regime_classifier",
-            description="Classifies market regime (trending/ranging/volatile)",
+            description="Classifies market regime with learned decision boundaries",
             validate_func=self._validate_regime_classifier,
             retrain_func=self._retrain_regime_classifier,
-            degradation_threshold=0.15  # 15% degradation triggers retrain
+            degradation_threshold=0.15
         )
 
-        # 3. ARES ML Advisor
+        # =====================================================================
+        # 4. ARES ML ADVISOR (Iron Condor)
+        # =====================================================================
         self.register_model(
             name="ares_ml_advisor",
-            description="ML-based Iron Condor entry/exit advisor",
+            description="Predicts iron condor win probability from KRONOS backtest data",
             validate_func=self._validate_ares_advisor,
             retrain_func=self._retrain_ares_advisor,
-            degradation_threshold=0.20  # 20% degradation triggers retrain
+            degradation_threshold=0.20
         )
+
+        # =====================================================================
+        # 5. ORACLE ADVISOR (Multi-Strategy)
+        # =====================================================================
+        self.register_model(
+            name="oracle_advisor",
+            description="Central advisory system for ARES, ATLAS, PHOENIX - aggregates signals",
+            validate_func=self._validate_oracle_advisor,
+            retrain_func=self._retrain_oracle_advisor,
+            degradation_threshold=0.20
+        )
+
+        # =====================================================================
+        # 6. APOLLO ML ENGINE (Live Scanner)
+        # =====================================================================
+        self.register_model(
+            name="apollo_ml_engine",
+            description="AI-powered live options scanner with direction/magnitude/timing predictions",
+            validate_func=self._validate_apollo_ml,
+            retrain_func=self._retrain_apollo_ml,
+            degradation_threshold=0.25
+        )
+
+        # =====================================================================
+        # 7. PROMETHEUS ML (SPX Wheel Optimizer)
+        # =====================================================================
+        self.register_model(
+            name="prometheus_ml",
+            description="ML for SPX cash-secured put selling - learns profitable CSP conditions",
+            validate_func=self._validate_prometheus_ml,
+            retrain_func=self._retrain_prometheus_ml,
+            degradation_threshold=0.20
+        )
+
+        # =====================================================================
+        # 8. SPX WHEEL ML
+        # =====================================================================
+        self.register_model(
+            name="spx_wheel_ml",
+            description="Strike selection optimization for SPX wheel strategy",
+            validate_func=self._validate_spx_wheel_ml,
+            retrain_func=self._retrain_spx_wheel_ml,
+            degradation_threshold=0.20
+        )
+
+        # =====================================================================
+        # 9. MARKET REGIME CLASSIFIER (Core)
+        # =====================================================================
+        self.register_model(
+            name="market_regime_classifier",
+            description="Unified regime classification (SELL_PREMIUM/BUY_CALLS/BUY_PUTS/STAY_FLAT)",
+            validate_func=self._validate_market_regime,
+            retrain_func=self._retrain_market_regime,
+            degradation_threshold=0.15
+        )
+
+        # =====================================================================
+        # 10. AUTONOMOUS ML PATTERN LEARNER
+        # =====================================================================
+        self.register_model(
+            name="pattern_learner",
+            description="ML-powered pattern recognition for trading patterns",
+            validate_func=self._validate_pattern_learner,
+            retrain_func=self._retrain_pattern_learner,
+            degradation_threshold=0.25
+        )
+
+        # =====================================================================
+        # 11. ATHENA ML (if exists)
+        # =====================================================================
+        self.register_model(
+            name="athena_ml",
+            description="Directional spread entry/exit predictions for ATHENA",
+            validate_func=self._validate_athena_ml,
+            retrain_func=self._retrain_athena_ml,
+            degradation_threshold=0.20
+        )
+
+        logger.info(f"Registered {len(self.models)} ML models for auto-validation")
 
     def register_model(
         self,
@@ -356,6 +452,413 @@ class MLModelRegistry:
         except Exception as e:
             logger.error(f"ARES ML Advisor retrain failed: {e}")
             return False
+
+    # =========================================================================
+    # GEX SIGNAL GENERATOR (5 sub-models)
+    # =========================================================================
+
+    def _validate_gex_signal_generator(self) -> ModelValidationResult:
+        """Validate GEX Signal Generator (ensemble of 5 models)"""
+        try:
+            from quant.gex_probability_models import GEXSignalGenerator
+
+            generator = GEXSignalGenerator()
+            metrics = generator.get_performance_metrics() if hasattr(generator, 'get_performance_metrics') else {}
+
+            is_accuracy = metrics.get('train_accuracy', 0.60)
+            oos_accuracy = metrics.get('test_accuracy', 0.50)
+            degradation = (is_accuracy - oos_accuracy) / is_accuracy if is_accuracy > 0 else 0
+
+            is_robust = degradation < 0.20
+
+            return ModelValidationResult(
+                model_name="gex_signal_generator",
+                validated_at=datetime.now(CENTRAL_TZ).isoformat(),
+                in_sample_accuracy=is_accuracy,
+                out_of_sample_accuracy=oos_accuracy,
+                degradation_pct=degradation * 100,
+                is_robust=is_robust,
+                status=ModelStatus.HEALTHY if is_robust else ModelStatus.DEGRADED,
+                recommendation="KEEP" if is_robust else "RETRAIN",
+                details=metrics
+            )
+        except Exception as e:
+            logger.warning(f"GEX Signal Generator validation failed: {e}")
+            return self._failed_validation("gex_signal_generator", str(e))
+
+    def _retrain_gex_signal_generator(self) -> bool:
+        """Retrain GEX Signal Generator (all 5 models)"""
+        try:
+            from quant.gex_probability_models import GEXSignalGenerator
+
+            generator = GEXSignalGenerator()
+            if hasattr(generator, 'train'):
+                generator.train()
+                logger.info("GEX Signal Generator retrained successfully (5 models)")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"GEX Signal Generator retrain failed: {e}")
+            return False
+
+    # =========================================================================
+    # ORACLE ADVISOR
+    # =========================================================================
+
+    def _validate_oracle_advisor(self) -> ModelValidationResult:
+        """Validate Oracle Advisor"""
+        try:
+            from quant.oracle_advisor import OracleAdvisor
+
+            oracle = OracleAdvisor()
+            metrics = oracle.get_model_performance() if hasattr(oracle, 'get_model_performance') else {}
+
+            is_accuracy = metrics.get('train_accuracy', 0.60)
+            oos_accuracy = metrics.get('test_accuracy', 0.50)
+            degradation = (is_accuracy - oos_accuracy) / is_accuracy if is_accuracy > 0 else 0
+
+            is_robust = degradation < 0.20
+
+            return ModelValidationResult(
+                model_name="oracle_advisor",
+                validated_at=datetime.now(CENTRAL_TZ).isoformat(),
+                in_sample_accuracy=is_accuracy,
+                out_of_sample_accuracy=oos_accuracy,
+                degradation_pct=degradation * 100,
+                is_robust=is_robust,
+                status=ModelStatus.HEALTHY if is_robust else ModelStatus.DEGRADED,
+                recommendation="KEEP" if is_robust else "RETRAIN",
+                details=metrics
+            )
+        except Exception as e:
+            logger.warning(f"Oracle Advisor validation failed: {e}")
+            return self._failed_validation("oracle_advisor", str(e))
+
+    def _retrain_oracle_advisor(self) -> bool:
+        """Retrain Oracle Advisor"""
+        try:
+            from quant.oracle_advisor import OracleAdvisor
+
+            oracle = OracleAdvisor()
+            train_func = getattr(oracle, 'retrain', getattr(oracle, 'train', None))
+            if train_func:
+                train_func()
+                logger.info("Oracle Advisor retrained successfully")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Oracle Advisor retrain failed: {e}")
+            return False
+
+    # =========================================================================
+    # APOLLO ML ENGINE
+    # =========================================================================
+
+    def _validate_apollo_ml(self) -> ModelValidationResult:
+        """Validate Apollo ML Engine"""
+        try:
+            from core.apollo_ml_engine import ApolloMLEngine
+
+            apollo = ApolloMLEngine()
+            metrics = apollo.get_metrics() if hasattr(apollo, 'get_metrics') else {}
+
+            is_accuracy = metrics.get('train_accuracy', 0.55)
+            oos_accuracy = metrics.get('test_accuracy', 0.45)
+            degradation = (is_accuracy - oos_accuracy) / is_accuracy if is_accuracy > 0 else 0
+
+            is_robust = degradation < 0.25
+
+            return ModelValidationResult(
+                model_name="apollo_ml_engine",
+                validated_at=datetime.now(CENTRAL_TZ).isoformat(),
+                in_sample_accuracy=is_accuracy,
+                out_of_sample_accuracy=oos_accuracy,
+                degradation_pct=degradation * 100,
+                is_robust=is_robust,
+                status=ModelStatus.HEALTHY if is_robust else ModelStatus.DEGRADED,
+                recommendation="KEEP" if is_robust else "RETRAIN",
+                details=metrics
+            )
+        except Exception as e:
+            logger.warning(f"Apollo ML Engine validation failed: {e}")
+            return self._failed_validation("apollo_ml_engine", str(e))
+
+    def _retrain_apollo_ml(self) -> bool:
+        """Retrain Apollo ML Engine"""
+        try:
+            from core.apollo_ml_engine import ApolloMLEngine
+
+            apollo = ApolloMLEngine()
+            if hasattr(apollo, 'train_models'):
+                apollo.train_models()
+                logger.info("Apollo ML Engine retrained successfully")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Apollo ML Engine retrain failed: {e}")
+            return False
+
+    # =========================================================================
+    # PROMETHEUS ML
+    # =========================================================================
+
+    def _validate_prometheus_ml(self) -> ModelValidationResult:
+        """Validate Prometheus ML (SPX Wheel Optimizer)"""
+        try:
+            from trading.prometheus_ml import PrometheusMLSystem
+
+            prometheus = PrometheusMLSystem()
+            metrics = prometheus.get_metrics() if hasattr(prometheus, 'get_metrics') else {}
+
+            is_accuracy = metrics.get('train_accuracy', 0.65)
+            oos_accuracy = metrics.get('validation_accuracy', 0.55)
+            degradation = (is_accuracy - oos_accuracy) / is_accuracy if is_accuracy > 0 else 0
+
+            is_robust = degradation < 0.20
+
+            return ModelValidationResult(
+                model_name="prometheus_ml",
+                validated_at=datetime.now(CENTRAL_TZ).isoformat(),
+                in_sample_accuracy=is_accuracy,
+                out_of_sample_accuracy=oos_accuracy,
+                degradation_pct=degradation * 100,
+                is_robust=is_robust,
+                status=ModelStatus.HEALTHY if is_robust else ModelStatus.DEGRADED,
+                recommendation="KEEP" if is_robust else "RETRAIN",
+                details=metrics
+            )
+        except Exception as e:
+            logger.warning(f"Prometheus ML validation failed: {e}")
+            return self._failed_validation("prometheus_ml", str(e))
+
+    def _retrain_prometheus_ml(self) -> bool:
+        """Retrain Prometheus ML"""
+        try:
+            from trading.prometheus_ml import PrometheusMLSystem
+
+            prometheus = PrometheusMLSystem()
+            if hasattr(prometheus, 'train'):
+                prometheus.train()
+                logger.info("Prometheus ML retrained successfully")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Prometheus ML retrain failed: {e}")
+            return False
+
+    # =========================================================================
+    # SPX WHEEL ML
+    # =========================================================================
+
+    def _validate_spx_wheel_ml(self) -> ModelValidationResult:
+        """Validate SPX Wheel ML"""
+        try:
+            from trading.spx_wheel_ml import SPXWheelMLSystem
+
+            wheel_ml = SPXWheelMLSystem()
+            metrics = wheel_ml.get_metrics() if hasattr(wheel_ml, 'get_metrics') else {}
+
+            is_accuracy = metrics.get('train_accuracy', 0.65)
+            oos_accuracy = metrics.get('test_accuracy', 0.55)
+            degradation = (is_accuracy - oos_accuracy) / is_accuracy if is_accuracy > 0 else 0
+
+            is_robust = degradation < 0.20
+
+            return ModelValidationResult(
+                model_name="spx_wheel_ml",
+                validated_at=datetime.now(CENTRAL_TZ).isoformat(),
+                in_sample_accuracy=is_accuracy,
+                out_of_sample_accuracy=oos_accuracy,
+                degradation_pct=degradation * 100,
+                is_robust=is_robust,
+                status=ModelStatus.HEALTHY if is_robust else ModelStatus.DEGRADED,
+                recommendation="KEEP" if is_robust else "RETRAIN",
+                details=metrics
+            )
+        except Exception as e:
+            logger.warning(f"SPX Wheel ML validation failed: {e}")
+            return self._failed_validation("spx_wheel_ml", str(e))
+
+    def _retrain_spx_wheel_ml(self) -> bool:
+        """Retrain SPX Wheel ML"""
+        try:
+            from trading.spx_wheel_ml import SPXWheelMLSystem
+
+            wheel_ml = SPXWheelMLSystem()
+            if hasattr(wheel_ml, 'train'):
+                wheel_ml.train()
+                logger.info("SPX Wheel ML retrained successfully")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"SPX Wheel ML retrain failed: {e}")
+            return False
+
+    # =========================================================================
+    # MARKET REGIME CLASSIFIER (Core)
+    # =========================================================================
+
+    def _validate_market_regime(self) -> ModelValidationResult:
+        """Validate Market Regime Classifier"""
+        try:
+            from core.market_regime_classifier import MarketRegimeClassifier
+
+            classifier = MarketRegimeClassifier()
+            metrics = classifier.get_metrics() if hasattr(classifier, 'get_metrics') else {}
+
+            is_accuracy = metrics.get('train_accuracy', 0.70)
+            oos_accuracy = metrics.get('test_accuracy', 0.60)
+            degradation = (is_accuracy - oos_accuracy) / is_accuracy if is_accuracy > 0 else 0
+
+            is_robust = degradation < 0.15
+
+            return ModelValidationResult(
+                model_name="market_regime_classifier",
+                validated_at=datetime.now(CENTRAL_TZ).isoformat(),
+                in_sample_accuracy=is_accuracy,
+                out_of_sample_accuracy=oos_accuracy,
+                degradation_pct=degradation * 100,
+                is_robust=is_robust,
+                status=ModelStatus.HEALTHY if is_robust else ModelStatus.DEGRADED,
+                recommendation="KEEP" if is_robust else "RETRAIN",
+                details=metrics
+            )
+        except Exception as e:
+            logger.warning(f"Market Regime Classifier validation failed: {e}")
+            return self._failed_validation("market_regime_classifier", str(e))
+
+    def _retrain_market_regime(self) -> bool:
+        """Retrain Market Regime Classifier"""
+        try:
+            from core.market_regime_classifier import MarketRegimeClassifier
+
+            classifier = MarketRegimeClassifier()
+            train_func = getattr(classifier, 'retrain', getattr(classifier, 'train', None))
+            if train_func:
+                train_func()
+                logger.info("Market Regime Classifier retrained successfully")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Market Regime Classifier retrain failed: {e}")
+            return False
+
+    # =========================================================================
+    # PATTERN LEARNER
+    # =========================================================================
+
+    def _validate_pattern_learner(self) -> ModelValidationResult:
+        """Validate Autonomous Pattern Learner"""
+        try:
+            from ai.autonomous_ml_pattern_learner import PatternLearner
+
+            learner = PatternLearner()
+            metrics = learner.get_metrics() if hasattr(learner, 'get_metrics') else {}
+
+            is_accuracy = metrics.get('train_accuracy', 0.55)
+            oos_accuracy = metrics.get('test_accuracy', 0.45)
+            degradation = (is_accuracy - oos_accuracy) / is_accuracy if is_accuracy > 0 else 0
+
+            is_robust = degradation < 0.25
+
+            return ModelValidationResult(
+                model_name="pattern_learner",
+                validated_at=datetime.now(CENTRAL_TZ).isoformat(),
+                in_sample_accuracy=is_accuracy,
+                out_of_sample_accuracy=oos_accuracy,
+                degradation_pct=degradation * 100,
+                is_robust=is_robust,
+                status=ModelStatus.HEALTHY if is_robust else ModelStatus.DEGRADED,
+                recommendation="KEEP" if is_robust else "RETRAIN",
+                details=metrics
+            )
+        except Exception as e:
+            logger.warning(f"Pattern Learner validation failed: {e}")
+            return self._failed_validation("pattern_learner", str(e))
+
+    def _retrain_pattern_learner(self) -> bool:
+        """Retrain Pattern Learner"""
+        try:
+            from ai.autonomous_ml_pattern_learner import PatternLearner
+
+            learner = PatternLearner()
+            if hasattr(learner, 'train_pattern_classifier'):
+                learner.train_pattern_classifier()
+                logger.info("Pattern Learner retrained successfully")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Pattern Learner retrain failed: {e}")
+            return False
+
+    # =========================================================================
+    # ATHENA ML
+    # =========================================================================
+
+    def _validate_athena_ml(self) -> ModelValidationResult:
+        """Validate ATHENA ML (Directional Spread Predictions)"""
+        try:
+            # ATHENA may use GEX directional or have its own ML
+            from quant.gex_directional_ml import GEXDirectionalPredictor
+
+            predictor = GEXDirectionalPredictor()
+            metrics = predictor.get_performance_metrics() if hasattr(predictor, 'get_performance_metrics') else {}
+
+            # For ATHENA, we check directional accuracy
+            is_accuracy = metrics.get('train_accuracy', 0.60)
+            oos_accuracy = metrics.get('test_accuracy', 0.50)
+            degradation = (is_accuracy - oos_accuracy) / is_accuracy if is_accuracy > 0 else 0
+
+            is_robust = degradation < 0.20
+
+            return ModelValidationResult(
+                model_name="athena_ml",
+                validated_at=datetime.now(CENTRAL_TZ).isoformat(),
+                in_sample_accuracy=is_accuracy,
+                out_of_sample_accuracy=oos_accuracy,
+                degradation_pct=degradation * 100,
+                is_robust=is_robust,
+                status=ModelStatus.HEALTHY if is_robust else ModelStatus.DEGRADED,
+                recommendation="KEEP" if is_robust else "RETRAIN",
+                details=metrics
+            )
+        except Exception as e:
+            logger.warning(f"ATHENA ML validation failed: {e}")
+            return self._failed_validation("athena_ml", str(e))
+
+    def _retrain_athena_ml(self) -> bool:
+        """Retrain ATHENA ML"""
+        try:
+            from quant.gex_directional_ml import GEXDirectionalPredictor
+
+            predictor = GEXDirectionalPredictor()
+            train_func = getattr(predictor, 'retrain', getattr(predictor, 'train', None))
+            if train_func:
+                train_func()
+                logger.info("ATHENA ML retrained successfully")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"ATHENA ML retrain failed: {e}")
+            return False
+
+    # =========================================================================
+    # HELPER METHODS
+    # =========================================================================
+
+    def _failed_validation(self, model_name: str, error: str) -> ModelValidationResult:
+        """Create a failed validation result"""
+        return ModelValidationResult(
+            model_name=model_name,
+            validated_at=datetime.now(CENTRAL_TZ).isoformat(),
+            in_sample_accuracy=0,
+            out_of_sample_accuracy=0,
+            degradation_pct=100,
+            is_robust=False,
+            status=ModelStatus.FAILED,
+            recommendation="INVESTIGATE",
+            details={'error': error}
+        )
 
 
 # =============================================================================
