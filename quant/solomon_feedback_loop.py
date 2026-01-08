@@ -1998,27 +1998,12 @@ class SolomonFeedbackLoop:
             return False
 
     def is_bot_killed(self, bot_name: str) -> bool:
-        """Check if a bot's kill switch is active"""
-        if not DB_AVAILABLE:
-            return False
+        """Check if a bot's kill switch is active
 
-        with get_db_connection() as conn:
-            if conn is None:
-                return False
-            try:
-                cursor = conn.cursor()
-
-                cursor.execute("""
-                    SELECT is_killed FROM solomon_kill_switch WHERE bot_name = %s
-                """, (bot_name,))
-
-                row = cursor.fetchone()
-
-                return row[0] if row else False
-
-            except Exception as e:
-                logger.error(f"Failed to check kill switch: {e}")
-                return False
+        KILL SWITCH DISABLED - Always returns False to allow all bots to trade
+        """
+        logger.debug(f"[SOLOMON] Kill switch check DISABLED for {bot_name} - allowing trade")
+        return False  # Kill switch completely disabled
 
     def get_kill_switch_status(self) -> Dict[str, Dict]:
         """Get kill switch status for all bots"""
