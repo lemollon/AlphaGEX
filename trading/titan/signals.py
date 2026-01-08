@@ -139,12 +139,13 @@ class SignalGenerator:
 
         if not kronos_works and TRADIER_GEX_AVAILABLE:
             try:
-                from data.gex_calculator import get_gex_calculator
-                tradier_calc = get_gex_calculator()
+                # CRITICAL: SPX requires production API (sandbox doesn't support SPX)
+                from data.gex_calculator import TradierGEXCalculator
+                tradier_calc = TradierGEXCalculator(sandbox=False)
                 test_result = tradier_calc.calculate_gex(self.config.ticker)
                 if test_result and test_result.get('spot_price', 0) > 0:
                     self.gex_calculator = tradier_calc
-                    logger.info(f"TITAN: Using Tradier GEX (live spot={test_result.get('spot_price')})")
+                    logger.info(f"TITAN: Using Tradier GEX PRODUCTION (live spot={test_result.get('spot_price')})")
                 else:
                     logger.error("TITAN: Tradier GEX returned no data!")
             except Exception as e:
