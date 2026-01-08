@@ -6288,12 +6288,17 @@ function OrbitingPlanet({
         <Sphere
           ref={meshRef}
           args={[scaledSize, lodPolygons.sphere, lodPolygons.sphere]}
-          onPointerOver={() => setIsHovered(true)}
-          onPointerOut={() => setIsHovered(false)}
+          onPointerOver={() => {
+            setIsHovered(true)
+            if (onClick) document.body.style.cursor = 'pointer'
+          }}
+          onPointerOut={() => {
+            setIsHovered(false)
+            document.body.style.cursor = 'default'
+          }}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onClick={handleClick}
-          style={{ cursor: onClick ? 'pointer' : 'default' }}
         >
           {showEffects ? (
             <MeshDistortMaterial
