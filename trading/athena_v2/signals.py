@@ -118,21 +118,34 @@ class SignalGenerator:
 
     def _init_components(self) -> None:
         """Initialize signal generation components"""
-        # GEX Calculator - Try Kronos first, but VERIFY it can fetch data
+        # GEX Calculator - Try Kronos first, but VERIFY it has FRESH data
         self.gex_calculator = None
         kronos_works = False
 
         if KRONOS_AVAILABLE:
             try:
                 kronos_calc = KronosGEXCalculator()
-                # CRITICAL: Test if Kronos can actually fetch data
                 test_result = kronos_calc.calculate_gex(self.config.ticker)
                 if test_result and test_result.get('spot_price', 0) > 0:
-                    self.gex_calculator = kronos_calc
-                    kronos_works = True
-                    logger.info(f"ATHENA: Kronos GEX verified (spot={test_result.get('spot_price')})")
+                    # Check data freshness - reject if older than 2 days
+                    trade_date = test_result.get('trade_date', '')
+                    if trade_date:
+                        from datetime import datetime
+                        try:
+                            data_date = datetime.strptime(trade_date, '%Y-%m-%d')
+                            days_old = (datetime.now() - data_date).days
+                            if days_old <= 2:
+                                self.gex_calculator = kronos_calc
+                                kronos_works = True
+                                logger.info(f"ATHENA: Kronos GEX verified (spot={test_result.get('spot_price')}, date={trade_date})")
+                            else:
+                                logger.warning(f"ATHENA: Kronos data too stale ({days_old} days old) - using Tradier")
+                        except ValueError:
+                            logger.warning("ATHENA: Kronos has invalid trade_date - using Tradier")
+                    else:
+                        logger.warning("ATHENA: Kronos returned no trade_date - using Tradier")
                 else:
-                    logger.warning("ATHENA: Kronos returned no data - falling back")
+                    logger.warning("ATHENA: Kronos returned no data - using Tradier")
             except Exception as e:
                 logger.warning(f"ATHENA: Kronos GEX init/test failed: {e}")
 
@@ -142,7 +155,7 @@ class SignalGenerator:
                 test_result = tradier_calc.calculate_gex(self.config.ticker)
                 if test_result and test_result.get('spot_price', 0) > 0:
                     self.gex_calculator = tradier_calc
-                    logger.info(f"ATHENA: Tradier GEX verified (spot={test_result.get('spot_price')})")
+                    logger.info(f"ATHENA: Using Tradier GEX (live spot={test_result.get('spot_price')})")
                 else:
                     logger.error("ATHENA: Tradier GEX returned no data!")
             except Exception as e:

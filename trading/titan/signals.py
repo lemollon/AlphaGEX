@@ -106,21 +106,34 @@ class SignalGenerator:
         self._init_components()
 
     def _init_components(self) -> None:
-        # GEX Calculator - Try Kronos first, but VERIFY it can fetch data
+        # GEX Calculator - Try Kronos first, but VERIFY it has FRESH data
         self.gex_calculator = None
         kronos_works = False
 
         if KRONOS_AVAILABLE:
             try:
                 kronos_calc = KronosGEXCalculator()
-                # CRITICAL: Test if Kronos can actually fetch data
                 test_result = kronos_calc.calculate_gex(self.config.ticker)
                 if test_result and test_result.get('spot_price', 0) > 0:
-                    self.gex_calculator = kronos_calc
-                    kronos_works = True
-                    logger.info(f"TITAN: Kronos GEX verified (spot={test_result.get('spot_price')})")
+                    # Check data freshness - reject if older than 2 days
+                    trade_date = test_result.get('trade_date', '')
+                    if trade_date:
+                        from datetime import datetime
+                        try:
+                            data_date = datetime.strptime(trade_date, '%Y-%m-%d')
+                            days_old = (datetime.now() - data_date).days
+                            if days_old <= 2:
+                                self.gex_calculator = kronos_calc
+                                kronos_works = True
+                                logger.info(f"TITAN: Kronos GEX verified (spot={test_result.get('spot_price')}, date={trade_date})")
+                            else:
+                                logger.warning(f"TITAN: Kronos data too stale ({days_old} days old) - using Tradier")
+                        except ValueError:
+                            logger.warning("TITAN: Kronos has invalid trade_date - using Tradier")
+                    else:
+                        logger.warning("TITAN: Kronos returned no trade_date - using Tradier")
                 else:
-                    logger.warning("TITAN: Kronos returned no data - falling back")
+                    logger.warning("TITAN: Kronos returned no data - using Tradier")
             except Exception as e:
                 logger.warning(f"TITAN: Kronos GEX init/test failed: {e}")
 
@@ -131,7 +144,7 @@ class SignalGenerator:
                 test_result = tradier_calc.calculate_gex(self.config.ticker)
                 if test_result and test_result.get('spot_price', 0) > 0:
                     self.gex_calculator = tradier_calc
-                    logger.info(f"TITAN: Tradier GEX verified (spot={test_result.get('spot_price')})")
+                    logger.info(f"TITAN: Using Tradier GEX (live spot={test_result.get('spot_price')})")
                 else:
                     logger.error("TITAN: Tradier GEX returned no data!")
             except Exception as e:
