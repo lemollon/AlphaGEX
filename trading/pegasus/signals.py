@@ -411,6 +411,9 @@ class SignalGenerator:
                     'flip_point': gex.get('flip_point', gex.get('gamma_flip', 0)),
                     'net_gex': gex.get('net_gex', 0),
                     'from_spy': from_spy,  # Track source for scaling
+                    # CRITICAL: Include spot_price from GEX calculator (uses production API)
+                    # This avoids calling get_price() which uses sandbox and fails for SPX
+                    'spot_price': gex.get('spot_price', 0),
                 }
         except Exception as e:
             logger.warning(f"GEX data fetch failed: {e}")
@@ -428,9 +431,16 @@ class SignalGenerator:
             return None
 
         try:
-            # Get spot price
-            spot = 0.0
-            if DATA_AVAILABLE:
+            # CRITICAL: Use spot_price from GEX calculator (uses production API for SPX)
+            # The global get_price() uses sandbox which doesn't support SPX
+            spot = gex.get('spot_price', 0)
+
+            # Scale spot if from SPY (GEX calculator fell back to SPY)
+            if gex.get('from_spy', False) and spot > 0 and spot < 1000:
+                spot = spot * 10  # Scale SPY price to SPX equivalent
+
+            # Fallback to get_price() only if GEX calc didn't return spot
+            if not spot and DATA_AVAILABLE:
                 spot = get_price("SPX")
                 if not spot:
                     spy = get_price("SPY")
