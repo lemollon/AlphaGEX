@@ -732,16 +732,18 @@ class ARESDatabase:
     def update_heartbeat(self, status: str, action: str) -> None:
         """Update bot heartbeat"""
         try:
+            import json
             with db_connection() as conn:
                 c = conn.cursor()
                 c.execute("""
-                    INSERT INTO bot_heartbeats (bot_name, status, last_action, last_scan_time)
-                    VALUES (%s, %s, %s, NOW())
+                    INSERT INTO bot_heartbeats (bot_name, last_heartbeat, status, scan_count, details)
+                    VALUES (%s, NOW(), %s, 1, %s)
                     ON CONFLICT (bot_name) DO UPDATE SET
+                        last_heartbeat = NOW(),
                         status = EXCLUDED.status,
-                        last_action = EXCLUDED.last_action,
-                        last_scan_time = NOW()
-                """, (self.bot_name, status, action))
+                        scan_count = bot_heartbeats.scan_count + 1,
+                        details = EXCLUDED.details
+                """, (self.bot_name, status, json.dumps({"last_action": action})))
                 conn.commit()
         except Exception as e:
             # Heartbeat failures are non-critical
