@@ -4471,6 +4471,21 @@ function MannaEffects({ color, sunColor, paused }: { color: string, sunColor: st
   const heavenBeamRef = useRef<THREE.Group>(null)
   const sparklesRef = useRef<THREE.Points>(null)
   const auroraRef = useRef<THREE.Group>(null)
+  const cosmicRaysRef = useRef<THREE.Group>(null)
+  const giantCrossRef = useRef<THREE.Group>(null)
+  const crossGlowRef = useRef<THREE.Group>(null)
+  const holyLightRef = useRef<THREE.Group>(null)
+  // New divine effects refs
+  const angelWingsRef = useRef<THREE.Group>(null)
+  const crownOfThornsRef = useRef<THREE.Group>(null)
+  const doveParticlesRef = useRef<THREE.Points>(null)
+  const livingWaterRef = useRef<THREE.Group>(null)
+  const rainbowArcRef = useRef<THREE.Group>(null)
+  const burningBushRef = useRef<THREE.Group>(null)
+  const holySymbolsRef = useRef<THREE.Group>(null)
+  const pearlyGatesRef = useRef<THREE.Group>(null)
+  const lightningRef = useRef<THREE.Group>(null)
+  const choirOfAngelsRef = useRef<THREE.Group>(null)
 
   // Falling manna particles - 300 for dramatic effect
   const mannaCount = 300
@@ -4601,6 +4616,105 @@ function MannaEffects({ color, sunColor, paused }: { color: string, sunColor: st
     { radius: 18, height: 12, color: '#6366f1', speed: 0.2, phase: Math.PI * 2 / 3 },
     { radius: 20, height: 14, color: '#4f46e5', speed: -0.15, phase: Math.PI },
   ], [])
+
+  // COSMIC GOLD RAYS - 36 massive rays shooting outward like a supernova
+  const cosmicRays = useMemo(() =>
+    Array.from({ length: 36 }, (_, i) => ({
+      angle: (i / 36) * Math.PI * 2,
+      theta: (Math.random() - 0.5) * Math.PI * 0.6, // Vertical spread
+      length: 35 + Math.random() * 25, // 35-60 units long!
+      width: 0.3 + Math.random() * 0.4,
+      speed: 1.5 + Math.random() * 2,
+      phase: Math.random() * Math.PI * 2,
+      pulseSpeed: 0.5 + Math.random() * 1.5
+    }))
+  , [])
+
+  // HOLY LIGHT BEAMS - 12 beams in sacred geometry
+  const holyBeams = useMemo(() =>
+    Array.from({ length: 12 }, (_, i) => ({
+      angle: (i / 12) * Math.PI * 2,
+      length: 45,
+      width: 0.8,
+      speed: 0.8 + i * 0.1
+    }))
+  , [])
+
+  // DOVE PARTICLES - Holy Spirit descending
+  const doveCount = 50
+  const dovePositions = useMemo(() => {
+    const positions = new Float32Array(doveCount * 3)
+    for (let i = 0; i < doveCount; i++) {
+      const angle = Math.random() * Math.PI * 2
+      const radius = 5 + Math.random() * 15
+      positions[i * 3] = Math.cos(angle) * radius
+      positions[i * 3 + 1] = 30 + Math.random() * 20
+      positions[i * 3 + 2] = Math.sin(angle) * radius
+    }
+    return positions
+  }, [])
+
+  // LIVING WATER STREAMS - 8 rivers flowing outward
+  const waterStreams = useMemo(() =>
+    Array.from({ length: 8 }, (_, i) => ({
+      angle: (i / 8) * Math.PI * 2,
+      length: 30,
+      width: 0.6,
+      speed: 0.5 + Math.random() * 0.3,
+      waveFreq: 2 + Math.random() * 2
+    }))
+  , [])
+
+  // RAINBOW COVENANT - 7 colors of the rainbow
+  const rainbowColors = useMemo(() => [
+    '#ef4444', // Red
+    '#f97316', // Orange
+    '#eab308', // Yellow
+    '#22c55e', // Green
+    '#3b82f6', // Blue
+    '#6366f1', // Indigo
+    '#a855f7', // Violet
+  ], [])
+
+  // CROWN OF THORNS - Thorny ring points
+  const thornPoints = useMemo(() =>
+    Array.from({ length: 24 }, (_, i) => ({
+      angle: (i / 24) * Math.PI * 2,
+      height: i % 2 === 0 ? 0.8 : 0.4,
+      lean: (Math.random() - 0.5) * 0.3
+    }))
+  , [])
+
+  // HOLY SYMBOLS - Alpha, Omega, Crosses, Ichthys positions
+  const holySymbols = useMemo(() => [
+    { symbol: 'Α', orbit: 8, speed: 0.2, phase: 0, size: 1.2 },
+    { symbol: 'Ω', orbit: 8, speed: 0.2, phase: Math.PI, size: 1.2 },
+    { symbol: '✝', orbit: 10, speed: -0.15, phase: Math.PI / 4, size: 1.0 },
+    { symbol: '✝', orbit: 10, speed: -0.15, phase: Math.PI * 5 / 4, size: 1.0 },
+    { symbol: '☧', orbit: 12, speed: 0.12, phase: Math.PI / 2, size: 0.9 }, // Chi-Rho
+    { symbol: '☧', orbit: 12, speed: 0.12, phase: Math.PI * 3 / 2, size: 0.9 },
+    { symbol: '✟', orbit: 14, speed: -0.1, phase: 0, size: 0.8 },
+    { symbol: '✟', orbit: 14, speed: -0.1, phase: Math.PI * 2 / 3, size: 0.8 },
+    { symbol: '✟', orbit: 14, speed: -0.1, phase: Math.PI * 4 / 3, size: 0.8 },
+  ], [])
+
+  // PEARLY GATES - 4 gates at cardinal directions
+  const pearlyGates = useMemo(() => [
+    { angle: 0, distance: 25 },
+    { angle: Math.PI / 2, distance: 25 },
+    { angle: Math.PI, distance: 25 },
+    { angle: Math.PI * 3 / 2, distance: 25 },
+  ], [])
+
+  // CHOIR OF ANGELS - 3 rings of light orbs
+  const choirRings = useMemo(() => [
+    { radius: 18, count: 12, speed: 0.3, height: 15 },
+    { radius: 22, count: 16, speed: -0.25, height: 18 },
+    { radius: 26, count: 20, speed: 0.2, height: 21 },
+  ], [])
+
+  // LIGHTNING state for random bolts
+  const [lightningBolts, setLightningBolts] = useState<Array<{angle: number, active: boolean, id: number}>>([])
 
   useFrame((state) => {
     if (paused) return
@@ -4777,6 +4891,142 @@ function MannaEffects({ color, sunColor, paused }: { color: string, sunColor: st
         band.scale.setScalar(wave)
       })
     }
+
+    // COSMIC GOLD RAYS - Pulsing and shooting outward
+    if (cosmicRaysRef.current) {
+      cosmicRaysRef.current.rotation.y = t * 0.03
+      cosmicRaysRef.current.rotation.x = Math.sin(t * 0.2) * 0.05
+      cosmicRaysRef.current.children.forEach((ray, i) => {
+        const pulse = 0.5 + Math.abs(Math.sin(t * cosmicRays[i].pulseSpeed + cosmicRays[i].phase)) * 0.5
+        ray.scale.y = pulse
+        ray.scale.x = 0.7 + Math.sin(t * cosmicRays[i].speed + cosmicRays[i].phase) * 0.3
+      })
+    }
+
+    // GIANT CROSS - Majestic rotation
+    if (giantCrossRef.current) {
+      giantCrossRef.current.rotation.y = t * 0.08
+      const pulse = 1 + Math.sin(t * 1.2) * 0.1
+      giantCrossRef.current.scale.setScalar(pulse)
+    }
+
+    // CROSS GLOW - Pulsing divine light around the cross
+    if (crossGlowRef.current) {
+      crossGlowRef.current.rotation.y = -t * 0.05
+      const glowPulse = 0.8 + Math.sin(t * 2) * 0.2
+      crossGlowRef.current.scale.setScalar(glowPulse)
+    }
+
+    // HOLY LIGHT BEAMS - Rotating sacred geometry
+    if (holyLightRef.current) {
+      holyLightRef.current.rotation.y = t * 0.15
+      holyLightRef.current.children.forEach((beam, i) => {
+        const intensity = 0.6 + Math.sin(t * holyBeams[i].speed + i) * 0.4
+        beam.scale.y = intensity
+      })
+    }
+
+    // ANGEL WINGS - Gentle flapping motion
+    if (angelWingsRef.current) {
+      const flapAngle = Math.sin(t * 1.5) * 0.15
+      angelWingsRef.current.children.forEach((wing, i) => {
+        wing.rotation.z = i === 0 ? flapAngle : -flapAngle
+        wing.rotation.y = t * 0.05
+      })
+    }
+
+    // CROWN OF THORNS - Slow rotation with pulse
+    if (crownOfThornsRef.current) {
+      crownOfThornsRef.current.rotation.y = t * 0.1
+      const thornPulse = 1 + Math.sin(t * 3) * 0.05
+      crownOfThornsRef.current.scale.setScalar(thornPulse)
+    }
+
+    // DOVE PARTICLES - Gentle descent with gliding
+    if (doveParticlesRef.current) {
+      const positions = doveParticlesRef.current.geometry.attributes.position.array as Float32Array
+      for (let i = 0; i < doveCount; i++) {
+        positions[i * 3 + 1] -= 0.03 // Slow descent
+        positions[i * 3] += Math.sin(t * 0.5 + i * 0.5) * 0.02 // Glide
+        positions[i * 3 + 2] += Math.cos(t * 0.5 + i * 0.5) * 0.02
+        if (positions[i * 3 + 1] < 0) {
+          positions[i * 3 + 1] = 35 + Math.random() * 15
+          const angle = Math.random() * Math.PI * 2
+          const radius = 5 + Math.random() * 15
+          positions[i * 3] = Math.cos(angle) * radius
+          positions[i * 3 + 2] = Math.sin(angle) * radius
+        }
+      }
+      doveParticlesRef.current.geometry.attributes.position.needsUpdate = true
+    }
+
+    // LIVING WATER - Flowing wave motion
+    if (livingWaterRef.current) {
+      livingWaterRef.current.children.forEach((stream, i) => {
+        const wave = Math.sin(t * waterStreams[i].waveFreq + i) * 0.3
+        stream.position.y = wave
+        stream.scale.x = 0.8 + Math.sin(t * waterStreams[i].speed + i) * 0.2
+      })
+    }
+
+    // RAINBOW ARC - Gentle shimmer
+    if (rainbowArcRef.current) {
+      rainbowArcRef.current.rotation.z = Math.sin(t * 0.3) * 0.05
+      const shimmer = 0.9 + Math.sin(t * 2) * 0.1
+      rainbowArcRef.current.scale.setScalar(shimmer)
+    }
+
+    // BURNING BUSH - Flickering flames
+    if (burningBushRef.current) {
+      burningBushRef.current.children.forEach((flame, i) => {
+        const flicker = 0.7 + Math.sin(t * 8 + i * 2) * 0.3
+        flame.scale.y = flicker
+        flame.scale.x = 0.8 + Math.sin(t * 6 + i) * 0.2
+        flame.rotation.z = Math.sin(t * 4 + i) * 0.1
+      })
+    }
+
+    // HOLY SYMBOLS - Orbiting motion
+    if (holySymbolsRef.current) {
+      holySymbolsRef.current.children.forEach((symbol, i) => {
+        const config = holySymbols[i]
+        if (config) {
+          const angle = t * config.speed + config.phase
+          symbol.position.x = Math.cos(angle) * config.orbit
+          symbol.position.z = Math.sin(angle) * config.orbit
+          symbol.position.y = 8 + Math.sin(t * 0.5 + i) * 2
+        }
+      })
+    }
+
+    // PEARLY GATES - Gentle glow pulse
+    if (pearlyGatesRef.current) {
+      pearlyGatesRef.current.children.forEach((gate, i) => {
+        const glow = 0.8 + Math.sin(t * 1.5 + i * Math.PI / 2) * 0.2
+        gate.scale.setScalar(glow)
+      })
+    }
+
+    // LIGHTNING - Random bolt generation
+    if (Math.random() < 0.002 && lightningBolts.length < 3) {
+      const newBolt = {
+        angle: Math.random() * Math.PI * 2,
+        active: true,
+        id: Date.now()
+      }
+      setLightningBolts(prev => [...prev, newBolt])
+      setTimeout(() => {
+        setLightningBolts(prev => prev.filter(b => b.id !== newBolt.id))
+      }, 150)
+    }
+
+    // CHOIR OF ANGELS - Rotating rings
+    if (choirOfAngelsRef.current) {
+      choirOfAngelsRef.current.children.forEach((ring, i) => {
+        ring.rotation.y = t * choirRings[i].speed
+        ring.position.y = choirRings[i].height + Math.sin(t * 0.5 + i) * 1
+      })
+    }
   })
 
   return (
@@ -4809,7 +5059,98 @@ function MannaEffects({ color, sunColor, paused }: { color: string, sunColor: st
         </Sphere>
       </group>
 
-      {/* DIVINE CROSS - Larger and More Dramatic */}
+      {/* GIANT MAJESTIC CROSS - The Central Symbol of Faith */}
+      <group ref={giantCrossRef}>
+        {/* Main vertical beam - MASSIVE */}
+        <mesh position={[0, 5, 0]}>
+          <boxGeometry args={[1.2, 25, 1.2]} />
+          <meshBasicMaterial color="#fbbf24" transparent opacity={0.95} />
+        </mesh>
+        {/* Main horizontal beam */}
+        <mesh position={[0, 12, 0]}>
+          <boxGeometry args={[18, 1.2, 1.2]} />
+          <meshBasicMaterial color="#fbbf24" transparent opacity={0.95} />
+        </mesh>
+        {/* Vertical inner glow */}
+        <mesh position={[0, 5, 0]}>
+          <boxGeometry args={[2, 26, 2]} />
+          <meshBasicMaterial color="#fef3c7" transparent opacity={0.3} />
+        </mesh>
+        {/* Horizontal inner glow */}
+        <mesh position={[0, 12, 0]}>
+          <boxGeometry args={[19, 2, 2]} />
+          <meshBasicMaterial color="#fef3c7" transparent opacity={0.3} />
+        </mesh>
+        {/* Cross center jewel */}
+        <Sphere args={[1.8, 32, 32]} position={[0, 12, 0]}>
+          <meshBasicMaterial color="#ffffff" transparent opacity={0.9} />
+        </Sphere>
+        {/* Cross tips - jewels */}
+        <Sphere args={[0.8, 16, 16]} position={[0, 17.5, 0]}>
+          <meshBasicMaterial color="#fef3c7" />
+        </Sphere>
+        <Sphere args={[0.8, 16, 16]} position={[0, -7.5, 0]}>
+          <meshBasicMaterial color="#fef3c7" />
+        </Sphere>
+        <Sphere args={[0.8, 16, 16]} position={[9, 12, 0]}>
+          <meshBasicMaterial color="#fef3c7" />
+        </Sphere>
+        <Sphere args={[0.8, 16, 16]} position={[-9, 12, 0]}>
+          <meshBasicMaterial color="#fef3c7" />
+        </Sphere>
+      </group>
+
+      {/* CROSS GLOW AURA - Radiating divine light from the cross */}
+      <group ref={crossGlowRef}>
+        <Sphere args={[8, 32, 32]} position={[0, 8, 0]}>
+          <meshBasicMaterial color="#fde68a" transparent opacity={0.1} side={THREE.DoubleSide} />
+        </Sphere>
+        <Sphere args={[12, 32, 32]} position={[0, 8, 0]}>
+          <meshBasicMaterial color="#fbbf24" transparent opacity={0.06} side={THREE.DoubleSide} />
+        </Sphere>
+        <Sphere args={[16, 32, 32]} position={[0, 8, 0]}>
+          <meshBasicMaterial color="#f59e0b" transparent opacity={0.03} side={THREE.DoubleSide} />
+        </Sphere>
+      </group>
+
+      {/* COSMIC GOLD RAYS - 36 Massive rays shooting outward like a supernova */}
+      <group ref={cosmicRaysRef}>
+        {cosmicRays.map((ray, i) => {
+          const x = Math.cos(ray.angle) * Math.cos(ray.theta)
+          const y = Math.sin(ray.theta)
+          const z = Math.sin(ray.angle) * Math.cos(ray.theta)
+          return (
+            <mesh
+              key={i}
+              position={[x * 3, y * 3 + 5, z * 3]}
+              rotation={[
+                ray.theta,
+                -ray.angle,
+                0
+              ]}
+            >
+              <cylinderGeometry args={[0.02, ray.width, ray.length, 8]} />
+              <meshBasicMaterial color="#fbbf24" transparent opacity={0.7} side={THREE.DoubleSide} />
+            </mesh>
+          )
+        })}
+      </group>
+
+      {/* HOLY LIGHT BEAMS - 12 Sacred geometry beams */}
+      <group ref={holyLightRef}>
+        {holyBeams.map((beam, i) => (
+          <mesh
+            key={i}
+            position={[Math.cos(beam.angle) * 2, 5, Math.sin(beam.angle) * 2]}
+            rotation={[0, -beam.angle, Math.PI / 2]}
+          >
+            <cylinderGeometry args={[0.05, beam.width, beam.length, 8]} />
+            <meshBasicMaterial color="#fcd34d" transparent opacity={0.5} side={THREE.DoubleSide} />
+          </mesh>
+        ))}
+      </group>
+
+      {/* OLD DIVINE CROSS - Keep as secondary inner cross */}
       <group ref={crossRef}>
         {/* Vertical beam */}
         <mesh position={[0, 0, 0]}>
@@ -5065,6 +5406,282 @@ function MannaEffects({ color, sunColor, paused }: { color: string, sunColor: st
           <meshBasicMaterial color="#fef3c7" transparent opacity={0.08 - i * 0.015} side={THREE.DoubleSide} />
         </mesh>
       ))}
+
+      {/* ============ NEW DIVINE EFFECTS ============ */}
+
+      {/* ANGEL WINGS - Seraphim wings spreading from the core */}
+      <group ref={angelWingsRef} position={[0, 8, 0]}>
+        {/* Left Wing */}
+        <group position={[-2, 0, 0]}>
+          {/* Main wing feathers */}
+          {[0, 1, 2, 3, 4].map(i => (
+            <mesh key={`left-feather-${i}`} position={[-3 - i * 2.5, i * 0.5 - 1, 0]} rotation={[0, 0, 0.3 + i * 0.1]}>
+              <planeGeometry args={[3 + i * 0.5, 8 - i * 0.8]} />
+              <meshBasicMaterial color="#fef3c7" transparent opacity={0.5 - i * 0.08} side={THREE.DoubleSide} />
+            </mesh>
+          ))}
+          {/* Wing glow */}
+          <mesh position={[-6, 0, 0]}>
+            <planeGeometry args={[15, 12]} />
+            <meshBasicMaterial color="#fde68a" transparent opacity={0.15} side={THREE.DoubleSide} />
+          </mesh>
+        </group>
+        {/* Right Wing */}
+        <group position={[2, 0, 0]}>
+          {[0, 1, 2, 3, 4].map(i => (
+            <mesh key={`right-feather-${i}`} position={[3 + i * 2.5, i * 0.5 - 1, 0]} rotation={[0, 0, -0.3 - i * 0.1]}>
+              <planeGeometry args={[3 + i * 0.5, 8 - i * 0.8]} />
+              <meshBasicMaterial color="#fef3c7" transparent opacity={0.5 - i * 0.08} side={THREE.DoubleSide} />
+            </mesh>
+          ))}
+          <mesh position={[6, 0, 0]}>
+            <planeGeometry args={[15, 12]} />
+            <meshBasicMaterial color="#fde68a" transparent opacity={0.15} side={THREE.DoubleSide} />
+          </mesh>
+        </group>
+      </group>
+
+      {/* CROWN OF THORNS - Circling the cross */}
+      <group ref={crownOfThornsRef} position={[0, 14, 0]}>
+        {/* Main thorn ring */}
+        <mesh rotation={[Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[2.5, 0.15, 8, 32]} />
+          <meshBasicMaterial color="#92400e" transparent opacity={0.9} />
+        </mesh>
+        {/* Individual thorns */}
+        {thornPoints.map((thorn, i) => (
+          <mesh
+            key={i}
+            position={[
+              Math.cos(thorn.angle) * 2.5,
+              0,
+              Math.sin(thorn.angle) * 2.5
+            ]}
+            rotation={[thorn.lean, -thorn.angle, Math.PI / 4]}
+          >
+            <coneGeometry args={[0.08, thorn.height, 4]} />
+            <meshBasicMaterial color="#78350f" />
+          </mesh>
+        ))}
+        {/* Blood drops */}
+        {[0, 2, 5, 8, 11, 15, 19, 22].map(i => (
+          <Sphere key={`blood-${i}`} args={[0.08, 8, 8]} position={[
+            Math.cos((i / 24) * Math.PI * 2) * 2.6,
+            -0.3 - Math.random() * 0.2,
+            Math.sin((i / 24) * Math.PI * 2) * 2.6
+          ]}>
+            <meshBasicMaterial color="#dc2626" transparent opacity={0.8} />
+          </Sphere>
+        ))}
+      </group>
+
+      {/* DOVE PARTICLES - Holy Spirit descending */}
+      <points ref={doveParticlesRef}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" count={doveCount} array={dovePositions} itemSize={3} />
+        </bufferGeometry>
+        <pointsMaterial color="#ffffff" size={0.4} transparent opacity={0.9} sizeAttenuation />
+      </points>
+
+      {/* LIVING WATER STREAMS - Rivers of living water flowing outward */}
+      <group ref={livingWaterRef} position={[0, -3, 0]}>
+        {waterStreams.map((stream, i) => (
+          <group key={i} rotation={[0, stream.angle, 0]}>
+            {/* Main water stream */}
+            <mesh position={[stream.length / 2, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+              <cylinderGeometry args={[0.1, stream.width, stream.length, 8]} />
+              <meshBasicMaterial color="#38bdf8" transparent opacity={0.5} />
+            </mesh>
+            {/* Water glow */}
+            <mesh position={[stream.length / 2, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+              <cylinderGeometry args={[0.3, stream.width + 0.5, stream.length, 8]} />
+              <meshBasicMaterial color="#7dd3fc" transparent opacity={0.2} />
+            </mesh>
+            {/* Ripples at the end */}
+            <mesh position={[stream.length, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+              <torusGeometry args={[1, 0.1, 8, 32]} />
+              <meshBasicMaterial color="#38bdf8" transparent opacity={0.3} side={THREE.DoubleSide} />
+            </mesh>
+          </group>
+        ))}
+      </group>
+
+      {/* RAINBOW COVENANT ARC - God's promise */}
+      <group ref={rainbowArcRef} position={[0, 25, -15]} rotation={[0.3, 0, 0]}>
+        {rainbowColors.map((color, i) => (
+          <mesh key={i} rotation={[Math.PI / 2, 0, 0]}>
+            <torusGeometry args={[20 + i * 1.5, 0.8, 8, 64, Math.PI]} />
+            <meshBasicMaterial color={color} transparent opacity={0.4 - i * 0.03} side={THREE.DoubleSide} />
+          </mesh>
+        ))}
+      </group>
+
+      {/* BURNING BUSH - Eternal flame that doesn't consume */}
+      <group ref={burningBushRef} position={[0, -5, 0]}>
+        {/* Bush base */}
+        <Sphere args={[2, 16, 16]} position={[0, 0, 0]}>
+          <meshBasicMaterial color="#166534" transparent opacity={0.7} />
+        </Sphere>
+        {/* Flames */}
+        {Array.from({ length: 12 }).map((_, i) => {
+          const angle = (i / 12) * Math.PI * 2
+          const r = 1.5
+          return (
+            <group key={i} position={[Math.cos(angle) * r, 1, Math.sin(angle) * r]}>
+              <mesh>
+                <coneGeometry args={[0.3, 2.5, 8]} />
+                <meshBasicMaterial color="#f97316" transparent opacity={0.8} />
+              </mesh>
+              <mesh position={[0, 0.5, 0]}>
+                <coneGeometry args={[0.2, 1.8, 8]} />
+                <meshBasicMaterial color="#fbbf24" transparent opacity={0.7} />
+              </mesh>
+              <mesh position={[0, 0.8, 0]}>
+                <coneGeometry args={[0.1, 1.2, 8]} />
+                <meshBasicMaterial color="#fef3c7" transparent opacity={0.6} />
+              </mesh>
+            </group>
+          )
+        })}
+        {/* Central flame pillar */}
+        <mesh position={[0, 2, 0]}>
+          <coneGeometry args={[0.6, 4, 8]} />
+          <meshBasicMaterial color="#ef4444" transparent opacity={0.7} />
+        </mesh>
+        <mesh position={[0, 2.5, 0]}>
+          <coneGeometry args={[0.4, 3, 8]} />
+          <meshBasicMaterial color="#f97316" transparent opacity={0.6} />
+        </mesh>
+      </group>
+
+      {/* FLOATING HOLY SYMBOLS - Alpha, Omega, Crosses, Chi-Rho */}
+      <group ref={holySymbolsRef}>
+        {holySymbols.map((sym, i) => (
+          <Html
+            key={i}
+            position={[
+              Math.cos(sym.phase) * sym.orbit,
+              8,
+              Math.sin(sym.phase) * sym.orbit
+            ]}
+            center
+            style={{ pointerEvents: 'none' }}
+          >
+            <div
+              className="font-serif font-bold text-amber-300"
+              style={{
+                fontSize: `${sym.size * 24}px`,
+                textShadow: '0 0 10px #fbbf24, 0 0 20px #f59e0b, 0 0 30px #d97706'
+              }}
+            >
+              {sym.symbol}
+            </div>
+          </Html>
+        ))}
+      </group>
+
+      {/* PEARLY GATES - 4 golden gates at cardinal directions */}
+      <group ref={pearlyGatesRef}>
+        {pearlyGates.map((gate, i) => (
+          <group key={i} position={[
+            Math.cos(gate.angle) * gate.distance,
+            0,
+            Math.sin(gate.angle) * gate.distance
+          ]} rotation={[0, -gate.angle + Math.PI / 2, 0]}>
+            {/* Gate pillars */}
+            <mesh position={[-3, 6, 0]}>
+              <cylinderGeometry args={[0.5, 0.6, 12, 16]} />
+              <meshBasicMaterial color="#fbbf24" transparent opacity={0.8} />
+            </mesh>
+            <mesh position={[3, 6, 0]}>
+              <cylinderGeometry args={[0.5, 0.6, 12, 16]} />
+              <meshBasicMaterial color="#fbbf24" transparent opacity={0.8} />
+            </mesh>
+            {/* Gate arch */}
+            <mesh position={[0, 12, 0]} rotation={[0, 0, Math.PI / 2]}>
+              <torusGeometry args={[3, 0.4, 8, 16, Math.PI]} />
+              <meshBasicMaterial color="#fcd34d" transparent opacity={0.7} />
+            </mesh>
+            {/* Gate bars */}
+            {[-2, -1, 0, 1, 2].map(j => (
+              <mesh key={j} position={[j, 5, 0]}>
+                <cylinderGeometry args={[0.1, 0.1, 10, 8]} />
+                <meshBasicMaterial color="#fef3c7" transparent opacity={0.6} />
+              </mesh>
+            ))}
+            {/* Pearl decorations */}
+            <Sphere args={[0.4, 16, 16]} position={[-3, 12.5, 0]}>
+              <meshBasicMaterial color="#ffffff" transparent opacity={0.9} />
+            </Sphere>
+            <Sphere args={[0.4, 16, 16]} position={[3, 12.5, 0]}>
+              <meshBasicMaterial color="#ffffff" transparent opacity={0.9} />
+            </Sphere>
+            <Sphere args={[0.5, 16, 16]} position={[0, 15, 0]}>
+              <meshBasicMaterial color="#ffffff" transparent opacity={0.95} />
+            </Sphere>
+          </group>
+        ))}
+      </group>
+
+      {/* LIGHTNING BOLTS - Divine power strikes */}
+      <group ref={lightningRef}>
+        {lightningBolts.map(bolt => (
+          <group key={bolt.id} rotation={[0, bolt.angle, 0]}>
+            <Line
+              points={[
+                [0, 30, 10],
+                [2, 22, 12],
+                [-1, 15, 11],
+                [1.5, 8, 10.5],
+                [0, 0, 10]
+              ]}
+              color="#fef3c7"
+              lineWidth={3}
+            />
+            {/* Lightning glow */}
+            <Line
+              points={[
+                [0, 30, 10],
+                [2, 22, 12],
+                [-1, 15, 11],
+                [1.5, 8, 10.5],
+                [0, 0, 10]
+              ]}
+              color="#ffffff"
+              lineWidth={6}
+              transparent
+              opacity={0.5}
+            />
+          </group>
+        ))}
+      </group>
+
+      {/* CHOIR OF ANGELS - Rings of light orbs */}
+      <group ref={choirOfAngelsRef}>
+        {choirRings.map((ring, ringIndex) => (
+          <group key={ringIndex}>
+            {Array.from({ length: ring.count }).map((_, i) => {
+              const angle = (i / ring.count) * Math.PI * 2
+              return (
+                <group key={i} position={[
+                  Math.cos(angle) * ring.radius,
+                  ring.height,
+                  Math.sin(angle) * ring.radius
+                ]}>
+                  {/* Angel orb */}
+                  <Sphere args={[0.3, 16, 16]}>
+                    <meshBasicMaterial color="#fef3c7" transparent opacity={0.9} />
+                  </Sphere>
+                  {/* Orb glow */}
+                  <Sphere args={[0.6, 8, 8]}>
+                    <meshBasicMaterial color="#fde68a" transparent opacity={0.3} side={THREE.DoubleSide} />
+                  </Sphere>
+                </group>
+              )
+            })}
+          </group>
+        ))}
+      </group>
 
       {/* CONNECTION BEAMS TO ALL SYSTEMS - MANNA as Source of All */}
       <group>
