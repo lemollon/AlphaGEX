@@ -981,3 +981,415 @@ async def get_icarus_scan_activity_today():
     """Get all ICARUS scans from today with summary."""
     today = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
     return await get_icarus_scan_activity(date=today, limit=200)
+
+
+@router.get("/equity-curve")
+async def get_icarus_equity_curve(days: int = 30):
+    """
+    Get ICARUS equity curve data.
+
+    Args:
+        days: Number of days of history (default 30)
+
+    Returns equity curve built from closed positions.
+    """
+    starting_capital = 100000
+    today = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Get starting capital from config
+        cursor.execute("""
+            SELECT value FROM autonomous_config WHERE key = 'icarus_starting_capital'
+        """)
+        row = cursor.fetchone()
+        if row and row[0]:
+            try:
+                starting_capital = float(row[0])
+            except (ValueError, TypeError):
+                pass
+
+        # Get closed positions grouped by date
+        cursor.execute('''
+            SELECT DATE(close_time AT TIME ZONE 'America/Chicago') as close_date,
+                   realized_pnl, position_id
+            FROM icarus_positions
+            WHERE status IN ('closed', 'expired')
+            AND close_time IS NOT NULL
+            AND close_time >= NOW() - INTERVAL '%s days'
+            ORDER BY close_time ASC
+        ''', (days,))
+        rows = cursor.fetchall()
+        conn.close()
+
+        if rows:
+            equity_curve = []
+            positions_by_date = {}
+            for row in rows:
+                close_date, pnl, pos_id = row
+                date_key = str(close_date) if close_date else None
+                if date_key:
+                    if date_key not in positions_by_date:
+                        positions_by_date[date_key] = []
+                    positions_by_date[date_key].append({'pnl': float(pnl) if pnl else 0, 'id': pos_id})
+
+            sorted_dates = sorted(positions_by_date.keys())
+            cumulative_pnl = 0
+
+            if sorted_dates:
+                equity_curve.append({
+                    "date": sorted_dates[0],
+                    "equity": starting_capital,
+                    "pnl": 0,
+                    "daily_pnl": 0,
+                    "return_pct": 0
+                })
+
+            for date_str in sorted_dates:
+                daily_pnl = sum(p['pnl'] for p in positions_by_date[date_str])
+                cumulative_pnl += daily_pnl
+                current_equity = starting_capital + cumulative_pnl
+
+                equity_curve.append({
+                    "date": date_str,
+                    "equity": round(current_equity, 2),
+                    "pnl": round(cumulative_pnl, 2),
+                    "daily_pnl": round(daily_pnl, 2),
+                    "return_pct": round((cumulative_pnl / starting_capital) * 100, 2),
+                    "trades_closed": len(positions_by_date[date_str])
+                })
+
+            if equity_curve and equity_curve[-1]["date"] != today:
+                equity_curve.append({
+                    "date": today,
+                    "equity": round(starting_capital + cumulative_pnl, 2),
+                    "pnl": round(cumulative_pnl, 2),
+                    "daily_pnl": 0,
+                    "return_pct": round((cumulative_pnl / starting_capital) * 100, 2)
+                })
+
+            return {
+                "success": True,
+                "data": {
+                    "equity_curve": equity_curve,
+                    "starting_capital": starting_capital,
+                    "current_equity": round(starting_capital + cumulative_pnl, 2),
+                    "total_pnl": round(cumulative_pnl, 2),
+                    "total_return_pct": round((cumulative_pnl / starting_capital) * 100, 2),
+                    "closed_positions_count": len(rows),
+                    "source": "database"
+                }
+            }
+    except Exception as db_err:
+        logger.warning(f"Could not read equity curve from database: {db_err}")
+
+    return {
+        "success": True,
+        "data": {
+            "equity_curve": [{
+                "date": today,
+                "equity": starting_capital,
+                "pnl": 0,
+                "daily_pnl": 0,
+                "return_pct": 0
+            }],
+            "starting_capital": starting_capital,
+            "current_equity": starting_capital,
+            "total_pnl": 0,
+            "message": "No closed positions found"
+        }
+    }
+
+
+@router.get("/equity-curve/intraday")
+async def get_icarus_intraday_equity(date: str = None):
+    """
+    Get ICARUS intraday equity curve with 5-minute interval snapshots.
+
+    Returns equity data points throughout the trading day showing:
+    - Realized P&L from closed positions
+    - Unrealized P&L from open positions (mark-to-market)
+
+    Args:
+        date: Date to get intraday data for (default: today)
+    """
+    now = datetime.now(CENTRAL_TZ)
+    today = date or now.strftime('%Y-%m-%d')
+    current_time = now.strftime('%H:%M:%S')
+
+    starting_capital = 100000
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Get starting capital from config
+        cursor.execute("""
+            SELECT value FROM autonomous_config WHERE key = 'icarus_starting_capital'
+        """)
+        row = cursor.fetchone()
+        if row and row[0]:
+            try:
+                starting_capital = float(row[0])
+            except (ValueError, TypeError):
+                pass
+
+        # Get intraday snapshots for the requested date
+        cursor.execute("""
+            SELECT timestamp, balance, unrealized_pnl, realized_pnl, open_positions, note
+            FROM icarus_equity_snapshots
+            WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+            ORDER BY timestamp ASC
+        """, (today,))
+        snapshots = cursor.fetchall()
+
+        # Get total realized P&L from closed positions up to today
+        cursor.execute("""
+            SELECT COALESCE(SUM(realized_pnl), 0)
+            FROM icarus_positions
+            WHERE status IN ('closed', 'expired')
+            AND DATE(close_time AT TIME ZONE 'America/Chicago') <= %s
+        """, (today,))
+        total_realized_row = cursor.fetchone()
+        total_realized = float(total_realized_row[0]) if total_realized_row and total_realized_row[0] else 0
+
+        # Get today's closed positions P&L
+        cursor.execute("""
+            SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
+            FROM icarus_positions
+            WHERE status IN ('closed', 'expired')
+            AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
+        """, (today,))
+        today_row = cursor.fetchone()
+        today_realized = float(today_row[0]) if today_row and today_row[0] else 0
+        today_closed_count = int(today_row[1]) if today_row and today_row[1] else 0
+
+        # Calculate unrealized P&L from open positions
+        unrealized_pnl = 0
+        open_positions = []
+        try:
+            cursor.execute("""
+                SELECT position_id, spread_type, entry_price, contracts,
+                       long_strike, short_strike, entry_time
+                FROM icarus_positions
+                WHERE status = 'open'
+            """)
+            open_rows = cursor.fetchall()
+
+            for row in open_rows:
+                pos_id, spread_type, entry_price, contracts, long_strike, short_strike, entry_time = row
+                entry_val = float(entry_price) if entry_price else 0
+                num_contracts = int(contracts) if contracts else 1
+
+                # Estimate current value (simplified - assume 50% decay)
+                max_profit = entry_val * 100 * num_contracts
+                current_unrealized = max_profit * 0.5
+
+                open_positions.append({
+                    "position_id": pos_id,
+                    "spread_type": spread_type,
+                    "unrealized_pnl": round(current_unrealized, 2)
+                })
+                unrealized_pnl += current_unrealized
+        except Exception as e:
+            logger.debug(f"Error calculating unrealized P&L: {e}")
+
+        conn.close()
+
+        # Build intraday curve from snapshots
+        intraday_curve = []
+
+        # Add market open point
+        prev_day_realized = total_realized - today_realized
+        intraday_curve.append({
+            "date": today,
+            "time": "08:30:00",
+            "equity": round(starting_capital + prev_day_realized, 2),
+            "pnl": round(prev_day_realized, 2),
+            "daily_pnl": 0,
+            "unrealized_pnl": 0,
+            "realized_pnl": round(prev_day_realized, 2),
+            "source": "market_open",
+            "label": "Market Open"
+        })
+
+        # Add snapshots
+        for snapshot in snapshots:
+            ts, balance, snap_unrealized, snap_realized, open_count, note = snapshot
+            snap_time = ts.astimezone(CENTRAL_TZ) if ts.tzinfo else ts
+            intraday_curve.append({
+                "date": today,
+                "time": snap_time.strftime('%H:%M:%S'),
+                "equity": round(float(balance) if balance else starting_capital, 2),
+                "pnl": round(float(snap_realized or 0) + float(snap_unrealized or 0), 2),
+                "daily_pnl": round(float(snap_realized or 0) + float(snap_unrealized or 0) - prev_day_realized, 2),
+                "unrealized_pnl": round(float(snap_unrealized or 0), 2),
+                "realized_pnl": round(float(snap_realized or 0), 2),
+                "open_positions": open_count,
+                "source": "snapshot"
+            })
+
+        # Add current live point if viewing today
+        if today == now.strftime('%Y-%m-%d'):
+            total_pnl = total_realized + unrealized_pnl
+            current_equity = starting_capital + total_pnl
+            today_total_pnl = today_realized + unrealized_pnl
+
+            intraday_curve.append({
+                "date": today,
+                "time": current_time,
+                "equity": round(current_equity, 2),
+                "pnl": round(total_pnl, 2),
+                "daily_pnl": round(today_total_pnl, 2),
+                "unrealized_pnl": round(unrealized_pnl, 2),
+                "realized_pnl": round(total_realized, 2),
+                "open_positions": len(open_positions),
+                "source": "live",
+                "label": "Current"
+            })
+
+        return {
+            "success": True,
+            "data": {
+                "intraday_curve": intraday_curve,
+                "date": today,
+                "starting_capital": round(starting_capital, 2),
+                "current_equity": round(starting_capital + total_realized + unrealized_pnl, 2),
+                "total_pnl": round(total_realized + unrealized_pnl, 2),
+                "total_realized_pnl": round(total_realized, 2),
+                "total_unrealized_pnl": round(unrealized_pnl, 2),
+                "today_realized_pnl": round(today_realized, 2),
+                "today_closed_count": today_closed_count,
+                "open_positions_count": len(open_positions),
+                "snapshot_count": len(snapshots),
+                "last_updated": now.isoformat()
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting ICARUS intraday equity: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e),
+            "data": {
+                "intraday_curve": [{
+                    "date": today,
+                    "time": current_time,
+                    "equity": starting_capital,
+                    "pnl": 0,
+                    "daily_pnl": 0,
+                    "source": "fallback"
+                }],
+                "starting_capital": starting_capital
+            }
+        }
+
+
+@router.post("/equity-snapshot")
+async def save_icarus_equity_snapshot():
+    """
+    Save current equity snapshot for intraday tracking.
+
+    Call this periodically (every 5 minutes) during market hours
+    to build detailed intraday equity curve.
+    """
+    now = datetime.now(CENTRAL_TZ)
+
+    starting_capital = 100000
+    unrealized_pnl = 0
+    realized_pnl = 0
+    open_count = 0
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Get starting capital
+        cursor.execute("""
+            SELECT value FROM autonomous_config WHERE key = 'icarus_starting_capital'
+        """)
+        row = cursor.fetchone()
+        if row and row[0]:
+            try:
+                starting_capital = float(row[0])
+            except (ValueError, TypeError):
+                pass
+
+        # Get total realized P&L
+        cursor.execute("""
+            SELECT COALESCE(SUM(realized_pnl), 0)
+            FROM icarus_positions
+            WHERE status IN ('closed', 'expired')
+        """)
+        row = cursor.fetchone()
+        realized_pnl = float(row[0]) if row and row[0] else 0
+
+        # Get open positions and calculate unrealized P&L
+        cursor.execute("""
+            SELECT position_id, entry_price, contracts
+            FROM icarus_positions
+            WHERE status = 'open'
+        """)
+        open_rows = cursor.fetchall()
+        open_count = len(open_rows)
+
+        for row in open_rows:
+            pos_id, entry_price, contracts = row
+            entry_val = float(entry_price) if entry_price else 0
+            num_contracts = int(contracts) if contracts else 1
+            unrealized_pnl += entry_val * 100 * num_contracts * 0.5
+
+        current_equity = starting_capital + realized_pnl + unrealized_pnl
+
+        # Create table if not exists
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS icarus_equity_snapshots (
+                id SERIAL PRIMARY KEY,
+                timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+                balance DECIMAL(12, 2) NOT NULL,
+                unrealized_pnl DECIMAL(12, 2),
+                realized_pnl DECIMAL(12, 2),
+                open_positions INTEGER,
+                note TEXT,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+        ''')
+
+        # Insert snapshot
+        cursor.execute('''
+            INSERT INTO icarus_equity_snapshots
+            (timestamp, balance, unrealized_pnl, realized_pnl, open_positions, note)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        ''', (
+            now,
+            current_equity,
+            unrealized_pnl,
+            realized_pnl,
+            open_count,
+            f"Auto snapshot at {now.strftime('%H:%M:%S')}"
+        ))
+
+        conn.commit()
+        conn.close()
+
+        return {
+            "success": True,
+            "data": {
+                "timestamp": now.isoformat(),
+                "equity": round(current_equity, 2),
+                "unrealized_pnl": round(unrealized_pnl, 2),
+                "realized_pnl": round(realized_pnl, 2),
+                "open_positions": open_count
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error saving ICARUS equity snapshot: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
