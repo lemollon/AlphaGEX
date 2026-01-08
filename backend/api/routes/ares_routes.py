@@ -2062,10 +2062,10 @@ async def get_ares_logs(
 
         c.execute(f"""
             SELECT
-                id, created_at, level, message, details
+                id, log_time, level, message, details
             FROM ares_logs
             {where_clause}
-            ORDER BY created_at DESC
+            ORDER BY log_time DESC
             LIMIT %s
         """, tuple(params))
 

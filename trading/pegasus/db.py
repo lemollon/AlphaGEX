@@ -468,15 +468,20 @@ class PEGASUSDatabase:
             return False
 
     def update_heartbeat(self, status: str, action: str) -> None:
+        """Update bot heartbeat for monitoring"""
         try:
+            import json
             with db_connection() as conn:
                 c = conn.cursor()
+                details = json.dumps({"last_action": action})
                 c.execute("""
-                    INSERT INTO bot_heartbeat (bot_name, status, last_action, last_scan_time)
-                    VALUES (%s, %s, %s, NOW())
+                    INSERT INTO bot_heartbeats (bot_name, last_heartbeat, status, details)
+                    VALUES (%s, NOW(), %s, %s)
                     ON CONFLICT (bot_name) DO UPDATE SET
-                        status = EXCLUDED.status, last_action = EXCLUDED.last_action, last_scan_time = NOW()
-                """, (self.bot_name, status, action))
+                        status = EXCLUDED.status,
+                        last_heartbeat = NOW(),
+                        details = EXCLUDED.details
+                """, (self.bot_name, status, details))
                 conn.commit()
         except Exception as e:
             # Heartbeat failures are non-critical

@@ -44,8 +44,9 @@ export default function ConversationHistory() {
       const res = await apiClient.getConversations(100)
 
       if (res.data.success) {
-        setConversations(res.data.conversations)
-        setFilteredConversations(res.data.conversations)
+        const conversations = res.data.conversations || []
+        setConversations(conversations)
+        setFilteredConversations(conversations)
       }
     } catch (error) {
       console.error('Error fetching conversations:', error)
