@@ -120,21 +120,38 @@ class SignalGenerator:
 
     def _init_components(self) -> None:
         """Initialize signal generation components"""
-        # GEX Calculator (try Kronos first, fallback to Tradier)
+        # GEX Calculator - Try Kronos first, but VERIFY it can fetch data
         self.gex_calculator = None
+        kronos_works = False
+
         if KRONOS_AVAILABLE:
             try:
-                self.gex_calculator = KronosGEXCalculator()
-                logger.info("ICARUS SignalGenerator: Using Kronos GEX")
+                kronos_calc = KronosGEXCalculator()
+                # CRITICAL: Test if Kronos can actually fetch data
+                test_result = kronos_calc.calculate_gex(self.config.ticker)
+                if test_result and test_result.get('spot_price', 0) > 0:
+                    self.gex_calculator = kronos_calc
+                    kronos_works = True
+                    logger.info(f"ICARUS: Kronos GEX verified (spot={test_result.get('spot_price')})")
+                else:
+                    logger.warning("ICARUS: Kronos returned no data - falling back")
             except Exception as e:
-                logger.warning(f"Kronos init failed: {e}")
+                logger.warning(f"ICARUS: Kronos GEX init/test failed: {e}")
 
-        if not self.gex_calculator and TRADIER_GEX_AVAILABLE:
+        if not kronos_works and TRADIER_GEX_AVAILABLE:
             try:
-                self.gex_calculator = get_gex_calculator()
-                logger.info("ICARUS SignalGenerator: Using Tradier GEX fallback")
+                tradier_calc = get_gex_calculator()
+                test_result = tradier_calc.calculate_gex(self.config.ticker)
+                if test_result and test_result.get('spot_price', 0) > 0:
+                    self.gex_calculator = tradier_calc
+                    logger.info(f"ICARUS: Tradier GEX verified (spot={test_result.get('spot_price')})")
+                else:
+                    logger.error("ICARUS: Tradier GEX returned no data!")
             except Exception as e:
-                logger.warning(f"Tradier GEX init failed: {e}")
+                logger.warning(f"ICARUS: Tradier GEX init/test failed: {e}")
+
+        if not self.gex_calculator:
+            logger.error("ICARUS: NO GEX CALCULATOR AVAILABLE")
 
         # ML Signal Integration
         self.ml_signal = None
