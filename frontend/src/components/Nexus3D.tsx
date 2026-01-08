@@ -11,6 +11,258 @@ import {
   Line
 } from '@react-three/drei'
 import * as THREE from 'three'
+import useSWR from 'swr'
+
+// =============================================================================
+// API FETCHER FOR LIVE DATA
+// =============================================================================
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+
+const fetcher = async (url: string) => {
+  const res = await fetch(`${API_BASE}${url}`)
+  if (!res.ok) throw new Error('Failed to fetch')
+  return res.json()
+}
+
+// Map system IDs to their API endpoint prefixes
+const SYSTEM_API_MAP: Record<string, string> = {
+  ares: '/api/ares',
+  athena: '/api/athena',
+  icarus: '/api/icarus',
+  pegasus: '/api/pegasus',
+  titan: '/api/titan',
+  sage: '/api/sage',
+  quant: '/api/quant',
+  oracle: '/api/oracle',
+  phoenix: '/api/phoenix',
+  atlas: '/api/atlas',
+}
+
+// Map planet names to their associated bot/metric type
+const PLANET_BOT_MAP: Record<string, string> = {
+  // ARES planets
+  'condor': 'ares',
+  'shield': 'ares',
+  'strategy': 'ares',
+  // ATHENA planets
+  'spread': 'athena',
+  'direction': 'athena',
+  'momentum': 'athena',
+  // ORACLE planets
+  'prediction': 'oracle',
+  'probability': 'oracle',
+  'confidence': 'oracle',
+  // PHOENIX planets
+  'rebirth': 'phoenix',
+  'flame': 'phoenix',
+  'ash': 'phoenix',
+  // ATLAS planets
+  'foundation': 'atlas',
+  'endurance': 'atlas',
+  'strength': 'atlas',
+}
+
+// Route mapping for navigation
+const SYSTEM_ROUTES: Record<string, string> = {
+  manna: '/daily-manna',
+  icarus: '/icarus',
+  pegasus: '/pegasus',
+  titan: '/titan',
+  sage: '/sage',
+  quant: '/quant',
+  oracle: '/oracle',
+  argus: '/argus',
+  systems: '/system/processes',
+  apollo: '/apollo',
+  kronos: '/zero-dte-backtest',
+  solomon: '/solomon',
+  hyperion: '/probability',
+  ares: '/ares',
+  athena: '/athena',
+  phoenix: '/phoenix',
+  atlas: '/atlas',
+}
+
+// =============================================================================
+// LIVE DATA HOOK - Fetches bot performance data from API
+// =============================================================================
+
+interface BotPerformanceData {
+  total_pnl?: number
+  today_pnl?: number
+  win_rate?: number
+  open_positions?: number
+  total_trades?: number
+  today_trades?: number
+  status?: 'active' | 'idle' | 'error'
+  capital?: number
+  return_pct?: number
+}
+
+interface AllBotsLiveData {
+  [systemId: string]: {
+    [planetName: string]: PlanetLiveData
+  }
+}
+
+function useBotLiveData(): { liveData: AllBotsLiveData, isLoading: boolean } {
+  // Fetch unified trader performance
+  const { data: traderPerf } = useSWR('/api/trader/performance', fetcher, {
+    refreshInterval: 30000, // Refresh every 30 seconds
+    revalidateOnFocus: false,
+  })
+
+  // Fetch ARES status
+  const { data: aresData } = useSWR('/api/ares/status', fetcher, {
+    refreshInterval: 30000,
+    revalidateOnFocus: false,
+  })
+
+  // Fetch ATHENA status
+  const { data: athenaData } = useSWR('/api/athena/status', fetcher, {
+    refreshInterval: 30000,
+    revalidateOnFocus: false,
+  })
+
+  // Fetch all bots status
+  const { data: botsStatus } = useSWR('/api/trader/bots/status', fetcher, {
+    refreshInterval: 30000,
+    revalidateOnFocus: false,
+  })
+
+  // Build live data object for all systems
+  const liveData = useMemo<AllBotsLiveData>(() => {
+    const data: AllBotsLiveData = {}
+
+    // Helper to safely extract performance data
+    const extractPerf = (botData: any): Partial<BotPerformanceData> => {
+      if (!botData) return {}
+      const d = botData.data || botData
+      return {
+        total_pnl: d.total_pnl ?? d.pnl ?? d.realized_pnl,
+        today_pnl: d.today_pnl ?? d.daily_pnl,
+        win_rate: d.win_rate,
+        open_positions: d.open_positions ?? d.positions_count ?? 0,
+        total_trades: d.total_trades ?? d.trades_count ?? 0,
+        today_trades: d.today_trades ?? d.trades_today ?? 0,
+        status: d.is_active || d.status === 'active' ? 'active' :
+                d.status === 'error' ? 'error' : 'idle',
+        return_pct: d.return_pct ?? d.total_return_pct,
+      }
+    }
+
+    // ARES system - Iron Condor bot
+    if (aresData) {
+      const perf = extractPerf(aresData)
+      data['ares'] = {
+        // Map to ORACLE system planets (where ARES performance is shown)
+        'prediction': {
+          pnl: perf.total_pnl,
+          pnlPercent: perf.return_pct,
+          winRate: perf.win_rate,
+          activePositions: perf.open_positions,
+          todayTrades: perf.today_trades,
+          status: perf.status,
+        }
+      }
+    }
+
+    // ATHENA system - Directional Spreads bot
+    if (athenaData) {
+      const perf = extractPerf(athenaData)
+      data['athena'] = {
+        'direction': {
+          pnl: perf.total_pnl,
+          pnlPercent: perf.return_pct,
+          winRate: perf.win_rate,
+          activePositions: perf.open_positions,
+          todayTrades: perf.today_trades,
+          status: perf.status,
+        }
+      }
+    }
+
+    // Bots status endpoint contains data for multiple bots
+    if (botsStatus?.data) {
+      const bots = botsStatus.data
+
+      // PHOENIX
+      if (bots.PHOENIX) {
+        const perf = extractPerf(bots.PHOENIX)
+        data['phoenix'] = {
+          'rebirth': {
+            pnl: perf.total_pnl,
+            winRate: perf.win_rate,
+            activePositions: perf.open_positions,
+            status: perf.status,
+          }
+        }
+      }
+
+      // ATLAS
+      if (bots.ATLAS) {
+        const perf = extractPerf(bots.ATLAS)
+        data['atlas'] = {
+          'foundation': {
+            pnl: perf.total_pnl,
+            winRate: perf.win_rate,
+            activePositions: perf.open_positions,
+            status: perf.status,
+          }
+        }
+      }
+
+      // ORACLE
+      if (bots.ORACLE) {
+        const perf = extractPerf(bots.ORACLE)
+        data['oracle'] = {
+          'prediction': {
+            pnl: perf.total_pnl,
+            winRate: perf.win_rate,
+            status: perf.status,
+          },
+          'probability': {
+            winRate: perf.win_rate,
+            status: perf.status,
+          },
+          'confidence': {
+            status: perf.status,
+          }
+        }
+      }
+    }
+
+    // Global trader performance for MANNA (the center)
+    if (traderPerf?.data) {
+      const perf = traderPerf.data
+      data['manna'] = {
+        'provision': {
+          pnl: perf.total_pnl,
+          pnlPercent: perf.total_return_pct,
+          winRate: perf.win_rate,
+          activePositions: perf.total_trades,
+          status: 'active',
+        },
+        'sustenance': {
+          pnl: perf.realized_pnl ?? perf.total_pnl,
+          winRate: perf.win_rate,
+          status: 'active',
+        },
+        'blessing': {
+          pnl: perf.unrealized_pnl ?? 0,
+          status: 'active',
+        }
+      }
+    }
+
+    return data
+  }, [traderPerf, aresData, athenaData, botsStatus])
+
+  const isLoading = !traderPerf && !aresData && !athenaData && !botsStatus
+
+  return { liveData, isLoading }
+}
 
 // =============================================================================
 // ERROR BOUNDARY
@@ -5638,13 +5890,15 @@ function SolarSystem({
   paused = false,
   onPulseToSystem,
   onSystemClick,
-  liveData
+  liveData,
+  onPlanetClick
 }: {
   system: typeof SOLAR_SYSTEMS[0]
   paused?: boolean
   onPulseToSystem?: (targetId: string) => void
   onSystemClick?: (systemId: string, position: [number, number, number]) => void
   liveData?: Record<string, PlanetLiveData>
+  onPlanetClick?: (systemId: string, planetName: string) => void
 }) {
   const { camera } = useThree()
   const groupRef = useRef<THREE.Group>(null)
@@ -5827,6 +6081,7 @@ function SolarSystem({
           phaseOffset={i * Math.PI * 0.7}
           lodLevel={lodLevel}
           liveData={liveData?.[planet.name.toLowerCase()]}
+          onClick={() => onPlanetClick?.(system.id, planet.name)}
         />
       ))}
 
@@ -5886,7 +6141,8 @@ function OrbitingPlanet({
   paused,
   phaseOffset,
   lodLevel = 'high',
-  liveData
+  liveData,
+  onClick
 }: {
   planet: { name: string, color: string, size: number, orbit: number, speed: number, effect?: PlanetEffect, moons?: number }
   systemId: string
@@ -5894,12 +6150,39 @@ function OrbitingPlanet({
   phaseOffset: number
   lodLevel?: LODLevel
   liveData?: PlanetLiveData
+  onClick?: () => void
 }) {
   const groupRef = useRef<THREE.Group>(null)
   const meshRef = useRef<THREE.Mesh>(null)
   const trailRef = useRef<THREE.Points>(null)
   const atmosphereRef = useRef<THREE.Mesh>(null)
   const [isHovered, setIsHovered] = useState(false)
+
+  // Track pointer to distinguish click from drag
+  const pointerDownPos = useRef<{ x: number, y: number } | null>(null)
+  const isDragging = useRef(false)
+
+  const handlePointerDown = useCallback((e: any) => {
+    pointerDownPos.current = { x: e.clientX, y: e.clientY }
+    isDragging.current = false
+  }, [])
+
+  const handlePointerMove = useCallback((e: any) => {
+    if (pointerDownPos.current) {
+      const dx = e.clientX - pointerDownPos.current.x
+      const dy = e.clientY - pointerDownPos.current.y
+      if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+        isDragging.current = true
+      }
+    }
+  }, [])
+
+  const handleClick = useCallback(() => {
+    if (!isDragging.current && onClick) {
+      onClick()
+    }
+    pointerDownPos.current = null
+  }, [onClick])
 
   // Trail positions
   const trailPositions = useMemo(() => new Float32Array(30 * 3), [])
@@ -6007,6 +6290,10 @@ function OrbitingPlanet({
           args={[scaledSize, lodPolygons.sphere, lodPolygons.sphere]}
           onPointerOver={() => setIsHovered(true)}
           onPointerOut={() => setIsHovered(false)}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onClick={handleClick}
+          style={{ cursor: onClick ? 'pointer' : 'default' }}
         >
           {showEffects ? (
             <MeshDistortMaterial
@@ -7908,10 +8195,14 @@ function PlasmaStorms({ paused }: { paused: boolean }) {
 
 function SolarSystemsContainer({
   paused,
-  onSystemClick
+  onSystemClick,
+  liveData,
+  onPlanetClick
 }: {
   paused: boolean
   onSystemClick?: (systemId: string, position: [number, number, number]) => void
+  liveData?: AllBotsLiveData
+  onPlanetClick?: (systemId: string, planetName: string) => void
 }) {
   const handlePulseToSystem = useCallback((targetId: string) => {
     // This could trigger effects on the target system
@@ -7928,6 +8219,8 @@ function SolarSystemsContainer({
           paused={paused}
           onPulseToSystem={handlePulseToSystem}
           onSystemClick={onSystemClick}
+          liveData={liveData?.[system.id]}
+          onPlanetClick={onPlanetClick}
         />
       ))}
 
@@ -10296,6 +10589,8 @@ interface SceneProps {
   setZoomTarget: (t: THREE.Vector3 | null) => void
   stockPrices: Array<{ symbol: string, price: number, change: number }>
   onCameraMove?: (pos: { x: number, y: number, z: number }) => void
+  liveData?: AllBotsLiveData
+  onPlanetClick?: (systemId: string, planetName: string) => void
 }
 
 // Camera position tracker component for minimap
@@ -10337,7 +10632,9 @@ function Scene({
   zoomTarget,
   setZoomTarget,
   stockPrices,
-  onCameraMove
+  onCameraMove,
+  liveData,
+  onPlanetClick
 }: SceneProps) {
   const { mouse3D } = useMousePosition()
   const controlsRef = useRef<any>(null)
@@ -10502,7 +10799,7 @@ function Scene({
       </AlwaysVisibleGroup>
 
       {/* Solar Systems with Neural Synapse Connections */}
-      <SolarSystemsContainer paused={paused} onSystemClick={handleSolarSystemClick} />
+      <SolarSystemsContainer paused={paused} onSystemClick={handleSolarSystemClick} liveData={liveData} onPlanetClick={onPlanetClick} />
 
       {/* WOW FACTOR FEATURES - wrapped for visibility from all angles */}
       <AlwaysVisibleGroup>
@@ -11172,6 +11469,19 @@ export default function Nexus3D({
   // Fetch real-time stock prices
   const { prices: stockPrices, isLive: stockPricesLive } = useStockPrices()
 
+  // Fetch live bot data for planets
+  const { liveData: botLiveData } = useBotLiveData()
+
+  // Handler for planet clicks - navigate to the system's route
+  const handlePlanetClick = useCallback((systemId: string, planetName: string) => {
+    // Get the route for this system
+    const route = SYSTEM_ROUTES[systemId]
+    if (route) {
+      // Use Next.js router or window.location
+      window.location.href = route
+    }
+  }, [])
+
   // Update global COLORS when theme changes
   useEffect(() => {
     COLORS = COLOR_THEMES[theme]
@@ -11360,6 +11670,8 @@ export default function Nexus3D({
               setZoomTarget={setZoomTarget}
               stockPrices={stockPrices}
               onCameraMove={setCameraPosition}
+              liveData={botLiveData}
+              onPlanetClick={handlePlanetClick}
             />
           </Suspense>
         </Canvas>
