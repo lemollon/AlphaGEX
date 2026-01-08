@@ -4471,6 +4471,10 @@ function MannaEffects({ color, sunColor, paused }: { color: string, sunColor: st
   const heavenBeamRef = useRef<THREE.Group>(null)
   const sparklesRef = useRef<THREE.Points>(null)
   const auroraRef = useRef<THREE.Group>(null)
+  const cosmicRaysRef = useRef<THREE.Group>(null)
+  const giantCrossRef = useRef<THREE.Group>(null)
+  const crossGlowRef = useRef<THREE.Group>(null)
+  const holyLightRef = useRef<THREE.Group>(null)
 
   // Falling manna particles - 300 for dramatic effect
   const mannaCount = 300
@@ -4601,6 +4605,29 @@ function MannaEffects({ color, sunColor, paused }: { color: string, sunColor: st
     { radius: 18, height: 12, color: '#6366f1', speed: 0.2, phase: Math.PI * 2 / 3 },
     { radius: 20, height: 14, color: '#4f46e5', speed: -0.15, phase: Math.PI },
   ], [])
+
+  // COSMIC GOLD RAYS - 36 massive rays shooting outward like a supernova
+  const cosmicRays = useMemo(() =>
+    Array.from({ length: 36 }, (_, i) => ({
+      angle: (i / 36) * Math.PI * 2,
+      theta: (Math.random() - 0.5) * Math.PI * 0.6, // Vertical spread
+      length: 35 + Math.random() * 25, // 35-60 units long!
+      width: 0.3 + Math.random() * 0.4,
+      speed: 1.5 + Math.random() * 2,
+      phase: Math.random() * Math.PI * 2,
+      pulseSpeed: 0.5 + Math.random() * 1.5
+    }))
+  , [])
+
+  // HOLY LIGHT BEAMS - 12 beams in sacred geometry
+  const holyBeams = useMemo(() =>
+    Array.from({ length: 12 }, (_, i) => ({
+      angle: (i / 12) * Math.PI * 2,
+      length: 45,
+      width: 0.8,
+      speed: 0.8 + i * 0.1
+    }))
+  , [])
 
   useFrame((state) => {
     if (paused) return
@@ -4777,6 +4804,40 @@ function MannaEffects({ color, sunColor, paused }: { color: string, sunColor: st
         band.scale.setScalar(wave)
       })
     }
+
+    // COSMIC GOLD RAYS - Pulsing and shooting outward
+    if (cosmicRaysRef.current) {
+      cosmicRaysRef.current.rotation.y = t * 0.03
+      cosmicRaysRef.current.rotation.x = Math.sin(t * 0.2) * 0.05
+      cosmicRaysRef.current.children.forEach((ray, i) => {
+        const pulse = 0.5 + Math.abs(Math.sin(t * cosmicRays[i].pulseSpeed + cosmicRays[i].phase)) * 0.5
+        ray.scale.y = pulse
+        ray.scale.x = 0.7 + Math.sin(t * cosmicRays[i].speed + cosmicRays[i].phase) * 0.3
+      })
+    }
+
+    // GIANT CROSS - Majestic rotation
+    if (giantCrossRef.current) {
+      giantCrossRef.current.rotation.y = t * 0.08
+      const pulse = 1 + Math.sin(t * 1.2) * 0.1
+      giantCrossRef.current.scale.setScalar(pulse)
+    }
+
+    // CROSS GLOW - Pulsing divine light around the cross
+    if (crossGlowRef.current) {
+      crossGlowRef.current.rotation.y = -t * 0.05
+      const glowPulse = 0.8 + Math.sin(t * 2) * 0.2
+      crossGlowRef.current.scale.setScalar(glowPulse)
+    }
+
+    // HOLY LIGHT BEAMS - Rotating sacred geometry
+    if (holyLightRef.current) {
+      holyLightRef.current.rotation.y = t * 0.15
+      holyLightRef.current.children.forEach((beam, i) => {
+        const intensity = 0.6 + Math.sin(t * holyBeams[i].speed + i) * 0.4
+        beam.scale.y = intensity
+      })
+    }
   })
 
   return (
@@ -4809,7 +4870,98 @@ function MannaEffects({ color, sunColor, paused }: { color: string, sunColor: st
         </Sphere>
       </group>
 
-      {/* DIVINE CROSS - Larger and More Dramatic */}
+      {/* GIANT MAJESTIC CROSS - The Central Symbol of Faith */}
+      <group ref={giantCrossRef}>
+        {/* Main vertical beam - MASSIVE */}
+        <mesh position={[0, 5, 0]}>
+          <boxGeometry args={[1.2, 25, 1.2]} />
+          <meshBasicMaterial color="#fbbf24" transparent opacity={0.95} />
+        </mesh>
+        {/* Main horizontal beam */}
+        <mesh position={[0, 12, 0]}>
+          <boxGeometry args={[18, 1.2, 1.2]} />
+          <meshBasicMaterial color="#fbbf24" transparent opacity={0.95} />
+        </mesh>
+        {/* Vertical inner glow */}
+        <mesh position={[0, 5, 0]}>
+          <boxGeometry args={[2, 26, 2]} />
+          <meshBasicMaterial color="#fef3c7" transparent opacity={0.3} />
+        </mesh>
+        {/* Horizontal inner glow */}
+        <mesh position={[0, 12, 0]}>
+          <boxGeometry args={[19, 2, 2]} />
+          <meshBasicMaterial color="#fef3c7" transparent opacity={0.3} />
+        </mesh>
+        {/* Cross center jewel */}
+        <Sphere args={[1.8, 32, 32]} position={[0, 12, 0]}>
+          <meshBasicMaterial color="#ffffff" transparent opacity={0.9} />
+        </Sphere>
+        {/* Cross tips - jewels */}
+        <Sphere args={[0.8, 16, 16]} position={[0, 17.5, 0]}>
+          <meshBasicMaterial color="#fef3c7" />
+        </Sphere>
+        <Sphere args={[0.8, 16, 16]} position={[0, -7.5, 0]}>
+          <meshBasicMaterial color="#fef3c7" />
+        </Sphere>
+        <Sphere args={[0.8, 16, 16]} position={[9, 12, 0]}>
+          <meshBasicMaterial color="#fef3c7" />
+        </Sphere>
+        <Sphere args={[0.8, 16, 16]} position={[-9, 12, 0]}>
+          <meshBasicMaterial color="#fef3c7" />
+        </Sphere>
+      </group>
+
+      {/* CROSS GLOW AURA - Radiating divine light from the cross */}
+      <group ref={crossGlowRef}>
+        <Sphere args={[8, 32, 32]} position={[0, 8, 0]}>
+          <meshBasicMaterial color="#fde68a" transparent opacity={0.1} side={THREE.DoubleSide} />
+        </Sphere>
+        <Sphere args={[12, 32, 32]} position={[0, 8, 0]}>
+          <meshBasicMaterial color="#fbbf24" transparent opacity={0.06} side={THREE.DoubleSide} />
+        </Sphere>
+        <Sphere args={[16, 32, 32]} position={[0, 8, 0]}>
+          <meshBasicMaterial color="#f59e0b" transparent opacity={0.03} side={THREE.DoubleSide} />
+        </Sphere>
+      </group>
+
+      {/* COSMIC GOLD RAYS - 36 Massive rays shooting outward like a supernova */}
+      <group ref={cosmicRaysRef}>
+        {cosmicRays.map((ray, i) => {
+          const x = Math.cos(ray.angle) * Math.cos(ray.theta)
+          const y = Math.sin(ray.theta)
+          const z = Math.sin(ray.angle) * Math.cos(ray.theta)
+          return (
+            <mesh
+              key={i}
+              position={[x * 3, y * 3 + 5, z * 3]}
+              rotation={[
+                ray.theta,
+                -ray.angle,
+                0
+              ]}
+            >
+              <cylinderGeometry args={[0.02, ray.width, ray.length, 8]} />
+              <meshBasicMaterial color="#fbbf24" transparent opacity={0.7} side={THREE.DoubleSide} />
+            </mesh>
+          )
+        })}
+      </group>
+
+      {/* HOLY LIGHT BEAMS - 12 Sacred geometry beams */}
+      <group ref={holyLightRef}>
+        {holyBeams.map((beam, i) => (
+          <mesh
+            key={i}
+            position={[Math.cos(beam.angle) * 2, 5, Math.sin(beam.angle) * 2]}
+            rotation={[0, -beam.angle, Math.PI / 2]}
+          >
+            <cylinderGeometry args={[0.05, beam.width, beam.length, 8]} />
+            <meshBasicMaterial color="#fcd34d" transparent opacity={0.5} side={THREE.DoubleSide} />
+          </mesh>
+        ))}
+      </group>
+
+      {/* OLD DIVINE CROSS - Keep as secondary inner cross */}
       <group ref={crossRef}>
         {/* Vertical beam */}
         <mesh position={[0, 0, 0]}>
