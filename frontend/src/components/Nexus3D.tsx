@@ -10978,11 +10978,13 @@ function Scene({
         <LensFlare paused={paused} />
       </AlwaysVisibleGroup>
 
-      {/* Core - wrapped for visibility from all angles */}
-      <AlwaysVisibleGroup>
-        <BreathingCore gexValue={gexValue} vixValue={vixValue} paused={paused} />
-        <CoreVortex paused={paused} />
-      </AlwaysVisibleGroup>
+      {/* Core - positioned at MANNA for GEX Core integration */}
+      <group position={[0, 0, -60]}>
+        <AlwaysVisibleGroup>
+          <BreathingCore gexValue={gexValue} vixValue={vixValue} paused={paused} />
+          <CoreVortex paused={paused} />
+        </AlwaysVisibleGroup>
+      </group>
 
       {/* Pulse effects - wrapped for visibility from all angles */}
       <AlwaysVisibleGroup>
