@@ -452,7 +452,8 @@ class TradierGEXCalculator:
             try:
                 from data.tradier_data_fetcher import TradierDataFetcher
                 self._tradier = TradierDataFetcher()
-            except ImportError as e:
+            except Exception as e:
+                # Catch all exceptions: ImportError, ValueError (missing API key), etc.
                 logger.error(f"Tradier not available: {e}")
                 return None
         return self._tradier
@@ -554,6 +555,25 @@ class TradierGEXCalculator:
         except Exception as e:
             logger.error(f"GEX calculation failed for {symbol}: {e}")
             return {'error': f'GEX calculation failed: {str(e)}'}
+
+    def calculate_gex(self, ticker: str) -> Optional[Dict[str, Any]]:
+        """
+        Calculate GEX for ticker - wrapper for signals compatibility.
+
+        This method provides a consistent interface that matches KronosGEXCalculator.calculate_gex()
+        so signals code can call gex_calculator.calculate_gex(ticker) regardless of which
+        calculator is in use.
+
+        Args:
+            ticker: Symbol to calculate GEX for (SPY, SPX, etc.)
+
+        Returns:
+            Dict with GEX data or None if unavailable
+        """
+        result = self.get_gex(ticker)
+        if result and not result.get('error'):
+            return result
+        return None
 
     def get_gex_profile(self, symbol: str) -> Optional[Dict[str, Any]]:
         """

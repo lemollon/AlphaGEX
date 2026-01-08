@@ -192,6 +192,48 @@ class KronosGEXCalculator:
 
         return None, 'no_data'
 
+    def calculate_gex(self, ticker: str = None) -> Optional[Dict[str, Any]]:
+        """
+        Calculate GEX for current day - wrapper for signals compatibility.
+
+        This method provides a consistent interface that matches TradierGEXCalculator.get_gex()
+        so signals code can call gex_calculator.calculate_gex(ticker) regardless of which
+        calculator is in use.
+
+        Args:
+            ticker: Ignored for Kronos (always uses SPX from ORAT database)
+
+        Returns:
+            Dict with GEX data or None if unavailable
+        """
+        gex_data, source = self.get_gex_for_today_or_recent()
+        if not gex_data:
+            return None
+
+        # Convert GEXData dataclass to dict format expected by signals
+        return {
+            'spot_price': gex_data.spot_price,
+            'underlying_price': gex_data.spot_price,
+            'net_gex': gex_data.net_gex,
+            'call_gex': gex_data.call_gex,
+            'put_gex': gex_data.put_gex,
+            'call_wall': gex_data.call_wall,
+            'put_wall': gex_data.put_wall,
+            'major_call_wall': gex_data.call_wall,
+            'major_put_wall': gex_data.put_wall,
+            'flip_point': gex_data.flip_point,
+            'gamma_flip': gex_data.flip_point,
+            'regime': gex_data.gex_regime,
+            'gex_regime': gex_data.gex_regime,
+            'gex_normalized': gex_data.gex_normalized,
+            'distance_to_flip_pct': gex_data.distance_to_flip_pct,
+            'above_call_wall': gex_data.above_call_wall,
+            'below_put_wall': gex_data.below_put_wall,
+            'between_walls': gex_data.between_walls,
+            'data_source': source,
+            'trade_date': gex_data.trade_date,
+        }
+
     def calculate_gex_for_date(
         self,
         trade_date: str,
