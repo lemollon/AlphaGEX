@@ -121,21 +121,42 @@ class SignalGenerator:
 
     def _init_components(self) -> None:
         """Initialize signal generation components"""
-        # GEX Calculator
+        # GEX Calculator - Try Kronos first, but VERIFY it can fetch data
+        # Kronos uses ORAT database which may not have recent data
         self.gex_calculator = None
+        kronos_works = False
+
         if KRONOS_AVAILABLE:
             try:
-                self.gex_calculator = KronosGEXCalculator()
-                logger.info("ARES SignalGenerator: Using Kronos GEX")
+                kronos_calc = KronosGEXCalculator()
+                # CRITICAL: Actually test if Kronos can fetch data
+                # Kronos init always succeeds but may fail to fetch data
+                test_result = kronos_calc.calculate_gex(self.config.ticker)
+                if test_result and test_result.get('spot_price', 0) > 0:
+                    self.gex_calculator = kronos_calc
+                    kronos_works = True
+                    logger.info(f"ARES SignalGenerator: Using Kronos GEX (verified with spot={test_result.get('spot_price')})")
+                else:
+                    logger.warning("ARES SignalGenerator: Kronos instantiated but returned no data - falling back")
             except Exception as e:
-                logger.warning(f"Kronos init failed: {e}")
+                logger.warning(f"Kronos init/test failed: {e}")
 
-        if not self.gex_calculator and TRADIER_GEX_AVAILABLE:
+        # Fall back to Tradier if Kronos didn't work
+        if not kronos_works and TRADIER_GEX_AVAILABLE:
             try:
-                self.gex_calculator = get_gex_calculator()
-                logger.info("ARES SignalGenerator: Using Tradier GEX fallback")
+                tradier_calc = get_gex_calculator()
+                # Also verify Tradier works
+                test_result = tradier_calc.calculate_gex(self.config.ticker)
+                if test_result and test_result.get('spot_price', 0) > 0:
+                    self.gex_calculator = tradier_calc
+                    logger.info(f"ARES SignalGenerator: Using Tradier GEX (verified with spot={test_result.get('spot_price')})")
+                else:
+                    logger.error("ARES SignalGenerator: Tradier GEX returned no data!")
             except Exception as e:
-                logger.warning(f"Tradier GEX init failed: {e}")
+                logger.warning(f"Tradier GEX init/test failed: {e}")
+
+        if not self.gex_calculator:
+            logger.error("ARES SignalGenerator: NO GEX CALCULATOR AVAILABLE - trading will be limited")
 
         # ARES ML Advisor (PRIMARY - trained on KRONOS backtests with ~70% win rate)
         self.ares_ml = None

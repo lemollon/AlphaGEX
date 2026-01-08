@@ -106,21 +106,39 @@ class SignalGenerator:
         self._init_components()
 
     def _init_components(self) -> None:
+        # GEX Calculator - Try Kronos first, but VERIFY it can fetch data
         self.gex_calculator = None
+        kronos_works = False
+
         if KRONOS_AVAILABLE:
             try:
-                self.gex_calculator = KronosGEXCalculator()
-                logger.info("PEGASUS: Kronos GEX initialized")
+                kronos_calc = KronosGEXCalculator()
+                # CRITICAL: Test if Kronos can actually fetch data
+                test_result = kronos_calc.calculate_gex(self.config.ticker)
+                if test_result and test_result.get('spot_price', 0) > 0:
+                    self.gex_calculator = kronos_calc
+                    kronos_works = True
+                    logger.info(f"PEGASUS: Kronos GEX verified (spot={test_result.get('spot_price')})")
+                else:
+                    logger.warning("PEGASUS: Kronos returned no data - falling back")
             except Exception as e:
-                logger.warning(f"PEGASUS: Kronos GEX init failed: {e}")
+                logger.warning(f"PEGASUS: Kronos GEX init/test failed: {e}")
 
-        if not self.gex_calculator and TRADIER_GEX_AVAILABLE:
+        if not kronos_works and TRADIER_GEX_AVAILABLE:
             try:
                 from data.gex_calculator import get_gex_calculator
-                self.gex_calculator = get_gex_calculator()
-                logger.info("PEGASUS: Tradier GEX initialized")
+                tradier_calc = get_gex_calculator()
+                test_result = tradier_calc.calculate_gex(self.config.ticker)
+                if test_result and test_result.get('spot_price', 0) > 0:
+                    self.gex_calculator = tradier_calc
+                    logger.info(f"PEGASUS: Tradier GEX verified (spot={test_result.get('spot_price')})")
+                else:
+                    logger.error("PEGASUS: Tradier GEX returned no data!")
             except Exception as e:
-                logger.warning(f"PEGASUS: Tradier GEX init failed: {e}")
+                logger.warning(f"PEGASUS: Tradier GEX init/test failed: {e}")
+
+        if not self.gex_calculator:
+            logger.error("PEGASUS: NO GEX CALCULATOR AVAILABLE")
 
         # ARES ML Advisor (PRIMARY - Iron Condor ML model with ~70% win rate)
         self.ares_ml = None
