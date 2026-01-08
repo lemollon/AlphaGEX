@@ -4515,13 +4515,13 @@ function MannaEffects({ color, sunColor, paused }: { color: string, sunColor: st
     return positions
   }, [])
 
-  // Divine light rays - 24 rays for more coverage
+  // Divine light rays - 48 thin electric rays (DBZ style)
   const rays = useMemo(() => {
-    return Array.from({ length: 24 }, (_, i) => ({
-      angle: (i / 24) * Math.PI * 2,
-      length: 12 + Math.random() * 8,
-      width: 0.4 + Math.random() * 0.3,
-      speed: 0.3 + Math.random() * 0.7,
+    return Array.from({ length: 48 }, (_, i) => ({
+      angle: (i / 48) * Math.PI * 2 + (Math.random() - 0.5) * 0.08,
+      length: 15 + Math.random() * 12,
+      width: 0.03 + Math.random() * 0.04, // Very thin electric
+      speed: 2 + Math.random() * 3, // Faster crackling
       phase: Math.random() * Math.PI * 2
     }))
   }, [])
@@ -4563,14 +4563,14 @@ function MannaEffects({ color, sunColor, paused }: { color: string, sunColor: st
     { radius: 14, speed: 0.7, phase: Math.PI },
   ], [])
 
-  // STARBURST RAYS - 48 dramatic rays shooting outward
+  // STARBURST RAYS - 96 thin electric rays shooting outward (DBZ style)
   const starburstRays = useMemo(() =>
-    Array.from({ length: 48 }, (_, i) => ({
-      angle: (i / 48) * Math.PI * 2,
-      length: 8 + Math.random() * 12,
-      speed: 2 + Math.random() * 3,
+    Array.from({ length: 96 }, (_, i) => ({
+      angle: (i / 96) * Math.PI * 2 + (Math.random() - 0.5) * 0.05,
+      length: 10 + Math.random() * 15,
+      speed: 4 + Math.random() * 4, // Faster crackling
       phase: Math.random() * Math.PI * 2,
-      width: 0.1 + Math.random() * 0.15
+      width: 0.02 + Math.random() * 0.03 // Very thin like lightning
     }))
   , [])
 
@@ -4617,26 +4617,26 @@ function MannaEffects({ color, sunColor, paused }: { color: string, sunColor: st
     { radius: 20, height: 14, color: '#4f46e5', speed: -0.15, phase: Math.PI },
   ], [])
 
-  // COSMIC GOLD RAYS - 36 massive rays shooting outward like a supernova
+  // COSMIC GOLD RAYS - 72 thin electric lightning bolts (DBZ style)
   const cosmicRays = useMemo(() =>
-    Array.from({ length: 36 }, (_, i) => ({
-      angle: (i / 36) * Math.PI * 2,
-      theta: (Math.random() - 0.5) * Math.PI * 0.6, // Vertical spread
-      length: 35 + Math.random() * 25, // 35-60 units long!
-      width: 0.3 + Math.random() * 0.4,
-      speed: 1.5 + Math.random() * 2,
+    Array.from({ length: 72 }, (_, i) => ({
+      angle: (i / 72) * Math.PI * 2 + (Math.random() - 0.5) * 0.1,
+      theta: (Math.random() - 0.5) * Math.PI * 0.8, // More vertical spread
+      length: 25 + Math.random() * 35, // 25-60 units long
+      width: 0.03 + Math.random() * 0.05, // MUCH thinner - lightning style
+      speed: 3 + Math.random() * 4, // Faster crackling
       phase: Math.random() * Math.PI * 2,
       pulseSpeed: 0.5 + Math.random() * 1.5
     }))
   , [])
 
-  // HOLY LIGHT BEAMS - 12 beams in sacred geometry
+  // HOLY LIGHT BEAMS - 24 thin electric beams in sacred geometry (DBZ style)
   const holyBeams = useMemo(() =>
-    Array.from({ length: 12 }, (_, i) => ({
-      angle: (i / 12) * Math.PI * 2,
-      length: 45,
-      width: 0.8,
-      speed: 0.8 + i * 0.1
+    Array.from({ length: 24 }, (_, i) => ({
+      angle: (i / 24) * Math.PI * 2,
+      length: 40 + Math.random() * 15,
+      width: 0.04 + Math.random() * 0.03, // Very thin
+      speed: 2 + Math.random() * 2
     }))
   , [])
 
@@ -4715,6 +4715,32 @@ function MannaEffects({ color, sunColor, paused }: { color: string, sunColor: st
 
   // LIGHTNING state for random bolts
   const [lightningBolts, setLightningBolts] = useState<Array<{angle: number, active: boolean, id: number}>>([])
+
+  // ELECTRIC SPARKS - DBZ style crackling particles
+  const electricSparkCount = 200
+  const electricSparkRef = useRef<THREE.Points>(null)
+  const electricSparkPositions = useMemo(() => {
+    const positions = new Float32Array(electricSparkCount * 3)
+    for (let i = 0; i < electricSparkCount; i++) {
+      const theta = Math.random() * Math.PI * 2
+      const phi = Math.random() * Math.PI
+      const radius = 3 + Math.random() * 12
+      positions[i * 3] = Math.sin(phi) * Math.cos(theta) * radius
+      positions[i * 3 + 1] = Math.cos(phi) * radius
+      positions[i * 3 + 2] = Math.sin(phi) * Math.sin(theta) * radius
+    }
+    return positions
+  }, [])
+
+  // AURA WAVES - DBZ style power aura rings
+  const auraWaveRef = useRef<THREE.Group>(null)
+  const auraWaves = useMemo(() => [
+    { radius: 4, speed: 3, opacity: 0.4 },
+    { radius: 6, speed: 2.5, opacity: 0.3 },
+    { radius: 8, speed: 2, opacity: 0.25 },
+    { radius: 10, speed: 1.5, opacity: 0.2 },
+    { radius: 12, speed: 1.2, opacity: 0.15 },
+  ], [])
 
   useFrame((state) => {
     if (paused) return
@@ -5025,6 +5051,41 @@ function MannaEffects({ color, sunColor, paused }: { color: string, sunColor: st
       choirOfAngelsRef.current.children.forEach((ring, i) => {
         ring.rotation.y = t * choirRings[i].speed
         ring.position.y = choirRings[i].height + Math.sin(t * 0.5 + i) * 1
+      })
+    }
+
+    // ELECTRIC SPARKS - DBZ crackling effect
+    if (electricSparkRef.current) {
+      const positions = electricSparkRef.current.geometry.attributes.position.array as Float32Array
+      for (let i = 0; i < electricSparkCount; i++) {
+        // Rapid jittering for electric effect
+        positions[i * 3] += (Math.random() - 0.5) * 0.3
+        positions[i * 3 + 1] += (Math.random() - 0.5) * 0.3
+        positions[i * 3 + 2] += (Math.random() - 0.5) * 0.3
+
+        // Keep particles within bounds
+        const dist = Math.sqrt(
+          positions[i * 3] ** 2 + positions[i * 3 + 1] ** 2 + positions[i * 3 + 2] ** 2
+        )
+        if (dist > 15 || dist < 2) {
+          const theta = Math.random() * Math.PI * 2
+          const phi = Math.random() * Math.PI
+          const radius = 3 + Math.random() * 10
+          positions[i * 3] = Math.sin(phi) * Math.cos(theta) * radius
+          positions[i * 3 + 1] = Math.cos(phi) * radius
+          positions[i * 3 + 2] = Math.sin(phi) * Math.sin(theta) * radius
+        }
+      }
+      electricSparkRef.current.geometry.attributes.position.needsUpdate = true
+      electricSparkRef.current.rotation.y = t * 0.5
+    }
+
+    // AURA WAVES - DBZ power aura expanding rings
+    if (auraWaveRef.current) {
+      auraWaveRef.current.children.forEach((wave, i) => {
+        const pulse = 1 + Math.sin(t * auraWaves[i].speed) * 0.3
+        wave.scale.setScalar(pulse)
+        wave.rotation.z = t * 0.2 * (i % 2 === 0 ? 1 : -1)
       })
     }
   })
@@ -5680,6 +5741,24 @@ function MannaEffects({ color, sunColor, paused }: { color: string, sunColor: st
               )
             })}
           </group>
+        ))}
+      </group>
+
+      {/* ELECTRIC SPARKS - DBZ style crackling energy */}
+      <points ref={electricSparkRef}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" count={electricSparkCount} array={electricSparkPositions} itemSize={3} />
+        </bufferGeometry>
+        <pointsMaterial color="#fef3c7" size={0.08} transparent opacity={0.9} sizeAttenuation />
+      </points>
+
+      {/* AURA WAVES - DBZ power-up expanding rings */}
+      <group ref={auraWaveRef}>
+        {auraWaves.map((wave, i) => (
+          <mesh key={i} rotation={[Math.PI / 2, 0, 0]}>
+            <ringGeometry args={[wave.radius - 0.05, wave.radius + 0.05, 64]} />
+            <meshBasicMaterial color="#fbbf24" transparent opacity={wave.opacity} side={THREE.DoubleSide} />
+          </mesh>
         ))}
       </group>
 
@@ -12059,6 +12138,36 @@ function AmbientParticles({ performanceMode, paused = false }: { performanceMode
 }
 
 // =============================================================================
+// ZOOM LEVEL CONTROLLER
+// =============================================================================
+
+function ZoomLevelController({ controlsRef, zoomLevel }: { controlsRef: React.RefObject<any>, zoomLevel: number }) {
+  const { camera } = useThree()
+  const prevZoomLevel = useRef(zoomLevel)
+
+  useEffect(() => {
+    if (controlsRef.current && prevZoomLevel.current !== zoomLevel) {
+      const target = controlsRef.current.target as THREE.Vector3
+      const direction = new THREE.Vector3()
+      direction.subVectors(camera.position, target).normalize()
+
+      // Calculate new distance based on zoom level
+      const currentDistance = camera.position.distanceTo(target)
+      const zoomFactor = zoomLevel / prevZoomLevel.current
+      const newDistance = Math.max(3, Math.min(100, currentDistance * zoomFactor))
+
+      // Move camera to new position
+      camera.position.copy(target).addScaledVector(direction, newDistance)
+      controlsRef.current.update()
+
+      prevZoomLevel.current = zoomLevel
+    }
+  }, [zoomLevel, camera, controlsRef])
+
+  return null
+}
+
+// =============================================================================
 // MAIN SCENE
 // =============================================================================
 
@@ -12083,6 +12192,7 @@ interface SceneProps {
   konamiActive: boolean
   zoomTarget: THREE.Vector3 | null
   setZoomTarget: (t: THREE.Vector3 | null) => void
+  zoomLevel?: number
   stockPrices: Array<{ symbol: string, price: number, change: number }>
   onCameraMove?: (pos: { x: number, y: number, z: number }) => void
   liveData?: AllBotsLiveData
@@ -12127,6 +12237,7 @@ function Scene({
   konamiActive,
   zoomTarget,
   setZoomTarget,
+  zoomLevel = 1,
   stockPrices,
   onCameraMove,
   liveData,
@@ -12156,6 +12267,9 @@ function Scene({
 
   return (
     <>
+      {/* Zoom Level Controller */}
+      <ZoomLevelController controlsRef={controlsRef} zoomLevel={zoomLevel} />
+
       {/* Camera Controller */}
       <CameraController
         controlsRef={controlsRef}
@@ -12546,12 +12660,20 @@ function NexusMinimap({
   currentSystem,
   cameraPosition,
   onNavigate,
-  onOverview
+  onOverview,
+  onZoomIn,
+  onZoomOut,
+  onZoomReset,
+  zoomLevel
 }: {
   currentSystem: string | null
   cameraPosition?: { x: number, y: number, z: number }
   onNavigate: (systemId: string, position: [number, number, number]) => void
   onOverview?: () => void
+  onZoomIn?: () => void
+  onZoomOut?: () => void
+  onZoomReset?: () => void
+  zoomLevel?: number
 }) {
   const [expanded, setExpanded] = useState(true)
 
@@ -12563,6 +12685,35 @@ function NexusMinimap({
   return (
     <div className="absolute top-4 right-4 z-10">
       <div className="flex gap-2 mb-2 justify-end">
+        {/* Zoom Controls */}
+        <div className="flex bg-black/70 border border-cyan-500/30 rounded-lg overflow-hidden backdrop-blur">
+          <button
+            onClick={onZoomIn}
+            className="w-8 h-8 flex items-center justify-center text-cyan-400 hover:bg-cyan-500/20 transition-colors border-r border-cyan-500/30"
+            title="Zoom In"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v6m3-3H7" />
+            </svg>
+          </button>
+          <button
+            onClick={onZoomReset}
+            className="px-2 h-8 flex items-center justify-center text-cyan-400 hover:bg-cyan-500/20 transition-colors text-xs font-bold border-r border-cyan-500/30"
+            title="Reset Zoom"
+          >
+            {zoomLevel ? `${Math.round(100 / zoomLevel)}%` : '100%'}
+          </button>
+          <button
+            onClick={onZoomOut}
+            className="w-8 h-8 flex items-center justify-center text-cyan-400 hover:bg-cyan-500/20 transition-colors"
+            title="Zoom Out"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM13 10H7" />
+            </svg>
+          </button>
+        </div>
+
         {/* Overview Button - See All Systems */}
         <button
           onClick={onOverview}
@@ -12930,6 +13081,7 @@ export default function Nexus3D({
   const [konamiActive, setKonamiActive] = useState(false)
   const [shakeActive, setShakeActive] = useState(false)
   const [zoomTarget, setZoomTarget] = useState<THREE.Vector3 | null>(null)
+  const [zoomLevel, setZoomLevel] = useState(1) // 1 = normal, 0.5 = zoomed in, 2 = zoomed out
   const [currentSystem, setCurrentSystem] = useState<string | null>(null)
   const [audioMuted, setAudioMuted] = useState(true)
   const [cameraPosition, setCameraPosition] = useState<{ x: number, y: number, z: number }>({ x: 0, y: 2, z: 10 })
@@ -12977,6 +13129,21 @@ export default function Nexus3D({
     const target = new THREE.Vector3(position[0], position[1], position[2])
     setZoomTarget(target)
     setCurrentSystem(systemId === 'home' ? null : systemId)
+  }, [])
+
+  // Zoom in handler - moves camera closer
+  const handleZoomIn = useCallback(() => {
+    setZoomLevel(prev => Math.max(0.3, prev * 0.7))
+  }, [])
+
+  // Zoom out handler - moves camera further
+  const handleZoomOut = useCallback(() => {
+    setZoomLevel(prev => Math.min(3, prev * 1.4))
+  }, [])
+
+  // Reset zoom handler
+  const handleZoomReset = useCallback(() => {
+    setZoomLevel(1)
   }, [])
 
   // Fetch real-time stock prices
@@ -13143,6 +13310,10 @@ export default function Nexus3D({
           cameraPosition={cameraPosition}
           onNavigate={handleNavigateToSystem}
           onOverview={handleGalaxyOverview}
+          onZoomIn={handleZoomIn}
+          onZoomOut={handleZoomOut}
+          onZoomReset={handleZoomReset}
+          zoomLevel={zoomLevel}
         />
 
         {/* Solar System Navigator */}
@@ -13191,6 +13362,7 @@ export default function Nexus3D({
               konamiActive={konamiActive}
               zoomTarget={zoomTarget}
               setZoomTarget={setZoomTarget}
+              zoomLevel={zoomLevel}
               stockPrices={stockPrices}
               onCameraMove={setCameraPosition}
               liveData={botLiveData}
