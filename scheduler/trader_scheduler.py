@@ -173,6 +173,19 @@ except ImportError:
     GEXDirectionalPredictor = None
     print("Warning: GEXDirectionalPredictor not available. Directional ML training will be disabled.")
 
+# Import Auto-Validation System for ML model health monitoring and auto-retrain
+try:
+    from quant.auto_validation_system import (
+        get_auto_validation_system, run_validation, get_validation_status
+    )
+    AUTO_VALIDATION_AVAILABLE = True
+except ImportError:
+    AUTO_VALIDATION_AVAILABLE = False
+    get_auto_validation_system = None
+    run_validation = None
+    get_validation_status = None
+    print("Warning: AutoValidationSystem not available. ML validation will be disabled.")
+
 # Import scan activity logger for comprehensive scan visibility
 try:
     from trading.scan_activity_logger import (
@@ -1903,6 +1916,89 @@ class AutonomousTraderScheduler:
         logger.info(f"QUANT: Next training scheduled for next Sunday at 5:00 PM CT")
         logger.info(f"=" * 80)
 
+    def scheduled_validation_logic(self):
+        """
+        AUTO-VALIDATION (ML Health Check) - runs WEEKLY on Saturday at 6:00 PM CT
+
+        Validates ALL 11 ML models using walk-forward validation:
+        - GEX Signal Generator (5 sub-models)
+        - GEX Directional ML
+        - ML Regime Classifier
+        - ARES ML Advisor
+        - Oracle Advisor
+        - Apollo ML Engine
+        - Prometheus ML
+        - SPX Wheel ML
+        - Market Regime Classifier
+        - Pattern Learner
+        - ATHENA ML
+
+        If degradation exceeds threshold, auto-retrain is triggered.
+        Also updates Thompson Sampling capital allocation based on bot performance.
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"AUTO-VALIDATION triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not AUTO_VALIDATION_AVAILABLE:
+            logger.warning("AUTO-VALIDATION: System not available")
+            return
+
+        try:
+            logger.info("AUTO-VALIDATION: Running weekly ML model health check...")
+
+            # Run validation on all models
+            results = run_validation(force=True)
+
+            # Count results by status
+            healthy = sum(1 for r in results if r.status.value == 'healthy')
+            degraded = sum(1 for r in results if r.status.value == 'degraded')
+            failed = sum(1 for r in results if r.status.value == 'failed')
+            retrained = sum(1 for r in results if r.recommendation == 'RETRAIN')
+
+            logger.info(f"AUTO-VALIDATION: Health check complete")
+            logger.info(f"  Total models: {len(results)}")
+            logger.info(f"  Healthy: {healthy}")
+            logger.info(f"  Degraded: {degraded}")
+            logger.info(f"  Failed: {failed}")
+            logger.info(f"  Auto-retrained: {retrained}")
+
+            # Log details for each model
+            for r in results:
+                status_icon = "✅" if r.status.value == 'healthy' else "⚠️" if r.status.value == 'degraded' else "❌"
+                logger.info(f"  {status_icon} {r.model_name}: {r.status.value} "
+                           f"(IS: {r.in_sample_accuracy:.1%}, OOS: {r.out_of_sample_accuracy:.1%}, "
+                           f"Degradation: {r.degradation_pct:.1f}%)")
+
+            # Get Thompson allocation status
+            system = get_auto_validation_system()
+            if system.thompson:
+                logger.info("AUTO-VALIDATION: Thompson Sampling allocation:")
+                for bot in system.bot_names:
+                    confidence = system.get_bot_confidence(bot)
+                    logger.info(f"    {bot}: {confidence:.1%} confidence")
+
+            # Save heartbeat
+            self._save_heartbeat('AUTO_VALIDATION', 'HEALTH_CHECK_COMPLETE', {
+                'total_models': len(results),
+                'healthy': healthy,
+                'degraded': degraded,
+                'failed': failed,
+                'retrained': retrained
+            })
+
+            logger.info(f"AUTO-VALIDATION: Next run scheduled for next Saturday at 6:00 PM CT")
+            logger.info(f"=" * 80)
+
+        except Exception as e:
+            error_msg = f"ERROR in AUTO-VALIDATION: {str(e)}"
+            logger.error(error_msg)
+            logger.error(traceback.format_exc())
+            self._save_heartbeat('AUTO_VALIDATION', 'ERROR', {'error': str(e)})
+            logger.info("AUTO-VALIDATION will retry next Saturday at 6:00 PM CT")
+            logger.info(f"=" * 80)
+
     def _record_training_history(self, model_name: str, status: str, accuracy_after: float = None,
                                   training_samples: int = None, triggered_by: str = 'SCHEDULED',
                                   error: str = None):
@@ -2289,6 +2385,31 @@ class AutonomousTraderScheduler:
             logger.info("✅ QUANT job scheduled (WEEKLY on Sunday at 5:00 PM CT)")
         else:
             logger.warning("⚠️ QUANT not available - ML model training disabled")
+
+        # =================================================================
+        # AUTO-VALIDATION JOB: ML Model Health Check - runs WEEKLY on Saturday
+        # Validates ALL 11 ML models using walk-forward validation:
+        # - Checks in-sample vs out-of-sample accuracy
+        # - Triggers auto-retrain if degradation exceeds threshold
+        # - Updates Thompson Sampling capital allocation
+        # Runs Saturday to prepare models for Sunday training if needed
+        # =================================================================
+        if AUTO_VALIDATION_AVAILABLE:
+            self.scheduler.add_job(
+                self.scheduled_validation_logic,
+                trigger=CronTrigger(
+                    hour=18,       # 6:00 PM CT - after market close
+                    minute=0,
+                    day_of_week='sat',  # Every Saturday
+                    timezone='America/Chicago'
+                ),
+                id='auto_validation',
+                name='VALIDATION - Weekly ML Model Health Check',
+                replace_existing=True
+            )
+            logger.info("✅ AUTO-VALIDATION job scheduled (WEEKLY on Saturday at 6:00 PM CT)")
+        else:
+            logger.warning("⚠️ AutoValidationSystem not available - ML validation disabled")
 
         self.scheduler.start()
         self.is_running = True

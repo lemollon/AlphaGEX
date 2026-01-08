@@ -950,7 +950,7 @@ class AutoValidationSystem:
             c.execute("""
                 SELECT bot_name, alpha, beta
                 FROM thompson_parameters
-                ORDER BY updated_at DESC
+                ORDER BY last_updated DESC
             """)
 
             for row in c.fetchall():
@@ -976,12 +976,12 @@ class AutoValidationSystem:
             # Save Thompson parameters
             for bot_name in self.thompson.bot_names:
                 c.execute("""
-                    INSERT INTO thompson_parameters (bot_name, alpha, beta, updated_at)
+                    INSERT INTO thompson_parameters (bot_name, alpha, beta, last_updated)
                     VALUES (%s, %s, %s, %s)
                     ON CONFLICT (bot_name) DO UPDATE SET
                         alpha = EXCLUDED.alpha,
                         beta = EXCLUDED.beta,
-                        updated_at = EXCLUDED.updated_at
+                        last_updated = EXCLUDED.last_updated
                 """, (
                     bot_name,
                     self.thompson.alpha[bot_name],
@@ -1131,15 +1131,16 @@ class AutoValidationSystem:
             return
 
         try:
+            import json
             conn = get_connection()
             c = conn.cursor()
 
             for result in results:
                 c.execute("""
                     INSERT INTO ml_validation_results (
-                        model_name, validated_at, is_accuracy, oos_accuracy,
-                        degradation_pct, is_robust, status, recommendation
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        model_name, validation_time, in_sample_accuracy, out_of_sample_accuracy,
+                        degradation_pct, is_robust, status, recommendation, details
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (
                     result.model_name,
                     result.validated_at,
@@ -1148,19 +1149,21 @@ class AutoValidationSystem:
                     result.degradation_pct,
                     result.is_robust,
                     result.status.value,
-                    result.recommendation
+                    result.recommendation,
+                    json.dumps(result.details)
                 ))
 
             conn.commit()
             conn.close()
+            logger.info(f"Saved {len(results)} validation results to database")
         except Exception as e:
-            logger.debug(f"Could not save validation results: {e}")
+            logger.warning(f"Could not save validation results: {e}")
 
     # =========================================================================
     # THOMPSON SAMPLING CAPITAL ALLOCATION
     # =========================================================================
 
-    def record_bot_outcome(self, bot_name: str, win: bool, pnl: float = 0):
+    def record_bot_outcome(self, bot_name: str, win: bool, pnl: float = 0, trade_type: str = None, symbol: str = "SPY"):
         """
         Record a bot trade outcome for Thompson Sampling.
 
@@ -1168,15 +1171,77 @@ class AutoValidationSystem:
             bot_name: Bot that made the trade
             win: Whether the trade was profitable
             pnl: Actual P&L amount
+            trade_type: Type of trade (IRON_CONDOR, VERTICAL_SPREAD, etc.)
+            symbol: Trading symbol
         """
         if not self.thompson:
             logger.debug("Thompson allocator not available")
             return
 
+        # Get pre-update parameters
+        alpha_before = self.thompson.alpha.get(bot_name, 1.0)
+        beta_before = self.thompson.beta.get(bot_name, 1.0)
+
+        # Update Thompson parameters
         self.thompson.record_outcome(bot_name, win, pnl)
+
+        # Get post-update parameters
+        alpha_after = self.thompson.alpha.get(bot_name, 1.0)
+        beta_after = self.thompson.beta.get(bot_name, 1.0)
+
+        # Save state and record outcome to database
         self._save_state()
+        self._save_trade_outcome(bot_name, win, pnl, trade_type, symbol, alpha_before, beta_before, alpha_after, beta_after)
 
         logger.debug(f"Recorded outcome for {bot_name}: win={win}, pnl=${pnl:.2f}")
+
+    def _save_trade_outcome(self, bot_name: str, win: bool, pnl: float, trade_type: str, symbol: str,
+                            alpha_before: float, beta_before: float, alpha_after: float, beta_after: float):
+        """Save trade outcome to database"""
+        if not DB_AVAILABLE:
+            return
+
+        try:
+            conn = get_connection()
+            c = conn.cursor()
+
+            c.execute("""
+                INSERT INTO thompson_trade_outcomes (
+                    bot_name, trade_time, win, pnl, trade_type, symbol,
+                    alpha_before, beta_before, alpha_after, beta_after
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                bot_name,
+                datetime.now(CENTRAL_TZ),
+                win,
+                pnl,
+                trade_type,
+                symbol,
+                alpha_before,
+                beta_before,
+                alpha_after,
+                beta_after
+            ))
+
+            # Also update thompson_parameters with running totals
+            c.execute("""
+                UPDATE thompson_parameters
+                SET total_trades = total_trades + 1,
+                    total_wins = total_wins + %s,
+                    total_pnl = total_pnl + %s,
+                    last_updated = %s
+                WHERE bot_name = %s
+            """, (
+                1 if win else 0,
+                pnl,
+                datetime.now(CENTRAL_TZ),
+                bot_name
+            ))
+
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.warning(f"Could not save trade outcome: {e}")
 
     def get_capital_allocation(
         self,
@@ -1225,8 +1290,39 @@ class AutoValidationSystem:
 
         self.allocation_history.append(result)
 
+        # Save to database
+        self._save_allocation_history(result)
+
         logger.info(f"Capital allocation ({method}): {result.allocation_pcts}")
         return result
+
+    def _save_allocation_history(self, allocation: CapitalAllocation):
+        """Save allocation decision to database"""
+        if not DB_AVAILABLE:
+            return
+
+        try:
+            import json
+            conn = get_connection()
+            c = conn.cursor()
+
+            c.execute("""
+                INSERT INTO thompson_allocation_history (
+                    allocation_time, total_capital, method, allocations, allocation_pcts, confidence
+                ) VALUES (%s, %s, %s, %s, %s, %s)
+            """, (
+                allocation.timestamp,
+                allocation.total_capital,
+                allocation.method,
+                json.dumps(allocation.allocations),
+                json.dumps(allocation.allocation_pcts),
+                json.dumps(allocation.confidence)
+            ))
+
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            logger.warning(f"Could not save allocation history: {e}")
 
     def get_bot_confidence(self, bot_name: str) -> float:
         """
