@@ -3259,7 +3259,7 @@ async def reset_ares_data(confirm: bool = False):
         # Also delete ARES daily performance
         deleted_performance = 0
         try:
-            cursor.execute("DELETE FROM ares_daily_performance")
+            cursor.execute("DELETE FROM ares_daily_perf")
             deleted_performance = cursor.rowcount
         except Exception:
             pass
