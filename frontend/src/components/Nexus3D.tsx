@@ -82,6 +82,7 @@ const SYSTEM_ROUTES: Record<string, string> = {
   athena: '/athena',
   phoenix: '/phoenix',
   atlas: '/atlas',
+  gexcore: '/gex',
 }
 
 // =============================================================================
@@ -2493,6 +2494,25 @@ const SOLAR_SYSTEMS = [
       { name: 'Gauss', color: '#10b981', size: 0.14, orbit: 4.0, speed: 0.3, effect: 'glow' as const, moons: 0 },
     ]
   },
+  // =============================================================================
+  // GEX CORE - The Analytical Heart (Gamma Exposure Analysis)
+  // =============================================================================
+  {
+    id: 'gexcore',
+    name: 'GEX CORE',
+    subtitle: 'Gamma Exposure Heart',
+    route: '/gex',
+    position: [0, -80, -60] as [number, number, number],  // Bottom - 6 o'clock
+    sunColor: '#22d3ee',  // Cyan - GEX signature color
+    glowColor: '#06b6d4',
+    flareType: 'pulse' as const,
+    planets: [
+      { name: 'Gamma', color: '#f97316', size: 0.24, orbit: 2.5, speed: 0.8, effect: 'fire' as const, moons: 2 },
+      { name: 'Delta', color: '#ef4444', size: 0.20, orbit: 3.5, speed: 0.6, effect: 'electric' as const, moons: 1 },
+      { name: 'Vanna', color: '#8b5cf6', size: 0.18, orbit: 4.5, speed: 0.45, effect: 'spiral' as const, moons: 2 },
+      { name: 'Charm', color: '#10b981', size: 0.15, orbit: 5.5, speed: 0.3, effect: 'glow' as const, moons: 1 },
+    ]
+  },
 ]
 
 // =============================================================================
@@ -4401,6 +4421,8 @@ function SystemAmbientEffects({
         return <HyperionEffects color={color} sunColor={sunColor} paused={paused} />
       case 'pegasus':
         return <PegasusEffects color={color} sunColor={sunColor} paused={paused} />
+      case 'gexcore':
+        return <GexCoreEffects color={color} sunColor={sunColor} paused={paused} />
       default:
         return null
     }
@@ -4672,6 +4694,183 @@ function MannaEffects({ color, sunColor, paused }: { color: string, sunColor: st
               dashed
               dashSize={0.5}
               gapSize={0.5}
+            />
+          )
+        })}
+      </group>
+    </group>
+  )
+}
+
+// =============================================================================
+// GEX CORE EFFECTS - The Analytical Heart of Gamma Exposure
+// Features: Data streams, gamma waves, pulsing vortex, trading signals
+// =============================================================================
+
+function GexCoreEffects({ color, sunColor, paused }: { color: string, sunColor: string, paused: boolean }) {
+  const groupRef = useRef<THREE.Group>(null)
+  const vortexRef = useRef<THREE.Group>(null)
+  const dataStreamsRef = useRef<THREE.Points>(null)
+  const waveRingsRef = useRef<THREE.Group>(null)
+
+  // Data stream particles (representing market data flowing in)
+  const streamCount = 150
+  const streamPositions = useMemo(() => {
+    const positions = new Float32Array(streamCount * 3)
+    for (let i = 0; i < streamCount; i++) {
+      const angle = Math.random() * Math.PI * 2
+      const radius = 8 + Math.random() * 6
+      const height = (Math.random() - 0.5) * 10
+      positions[i * 3] = Math.cos(angle) * radius
+      positions[i * 3 + 1] = height
+      positions[i * 3 + 2] = Math.sin(angle) * radius
+    }
+    return positions
+  }, [])
+
+  // Gamma wave rings
+  const waveRings = useMemo(() => [
+    { radius: 4, speed: 1.5, direction: 1 },
+    { radius: 6, speed: 1.0, direction: -1 },
+    { radius: 8, speed: 0.7, direction: 1 },
+  ], [])
+
+  // GEX level indicators (like price levels)
+  const gexLevels = useMemo(() => [
+    { level: 2, label: '+2B', color: '#22c55e' },
+    { level: 0, label: '0', color: '#fbbf24' },
+    { level: -2, label: '-2B', color: '#ef4444' },
+  ], [])
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    // Rotate main group slowly
+    if (groupRef.current) {
+      groupRef.current.rotation.y = t * 0.05
+    }
+
+    // Animate vortex - fast spinning core
+    if (vortexRef.current) {
+      vortexRef.current.rotation.y = t * 2
+      vortexRef.current.rotation.x = Math.sin(t * 0.5) * 0.2
+    }
+
+    // Animate data streams - spiral inward
+    if (dataStreamsRef.current) {
+      const positions = dataStreamsRef.current.geometry.attributes.position.array as Float32Array
+      for (let i = 0; i < streamCount; i++) {
+        const x = positions[i * 3]
+        const z = positions[i * 3 + 2]
+        const radius = Math.sqrt(x * x + z * z)
+        const angle = Math.atan2(z, x)
+
+        // Spiral inward
+        const newRadius = radius - 0.05
+        const newAngle = angle + 0.02
+
+        if (newRadius < 2) {
+          // Reset to outer edge
+          const resetRadius = 10 + Math.random() * 4
+          const resetAngle = Math.random() * Math.PI * 2
+          positions[i * 3] = Math.cos(resetAngle) * resetRadius
+          positions[i * 3 + 2] = Math.sin(resetAngle) * resetRadius
+          positions[i * 3 + 1] = (Math.random() - 0.5) * 10
+        } else {
+          positions[i * 3] = Math.cos(newAngle) * newRadius
+          positions[i * 3 + 2] = Math.sin(newAngle) * newRadius
+        }
+      }
+      dataStreamsRef.current.geometry.attributes.position.needsUpdate = true
+    }
+
+    // Pulse wave rings
+    if (waveRingsRef.current) {
+      waveRingsRef.current.children.forEach((ring, i) => {
+        const scale = 1 + Math.sin(t * waveRings[i].speed) * 0.15
+        ring.scale.setScalar(scale)
+        ring.rotation.z = t * 0.3 * waveRings[i].direction
+      })
+    }
+  })
+
+  return (
+    <group ref={groupRef}>
+      {/* CENTRAL VORTEX - Fast spinning core representing data processing */}
+      <group ref={vortexRef}>
+        {/* Inner spinning torus */}
+        <mesh rotation={[Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[1.5, 0.3, 16, 32]} />
+          <meshBasicMaterial color="#22d3ee" transparent opacity={0.6} side={THREE.DoubleSide} />
+        </mesh>
+        {/* Cross torus */}
+        <mesh rotation={[0, 0, 0]}>
+          <torusGeometry args={[1.5, 0.2, 16, 32]} />
+          <meshBasicMaterial color="#06b6d4" transparent opacity={0.4} side={THREE.DoubleSide} />
+        </mesh>
+        {/* Core sphere */}
+        <Sphere args={[0.8, 32, 32]}>
+          <meshBasicMaterial color="#0891b2" transparent opacity={0.8} />
+        </Sphere>
+      </group>
+
+      {/* GAMMA WAVE RINGS - Pulsing outward like sonar */}
+      <group ref={waveRingsRef}>
+        {waveRings.map((ring, i) => (
+          <mesh key={i} rotation={[Math.PI / 2, 0, 0]}>
+            <torusGeometry args={[ring.radius, 0.05, 8, 64]} />
+            <meshBasicMaterial color="#22d3ee" transparent opacity={0.3 - i * 0.08} side={THREE.DoubleSide} />
+          </mesh>
+        ))}
+      </group>
+
+      {/* DATA STREAM PARTICLES - Market data flowing into the core */}
+      <points ref={dataStreamsRef}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" count={streamCount} array={streamPositions} itemSize={3} />
+        </bufferGeometry>
+        <pointsMaterial color="#22d3ee" size={0.1} transparent opacity={0.7} sizeAttenuation />
+      </points>
+
+      {/* GEX LEVEL INDICATORS - Horizontal planes showing gamma levels */}
+      {gexLevels.map((gex, i) => (
+        <group key={i} position={[0, gex.level * 2, 0]}>
+          <mesh rotation={[Math.PI / 2, 0, 0]}>
+            <ringGeometry args={[3, 3.1, 64]} />
+            <meshBasicMaterial color={gex.color} transparent opacity={0.4} side={THREE.DoubleSide} />
+          </mesh>
+          <Html position={[4, 0, 0]} center style={{ pointerEvents: 'none' }}>
+            <div className="text-[10px] font-mono font-bold px-1 rounded" style={{ color: gex.color, textShadow: '0 0 4px black' }}>
+              {gex.label}
+            </div>
+          </Html>
+        </group>
+      ))}
+
+      {/* OUTER DATA SHELL - Represents the boundary of analysis */}
+      <Sphere args={[10, 32, 32]}>
+        <meshBasicMaterial color="#22d3ee" transparent opacity={0.02} side={THREE.DoubleSide} wireframe />
+      </Sphere>
+
+      {/* CONNECTING BEAMS - Data connections to other systems */}
+      <group>
+        {[0, 60, 120, 180, 240, 300].map((angle, i) => {
+          const rad = (angle * Math.PI) / 180
+          return (
+            <Line
+              key={i}
+              points={[
+                [0, 0, 0],
+                [Math.cos(rad) * 12, Math.sin(i * 0.5) * 3, Math.sin(rad) * 12]
+              ]}
+              color="#22d3ee"
+              lineWidth={1}
+              transparent
+              opacity={0.2}
+              dashed
+              dashSize={0.3}
+              gapSize={0.2}
             />
           )
         })}
@@ -10978,13 +11177,11 @@ function Scene({
         <LensFlare paused={paused} />
       </AlwaysVisibleGroup>
 
-      {/* Core - positioned at MANNA for GEX Core integration */}
-      <group position={[0, 0, -60]}>
-        <AlwaysVisibleGroup>
-          <BreathingCore gexValue={gexValue} vixValue={vixValue} paused={paused} />
-          <CoreVortex paused={paused} />
-        </AlwaysVisibleGroup>
-      </group>
+      {/* GEX Core - separate system, the analytical heart of the trading universe */}
+      <AlwaysVisibleGroup>
+        <BreathingCore gexValue={gexValue} vixValue={vixValue} paused={paused} />
+        <CoreVortex paused={paused} />
+      </AlwaysVisibleGroup>
 
       {/* Pulse effects - wrapped for visibility from all angles */}
       <AlwaysVisibleGroup>
