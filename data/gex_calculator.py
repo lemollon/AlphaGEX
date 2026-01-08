@@ -441,8 +441,17 @@ class TradierGEXCalculator:
     This is the fallback when TradingVolatilityAPI is unavailable.
     """
 
-    def __init__(self):
+    def __init__(self, sandbox: bool = None):
+        """
+        Initialize GEX Calculator.
+
+        Args:
+            sandbox: If True, use sandbox API. If False, use production.
+                     If None, use TRADIER_SANDBOX env var (default behavior).
+                     SPX requires sandbox=False since sandbox doesn't support SPX.
+        """
         self._tradier = None
+        self._sandbox = sandbox  # None = use env var default
         self._cache = {}
         self._cache_ttl = 300  # 5 minutes
 
@@ -451,7 +460,11 @@ class TradierGEXCalculator:
         if self._tradier is None:
             try:
                 from data.tradier_data_fetcher import TradierDataFetcher
-                self._tradier = TradierDataFetcher()
+                # Pass sandbox parameter if explicitly set, otherwise use default
+                if self._sandbox is not None:
+                    self._tradier = TradierDataFetcher(sandbox=self._sandbox)
+                else:
+                    self._tradier = TradierDataFetcher()
             except Exception as e:
                 # Catch all exceptions: ImportError, ValueError (missing API key), etc.
                 logger.error(f"Tradier not available: {e}")
