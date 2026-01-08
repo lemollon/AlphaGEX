@@ -607,18 +607,19 @@ async def get_athena_signals(
         where_clause = ""
         params = [limit]
         if direction:
-            where_clause = "WHERE signal_direction = %s"
+            where_clause = "WHERE direction = %s"
             params = [direction, limit]
 
+        # Query athena_signals table with correct V2 column names
         c.execute(f"""
             SELECT
-                id, created_at, ticker, signal_direction,
-                ml_confidence, oracle_advice, gex_regime,
-                call_wall, put_wall, spot_price,
-                spread_type, reasoning, status
-            FROM apache_signals
+                id, signal_time, direction, spread_type,
+                confidence, spot_price, call_wall, put_wall,
+                gex_regime, vix, rr_ratio, was_executed,
+                skip_reason, reasoning
+            FROM athena_signals
             {where_clause}
-            ORDER BY created_at DESC
+            ORDER BY signal_time DESC
             LIMIT %s
         """, tuple(params))
 
@@ -630,17 +631,20 @@ async def get_athena_signals(
             signals.append({
                 "id": row[0],
                 "created_at": row[1].isoformat() if row[1] else None,
-                "ticker": row[2],
-                "direction": row[3],
+                "ticker": "SPY",  # ATHENA trades SPY
+                "direction": row[2],
                 "confidence": float(row[4]) if row[4] else 0,
-                "oracle_advice": row[5],
-                "gex_regime": row[6],
-                "call_wall": float(row[7]) if row[7] else 0,
-                "put_wall": float(row[8]) if row[8] else 0,
-                "spot_price": float(row[9]) if row[9] else 0,
-                "spread_type": row[10],
-                "reasoning": row[11],
-                "status": row[12]
+                "oracle_advice": None,  # Not in V2 schema
+                "gex_regime": row[8],
+                "call_wall": float(row[6]) if row[6] else 0,
+                "put_wall": float(row[7]) if row[7] else 0,
+                "spot_price": float(row[5]) if row[5] else 0,
+                "spread_type": row[3],
+                "reasoning": row[13],
+                "status": "executed" if row[11] else "skipped",
+                "vix": float(row[9]) if row[9] else None,
+                "rr_ratio": float(row[10]) if row[10] else None,
+                "skip_reason": row[12]
             })
 
         return {
@@ -670,18 +674,19 @@ async def get_athena_logs(
         conn = get_connection()
         c = conn.cursor()
 
+        # Query athena_logs table with correct V2 column names
         where_clause = ""
         params = [limit]
         if level:
-            where_clause = "WHERE log_level = %s"
+            where_clause = "WHERE level = %s"
             params = [level, limit]
 
         c.execute(f"""
             SELECT
-                id, created_at, log_level, message, details
-            FROM apache_logs
+                id, log_time, level, message, details
+            FROM athena_logs
             {where_clause}
-            ORDER BY created_at DESC
+            ORDER BY log_time DESC
             LIMIT %s
         """, tuple(params))
 
@@ -715,35 +720,42 @@ async def get_athena_performance(
 ):
     """
     Get ATHENA performance metrics over time.
+    Computed from athena_positions table (V2 schema).
     """
     try:
         conn = get_connection()
         c = conn.cursor()
 
-        # Get daily performance
+        # Compute daily performance from closed positions in athena_positions
         c.execute("""
             SELECT
-                trade_date, trades_executed, trades_won, trades_lost,
-                win_rate, gross_pnl, net_pnl, daily_return_pct,
-                bullish_trades, bearish_trades
-            FROM apache_performance
-            WHERE trade_date >= CURRENT_DATE - INTERVAL '%s days'
+                DATE(close_time AT TIME ZONE 'America/Chicago') as trade_date,
+                COUNT(*) as trades_executed,
+                SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as trades_won,
+                SUM(CASE WHEN realized_pnl <= 0 THEN 1 ELSE 0 END) as trades_lost,
+                SUM(realized_pnl) as net_pnl,
+                SUM(CASE WHEN spread_type ILIKE '%%BULL%%' THEN 1 ELSE 0 END) as bullish_trades,
+                SUM(CASE WHEN spread_type ILIKE '%%BEAR%%' THEN 1 ELSE 0 END) as bearish_trades
+            FROM athena_positions
+            WHERE status IN ('closed', 'expired')
+            AND close_time >= NOW() - INTERVAL '%s days'
+            GROUP BY DATE(close_time AT TIME ZONE 'America/Chicago')
             ORDER BY trade_date DESC
         """, (days,))
 
         rows = c.fetchall()
 
-        # Calculate summary stats
+        # Calculate summary stats from athena_positions
         c.execute("""
             SELECT
-                COALESCE(SUM(trades_executed), 0) as total_trades,
-                COALESCE(SUM(trades_won), 0) as total_wins,
-                COALESCE(SUM(net_pnl), 0) as total_pnl,
-                COALESCE(AVG(win_rate), 0) as avg_win_rate,
-                COALESCE(SUM(bullish_trades), 0) as bullish_count,
-                COALESCE(SUM(bearish_trades), 0) as bearish_count
-            FROM apache_performance
-            WHERE trade_date >= CURRENT_DATE - INTERVAL '%s days'
+                COUNT(*) as total_trades,
+                SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as total_wins,
+                COALESCE(SUM(realized_pnl), 0) as total_pnl,
+                SUM(CASE WHEN spread_type ILIKE '%%BULL%%' THEN 1 ELSE 0 END) as bullish_count,
+                SUM(CASE WHEN spread_type ILIKE '%%BEAR%%' THEN 1 ELSE 0 END) as bearish_count
+            FROM athena_positions
+            WHERE status IN ('closed', 'expired')
+            AND close_time >= NOW() - INTERVAL '%s days'
         """, (days,))
 
         summary_row = c.fetchone()
@@ -751,29 +763,39 @@ async def get_athena_performance(
 
         daily_data = []
         for row in rows:
+            trades = row[1] or 0
+            wins = row[2] or 0
+            losses = row[3] or 0
+            net_pnl = float(row[4]) if row[4] else 0
+            win_rate = (wins / trades * 100) if trades > 0 else 0
+
             daily_data.append({
                 "date": str(row[0]),
-                "trades": row[1],
-                "wins": row[2],
-                "losses": row[3],
-                "win_rate": float(row[4]) if row[4] else 0,
-                "gross_pnl": float(row[5]) if row[5] else 0,
-                "net_pnl": float(row[6]) if row[6] else 0,
-                "return_pct": float(row[7]) if row[7] else 0,
-                "bullish": row[8],
-                "bearish": row[9]
+                "trades": trades,
+                "wins": wins,
+                "losses": losses,
+                "win_rate": round(win_rate, 1),
+                "gross_pnl": net_pnl,  # V2 doesn't track gross vs net separately
+                "net_pnl": net_pnl,
+                "return_pct": 0,  # Would need capital tracking to compute
+                "bullish": row[5] or 0,
+                "bearish": row[6] or 0
             })
+
+        total_trades = summary_row[0] if summary_row else 0
+        total_wins = summary_row[1] if summary_row else 0
+        avg_win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0
 
         return {
             "success": True,
             "data": {
                 "summary": {
-                    "total_trades": summary_row[0] if summary_row else 0,
-                    "total_wins": summary_row[1] if summary_row else 0,
+                    "total_trades": total_trades,
+                    "total_wins": total_wins,
                     "total_pnl": float(summary_row[2]) if summary_row and summary_row[2] else 0,
-                    "avg_win_rate": float(summary_row[3]) if summary_row and summary_row[3] else 0,
-                    "bullish_count": summary_row[4] if summary_row else 0,
-                    "bearish_count": summary_row[5] if summary_row else 0
+                    "avg_win_rate": round(avg_win_rate, 1),
+                    "bullish_count": summary_row[3] if summary_row else 0,
+                    "bearish_count": summary_row[4] if summary_row else 0
                 },
                 "daily": daily_data
             }
