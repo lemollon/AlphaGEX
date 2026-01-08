@@ -1999,45 +1999,119 @@ const STOCK_TICKERS = [
 
 // =============================================================================
 // SOLAR SYSTEM DEFINITIONS - Each with unique flares and planet effects
+// MANNA is the CENTER OF THE UNIVERSE - all systems orbit around it
+// Inner Ring: 5 Bot Systems (ICARUS, PEGASUS, TITAN, SAGE, QUANT) - radius ~45
+// Outer Ring: 7 Original Systems - radius ~80
 // =============================================================================
 
 const SOLAR_SYSTEMS = [
+  // =============================================================================
+  // MANNA - THE CENTER OF THE NEXUS UNIVERSE (Christian Theme)
+  // =============================================================================
   {
-    id: 'solomon',
-    name: 'SOLOMON',
-    subtitle: 'AI Wisdom',
-    route: '/solomon',
-    position: [-45, 15, -50] as [number, number, number],  // Far upper left - spread out
-    sunColor: '#f59e0b',
-    glowColor: '#fbbf24',
+    id: 'manna',
+    name: 'MANNA',
+    subtitle: 'Bread of Heaven',
+    route: '/daily-manna',
+    position: [0, 0, -60] as [number, number, number],  // CENTER OF THE UNIVERSE
+    sunColor: '#fef3c7',  // Warm golden white - heavenly bread
+    glowColor: '#fde68a',
+    flareType: 'radiant' as const,
+    planets: [
+      { name: 'Provision', color: '#fbbf24', size: 0.35, orbit: 3.0, speed: 0.4, effect: 'glow' as const, moons: 2 },
+      { name: 'Sustenance', color: '#f59e0b', size: 0.28, orbit: 4.5, speed: 0.28, effect: 'rings' as const, moons: 1 },
+      { name: 'Blessing', color: '#fef3c7', size: 0.24, orbit: 6.0, speed: 0.18, effect: 'aura' as const, moons: 3 },
+    ]
+  },
+  // =============================================================================
+  // INNER RING - The 5 Bot Solar Systems (radius ~45 from MANNA)
+  // Arranged in a pentagon around MANNA
+  // =============================================================================
+  {
+    id: 'icarus',
+    name: 'ICARUS',
+    subtitle: 'Sun Chaser',
+    route: '/icarus',
+    position: [0, 45, -60] as [number, number, number],  // Top - 12 o'clock
+    sunColor: '#fb923c',  // Blazing orange - the sun he dared approach
+    glowColor: '#fdba74',
+    flareType: 'eruption' as const,
+    planets: [
+      { name: 'Ambition', color: '#ef4444', size: 0.22, orbit: 2.2, speed: 0.8, effect: 'fire' as const, moons: 1 },
+      { name: 'Velocity', color: '#f97316', size: 0.18, orbit: 3.2, speed: 0.6, effect: 'electric' as const, moons: 2 },
+      { name: 'Zenith', color: '#fbbf24', size: 0.15, orbit: 4.0, speed: 0.4, effect: 'pulse' as const, moons: 0 },
+    ]
+  },
+  {
+    id: 'pegasus',
+    name: 'PEGASUS',
+    subtitle: 'Divine Steed',
+    route: '/pegasus',
+    position: [43, 14, -60] as [number, number, number],  // Upper right - 2 o'clock
+    sunColor: '#14b8a6',  // Teal - swift and graceful
+    glowColor: '#2dd4bf',
+    flareType: 'wings' as const,
+    planets: [
+      { name: 'Flight', color: '#06b6d4', size: 0.20, orbit: 2.0, speed: 0.7, effect: 'glow' as const, moons: 1 },
+      { name: 'Liberty', color: '#5eead4', size: 0.17, orbit: 3.0, speed: 0.5, effect: 'rings' as const, moons: 2 },
+      { name: 'Horizon', color: '#99f6e4', size: 0.15, orbit: 4.0, speed: 0.35, effect: 'aura' as const, moons: 0 },
+    ]
+  },
+  {
+    id: 'titan',
+    name: 'TITAN',
+    subtitle: 'Primordial Force',
+    route: '/titan',
+    position: [26, -36, -60] as [number, number, number],  // Lower right - 4 o'clock
+    sunColor: '#7c3aed',  // Deep purple - ancient cosmic power
+    glowColor: '#a78bfa',
+    flareType: 'mystic' as const,
+    planets: [
+      { name: 'Colossus', color: '#8b5cf6', size: 0.26, orbit: 2.4, speed: 0.5, effect: 'rings' as const, moons: 2 },
+      { name: 'Fortress', color: '#6366f1', size: 0.22, orbit: 3.4, speed: 0.35, effect: 'crystals' as const, moons: 1 },
+      { name: 'Apex', color: '#4f46e5', size: 0.18, orbit: 4.2, speed: 0.25, effect: 'hexagon' as const, moons: 3 },
+    ]
+  },
+  {
+    id: 'sage',
+    name: 'SAGE',
+    subtitle: 'Enlightened Mind',
+    route: '/sage',
+    position: [-26, -36, -60] as [number, number, number],  // Lower left - 8 o'clock
+    sunColor: '#0ea5e9',  // Deep sky blue - clarity and insight
+    glowColor: '#38bdf8',
     flareType: 'wisdom' as const,
     planets: [
-      { name: 'Analysis', color: '#22d3ee', size: 0.18, orbit: 1.8, speed: 0.6, effect: 'rings' as const, moons: 1 },
-      { name: 'Strategy', color: '#a855f7', size: 0.15, orbit: 2.8, speed: 0.4, effect: 'crystals' as const, moons: 2 },
-      { name: 'Insight', color: '#10b981', size: 0.12, orbit: 3.6, speed: 0.25, effect: 'aura' as const, moons: 0 },
+      { name: 'Insight', color: '#06b6d4', size: 0.21, orbit: 2.3, speed: 0.55, effect: 'glow' as const, moons: 1 },
+      { name: 'Foresight', color: '#0284c7', size: 0.18, orbit: 3.3, speed: 0.4, effect: 'orbit_rings' as const, moons: 2 },
+      { name: 'Clarity', color: '#0369a1', size: 0.15, orbit: 4.1, speed: 0.28, effect: 'aura' as const, moons: 0 },
     ]
   },
   {
-    id: 'argus',
-    name: 'ARGUS',
-    subtitle: 'All-Seeing Eye',
-    route: '/argus',
-    position: [50, 10, -35] as [number, number, number],  // Far right
-    sunColor: '#06b6d4',
-    glowColor: '#22d3ee',
-    flareType: 'pulse' as const,
+    id: 'quant',
+    name: 'QUANT',
+    subtitle: 'Algorithmic Core',
+    route: '/quant',
+    position: [-43, 14, -60] as [number, number, number],  // Upper left - 10 o'clock
+    sunColor: '#f1f5f9',  // Silver-white - mathematical precision
+    glowColor: '#e2e8f0',
+    flareType: 'fractal' as const,
     planets: [
-      { name: 'Gamma', color: '#f97316', size: 0.22, orbit: 2.0, speed: 0.8, effect: 'fire' as const, moons: 2 },
-      { name: 'Delta', color: '#ef4444', size: 0.16, orbit: 3.0, speed: 0.5, effect: 'electric' as const, moons: 1 },
-      { name: 'Theta', color: '#8b5cf6', size: 0.13, orbit: 3.8, speed: 0.35, effect: 'spiral' as const, moons: 3 },
+      { name: 'Algorithm', color: '#cbd5e1', size: 0.20, orbit: 2.2, speed: 0.618, effect: 'binary' as const, moons: 1 },
+      { name: 'Matrix', color: '#94a3b8', size: 0.17, orbit: 3.14, speed: 0.45, effect: 'data_stream' as const, moons: 2 },
+      { name: 'Calculus', color: '#64748b', size: 0.14, orbit: 4.0, speed: 0.3, effect: 'spiral' as const, moons: 1 },
     ]
   },
+  // =============================================================================
+  // OUTER RING - The Original Systems (radius ~80 from MANNA)
+  // Arranged in a heptagon around the inner ring
+  // =============================================================================
   {
     id: 'oracle',
     name: 'ORACLE',
     subtitle: 'Future Sight',
     route: '/oracle',
-    position: [0, 35, -60] as [number, number, number],  // High above - way up
+    position: [0, 80, -60] as [number, number, number],  // Top - 12 o'clock
     sunColor: '#8b5cf6',
     glowColor: '#a855f7',
     flareType: 'mystic' as const,
@@ -2048,18 +2122,18 @@ const SOLAR_SYSTEMS = [
     ]
   },
   {
-    id: 'kronos',
-    name: 'KRONOS',
-    subtitle: 'Time Master',
-    route: '/zero-dte-backtest',
-    position: [-40, -20, -45] as [number, number, number],  // Lower left - spread out
-    sunColor: '#ef4444',
-    glowColor: '#f87171',
-    flareType: 'eruption' as const,
+    id: 'argus',
+    name: 'ARGUS',
+    subtitle: 'All-Seeing Eye',
+    route: '/argus',
+    position: [70, 40, -55] as [number, number, number],  // Upper right - 1:30
+    sunColor: '#06b6d4',
+    glowColor: '#22d3ee',
+    flareType: 'pulse' as const,
     planets: [
-      { name: 'History', color: '#6b7280', size: 0.19, orbit: 2.4, speed: 0.55, effect: 'dust' as const, moons: 1 },
-      { name: 'Backtest', color: '#3b82f6', size: 0.16, orbit: 3.4, speed: 0.38, effect: 'data_stream' as const, moons: 2 },
-      { name: 'Patterns', color: '#fbbf24', size: 0.13, orbit: 4.2, speed: 0.25, effect: 'hexagon' as const, moons: 1 },
+      { name: 'Gamma', color: '#f97316', size: 0.22, orbit: 2.0, speed: 0.8, effect: 'fire' as const, moons: 2 },
+      { name: 'Delta', color: '#ef4444', size: 0.16, orbit: 3.0, speed: 0.5, effect: 'electric' as const, moons: 1 },
+      { name: 'Theta', color: '#8b5cf6', size: 0.13, orbit: 3.8, speed: 0.35, effect: 'spiral' as const, moons: 3 },
     ]
   },
   {
@@ -2067,7 +2141,7 @@ const SOLAR_SYSTEMS = [
     name: 'SYSTEMS',
     subtitle: 'Core Hub',
     route: '/system/processes',
-    position: [45, -15, -55] as [number, number, number],  // Lower right - spread out
+    position: [78, -20, -65] as [number, number, number],  // Right - 3 o'clock
     sunColor: '#10b981',
     glowColor: '#34d399',
     flareType: 'network' as const,
@@ -2082,7 +2156,7 @@ const SOLAR_SYSTEMS = [
     name: 'APOLLO',
     subtitle: 'ML Scanner',
     route: '/apollo',
-    position: [0, -30, -40] as [number, number, number],  // Below center
+    position: [45, -68, -60] as [number, number, number],  // Lower right - 5 o'clock
     sunColor: '#fbbf24',
     glowColor: '#fcd34d',
     flareType: 'radiant' as const,
@@ -2093,11 +2167,41 @@ const SOLAR_SYSTEMS = [
     ]
   },
   {
+    id: 'kronos',
+    name: 'KRONOS',
+    subtitle: 'Time Master',
+    route: '/zero-dte-backtest',
+    position: [-45, -68, -60] as [number, number, number],  // Lower left - 7 o'clock
+    sunColor: '#ef4444',
+    glowColor: '#f87171',
+    flareType: 'eruption' as const,
+    planets: [
+      { name: 'History', color: '#6b7280', size: 0.19, orbit: 2.4, speed: 0.55, effect: 'dust' as const, moons: 1 },
+      { name: 'Backtest', color: '#3b82f6', size: 0.16, orbit: 3.4, speed: 0.38, effect: 'data_stream' as const, moons: 2 },
+      { name: 'Patterns', color: '#fbbf24', size: 0.13, orbit: 4.2, speed: 0.25, effect: 'hexagon' as const, moons: 1 },
+    ]
+  },
+  {
+    id: 'solomon',
+    name: 'SOLOMON',
+    subtitle: 'AI Wisdom',
+    route: '/solomon',
+    position: [-78, -20, -65] as [number, number, number],  // Left - 9 o'clock
+    sunColor: '#f59e0b',
+    glowColor: '#fbbf24',
+    flareType: 'wisdom' as const,
+    planets: [
+      { name: 'Analysis', color: '#22d3ee', size: 0.18, orbit: 1.8, speed: 0.6, effect: 'rings' as const, moons: 1 },
+      { name: 'Strategy', color: '#a855f7', size: 0.15, orbit: 2.8, speed: 0.4, effect: 'crystals' as const, moons: 2 },
+      { name: 'Insight', color: '#10b981', size: 0.12, orbit: 3.6, speed: 0.25, effect: 'aura' as const, moons: 0 },
+    ]
+  },
+  {
     id: 'hyperion',
     name: 'HYPERION',
     subtitle: 'Mathematical Titan',
     route: '/probability',
-    position: [-25, 25, -30] as [number, number, number],  // Upper left closer
+    position: [-70, 40, -55] as [number, number, number],  // Upper left - 10:30
     sunColor: '#6366f1',
     glowColor: '#818cf8',
     flareType: 'fractal' as const,
@@ -2105,21 +2209,6 @@ const SOLAR_SYSTEMS = [
       { name: 'Fibonacci', color: '#a855f7', size: 0.22, orbit: 2.2, speed: 0.618, effect: 'spiral' as const, moons: 1 },
       { name: 'Euler', color: '#06b6d4', size: 0.17, orbit: 3.14, speed: 0.5, effect: 'rings' as const, moons: 2 },
       { name: 'Gauss', color: '#10b981', size: 0.14, orbit: 4.0, speed: 0.3, effect: 'glow' as const, moons: 0 },
-    ]
-  },
-  {
-    id: 'pegasus',
-    name: 'PEGASUS',
-    subtitle: 'Winged Guardian',
-    route: '/pegasus',
-    position: [35, 20, -35] as [number, number, number],  // Upper right - opposite from HYPERION
-    sunColor: '#14b8a6',  // Teal - protection/stability
-    glowColor: '#2dd4bf',
-    flareType: 'wings' as const,
-    planets: [
-      { name: 'Shield', color: '#06b6d4', size: 0.20, orbit: 2.0, speed: 0.55, effect: 'rings' as const, moons: 1 },
-      { name: 'Premium', color: '#f59e0b', size: 0.17, orbit: 3.0, speed: 0.4, effect: 'fire' as const, moons: 2 },
-      { name: 'Wings', color: '#e2e8f0', size: 0.15, orbit: 4.0, speed: 0.3, effect: 'glow' as const, moons: 0 },
     ]
   },
 ]
