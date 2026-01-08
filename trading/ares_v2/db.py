@@ -735,7 +735,7 @@ class ARESDatabase:
             with db_connection() as conn:
                 c = conn.cursor()
                 c.execute("""
-                    INSERT INTO bot_heartbeat (bot_name, status, last_action, last_scan_time)
+                    INSERT INTO bot_heartbeats (bot_name, status, last_action, last_scan_time)
                     VALUES (%s, %s, %s, NOW())
                     ON CONFLICT (bot_name) DO UPDATE SET
                         status = EXCLUDED.status,
