@@ -70,6 +70,14 @@ except ImportError:
     MATH_OPTIMIZER_AVAILABLE = False
     MathOptimizerMixin = object  # Fallback to empty base class
 
+# Solomon Enhanced for feedback loop recording
+try:
+    from quant.solomon_enhancements import get_solomon_enhanced
+    SOLOMON_ENHANCED_AVAILABLE = True
+except ImportError:
+    SOLOMON_ENHANCED_AVAILABLE = False
+    get_solomon_enhanced = None
+
 # Market calendar for holiday checking
 try:
     from trading.market_calendar import MarketCalendar
@@ -353,6 +361,10 @@ class ATHENATrader(MathOptimizerMixin):
                     # Record outcome to Oracle for ML feedback loop
                     self._record_oracle_outcome(pos, reason, pnl)
 
+                    # Record outcome to Solomon Enhanced for feedback loops
+                    trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+                    self._record_solomon_outcome(pnl, trade_date)
+
                     # Record outcome to Learning Memory for self-improvement
                     if pos.position_id in self._prediction_ids:
                         self._record_learning_memory_outcome(
@@ -412,6 +424,37 @@ class ATHENATrader(MathOptimizerMixin):
 
         except Exception as e:
             logger.warning(f"ATHENA: Oracle outcome recording failed: {e}")
+
+    def _record_solomon_outcome(self, pnl: float, trade_date: str):
+        """
+        Record trade outcome to Solomon Enhanced for feedback loop tracking.
+
+        This updates:
+        - Consecutive loss tracking (triggers kill if threshold reached)
+        - Daily P&L monitoring (triggers kill if max loss reached)
+        - Performance tracking for version comparison
+        """
+        if not SOLOMON_ENHANCED_AVAILABLE or not get_solomon_enhanced:
+            return
+
+        try:
+            enhanced = get_solomon_enhanced()
+            alerts = enhanced.record_trade_outcome(
+                bot_name='ATHENA',
+                pnl=pnl,
+                trade_date=trade_date,
+                capital_base=getattr(self, 'config', {}).get('capital', 100000.0)
+                if hasattr(self.config, 'get') else 100000.0
+            )
+
+            if alerts:
+                for alert in alerts:
+                    logger.warning(f"ATHENA Solomon Alert: {alert}")
+
+            logger.debug(f"ATHENA: Recorded outcome to Solomon Enhanced - P&L=${pnl:.2f}")
+
+        except Exception as e:
+            logger.warning(f"ATHENA: Solomon outcome recording failed: {e}")
 
     def _record_learning_memory_prediction(self, pos: SpreadPosition, signal) -> Optional[str]:
         """
@@ -982,6 +1025,9 @@ class ATHENATrader(MathOptimizerMixin):
                 )
                 # Record outcome to Oracle for ML feedback
                 self._record_oracle_outcome(pos, reason, pnl)
+                # Record outcome to Solomon Enhanced for feedback loops
+                trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+                self._record_solomon_outcome(pnl, trade_date)
                 # Record outcome to Learning Memory for self-improvement
                 if pos.position_id in self._prediction_ids:
                     self._record_learning_memory_outcome(
@@ -1056,6 +1102,10 @@ class ATHENATrader(MathOptimizerMixin):
                     # Record outcome for ML feedback
                     close_reason = "EXPIRED_PROFIT" if final_pnl > 0 else "EXPIRED_LOSS"
                     self._record_oracle_outcome(pos, close_reason, final_pnl)
+
+                    # Record outcome to Solomon Enhanced for feedback loops
+                    trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+                    self._record_solomon_outcome(final_pnl, trade_date)
 
                     # Record to Learning Memory
                     if pos.position_id in self._prediction_ids:
