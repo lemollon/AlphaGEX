@@ -674,6 +674,35 @@ async def deactivate_kill_switch(bot_name: str, request: ResumeRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/killswitch/clear-all")
+async def clear_all_kill_switches():
+    """
+    Clear all kill switch records from the database.
+
+    This completely removes all killswitch entries, allowing all bots to trade.
+    """
+    try:
+        from database_adapter import get_connection
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Clear all killswitch records
+        cursor.execute("DELETE FROM solomon_kill_switch")
+        deleted_count = cursor.rowcount
+
+        conn.commit()
+        conn.close()
+
+        return {
+            "success": True,
+            "message": f"Cleared {deleted_count} kill switch records. All bots can now trade.",
+            "deleted_count": deleted_count
+        }
+    except Exception as e:
+        logger.error(f"Failed to clear kill switches: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # =============================================================================
 # FEEDBACK LOOP CONTROL
 # =============================================================================
