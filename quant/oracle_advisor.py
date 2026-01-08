@@ -1303,7 +1303,17 @@ class OracleAdvisor:
 
     MODEL_PATH = os.path.join(os.path.dirname(__file__), '.models')
 
-    def __init__(self, enable_claude: bool = True):
+    def __init__(self, enable_claude: bool = True, omega_mode: bool = False):
+        """
+        Initialize Oracle Advisor.
+
+        Args:
+            enable_claude: Whether to enable Claude AI validation
+            omega_mode: OMEGA Orchestrator mode - when True:
+                - Disables strict VIX skip rules (defers to ML Advisor)
+                - Integrates Ensemble signals for context
+                - Acts as bot-specific adapter rather than decision maker
+        """
         self.model = None
         self.calibrated_model = None
         self.scaler = None
@@ -1311,6 +1321,13 @@ class OracleAdvisor:
         self.training_metrics: Optional[TrainingMetrics] = None
         self.model_version = "0.0.0"
         self._has_gex_features = False
+
+        # OMEGA mode - trust ML Advisor, use Oracle for adaptation only
+        self.omega_mode = omega_mode
+
+        # Ensemble integration (Gap 5 / Option B)
+        self._ensemble_weighter = None
+        self._dynamic_weight_updater = None
 
         # Live log for frontend transparency
         self.live_log = oracle_live_log
@@ -1335,8 +1352,116 @@ class OracleAdvisor:
         self.live_log.log("INIT", f"Oracle Advisor initialized (model v{self.model_version})", {
             "model_trained": self.is_trained,
             "claude_enabled": enable_claude,
-            "has_gex_features": self._has_gex_features
+            "has_gex_features": self._has_gex_features,
+            "omega_mode": omega_mode
         })
+
+    # =========================================================================
+    # ENSEMBLE INTEGRATION (Option B - Ensemble feeds into Oracle)
+    # =========================================================================
+
+    def get_ensemble_weighter(self, symbol: str = "SPY"):
+        """Get or create ensemble weighter"""
+        if self._ensemble_weighter is None:
+            try:
+                from quant.ensemble_strategy import get_ensemble_weighter
+                self._ensemble_weighter = get_ensemble_weighter(symbol)
+            except ImportError:
+                logger.warning("Could not load ensemble_strategy module")
+        return self._ensemble_weighter
+
+    def get_dynamic_weight_updater(self, symbol: str = "SPY"):
+        """Get or create dynamic weight updater (Gap 5)"""
+        if self._dynamic_weight_updater is None:
+            try:
+                from quant.ensemble_strategy import get_dynamic_weight_updater
+                self._dynamic_weight_updater = get_dynamic_weight_updater(symbol)
+            except ImportError:
+                logger.warning("Could not load dynamic weight updater")
+        return self._dynamic_weight_updater
+
+    def get_ensemble_context(
+        self,
+        context: 'MarketContext',
+        gex_data: Optional[Dict] = None,
+        psychology_data: Optional[Dict] = None,
+        rsi_data: Optional[Dict] = None,
+        vol_surface_data: Optional[Dict] = None
+    ) -> Optional[Dict]:
+        """
+        Get ensemble market context for Oracle decisions.
+
+        This implements Option B: Ensemble FEEDS INTO Oracle.
+        Ensemble provides market context that Oracle uses for bot-specific adaptation.
+        """
+        ensemble = self.get_ensemble_weighter()
+        if ensemble is None:
+            return None
+
+        # Build GEX data from context if not provided
+        if gex_data is None:
+            gex_data = {
+                'recommended_action': 'HOLD',
+                'confidence': 50,
+                'gex_net': context.gex_net,
+                'gex_regime': context.gex_regime.value,
+                'gex_normalized': context.gex_normalized,
+                'gex_flip_point': context.gex_flip_point,
+                'gex_call_wall': context.gex_call_wall,
+                'gex_put_wall': context.gex_put_wall
+            }
+
+        try:
+            signal = ensemble.get_ensemble_signal(
+                gex_data=gex_data,
+                psychology_data=psychology_data,
+                rsi_data=rsi_data,
+                vol_surface_data=vol_surface_data,
+                current_regime=context.gex_regime.value
+            )
+
+            return {
+                'signal': signal.final_signal.value,
+                'confidence': signal.confidence,
+                'should_trade': signal.should_trade,
+                'position_size_multiplier': signal.position_size_multiplier,
+                'bullish_weight': signal.bullish_weight,
+                'bearish_weight': signal.bearish_weight,
+                'neutral_weight': signal.neutral_weight,
+                'component_count': len(signal.component_signals)
+            }
+        except Exception as e:
+            logger.error(f"Failed to get ensemble context: {e}")
+            return None
+
+    def update_ensemble_from_outcome(
+        self,
+        strategy_name: str,
+        was_correct: bool,
+        confidence_at_prediction: float,
+        actual_pnl_pct: float,
+        current_regime: str
+    ) -> Optional[Dict[str, float]]:
+        """
+        Update ensemble weights based on trade outcome (Gap 5).
+
+        This feeds outcome data back to the ensemble for dynamic weight updates.
+        """
+        updater = self.get_dynamic_weight_updater()
+        if updater is None:
+            return None
+
+        try:
+            return updater.update_weights_from_outcome(
+                strategy_name=strategy_name,
+                was_correct=was_correct,
+                confidence_at_prediction=confidence_at_prediction,
+                actual_pnl_pct=actual_pnl_pct,
+                current_regime=current_regime
+            )
+        except Exception as e:
+            logger.error(f"Failed to update ensemble weights: {e}")
+            return None
 
     @property
     def claude_available(self) -> bool:
@@ -1905,27 +2030,40 @@ class OracleAdvisor:
         # =========================================================================
         # VIX-BASED SKIP LOGIC (Configurable per Strategy Preset)
         # Based on backtest: 2022-2024 showed Sharpe 8.55 → 16.84 with VIX filtering
+        #
+        # OMEGA MODE: When omega_mode=True, VIX skip rules are DISABLED.
+        # In OMEGA mode, ML Advisor is the PRIMARY decision maker, and Oracle
+        # only provides bot-specific adaptation (strikes, risk adjustment).
         # =========================================================================
         skip_reason = None
         skip_threshold_used = 0.0
 
-        # Rule 1: Hard VIX skip (e.g., VIX > 32 for Moderate strategy)
-        if vix_hard_skip > 0 and context.vix > vix_hard_skip:
-            skip_reason = f"VIX {context.vix:.1f} > {vix_hard_skip} - volatility too high for Iron Condor"
-            skip_threshold_used = vix_hard_skip
+        # OMEGA MODE CHECK: Skip VIX rules if Oracle is in OMEGA mode
+        # In OMEGA mode, we trust ML Advisor for the trade/skip decision
+        if not self.omega_mode:
+            # Rule 1: Hard VIX skip (e.g., VIX > 32 for Moderate strategy)
+            if vix_hard_skip > 0 and context.vix > vix_hard_skip:
+                skip_reason = f"VIX {context.vix:.1f} > {vix_hard_skip} - volatility too high for Iron Condor"
+                skip_threshold_used = vix_hard_skip
 
-        # Rule 2: Monday/Friday VIX skip (e.g., VIX > 30 on Mon/Fri for Aggressive strategy)
-        elif vix_monday_friday_skip > 0 and context.day_of_week in [0, 4]:  # Monday=0, Friday=4
-            if context.vix > vix_monday_friday_skip:
-                day_name = "Monday" if context.day_of_week == 0 else "Friday"
-                skip_reason = f"VIX {context.vix:.1f} > {vix_monday_friday_skip} on {day_name} - higher risk day"
-                skip_threshold_used = vix_monday_friday_skip
+            # Rule 2: Monday/Friday VIX skip (e.g., VIX > 30 on Mon/Fri for Aggressive strategy)
+            elif vix_monday_friday_skip > 0 and context.day_of_week in [0, 4]:  # Monday=0, Friday=4
+                if context.vix > vix_monday_friday_skip:
+                    day_name = "Monday" if context.day_of_week == 0 else "Friday"
+                    skip_reason = f"VIX {context.vix:.1f} > {vix_monday_friday_skip} on {day_name} - higher risk day"
+                    skip_threshold_used = vix_monday_friday_skip
 
-        # Rule 3: Streak-based VIX skip (e.g., VIX > 28 after 2+ losses for Aggressive strategy)
-        elif vix_streak_skip > 0 and recent_losses >= 2:
-            if context.vix > vix_streak_skip:
-                skip_reason = f"VIX {context.vix:.1f} > {vix_streak_skip} with {recent_losses} recent losses - risk reduction"
-                skip_threshold_used = vix_streak_skip
+            # Rule 3: Streak-based VIX skip (e.g., VIX > 28 after 2+ losses for Aggressive strategy)
+            elif vix_streak_skip > 0 and recent_losses >= 2:
+                if context.vix > vix_streak_skip:
+                    skip_reason = f"VIX {context.vix:.1f} > {vix_streak_skip} with {recent_losses} recent losses - risk reduction"
+                    skip_threshold_used = vix_streak_skip
+        else:
+            # Log that OMEGA mode is active
+            self.live_log.log("OMEGA_MODE", "VIX skip rules DISABLED - deferring to ML Advisor", {
+                "vix": context.vix,
+                "vix_hard_skip_would_trigger": vix_hard_skip > 0 and context.vix > vix_hard_skip
+            })
 
         # If any VIX skip rule triggered, return SKIP_TODAY
         # BUT: Check if conditions favor directional trading (ATHENA)

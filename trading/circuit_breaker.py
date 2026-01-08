@@ -1,6 +1,45 @@
 """
 CIRCUIT BREAKER / KILL SWITCH
 
+==============================================================================
+DEPRECATION NOTICE (January 2025)
+==============================================================================
+
+This module is DEPRECATED in favor of Solomon Enhancements.
+
+USE INSTEAD:
+    from quant.solomon_enhancements import get_solomon_enhanced
+
+    solomon = get_solomon_enhanced()
+
+    # Check if trading is allowed
+    if solomon.solomon.can_trade(bot_name):
+        # ... execute trade
+
+    # Activate kill switch
+    solomon.solomon.activate_kill_switch(bot_name, "reason", "user")
+
+    # Get comprehensive status
+    status = solomon.get_comprehensive_analysis(bot_name)
+
+Solomon provides all CircuitBreaker functionality PLUS:
+- Consecutive loss monitoring with auto-kill
+- Daily loss monitoring with auto-kill
+- Cross-bot correlation tracking
+- Version comparison
+- A/B testing framework
+- Proposal validation system
+
+MIGRATION:
+- CircuitBreaker.can_trade() -> solomon.solomon.can_trade(bot_name)
+- CircuitBreaker.activate_kill_switch() -> solomon.solomon.activate_kill_switch()
+- CircuitBreaker.record_trade() -> solomon.record_trade_outcome()
+- CircuitBreaker.get_status() -> solomon.get_comprehensive_analysis()
+
+==============================================================================
+LEGACY CODE BELOW - Kept for backward compatibility
+==============================================================================
+
 Emergency stop and risk management for SPX wheel trading:
 
 1. MAX DAILY LOSS - Stop trading if daily loss exceeds threshold
@@ -9,9 +48,7 @@ Emergency stop and risk management for SPX wheel trading:
 4. KILL SWITCH - Immediately disable all trading
 5. TRADING HOURS - Only trade during market hours
 
-This was MISSING - adding it now for proper risk management!
-
-USAGE:
+USAGE (DEPRECATED):
     from trading.circuit_breaker import CircuitBreaker, is_trading_enabled
 
     cb = CircuitBreaker()
@@ -26,6 +63,16 @@ USAGE:
     # Check status
     status = cb.get_status()
 """
+
+import warnings
+
+# Issue deprecation warning when module is imported
+warnings.warn(
+    "trading.circuit_breaker is deprecated. Use quant.solomon_enhancements instead. "
+    "See module docstring for migration guide.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
 import os
 import sys
