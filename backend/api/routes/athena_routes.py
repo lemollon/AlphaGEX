@@ -433,23 +433,22 @@ async def get_athena_positions(
         has_new_columns = c.fetchone() is not None
 
         if has_new_columns:
-            # Full query with all new columns
+            # Full query with all new columns (V2 schema)
             c.execute(f"""
                 SELECT
                     position_id, spread_type, ticker,
                     long_strike, short_strike, expiration,
-                    entry_price, contracts, max_profit, max_loss,
-                    spot_at_entry, gex_regime, oracle_confidence,
-                    status, exit_price, exit_reason, realized_pnl,
-                    created_at, exit_time, oracle_reasoning,
-                    vix_at_entry, put_wall_at_entry, call_wall_at_entry,
-                    flip_point_at_entry, net_gex_at_entry,
-                    entry_delta, entry_gamma, entry_theta, entry_vega,
+                    entry_debit, contracts, max_profit, max_loss,
+                    underlying_at_entry, gex_regime, oracle_confidence,
+                    status, close_price, close_reason, realized_pnl,
+                    open_time, close_time, trade_reasoning,
+                    vix_at_entry, put_wall, call_wall,
+                    flip_point, net_gex,
                     ml_direction, ml_confidence, ml_win_probability,
-                    breakeven, rr_ratio
+                    wall_type, wall_distance_pct
                 FROM athena_positions
                 {where_clause}
-                ORDER BY created_at DESC
+                ORDER BY open_time DESC
                 LIMIT %s
             """, (limit,))
         else:
@@ -458,13 +457,13 @@ async def get_athena_positions(
                 SELECT
                     position_id, spread_type, ticker,
                     long_strike, short_strike, expiration,
-                    entry_price, contracts, max_profit, max_loss,
-                    spot_at_entry, gex_regime, oracle_confidence,
-                    status, exit_price, exit_reason, realized_pnl,
-                    created_at, exit_time, oracle_reasoning
+                    entry_debit, contracts, max_profit, max_loss,
+                    underlying_at_entry, gex_regime, oracle_confidence,
+                    status, close_price, close_reason, realized_pnl,
+                    open_time, close_time, trade_reasoning
                 FROM athena_positions
                 {where_clause}
-                ORDER BY created_at DESC
+                ORDER BY open_time DESC
                 LIMIT %s
             """, (limit,))
 
@@ -473,47 +472,26 @@ async def get_athena_positions(
 
         positions = []
         for row in rows:
+            # Extract base fields (indices 0-19 for basic query, 0-29 for full query)
+            # idx 0-2: position_id, spread_type, ticker
+            # idx 3-5: long_strike, short_strike, expiration
+            # idx 6-9: entry_debit, contracts, max_profit, max_loss
+            # idx 10-12: underlying_at_entry, gex_regime, oracle_confidence
+            # idx 13-16: status, close_price, close_reason, realized_pnl
+            # idx 17-19: open_time, close_time, trade_reasoning
             long_strike = float(row[3]) if row[3] else 0
             short_strike = float(row[4]) if row[4] else 0
-            spot_at_entry = float(row[10]) if row[10] else 0
-            entry_price = float(row[6]) if row[6] else 0
+            underlying_at_entry = float(row[10]) if row[10] else 0
+            entry_debit = float(row[6]) if row[6] else 0
             spread_width = abs(short_strike - long_strike)
 
-            # Use stored Greeks if available (new schema), otherwise calculate
-            if has_new_columns and len(row) > 25:
-                stored_delta = row[25]
-                stored_gamma = row[26]
-                stored_theta = row[27]
-                stored_vega = row[28]
+            # Calculate greeks (we don't store greeks in V2 schema, so always calculate)
+            greeks = _calculate_position_greeks(long_strike, short_strike, underlying_at_entry)
 
-                if stored_delta is not None:
-                    greeks = {
-                        "net_delta": round(float(stored_delta), 3),
-                        "net_gamma": round(float(stored_gamma), 3) if stored_gamma else 0,
-                        "net_theta": round(float(stored_theta), 3) if stored_theta else 0,
-                        "net_vega": round(float(stored_vega), 3) if stored_vega else 0,
-                        "long_delta": 0,
-                        "short_delta": 0
-                    }
-                else:
-                    greeks = _calculate_position_greeks(long_strike, short_strike, spot_at_entry)
-            else:
-                # Fallback to calculated Greeks for older schema
-                greeks = _calculate_position_greeks(long_strike, short_strike, spot_at_entry)
-
-            # Use stored breakeven if available, otherwise calculate
-            if has_new_columns and len(row) > 32:
-                stored_breakeven = row[32]
-                if stored_breakeven:
-                    breakeven = float(stored_breakeven)
-                else:
-                    spread_type_str = row[1] or ""
-                    is_bullish = "BULL" in spread_type_str.upper()
-                    breakeven = long_strike + entry_price if is_bullish else short_strike - abs(entry_price)
-            else:
-                spread_type_str = row[1] or ""
-                is_bullish = "BULL" in spread_type_str.upper()
-                breakeven = long_strike + entry_price if is_bullish else short_strike - abs(entry_price)
+            # Calculate breakeven
+            spread_type_str = row[1] or ""
+            is_bullish = "BULL" in spread_type_str.upper()
+            breakeven = long_strike + entry_debit if is_bullish else short_strike - abs(entry_debit)
 
             # Calculate time info
             expiration = str(row[5]) if row[5] else None
@@ -522,16 +500,14 @@ async def get_athena_positions(
                 from datetime import datetime
                 try:
                     exp_date = datetime.strptime(expiration, "%Y-%m-%d").date()
-                    created_at = row[17]
-                    if created_at:
-                        is_0dte = exp_date == created_at.date()
+                    open_time = row[17]
+                    if open_time:
+                        is_0dte = exp_date == open_time.date()
                 except (ValueError, TypeError, AttributeError):
-                    pass  # Keep default is_0dte=True if date parsing fails
+                    pass  # Keep default is_0dte=False if date parsing fails
 
             # Format spread string based on type
-            spread_type_str = row[1] or ""
             is_call = "CALL" in spread_type_str.upper()
-            is_bullish = "BULL" in spread_type_str.upper()
             strike_suffix = "C" if is_call else "P"
 
             # For bull spreads: buy lower, sell higher; for bear spreads: buy higher, sell lower
@@ -566,38 +542,39 @@ async def get_athena_positions(
                 "expiration": expiration,
                 "dte": dte,
                 "is_0dte": is_0dte,
-                "entry_price": entry_price,
+                "entry_price": entry_debit,  # Keep frontend field name for compatibility
                 "contracts": row[7],
                 "max_profit": max_profit_val,
                 "max_loss": float(row[9]) if row[9] else 0,
                 "rr_ratio": round(max_profit_val / float(row[9]), 2) if row[9] and float(row[9]) > 0 else 0,
                 "breakeven": round(breakeven, 2),
-                "spot_at_entry": spot_at_entry,
+                "spot_at_entry": underlying_at_entry,  # Keep frontend field name for compatibility
                 "gex_regime": row[11],
                 "oracle_confidence": float(row[12]) if row[12] else 0,
                 "oracle_reasoning": row[19][:200] if row[19] else None,
                 "greeks": greeks,
                 "status": row[13],
-                "exit_price": float(row[14]) if row[14] else 0,
-                "exit_reason": row[15],
+                "exit_price": float(row[14]) if row[14] else 0,  # close_price
+                "exit_reason": row[15],  # close_reason
                 "realized_pnl": realized_pnl,
                 "return_pct": return_pct,
-                "created_at": row[17].isoformat() if row[17] else None,
-                "exit_time": row[18].isoformat() if row[18] else None,
+                "created_at": row[17].isoformat() if row[17] else None,  # open_time
+                "exit_time": row[18].isoformat() if row[18] else None,  # close_time
             }
 
-            # Add new fields if available
-            if has_new_columns and len(row) > 33:
+            # Add new fields if available (V2 schema with migration columns)
+            # idx 20-29: vix_at_entry, put_wall, call_wall, flip_point, net_gex,
+            #            ml_direction, ml_confidence, ml_win_probability, wall_type, wall_distance_pct
+            if has_new_columns and len(row) > 20:
                 position_data.update({
                     "vix_at_entry": float(row[20]) if row[20] else None,
-                    "put_wall_at_entry": float(row[21]) if row[21] else None,
-                    "call_wall_at_entry": float(row[22]) if row[22] else None,
-                    "flip_point_at_entry": float(row[23]) if row[23] else None,
-                    "net_gex_at_entry": float(row[24]) if row[24] else None,
-                    "ml_direction": row[29],
-                    "ml_confidence": float(row[30]) if row[30] else None,
-                    "ml_win_probability": float(row[31]) if row[31] else None,
-                    "rr_ratio": float(row[33]) if row[33] else None
+                    "put_wall_at_entry": float(row[21]) if row[21] else None,  # put_wall
+                    "call_wall_at_entry": float(row[22]) if row[22] else None,  # call_wall
+                    "flip_point_at_entry": float(row[23]) if row[23] else None,  # flip_point
+                    "net_gex_at_entry": float(row[24]) if row[24] else None,  # net_gex
+                    "ml_direction": row[25] if len(row) > 25 else None,
+                    "ml_confidence": float(row[26]) if len(row) > 26 and row[26] else None,
+                    "ml_win_probability": float(row[27]) if len(row) > 27 and row[27] else None,
                 })
 
             positions.append(position_data)
@@ -1313,13 +1290,13 @@ async def get_athena_live_pnl():
             # Get open positions with entry context from athena_positions
             cursor.execute('''
                 SELECT
-                    position_id, spread_type, created_at, expiration,
-                    long_strike, short_strike, entry_price, contracts,
-                    max_profit, max_loss, spot_at_entry, gex_regime,
-                    oracle_confidence, oracle_reasoning, ticker
+                    position_id, spread_type, open_time, expiration,
+                    long_strike, short_strike, entry_debit, contracts,
+                    max_profit, max_loss, underlying_at_entry, gex_regime,
+                    oracle_confidence, trade_reasoning, ticker
                 FROM athena_positions
                 WHERE status = 'open' AND expiration >= %s
-                ORDER BY created_at ASC
+                ORDER BY open_time ASC
             ''', (today,))
             open_rows = cursor.fetchall()
 
@@ -1328,7 +1305,7 @@ async def get_athena_live_pnl():
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM athena_positions
                 WHERE status IN ('closed', 'expired')
-                AND DATE(exit_time) = %s
+                AND DATE(close_time) = %s
             ''', (today,))
             realized_row = cursor.fetchone()
             today_realized = float(realized_row[0]) if realized_row else 0
@@ -1337,9 +1314,9 @@ async def get_athena_live_pnl():
             # Format open positions with entry context
             positions = []
             for row in open_rows:
-                (pos_id, spread_type, created_at, exp, long_strike, short_strike,
-                 entry_price, contracts, max_profit, max_loss, spot_entry,
-                 gex_regime, oracle_conf, oracle_reason, ticker) = row
+                (pos_id, spread_type, open_time, exp, long_strike, short_strike,
+                 entry_debit, contracts, max_profit, max_loss, underlying_at_entry,
+                 gex_regime, oracle_conf, trade_reasoning, ticker) = row
 
                 # Calculate DTE
                 dte = None
@@ -1358,22 +1335,22 @@ async def get_athena_live_pnl():
                 positions.append({
                     'position_id': pos_id,
                     'spread_type': spread_type,
-                    'open_date': str(created_at) if created_at else None,
+                    'open_date': str(open_time) if open_time else None,
                     'expiration': str(exp) if exp else None,
                     'long_strike': float(long_strike) if long_strike else 0,
                     'short_strike': float(short_strike) if short_strike else 0,
-                    'entry_debit': float(entry_price) if entry_price else 0,
+                    'entry_debit': float(entry_debit) if entry_debit else 0,
                     'contracts_remaining': int(contracts) if contracts else 0,
                     'initial_contracts': int(contracts) if contracts else 0,
                     'max_profit': round(float(max_profit or 0) * 100 * (contracts or 0), 2),
                     'max_loss': round(float(max_loss or 0) * 100 * (contracts or 0), 2),
-                    'underlying_at_entry': float(spot_entry) if spot_entry else 0,
+                    'underlying_at_entry': float(underlying_at_entry) if underlying_at_entry else 0,
                     # Entry context for transparency
                     'dte': dte,
                     'is_0dte': is_0dte,
                     'gex_regime_at_entry': gex_regime or '',
                     'oracle_confidence': float(oracle_conf) if oracle_conf else 0,
-                    'oracle_reasoning': oracle_reason or '',
+                    'oracle_reasoning': trade_reasoning or '',
                     'direction': direction,
                     # Live data not available from DB
                     'unrealized_pnl': None,
@@ -1420,9 +1397,9 @@ async def get_athena_live_pnl():
             # Get open positions
             cursor.execute('''
                 SELECT
-                    position_id, spread_type, created_at, expiration,
-                    long_strike, short_strike, entry_price, contracts,
-                    max_profit, max_loss, spot_at_entry, ticker
+                    position_id, spread_type, open_time, expiration,
+                    long_strike, short_strike, entry_debit, contracts,
+                    max_profit, max_loss, underlying_at_entry, ticker
                 FROM athena_positions
                 WHERE status = 'open' AND expiration >= %s
             ''', (today,))
@@ -1433,7 +1410,7 @@ async def get_athena_live_pnl():
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM athena_positions
                 WHERE status IN ('closed', 'expired')
-                AND DATE(exit_time) = %s
+                AND DATE(close_time) = %s
             ''', (today,))
             realized_row = cursor.fetchone()
             today_realized = float(realized_row[0]) if realized_row else 0
@@ -1442,15 +1419,15 @@ async def get_athena_live_pnl():
             # Format positions
             positions = []
             for row in open_rows:
-                (pos_id, spread_type, created_at, exp, long_strike, short_strike,
-                 entry_price, contracts, max_profit, max_loss, spot_entry, ticker) = row
+                (pos_id, spread_type, open_time, exp, long_strike, short_strike,
+                 entry_debit, contracts, max_profit, max_loss, underlying_at_entry, ticker) = row
 
                 positions.append({
                     'position_id': pos_id,
                     'spread_type': spread_type,
-                    'open_date': str(created_at) if created_at else None,
+                    'open_date': str(open_time) if open_time else None,
                     'expiration': str(exp) if exp else None,
-                    'entry_debit': float(entry_price) if entry_price else 0,
+                    'entry_debit': float(entry_debit) if entry_debit else 0,
                     'contracts_remaining': int(contracts) if contracts else 0,
                     'max_profit': float(max_profit) if max_profit else 0,
                     'unrealized_pnl': None,
