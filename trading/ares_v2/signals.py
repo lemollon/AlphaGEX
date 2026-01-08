@@ -121,42 +121,55 @@ class SignalGenerator:
 
     def _init_components(self) -> None:
         """Initialize signal generation components"""
-        # GEX Calculator - Try Kronos first, but VERIFY it can fetch data
-        # Kronos uses ORAT database which may not have recent data
+        # GEX Calculator - Try Kronos first, but VERIFY it has FRESH data
+        # Kronos uses ORAT database which is historical (EOD) and may be stale
         self.gex_calculator = None
         kronos_works = False
 
         if KRONOS_AVAILABLE:
             try:
                 kronos_calc = KronosGEXCalculator()
-                # CRITICAL: Actually test if Kronos can fetch data
-                # Kronos init always succeeds but may fail to fetch data
+                # CRITICAL: Test if Kronos has RECENT data (within 2 trading days)
                 test_result = kronos_calc.calculate_gex(self.config.ticker)
                 if test_result and test_result.get('spot_price', 0) > 0:
-                    self.gex_calculator = kronos_calc
-                    kronos_works = True
-                    logger.info(f"ARES SignalGenerator: Using Kronos GEX (verified with spot={test_result.get('spot_price')})")
+                    # Check data freshness - reject if older than 2 days
+                    trade_date = test_result.get('trade_date', '')
+                    if trade_date:
+                        from datetime import datetime
+                        try:
+                            data_date = datetime.strptime(trade_date, '%Y-%m-%d')
+                            days_old = (datetime.now() - data_date).days
+                            if days_old <= 2:
+                                self.gex_calculator = kronos_calc
+                                kronos_works = True
+                                logger.info(f"ARES: Kronos GEX verified (spot={test_result.get('spot_price')}, date={trade_date})")
+                            else:
+                                logger.warning(f"ARES: Kronos data too stale ({days_old} days old) - falling back to Tradier")
+                        except ValueError:
+                            logger.warning(f"ARES: Kronos has invalid trade_date format - falling back")
+                    else:
+                        logger.warning("ARES: Kronos returned no trade_date - falling back")
                 else:
-                    logger.warning("ARES SignalGenerator: Kronos instantiated but returned no data - falling back")
+                    logger.warning("ARES: Kronos returned no data - falling back")
             except Exception as e:
-                logger.warning(f"Kronos init/test failed: {e}")
+                logger.warning(f"ARES: Kronos init/test failed: {e}")
 
-        # Fall back to Tradier if Kronos didn't work
+        # Fall back to Tradier for LIVE data if Kronos didn't work
         if not kronos_works and TRADIER_GEX_AVAILABLE:
             try:
                 tradier_calc = get_gex_calculator()
-                # Also verify Tradier works
+                # Verify Tradier works with live data
                 test_result = tradier_calc.calculate_gex(self.config.ticker)
                 if test_result and test_result.get('spot_price', 0) > 0:
                     self.gex_calculator = tradier_calc
-                    logger.info(f"ARES SignalGenerator: Using Tradier GEX (verified with spot={test_result.get('spot_price')})")
+                    logger.info(f"ARES: Using Tradier GEX (live spot={test_result.get('spot_price')})")
                 else:
-                    logger.error("ARES SignalGenerator: Tradier GEX returned no data!")
+                    logger.error("ARES: Tradier GEX returned no data!")
             except Exception as e:
-                logger.warning(f"Tradier GEX init/test failed: {e}")
+                logger.warning(f"ARES: Tradier GEX init/test failed: {e}")
 
         if not self.gex_calculator:
-            logger.error("ARES SignalGenerator: NO GEX CALCULATOR AVAILABLE - trading will be limited")
+            logger.error("ARES: NO GEX CALCULATOR AVAILABLE - trading will be limited")
 
         # ARES ML Advisor (PRIMARY - trained on KRONOS backtests with ~70% win rate)
         self.ares_ml = None
