@@ -85,6 +85,23 @@ except ImportError:
     MATH_OPTIMIZER_AVAILABLE = False
     MathOptimizerMixin = object  # Fallback to empty base class
 
+# Solomon Enhanced for feedback loop recording
+try:
+    from quant.solomon_enhancements import get_solomon_enhanced
+    SOLOMON_ENHANCED_AVAILABLE = True
+except ImportError:
+    SOLOMON_ENHANCED_AVAILABLE = False
+    get_solomon_enhanced = None
+
+# Auto-Validation System for Thompson Sampling capital allocation
+try:
+    from quant.auto_validation_system import get_auto_validation_system, record_bot_outcome
+    AUTO_VALIDATION_AVAILABLE = True
+except ImportError:
+    AUTO_VALIDATION_AVAILABLE = False
+    get_auto_validation_system = None
+    record_bot_outcome = None
+
 
 class ARESTrader(MathOptimizerMixin):
     """
@@ -628,6 +645,13 @@ class ARESTrader(MathOptimizerMixin):
                     # Record outcome to Oracle for ML feedback loop
                     self._record_oracle_outcome(pos, reason, pnl)
 
+                    # Record outcome to Solomon Enhanced for feedback loops
+                    trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+                    self._record_solomon_outcome(pnl, trade_date)
+
+                    # Record outcome to Thompson Sampling for capital allocation
+                    self._record_thompson_outcome(pnl)
+
                     # Record outcome to Learning Memory for self-improvement
                     if pos.position_id in self._prediction_ids:
                         self._record_learning_memory_outcome(
@@ -691,6 +715,53 @@ class ARESTrader(MathOptimizerMixin):
 
         except Exception as e:
             logger.warning(f"ARES: Oracle outcome recording failed: {e}")
+
+    def _record_solomon_outcome(self, pnl: float, trade_date: str):
+        """
+        Record trade outcome to Solomon Enhanced for feedback loop tracking.
+
+        This updates:
+        - Consecutive loss tracking (triggers kill if threshold reached)
+        - Daily P&L monitoring (triggers kill if max loss reached)
+        - Performance tracking for version comparison
+        """
+        if not SOLOMON_ENHANCED_AVAILABLE or not get_solomon_enhanced:
+            return
+
+        try:
+            enhanced = get_solomon_enhanced()
+            alerts = enhanced.record_trade_outcome(
+                bot_name='ARES',
+                pnl=pnl,
+                trade_date=trade_date,
+                capital_base=getattr(self, 'config', {}).get('capital', 100000.0)
+                if hasattr(self.config, 'get') else 100000.0
+            )
+
+            if alerts:
+                for alert in alerts:
+                    logger.warning(f"ARES Solomon Alert: {alert}")
+
+            logger.debug(f"ARES: Recorded outcome to Solomon Enhanced - P&L=${pnl:.2f}")
+
+        except Exception as e:
+            logger.warning(f"ARES: Solomon outcome recording failed: {e}")
+
+    def _record_thompson_outcome(self, pnl: float):
+        """
+        Record trade outcome to Thompson Sampling for capital allocation.
+
+        This updates the Beta distribution parameters for ARES,
+        which affects future capital allocation across bots.
+        """
+        if not AUTO_VALIDATION_AVAILABLE or not record_bot_outcome:
+            return
+
+        try:
+            record_bot_outcome('ARES', win=(pnl > 0), pnl=pnl)
+            logger.debug(f"ARES: Recorded outcome to Thompson Sampling - P&L=${pnl:.2f}")
+        except Exception as e:
+            logger.warning(f"ARES: Thompson outcome recording failed: {e}")
 
     def _record_learning_memory_prediction(self, pos: IronCondorPosition, signal) -> Optional[str]:
         """
@@ -1101,6 +1172,11 @@ class ARESTrader(MathOptimizerMixin):
                 self.db.close_position(pos.position_id, close_price, pnl, reason)
                 # Record outcome to Oracle for ML feedback
                 self._record_oracle_outcome(pos, reason, pnl)
+                # Record outcome to Solomon Enhanced for feedback loops
+                trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+                self._record_solomon_outcome(pnl, trade_date)
+                # Record outcome to Thompson Sampling for capital allocation
+                self._record_thompson_outcome(pnl)
                 # Record outcome to Learning Memory for self-improvement
                 if pos.position_id in self._prediction_ids:
                     self._record_learning_memory_outcome(
@@ -1176,6 +1252,13 @@ class ARESTrader(MathOptimizerMixin):
                     # Zero P&L is breakeven, not a loss
                     close_reason = "EXPIRED_PROFIT" if final_pnl >= 0 else "EXPIRED_LOSS"
                     self._record_oracle_outcome(pos, close_reason, final_pnl)
+
+                    # Record outcome to Solomon Enhanced for feedback loops
+                    trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+                    self._record_solomon_outcome(final_pnl, trade_date)
+
+                    # Record outcome to Thompson Sampling for capital allocation
+                    self._record_thompson_outcome(final_pnl)
 
                     # Record to Learning Memory
                     if pos.position_id in self._prediction_ids:

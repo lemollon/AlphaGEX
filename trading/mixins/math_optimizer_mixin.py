@@ -256,60 +256,111 @@ class MathOptimizerMixin:
 
     # =========================================================================
     # THOMPSON SAMPLING - CAPITAL ALLOCATION
+    # Uses AutoValidationSystem Thompson (with DB persistence) when available,
+    # falls back to MathOptimizer's Thompson if not.
     # =========================================================================
+
+    def _get_auto_validation_system(self):
+        """Get AutoValidationSystem for Thompson Sampling with DB persistence"""
+        try:
+            from quant.auto_validation_system import get_auto_validation_system
+            return get_auto_validation_system()
+        except ImportError:
+            return None
 
     def math_get_allocation(self, total_capital: float = 100000) -> Dict[str, float]:
         """
         Get Thompson Sampling allocation for all bots.
 
+        Prefers AutoValidationSystem's Thompson (has DB persistence) over
+        MathOptimizer's Thompson (in-memory only).
+
         Args:
             total_capital: Total capital to allocate
 
         Returns:
-            Dict with bot -> allocation amount
+            Dict with bot -> allocation amount AND 'allocations' for percentage access
         """
+        bots = ['ARES', 'ATHENA', 'PHOENIX', 'ATLAS']
+        equal_fallback = {bot: total_capital / len(bots) for bot in bots}
+        equal_fallback['allocations'] = {bot: 1.0 / len(bots) for bot in bots}
+
+        # Try AutoValidationSystem first (has DB persistence)
+        auto_validation = self._get_auto_validation_system()
+        if auto_validation:
+            try:
+                allocation = auto_validation.get_capital_allocation(
+                    total_capital=total_capital,
+                    method="thompson"
+                )
+                dollar_allocations = allocation.allocations.copy()
+                dollar_allocations['allocations'] = allocation.allocation_pcts
+
+                logger.info(f"Thompson allocation (AutoValidation): {', '.join(f'{b}:${a:,.0f}' for b, a in allocation.allocations.items())}")
+                return dollar_allocations
+            except Exception as e:
+                logger.debug(f"AutoValidation Thompson failed: {e}")
+
+        # Fall back to MathOptimizer Thompson
         if not self._math_enabled or not self.math_optimizer:
-            # Equal allocation fallback
-            bots = ['ARES', 'ATHENA', 'PHOENIX', 'ATLAS']
-            return {bot: total_capital / len(bots) for bot in bots}
+            return equal_fallback
 
         try:
             allocation = self.math_optimizer.thompson.sample_allocation(total_capital)
 
-            # Convert percentages to dollar amounts
+            # Convert to dollar amounts
             dollar_allocations = {
                 bot: alloc * total_capital
                 for bot, alloc in allocation.allocations.items()
             }
+            dollar_allocations['allocations'] = allocation.allocations
 
-            logger.info(f"Thompson allocation: {', '.join(f'{b}:${a:,.0f}' for b, a in dollar_allocations.items())}")
-
+            logger.info(f"Thompson allocation (MathOptimizer): {', '.join(f'{b}:${a:,.0f}' for b, a in allocation.allocations.items())}")
             return dollar_allocations
 
         except Exception as e:
             logger.error(f"Thompson allocation failed: {e}")
-            bots = ['ARES', 'ATHENA', 'PHOENIX', 'ATLAS']
-            return {bot: total_capital / len(bots) for bot in bots}
+            return equal_fallback
 
     def math_get_my_allocation(self, total_capital: float = 100000) -> float:
         """Get this bot's allocated capital"""
         allocations = self.math_get_allocation(total_capital)
         return allocations.get(self._math_bot_name, total_capital / 4)
 
-    def math_record_outcome(self, win: bool, pnl: float):
+    def math_record_outcome(self, win: bool, pnl: float, trade_type: str = None):
         """
         Record trade outcome for Thompson Sampling learning.
+
+        Records to AutoValidationSystem (DB-persisted) when available,
+        falls back to MathOptimizer's in-memory Thompson.
 
         Args:
             win: Whether trade was profitable
             pnl: Actual P&L amount
+            trade_type: Optional trade type (IRON_CONDOR, VERTICAL_SPREAD, etc.)
         """
+        # Try AutoValidationSystem first (has DB persistence)
+        auto_validation = self._get_auto_validation_system()
+        if auto_validation:
+            try:
+                auto_validation.record_bot_outcome(
+                    self._math_bot_name,
+                    win=win,
+                    pnl=pnl,
+                    trade_type=trade_type
+                )
+                logger.info(f"{self._math_bot_name}: Recorded outcome to AutoValidation Thompson (DB-persisted)")
+                return
+            except Exception as e:
+                logger.debug(f"AutoValidation record failed: {e}")
+
+        # Fall back to MathOptimizer Thompson (in-memory)
         if not self._math_enabled or not self.math_optimizer:
             return
 
         try:
             self.math_optimizer.thompson.record_outcome(self._math_bot_name, win, pnl)
-            logger.info(f"{self._math_bot_name}: Recorded outcome win={win}, pnl=${pnl:.2f} to Thompson")
+            logger.info(f"{self._math_bot_name}: Recorded outcome win={win}, pnl=${pnl:.2f} to MathOptimizer Thompson")
         except Exception as e:
             logger.error(f"{self._math_bot_name}: Failed to record Thompson outcome: {e}")
 

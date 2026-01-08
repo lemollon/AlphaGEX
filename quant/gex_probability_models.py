@@ -1031,6 +1031,17 @@ class GEXSignalGenerator:
         else:
             conviction_factors.append(0.6)
 
+        # FlipGravity - measures pull toward GEX flip point
+        # High gravity = strong directional pull, good for directional trades
+        # Low gravity = price may stay flat, reduce conviction
+        flip_gravity_score = flip_gravity.raw_value
+        if flip_gravity_score > 0.7:
+            conviction_factors.append(0.9)  # Strong pull toward flip - high conviction
+        elif flip_gravity_score > 0.4:
+            conviction_factors.append(0.7)  # Moderate pull - decent conviction
+        else:
+            conviction_factors.append(0.5)  # Weak gravity - lower conviction
+
         # Volatility-based adjustment
         exp_vol = volatility.raw_value
         if exp_vol < 0.5:  # Very low expected vol

@@ -640,8 +640,176 @@ class EnsembleStrategyWeighter:
         }
 
 
-# Global instance
+# =============================================================================
+# GAP 5: DYNAMIC ENSEMBLE WEIGHT UPDATER
+# =============================================================================
+
+class DynamicEnsembleWeightUpdater:
+    """
+    Gap 5: Real-time dynamic weight updates for ensemble strategies.
+
+    Instead of using static or slowly-adapting weights, this provides:
+    - Real-time weight adjustments based on recent performance
+    - Regime-aware weight boosting/penalizing
+    - Exponential decay for recency weighting
+    - Confidence-weighted outcome tracking
+    """
+
+    # Configuration
+    RECENCY_DECAY_FACTOR = 0.95  # Exponential decay per day
+    MIN_WEIGHT = 0.05  # Minimum strategy weight
+    MAX_WEIGHT = 0.50  # Maximum strategy weight
+    BOOST_THRESHOLD_WIN_RATE = 0.70  # Boost if win rate > 70%
+    PENALIZE_THRESHOLD_WIN_RATE = 0.45  # Penalize if win rate < 45%
+    REGIME_BOOST_FACTOR = 1.3  # Boost strategies performing well in current regime
+    REGIME_PENALIZE_FACTOR = 0.7  # Penalize strategies performing poorly in current regime
+
+    def __init__(self, weighter: EnsembleStrategyWeighter):
+        self.weighter = weighter
+        self._dynamic_adjustments: Dict[str, float] = {}  # strategy -> adjustment multiplier
+        self._last_update = datetime.now()
+        self._regime_performance_cache: Dict[str, Dict[str, float]] = {}
+
+    def update_weights_from_outcome(
+        self,
+        strategy_name: str,
+        was_correct: bool,
+        confidence_at_prediction: float,
+        actual_pnl_pct: float,
+        current_regime: str
+    ) -> Dict[str, float]:
+        """
+        Update strategy weights based on outcome.
+
+        Args:
+            strategy_name: Name of the strategy
+            was_correct: Whether the prediction was correct
+            confidence_at_prediction: Strategy's confidence when prediction was made
+            actual_pnl_pct: Actual P&L percentage from the trade
+            current_regime: Current market regime
+
+        Returns:
+            Updated weights for all strategies
+        """
+        category = self.weighter._map_strategy_to_category(strategy_name)
+        if not category:
+            return self.get_current_weights(current_regime)
+
+        # Calculate adjustment based on outcome
+        if was_correct:
+            # Boost proportional to confidence and P&L
+            adjustment = 1.0 + (confidence_at_prediction / 100) * (actual_pnl_pct / 10)
+            adjustment = min(1.5, adjustment)  # Cap at 50% boost
+        else:
+            # Penalize inversely proportional to confidence
+            # High confidence wrong predictions get penalized more
+            adjustment = 1.0 - (confidence_at_prediction / 100) * 0.3
+            adjustment = max(0.5, adjustment)  # Cap at 50% penalty
+
+        # Apply regime adjustment
+        regime_key = f"{category}:{current_regime}"
+        if regime_key not in self._regime_performance_cache:
+            self._regime_performance_cache[regime_key] = {'wins': 0, 'total': 0}
+
+        self._regime_performance_cache[regime_key]['total'] += 1
+        if was_correct:
+            self._regime_performance_cache[regime_key]['wins'] += 1
+
+        regime_win_rate = (
+            self._regime_performance_cache[regime_key]['wins'] /
+            self._regime_performance_cache[regime_key]['total']
+        )
+
+        if regime_win_rate >= self.BOOST_THRESHOLD_WIN_RATE:
+            adjustment *= self.REGIME_BOOST_FACTOR
+        elif regime_win_rate <= self.PENALIZE_THRESHOLD_WIN_RATE:
+            adjustment *= self.REGIME_PENALIZE_FACTOR
+
+        # Store/update adjustment
+        if category in self._dynamic_adjustments:
+            # Blend with existing adjustment using decay
+            existing = self._dynamic_adjustments[category]
+            self._dynamic_adjustments[category] = (
+                existing * self.RECENCY_DECAY_FACTOR +
+                adjustment * (1 - self.RECENCY_DECAY_FACTOR)
+            )
+        else:
+            self._dynamic_adjustments[category] = adjustment
+
+        # Record in underlying weighter for persistence
+        self.weighter.record_trade_outcome(strategy_name, actual_pnl_pct, current_regime)
+
+        self._last_update = datetime.now()
+        return self.get_current_weights(current_regime)
+
+    def get_current_weights(self, current_regime: str = "UNKNOWN") -> Dict[str, float]:
+        """
+        Get current dynamically-adjusted weights.
+
+        Returns:
+            Dict of strategy -> weight (0-1)
+        """
+        # Get base weights from weighter
+        base_weights = self.weighter.get_strategy_weights(current_regime)
+
+        # Apply dynamic adjustments
+        adjusted_weights = {}
+        for strategy, base_weight in base_weights.items():
+            adjustment = self._dynamic_adjustments.get(strategy, 1.0)
+            adjusted = base_weight * adjustment
+            # Apply min/max bounds
+            adjusted = max(self.MIN_WEIGHT, min(self.MAX_WEIGHT, adjusted))
+            adjusted_weights[strategy] = adjusted
+
+        # Normalize to sum to 1
+        total = sum(adjusted_weights.values())
+        if total > 0:
+            adjusted_weights = {k: v / total for k, v in adjusted_weights.items()}
+
+        return adjusted_weights
+
+    def get_regime_performance(self, current_regime: str = None) -> Dict[str, Dict]:
+        """Get performance by regime for transparency"""
+        if current_regime:
+            return {
+                k: v for k, v in self._regime_performance_cache.items()
+                if k.endswith(f":{current_regime}")
+            }
+        return self._regime_performance_cache.copy()
+
+    def decay_weights(self) -> None:
+        """
+        Apply time decay to all adjustments.
+
+        Should be called periodically (e.g., daily) to allow
+        weights to revert toward base values.
+        """
+        for strategy in self._dynamic_adjustments:
+            current = self._dynamic_adjustments[strategy]
+            # Decay toward 1.0 (neutral)
+            self._dynamic_adjustments[strategy] = (
+                1.0 + (current - 1.0) * self.RECENCY_DECAY_FACTOR
+            )
+
+    def reset_strategy(self, strategy_name: str) -> None:
+        """Reset a strategy's dynamic adjustment to neutral"""
+        category = self.weighter._map_strategy_to_category(strategy_name)
+        if category and category in self._dynamic_adjustments:
+            del self._dynamic_adjustments[category]
+
+    def get_status(self) -> Dict:
+        """Get status of dynamic weight updater"""
+        return {
+            'last_update': self._last_update.isoformat(),
+            'dynamic_adjustments': self._dynamic_adjustments.copy(),
+            'regime_performance_cache_size': len(self._regime_performance_cache),
+            'strategies_tracked': list(self._dynamic_adjustments.keys())
+        }
+
+
+# Global instances
 _ensemble_weighter: Optional[EnsembleStrategyWeighter] = None
+_dynamic_updater: Optional[DynamicEnsembleWeightUpdater] = None
 
 
 def get_ensemble_weighter(symbol: str = "SPY") -> EnsembleStrategyWeighter:
@@ -650,6 +818,18 @@ def get_ensemble_weighter(symbol: str = "SPY") -> EnsembleStrategyWeighter:
     if _ensemble_weighter is None or _ensemble_weighter.symbol != symbol:
         _ensemble_weighter = EnsembleStrategyWeighter(symbol)
     return _ensemble_weighter
+
+
+def get_dynamic_weight_updater(symbol: str = "SPY") -> DynamicEnsembleWeightUpdater:
+    """Get or create dynamic weight updater (Gap 5)"""
+    global _dynamic_updater, _ensemble_weighter
+
+    weighter = get_ensemble_weighter(symbol)
+
+    if _dynamic_updater is None or _dynamic_updater.weighter != weighter:
+        _dynamic_updater = DynamicEnsembleWeightUpdater(weighter)
+
+    return _dynamic_updater
 
 
 def get_ensemble_signal(
