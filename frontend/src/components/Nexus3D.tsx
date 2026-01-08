@@ -57,6 +57,36 @@ export interface BotStatus {
   gex?: 'active' | 'idle' | 'trading' | 'error'
 }
 
+// Live data for planets - metrics displayed on each planet
+export interface PlanetLiveData {
+  pnl?: number
+  pnlPercent?: number
+  winRate?: number
+  activePositions?: number
+  todayTrades?: number
+  status?: 'active' | 'idle' | 'error'
+}
+
+// System categories for navigation
+export type SystemCategory = 'center' | 'inner' | 'outer'
+
+// Get system category based on position
+function getSystemCategory(systemId: string): SystemCategory {
+  if (systemId === 'manna') return 'center'
+  const innerRing = ['icarus', 'pegasus', 'titan', 'sage', 'quant']
+  if (innerRing.includes(systemId)) return 'inner'
+  return 'outer'
+}
+
+// Get category label
+function getCategoryLabel(category: SystemCategory): string {
+  switch (category) {
+    case 'center': return 'CENTER'
+    case 'inner': return 'INNER RING'
+    case 'outer': return 'OUTER RING'
+  }
+}
+
 export type ColorTheme = 'cyan' | 'purple' | 'green' | 'red'
 
 interface Nexus3DProps {
@@ -5581,25 +5611,49 @@ function PegasusEffects({ color, sunColor, paused }: { color: string, sunColor: 
 
 // =============================================================================
 // SOLAR SYSTEM - Beautiful Mini Solar System with Orbiting Planets
+// Now with LOD (Level of Detail) for performance optimization
 // =============================================================================
+
+// LOD levels based on camera distance
+type LODLevel = 'high' | 'medium' | 'low' | 'minimal'
+
+function getLODLevel(distance: number): LODLevel {
+  if (distance < 30) return 'high'
+  if (distance < 60) return 'medium'
+  if (distance < 100) return 'low'
+  return 'minimal'
+}
+
+function getLODPolygons(lod: LODLevel): { sphere: number, torus: number } {
+  switch (lod) {
+    case 'high': return { sphere: 32, torus: 64 }
+    case 'medium': return { sphere: 16, torus: 32 }
+    case 'low': return { sphere: 8, torus: 16 }
+    case 'minimal': return { sphere: 6, torus: 8 }
+  }
+}
 
 function SolarSystem({
   system,
   paused = false,
   onPulseToSystem,
-  onSystemClick
+  onSystemClick,
+  liveData
 }: {
   system: typeof SOLAR_SYSTEMS[0]
   paused?: boolean
   onPulseToSystem?: (targetId: string) => void
   onSystemClick?: (systemId: string, position: [number, number, number]) => void
+  liveData?: Record<string, PlanetLiveData>
 }) {
+  const { camera } = useThree()
   const groupRef = useRef<THREE.Group>(null)
   const sunRef = useRef<THREE.Mesh>(null)
   const glowRef = useRef<THREE.Mesh>(null)
   const ringsRef = useRef<THREE.Group>(null)
   const [isHovered, setIsHovered] = useState(false)
   const [pulseIntensity, setPulseIntensity] = useState(0)
+  const [lodLevel, setLodLevel] = useState<LODLevel>('high')
 
   // Track pointer to distinguish click from drag
   const pointerDownPos = useRef<{ x: number, y: number } | null>(null)
@@ -5645,13 +5699,21 @@ function SolarSystem({
     if (paused) return
     const t = state.clock.elapsedTime
 
-    // Gentle floating motion
-    if (groupRef.current) {
+    // Calculate LOD based on camera distance
+    const systemPos = new THREE.Vector3(...system.position)
+    const distance = camera.position.distanceTo(systemPos)
+    const newLodLevel = getLODLevel(distance)
+    if (newLodLevel !== lodLevel) {
+      setLodLevel(newLodLevel)
+    }
+
+    // Gentle floating motion (skip for minimal LOD)
+    if (groupRef.current && lodLevel !== 'minimal') {
       groupRef.current.position.y = system.position[1] + Math.sin(t * 0.3 + system.position[0]) * 0.3
     }
 
-    // Sun pulsing glow
-    if (sunRef.current) {
+    // Sun pulsing glow (skip for low/minimal LOD)
+    if (sunRef.current && (lodLevel === 'high' || lodLevel === 'medium')) {
       const pulse = 1 + Math.sin(t * 2) * 0.1
       sunRef.current.scale.setScalar(pulse)
     }
@@ -5661,8 +5723,8 @@ function SolarSystem({
       ;(glowRef.current.material as THREE.MeshBasicMaterial).opacity = 0.05
     }
 
-    // Orbital rings rotation
-    if (ringsRef.current) {
+    // Orbital rings rotation (skip for minimal LOD)
+    if (ringsRef.current && lodLevel !== 'minimal') {
       ringsRef.current.rotation.x = Math.PI / 2 + Math.sin(t * 0.2) * 0.1
       ringsRef.current.rotation.z = t * 0.05
     }
@@ -5686,6 +5748,11 @@ function SolarSystem({
     return () => clearInterval(interval)
   }, [paused, system.id, onPulseToSystem])
 
+  // Get polygon counts based on LOD
+  const lodPolygons = getLODPolygons(lodLevel)
+  const showEffects = lodLevel === 'high' || lodLevel === 'medium'
+  const showPlanets = lodLevel !== 'minimal'
+
   return (
     <group
       ref={groupRef}
@@ -5697,70 +5764,90 @@ function SolarSystem({
       onClick={handleClick}
     >
       {/* Far-distance beacon glow - always visible from afar */}
-      <Sphere args={[8, 16, 16]}>
+      <Sphere args={[8, Math.max(8, lodPolygons.sphere / 2), Math.max(8, lodPolygons.sphere / 2)]}>
         <meshBasicMaterial color={system.glowColor} transparent opacity={0.02} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
       </Sphere>
 
-      {/* Outer glow halo */}
-      <Sphere ref={glowRef} args={[5, 32, 32]}>
-        <meshBasicMaterial color={system.glowColor} transparent opacity={0.04} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+      {/* Outer glow halo - skip for minimal LOD */}
+      {lodLevel !== 'minimal' && (
+        <Sphere ref={glowRef} args={[5, lodPolygons.sphere, lodPolygons.sphere]}>
+          <meshBasicMaterial color={system.glowColor} transparent opacity={0.04} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+        </Sphere>
+      )}
+
+      {/* Secondary glow - only for high/medium LOD */}
+      {showEffects && (
+        <Sphere args={[3.5, lodPolygons.sphere, lodPolygons.sphere]}>
+          <meshBasicMaterial color={system.glowColor} transparent opacity={0.03} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+        </Sphere>
+      )}
+
+      {/* Central sun with distortion - use basic material for low LOD */}
+      <Sphere ref={sunRef} args={[2, lodPolygons.sphere, lodPolygons.sphere]}>
+        {showEffects ? (
+          <MeshDistortMaterial
+            color={system.sunColor}
+            emissive={system.sunColor}
+            emissiveIntensity={isHovered ? 3 : 2}
+            distort={0.35}
+            speed={3}
+            side={THREE.DoubleSide}
+          />
+        ) : (
+          <meshBasicMaterial color={system.sunColor} side={THREE.DoubleSide} />
+        )}
       </Sphere>
 
-      {/* Secondary glow */}
-      <Sphere args={[3.5, 32, 32]}>
-        <meshBasicMaterial color={system.glowColor} transparent opacity={0.03} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
-      </Sphere>
+      {/* Sun core (bright center) - only for high/medium LOD */}
+      {showEffects && (
+        <Sphere args={[0.8, lodPolygons.sphere / 2, lodPolygons.sphere / 2]}>
+          <meshBasicMaterial color="#ffffff" side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+        </Sphere>
+      )}
 
-      {/* Central sun with distortion */}
-      <Sphere ref={sunRef} args={[2, 32, 32]}>
-        <MeshDistortMaterial
-          color={system.sunColor}
-          emissive={system.sunColor}
-          emissiveIntensity={isHovered ? 3 : 2}
-          distort={0.35}
-          speed={3}
-          side={THREE.DoubleSide}
-        />
-      </Sphere>
+      {/* Orbital rings - scaled up for visibility, skip for minimal LOD */}
+      {showPlanets && (
+        <group ref={ringsRef}>
+          {system.planets.map((planet, i) => (
+            <mesh key={i} rotation={[Math.PI / 2, 0, 0]}>
+              <torusGeometry args={[planet.orbit * 2.5, 0.04, 8, lodPolygons.torus]} />
+              <meshBasicMaterial color={planet.color} transparent opacity={0.4} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+            </mesh>
+          ))}
+        </group>
+      )}
 
-      {/* Sun core (bright center) */}
-      <Sphere args={[0.8, 16, 16]}>
-        <meshBasicMaterial color="#ffffff" side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
-      </Sphere>
-
-      {/* Orbital rings - scaled up for visibility */}
-      <group ref={ringsRef}>
-        {system.planets.map((planet, i) => (
-          <mesh key={i} rotation={[Math.PI / 2, 0, 0]}>
-            <torusGeometry args={[planet.orbit * 2.5, 0.04, 8, 64]} />
-            <meshBasicMaterial color={planet.color} transparent opacity={0.4} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
-          </mesh>
-        ))}
-      </group>
-
-      {/* Orbiting planets */}
-      {system.planets.map((planet, i) => (
+      {/* Orbiting planets - skip for minimal LOD */}
+      {showPlanets && system.planets.map((planet, i) => (
         <OrbitingPlanet
           key={i}
           planet={planet}
           systemId={system.id}
           paused={paused}
           phaseOffset={i * Math.PI * 0.7}
+          lodLevel={lodLevel}
+          liveData={liveData?.[planet.name.toLowerCase()]}
         />
       ))}
 
-      {/* Particle corona around sun - wrapped for visibility */}
-      <AlwaysVisibleGroup>
-        <SunCorona color={system.glowColor} paused={paused} />
-      </AlwaysVisibleGroup>
+      {/* Particle corona around sun - only for high LOD */}
+      {lodLevel === 'high' && (
+        <AlwaysVisibleGroup>
+          <SunCorona color={system.glowColor} paused={paused} />
+        </AlwaysVisibleGroup>
+      )}
 
-      {/* Unique sun flare effect - wrapped for visibility from all angles */}
-      <AlwaysVisibleGroup>
-        <SunFlareEffect flareType={system.flareType as FlareType} color={system.glowColor} paused={paused} />
-      </AlwaysVisibleGroup>
+      {/* Unique sun flare effect - only for high/medium LOD */}
+      {showEffects && (
+        <AlwaysVisibleGroup>
+          <SunFlareEffect flareType={system.flareType as FlareType} color={system.glowColor} paused={paused} />
+        </AlwaysVisibleGroup>
+      )}
 
-      {/* Unique system ambient effects */}
-      <SystemAmbientEffects systemId={system.id} color={system.glowColor} sunColor={system.sunColor} paused={paused} />
+      {/* Unique system ambient effects - only for high LOD */}
+      {lodLevel === 'high' && (
+        <SystemAmbientEffects systemId={system.id} color={system.glowColor} sunColor={system.sunColor} paused={paused} />
+      )}
 
       {/* System label */}
       <Html position={[0, 1.5, 0]} center>
@@ -5797,12 +5884,16 @@ function OrbitingPlanet({
   planet,
   systemId,
   paused,
-  phaseOffset
+  phaseOffset,
+  lodLevel = 'high',
+  liveData
 }: {
   planet: { name: string, color: string, size: number, orbit: number, speed: number, effect?: PlanetEffect, moons?: number }
   systemId: string
   paused: boolean
   phaseOffset: number
+  lodLevel?: LODLevel
+  liveData?: PlanetLiveData
 }) {
   const groupRef = useRef<THREE.Group>(null)
   const meshRef = useRef<THREE.Mesh>(null)
@@ -5816,6 +5907,13 @@ function OrbitingPlanet({
 
   // Scale orbit to match the larger solar system visualization
   const scaledOrbit = planet.orbit * 2.5
+
+  // Get polygon counts based on LOD
+  const lodPolygons = getLODPolygons(lodLevel)
+  const showAtmosphere = lodLevel === 'high' || lodLevel === 'medium'
+  const showTrail = lodLevel === 'high'
+  const showMoons = lodLevel === 'high' || lodLevel === 'medium'
+  const showEffects = lodLevel === 'high'
 
   useFrame((state) => {
     if (paused) return
@@ -5867,57 +5965,82 @@ function OrbitingPlanet({
   // Scale planet size for better visibility
   const scaledSize = planet.size * 3
 
+  // Format P&L value with color
+  const formatPnL = (pnl?: number, pnlPercent?: number) => {
+    if (pnl === undefined) return null
+    const isPositive = pnl >= 0
+    const color = isPositive ? '#10b981' : '#ef4444'
+    const sign = isPositive ? '+' : ''
+    const percentStr = pnlPercent !== undefined ? ` (${sign}${pnlPercent.toFixed(1)}%)` : ''
+    return { value: `${sign}$${Math.abs(pnl).toLocaleString()}${percentStr}`, color }
+  }
+
   return (
     <group>
-      {/* Planet trail - always visible from all angles */}
-      <points ref={trailRef}>
-        <bufferGeometry>
-          <bufferAttribute
-            attach="attributes-position"
-            count={30}
-            array={trailPositions}
-            itemSize={3}
-          />
-        </bufferGeometry>
-        <pointsMaterial color={planet.color} size={0.08} transparent opacity={0.5} depthTest={false} depthWrite={false} />
-      </points>
+      {/* Planet trail - only for high LOD */}
+      {showTrail && (
+        <points ref={trailRef}>
+          <bufferGeometry>
+            <bufferAttribute
+              attach="attributes-position"
+              count={30}
+              array={trailPositions}
+              itemSize={3}
+            />
+          </bufferGeometry>
+          <pointsMaterial color={planet.color} size={0.08} transparent opacity={0.5} depthTest={false} depthWrite={false} />
+        </points>
+      )}
 
       {/* Planet with effects */}
       <group ref={groupRef}>
-        {/* Planet atmosphere glow - always visible from all angles (95-97% transparent) */}
-        <Sphere ref={atmosphereRef} args={[scaledSize * 1.5, 16, 16]}>
-          <meshBasicMaterial color={planet.color} transparent opacity={isHovered ? 0.05 : 0.03} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
-        </Sphere>
+        {/* Planet atmosphere glow - only for high/medium LOD */}
+        {showAtmosphere && (
+          <Sphere ref={atmosphereRef} args={[scaledSize * 1.5, lodPolygons.sphere / 2, lodPolygons.sphere / 2]}>
+            <meshBasicMaterial color={planet.color} transparent opacity={isHovered ? 0.05 : 0.03} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+          </Sphere>
+        )}
 
-        {/* Planet sphere */}
+        {/* Planet sphere - uses LOD polygon count */}
         <Sphere
           ref={meshRef}
-          args={[scaledSize, 16, 16]}
+          args={[scaledSize, lodPolygons.sphere, lodPolygons.sphere]}
           onPointerOver={() => setIsHovered(true)}
           onPointerOut={() => setIsHovered(false)}
         >
-          <MeshDistortMaterial
-            color={planet.color}
-            emissive={planet.color}
-            emissiveIntensity={isHovered ? 0.6 : 0.3}
-            distort={isHovered ? 0.15 : 0.05}
-            speed={2}
-            side={THREE.DoubleSide}
-          />
+          {showEffects ? (
+            <MeshDistortMaterial
+              color={planet.color}
+              emissive={planet.color}
+              emissiveIntensity={isHovered ? 0.6 : 0.3}
+              distort={isHovered ? 0.15 : 0.05}
+              speed={2}
+              side={THREE.DoubleSide}
+            />
+          ) : (
+            <meshBasicMaterial
+              color={planet.color}
+              transparent
+              opacity={0.9}
+              side={THREE.DoubleSide}
+            />
+          )}
         </Sphere>
 
-        {/* Inner core glow - always visible from all angles (reduced opacity) */}
-        <Sphere args={[scaledSize * 0.5, 8, 8]}>
-          <meshBasicMaterial color="#ffffff" transparent opacity={0.15} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
-        </Sphere>
+        {/* Inner core glow - only for high/medium LOD */}
+        {showAtmosphere && (
+          <Sphere args={[scaledSize * 0.5, lodPolygons.sphere / 4, lodPolygons.sphere / 4]}>
+            <meshBasicMaterial color="#ffffff" transparent opacity={0.15} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+          </Sphere>
+        )}
 
-        {/* Orbiting moons */}
-        {moons.map(moon => (
+        {/* Orbiting moons - only for high/medium LOD */}
+        {showMoons && moons.map(moon => (
           <OrbitingMoon key={moon.id} moon={moon} planetColor={planet.color} paused={paused} />
         ))}
 
-        {/* Planet unique effect - wrapped in AlwaysVisibleGroup for 100% visibility from all angles */}
-        {planet.effect && (
+        {/* Planet unique effect - only for high LOD */}
+        {showEffects && planet.effect && (
           <AlwaysVisibleGroup>
             <PlanetEffectComponent
               effect={planet.effect}
@@ -5928,26 +6051,73 @@ function OrbitingPlanet({
           </AlwaysVisibleGroup>
         )}
 
-        {/* Hover tooltip */}
+        {/* Hover tooltip with live data */}
         {isHovered && (
           <Html position={[0, scaledSize + 0.5, 0]} center>
-            <div className="bg-gray-900/90 border border-gray-700 rounded-lg px-3 py-2 text-center backdrop-blur-sm min-w-[80px]">
-              <div className="text-xs font-bold" style={{ color: planet.color }}>
+            <div className="bg-gray-900/95 border border-gray-700 rounded-lg px-3 py-2 text-center backdrop-blur-sm min-w-[120px] shadow-xl">
+              <div className="text-xs font-bold mb-1" style={{ color: planet.color }}>
                 {planet.name}
               </div>
+              {/* Live data section */}
+              {liveData && (
+                <div className="border-t border-gray-700 pt-1.5 mt-1.5 space-y-1">
+                  {/* P&L */}
+                  {liveData.pnl !== undefined && (
+                    <div className="flex justify-between items-center text-[10px]">
+                      <span className="text-gray-400">P&L:</span>
+                      <span style={{ color: formatPnL(liveData.pnl, liveData.pnlPercent)?.color }}>
+                        {formatPnL(liveData.pnl, liveData.pnlPercent)?.value}
+                      </span>
+                    </div>
+                  )}
+                  {/* Win Rate */}
+                  {liveData.winRate !== undefined && (
+                    <div className="flex justify-between items-center text-[10px]">
+                      <span className="text-gray-400">Win Rate:</span>
+                      <span className="text-cyan-400">{liveData.winRate.toFixed(1)}%</span>
+                    </div>
+                  )}
+                  {/* Active Positions */}
+                  {liveData.activePositions !== undefined && (
+                    <div className="flex justify-between items-center text-[10px]">
+                      <span className="text-gray-400">Positions:</span>
+                      <span className="text-yellow-400">{liveData.activePositions}</span>
+                    </div>
+                  )}
+                  {/* Today's Trades */}
+                  {liveData.todayTrades !== undefined && (
+                    <div className="flex justify-between items-center text-[10px]">
+                      <span className="text-gray-400">Today:</span>
+                      <span className="text-purple-400">{liveData.todayTrades} trades</span>
+                    </div>
+                  )}
+                  {/* Status */}
+                  {liveData.status && (
+                    <div className="flex justify-between items-center text-[10px]">
+                      <span className="text-gray-400">Status:</span>
+                      <span className={
+                        liveData.status === 'active' ? 'text-green-400' :
+                        liveData.status === 'error' ? 'text-red-400' : 'text-gray-400'
+                      }>
+                        {liveData.status.toUpperCase()}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </Html>
         )}
 
-        {/* Enhanced glow when hovered - always visible from all angles (reduced opacity) */}
-        {isHovered && (
+        {/* Enhanced glow when hovered - only for high/medium LOD */}
+        {isHovered && showAtmosphere && (
           <>
-            <Sphere args={[scaledSize * 2, 8, 8]}>
+            <Sphere args={[scaledSize * 2, lodPolygons.sphere / 2, lodPolygons.sphere / 2]}>
               <meshBasicMaterial color={planet.color} transparent opacity={0.12} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </Sphere>
             {/* Pulsing ring */}
             <mesh rotation={[Math.PI / 2, 0, 0]}>
-              <torusGeometry args={[scaledSize * 1.5, 0.03, 8, 32]} />
+              <torusGeometry args={[scaledSize * 1.5, 0.03, 8, lodPolygons.torus / 2]} />
               <meshBasicMaterial color="#ffffff" transparent opacity={0.5} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </mesh>
           </>
@@ -10125,6 +10295,24 @@ interface SceneProps {
   zoomTarget: THREE.Vector3 | null
   setZoomTarget: (t: THREE.Vector3 | null) => void
   stockPrices: Array<{ symbol: string, price: number, change: number }>
+  onCameraMove?: (pos: { x: number, y: number, z: number }) => void
+}
+
+// Camera position tracker component for minimap
+function CameraPositionTracker({ onCameraMove }: { onCameraMove?: (pos: { x: number, y: number, z: number }) => void }) {
+  const { camera } = useThree()
+
+  useFrame(() => {
+    if (onCameraMove) {
+      onCameraMove({
+        x: camera.position.x,
+        y: camera.position.y,
+        z: camera.position.z
+      })
+    }
+  })
+
+  return null
 }
 
 function Scene({
@@ -10148,7 +10336,8 @@ function Scene({
   konamiActive,
   zoomTarget,
   setZoomTarget,
-  stockPrices
+  stockPrices,
+  onCameraMove
 }: SceneProps) {
   const { mouse3D } = useMousePosition()
   const controlsRef = useRef<any>(null)
@@ -10182,6 +10371,9 @@ function Scene({
         paused={paused}
         setPaused={setPaused}
       />
+
+      {/* Camera Position Tracker for minimap */}
+      <CameraPositionTracker onCameraMove={onCameraMove} />
 
       {/* Lighting */}
       <ambientLight intensity={0.1} />
@@ -10554,7 +10746,196 @@ function ControlPanel({
 }
 
 // =============================================================================
-// SOLAR SYSTEM NAVIGATOR - Quick travel buttons to each solar system
+// MINIMAP - 2D overhead view showing all systems and camera position
+// =============================================================================
+
+function NexusMinimap({
+  currentSystem,
+  cameraPosition,
+  onNavigate
+}: {
+  currentSystem: string | null
+  cameraPosition?: { x: number, y: number, z: number }
+  onNavigate: (systemId: string, position: [number, number, number]) => void
+}) {
+  const [expanded, setExpanded] = useState(true)
+
+  // Scale factor to fit systems in minimap (systems go from -80 to +80)
+  const scale = 0.5
+  const mapSize = 120
+  const center = mapSize / 2
+
+  return (
+    <div className="absolute top-4 right-4 z-10">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-8 h-8 bg-black/70 border border-cyan-500/30 rounded-lg flex items-center justify-center text-cyan-400 hover:bg-cyan-500/20 transition-colors backdrop-blur mb-2 ml-auto"
+        title="Toggle Minimap"
+      >
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+        </svg>
+      </button>
+
+      {expanded && (
+        <div className="bg-black/80 border border-cyan-500/30 rounded-lg p-2 backdrop-blur">
+          <div className="text-[10px] text-cyan-400 font-bold mb-1 tracking-wider">GALAXY MAP</div>
+          <div
+            className="relative rounded border border-gray-700/50"
+            style={{ width: mapSize, height: mapSize, background: 'radial-gradient(circle at center, #1a1a2e 0%, #0a0a15 100%)' }}
+          >
+            {/* Grid lines */}
+            <div className="absolute inset-0 opacity-20">
+              <div className="absolute left-1/2 top-0 bottom-0 w-px bg-gray-500" />
+              <div className="absolute top-1/2 left-0 right-0 h-px bg-gray-500" />
+              <div className="absolute inset-0 border border-gray-600 rounded-full" style={{ margin: '25%' }} />
+              <div className="absolute inset-0 border border-gray-600 rounded-full" style={{ margin: '10%' }} />
+            </div>
+
+            {/* Solar systems as dots */}
+            {SOLAR_SYSTEMS.map(system => {
+              const x = center + system.position[0] * scale
+              const y = center - system.position[1] * scale // Invert Y for top-down view
+              const isCenter = system.id === 'manna'
+              const isCurrent = currentSystem === system.id
+              const category = getSystemCategory(system.id)
+
+              return (
+                <button
+                  key={system.id}
+                  onClick={() => onNavigate(system.id, system.position)}
+                  className={`absolute transform -translate-x-1/2 -translate-y-1/2 transition-all hover:scale-150 ${isCurrent ? 'z-20' : 'z-10'}`}
+                  style={{ left: x, top: y }}
+                  title={`${system.name} - ${system.subtitle}`}
+                >
+                  <div
+                    className={`rounded-full ${isCurrent ? 'ring-2 ring-white ring-offset-1 ring-offset-black' : ''}`}
+                    style={{
+                      width: isCenter ? 10 : category === 'inner' ? 6 : 5,
+                      height: isCenter ? 10 : category === 'inner' ? 6 : 5,
+                      backgroundColor: system.sunColor,
+                      boxShadow: `0 0 ${isCenter ? 8 : 4}px ${system.glowColor}`
+                    }}
+                  />
+                </button>
+              )
+            })}
+
+            {/* Camera position indicator */}
+            {cameraPosition && (
+              <div
+                className="absolute w-0 h-0 border-l-[4px] border-r-[4px] border-b-[8px] border-l-transparent border-r-transparent border-b-white transform -translate-x-1/2 -translate-y-1/2 z-30"
+                style={{
+                  left: center + (cameraPosition.x || 0) * scale,
+                  top: center - (cameraPosition.y || 0) * scale,
+                  filter: 'drop-shadow(0 0 4px white)'
+                }}
+                title="Camera Position"
+              />
+            )}
+
+            {/* Ring labels */}
+            <div className="absolute text-[6px] text-gray-500" style={{ left: 4, top: mapSize / 2 - 20 }}>OUTER</div>
+            <div className="absolute text-[6px] text-gray-500" style={{ left: 4, top: mapSize / 2 + 5 }}>INNER</div>
+          </div>
+
+          {/* Legend */}
+          <div className="flex gap-2 mt-1 text-[8px] text-gray-500">
+            <span className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-amber-200" /> Center
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-gray-400" /> Inner
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="w-1 h-1 rounded-full bg-gray-500" /> Outer
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// =============================================================================
+// BREADCRUMBS - Show current navigation path
+// =============================================================================
+
+function NavigationBreadcrumbs({
+  currentSystem,
+  onNavigate
+}: {
+  currentSystem: string | null
+  onNavigate: (systemId: string, position: [number, number, number]) => void
+}) {
+  if (!currentSystem) return null
+
+  const system = SOLAR_SYSTEMS.find(s => s.id === currentSystem)
+  if (!system) return null
+
+  const category = getSystemCategory(currentSystem)
+  const categoryLabel = getCategoryLabel(category)
+
+  return (
+    <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10">
+      <div className="bg-black/80 border border-purple-500/30 rounded-lg px-4 py-2 backdrop-blur flex items-center gap-2 text-sm">
+        {/* Home */}
+        <button
+          onClick={() => onNavigate('home', [0, 0, 0])}
+          className="text-gray-400 hover:text-cyan-400 transition-colors flex items-center gap-1"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+          </svg>
+          <span>NEXUS</span>
+        </button>
+
+        {/* Separator */}
+        <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+
+        {/* Category (only if not center) */}
+        {category !== 'center' && (
+          <>
+            <button
+              onClick={() => {
+                // Navigate to MANNA (center) when clicking ring
+                const manna = SOLAR_SYSTEMS.find(s => s.id === 'manna')
+                if (manna) onNavigate(manna.id, manna.position)
+              }}
+              className="text-gray-400 hover:text-purple-400 transition-colors"
+            >
+              {categoryLabel}
+            </button>
+
+            <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </>
+        )}
+
+        {/* Current System */}
+        <span
+          className="font-bold flex items-center gap-2"
+          style={{ color: system.sunColor, textShadow: `0 0 10px ${system.glowColor}` }}
+        >
+          <span
+            className="w-3 h-3 rounded-full"
+            style={{ backgroundColor: system.sunColor, boxShadow: `0 0 8px ${system.glowColor}` }}
+          />
+          {system.name}
+        </span>
+
+        {/* Subtitle */}
+        <span className="text-gray-500 text-xs">({system.subtitle})</span>
+      </div>
+    </div>
+  )
+}
+
+// =============================================================================
+// SOLAR SYSTEM NAVIGATOR - Enhanced with categories
 // =============================================================================
 
 function SolarSystemNavigator({
@@ -10565,6 +10946,45 @@ function SolarSystemNavigator({
   currentSystem: string | null
 }) {
   const [expanded, setExpanded] = useState(true)
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<SystemCategory>>(new Set())
+
+  // Group systems by category
+  const systemsByCategory = useMemo(() => {
+    const groups: Record<SystemCategory, typeof SOLAR_SYSTEMS> = {
+      center: [],
+      inner: [],
+      outer: []
+    }
+    SOLAR_SYSTEMS.forEach(system => {
+      const category = getSystemCategory(system.id)
+      groups[category].push(system)
+    })
+    return groups
+  }, [])
+
+  const toggleCategory = (category: SystemCategory) => {
+    setCollapsedCategories(prev => {
+      const next = new Set(prev)
+      if (next.has(category)) {
+        next.delete(category)
+      } else {
+        next.add(category)
+      }
+      return next
+    })
+  }
+
+  const categoryColors: Record<SystemCategory, string> = {
+    center: '#fef3c7',
+    inner: '#a855f7',
+    outer: '#06b6d4'
+  }
+
+  const categoryIcons: Record<SystemCategory, string> = {
+    center: '✦',
+    inner: '◉',
+    outer: '○'
+  }
 
   return (
     <div className="absolute bottom-4 left-4 z-10">
@@ -10579,43 +10999,74 @@ function SolarSystemNavigator({
       </button>
 
       {expanded && (
-        <div className="bg-black/80 border border-purple-500/30 rounded-lg p-3 backdrop-blur min-w-[180px]">
+        <div className="bg-black/80 border border-purple-500/30 rounded-lg p-3 backdrop-blur min-w-[220px] max-h-[70vh] overflow-y-auto">
           <h3 className="text-purple-400 font-bold mb-3 text-xs tracking-wider flex items-center gap-2">
             <span className="text-lg">🚀</span> SOLAR SYSTEMS
+            <span className="text-gray-500 font-normal">({SOLAR_SYSTEMS.length})</span>
           </h3>
 
-          <div className="space-y-1.5">
-            {SOLAR_SYSTEMS.map(system => (
+          {/* Grouped systems */}
+          {(['center', 'inner', 'outer'] as SystemCategory[]).map(category => (
+            <div key={category} className="mb-2">
+              {/* Category header */}
               <button
-                key={system.id}
-                onClick={() => onNavigate(system.id, system.position)}
-                className={`w-full py-2 px-3 rounded text-xs font-medium transition-all flex items-center gap-2 ${
-                  currentSystem === system.id
-                    ? 'bg-gradient-to-r from-purple-500/40 to-cyan-500/40 text-white border border-purple-500/50'
-                    : 'bg-gray-800/50 text-gray-300 hover:bg-gray-700/50 border border-transparent'
-                }`}
+                onClick={() => toggleCategory(category)}
+                className="w-full flex items-center gap-2 py-1.5 px-2 rounded text-xs font-medium hover:bg-gray-800/50 transition-colors"
+                style={{ color: categoryColors[category] }}
               >
-                <span
-                  className="w-3 h-3 rounded-full"
-                  style={{ backgroundColor: system.sunColor, boxShadow: `0 0 8px ${system.glowColor}` }}
-                />
-                <span className="flex-1 text-left">{system.name}</span>
-                <span className="text-gray-500 text-[10px]">{system.subtitle}</span>
+                <span className="text-sm">{categoryIcons[category]}</span>
+                <span className="flex-1 text-left">{getCategoryLabel(category)}</span>
+                <span className="text-gray-500">({systemsByCategory[category].length})</span>
+                <svg
+                  className={`w-3 h-3 transition-transform ${collapsedCategories.has(category) ? '' : 'rotate-90'}`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
               </button>
-            ))}
-          </div>
+
+              {/* Systems in category */}
+              {!collapsedCategories.has(category) && (
+                <div className="space-y-1 mt-1 ml-2">
+                  {systemsByCategory[category].map(system => (
+                    <button
+                      key={system.id}
+                      onClick={() => onNavigate(system.id, system.position)}
+                      className={`w-full py-1.5 px-2 rounded text-xs font-medium transition-all flex items-center gap-2 ${
+                        currentSystem === system.id
+                          ? 'bg-gradient-to-r from-purple-500/40 to-cyan-500/40 text-white border border-purple-500/50'
+                          : 'bg-gray-800/30 text-gray-300 hover:bg-gray-700/50 border border-transparent'
+                      }`}
+                    >
+                      <span
+                        className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                        style={{ backgroundColor: system.sunColor, boxShadow: `0 0 6px ${system.glowColor}` }}
+                      />
+                      <span className="flex-1 text-left truncate">{system.name}</span>
+                      <span className="text-gray-500 text-[9px] truncate max-w-[60px]">{system.subtitle}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
 
           <div className="mt-3 pt-2 border-t border-purple-500/20">
             <button
               onClick={() => onNavigate('home', [0, 0, 0])}
-              className="w-full py-1.5 rounded text-xs font-medium bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30 transition-colors"
+              className="w-full py-1.5 rounded text-xs font-medium bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30 transition-colors flex items-center justify-center gap-2"
             >
-              🏠 Return to Center
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+              </svg>
+              Return to Overview
             </button>
           </div>
 
-          <div className="mt-2 text-[10px] text-gray-500">
-            Click on any solar system to fly there
+          <div className="mt-2 text-[10px] text-gray-500 text-center">
+            Click systems or use minimap to navigate
           </div>
         </div>
       )}
@@ -10671,6 +11122,7 @@ export default function Nexus3D({
   const [zoomTarget, setZoomTarget] = useState<THREE.Vector3 | null>(null)
   const [currentSystem, setCurrentSystem] = useState<string | null>(null)
   const [audioMuted, setAudioMuted] = useState(true)
+  const [cameraPosition, setCameraPosition] = useState<{ x: number, y: number, z: number }>({ x: 0, y: 2, z: 10 })
   const audioContextRef = useRef<AudioContext | null>(null)
   const gainNodeRef = useRef<GainNode | null>(null)
   const holdTimer = useRef<NodeJS.Timeout | null>(null)
@@ -10847,6 +11299,19 @@ export default function Nexus3D({
         {/* Pause Indicator */}
         <PauseIndicator paused={paused} />
 
+        {/* Navigation Breadcrumbs */}
+        <NavigationBreadcrumbs
+          currentSystem={currentSystem}
+          onNavigate={handleNavigateToSystem}
+        />
+
+        {/* Minimap */}
+        <NexusMinimap
+          currentSystem={currentSystem}
+          cameraPosition={cameraPosition}
+          onNavigate={handleNavigateToSystem}
+        />
+
         {/* Solar System Navigator */}
         <SolarSystemNavigator
           onNavigate={handleNavigateToSystem}
@@ -10894,6 +11359,7 @@ export default function Nexus3D({
               zoomTarget={zoomTarget}
               setZoomTarget={setZoomTarget}
               stockPrices={stockPrices}
+              onCameraMove={setCameraPosition}
             />
           </Suspense>
         </Canvas>
