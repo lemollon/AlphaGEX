@@ -383,6 +383,55 @@ class SignalGenerator:
             logger.warning(f"GEX data fetch failed: {e}")
         return None
 
+    def get_gex_data(self) -> Optional[Dict[str, Any]]:
+        """
+        Get current GEX data - PUBLIC method for trader.
+
+        Returns dict with: spot_price, call_wall, put_wall, gex_regime, vix
+        """
+        gex = self._get_gex_data()
+        if not gex:
+            logger.warning("No GEX data available")
+            return None
+
+        try:
+            # Get spot price
+            spot = 0.0
+            if DATA_AVAILABLE:
+                spot = get_price("SPX")
+                if not spot:
+                    spy = get_price("SPY")
+                    if spy:
+                        spot = spy * 10
+
+            # Get VIX
+            vix = 20.0
+            if DATA_AVAILABLE:
+                try:
+                    vix = get_vix() or 20.0
+                except Exception:
+                    pass
+
+            # Scale walls if from SPY
+            scale = 10 if gex.get('from_spy', False) else 1
+
+            return {
+                'spot_price': spot,
+                'underlying_price': spot,
+                'call_wall': gex.get('call_wall', 0) * scale,
+                'put_wall': gex.get('put_wall', 0) * scale,
+                'gex_regime': gex.get('regime', 'NEUTRAL'),
+                'regime': gex.get('regime', 'NEUTRAL'),
+                'net_gex': gex.get('net_gex', 0),
+                'flip_point': gex.get('flip_point', 0) * scale,
+                'vix': vix,
+                'from_spy': gex.get('from_spy', False),
+                'timestamp': datetime.now(CENTRAL_TZ),
+            }
+        except Exception as e:
+            logger.error(f"GEX fetch error: {e}")
+            return None
+
     def get_ml_prediction(self, market_data: Dict) -> Optional[Dict[str, Any]]:
         """
         Get prediction from ARES ML Advisor (PRIMARY source for Iron Condors).

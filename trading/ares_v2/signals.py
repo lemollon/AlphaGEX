@@ -397,6 +397,52 @@ class SignalGenerator:
 
         return None
 
+    def get_gex_data(self) -> Optional[Dict[str, Any]]:
+        """
+        Get current GEX data - PUBLIC method for trader.
+
+        Returns dict with: spot_price, call_wall, put_wall, gex_regime, vix
+        """
+        if not self.gex_calculator:
+            logger.warning("No GEX calculator available")
+            return None
+
+        try:
+            gex = self.gex_calculator.calculate_gex(self.config.ticker)
+            if not gex:
+                return None
+
+            # Get spot price
+            spot = 0.0
+            if DATA_PROVIDER_AVAILABLE:
+                spot = get_price(self.config.ticker)
+            if not spot:
+                spot = gex.get('spot_price', gex.get('underlying_price', 0))
+
+            # Get VIX
+            vix = 20.0
+            if DATA_PROVIDER_AVAILABLE:
+                try:
+                    vix = get_vix() or 20.0
+                except Exception:
+                    pass
+
+            return {
+                'spot_price': spot,
+                'underlying_price': spot,
+                'call_wall': gex.get('call_wall', gex.get('major_call_wall', 0)),
+                'put_wall': gex.get('put_wall', gex.get('major_put_wall', 0)),
+                'gex_regime': gex.get('regime', gex.get('gex_regime', 'NEUTRAL')),
+                'regime': gex.get('regime', gex.get('gex_regime', 'NEUTRAL')),
+                'net_gex': gex.get('net_gex', 0),
+                'flip_point': gex.get('flip_point', gex.get('gamma_flip', 0)),
+                'vix': vix,
+                'timestamp': datetime.now(CENTRAL_TZ),
+            }
+        except Exception as e:
+            logger.error(f"GEX fetch error: {e}")
+            return None
+
     def _calculate_expected_move(self, spot: float, vix: float) -> float:
         """
         Calculate expected daily move (1 SD).
