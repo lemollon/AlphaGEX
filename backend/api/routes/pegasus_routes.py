@@ -1029,19 +1029,21 @@ async def get_pegasus_logs(
         conn = get_connection()
         c = conn.cursor()
 
-        where_clause = "WHERE bot_name = 'PEGASUS'"
+        # pegasus_logs table has columns: log_time, level (not created_at, log_level)
+        # and does NOT have bot_name column (it's PEGASUS-specific)
+        where_clause = "WHERE 1=1"
         params = []
         if level:
-            where_clause += " AND log_level = %s"
+            where_clause += " AND level = %s"
             params.append(level)
         params.append(limit)
 
         c.execute(f"""
             SELECT
-                id, created_at, log_level, message, details
+                id, log_time, level, message, details
             FROM pegasus_logs
             {where_clause}
-            ORDER BY created_at DESC
+            ORDER BY log_time DESC
             LIMIT %s
         """, tuple(params))
 
@@ -1079,10 +1081,10 @@ async def get_pegasus_logs(
 
             c.execute(f"""
                 SELECT
-                    id, created_at, level, message, details
+                    id, log_time, level, message, details
                 FROM bot_logs
                 {where_clause}
-                ORDER BY created_at DESC
+                ORDER BY log_time DESC
                 LIMIT %s
             """, tuple(params))
 
