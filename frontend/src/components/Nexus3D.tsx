@@ -4383,6 +4383,8 @@ function SystemAmbientEffects({
   // Wrap all effects in AlwaysVisibleGroup so they render from ANY viewing angle
   const getEffects = () => {
     switch (systemId) {
+      case 'manna':
+        return <MannaEffects color={color} sunColor={sunColor} paused={paused} />
       case 'solomon':
         return <SolomonEffects color={color} sunColor={sunColor} paused={paused} />
       case 'argus':
@@ -4406,6 +4408,276 @@ function SystemAmbientEffects({
 
   const effects = getEffects()
   return effects ? <AlwaysVisibleGroup>{effects}</AlwaysVisibleGroup> : null
+}
+
+// =============================================================================
+// MANNA EFFECTS - The Most Divine, Extravagant System in the Nexus
+// Features: Bible verse rings, divine rays, falling manna, halos, cross core
+// =============================================================================
+
+// Bible verses for the rings
+const MANNA_VERSES = [
+  "I am the bread of life - John 6:35",
+  "Man shall not live by bread alone - Matthew 4:4",
+  "Give us this day our daily bread - Matthew 6:11",
+  "The Lord is my shepherd - Psalm 23:1",
+  "For God so loved the world - John 3:16",
+  "I can do all things through Christ - Philippians 4:13",
+  "The Lord will provide - Genesis 22:14",
+  "Taste and see that the Lord is good - Psalm 34:8",
+]
+
+function MannaEffects({ color, sunColor, paused }: { color: string, sunColor: string, paused: boolean }) {
+  const groupRef = useRef<THREE.Group>(null)
+  const verseRingsRef = useRef<THREE.Group>(null)
+  const haloRef = useRef<THREE.Group>(null)
+  const raysRef = useRef<THREE.Group>(null)
+  const particlesRef = useRef<THREE.Points>(null)
+  const crossRef = useRef<THREE.Group>(null)
+
+  // Falling manna particles
+  const mannaCount = 100
+  const mannaPositions = useMemo(() => {
+    const positions = new Float32Array(mannaCount * 3)
+    for (let i = 0; i < mannaCount; i++) {
+      const angle = Math.random() * Math.PI * 2
+      const radius = 3 + Math.random() * 12
+      positions[i * 3] = Math.cos(angle) * radius
+      positions[i * 3 + 1] = 15 + Math.random() * 20 // Start high
+      positions[i * 3 + 2] = Math.sin(angle) * radius
+    }
+    return positions
+  }, [])
+
+  // Divine light rays (12 rays like clock hours)
+  const rays = useMemo(() => {
+    return Array.from({ length: 12 }, (_, i) => ({
+      angle: (i / 12) * Math.PI * 2,
+      length: 8 + Math.random() * 4,
+      width: 0.3 + Math.random() * 0.2,
+      speed: 0.5 + Math.random() * 0.5,
+      phase: Math.random() * Math.PI * 2
+    }))
+  }, [])
+
+  // Multiple halo rings
+  const halos = useMemo(() => [
+    { radius: 3, opacity: 0.4, speed: 0.3 },
+    { radius: 5, opacity: 0.25, speed: -0.2 },
+    { radius: 7, opacity: 0.15, speed: 0.15 },
+  ], [])
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    // Rotate verse rings at different speeds
+    if (verseRingsRef.current) {
+      verseRingsRef.current.children.forEach((ring, i) => {
+        ring.rotation.y = t * (0.1 + i * 0.05) * (i % 2 === 0 ? 1 : -1)
+        ring.rotation.x = Math.sin(t * 0.2 + i) * 0.1
+      })
+    }
+
+    // Pulse halos
+    if (haloRef.current) {
+      haloRef.current.children.forEach((halo, i) => {
+        const scale = 1 + Math.sin(t * (1 + i * 0.3)) * 0.1
+        halo.scale.setScalar(scale)
+      })
+    }
+
+    // Animate divine rays
+    if (raysRef.current) {
+      raysRef.current.children.forEach((ray, i) => {
+        const pulse = 0.7 + Math.sin(t * rays[i].speed + rays[i].phase) * 0.3
+        ray.scale.y = pulse
+        const material = (ray as THREE.Mesh).material as THREE.MeshBasicMaterial
+        if (material.opacity !== undefined) {
+          material.opacity = 0.3 + Math.sin(t * rays[i].speed * 2 + rays[i].phase) * 0.2
+        }
+      })
+    }
+
+    // Falling manna particles
+    if (particlesRef.current) {
+      const positions = particlesRef.current.geometry.attributes.position.array as Float32Array
+      for (let i = 0; i < mannaCount; i++) {
+        positions[i * 3 + 1] -= 0.05 // Fall down
+        // Reset when too low
+        if (positions[i * 3 + 1] < -5) {
+          positions[i * 3 + 1] = 15 + Math.random() * 10
+          const angle = Math.random() * Math.PI * 2
+          const radius = 3 + Math.random() * 12
+          positions[i * 3] = Math.cos(angle) * radius
+          positions[i * 3 + 2] = Math.sin(angle) * radius
+        }
+      }
+      particlesRef.current.geometry.attributes.position.needsUpdate = true
+      particlesRef.current.rotation.y = t * 0.02
+    }
+
+    // Rotate cross subtly
+    if (crossRef.current) {
+      crossRef.current.rotation.y = t * 0.1
+      const pulse = 1 + Math.sin(t * 2) * 0.1
+      crossRef.current.scale.setScalar(pulse)
+    }
+
+    // Gentle rotation of entire effect group
+    if (groupRef.current) {
+      groupRef.current.rotation.y = t * 0.02
+    }
+  })
+
+  return (
+    <group ref={groupRef}>
+      {/* DIVINE CROSS CORE - Glowing cross at the center */}
+      <group ref={crossRef}>
+        {/* Vertical beam */}
+        <mesh position={[0, 0, 0]}>
+          <boxGeometry args={[0.3, 3, 0.3]} />
+          <meshBasicMaterial color="#fef3c7" transparent opacity={0.8} />
+        </mesh>
+        {/* Horizontal beam */}
+        <mesh position={[0, 0.5, 0]}>
+          <boxGeometry args={[2, 0.3, 0.3]} />
+          <meshBasicMaterial color="#fef3c7" transparent opacity={0.8} />
+        </mesh>
+        {/* Cross glow */}
+        <Sphere args={[1.5, 16, 16]}>
+          <meshBasicMaterial color="#fde68a" transparent opacity={0.2} side={THREE.DoubleSide} />
+        </Sphere>
+      </group>
+
+      {/* MULTIPLE HALOS - Pulsing golden rings */}
+      <group ref={haloRef}>
+        {halos.map((halo, i) => (
+          <mesh key={i} rotation={[Math.PI / 2, 0, 0]} position={[0, 0.5 + i * 0.3, 0]}>
+            <torusGeometry args={[halo.radius, 0.08, 8, 64]} />
+            <meshBasicMaterial color="#fcd34d" transparent opacity={halo.opacity} side={THREE.DoubleSide} />
+          </mesh>
+        ))}
+      </group>
+
+      {/* DIVINE LIGHT RAYS - Emanating outward like heavenly light */}
+      <group ref={raysRef}>
+        {rays.map((ray, i) => (
+          <mesh
+            key={i}
+            position={[
+              Math.cos(ray.angle) * 2,
+              0,
+              Math.sin(ray.angle) * 2
+            ]}
+            rotation={[0, -ray.angle, Math.PI / 2]}
+          >
+            <cylinderGeometry args={[0.02, ray.width, ray.length, 8]} />
+            <meshBasicMaterial color="#fef3c7" transparent opacity={0.4} side={THREE.DoubleSide} />
+          </mesh>
+        ))}
+      </group>
+
+      {/* FALLING MANNA PARTICLES - Heavenly bread from above */}
+      <points ref={particlesRef}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" count={mannaCount} array={mannaPositions} itemSize={3} />
+        </bufferGeometry>
+        <pointsMaterial color="#fef3c7" size={0.15} transparent opacity={0.8} sizeAttenuation />
+      </points>
+
+      {/* BIBLE VERSE RINGS - Saturn-like rings with scrolling scripture */}
+      <group ref={verseRingsRef}>
+        {/* Ring 1 - Inner ring */}
+        <group rotation={[Math.PI / 6, 0, 0]}>
+          <mesh rotation={[Math.PI / 2, 0, 0]}>
+            <torusGeometry args={[4, 0.02, 8, 64]} />
+            <meshBasicMaterial color="#fbbf24" transparent opacity={0.6} side={THREE.DoubleSide} />
+          </mesh>
+          {MANNA_VERSES.slice(0, 4).map((verse, i) => (
+            <Html
+              key={i}
+              position={[
+                Math.cos((i / 4) * Math.PI * 2) * 4,
+                0,
+                Math.sin((i / 4) * Math.PI * 2) * 4
+              ]}
+              center
+              style={{ pointerEvents: 'none' }}
+            >
+              <div className="text-[8px] text-amber-300/80 whitespace-nowrap font-serif italic backdrop-blur-sm px-1 rounded">
+                {verse}
+              </div>
+            </Html>
+          ))}
+        </group>
+
+        {/* Ring 2 - Middle ring */}
+        <group rotation={[-Math.PI / 8, 0, Math.PI / 6]}>
+          <mesh rotation={[Math.PI / 2, 0, 0]}>
+            <torusGeometry args={[6, 0.015, 8, 64]} />
+            <meshBasicMaterial color="#f59e0b" transparent opacity={0.4} side={THREE.DoubleSide} />
+          </mesh>
+          {MANNA_VERSES.slice(4, 8).map((verse, i) => (
+            <Html
+              key={i}
+              position={[
+                Math.cos((i / 4) * Math.PI * 2) * 6,
+                0,
+                Math.sin((i / 4) * Math.PI * 2) * 6
+              ]}
+              center
+              style={{ pointerEvents: 'none' }}
+            >
+              <div className="text-[7px] text-yellow-400/70 whitespace-nowrap font-serif italic backdrop-blur-sm px-1 rounded">
+                {verse}
+              </div>
+            </Html>
+          ))}
+        </group>
+
+        {/* Ring 3 - Outer ring */}
+        <group rotation={[Math.PI / 4, 0, -Math.PI / 8]}>
+          <mesh rotation={[Math.PI / 2, 0, 0]}>
+            <torusGeometry args={[8, 0.01, 8, 64]} />
+            <meshBasicMaterial color="#d97706" transparent opacity={0.3} side={THREE.DoubleSide} />
+          </mesh>
+        </group>
+      </group>
+
+      {/* OUTER GLORY - Large ethereal glow */}
+      <Sphere args={[12, 32, 32]}>
+        <meshBasicMaterial color="#fef3c7" transparent opacity={0.03} side={THREE.DoubleSide} />
+      </Sphere>
+
+      {/* CONNECTION BEAMS TO OTHER SYSTEMS - Energy threads showing MANNA as the source */}
+      <group>
+        {SOLAR_SYSTEMS.filter(s => s.id !== 'manna').map((system, i) => {
+          const dir = new THREE.Vector3(
+            system.position[0],
+            system.position[1],
+            system.position[2] + 60 // Offset because MANNA is at z=-60
+          ).normalize()
+          return (
+            <Line
+              key={system.id}
+              points={[
+                [0, 0, 0],
+                [dir.x * 15, dir.y * 15, dir.z * 15]
+              ]}
+              color="#fcd34d"
+              lineWidth={0.5}
+              transparent
+              opacity={0.15}
+              dashed
+              dashSize={0.5}
+              gapSize={0.5}
+            />
+          )
+        })}
+      </group>
+    </group>
+  )
 }
 
 // SOLOMON - Wisdom scrolls, knowledge particles, ancient symbols
@@ -6030,21 +6302,33 @@ function SolarSystem({
       )}
 
       {/* Secondary glow - only for high/medium LOD */}
+      {/* MANNA gets extra outer glow layers for divine presence */}
+      {system.id === 'manna' && showEffects && (
+        <>
+          <Sphere args={[8, lodPolygons.sphere, lodPolygons.sphere]}>
+            <meshBasicMaterial color="#fef3c7" transparent opacity={0.02} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+          </Sphere>
+          <Sphere args={[6, lodPolygons.sphere, lodPolygons.sphere]}>
+            <meshBasicMaterial color="#fde68a" transparent opacity={0.03} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+          </Sphere>
+        </>
+      )}
+
       {showEffects && (
-        <Sphere args={[3.5, lodPolygons.sphere, lodPolygons.sphere]}>
-          <meshBasicMaterial color={system.glowColor} transparent opacity={0.03} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+        <Sphere args={[system.id === 'manna' ? 7 : 3.5, lodPolygons.sphere, lodPolygons.sphere]}>
+          <meshBasicMaterial color={system.glowColor} transparent opacity={system.id === 'manna' ? 0.05 : 0.03} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
         </Sphere>
       )}
 
-      {/* Central sun with distortion - use basic material for low LOD */}
-      <Sphere ref={sunRef} args={[2, lodPolygons.sphere, lodPolygons.sphere]}>
+      {/* Central sun with distortion - MANNA is 3x larger */}
+      <Sphere ref={sunRef} args={[system.id === 'manna' ? 4 : 2, lodPolygons.sphere, lodPolygons.sphere]}>
         {showEffects ? (
           <MeshDistortMaterial
             color={system.sunColor}
             emissive={system.sunColor}
-            emissiveIntensity={isHovered ? 3 : 2}
-            distort={0.35}
-            speed={3}
+            emissiveIntensity={system.id === 'manna' ? (isHovered ? 4 : 3) : (isHovered ? 3 : 2)}
+            distort={system.id === 'manna' ? 0.5 : 0.35}
+            speed={system.id === 'manna' ? 4 : 3}
             side={THREE.DoubleSide}
           />
         ) : (
@@ -6052,9 +6336,9 @@ function SolarSystem({
         )}
       </Sphere>
 
-      {/* Sun core (bright center) - only for high/medium LOD */}
+      {/* Sun core (bright center) - MANNA gets larger, brighter core */}
       {showEffects && (
-        <Sphere args={[0.8, lodPolygons.sphere / 2, lodPolygons.sphere / 2]}>
+        <Sphere args={[system.id === 'manna' ? 1.6 : 0.8, lodPolygons.sphere / 2, lodPolygons.sphere / 2]}>
           <meshBasicMaterial color="#ffffff" side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
         </Sphere>
       )}
@@ -11054,11 +11338,13 @@ function ControlPanel({
 function NexusMinimap({
   currentSystem,
   cameraPosition,
-  onNavigate
+  onNavigate,
+  onOverview
 }: {
   currentSystem: string | null
   cameraPosition?: { x: number, y: number, z: number }
   onNavigate: (systemId: string, position: [number, number, number]) => void
+  onOverview?: () => void
 }) {
   const [expanded, setExpanded] = useState(true)
 
@@ -11069,15 +11355,30 @@ function NexusMinimap({
 
   return (
     <div className="absolute top-4 right-4 z-10">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-8 h-8 bg-black/70 border border-cyan-500/30 rounded-lg flex items-center justify-center text-cyan-400 hover:bg-cyan-500/20 transition-colors backdrop-blur mb-2 ml-auto"
-        title="Toggle Minimap"
-      >
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
-        </svg>
-      </button>
+      <div className="flex gap-2 mb-2 justify-end">
+        {/* Overview Button - See All Systems */}
+        <button
+          onClick={onOverview}
+          className="px-3 h-8 bg-gradient-to-r from-amber-500/20 to-yellow-500/20 border border-amber-500/50 rounded-lg flex items-center gap-2 text-amber-400 hover:from-amber-500/30 hover:to-yellow-500/30 transition-all backdrop-blur text-xs font-bold tracking-wider"
+          title="Galaxy Overview - See All Systems"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          OVERVIEW
+        </button>
+
+        {/* Toggle Minimap */}
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="w-8 h-8 bg-black/70 border border-cyan-500/30 rounded-lg flex items-center justify-center text-cyan-400 hover:bg-cyan-500/20 transition-colors backdrop-blur"
+          title="Toggle Minimap"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+          </svg>
+        </button>
+      </div>
 
       {expanded && (
         <div className="bg-black/80 border border-cyan-500/30 rounded-lg p-2 backdrop-blur">
@@ -11487,6 +11788,15 @@ export default function Nexus3D({
     }
   }, [])
 
+  // Handler for galaxy overview - zoom out to see all systems
+  const handleGalaxyOverview = useCallback(() => {
+    // Zoom to a position high above MANNA that can see all 13 systems
+    // Systems span roughly -80 to +80 in x/y, with z around -55 to -65
+    const overviewPosition = new THREE.Vector3(0, 120, 40) // High and back to see everything
+    setZoomTarget(overviewPosition)
+    setCurrentSystem(null) // Clear current system to show we're in overview
+  }, [])
+
   // Update global COLORS when theme changes
   useEffect(() => {
     COLORS = COLOR_THEMES[theme]
@@ -11625,6 +11935,7 @@ export default function Nexus3D({
           currentSystem={currentSystem}
           cameraPosition={cameraPosition}
           onNavigate={handleNavigateToSystem}
+          onOverview={handleGalaxyOverview}
         />
 
         {/* Solar System Navigator */}
