@@ -4465,17 +4465,22 @@ function MannaEffects({ color, sunColor, paused }: { color: string, sunColor: st
   const mannaRef = useRef<THREE.Points>(null)
 
   // ==================== GOLDEN LIGHTNING BOLTS ====================
-  // Thin electric bolts shooting from center - DBZ style
+  // Thin electric bolts shooting from center in ALL directions - DBZ style
+  // Full spherical distribution (up, down, horizontal, everywhere)
   const lightningBolts = useMemo(() =>
-    Array.from({ length: 48 }, (_, i) => ({
-      angle: (i / 48) * Math.PI * 2,
-      theta: (Math.random() - 0.5) * Math.PI * 0.6, // Vertical spread
-      length: 20 + Math.random() * 25,
-      segments: 6 + Math.floor(Math.random() * 4), // Jagged segments
-      width: 0.02 + Math.random() * 0.03, // Very thin
-      speed: 3 + Math.random() * 4,
-      phase: Math.random() * Math.PI * 2
-    }))
+    Array.from({ length: 72 }, (_, i) => {
+      // True spherical distribution - phi goes 0 to PI (pole to pole)
+      const phi = Math.acos(2 * Math.random() - 1) // Uniform sphere distribution
+      const theta = Math.random() * Math.PI * 2 // Full 360 horizontal
+      return {
+        phi,
+        theta,
+        length: 18 + Math.random() * 28,
+        width: 0.025 + Math.random() * 0.04,
+        speed: 8 + Math.random() * 12, // MUCH faster flashing than GEX Core
+        phase: Math.random() * Math.PI * 2
+      }
+    })
   , [])
 
   // ==================== STAR DUST PARTICLES ====================
@@ -4495,16 +4500,21 @@ function MannaEffects({ color, sunColor, paused }: { color: string, sunColor: st
   }, [])
 
   // ==================== DIVINE RAYS FROM CENTER ====================
-  // All rays originate from (0,0,0)
+  // All rays originate from (0,0,0) in FULL spherical distribution
   const divineRays = useMemo(() =>
-    Array.from({ length: 72 }, (_, i) => ({
-      angle: (i / 72) * Math.PI * 2,
-      theta: (Math.random() - 0.5) * Math.PI * 0.7,
-      length: 15 + Math.random() * 20,
-      width: 0.015 + Math.random() * 0.025, // Very thin lightning style
-      speed: 2 + Math.random() * 3,
-      phase: Math.random() * Math.PI * 2
-    }))
+    Array.from({ length: 96 }, (_, i) => {
+      // True spherical distribution - rays go everywhere
+      const phi = Math.acos(2 * Math.random() - 1) // Uniform sphere distribution
+      const theta = Math.random() * Math.PI * 2 // Full 360 horizontal
+      return {
+        phi,
+        theta,
+        length: 12 + Math.random() * 22,
+        width: 0.02 + Math.random() * 0.035,
+        speed: 3 + Math.random() * 5,
+        phase: Math.random() * Math.PI * 2
+      }
+    })
   , [])
 
   // ==================== HALOS ====================
@@ -4549,14 +4559,21 @@ function MannaEffects({ color, sunColor, paused }: { color: string, sunColor: st
       crossRef.current.scale.setScalar(pulse)
     }
 
-    // Lightning bolts pulsing from center
+    // Lightning bolts flashing rapidly from center - faster than GEX Core
     if (lightningRef.current) {
       lightningRef.current.children.forEach((bolt, i) => {
-        const pulse = 0.4 + Math.abs(Math.sin(t * lightningBolts[i].speed + lightningBolts[i].phase)) * 0.6
-        bolt.scale.y = pulse
-        bolt.scale.x = 0.6 + Math.sin(t * lightningBolts[i].speed * 2 + lightningBolts[i].phase) * 0.4
+        // Rapid flashing with sharp on/off effect
+        const flash = Math.sin(t * lightningBolts[i].speed + lightningBolts[i].phase)
+        const intensity = flash > 0.3 ? 1 : (flash > 0 ? 0.5 : 0.2) // Sharp flash effect
+        bolt.scale.y = intensity
+        bolt.scale.x = 0.5 + intensity * 0.5
+        // Also animate opacity through material
+        const mesh = bolt as THREE.Mesh
+        if (mesh.material && 'opacity' in mesh.material) {
+          (mesh.material as THREE.MeshBasicMaterial).opacity = 0.3 + intensity * 0.7
+        }
       })
-      lightningRef.current.rotation.y = t * 0.02
+      lightningRef.current.rotation.y = t * 0.03
     }
 
     // Star dust twinkling
@@ -4673,20 +4690,20 @@ function MannaEffects({ color, sunColor, paused }: { color: string, sunColor: st
         </Sphere>
       </group>
 
-      {/* ==================== GOLDEN LIGHTNING BOLTS - From center outward ==================== */}
+      {/* ==================== GOLDEN LIGHTNING BOLTS - From center outward in ALL directions ==================== */}
       <group ref={lightningRef}>
         {lightningBolts.map((bolt, i) => {
-          const x = Math.cos(bolt.angle) * Math.cos(bolt.theta)
-          const y = Math.sin(bolt.theta)
-          const z = Math.sin(bolt.angle) * Math.cos(bolt.theta)
+          // Spherical to Cartesian: x = sin(phi)cos(theta), y = cos(phi), z = sin(phi)sin(theta)
+          const rotationX = bolt.phi - Math.PI / 2 // Adjust so 0 phi points up
+          const rotationY = -bolt.theta
           return (
             <mesh
               key={i}
               position={[0, 0, 0]}
-              rotation={[bolt.theta, -bolt.angle, 0]}
+              rotation={[rotationX, rotationY, 0]}
             >
-              <cylinderGeometry args={[0.01, bolt.width, bolt.length, 6]} />
-              <meshBasicMaterial color="#fbbf24" transparent opacity={0.8} side={THREE.DoubleSide} />
+              <cylinderGeometry args={[0.015, bolt.width, bolt.length, 6]} />
+              <meshBasicMaterial color="#fbbf24" transparent opacity={0.9} side={THREE.DoubleSide} />
             </mesh>
           )
         })}
@@ -4700,19 +4717,19 @@ function MannaEffects({ color, sunColor, paused }: { color: string, sunColor: st
         <pointsMaterial color="#fef3c7" size={0.08} transparent opacity={0.9} sizeAttenuation />
       </points>
 
-      {/* ==================== DIVINE RAYS - From center outward ==================== */}
+      {/* ==================== DIVINE RAYS - From center outward in ALL directions ==================== */}
       <group ref={raysRef}>
         {divineRays.map((ray, i) => {
-          const x = Math.cos(ray.angle) * Math.cos(ray.theta)
-          const y = Math.sin(ray.theta)
-          const z = Math.sin(ray.angle) * Math.cos(ray.theta)
+          // Spherical to rotation - same as lightning
+          const rotationX = ray.phi - Math.PI / 2
+          const rotationY = -ray.theta
           return (
             <mesh
               key={i}
               position={[0, 0, 0]}
-              rotation={[ray.theta, -ray.angle, 0]}
+              rotation={[rotationX, rotationY, 0]}
             >
-              <cylinderGeometry args={[0.005, ray.width, ray.length, 6]} />
+              <cylinderGeometry args={[0.008, ray.width, ray.length, 6]} />
               <meshBasicMaterial color="#fcd34d" transparent opacity={0.6} side={THREE.DoubleSide} />
             </mesh>
           )
