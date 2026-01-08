@@ -78,6 +78,15 @@ except ImportError:
     SOLOMON_ENHANCED_AVAILABLE = False
     get_solomon_enhanced = None
 
+# Auto-Validation System for Thompson Sampling capital allocation
+try:
+    from quant.auto_validation_system import get_auto_validation_system, record_bot_outcome
+    AUTO_VALIDATION_AVAILABLE = True
+except ImportError:
+    AUTO_VALIDATION_AVAILABLE = False
+    get_auto_validation_system = None
+    record_bot_outcome = None
+
 # Market calendar for holiday checking
 try:
     from trading.market_calendar import MarketCalendar
@@ -365,6 +374,9 @@ class ATHENATrader(MathOptimizerMixin):
                     trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
                     self._record_solomon_outcome(pnl, trade_date)
 
+                    # Record outcome to Thompson Sampling for capital allocation
+                    self._record_thompson_outcome(pnl)
+
                     # Record outcome to Learning Memory for self-improvement
                     if pos.position_id in self._prediction_ids:
                         self._record_learning_memory_outcome(
@@ -455,6 +467,22 @@ class ATHENATrader(MathOptimizerMixin):
 
         except Exception as e:
             logger.warning(f"ATHENA: Solomon outcome recording failed: {e}")
+
+    def _record_thompson_outcome(self, pnl: float):
+        """
+        Record trade outcome to Thompson Sampling for capital allocation.
+
+        This updates the Beta distribution parameters for ATHENA,
+        which affects future capital allocation across bots.
+        """
+        if not AUTO_VALIDATION_AVAILABLE or not record_bot_outcome:
+            return
+
+        try:
+            record_bot_outcome('ATHENA', win=(pnl > 0), pnl=pnl)
+            logger.debug(f"ATHENA: Recorded outcome to Thompson Sampling - P&L=${pnl:.2f}")
+        except Exception as e:
+            logger.warning(f"ATHENA: Thompson outcome recording failed: {e}")
 
     def _record_learning_memory_prediction(self, pos: SpreadPosition, signal) -> Optional[str]:
         """
@@ -1028,6 +1056,8 @@ class ATHENATrader(MathOptimizerMixin):
                 # Record outcome to Solomon Enhanced for feedback loops
                 trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
                 self._record_solomon_outcome(pnl, trade_date)
+                # Record outcome to Thompson Sampling for capital allocation
+                self._record_thompson_outcome(pnl)
                 # Record outcome to Learning Memory for self-improvement
                 if pos.position_id in self._prediction_ids:
                     self._record_learning_memory_outcome(
@@ -1106,6 +1136,9 @@ class ATHENATrader(MathOptimizerMixin):
                     # Record outcome to Solomon Enhanced for feedback loops
                     trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
                     self._record_solomon_outcome(final_pnl, trade_date)
+
+                    # Record outcome to Thompson Sampling for capital allocation
+                    self._record_thompson_outcome(final_pnl)
 
                     # Record to Learning Memory
                     if pos.position_id in self._prediction_ids:
