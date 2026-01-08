@@ -428,7 +428,7 @@ async def get_athena_positions(
         # Check if new columns exist (migration 010)
         c.execute("""
             SELECT column_name FROM information_schema.columns
-            WHERE table_name = 'apache_positions' AND column_name = 'vix_at_entry'
+            WHERE table_name = 'athena_positions' AND column_name = 'vix_at_entry'
         """)
         has_new_columns = c.fetchone() is not None
 
@@ -447,7 +447,7 @@ async def get_athena_positions(
                     entry_delta, entry_gamma, entry_theta, entry_vega,
                     ml_direction, ml_confidence, ml_win_probability,
                     breakeven, rr_ratio
-                FROM apache_positions
+                FROM athena_positions
                 {where_clause}
                 ORDER BY created_at DESC
                 LIMIT %s
@@ -462,7 +462,7 @@ async def get_athena_positions(
                     spot_at_entry, gex_regime, oracle_confidence,
                     status, exit_price, exit_reason, realized_pnl,
                     created_at, exit_time, oracle_reasoning
-                FROM apache_positions
+                FROM athena_positions
                 {where_clause}
                 ORDER BY created_at DESC
                 LIMIT %s
@@ -1310,14 +1310,14 @@ async def get_athena_live_pnl():
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Get open positions with entry context from apache_positions
+            # Get open positions with entry context from athena_positions
             cursor.execute('''
                 SELECT
                     position_id, spread_type, created_at, expiration,
                     long_strike, short_strike, entry_price, contracts,
                     max_profit, max_loss, spot_at_entry, gex_regime,
                     oracle_confidence, oracle_reasoning, ticker
-                FROM apache_positions
+                FROM athena_positions
                 WHERE status = 'open' AND expiration >= %s
                 ORDER BY created_at ASC
             ''', (today,))
@@ -1326,7 +1326,7 @@ async def get_athena_live_pnl():
             # Get today's realized P&L from closed positions
             cursor.execute('''
                 SELECT COALESCE(SUM(realized_pnl), 0)
-                FROM apache_positions
+                FROM athena_positions
                 WHERE status IN ('closed', 'expired')
                 AND DATE(exit_time) = %s
             ''', (today,))
@@ -1423,7 +1423,7 @@ async def get_athena_live_pnl():
                     position_id, spread_type, created_at, expiration,
                     long_strike, short_strike, entry_price, contracts,
                     max_profit, max_loss, spot_at_entry, ticker
-                FROM apache_positions
+                FROM athena_positions
                 WHERE status = 'open' AND expiration >= %s
             ''', (today,))
             open_rows = cursor.fetchall()
@@ -1431,7 +1431,7 @@ async def get_athena_live_pnl():
             # Get today's realized P&L
             cursor.execute('''
                 SELECT COALESCE(SUM(realized_pnl), 0)
-                FROM apache_positions
+                FROM athena_positions
                 WHERE status IN ('closed', 'expired')
                 AND DATE(exit_time) = %s
             ''', (today,))

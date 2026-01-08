@@ -50,11 +50,11 @@ export default function GEXHistory() {
       ])
 
       if (historyRes.data.success) {
-        setHistory(historyRes.data.gex_history)
+        setHistory(historyRes.data.gex_history || [])
       }
 
       if (regimeRes.data.success) {
-        setRegimeChanges(regimeRes.data.regime_changes)
+        setRegimeChanges(regimeRes.data.regime_changes || [])
       }
     } catch (error) {
       logger.error('Error fetching GEX history:', error)
