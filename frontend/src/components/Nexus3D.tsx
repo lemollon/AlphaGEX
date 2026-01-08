@@ -2502,7 +2502,7 @@ const SOLAR_SYSTEMS = [
     name: 'GEX CORE',
     subtitle: 'Gamma Exposure Heart',
     route: '/gex',
-    position: [0, -80, -60] as [number, number, number],  // Bottom - 6 o'clock
+    position: [0, -130, -60] as [number, number, number],  // Bottom - 6 o'clock (spaced from MANNA)
     sunColor: '#22d3ee',  // Cyan - GEX signature color
     glowColor: '#06b6d4',
     flareType: 'pulse' as const,
@@ -12173,8 +12173,8 @@ export default function Nexus3D({
   // Handler for galaxy overview - zoom out to see all systems
   const handleGalaxyOverview = useCallback(() => {
     // Zoom to a position high above MANNA that can see all 13 systems
-    // Systems span roughly -80 to +80 in x/y, with z around -55 to -65
-    const overviewPosition = new THREE.Vector3(0, 120, 40) // High and back to see everything
+    // Systems span roughly -80 to +80 in x, -130 to +80 in y, with z around -55 to -65
+    const overviewPosition = new THREE.Vector3(0, 0, 120) // Far back to see everything including GEX Core at Y=-130
     setZoomTarget(overviewPosition)
     setCurrentSystem(null) // Clear current system to show we're in overview
   }, [])
