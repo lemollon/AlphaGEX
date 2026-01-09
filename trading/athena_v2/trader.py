@@ -38,11 +38,13 @@ except ImportError:
 try:
     from trading.scan_activity_logger import log_athena_scan, ScanOutcome, CheckResult
     SCAN_LOGGER_AVAILABLE = True
-except ImportError:
+    print("✅ ATHENA: Scan activity logger loaded")
+except ImportError as e:
     SCAN_LOGGER_AVAILABLE = False
     log_athena_scan = None
     ScanOutcome = None
     CheckResult = None
+    print(f"❌ ATHENA: Scan activity logger FAILED: {e}")
 
 # Oracle for outcome recording
 try:
