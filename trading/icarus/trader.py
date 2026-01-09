@@ -48,6 +48,16 @@ except ImportError as e:
     CheckResult = None
     print(f"❌ ICARUS: Scan activity logger FAILED: {e}")
 
+# ML Data Gatherer for comprehensive ML analysis logging
+try:
+    from trading.ml_data_gatherer import gather_ml_data
+    ML_GATHERER_AVAILABLE = True
+    print("✅ ICARUS: ML Data Gatherer loaded")
+except ImportError as e:
+    ML_GATHERER_AVAILABLE = False
+    gather_ml_data = None
+    print(f"⚠️ ICARUS: ML Data Gatherer not available: {e}")
+
 # Oracle for outcome recording
 try:
     from quant.oracle_advisor import OracleAdvisor, BotName as OracleBotName, TradeOutcome as OracleTradeOutcome
@@ -736,6 +746,26 @@ class ICARUSTrader(MathOptimizerMixin):
                 oracle_confidence = oracle_confidence or oracle_data.get('confidence', 0)
                 oracle_top_factors = oracle_data.get('top_factors', oracle_data.get('factors', []))
 
+            # Gather comprehensive ML data for logging
+            ml_kwargs = {}
+            if ML_GATHERER_AVAILABLE and gather_ml_data:
+                try:
+                    market_data = context.get('market_data', {})
+                    gex_data = context.get('gex_data', {})
+                    ml_kwargs = gather_ml_data(
+                        symbol=self.config.symbol,
+                        spot_price=market_data.get('spot_price', 0) if market_data else 0,
+                        vix=market_data.get('vix', 0) if market_data else 0,
+                        gex_data=gex_data,
+                        market_data=market_data,
+                        bot_name="ICARUS",
+                        win_rate=0.60,  # ICARUS historical win rate
+                        avg_win=180,
+                        avg_loss=280,
+                    )
+                except Exception as ml_err:
+                    logger.debug(f"ML data gathering failed (non-critical): {ml_err}")
+
             log_icarus_scan(
                 outcome=outcome,
                 decision_summary=decision,
@@ -753,6 +783,7 @@ class ICARUSTrader(MathOptimizerMixin):
                 min_win_probability_threshold=self.config.min_win_probability,
                 trade_executed=result.get('trades_opened', 0) > 0,
                 error_message=error_msg,
+                **ml_kwargs,  # Include all ML analysis data
             )
         except Exception as e:
             logger.warning(f"Failed to log scan activity: {e}")

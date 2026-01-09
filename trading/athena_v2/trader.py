@@ -46,6 +46,16 @@ except ImportError as e:
     CheckResult = None
     print(f"❌ ATHENA: Scan activity logger FAILED: {e}")
 
+# ML Data Gatherer for comprehensive ML analysis logging
+try:
+    from trading.ml_data_gatherer import gather_ml_data
+    ML_GATHERER_AVAILABLE = True
+    print("✅ ATHENA: ML Data Gatherer loaded")
+except ImportError as e:
+    ML_GATHERER_AVAILABLE = False
+    gather_ml_data = None
+    print(f"⚠️ ATHENA: ML Data Gatherer not available: {e}")
+
 # Oracle for outcome recording
 try:
     from quant.oracle_advisor import OracleAdvisor, BotName as OracleBotName, TradeOutcome as OracleTradeOutcome
@@ -917,6 +927,26 @@ class ATHENATrader(MathOptimizerMixin):
             # Build trade details if position opened
             position = context.get('position')
 
+            # Gather comprehensive ML data for logging
+            ml_kwargs = {}
+            if ML_GATHERER_AVAILABLE and gather_ml_data:
+                try:
+                    market_data = context.get('market_data', {})
+                    gex_data = context.get('gex_data', {})
+                    ml_kwargs = gather_ml_data(
+                        symbol=self.config.symbol,
+                        spot_price=market_data.get('spot_price', 0) if market_data else 0,
+                        vix=market_data.get('vix', 0) if market_data else 0,
+                        gex_data=gex_data,
+                        market_data=market_data,
+                        bot_name="ATHENA",
+                        win_rate=0.65,  # ATHENA historical win rate
+                        avg_win=200,
+                        avg_loss=300,
+                    )
+                except Exception as ml_err:
+                    logger.debug(f"ML data gathering failed (non-critical): {ml_err}")
+
             log_athena_scan(
                 outcome=outcome,
                 decision_summary=decision,
@@ -939,6 +969,7 @@ class ATHENATrader(MathOptimizerMixin):
                 trade_executed=result.get('trades_opened', 0) > 0,
                 error_message=error_msg,
                 generate_ai_explanation=False,  # Keep it simple
+                **ml_kwargs,  # Include all ML analysis data
             )
         except Exception as e:
             logger.warning(f"Failed to log scan activity: {e}")
