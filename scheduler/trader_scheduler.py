@@ -245,12 +245,19 @@ class AutonomousTraderScheduler:
 
         # PHOENIX - 0DTE SPY/SPX Options Trader
         # Capital: $400,000 (40% of total)
-        self.trader = AutonomousPaperTrader(
-            symbol='SPY',
-            capital=CAPITAL_ALLOCATION['PHOENIX']
-        )
-        self.api_client = TradingVolatilityAPI()
-        logger.info(f"✅ PHOENIX initialized with ${CAPITAL_ALLOCATION['PHOENIX']:,} capital")
+        # CRITICAL: Wrap in try-except to prevent scheduler crash if PHOENIX init fails
+        self.trader = None
+        self.api_client = None
+        try:
+            self.trader = AutonomousPaperTrader(
+                symbol='SPY',
+                capital=CAPITAL_ALLOCATION['PHOENIX']
+            )
+            self.api_client = TradingVolatilityAPI()
+            logger.info(f"✅ PHOENIX initialized with ${CAPITAL_ALLOCATION['PHOENIX']:,} capital")
+        except Exception as e:
+            logger.error(f"PHOENIX initialization failed: {e}")
+            logger.error("Scheduler will continue without PHOENIX - other bots will still run")
 
         # ATLAS - SPX Cash-Secured Put Wheel Trader
         # Capital: $400,000 (40% of total)
@@ -570,6 +577,12 @@ class AutonomousTraderScheduler:
 
         logger.info(f"=" * 80)
         logger.info(f"Scheduler triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        # Check if PHOENIX trader is available
+        if not self.trader:
+            logger.warning("PHOENIX trader not available - skipping")
+            self._save_heartbeat('PHOENIX', 'UNAVAILABLE')
+            return
 
         # Double-check market is open (belt and suspenders)
         if not self.is_market_open():
