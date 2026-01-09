@@ -1013,19 +1013,21 @@ def init_database():
         )
     ''')
 
-    # Autonomous Trade Activity (used by trader_routes.py)
+    # Autonomous Trade Activity (used by trader_routes.py and performance_tracker.py)
+    # Schema matches production database
     c.execute('''
         CREATE TABLE IF NOT EXISTS autonomous_trade_activity (
             id SERIAL PRIMARY KEY,
-            timestamp TIMESTAMPTZ DEFAULT NOW(),
-            action TEXT,
+            activity_date TEXT,
+            activity_time TEXT,
+            activity_timestamp TEXT,
+            action_type TEXT,
             symbol TEXT,
-            strike REAL,
-            option_type TEXT,
-            contracts INTEGER,
-            price REAL,
-            reason TEXT,
-            success BOOLEAN DEFAULT TRUE
+            details TEXT,
+            position_id INTEGER,
+            pnl_impact REAL,
+            success BOOLEAN DEFAULT TRUE,
+            error_message TEXT
         )
     ''')
 
@@ -1995,9 +1997,10 @@ def init_database():
     # Autonomous live status indexes
     safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_live_status_timestamp ON autonomous_live_status(timestamp)")
 
-    # Autonomous trade activity indexes
-    safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_activity_timestamp ON autonomous_trade_activity(timestamp)")
+    # Autonomous trade activity indexes (uses activity_timestamp, not timestamp)
+    safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_activity_timestamp ON autonomous_trade_activity(activity_timestamp)")
     safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_activity_symbol ON autonomous_trade_activity(symbol)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_activity_date ON autonomous_trade_activity(activity_date)")
 
     # Scanner history indexes
     safe_index("CREATE INDEX IF NOT EXISTS idx_scanner_history_timestamp ON scanner_history(timestamp)")
@@ -3834,11 +3837,13 @@ def backfill_ai_intelligence_tables():
             print("\n  9. autonomous_trade_activity FROM autonomous_trade_log...")
             try:
                 c.execute("""
-                    INSERT INTO autonomous_trade_activity (timestamp, action, reason, success)
+                    INSERT INTO autonomous_trade_activity (activity_date, activity_time, activity_timestamp, action_type, details, success)
                     SELECT
+                        date,
+                        COALESCE(time, '00:00:00'),
                         CASE
-                            WHEN date ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN (date || ' ' || COALESCE(time, '00:00:00'))::timestamp
-                            ELSE NOW()
+                            WHEN date ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN date || ' ' || COALESCE(time, '00:00:00')
+                            ELSE TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')
                         END,
                         action,
                         details,
@@ -3847,8 +3852,8 @@ def backfill_ai_intelligence_tables():
                     WHERE date IS NOT NULL
                     AND NOT EXISTS (
                         SELECT 1 FROM autonomous_trade_activity ata
-                        WHERE ata.action = autonomous_trade_log.action
-                        AND DATE(ata.timestamp)::text = autonomous_trade_log.date
+                        WHERE ata.action_type = autonomous_trade_log.action
+                        AND ata.activity_date = autonomous_trade_log.date
                     )
                     ORDER BY date DESC, time DESC
                     LIMIT 500
