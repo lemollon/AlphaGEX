@@ -16,15 +16,21 @@ import {
   Shield,
   Sword,
   Target,
-  Zap
+  Zap,
+  Flame,
+  Rocket
 } from 'lucide-react'
 import {
   useARESStatus,
   useATHENAStatus,
   usePEGASUSStatus,
+  useICARUSStatus,
+  useTITANStatus,
   useARESLivePnL,
   useATHENALivePnL,
-  usePEGASUSLivePnL
+  usePEGASUSLivePnL,
+  useICARUSLivePnL,
+  useTITANLivePnL
 } from '@/lib/hooks/useMarketData'
 
 // Helper to format timestamp in Central Time
@@ -66,6 +72,8 @@ function BotStatusCard({ name, icon, href, status, livePnL, color, isLoading }: 
     blue: { bg: 'bg-blue-500/10', border: 'border-blue-500/30', text: 'text-blue-500' },
     purple: { bg: 'bg-purple-500/10', border: 'border-purple-500/30', text: 'text-purple-500' },
     amber: { bg: 'bg-amber-500/10', border: 'border-amber-500/30', text: 'text-amber-500' },
+    cyan: { bg: 'bg-cyan-500/10', border: 'border-cyan-500/30', text: 'text-cyan-500' },
+    rose: { bg: 'bg-rose-500/10', border: 'border-rose-500/30', text: 'text-rose-500' },
   }
 
   const colors = colorClasses[color] || colorClasses.blue
@@ -137,21 +145,30 @@ function BotStatusCard({ name, icon, href, status, livePnL, color, isLoading }: 
 export default function BotStatusOverview() {
   const [expanded, setExpanded] = useState(true)
 
+  // Live trading bots
   const { data: aresStatus, isLoading: aresLoading, mutate: refreshAres } = useARESStatus()
   const { data: athenaStatus, isLoading: athenaLoading, mutate: refreshAthena } = useATHENAStatus()
   const { data: pegasusStatus, isLoading: pegasusLoading, mutate: refreshPegasus } = usePEGASUSStatus()
 
+  // Paper trading bots
+  const { data: icarusStatus, isLoading: icarusLoading, mutate: refreshIcarus } = useICARUSStatus()
+  const { data: titanStatus, isLoading: titanLoading, mutate: refreshTitan } = useTITANStatus()
+
   const { data: aresLivePnL } = useARESLivePnL()
   const { data: athenaLivePnL } = useATHENALivePnL()
   const { data: pegasusLivePnL } = usePEGASUSLivePnL()
+  const { data: icarusLivePnL } = useICARUSLivePnL()
+  const { data: titanLivePnL } = useTITANLivePnL()
 
   const refreshAll = () => {
     refreshAres()
     refreshAthena()
     refreshPegasus()
+    refreshIcarus()
+    refreshTitan()
   }
 
-  // Calculate total P&L across all bots
+  // Calculate total P&L across all bots (live bots only for main display)
   const totalTodayPnL = (aresLivePnL?.data?.today_pnl || 0) +
                         (athenaLivePnL?.data?.today_pnl || 0) +
                         (pegasusLivePnL?.data?.today_pnl || 0)
@@ -160,12 +177,23 @@ export default function BotStatusOverview() {
                              (athenaLivePnL?.data?.total_unrealized_pnl || 0) +
                              (pegasusLivePnL?.data?.total_unrealized_pnl || 0)
 
+  // Paper bot P&L (separate tracking)
+  const paperTodayPnL = (icarusLivePnL?.data?.today_pnl || 0) +
+                        (titanLivePnL?.data?.today_pnl || 0)
+
   // Count active bots
-  const activeBots = [
+  const activeLiveBots = [
     aresStatus?.data?.is_active || aresStatus?.data?.bot_status === 'ACTIVE',
     athenaStatus?.data?.is_active || athenaStatus?.data?.bot_status === 'ACTIVE',
     pegasusStatus?.data?.is_active || pegasusStatus?.data?.status === 'active'
   ].filter(Boolean).length
+
+  const activePaperBots = [
+    icarusStatus?.data?.is_active || icarusStatus?.data?.bot_status === 'ACTIVE',
+    titanStatus?.data?.is_active || titanStatus?.data?.bot_status === 'ACTIVE'
+  ].filter(Boolean).length
+
+  const totalActiveBots = activeLiveBots + activePaperBots
 
   return (
     <div className="card bg-gradient-to-r from-primary/5 to-transparent border border-primary/20">
@@ -182,11 +210,16 @@ export default function BotStatusOverview() {
             <div className="flex items-center gap-3 text-xs text-text-muted">
               <span className="flex items-center gap-1">
                 <span className="w-2 h-2 bg-success rounded-full animate-pulse" />
-                {activeBots}/3 active
+                {totalActiveBots}/5 active
               </span>
               <span className={totalTodayPnL >= 0 ? 'text-success' : 'text-danger'}>
-                Today: {totalTodayPnL >= 0 ? '+' : ''}${totalTodayPnL.toFixed(0)}
+                Live: {totalTodayPnL >= 0 ? '+' : ''}${totalTodayPnL.toFixed(0)}
               </span>
+              {paperTodayPnL !== 0 && (
+                <span className={`${paperTodayPnL >= 0 ? 'text-cyan-500' : 'text-danger'}`}>
+                  Paper: {paperTodayPnL >= 0 ? '+' : ''}${paperTodayPnL.toFixed(0)}
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -226,35 +259,63 @@ export default function BotStatusOverview() {
             </div>
           </div>
 
-          {/* Bot Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <BotStatusCard
-              name="ARES"
-              icon={<Sword className="w-5 h-5 text-blue-500" />}
-              href="/ares"
-              status={aresStatus?.data}
-              livePnL={aresLivePnL?.data}
-              color="blue"
-              isLoading={aresLoading}
-            />
-            <BotStatusCard
-              name="ATHENA"
-              icon={<Target className="w-5 h-5 text-purple-500" />}
-              href="/athena"
-              status={athenaStatus?.data}
-              livePnL={athenaLivePnL?.data}
-              color="purple"
-              isLoading={athenaLoading}
-            />
-            <BotStatusCard
-              name="PEGASUS"
-              icon={<Shield className="w-5 h-5 text-amber-500" />}
-              href="/pegasus"
-              status={pegasusStatus?.data}
-              livePnL={pegasusLivePnL?.data}
-              color="amber"
-              isLoading={pegasusLoading}
-            />
+          {/* Live Trading Bots */}
+          <div className="mb-3">
+            <div className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">Live Trading</div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <BotStatusCard
+                name="ARES"
+                icon={<Sword className="w-5 h-5 text-blue-500" />}
+                href="/ares"
+                status={aresStatus?.data}
+                livePnL={aresLivePnL?.data}
+                color="blue"
+                isLoading={aresLoading}
+              />
+              <BotStatusCard
+                name="ATHENA"
+                icon={<Target className="w-5 h-5 text-purple-500" />}
+                href="/athena"
+                status={athenaStatus?.data}
+                livePnL={athenaLivePnL?.data}
+                color="purple"
+                isLoading={athenaLoading}
+              />
+              <BotStatusCard
+                name="PEGASUS"
+                icon={<Shield className="w-5 h-5 text-amber-500" />}
+                href="/pegasus"
+                status={pegasusStatus?.data}
+                livePnL={pegasusLivePnL?.data}
+                color="amber"
+                isLoading={pegasusLoading}
+              />
+            </div>
+          </div>
+
+          {/* Paper Trading Bots */}
+          <div>
+            <div className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">Paper Trading</div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <BotStatusCard
+                name="ICARUS"
+                icon={<Flame className="w-5 h-5 text-cyan-500" />}
+                href="/icarus"
+                status={icarusStatus?.data}
+                livePnL={icarusLivePnL?.data}
+                color="cyan"
+                isLoading={icarusLoading}
+              />
+              <BotStatusCard
+                name="TITAN"
+                icon={<Rocket className="w-5 h-5 text-rose-500" />}
+                href="/titan"
+                status={titanStatus?.data}
+                livePnL={titanLivePnL?.data}
+                color="rose"
+                isLoading={titanLoading}
+              />
+            </div>
           </div>
 
           {/* Quick Links */}

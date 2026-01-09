@@ -31,27 +31,31 @@ export default function Dashboard() {
             <p className="text-text-secondary text-sm mt-1">Real-time GEX intelligence & trading signals</p>
           </div>
 
-          {/* Row 1: Bot Status & Oracle - Equal width */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+          {/* Row 1: Bot Status - Full width with all 5 bots */}
+          <div className="mb-4">
             <BotStatusOverview />
-            <OracleRecommendationWidget />
           </div>
 
-          {/* Row 2: AI/ML Systems - SAGE, QUANT, Math Optimizer */}
+          {/* Row 2: Oracle & Gamma Expiration */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+            <OracleRecommendationWidget />
+            <GammaExpirationWidget />
+          </div>
+
+          {/* Row 3: AI/ML Systems - SAGE, QUANT, Math Optimizer */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
             <SAGEStatusWidget />
             <QuantStatusWidget />
             <MathOptimizerWidget />
           </div>
 
-          {/* Row 3: ARGUS, Gamma Widget, Scan Feed - Equal thirds */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+          {/* Row 4: ARGUS Alerts & Scan Feed - Activity monitoring */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
             <ARGUSAlertsWidget />
-            <GammaExpirationWidget />
             <DashboardScanFeed />
           </div>
 
-          {/* Row 4: Intelligence Dashboard - Full width */}
+          {/* Row 5: Intelligence Dashboard - Full width */}
           <div>
             <IntelligenceDashboard />
           </div>
