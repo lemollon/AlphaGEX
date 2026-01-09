@@ -511,6 +511,31 @@ git push origin main
 
 ---
 
+## Development Standards
+
+### Production-Ready Implementation
+When implementing features, **always deliver production-ready, end-to-end implementations**:
+
+1. **Don't just write scaffolding** - Wire it up to actually run in production
+2. **Complete the full loop**: Database schema → Backend logic → API endpoint → Frontend display
+3. **If adding data fields**, integrate them into the code that populates them
+4. **If adding UI components**, ensure the backend sends the data they need
+5. **If adding new analysis systems**, integrate them into the bots that use them
+
+**Example**: If asked to "add ML analysis to scan activity":
+- BAD: Add database columns and UI components, but leave bots unchanged
+- GOOD: Add columns, update bots to call ML systems, pass data to logger, display in UI
+
+### Trigger Phrases
+When the user says any of these, ensure full end-to-end implementation:
+- "make it production-ready"
+- "implement end-to-end"
+- "wire it up"
+- "make it actually work"
+- "activate it"
+
+---
+
 ## Important Notes for AI Assistants
 
 ### When Modifying Code
