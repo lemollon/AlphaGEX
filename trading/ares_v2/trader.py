@@ -46,11 +46,14 @@ except ImportError:
 try:
     from trading.scan_activity_logger import log_ares_scan, ScanOutcome, CheckResult
     SCAN_LOGGER_AVAILABLE = True
-except ImportError:
+    print("✅ ARES: Scan activity logger loaded")
+except ImportError as e:
     SCAN_LOGGER_AVAILABLE = False
     log_ares_scan = None
     ScanOutcome = None
     CheckResult = None
+    print(f"❌ ARES: Scan activity logger FAILED to load: {e}")
+    print("   ARES scans will NOT be logged during market hours!")
 
 # Oracle for outcome recording and strategy recommendations
 try:

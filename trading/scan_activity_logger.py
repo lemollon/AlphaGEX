@@ -365,6 +365,7 @@ def log_scan_activity(
         """)
 
         # Add new columns if they don't exist (for existing tables)
+        # Note: These are safe migrations - ADD COLUMN IF NOT EXISTS won't error
         try:
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS risk_reward_ratio DECIMAL(10, 4)")
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS what_would_trigger TEXT")
@@ -377,8 +378,14 @@ def log_scan_activity(
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS oracle_suggested_strikes JSONB")
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS oracle_thresholds JSONB")
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS min_win_probability_threshold DECIMAL(5, 4)")
-        except Exception:
-            pass  # Columns may already exist
+            conn.commit()  # Commit schema changes before INSERT
+        except Exception as e:
+            # Log the error but continue - columns likely already exist
+            logger.debug(f"ALTER TABLE scan_activity (non-critical): {e}")
+            try:
+                conn.rollback()  # Rollback any failed transaction to clean state
+            except Exception:
+                pass
 
         # Generate Claude AI explanation if enabled and market data available
         ai_what_trigger = what_would_trigger
@@ -508,14 +515,22 @@ def log_scan_activity(
         ))
 
         conn.commit()
-        conn.close()
-
         logger.info(f"[{bot_name}] Scan #{scan_number} logged: {outcome.value} - {decision_summary}")
         return scan_id
 
     except Exception as e:
         logger.error(f"Failed to log scan activity: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return None
+
+    finally:
+        # Always close connection to prevent leaks
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
 
 
 def get_recent_scans(
