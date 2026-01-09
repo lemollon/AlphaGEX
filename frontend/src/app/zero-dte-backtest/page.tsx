@@ -626,6 +626,19 @@ export default function ZeroDTEBacktestPage() {
     }
   }
 
+  const resetBacktest = () => {
+    // Clear all job and results state to start fresh
+    setResults([])
+    setSelectedResult(null)
+    setLiveJobResult(null)
+    setCurrentJobId(null)
+    setCompletedJobId(null)
+    setJobStatus(null)
+    setRunning(false)
+    setError(null)
+    setSelectedPresetId('')
+  }
+
   const runBacktest = async () => {
     // Prevent double-clicks
     if (running) return
@@ -1571,6 +1584,17 @@ export default function ZeroDTEBacktestPage() {
                 <Download className="w-4 h-4" />
                 Save Strategy
               </button>
+
+              {(liveJobResult || results.length > 0 || completedJobId) && !running && (
+                <button
+                  onClick={resetBacktest}
+                  className="px-4 py-3 bg-orange-600 hover:bg-orange-700 rounded-lg font-medium flex items-center gap-2 text-sm"
+                  title="Clear results and start a new backtest"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  New Backtest
+                </button>
+              )}
 
               {error && !error.includes('Backend') && (
                 <div className="flex items-center gap-2 text-red-400">
