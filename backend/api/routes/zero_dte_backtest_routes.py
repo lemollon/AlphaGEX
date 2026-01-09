@@ -381,6 +381,23 @@ def _sanitize_numeric(value, default=0.0, max_value=999999999.99):
         return default
 
 
+def _format_strategy_name(strategy_type: str) -> str:
+    """Convert strategy_type to a human-readable display name"""
+    STRATEGY_NAMES = {
+        "iron_condor": "Iron Condor",
+        "bull_put": "Bull Put Spread",
+        "bear_call": "Bear Call Spread",
+        "iron_butterfly": "Iron Butterfly",
+        "diagonal_call": "Diagonal Call (PMCC)",
+        "diagonal_put": "Diagonal Put (PMCP)",
+        "gex_protected_iron_condor": "GEX-Protected IC",
+        "bull_call": "Bull Call Spread",
+        "bear_put": "Bear Put Spread",
+        "apache_directional": "Apache Directional",
+    }
+    return STRATEGY_NAMES.get(strategy_type, strategy_type.replace("_", " ").title())
+
+
 def save_backtest_results(results: Dict, config: ZeroDTEBacktestConfig, job_id: str):
     """Save backtest results to database"""
     try:
@@ -440,8 +457,11 @@ def save_backtest_results(results: Dict, config: ZeroDTEBacktestConfig, job_id: 
         tier_stats_json = json.dumps(results.get('tier_stats', {}), default=str)
         monthly_returns_json = json.dumps(results.get('monthly_returns', {}), default=str)
 
+        # Get formatted strategy name from strategy_type
+        strategy_display_name = _format_strategy_name(config.strategy_type)
+
         # Debug logging
-        print(f"📝 KRONOS: Saving backtest - job_id={job_id}, trades={total_trades}, return={total_return_pct:.2f}%", flush=True)
+        print(f"📝 KRONOS: Saving backtest - job_id={job_id}, strategy={strategy_display_name}, trades={total_trades}, return={total_return_pct:.2f}%", flush=True)
 
         cursor.execute("""
             INSERT INTO zero_dte_backtest_results (
@@ -460,7 +480,7 @@ def save_backtest_results(results: Dict, config: ZeroDTEBacktestConfig, job_id: 
                 total_return_pct = EXCLUDED.total_return_pct
         """, (
             job_id,
-            config.strategy,
+            strategy_display_name,
             config.ticker,
             config.start_date,
             config.end_date,
