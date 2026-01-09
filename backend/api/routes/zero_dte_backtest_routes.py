@@ -1902,6 +1902,62 @@ STRATEGY_PRESETS = [
             "strike_selection": "sd",
             "sd_multiplier": 1.0
         }
+    },
+    {
+        "id": "bull_call_debit",
+        "name": "Bull Call Spread",
+        "description": "Bullish debit spread - buy ATM call, sell higher OTM call. Profit if price rises above breakeven.",
+        "is_preset": True,
+        "tags": ["bullish", "debit", "call_spread"],
+        "config": {
+            "strategy_type": "bull_call",
+            "sd_multiplier": 1.0,
+            "risk_per_trade_pct": 5.0,
+            "spread_width": 10.0,
+            "strike_selection": "sd"
+        }
+    },
+    {
+        "id": "bear_put_debit",
+        "name": "Bear Put Spread",
+        "description": "Bearish debit spread - buy ATM put, sell lower OTM put. Profit if price falls below breakeven.",
+        "is_preset": True,
+        "tags": ["bearish", "debit", "put_spread"],
+        "config": {
+            "strategy_type": "bear_put",
+            "sd_multiplier": 1.0,
+            "risk_per_trade_pct": 5.0,
+            "spread_width": 10.0,
+            "strike_selection": "sd"
+        }
+    },
+    {
+        "id": "diagonal_call_pmcc",
+        "name": "Diagonal Call (PMCC)",
+        "description": "Poor Man's Covered Call - sell near-term OTM call, buy longer-term ITM/ATM call. Profit from premium and theta decay.",
+        "is_preset": True,
+        "tags": ["diagonal", "pmcc", "theta"],
+        "config": {
+            "strategy_type": "diagonal_call",
+            "sd_multiplier": 1.0,
+            "risk_per_trade_pct": 5.0,
+            "spread_width": 10.0,
+            "strike_selection": "sd"
+        }
+    },
+    {
+        "id": "diagonal_put_pmcp",
+        "name": "Diagonal Put (PMCP)",
+        "description": "Poor Man's Covered Put - sell near-term OTM put, buy longer-term ITM/ATM put. Profit from premium and theta decay.",
+        "is_preset": True,
+        "tags": ["diagonal", "pmcp", "theta"],
+        "config": {
+            "strategy_type": "diagonal_put",
+            "sd_multiplier": 1.0,
+            "risk_per_trade_pct": 5.0,
+            "spread_width": 10.0,
+            "strike_selection": "sd"
+        }
     }
 ]
 
