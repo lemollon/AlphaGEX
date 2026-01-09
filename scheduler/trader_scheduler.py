@@ -767,6 +767,10 @@ class AutonomousTraderScheduler:
         """
         now = datetime.now(CENTRAL_TZ)
 
+        # Update last check time IMMEDIATELY for health monitoring
+        # (even if we return early due to market closed, the job IS running)
+        self.last_ares_check = now
+
         logger.info(f"=" * 80)
         logger.info(f"ARES V2 (SPY IC) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
@@ -832,8 +836,6 @@ class AutonomousTraderScheduler:
                 logger.debug(f"ARES: Could not check Solomon: {e}")
 
         try:
-            self.last_ares_check = now
-
             # Run the V2 cycle
             result = self.ares_trader.run_cycle()
 
@@ -1078,6 +1080,10 @@ class AutonomousTraderScheduler:
         """
         now = datetime.now(CENTRAL_TZ)
 
+        # Update last check time IMMEDIATELY for health monitoring
+        # (even if we return early due to market closed, the job IS running)
+        self.last_athena_check = now
+
         logger.info(f"=" * 80)
         logger.info(f"ATHENA V2 (SPY Spreads) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
@@ -1143,8 +1149,6 @@ class AutonomousTraderScheduler:
                 logger.debug(f"ATHENA: Could not check Solomon: {e}")
 
         try:
-            self.last_athena_check = now
-
             # Run the V2 cycle
             result = self.athena_trader.run_cycle()
 
@@ -1187,6 +1191,9 @@ class AutonomousTraderScheduler:
         - Uses SPXW weekly options
         """
         now = datetime.now(CENTRAL_TZ)
+
+        # Update last check time IMMEDIATELY for health monitoring
+        self.last_pegasus_check = now
 
         logger.info(f"=" * 80)
         logger.info(f"PEGASUS (SPX IC) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
@@ -1253,8 +1260,6 @@ class AutonomousTraderScheduler:
                 logger.debug(f"PEGASUS: Could not check Solomon: {e}")
 
         try:
-            self.last_pegasus_check = now
-
             # Run the cycle
             result = self.pegasus_trader.run_cycle()
 
@@ -1337,6 +1342,9 @@ class AutonomousTraderScheduler:
         """
         now = datetime.now(CENTRAL_TZ)
 
+        # Update last check time IMMEDIATELY for health monitoring
+        self.last_icarus_check = now
+
         logger.info(f"=" * 80)
         logger.info(f"ICARUS (Aggressive Spreads) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
@@ -1401,8 +1409,6 @@ class AutonomousTraderScheduler:
                 logger.debug(f"ICARUS: Could not check Solomon: {e}")
 
         try:
-            self.last_icarus_check = now
-
             # Run the cycle
             result = self.icarus_trader.run_cycle()
 
@@ -1496,6 +1502,9 @@ class AutonomousTraderScheduler:
         """
         now = datetime.now(CENTRAL_TZ)
 
+        # Update last check time IMMEDIATELY for health monitoring
+        self.last_titan_check = now
+
         logger.info(f"=" * 80)
         logger.info(f"TITAN (Aggressive SPX IC) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
@@ -1560,8 +1569,6 @@ class AutonomousTraderScheduler:
                 logger.debug(f"TITAN: Could not check Solomon: {e}")
 
         try:
-            self.last_titan_check = now
-
             # Run the cycle
             result = self.titan_trader.run_cycle()
 
@@ -2587,17 +2594,72 @@ class AutonomousTraderScheduler:
         logger.info("✓ Auto-restart disabled - won't restart on app reload")
 
     def is_scheduler_healthy(self) -> bool:
-        """Check if the scheduler thread is alive and running"""
+        """
+        Check if the scheduler is healthy.
+
+        This performs TWO checks:
+        1. Thread liveness: Is the APScheduler thread alive?
+        2. Job execution: Are jobs actually running? (checks last_*_check timestamps)
+
+        The scheduler can be in a zombie state where the thread is alive but
+        jobs aren't executing. This method detects both conditions.
+        """
         if not self.is_running or not self.scheduler:
             return False
+
         try:
-            # Check if APScheduler's internal thread is alive
+            # Check 1: Is APScheduler's internal thread alive?
             if hasattr(self.scheduler, '_thread') and self.scheduler._thread:
-                return self.scheduler._thread.is_alive()
-            # Fallback: try to get jobs (will fail if scheduler is dead)
-            self.scheduler.get_jobs()
+                if not self.scheduler._thread.is_alive():
+                    logger.warning("Health check: APScheduler thread is DEAD")
+                    return False
+            else:
+                # Fallback: try to get jobs (will fail if scheduler is dead)
+                self.scheduler.get_jobs()
+
+            # Check 2: Are jobs actually executing?
+            # If ARES/ATHENA haven't run in 15+ minutes, something is wrong
+            # (they should run every 5 minutes)
+            now = datetime.now(CENTRAL_TZ)
+            max_stale_minutes = 15  # Jobs run every 5 min, allow 3x buffer
+
+            # Only check job staleness if we have traders initialized
+            # and have had at least one check
+            stale_jobs = []
+
+            if self.ares_trader and self.last_ares_check:
+                ares_age = (now - self.last_ares_check).total_seconds() / 60
+                if ares_age > max_stale_minutes:
+                    stale_jobs.append(f"ARES ({ares_age:.1f} min stale)")
+
+            if self.athena_trader and self.last_athena_check:
+                athena_age = (now - self.last_athena_check).total_seconds() / 60
+                if athena_age > max_stale_minutes:
+                    stale_jobs.append(f"ATHENA ({athena_age:.1f} min stale)")
+
+            if self.pegasus_trader and self.last_pegasus_check:
+                pegasus_age = (now - self.last_pegasus_check).total_seconds() / 60
+                if pegasus_age > max_stale_minutes:
+                    stale_jobs.append(f"PEGASUS ({pegasus_age:.1f} min stale)")
+
+            if self.icarus_trader and self.last_icarus_check:
+                icarus_age = (now - self.last_icarus_check).total_seconds() / 60
+                if icarus_age > max_stale_minutes:
+                    stale_jobs.append(f"ICARUS ({icarus_age:.1f} min stale)")
+
+            if self.titan_trader and self.last_titan_check:
+                titan_age = (now - self.last_titan_check).total_seconds() / 60
+                if titan_age > max_stale_minutes:
+                    stale_jobs.append(f"TITAN ({titan_age:.1f} min stale)")
+
+            if stale_jobs:
+                logger.warning(f"Health check: STALE JOBS detected - {', '.join(stale_jobs)}")
+                return False
+
             return True
-        except Exception:
+
+        except Exception as e:
+            logger.error(f"Health check exception: {e}")
             return False
 
     def get_status(self) -> dict:
@@ -2741,12 +2803,13 @@ def run_standalone():
     shutdown_requested = False
     scheduler = None
     restart_count = 0
-    max_restarts = 10  # Maximum restarts before giving up
+    max_restarts = 20  # Maximum restarts before giving up (higher for production resilience)
     health_check_failures = 0
-    max_health_failures = 3  # Restart after 3 consecutive health check failures
+    max_health_failures = 2  # Restart after 2 consecutive health check failures (more aggressive)
+    last_status_log = time.time()
 
     def signal_handler(signum, frame):
-        nonlocal shutdown_requested
+        nonlocal shutdown_requested, last_status_log
         logger.info(f"Received signal {signum}, requesting shutdown...")
         shutdown_requested = True
         try:
@@ -2788,22 +2851,33 @@ def run_standalone():
     # Keep the process alive with health monitoring and auto-restart
     try:
         while not shutdown_requested:
-            time.sleep(60)  # Check every minute
+            time.sleep(30)  # Check every 30 seconds (more aggressive monitoring)
 
-            # Health check - verify scheduler thread is alive
+            # Health check - verify scheduler thread is alive AND jobs are executing
             try:
                 if scheduler and scheduler.is_scheduler_healthy():
                     health_check_failures = 0  # Reset on success
 
-                    # Log status periodically
-                    status = scheduler.get_status()
-                    if status.get('market_open'):
-                        logger.info(f"Market OPEN - Executions: PHOENIX={scheduler.execution_count}, ATLAS={scheduler.atlas_execution_count}, ARES={scheduler.ares_execution_count}, PEGASUS={scheduler.pegasus_execution_count}, ATHENA={scheduler.athena_execution_count}, ICARUS={scheduler.icarus_execution_count}, TITAN={scheduler.titan_execution_count}, ARGUS={scheduler.argus_execution_count}")
-                    else:
-                        logger.debug(f"Market closed. Next run: {status.get('next_run', 'Unknown')}")
+                    # Log status every 5 minutes
+                    current_time = time.time()
+                    if current_time - last_status_log >= 300:  # 5 minutes
+                        status = scheduler.get_status()
+                        now_ct = datetime.now(CENTRAL_TZ)
+
+                        # Log scan counts and last check times for visibility
+                        logger.info(f"[HEALTH OK @ {now_ct.strftime('%H:%M:%S')}] "
+                                   f"ARES={scheduler.ares_execution_count} (last: {scheduler.last_ares_check.strftime('%H:%M:%S') if scheduler.last_ares_check else 'never'}), "
+                                   f"ATHENA={scheduler.athena_execution_count} (last: {scheduler.last_athena_check.strftime('%H:%M:%S') if scheduler.last_athena_check else 'never'}), "
+                                   f"restarts={restart_count}")
+
+                        last_status_log = current_time
                 else:
                     health_check_failures += 1
-                    logger.warning(f"Scheduler health check FAILED ({health_check_failures}/{max_health_failures})")
+                    now_ct = datetime.now(CENTRAL_TZ)
+                    logger.warning(f"[HEALTH FAIL @ {now_ct.strftime('%H:%M:%S')}] "
+                                  f"Health check FAILED ({health_check_failures}/{max_health_failures}) - "
+                                  f"ARES last: {scheduler.last_ares_check.strftime('%H:%M:%S') if scheduler and scheduler.last_ares_check else 'never'}, "
+                                  f"ATHENA last: {scheduler.last_athena_check.strftime('%H:%M:%S') if scheduler and scheduler.last_athena_check else 'never'}")
 
                     if health_check_failures >= max_health_failures:
                         logger.error("SCHEDULER DEAD - Attempting auto-restart...")
