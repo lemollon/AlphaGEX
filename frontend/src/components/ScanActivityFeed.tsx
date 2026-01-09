@@ -248,6 +248,52 @@ interface ScanActivity {
   argus_historical_outcome?: string
   argus_roc_value?: number
   argus_roc_signal?: string
+
+  // === NEW: IV Context ===
+  iv_rank?: number  // 0-100
+  iv_percentile?: number  // 0-100
+  iv_hv_ratio?: number  // IV / HV ratio
+  iv_30d?: number  // 30-day IV
+  hv_30d?: number  // 30-day HV
+
+  // === NEW: Time Context ===
+  day_of_week?: string  // Monday, Tuesday, etc.
+  day_of_week_num?: number  // 0=Monday, 4=Friday
+  time_of_day?: string  // morning, midday, afternoon
+  hour_ct?: number
+  minute_ct?: number
+  days_to_monthly_opex?: number
+  days_to_weekly_opex?: number
+  is_opex_week?: boolean
+  is_fomc_day?: boolean
+  is_cpi_day?: boolean
+
+  // === NEW: Recent Performance Context ===
+  similar_setup_win_rate?: number
+  similar_setup_count?: number
+  similar_setup_avg_pnl?: number
+  current_streak?: number  // Positive = win streak, Negative = loss streak
+  streak_type?: string  // "WIN" or "LOSS"
+  last_5_trades_win_rate?: number
+  last_10_trades_win_rate?: number
+  daily_pnl?: number
+  weekly_pnl?: number
+
+  // === NEW: ML Consensus & Conflict Detection ===
+  ml_consensus?: string  // STRONG_BULLISH, BULLISH, MIXED, BEARISH, STRONG_BEARISH
+  ml_consensus_score?: number  // -1 to +1
+  ml_systems_agree?: number
+  ml_systems_total?: number
+  ml_conflicts?: Array<{
+    system1: string
+    system1_signal: string
+    system2: string
+    system2_signal: string
+    severity: string
+  }>
+  ml_conflict_severity?: string  // none, low, medium, high
+  ml_highest_confidence_system?: string
+  ml_highest_confidence_value?: number
 }
 
 // Helper to derive skip reason from outcome and checks
@@ -343,7 +389,52 @@ function getDirectionIcon(direction: string) {
   return null
 }
 
+// Helper function to compute ML Consensus display
+function getMLConsensusDisplay(scan: ScanActivity): { label: string; color: string; score: number } | null {
+  // If we have explicit ml_consensus, use it
+  if (scan.ml_consensus) {
+    const consensusMap: Record<string, { label: string; color: string }> = {
+      'STRONG_BULLISH': { label: '🟢 STRONG BULLISH', color: 'text-green-400' },
+      'BULLISH': { label: '🟢 BULLISH', color: 'text-green-400' },
+      'MIXED': { label: '🟡 MIXED', color: 'text-yellow-400' },
+      'BEARISH': { label: '🔴 BEARISH', color: 'text-red-400' },
+      'STRONG_BEARISH': { label: '🔴 STRONG BEARISH', color: 'text-red-400' },
+      'NO_DATA': { label: '⚪ NO DATA', color: 'text-gray-400' }
+    }
+    return {
+      ...consensusMap[scan.ml_consensus] || { label: scan.ml_consensus, color: 'text-gray-400' },
+      score: scan.ml_consensus_score || 0
+    }
+  }
+
+  // Otherwise compute from available signals
+  const signals: Array<{ name: string; signal: string; confidence: number }> = []
+
+  if (scan.oracle_advice) signals.push({ name: 'Oracle', signal: scan.oracle_advice, confidence: scan.oracle_confidence || 0 })
+  if (scan.quant_ml_advice) signals.push({ name: 'QuantML', signal: scan.quant_ml_advice, confidence: scan.quant_ml_confidence || 0 })
+  if (scan.regime_predicted_action) signals.push({ name: 'Regime', signal: scan.regime_predicted_action, confidence: scan.regime_confidence || 0 })
+  if (scan.gex_ml_direction) signals.push({ name: 'GEX ML', signal: scan.gex_ml_direction, confidence: (scan.gex_ml_confidence || 0) * 100 })
+  if (scan.ensemble_signal) signals.push({ name: 'Ensemble', signal: scan.ensemble_signal, confidence: scan.ensemble_confidence || 0 })
+
+  if (signals.length === 0) return null
+
+  let bullish = 0, bearish = 0, neutral = 0
+  for (const s of signals) {
+    const sig = s.signal.toUpperCase()
+    if (sig.includes('BUY') || sig.includes('BULLISH') || sig.includes('TRADE')) bullish++
+    else if (sig.includes('SELL') || sig.includes('BEARISH') || sig.includes('PUT')) bearish++
+    else neutral++
+  }
+
+  const score = (bullish - bearish) / signals.length
+  if (score > 0.5) return { label: `🟢 BULLISH (${bullish}/${signals.length})`, color: 'text-green-400', score }
+  if (score < -0.5) return { label: `🔴 BEARISH (${bearish}/${signals.length})`, color: 'text-red-400', score }
+  return { label: `🟡 MIXED (${bullish}↑ ${bearish}↓ ${neutral}−)`, color: 'text-yellow-400', score }
+}
+
 export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActivityFeedProps) {
+  const [expandAll, setExpandAll] = useState(false)
+
   if (isLoading) {
     return (
       <div className="bg-gray-800/50 rounded-lg border border-gray-700 p-4">
@@ -405,6 +496,13 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
               <span className="text-red-400">{errors} errors</span>
             </div>
           )}
+          <button
+            onClick={() => setExpandAll(!expandAll)}
+            className="px-2 py-1 text-xs bg-gray-700 hover:bg-gray-600 rounded border border-gray-600 text-gray-300 flex items-center gap-1"
+          >
+            {expandAll ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+            {expandAll ? 'Collapse All' : 'Expand All'}
+          </button>
         </div>
       </div>
 
@@ -457,6 +555,82 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
                 {scan.outcome}
               </span>
             </div>
+
+            {/* === NEW: Quick ML Summary Bar === */}
+            {(() => {
+              const consensus = getMLConsensusDisplay(scan)
+              const hasAnyML = scan.oracle_advice || scan.quant_ml_advice || scan.regime_predicted_action ||
+                              scan.gex_ml_direction || scan.ensemble_signal
+              if (!hasAnyML) return null
+
+              return (
+                <div className="mt-2 p-2 bg-gray-900/50 rounded border border-gray-700 flex flex-wrap items-center gap-2 text-xs">
+                  {/* ML Consensus */}
+                  {consensus && (
+                    <div className={`font-medium ${consensus.color}`}>
+                      {consensus.label}
+                    </div>
+                  )}
+                  <div className="text-gray-600">|</div>
+                  {/* Individual Signals */}
+                  {scan.oracle_advice && (
+                    <span className={`px-1.5 py-0.5 rounded ${
+                      scan.oracle_advice === 'TRADE' ? 'bg-green-500/20 text-green-400' :
+                      scan.oracle_advice === 'SKIP' ? 'bg-red-500/20 text-red-400' : 'bg-gray-500/20 text-gray-400'
+                    }`}>
+                      Oracle: {scan.oracle_advice} {scan.oracle_win_probability ? `(${(scan.oracle_win_probability * 100).toFixed(0)}%)` : ''}
+                    </span>
+                  )}
+                  {scan.quant_ml_advice && (
+                    <span className={`px-1.5 py-0.5 rounded ${
+                      scan.quant_ml_advice === 'TRADE_FULL' ? 'bg-green-500/20 text-green-400' :
+                      scan.quant_ml_advice === 'TRADE_REDUCED' ? 'bg-yellow-500/20 text-yellow-400' :
+                      'bg-red-500/20 text-red-400'
+                    }`}>
+                      QuantML: {scan.quant_ml_advice.replace('TRADE_', '').replace('SKIP_', '')}
+                    </span>
+                  )}
+                  {scan.regime_predicted_action && (
+                    <span className={`px-1.5 py-0.5 rounded ${
+                      scan.regime_predicted_action === 'SELL_PREMIUM' ? 'bg-green-500/20 text-green-400' :
+                      scan.regime_predicted_action.includes('BUY') ? 'bg-blue-500/20 text-blue-400' :
+                      'bg-gray-500/20 text-gray-400'
+                    }`}>
+                      Regime: {scan.regime_predicted_action.replace('_', ' ')}
+                    </span>
+                  )}
+                  {scan.gex_ml_direction && (
+                    <span className={`px-1.5 py-0.5 rounded ${
+                      scan.gex_ml_direction === 'BULLISH' ? 'bg-green-500/20 text-green-400' :
+                      scan.gex_ml_direction === 'BEARISH' ? 'bg-red-500/20 text-red-400' :
+                      'bg-gray-500/20 text-gray-400'
+                    }`}>
+                      GEX ML: {scan.gex_ml_direction}
+                    </span>
+                  )}
+                  {scan.ensemble_signal && (
+                    <span className={`px-1.5 py-0.5 rounded ${
+                      scan.ensemble_signal.includes('BUY') ? 'bg-green-500/20 text-green-400' :
+                      scan.ensemble_signal.includes('SELL') ? 'bg-red-500/20 text-red-400' :
+                      'bg-gray-500/20 text-gray-400'
+                    }`}>
+                      Ensemble: {scan.ensemble_signal}
+                    </span>
+                  )}
+                  {/* Conflict Warning */}
+                  {scan.ml_conflict_severity && scan.ml_conflict_severity !== 'none' && (
+                    <span className={`px-1.5 py-0.5 rounded flex items-center gap-1 ${
+                      scan.ml_conflict_severity === 'high' ? 'bg-red-500/20 text-red-400' :
+                      scan.ml_conflict_severity === 'medium' ? 'bg-orange-500/20 text-orange-400' :
+                      'bg-yellow-500/20 text-yellow-400'
+                    }`}>
+                      <AlertTriangle className="w-3 h-3" />
+                      {scan.ml_conflict_severity.toUpperCase()} CONFLICT
+                    </span>
+                  )}
+                </div>
+              )
+            })()}
 
             {/* Market Data Row */}
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-400">
@@ -1099,9 +1273,224 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
               </details>
             )}
 
+            {/* === NEW: IV Context Section === */}
+            {(scan.iv_rank !== undefined || scan.iv_percentile !== undefined || scan.iv_hv_ratio !== undefined) && (
+              <details className="mt-2" open={expandAll}>
+                <summary className="text-xs text-violet-400 cursor-pointer hover:text-violet-300 flex items-center gap-1">
+                  <Percent className="w-3 h-3" />
+                  IV Context
+                  {scan.iv_rank !== undefined && (
+                    <span className={`ml-1 px-1.5 py-0.5 rounded ${
+                      scan.iv_rank > 70 ? 'bg-red-500/20 text-red-400' :
+                      scan.iv_rank > 30 ? 'bg-yellow-500/20 text-yellow-400' :
+                      'bg-green-500/20 text-green-400'
+                    }`}>
+                      Rank: {scan.iv_rank.toFixed(0)}%
+                    </span>
+                  )}
+                </summary>
+                <div className="mt-2 p-3 bg-violet-900/20 border border-violet-500/30 rounded text-xs space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    {scan.iv_rank !== undefined && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400">IV Rank:</span>
+                        <span className={scan.iv_rank > 50 ? 'text-red-400' : 'text-green-400'}>{scan.iv_rank.toFixed(1)}%</span>
+                      </div>
+                    )}
+                    {scan.iv_percentile !== undefined && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400">IV Percentile:</span>
+                        <span className="text-violet-400">{scan.iv_percentile.toFixed(1)}%</span>
+                      </div>
+                    )}
+                    {scan.iv_hv_ratio !== undefined && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400">IV/HV Ratio:</span>
+                        <span className={scan.iv_hv_ratio > 1.2 ? 'text-green-400' : scan.iv_hv_ratio < 0.8 ? 'text-red-400' : 'text-gray-400'}>
+                          {scan.iv_hv_ratio.toFixed(2)}x
+                        </span>
+                      </div>
+                    )}
+                    {scan.iv_30d !== undefined && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400">30d IV:</span>
+                        <span className="text-violet-400">{scan.iv_30d.toFixed(1)}%</span>
+                      </div>
+                    )}
+                    {scan.hv_30d !== undefined && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400">30d HV:</span>
+                        <span className="text-violet-400">{scan.hv_30d.toFixed(1)}%</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </details>
+            )}
+
+            {/* === NEW: Time Context Section === */}
+            {(scan.day_of_week || scan.time_of_day || scan.days_to_monthly_opex !== undefined) && (
+              <details className="mt-2" open={expandAll}>
+                <summary className="text-xs text-indigo-400 cursor-pointer hover:text-indigo-300 flex items-center gap-1">
+                  <Clock className="w-3 h-3" />
+                  Time Context
+                  {scan.day_of_week && (
+                    <span className={`ml-1 px-1.5 py-0.5 rounded ${
+                      ['Monday', 'Tuesday'].includes(scan.day_of_week) ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'
+                    }`}>
+                      {scan.day_of_week}
+                    </span>
+                  )}
+                  {scan.is_opex_week && (
+                    <span className="ml-1 px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-400">OPEX WEEK</span>
+                  )}
+                </summary>
+                <div className="mt-2 p-3 bg-indigo-900/20 border border-indigo-500/30 rounded text-xs space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    {scan.day_of_week && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400">Day:</span>
+                        <span className={['Monday', 'Tuesday'].includes(scan.day_of_week) ? 'text-green-400 font-medium' : 'text-gray-300'}>
+                          {scan.day_of_week} {['Monday', 'Tuesday'].includes(scan.day_of_week) && '⭐'}
+                        </span>
+                      </div>
+                    )}
+                    {scan.time_of_day && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400">Time of Day:</span>
+                        <span className="text-indigo-400">{scan.time_of_day}</span>
+                      </div>
+                    )}
+                    {scan.days_to_monthly_opex !== undefined && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400">Days to Monthly OPEX:</span>
+                        <span className={scan.days_to_monthly_opex <= 3 ? 'text-orange-400 font-medium' : 'text-gray-300'}>
+                          {scan.days_to_monthly_opex} days
+                        </span>
+                      </div>
+                    )}
+                    {scan.days_to_weekly_opex !== undefined && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400">Days to Weekly OPEX:</span>
+                        <span className="text-gray-300">{scan.days_to_weekly_opex} days</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex gap-2 pt-1 border-t border-indigo-500/20">
+                    {scan.is_fomc_day && (
+                      <span className="px-2 py-0.5 rounded bg-red-500/20 text-red-400 font-medium">🏛️ FOMC DAY</span>
+                    )}
+                    {scan.is_cpi_day && (
+                      <span className="px-2 py-0.5 rounded bg-orange-500/20 text-orange-400 font-medium">📊 CPI DAY</span>
+                    )}
+                    {scan.is_opex_week && (
+                      <span className="px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-400">📅 OPEX Week</span>
+                    )}
+                  </div>
+                </div>
+              </details>
+            )}
+
+            {/* === NEW: Recent Performance Context Section === */}
+            {(scan.current_streak !== undefined || scan.last_5_trades_win_rate !== undefined || scan.similar_setup_win_rate !== undefined) && (
+              <details className="mt-2" open={expandAll}>
+                <summary className="text-xs text-teal-400 cursor-pointer hover:text-teal-300 flex items-center gap-1">
+                  <Database className="w-3 h-3" />
+                  Recent Performance
+                  {scan.streak_type && scan.current_streak !== undefined && (
+                    <span className={`ml-1 px-1.5 py-0.5 rounded ${
+                      scan.streak_type === 'WIN' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                    }`}>
+                      {Math.abs(scan.current_streak)} {scan.streak_type} streak
+                    </span>
+                  )}
+                </summary>
+                <div className="mt-2 p-3 bg-teal-900/20 border border-teal-500/30 rounded text-xs space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    {scan.last_5_trades_win_rate !== undefined && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400">Last 5 Trades:</span>
+                        <span className={scan.last_5_trades_win_rate >= 0.6 ? 'text-green-400' : scan.last_5_trades_win_rate >= 0.4 ? 'text-yellow-400' : 'text-red-400'}>
+                          {(scan.last_5_trades_win_rate * 100).toFixed(0)}% win
+                        </span>
+                      </div>
+                    )}
+                    {scan.last_10_trades_win_rate !== undefined && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400">Last 10 Trades:</span>
+                        <span className={scan.last_10_trades_win_rate >= 0.6 ? 'text-green-400' : scan.last_10_trades_win_rate >= 0.4 ? 'text-yellow-400' : 'text-red-400'}>
+                          {(scan.last_10_trades_win_rate * 100).toFixed(0)}% win
+                        </span>
+                      </div>
+                    )}
+                    {scan.similar_setup_win_rate !== undefined && scan.similar_setup_count !== undefined && scan.similar_setup_count > 0 && (
+                      <div className="flex items-center justify-between col-span-2">
+                        <span className="text-gray-400">Similar Setups ({scan.similar_setup_count}):</span>
+                        <span className={scan.similar_setup_win_rate >= 0.55 ? 'text-green-400' : 'text-yellow-400'}>
+                          {(scan.similar_setup_win_rate * 100).toFixed(0)}% win, avg ${scan.similar_setup_avg_pnl?.toFixed(0) || 0}
+                        </span>
+                      </div>
+                    )}
+                    {scan.daily_pnl !== undefined && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400">Today&apos;s P&L:</span>
+                        <span className={scan.daily_pnl >= 0 ? 'text-green-400' : 'text-red-400'}>
+                          {scan.daily_pnl >= 0 ? '+' : ''}${scan.daily_pnl.toFixed(0)}
+                        </span>
+                      </div>
+                    )}
+                    {scan.weekly_pnl !== undefined && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-400">Week&apos;s P&L:</span>
+                        <span className={scan.weekly_pnl >= 0 ? 'text-green-400' : 'text-red-400'}>
+                          {scan.weekly_pnl >= 0 ? '+' : ''}${scan.weekly_pnl.toFixed(0)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </details>
+            )}
+
+            {/* === NEW: ML Conflicts Section === */}
+            {scan.ml_conflicts && scan.ml_conflicts.length > 0 && (
+              <details className="mt-2" open={expandAll || scan.ml_conflict_severity === 'high'}>
+                <summary className="text-xs text-red-400 cursor-pointer hover:text-red-300 flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3" />
+                  ML Conflicts ({scan.ml_conflicts.length})
+                  <span className={`ml-1 px-1.5 py-0.5 rounded ${
+                    scan.ml_conflict_severity === 'high' ? 'bg-red-500/20 text-red-400' :
+                    scan.ml_conflict_severity === 'medium' ? 'bg-orange-500/20 text-orange-400' :
+                    'bg-yellow-500/20 text-yellow-400'
+                  }`}>
+                    {scan.ml_conflict_severity?.toUpperCase()} SEVERITY
+                  </span>
+                </summary>
+                <div className="mt-2 p-3 bg-red-900/20 border border-red-500/30 rounded text-xs space-y-2">
+                  {scan.ml_conflicts.map((conflict, i) => (
+                    <div key={i} className="flex items-center justify-between p-2 bg-gray-800 rounded">
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-300">{conflict.system1}</span>
+                        <span className={conflict.system1_signal.includes('BUY') || conflict.system1_signal.includes('BULL') ? 'text-green-400' : 'text-red-400'}>
+                          {conflict.system1_signal}
+                        </span>
+                      </div>
+                      <span className="text-gray-500">vs</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-gray-300">{conflict.system2}</span>
+                        <span className={conflict.system2_signal.includes('BUY') || conflict.system2_signal.includes('BULL') ? 'text-green-400' : 'text-red-400'}>
+                          {conflict.system2_signal}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+
             {/* Checks Summary (if available) */}
             {scan.checks_performed && scan.checks_performed.length > 0 && (
-              <details className="mt-2">
+              <details className="mt-2" open={expandAll}>
                 <summary className="text-xs text-orange-400 cursor-pointer hover:text-orange-300 flex items-center gap-1">
                   <Shield className="w-3 h-3" />
                   Risk Checks ({scan.checks_performed.filter(c => c.passed).length}/{scan.checks_performed.length} passed)

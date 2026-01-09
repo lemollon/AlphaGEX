@@ -171,6 +171,46 @@ class ScanActivity:
     argus_roc_value: float = 0
     argus_roc_signal: str = ""
 
+    # === NEW: IV Context ===
+    iv_rank: float = 0  # 0-100 percentile
+    iv_percentile: float = 0  # IV percentile vs 52-week range
+    iv_hv_ratio: float = 0  # Implied vol / Historical vol ratio
+    iv_30d: float = 0  # 30-day implied volatility
+    hv_30d: float = 0  # 30-day historical volatility
+
+    # === NEW: Time Context ===
+    day_of_week: str = ""  # Monday, Tuesday, etc.
+    day_of_week_num: int = 0  # 0=Monday, 4=Friday
+    time_of_day: str = ""  # morning, midday, afternoon
+    hour_ct: int = 0  # Hour in Central Time
+    minute_ct: int = 0  # Minute in Central Time
+    days_to_monthly_opex: int = 0  # Days until monthly options expiration
+    days_to_weekly_opex: int = 0  # Days until weekly expiration
+    is_opex_week: bool = False  # True if within OPEX week
+    is_fomc_day: bool = False  # True if FOMC announcement day
+    is_cpi_day: bool = False  # True if CPI release day
+
+    # === NEW: Recent Performance Context ===
+    similar_setup_win_rate: float = 0  # Win rate in similar conditions (last 30 days)
+    similar_setup_count: int = 0  # Number of similar setups found
+    similar_setup_avg_pnl: float = 0  # Average P&L in similar conditions
+    current_streak: int = 0  # Positive = win streak, Negative = loss streak
+    streak_type: str = ""  # "WIN" or "LOSS"
+    last_5_trades_win_rate: float = 0  # Win rate of last 5 trades
+    last_10_trades_win_rate: float = 0  # Win rate of last 10 trades
+    daily_pnl: float = 0  # Today's P&L so far
+    weekly_pnl: float = 0  # This week's P&L
+
+    # === NEW: ML Consensus & Conflict Detection ===
+    ml_consensus: str = ""  # STRONG_BULLISH, BULLISH, MIXED, BEARISH, STRONG_BEARISH, NO_DATA
+    ml_consensus_score: float = 0  # -1 (all bearish) to +1 (all bullish)
+    ml_systems_agree: int = 0  # Number of systems that agree with consensus
+    ml_systems_total: int = 0  # Total number of active ML systems
+    ml_conflicts: List[Dict] = field(default_factory=list)  # List of conflicting signals
+    ml_conflict_severity: str = ""  # none, low, medium, high
+    ml_highest_confidence_system: str = ""  # Which ML system has highest confidence
+    ml_highest_confidence_value: float = 0  # The confidence value
+
     # Checks
     checks_performed: List[CheckResult] = field(default_factory=list)
     all_checks_passed: bool = True
@@ -338,7 +378,43 @@ def log_scan_activity(
     argus_similarity_score: float = 0,
     argus_historical_outcome: str = "",
     argus_roc_value: float = 0,
-    argus_roc_signal: str = ""
+    argus_roc_signal: str = "",
+    # === NEW: IV Context ===
+    iv_rank: float = 0,
+    iv_percentile: float = 0,
+    iv_hv_ratio: float = 0,
+    iv_30d: float = 0,
+    hv_30d: float = 0,
+    # === NEW: Time Context ===
+    day_of_week: str = "",
+    day_of_week_num: int = 0,
+    time_of_day: str = "",
+    hour_ct: int = 0,
+    minute_ct: int = 0,
+    days_to_monthly_opex: int = 0,
+    days_to_weekly_opex: int = 0,
+    is_opex_week: bool = False,
+    is_fomc_day: bool = False,
+    is_cpi_day: bool = False,
+    # === NEW: Recent Performance Context ===
+    similar_setup_win_rate: float = 0,
+    similar_setup_count: int = 0,
+    similar_setup_avg_pnl: float = 0,
+    current_streak: int = 0,
+    streak_type: str = "",
+    last_5_trades_win_rate: float = 0,
+    last_10_trades_win_rate: float = 0,
+    daily_pnl: float = 0,
+    weekly_pnl: float = 0,
+    # === NEW: ML Consensus & Conflict Detection ===
+    ml_consensus: str = "",
+    ml_consensus_score: float = 0,
+    ml_systems_agree: int = 0,
+    ml_systems_total: int = 0,
+    ml_conflicts: Optional[List[Dict]] = None,
+    ml_conflict_severity: str = "",
+    ml_highest_confidence_system: str = "",
+    ml_highest_confidence_value: float = 0
 ) -> Optional[str]:
     """
     Log a scan activity to the database.
@@ -557,6 +633,42 @@ def log_scan_activity(
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS argus_historical_outcome VARCHAR(50)")
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS argus_roc_value DECIMAL(10, 4)")
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS argus_roc_signal VARCHAR(50)")
+            # === NEW: IV Context columns ===
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS iv_rank DECIMAL(5, 2)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS iv_percentile DECIMAL(5, 2)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS iv_hv_ratio DECIMAL(5, 2)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS iv_30d DECIMAL(5, 2)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS hv_30d DECIMAL(5, 2)")
+            # === NEW: Time Context columns ===
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS day_of_week VARCHAR(20)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS day_of_week_num INTEGER")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS time_of_day VARCHAR(20)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS hour_ct INTEGER")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS minute_ct INTEGER")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS days_to_monthly_opex INTEGER")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS days_to_weekly_opex INTEGER")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS is_opex_week BOOLEAN")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS is_fomc_day BOOLEAN")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS is_cpi_day BOOLEAN")
+            # === NEW: Recent Performance Context columns ===
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS similar_setup_win_rate DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS similar_setup_count INTEGER")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS similar_setup_avg_pnl DECIMAL(15, 2)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS current_streak INTEGER")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS streak_type VARCHAR(10)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS last_5_trades_win_rate DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS last_10_trades_win_rate DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS daily_pnl DECIMAL(15, 2)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS weekly_pnl DECIMAL(15, 2)")
+            # === NEW: ML Consensus & Conflict Detection columns ===
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ml_consensus VARCHAR(50)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ml_consensus_score DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ml_systems_agree INTEGER")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ml_systems_total INTEGER")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ml_conflicts JSONB")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ml_conflict_severity VARCHAR(20)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ml_highest_confidence_system VARCHAR(50)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ml_highest_confidence_value DECIMAL(5, 4)")
             conn.commit()  # Commit schema changes before INSERT
         except Exception as e:
             # Log the error but continue - columns likely already exist
@@ -670,7 +782,19 @@ def log_scan_activity(
                 kelly_optimal, kelly_safe, kelly_conservative, kelly_prob_ruin, kelly_recommendation,
                 -- NEW: ARGUS Pattern Analysis
                 argus_pattern_match, argus_similarity_score, argus_historical_outcome,
-                argus_roc_value, argus_roc_signal
+                argus_roc_value, argus_roc_signal,
+                -- NEW: IV Context
+                iv_rank, iv_percentile, iv_hv_ratio, iv_30d, hv_30d,
+                -- NEW: Time Context
+                day_of_week, day_of_week_num, time_of_day, hour_ct, minute_ct,
+                days_to_monthly_opex, days_to_weekly_opex, is_opex_week, is_fomc_day, is_cpi_day,
+                -- NEW: Recent Performance Context
+                similar_setup_win_rate, similar_setup_count, similar_setup_avg_pnl,
+                current_streak, streak_type, last_5_trades_win_rate, last_10_trades_win_rate,
+                daily_pnl, weekly_pnl,
+                -- NEW: ML Consensus & Conflict Detection
+                ml_consensus, ml_consensus_score, ml_systems_agree, ml_systems_total,
+                ml_conflicts, ml_conflict_severity, ml_highest_confidence_system, ml_highest_confidence_value
             ) VALUES (
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
@@ -684,7 +808,11 @@ def log_scan_activity(
                 %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s,
                 %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s
             )
         """, (
             bot_name, scan_id, scan_number,
@@ -735,7 +863,20 @@ def log_scan_activity(
             kelly_optimal, kelly_safe, kelly_conservative, kelly_prob_ruin, kelly_recommendation,
             # NEW: ARGUS Pattern Analysis
             argus_pattern_match, argus_similarity_score, argus_historical_outcome,
-            argus_roc_value, argus_roc_signal
+            argus_roc_value, argus_roc_signal,
+            # NEW: IV Context
+            iv_rank, iv_percentile, iv_hv_ratio, iv_30d, hv_30d,
+            # NEW: Time Context
+            day_of_week, day_of_week_num, time_of_day, hour_ct, minute_ct,
+            days_to_monthly_opex, days_to_weekly_opex, is_opex_week, is_fomc_day, is_cpi_day,
+            # NEW: Recent Performance Context
+            similar_setup_win_rate, similar_setup_count, similar_setup_avg_pnl,
+            current_streak, streak_type, last_5_trades_win_rate, last_10_trades_win_rate,
+            daily_pnl, weekly_pnl,
+            # NEW: ML Consensus & Conflict Detection
+            ml_consensus, ml_consensus_score, ml_systems_agree, ml_systems_total,
+            json.dumps(ml_conflicts) if ml_conflicts else None, ml_conflict_severity,
+            ml_highest_confidence_system, ml_highest_confidence_value
         ))
 
         conn.commit()
@@ -823,7 +964,19 @@ def get_recent_scans(
                 kelly_optimal, kelly_safe, kelly_conservative, kelly_prob_ruin, kelly_recommendation,
                 -- NEW: ARGUS Pattern Analysis
                 argus_pattern_match, argus_similarity_score, argus_historical_outcome,
-                argus_roc_value, argus_roc_signal
+                argus_roc_value, argus_roc_signal,
+                -- NEW: IV Context
+                iv_rank, iv_percentile, iv_hv_ratio, iv_30d, hv_30d,
+                -- NEW: Time Context
+                day_of_week, day_of_week_num, time_of_day, hour_ct, minute_ct,
+                days_to_monthly_opex, days_to_weekly_opex, is_opex_week, is_fomc_day, is_cpi_day,
+                -- NEW: Recent Performance Context
+                similar_setup_win_rate, similar_setup_count, similar_setup_avg_pnl,
+                current_streak, streak_type, last_5_trades_win_rate, last_10_trades_win_rate,
+                daily_pnl, weekly_pnl,
+                -- NEW: ML Consensus & Conflict Detection
+                ml_consensus, ml_consensus_score, ml_systems_agree, ml_systems_total,
+                ml_conflicts, ml_conflict_severity, ml_highest_confidence_system, ml_highest_confidence_value
             FROM scan_activity
             WHERE 1=1
         """
@@ -887,7 +1040,19 @@ def get_recent_scans(
             'kelly_optimal', 'kelly_safe', 'kelly_conservative', 'kelly_prob_ruin', 'kelly_recommendation',
             # NEW: ARGUS Pattern Analysis
             'argus_pattern_match', 'argus_similarity_score', 'argus_historical_outcome',
-            'argus_roc_value', 'argus_roc_signal'
+            'argus_roc_value', 'argus_roc_signal',
+            # NEW: IV Context
+            'iv_rank', 'iv_percentile', 'iv_hv_ratio', 'iv_30d', 'hv_30d',
+            # NEW: Time Context
+            'day_of_week', 'day_of_week_num', 'time_of_day', 'hour_ct', 'minute_ct',
+            'days_to_monthly_opex', 'days_to_weekly_opex', 'is_opex_week', 'is_fomc_day', 'is_cpi_day',
+            # NEW: Recent Performance Context
+            'similar_setup_win_rate', 'similar_setup_count', 'similar_setup_avg_pnl',
+            'current_streak', 'streak_type', 'last_5_trades_win_rate', 'last_10_trades_win_rate',
+            'daily_pnl', 'weekly_pnl',
+            # NEW: ML Consensus & Conflict Detection
+            'ml_consensus', 'ml_consensus_score', 'ml_systems_agree', 'ml_systems_total',
+            'ml_conflicts', 'ml_conflict_severity', 'ml_highest_confidence_system', 'ml_highest_confidence_value'
         ]
 
         results = []
@@ -906,7 +1071,7 @@ def get_recent_scans(
                 'signal_win_probability', 'premium_collected', 'max_risk',
                 'risk_reward_ratio', 'oracle_win_probability', 'oracle_confidence',
                 'min_win_probability_threshold',
-                # NEW fields
+                # Quant ML / Regime / GEX ML / Ensemble
                 'quant_ml_win_probability', 'quant_ml_confidence',
                 'quant_ml_suggested_risk_pct', 'quant_ml_suggested_sd_multiplier',
                 'regime_confidence', 'gex_ml_confidence',
@@ -915,7 +1080,15 @@ def get_recent_scans(
                 'ensemble_position_size_multiplier',
                 'flip_point', 'flip_point_distance_pct',
                 'kelly_optimal', 'kelly_safe', 'kelly_conservative', 'kelly_prob_ruin',
-                'argus_similarity_score', 'argus_roc_value'
+                'argus_similarity_score', 'argus_roc_value',
+                # IV Context
+                'iv_rank', 'iv_percentile', 'iv_hv_ratio', 'iv_30d', 'hv_30d',
+                # Recent Performance Context
+                'similar_setup_win_rate', 'similar_setup_avg_pnl',
+                'last_5_trades_win_rate', 'last_10_trades_win_rate',
+                'daily_pnl', 'weekly_pnl',
+                # ML Consensus
+                'ml_consensus_score', 'ml_highest_confidence_value'
             ]
             for key in decimal_fields:
                 if record.get(key) is not None:
