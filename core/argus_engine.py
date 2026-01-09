@@ -481,11 +481,17 @@ class ArgusEngine:
         if not history or len(history) < 2:
             return 0.0
 
-        # Find value from X minutes ago
-        target_time = datetime.now() - timedelta(minutes=minutes)
+        from zoneinfo import ZoneInfo
+        CENTRAL_TZ = ZoneInfo("America/Chicago")
+
+        # Find value from X minutes ago - use timezone-aware datetime
+        target_time = datetime.now(CENTRAL_TZ) - timedelta(minutes=minutes)
         old_gamma = None
 
         for timestamp, gamma in reversed(history):
+            # Handle timezone-aware comparison
+            if timestamp.tzinfo is None:
+                timestamp = timestamp.replace(tzinfo=CENTRAL_TZ)
             if timestamp <= target_time:
                 old_gamma = gamma
                 break
