@@ -31,11 +31,13 @@ except ImportError:
 try:
     from trading.scan_activity_logger import log_pegasus_scan, ScanOutcome, CheckResult
     SCAN_LOGGER_AVAILABLE = True
-except ImportError:
+    print("✅ PEGASUS: Scan activity logger loaded")
+except ImportError as e:
     SCAN_LOGGER_AVAILABLE = False
     log_pegasus_scan = None
     ScanOutcome = None
     CheckResult = None
+    print(f"❌ PEGASUS: Scan activity logger FAILED: {e}")
 
 # Bot decision logging (for bot_decision_logs table)
 try:
