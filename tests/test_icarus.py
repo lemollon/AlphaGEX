@@ -4,11 +4,16 @@ ICARUS Bot Comprehensive Test Suite
 
 Tests for the ICARUS aggressive directional spreads trading bot.
 
-ICARUS uses aggressive parameters:
-- 10% wall filter (vs ATHENA's 3%)
-- 40% min win probability (vs 48%)
-- 4% risk per trade (vs 2%)
-- $3 spread width (vs $2)
+ICARUS uses AGGRESSIVE Apache GEX backtest parameters (vs ATHENA):
+- 2% wall filter (vs 1%) - more room to trade
+- 48% min win probability (vs 55%) - lower threshold
+- 3% risk per trade (vs 2%) - larger positions
+- $3 spread width (vs $2) - wider spreads
+- VIX range 12-30 (vs 15-25) - wider volatility range
+- GEX ratio 1.3/0.77 (vs 1.5/0.67) - weaker asymmetry allowed
+- 1.2 R:R ratio (vs 1.5) - accept slightly lower R:R
+
+Safety filters ARE ENABLED with aggressive thresholds.
 """
 
 import pytest
@@ -75,18 +80,29 @@ class TestICARUSConfig:
     """Test ICARUS configuration"""
 
     def test_default_config_values(self, mock_db_connection):
-        """Test default config values are aggressive"""
+        """Test default config values are aggressive Apache GEX backtest parameters"""
         with patch('database_adapter.get_connection', return_value=mock_db_connection):
             from trading.icarus.models import ICARUSConfig
             config = ICARUSConfig()
 
-            # ICARUS aggressive defaults
-            assert config.wall_filter_pct == 10.0, "Wall filter should be 10%"
-            assert config.min_win_probability == 0.40, "Min win prob should be 40%"
-            assert config.risk_per_trade_pct == 4.0, "Risk per trade should be 4%"
-            assert config.spread_width == 3, "Spread width should be $3"
-            assert config.max_daily_trades == 10, "Max daily trades should be 10"
-            assert config.max_open_positions == 5, "Max open positions should be 5"
+            # ICARUS aggressive Apache GEX backtest defaults
+            assert config.wall_filter_pct == 2.0, "Wall filter should be 2% (vs ATHENA's 1%)"
+            assert config.min_win_probability == 0.48, "Min win prob should be 48% (vs ATHENA's 55%)"
+            assert config.min_confidence == 0.48, "Min confidence should be 48% (vs ATHENA's 55%)"
+            assert config.min_rr_ratio == 1.2, "Min R:R ratio should be 1.2 (vs ATHENA's 1.5)"
+            assert config.risk_per_trade_pct == 3.0, "Risk per trade should be 3% (vs ATHENA's 2%)"
+            assert config.spread_width == 3, "Spread width should be $3 (vs ATHENA's $2)"
+            assert config.max_daily_trades == 8, "Max daily trades should be 8 (vs ATHENA's 5)"
+            assert config.max_open_positions == 4, "Max open positions should be 4 (vs ATHENA's 3)"
+            # VIX filter
+            assert config.min_vix == 12.0, "Min VIX should be 12 (vs ATHENA's 15)"
+            assert config.max_vix == 30.0, "Max VIX should be 30 (vs ATHENA's 25)"
+            # GEX ratio asymmetry
+            assert config.min_gex_ratio_bearish == 1.3, "Min GEX ratio bearish should be 1.3 (vs ATHENA's 1.5)"
+            assert config.max_gex_ratio_bullish == 0.77, "Max GEX ratio bullish should be 0.77 (vs ATHENA's 0.67)"
+            # Exit thresholds
+            assert config.profit_target_pct == 40.0, "Profit target should be 40% (vs ATHENA's 50%)"
+            assert config.stop_loss_pct == 60.0, "Stop loss should be 60% (vs ATHENA's 50%)"
 
     def test_config_validation_valid(self, mock_db_connection):
         """Test valid config passes validation"""
@@ -160,15 +176,15 @@ class TestICARUSModels:
             assert data['spread_type'] == 'BULL_CALL'
 
     def test_trade_signal_validation(self, mock_db_connection):
-        """Test TradeSignal validation"""
+        """Test TradeSignal validation with Apache aggressive thresholds"""
         with patch('database_adapter.get_connection', return_value=mock_db_connection):
             from trading.icarus.models import TradeSignal, SpreadType
 
-            # Valid signal
+            # Valid signal - meets aggressive thresholds (48% confidence, 1.2 R:R)
             signal = TradeSignal(
                 direction='BULLISH',
                 spread_type=SpreadType.BULL_CALL,
-                confidence=0.75,
+                confidence=0.55,  # Above 48% threshold
                 spot_price=586.0,
                 call_wall=590.0,
                 put_wall=580.0,
@@ -178,17 +194,17 @@ class TestICARUSModels:
                 short_strike=588.0,
                 expiration='2024-12-06',
                 estimated_debit=1.50,
-                max_profit=150.0,
+                max_profit=180.0,  # 1.2 R:R
                 max_loss=150.0,
-                rr_ratio=1.0,
+                rr_ratio=1.2,  # Meets 1.2 minimum
             )
-            assert signal.is_valid, "Signal should be valid"
+            assert signal.is_valid, "Signal should be valid with 55% confidence and 1.2 R:R"
 
-            # Invalid signal (missing rr_ratio)
-            invalid_signal = TradeSignal(
+            # Invalid signal - below 48% confidence threshold
+            low_confidence_signal = TradeSignal(
                 direction='BULLISH',
                 spread_type=SpreadType.BULL_CALL,
-                confidence=0.75,
+                confidence=0.40,  # Below 48% threshold
                 spot_price=586.0,
                 call_wall=590.0,
                 put_wall=580.0,
@@ -196,9 +212,27 @@ class TestICARUSModels:
                 vix=15.0,
                 long_strike=585.0,
                 short_strike=588.0,
-                rr_ratio=0,  # Invalid
+                max_profit=150.0,
+                rr_ratio=1.5,
             )
-            assert not invalid_signal.is_valid, "Signal with zero R:R should be invalid"
+            assert not low_confidence_signal.is_valid, "Signal with 40% confidence should be invalid (below 48%)"
+
+            # Invalid signal - below 1.2 R:R threshold
+            low_rr_signal = TradeSignal(
+                direction='BULLISH',
+                spread_type=SpreadType.BULL_CALL,
+                confidence=0.55,
+                spot_price=586.0,
+                call_wall=590.0,
+                put_wall=580.0,
+                gex_regime='POSITIVE',
+                vix=15.0,
+                long_strike=585.0,
+                short_strike=588.0,
+                max_profit=150.0,
+                rr_ratio=1.0,  # Below 1.2 threshold
+            )
+            assert not low_rr_signal.is_valid, "Signal with 1.0 R:R should be invalid (below 1.2)"
 
 
 # =============================================================================
@@ -274,15 +308,15 @@ class TestOrderExecutor:
     """Test order execution logic"""
 
     def test_position_size_calculation(self, order_executor):
-        """Test position size calculation"""
-        # 4% risk of 100k = 4000
-        # With max_loss of 100 per contract = 40 contracts
+        """Test position size calculation with 3% risk per trade"""
+        # 3% risk of 100k = 3000
+        # With max_loss of 100 per contract = 30 contracts
         contracts = order_executor._calculate_position_size(100.0, 1.0)
-        assert contracts == 40, f"Expected 40 contracts, got {contracts}"
+        assert contracts == 30, f"Expected 30 contracts, got {contracts}"
 
-        # With max_loss of 200 = 20 contracts
+        # With max_loss of 200 = 15 contracts
         contracts = order_executor._calculate_position_size(200.0, 1.0)
-        assert contracts == 20, f"Expected 20 contracts, got {contracts}"
+        assert contracts == 15, f"Expected 15 contracts, got {contracts}"
 
     def test_position_size_with_thompson_weight(self, order_executor):
         """Test position size with Thompson weight"""
