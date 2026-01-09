@@ -62,6 +62,10 @@ interface StrikeData {
   gamma_change_pct: number
   roc_1min: number
   roc_5min: number
+  roc_30min: number
+  roc_1hr: number
+  roc_4hr: number
+  roc_trading_day: number  // ROC since market open (8:30 AM CT)
   is_magnet: boolean
   magnet_rank: number | null
   is_pin: boolean
@@ -353,6 +357,25 @@ export default function ArgusPage() {
 
   // EOD Strike Statistics
   const [eodStats, setEodStats] = useState<EODStrikeStat[]>([])
+
+  // ROC timeframe selector - for extra long timeframes only (4hr, day)
+  // 1m, 5m, 30m, 1hr ROC are always visible in the table
+  type RocTimeframe = '4hr' | 'day'
+  const [selectedRocTimeframe, setSelectedRocTimeframe] = useState<RocTimeframe>('4hr')
+
+  const rocTimeframeOptions: { value: RocTimeframe; label: string; shortLabel: string }[] = [
+    { value: '4hr', label: '4 Hours', shortLabel: '4h' },
+    { value: 'day', label: 'Trading Day', shortLabel: 'Day' },
+  ]
+
+  // Helper to get ROC value for selected longer timeframe (4hr or Day)
+  const getLongRocValue = (strike: StrikeData): number => {
+    switch (selectedRocTimeframe) {
+      case '4hr': return strike.roc_4hr ?? 0
+      case 'day': return strike.roc_trading_day ?? 0
+      default: return strike.roc_4hr ?? 0
+    }
+  }
 
   // EMA smoothed maxGamma state
   const [smoothedMaxGamma, setSmoothedMaxGamma] = useState<number>(1)
@@ -1695,58 +1718,8 @@ export default function ArgusPage() {
           </div>
         </div>
 
-        {/* NEW: Accuracy Dashboard + Trade Ideas Row */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-          {/* Accuracy Dashboard */}
-          <div className="bg-gray-800/50 rounded-xl p-5">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold text-white flex items-center gap-2">
-                <Percent className="w-5 h-5 text-cyan-400" />
-                System Accuracy
-              </h3>
-              <button
-                onClick={() => setShowAccuracyPanel(!showAccuracyPanel)}
-                className="text-xs text-gray-500 hover:text-white"
-              >
-                {showAccuracyPanel ? 'Hide' : 'Show'}
-              </button>
-            </div>
-            {showAccuracyPanel && accuracyMetrics && accuracyMetrics.total_predictions > 0 ? (
-              <>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                  <div className="bg-gray-900/50 rounded-lg p-3 text-center">
-                    <div className="text-xs text-gray-500 mb-1">Pin Accuracy (7d)</div>
-                    <div className={`text-xl font-bold ${accuracyMetrics.pin_accuracy_7d >= 75 ? 'text-emerald-400' : accuracyMetrics.pin_accuracy_7d >= 50 ? 'text-yellow-400' : 'text-rose-400'}`}>
-                      {accuracyMetrics.pin_accuracy_7d.toFixed(0)}%
-                    </div>
-                  </div>
-                  <div className="bg-gray-900/50 rounded-lg p-3 text-center">
-                    <div className="text-xs text-gray-500 mb-1">Direction (7d)</div>
-                    <div className={`text-xl font-bold ${accuracyMetrics.direction_accuracy_7d >= 55 ? 'text-emerald-400' : accuracyMetrics.direction_accuracy_7d >= 50 ? 'text-yellow-400' : 'text-rose-400'}`}>
-                      {accuracyMetrics.direction_accuracy_7d.toFixed(0)}%
-                    </div>
-                  </div>
-                  <div className="bg-gray-900/50 rounded-lg p-3 text-center">
-                    <div className="text-xs text-gray-500 mb-1">Magnet Hit (7d)</div>
-                    <div className={`text-xl font-bold ${accuracyMetrics.magnet_hit_rate_7d >= 70 ? 'text-emerald-400' : accuracyMetrics.magnet_hit_rate_7d >= 50 ? 'text-yellow-400' : 'text-rose-400'}`}>
-                      {accuracyMetrics.magnet_hit_rate_7d.toFixed(0)}%
-                    </div>
-                  </div>
-                </div>
-                <div className="mt-3 text-xs text-gray-600 flex items-center gap-1">
-                  <Info className="w-3 h-3" />
-                  Based on {accuracyMetrics.total_predictions} predictions
-                </div>
-              </>
-            ) : showAccuracyPanel ? (
-              <div className="text-center py-4 text-gray-500">
-                <Percent className="w-6 h-6 mx-auto mb-2 opacity-30" />
-                <p className="text-sm">No accuracy data yet</p>
-                <p className="text-xs text-gray-600 mt-1">Predictions will be tracked over time</p>
-              </div>
-            ) : null}
-          </div>
-
+        {/* Trade Ideas Section */}
+        <div className="mb-6">
           {/* Trade Ideas Generator */}
           <div className="bg-gradient-to-r from-emerald-900/30 to-blue-900/30 border border-emerald-500/30 rounded-xl p-5">
             <div className="flex items-center justify-between mb-4">
@@ -1823,19 +1796,19 @@ export default function ArgusPage() {
           </div>
         </div>
 
-        {/* NEW: Pattern Similarity + Gamma Flips Row */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+        {/* Pattern Similarity Section */}
+        <div className="mb-6">
           {/* Pattern Similarity Scorecard */}
           <div className="bg-gray-800/50 rounded-xl p-5">
             <h3 className="font-bold text-white flex items-center gap-2 mb-4">
               <Repeat className="w-5 h-5 text-indigo-400" />
               Pattern Similarity
-              <span className="text-xs text-gray-500 font-normal">vs Historical Days</span>
+              <span className="text-xs text-gray-500 font-normal">vs Historical Days (90d)</span>
             </h3>
             {patternMatches.length > 0 ? (
-              <div className="space-y-2">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 {patternMatches.slice(0, 3).map((match, idx) => (
-                  <div key={match.date} className="flex items-center justify-between p-2 bg-gray-900/50 rounded-lg">
+                  <div key={match.date} className="flex items-center justify-between p-3 bg-gray-900/50 rounded-lg">
                     <div className="flex items-center gap-3">
                       <span className="text-xs text-gray-500">#{idx + 1}</span>
                       <div>
@@ -1866,55 +1839,8 @@ export default function ArgusPage() {
             ) : (
               <div className="text-center py-6 text-gray-500">
                 <Repeat className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                <p className="text-sm">Analyzing historical patterns...</p>
-              </div>
-            )}
-          </div>
-
-          {/* Gamma Flip History with Outcomes */}
-          <div className="bg-gray-800/50 rounded-xl p-5">
-            <h3 className="font-bold text-white flex items-center gap-2 mb-4">
-              <Zap className="w-5 h-5 text-orange-400" />
-              Recent Gamma Flips
-              <span className="text-xs text-gray-500 font-normal">Last 30 min</span>
-            </h3>
-            {gammaFlips30m.length > 0 ? (
-              <div className="space-y-2 max-h-48 overflow-y-auto">
-                {gammaFlips30m.slice(0, 6).map((flip, idx) => (
-                  <div key={`${flip.strike}-${flip.flipped_at}`} className={`flex items-center justify-between p-2 rounded-lg ${
-                    flip.direction === 'POS_TO_NEG' ? 'bg-rose-500/10' : 'bg-emerald-500/10'
-                  }`}>
-                    <div className="flex items-center gap-3">
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                        flip.direction === 'POS_TO_NEG' ? 'bg-rose-500 text-white' : 'bg-emerald-500 text-white'
-                      }`}>
-                        {flip.direction === 'POS_TO_NEG' ? '→ -γ' : '→ +γ'}
-                      </span>
-                      <div>
-                        <div className="font-mono text-white">${flip.strike}</div>
-                        <div className="text-xs text-gray-500">{flip.mins_ago.toFixed(0)}m ago</div>
-                      </div>
-                    </div>
-                    <div className="text-right text-xs">
-                      <div className="text-gray-500">Before → After</div>
-                      <div className="font-mono">
-                        <span className={flip.gamma_before > 0 ? 'text-emerald-400' : 'text-rose-400'}>
-                          {formatGamma(flip.gamma_before)}
-                        </span>
-                        <span className="text-gray-500 mx-1">→</span>
-                        <span className={flip.gamma_after > 0 ? 'text-emerald-400' : 'text-rose-400'}>
-                          {formatGamma(flip.gamma_after)}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-6 text-gray-500">
-                <Zap className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                <p className="text-sm">No gamma flips in last 30 min</p>
-                <p className="text-xs text-gray-600 mt-1">Flips occur when gamma changes sign</p>
+                <p className="text-sm">No similar patterns found in historical data</p>
+                <p className="text-xs text-gray-600 mt-1">Comparing current gamma structure against 90 days of history</p>
               </div>
             )}
           </div>
@@ -2281,6 +2207,19 @@ export default function ArgusPage() {
                       <th className="text-right py-2 px-2 text-gray-500 font-medium">Prob %</th>
                       <th className="text-right py-2 px-2 text-gray-500 font-medium">1m ROC</th>
                       <th className="text-right py-2 px-2 text-gray-500 font-medium">5m ROC</th>
+                      <th className="text-right py-2 px-2 text-gray-500 font-medium">30m ROC</th>
+                      <th className="text-right py-2 px-2 text-gray-500 font-medium">1hr ROC</th>
+                      <th className="text-right py-2 px-2 text-gray-500 font-medium">
+                        <select
+                          value={selectedRocTimeframe}
+                          onChange={(e) => setSelectedRocTimeframe(e.target.value as RocTimeframe)}
+                          className="bg-gray-800 border border-gray-600 rounded px-1 py-0.5 text-xs text-gray-300 cursor-pointer hover:border-purple-500 focus:outline-none focus:border-purple-500"
+                        >
+                          {rocTimeframeOptions.map(opt => (
+                            <option key={opt.value} value={opt.value}>{opt.shortLabel} ROC</option>
+                          ))}
+                        </select>
+                      </th>
                       <th className="text-center py-2 px-2 text-gray-500 font-medium">30m Trend</th>
                       <th className="text-center py-2 px-2 text-gray-500 font-medium">Status</th>
                     </tr>
@@ -2332,6 +2271,27 @@ export default function ArgusPage() {
                           strike.roc_5min > 0 ? 'text-emerald-400' : strike.roc_5min < 0 ? 'text-rose-400' : 'text-gray-500'
                         }`}>
                           {strike.roc_5min > 0 ? '+' : ''}{strike.roc_5min.toFixed(1)}%
+                        </td>
+                        <td className={`py-2 px-2 text-right font-mono ${
+                          (strike.roc_30min ?? 0) > 0 ? 'text-emerald-400' : (strike.roc_30min ?? 0) < 0 ? 'text-rose-400' : 'text-gray-500'
+                        }`}>
+                          {(strike.roc_30min ?? 0) > 0 ? '+' : ''}{(strike.roc_30min ?? 0).toFixed(1)}%
+                        </td>
+                        <td className={`py-2 px-2 text-right font-mono ${
+                          (strike.roc_1hr ?? 0) > 0 ? 'text-emerald-400' : (strike.roc_1hr ?? 0) < 0 ? 'text-rose-400' : 'text-gray-500'
+                        }`}>
+                          {(strike.roc_1hr ?? 0) > 0 ? '+' : ''}{(strike.roc_1hr ?? 0).toFixed(1)}%
+                        </td>
+                        <td className={`py-2 px-2 text-right font-mono ${
+                          (() => {
+                            const roc = getLongRocValue(strike)
+                            return roc > 0 ? 'text-emerald-400' : roc < 0 ? 'text-rose-400' : 'text-gray-500'
+                          })()
+                        }`}>
+                          {(() => {
+                            const roc = getLongRocValue(strike)
+                            return `${roc > 0 ? '+' : ''}${roc.toFixed(1)}%`
+                          })()}
                         </td>
                         <td className="py-2 px-2 text-center">
                           {(() => {
@@ -2392,6 +2352,116 @@ export default function ArgusPage() {
                 </table>
               </div>
             </div>
+
+            {/* Selected Strike ROC Detail Panel */}
+            {selectedStrike && (
+              <div className="bg-gray-800/50 rounded-xl p-5 border border-purple-500/30">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-bold text-white flex items-center gap-2">
+                    <Activity className="w-5 h-5 text-purple-400" />
+                    ROC Analysis: ${selectedStrike.strike}
+                    {selectedStrike.is_pin && <span className="text-xs bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded">PIN</span>}
+                    {selectedStrike.is_magnet && <span className="text-xs bg-yellow-500/20 text-yellow-300 px-2 py-0.5 rounded">MAGNET</span>}
+                  </h3>
+                  <button
+                    onClick={() => setSelectedStrike(null)}
+                    className="text-gray-500 hover:text-white text-sm"
+                  >
+                    ✕ Close
+                  </button>
+                </div>
+
+                {/* ROC Grid - All Timeframes */}
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+                  {[
+                    { label: '1 Min', value: selectedStrike.roc_1min, key: '1min', alwaysInTable: true },
+                    { label: '5 Min', value: selectedStrike.roc_5min, key: '5min', alwaysInTable: true },
+                    { label: '30 Min', value: selectedStrike.roc_30min ?? 0, key: '30min', alwaysInTable: true },
+                    { label: '1 Hour', value: selectedStrike.roc_1hr ?? 0, key: '1hr', alwaysInTable: true },
+                    { label: '4 Hour', value: selectedStrike.roc_4hr ?? 0, key: '4hr', alwaysInTable: false },
+                    { label: 'Today', value: selectedStrike.roc_trading_day ?? 0, key: 'day', alwaysInTable: false },
+                  ].map(({ label, value, key, alwaysInTable }) => (
+                    <div
+                      key={key}
+                      className={`bg-gray-900/50 rounded-lg p-3 text-center transition-all ${
+                        alwaysInTable
+                          ? 'border border-gray-600'  // 1m and 5m are always shown
+                          : selectedRocTimeframe === key
+                            ? 'ring-2 ring-purple-500 cursor-pointer'
+                            : 'hover:bg-gray-800/50 cursor-pointer'
+                      }`}
+                      onClick={() => !alwaysInTable && setSelectedRocTimeframe(key as RocTimeframe)}
+                    >
+                      <div className="text-xs text-gray-500 mb-1">
+                        {label}
+                        {alwaysInTable && <span className="ml-1 text-[9px] text-gray-600">(in table)</span>}
+                      </div>
+                      <div className={`text-lg font-mono font-bold ${
+                        value > 0 ? 'text-emerald-400' : value < 0 ? 'text-rose-400' : 'text-gray-500'
+                      }`}>
+                        {value > 0 ? '+' : ''}{value.toFixed(1)}%
+                      </div>
+                      {/* Visual indicator bar */}
+                      <div className="mt-2 h-1 bg-gray-700 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all ${
+                            value > 0 ? 'bg-emerald-500' : value < 0 ? 'bg-rose-500' : 'bg-gray-600'
+                          }`}
+                          style={{
+                            width: `${Math.min(Math.abs(value) * 2, 100)}%`,
+                            marginLeft: value < 0 ? 'auto' : 0
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Additional Strike Info */}
+                <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                  <div className="bg-gray-900/30 rounded px-3 py-2">
+                    <span className="text-gray-500">Net Gamma:</span>
+                    <span className={`ml-2 font-mono ${selectedStrike.net_gamma > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {selectedStrike.net_gamma > 1e6
+                        ? `${(selectedStrike.net_gamma / 1e6).toFixed(1)}M`
+                        : selectedStrike.net_gamma > 1e3
+                          ? `${(selectedStrike.net_gamma / 1e3).toFixed(1)}K`
+                          : selectedStrike.net_gamma.toFixed(0)}
+                    </span>
+                  </div>
+                  <div className="bg-gray-900/30 rounded px-3 py-2">
+                    <span className="text-gray-500">Probability:</span>
+                    <span className="ml-2 font-mono text-blue-400">{selectedStrike.probability.toFixed(1)}%</span>
+                  </div>
+                  <div className="bg-gray-900/30 rounded px-3 py-2">
+                    <span className="text-gray-500">Distance:</span>
+                    <span className={`ml-2 font-mono ${
+                      gammaData?.spot_price && selectedStrike.strike > gammaData.spot_price ? 'text-emerald-400' : 'text-rose-400'
+                    }`}>
+                      {gammaData?.spot_price
+                        ? `${((selectedStrike.strike - gammaData.spot_price) / gammaData.spot_price * 100) > 0 ? '+' : ''}${((selectedStrike.strike - gammaData.spot_price) / gammaData.spot_price * 100).toFixed(2)}%`
+                        : '-'}
+                    </span>
+                  </div>
+                  <div className="bg-gray-900/30 rounded px-3 py-2">
+                    <span className="text-gray-500">Status:</span>
+                    <span className={`ml-2 ${
+                      selectedStrike.is_danger
+                        ? 'text-orange-400'
+                        : selectedStrike.gamma_flipped
+                          ? 'text-yellow-400'
+                          : 'text-gray-400'
+                    }`}>
+                      {selectedStrike.is_danger
+                        ? selectedStrike.danger_type
+                        : selectedStrike.gamma_flipped
+                          ? `Flipped ${selectedStrike.flip_direction}`
+                          : 'Normal'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Live Commentary / ARGUS Log */}
             <div className="bg-gray-800/50 rounded-xl p-5">

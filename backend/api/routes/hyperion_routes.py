@@ -30,7 +30,199 @@ CACHE_TTL_SECONDS = 60  # 60 second cache for weekly data (less volatile than 0D
 
 # History for ROC calculation - maps (symbol, strike) -> [(timestamp, gamma)]
 _gamma_history: Dict[str, List[Tuple[datetime, float]]] = {}
-HISTORY_MINUTES = 30  # Keep 30 minutes of history
+HISTORY_MINUTES = 420  # Keep 7 hours of history for full trading day ROC
+
+# Track if history has been loaded from database per symbol
+_history_loaded: Dict[str, bool] = {}
+
+
+def ensure_hyperion_gamma_history_table():
+    """Create the HYPERION gamma history table if it doesn't exist"""
+    try:
+        conn = get_connection()
+        if not conn:
+            return False
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS hyperion_gamma_history (
+                id SERIAL PRIMARY KEY,
+                symbol VARCHAR(10) NOT NULL,
+                strike DECIMAL(10, 2) NOT NULL,
+                gamma_value DECIMAL(20, 8) NOT NULL,
+                recorded_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+        """)
+        # Create index for efficient lookups
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_hyperion_gamma_history_strike_time
+            ON hyperion_gamma_history(symbol, strike, recorded_at DESC)
+        """)
+        # Create index for cleanup queries
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_hyperion_gamma_history_recorded_at
+            ON hyperion_gamma_history(recorded_at)
+        """)
+        conn.commit()
+        cursor.close()
+        conn.close()
+        logger.info("HYPERION: Gamma history table ensured")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to create HYPERION gamma history table: {e}")
+        return False
+
+
+def persist_hyperion_gamma_history(symbol: str):
+    """
+    Persist current gamma history to database.
+    Called periodically to ensure ROC data survives restarts.
+    """
+    global _gamma_history
+
+    if not _gamma_history:
+        return
+
+    try:
+        conn = get_connection()
+        if not conn:
+            return
+
+        cursor = conn.cursor()
+        ensure_hyperion_gamma_history_table()
+
+        # Get the most recent timestamp we have in DB for this symbol
+        cursor.execute("""
+            SELECT MAX(recorded_at) FROM hyperion_gamma_history WHERE symbol = %s
+        """, (symbol,))
+        row = cursor.fetchone()
+        last_db_time = row[0] if row and row[0] else None
+
+        # Insert only new history entries (avoid duplicates)
+        inserted = 0
+        for history_key, history_list in _gamma_history.items():
+            # Only persist history for the current symbol
+            if not history_key.startswith(f"{symbol}_"):
+                continue
+
+            # Extract strike from history_key (format: "SYMBOL_STRIKE")
+            parts = history_key.rsplit('_', 1)
+            if len(parts) != 2:
+                continue
+            strike = float(parts[1])
+
+            for recorded_time, gamma_value in history_list:
+                # Skip if we already have this or older
+                if last_db_time:
+                    check_time = recorded_time
+                    if check_time.tzinfo is None:
+                        check_time = check_time.replace(tzinfo=CENTRAL_TZ)
+                    if last_db_time.tzinfo is None:
+                        last_db_time = last_db_time.replace(tzinfo=CENTRAL_TZ)
+                    if check_time <= last_db_time:
+                        continue
+
+                cursor.execute("""
+                    INSERT INTO hyperion_gamma_history (symbol, strike, gamma_value, recorded_at)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT DO NOTHING
+                """, (symbol, strike, gamma_value, recorded_time))
+                inserted += 1
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        if inserted > 0:
+            logger.debug(f"HYPERION: Persisted {inserted} gamma history entries for {symbol}")
+    except Exception as e:
+        logger.warning(f"Failed to persist HYPERION gamma history: {e}")
+
+
+def load_hyperion_gamma_history(symbol: str):
+    """
+    Load gamma history from database.
+    Called on first data fetch to restore ROC calculation capability.
+    """
+    global _gamma_history, _history_loaded
+
+    if _history_loaded.get(symbol, False):
+        logger.debug(f"HYPERION: Gamma history already loaded for {symbol}, skipping")
+        return
+
+    try:
+        conn = get_connection()
+        if not conn:
+            _history_loaded[symbol] = True
+            return
+
+        cursor = conn.cursor()
+        ensure_hyperion_gamma_history_table()
+
+        # Load full trading day of history (7 hours = 420 minutes to support all ROC timeframes)
+        cursor.execute("""
+            SELECT strike, gamma_value, recorded_at
+            FROM hyperion_gamma_history
+            WHERE symbol = %s
+            AND recorded_at > NOW() - INTERVAL '420 minutes'
+            ORDER BY strike, recorded_at ASC
+        """, (symbol,))
+
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        if not rows:
+            logger.debug(f"HYPERION: No recent gamma history found for {symbol}")
+            _history_loaded[symbol] = True
+            return
+
+        # Populate gamma history
+        for strike, gamma_value, recorded_at in rows:
+            history_key = f"{symbol}_{float(strike)}"
+            if history_key not in _gamma_history:
+                _gamma_history[history_key] = []
+
+            # Ensure timezone awareness
+            if recorded_at.tzinfo is None:
+                recorded_at = recorded_at.replace(tzinfo=CENTRAL_TZ)
+
+            _gamma_history[history_key].append((recorded_at, float(gamma_value)))
+
+        _history_loaded[symbol] = True
+        unique_strikes = len([k for k in _gamma_history.keys() if k.startswith(f"{symbol}_")])
+        total_entries = sum(len(h) for k, h in _gamma_history.items() if k.startswith(f"{symbol}_"))
+        logger.info(f"HYPERION: Loaded gamma history for {symbol}: {unique_strikes} strikes, {total_entries} entries")
+
+    except Exception as e:
+        logger.warning(f"Failed to load HYPERION gamma history: {e}")
+        _history_loaded[symbol] = True  # Prevent repeated failures
+
+
+def cleanup_old_hyperion_gamma_history():
+    """
+    Clean up gamma history older than 8 hours.
+    Called periodically to prevent table bloat.
+    """
+    try:
+        conn = get_connection()
+        if not conn:
+            return
+
+        cursor = conn.cursor()
+        cursor.execute("""
+            DELETE FROM hyperion_gamma_history
+            WHERE recorded_at < NOW() - INTERVAL '8 hours'
+        """)
+        deleted = cursor.rowcount
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        if deleted > 0:
+            logger.debug(f"HYPERION: Cleaned up {deleted} old gamma history entries")
+    except Exception as e:
+        logger.warning(f"Failed to cleanup HYPERION gamma history: {e}")
 
 
 def get_cached(key: str, ttl: int = CACHE_TTL_SECONDS) -> Any:
@@ -78,7 +270,7 @@ def calculate_roc(symbol: str, strike: float, current_gamma: float, minutes: int
         symbol: Stock symbol
         strike: Strike price
         current_gamma: Current gamma value
-        minutes: Number of minutes to look back (1 or 5)
+        minutes: Number of minutes to look back (1, 5, 30, 60, 240)
 
     Returns:
         Rate of change as percentage
@@ -106,6 +298,50 @@ def calculate_roc(symbol: str, strike: float, current_gamma: float, minutes: int
         return 0.0
 
     roc = ((current_gamma - old_gamma) / abs(old_gamma)) * 100
+    return round(roc, 2)
+
+
+def calculate_roc_since_open(symbol: str, strike: float, current_gamma: float) -> float:
+    """
+    Calculate rate of change since market open (8:30 AM CT).
+
+    Args:
+        symbol: Stock symbol
+        strike: Strike price
+        current_gamma: Current gamma value
+
+    Returns:
+        Rate of change as percentage since market open
+    """
+    history_key = f"{symbol}_{strike}"
+    history = _gamma_history.get(history_key, [])
+
+    if not history or len(history) < 1:
+        return 0.0
+
+    now = datetime.now(CENTRAL_TZ)
+
+    # Market open is 8:30 AM CT
+    market_open = now.replace(hour=8, minute=30, second=0, microsecond=0)
+
+    # If it's before market open today, no trading day ROC available
+    if now < market_open:
+        return 0.0
+
+    # Find the first gamma value after market open
+    open_gamma = None
+    for timestamp, gamma in history:
+        # Handle timezone-aware comparison
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=CENTRAL_TZ)
+        if timestamp >= market_open:
+            open_gamma = gamma
+            break
+
+    if open_gamma is None or open_gamma == 0:
+        return 0.0
+
+    roc = ((current_gamma - open_gamma) / abs(open_gamma)) * 100
     return round(roc, 2)
 
 
@@ -209,6 +445,25 @@ def detect_pinning_condition(
     return {'is_pinning': False}
 
 
+def is_market_hours() -> bool:
+    """Check if market is currently open (9:30 AM - 4:00 PM ET / 8:30 AM - 3:00 PM CT)"""
+    now = datetime.now(CENTRAL_TZ)
+    # Weekend
+    if now.weekday() >= 5:
+        return False
+    # Holiday check
+    try:
+        from trading.market_calendar import MARKET_HOLIDAYS_2024_2025
+        date_str = now.strftime('%Y-%m-%d')
+        if date_str in MARKET_HOLIDAYS_2024_2025:
+            return False
+    except ImportError:
+        pass  # Skip holiday check if calendar not available
+    # Time check (8:30 AM - 3:00 PM CT)
+    time_minutes = now.hour * 60 + now.minute
+    return 8 * 60 + 30 <= time_minutes < 15 * 60
+
+
 # Try to import Tradier data fetcher
 TRADIER_AVAILABLE = False
 TradierDataFetcher = None
@@ -301,10 +556,17 @@ async def fetch_gamma_data(symbol: str, expiration: str) -> dict:
     """
     Fetch gamma data for a weekly options symbol.
     """
+    # Determine cache TTL based on market hours
+    market_open = is_market_hours()
+    cache_ttl = CACHE_TTL_SECONDS if market_open else 300  # 60s when open, 5min when closed
+
     cache_key = f"hyperion_gamma_{symbol}_{expiration}"
-    cached = get_cached(cache_key)
-    if cached:
+    cached = get_cached(cache_key, cache_ttl)
+    if cached and not cached.get('is_mock', False):
         return cached
+
+    # Load history from database on first call for this symbol
+    load_hyperion_gamma_history(symbol)
 
     tradier = get_tradier()
     if not tradier:
@@ -353,10 +615,14 @@ async def fetch_gamma_data(symbol: str, expiration: str) -> dict:
             # Calculate net gamma (simplified)
             net_gamma = (call_gamma * call_oi - put_gamma * put_oi) * 100 * spot_price
 
-            # Update history and calculate ROC
+            # Update history and calculate ROC for all timeframes
             update_gamma_history(symbol, strike, net_gamma, timestamp)
             roc_1min = calculate_roc(symbol, strike, net_gamma, minutes=1)
             roc_5min = calculate_roc(symbol, strike, net_gamma, minutes=5)
+            roc_30min = calculate_roc(symbol, strike, net_gamma, minutes=30)
+            roc_1hr = calculate_roc(symbol, strike, net_gamma, minutes=60)
+            roc_4hr = calculate_roc(symbol, strike, net_gamma, minutes=240)
+            roc_trading_day = calculate_roc_since_open(symbol, strike, net_gamma)
 
             strikes.append({
                 'strike': strike,
@@ -369,6 +635,10 @@ async def fetch_gamma_data(symbol: str, expiration: str) -> dict:
                 'gamma_change_pct': 0,
                 'roc_1min': roc_1min,
                 'roc_5min': roc_5min,
+                'roc_30min': roc_30min,
+                'roc_1hr': roc_1hr,
+                'roc_4hr': roc_4hr,
+                'roc_trading_day': roc_trading_day,
                 'is_magnet': False,
                 'magnet_rank': None,
                 'is_pin': False,
@@ -416,7 +686,7 @@ async def fetch_gamma_data(symbol: str, expiration: str) -> dict:
             'total_net_gamma': total_net_gamma,
             'gamma_regime': gamma_regime,
             'regime_flipped': False,
-            'market_status': 'open',
+            'market_status': 'open' if market_open else 'closed',
             'strikes': strikes,
             'magnets': [{'rank': i+1, 'strike': s['strike'], 'net_gamma': s['net_gamma'], 'probability': 0}
                        for i, s in enumerate(sorted_strikes[:3])],
@@ -428,6 +698,14 @@ async def fetch_gamma_data(symbol: str, expiration: str) -> dict:
             'is_mock': False,
             'fetched_at': format_central_timestamp()
         }
+
+        # Persist gamma history to database for ROC calculation persistence
+        persist_hyperion_gamma_history(symbol)
+
+        # Cleanup old history periodically (every ~100 calls via random)
+        import random
+        if random.random() < 0.01:  # ~1% chance to cleanup
+            cleanup_old_hyperion_gamma_history()
 
         set_cached(cache_key, result)
         return result
@@ -468,10 +746,14 @@ def get_mock_gamma_data(symbol: str, expiration: str, spot: float = None, vix: f
         if random.random() > 0.5:
             net_gamma = -net_gamma
 
-        # Update history and calculate ROC for mock data too
+        # Update history and calculate ROC for all timeframes
         update_gamma_history(symbol, strike, net_gamma, timestamp)
         roc_1min = calculate_roc(symbol, strike, net_gamma, minutes=1)
         roc_5min = calculate_roc(symbol, strike, net_gamma, minutes=5)
+        roc_30min = calculate_roc(symbol, strike, net_gamma, minutes=30)
+        roc_1hr = calculate_roc(symbol, strike, net_gamma, minutes=60)
+        roc_4hr = calculate_roc(symbol, strike, net_gamma, minutes=240)
+        roc_trading_day = calculate_roc_since_open(symbol, strike, net_gamma)
 
         strikes.append({
             'strike': strike,
@@ -480,6 +762,10 @@ def get_mock_gamma_data(symbol: str, expiration: str, spot: float = None, vix: f
             'gamma_change_pct': 0,
             'roc_1min': roc_1min,
             'roc_5min': roc_5min,
+            'roc_30min': roc_30min,
+            'roc_1hr': roc_1hr,
+            'roc_4hr': roc_4hr,
+            'roc_trading_day': roc_trading_day,
             'is_magnet': distance <= 1,
             'magnet_rank': distance + 1 if distance <= 2 else None,
             'is_pin': i == 0,
