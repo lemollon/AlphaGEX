@@ -196,6 +196,7 @@ export default function ZeroDTEBacktestPage() {
 
   // Preset application feedback
   const [presetAppliedMessage, setPresetAppliedMessage] = useState<string | null>(null)
+  const [selectedPresetId, setSelectedPresetId] = useState<string>('')
 
   // Check backend health on mount
   const checkBackendHealth = async () => {
@@ -351,6 +352,8 @@ export default function ZeroDTEBacktestPage() {
         end_date: prev.end_date,
         initial_capital: prev.initial_capital,
       }))
+      // Track selected preset
+      setSelectedPresetId(presetId)
       // Show feedback message
       setPresetAppliedMessage(`Applied preset: ${preset.name}`)
       setTimeout(() => setPresetAppliedMessage(null), 3000)
@@ -1213,8 +1216,14 @@ export default function ZeroDTEBacktestPage() {
                   <span className="text-gray-600 ml-1">(Quick Start)</span>
                 </label>
                 <select
-                  value=""
-                  onChange={e => e.target.value && applyPreset(e.target.value)}
+                  value={selectedPresetId}
+                  onChange={e => {
+                    if (e.target.value) {
+                      applyPreset(e.target.value)
+                    } else {
+                      setSelectedPresetId('')
+                    }
+                  }}
                   className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
                 >
                   <option value="">Select a preset...</option>
