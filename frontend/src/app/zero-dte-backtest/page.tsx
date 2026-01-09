@@ -627,8 +627,7 @@ export default function ZeroDTEBacktestPage() {
   }
 
   const resetBacktest = () => {
-    // Clear all job and results state to start fresh
-    setResults([])
+    // Clear current job state to start fresh, but preserve history for comparison
     setSelectedResult(null)
     setLiveJobResult(null)
     setCurrentJobId(null)
@@ -637,6 +636,8 @@ export default function ZeroDTEBacktestPage() {
     setRunning(false)
     setError(null)
     setSelectedPresetId('')
+    // Reload results from database to get latest (including any newly saved backtests)
+    loadResults()
   }
 
   const runBacktest = async () => {
