@@ -3,14 +3,19 @@ ICARUS Aggressive Directional Spread Bot API Routes
 =====================================================
 
 API endpoints for the ICARUS aggressive directional spread trading bot.
-ICARUS is an aggressive clone of ATHENA with relaxed GEX wall filters.
+ICARUS uses AGGRESSIVE Apache GEX backtest parameters (vs ATHENA conservative):
 
 Key differences from ATHENA:
-- 10% wall filter (vs 3%)
-- 40% min win probability (vs 48%)
-- 4% risk per trade (vs 2%)
-- 10 max daily trades (vs 5)
-- 5 max open positions (vs 3)
+- 2% wall filter (vs 1%) - more room to trade
+- 48% min win probability (vs 55%) - lower threshold
+- 3% risk per trade (vs 2%) - larger positions
+- 8 max daily trades (vs 5) - more opportunities
+- 4 max open positions (vs 3) - more exposure
+- VIX range 12-30 (vs 15-25) - wider volatility range
+- GEX ratio 1.3/0.77 (vs 1.5/0.67) - weaker asymmetry allowed
+- 1.2 R:R ratio (vs 1.5) - accept slightly lower R:R
+
+Safety filters ARE ENABLED with aggressive thresholds.
 """
 
 import logging
@@ -392,15 +397,21 @@ async def get_icarus_status():
                 "oracle_available": False,
                 "gex_ml_available": False,
                 "config": {
-                    "risk_per_trade": 4.0,
+                    "risk_per_trade": 3.0,
                     "spread_width": 3,
-                    "wall_filter_pct": 10.0,
+                    "wall_filter_pct": 2.0,
                     "ticker": "SPY",
-                    "max_daily_trades": 10,
-                    "max_open_positions": 5,
-                    "min_win_probability": 0.40,
-                    "profit_target_pct": 30.0,
-                    "stop_loss_pct": 70.0
+                    "max_daily_trades": 8,
+                    "max_open_positions": 4,
+                    "min_win_probability": 0.48,
+                    "min_confidence": 0.48,
+                    "min_rr_ratio": 1.2,
+                    "min_vix": 12.0,
+                    "max_vix": 30.0,
+                    "min_gex_ratio_bearish": 1.3,
+                    "max_gex_ratio_bullish": 0.77,
+                    "profit_target_pct": 40.0,
+                    "stop_loss_pct": 60.0
                 },
                 "message": "ICARUS reading from database"
             }
@@ -756,19 +767,24 @@ async def get_icarus_performance(
 
 @router.get("/config")
 async def get_icarus_config():
-    """Get ICARUS configuration settings."""
-    # ICARUS aggressive configuration
+    """Get ICARUS configuration settings (Apache GEX backtest aggressive parameters)."""
+    # ICARUS aggressive Apache GEX backtest configuration
     default_config = {
-        "risk_per_trade": {"value": "4.0", "description": "Risk per trade (4% - aggressive)"},
-        "spread_width": {"value": "3", "description": "Width of spread in strikes ($3)"},
-        "max_daily_trades": {"value": "10", "description": "Maximum trades per day (aggressive)"},
-        "max_open_positions": {"value": "5", "description": "Maximum concurrent positions"},
+        "risk_per_trade": {"value": "3.0", "description": "Risk per trade (3% vs ATHENA's 2%)"},
+        "spread_width": {"value": "3", "description": "Width of spread in strikes ($3 vs ATHENA's $2)"},
+        "max_daily_trades": {"value": "8", "description": "Maximum trades per day (8 vs ATHENA's 5)"},
+        "max_open_positions": {"value": "4", "description": "Maximum concurrent positions (4 vs ATHENA's 3)"},
         "ticker": {"value": "SPY", "description": "Trading ticker symbol"},
-        "wall_filter_pct": {"value": "10.0", "description": "GEX wall filter (10% - most relaxed)"},
-        "min_win_probability": {"value": "0.40", "description": "Minimum Oracle win probability (40%)"},
-        "min_rr_ratio": {"value": "0.5", "description": "Minimum risk:reward ratio"},
-        "stop_loss_pct": {"value": "70", "description": "Stop loss percentage (wider stops)"},
-        "profit_target_pct": {"value": "30", "description": "Take profit percentage (earlier exits)"},
+        "wall_filter_pct": {"value": "2.0", "description": "GEX wall filter (2% vs ATHENA's 1%)"},
+        "min_win_probability": {"value": "0.48", "description": "Minimum win probability (48% vs ATHENA's 55%)"},
+        "min_confidence": {"value": "0.48", "description": "Minimum signal confidence (48% vs ATHENA's 55%)"},
+        "min_rr_ratio": {"value": "1.2", "description": "Minimum risk:reward ratio (1.2 vs ATHENA's 1.5)"},
+        "min_vix": {"value": "12.0", "description": "Minimum VIX (12 vs ATHENA's 15)"},
+        "max_vix": {"value": "30.0", "description": "Maximum VIX (30 vs ATHENA's 25)"},
+        "min_gex_ratio_bearish": {"value": "1.3", "description": "GEX ratio for bearish signal (1.3 vs ATHENA's 1.5)"},
+        "max_gex_ratio_bullish": {"value": "0.77", "description": "GEX ratio for bullish signal (0.77 vs ATHENA's 0.67)"},
+        "stop_loss_pct": {"value": "60", "description": "Stop loss percentage (60% vs ATHENA's 50%)"},
+        "profit_target_pct": {"value": "40", "description": "Take profit percentage (40% vs ATHENA's 50%)"},
         "entry_start_time": {"value": "08:35", "description": "Trading window start time CT"},
         "entry_end_time": {"value": "14:30", "description": "Trading window end time CT"},
     }
