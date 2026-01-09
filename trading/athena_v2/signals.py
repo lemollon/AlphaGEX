@@ -118,51 +118,23 @@ class SignalGenerator:
 
     def _init_components(self) -> None:
         """Initialize signal generation components"""
-        # GEX Calculator - Try Kronos first, but VERIFY it has FRESH data
+        # GEX Calculator - Use Tradier for LIVE data (Kronos is for backtesting only)
         self.gex_calculator = None
-        kronos_works = False
 
-        if KRONOS_AVAILABLE:
-            try:
-                kronos_calc = KronosGEXCalculator()
-                test_result = kronos_calc.calculate_gex(self.config.ticker)
-                if test_result and test_result.get('spot_price', 0) > 0:
-                    # Check data freshness - reject if older than 2 days
-                    trade_date = test_result.get('trade_date', '')
-                    if trade_date:
-                        from datetime import datetime
-                        try:
-                            data_date = datetime.strptime(trade_date, '%Y-%m-%d')
-                            days_old = (datetime.now() - data_date).days
-                            if days_old <= 2:
-                                self.gex_calculator = kronos_calc
-                                kronos_works = True
-                                logger.info(f"ATHENA: Kronos GEX verified (spot={test_result.get('spot_price')}, date={trade_date})")
-                            else:
-                                logger.warning(f"ATHENA: Kronos data too stale ({days_old} days old) - using Tradier")
-                        except ValueError:
-                            logger.warning("ATHENA: Kronos has invalid trade_date - using Tradier")
-                    else:
-                        logger.warning("ATHENA: Kronos returned no trade_date - using Tradier")
-                else:
-                    logger.warning("ATHENA: Kronos returned no data - using Tradier")
-            except Exception as e:
-                logger.warning(f"ATHENA: Kronos GEX init/test failed: {e}")
-
-        if not kronos_works and TRADIER_GEX_AVAILABLE:
+        if TRADIER_GEX_AVAILABLE:
             try:
                 tradier_calc = get_gex_calculator()
                 test_result = tradier_calc.calculate_gex(self.config.ticker)
                 if test_result and test_result.get('spot_price', 0) > 0:
                     self.gex_calculator = tradier_calc
-                    logger.info(f"ATHENA: Using Tradier GEX (live spot={test_result.get('spot_price')})")
+                    logger.info(f"ATHENA: Using Tradier GEX for LIVE trading (spot={test_result.get('spot_price')})")
                 else:
                     logger.error("ATHENA: Tradier GEX returned no data!")
             except Exception as e:
                 logger.warning(f"ATHENA: Tradier GEX init/test failed: {e}")
 
         if not self.gex_calculator:
-            logger.error("ATHENA: NO GEX CALCULATOR AVAILABLE")
+            logger.error("ATHENA: NO GEX CALCULATOR AVAILABLE - Tradier required for live trading")
 
         # ML Signal Integration
         self.ml_signal = None
@@ -370,8 +342,11 @@ class SignalGenerator:
                 'flip_point': gex.get('flip_point', gex.get('gamma_flip', 0)),
                 'vix': vix,
                 'timestamp': datetime.now(CENTRAL_TZ),
-                # Raw Kronos data for audit
-                'kronos_raw': gex,
+                # Raw GEX data for audit (Tradier live data)
+                'gex_raw': gex,
+                # GEX values for ratio calculation (Tradier uses call_gex/put_gex)
+                'call_gex': abs(gex.get('call_gex', 0)),
+                'put_gex': abs(gex.get('put_gex', 0)),
             }
         except Exception as e:
             logger.error(f"GEX fetch error: {e}")
@@ -688,14 +663,16 @@ class SignalGenerator:
         # - Bullish: GEX ratio < 0.67 (call GEX dominates)
         # Ratio between 0.67-1.5 = no clear directional edge
         # ============================================================
-        kronos_raw = gex_data.get('kronos_raw', {})
-        total_put_gex = abs(kronos_raw.get('total_put_gex', kronos_raw.get('put_gex', 0)) or 0)
-        total_call_gex = abs(kronos_raw.get('total_call_gex', kronos_raw.get('call_gex', 0)) or 0)
+        # Use Tradier live GEX data (call_gex/put_gex fields)
+        total_put_gex = gex_data.get('put_gex', 0)
+        total_call_gex = gex_data.get('call_gex', 0)
 
         if total_call_gex > 0:
             gex_ratio = total_put_gex / total_call_gex
         else:
             gex_ratio = 10.0 if total_put_gex > 0 else 1.0
+
+        logger.info(f"[ATHENA] GEX values - Put: {total_put_gex:,.0f}, Call: {total_call_gex:,.0f}, Ratio: {gex_ratio:.2f}")
 
         has_gex_asymmetry = (gex_ratio >= self.config.min_gex_ratio_bearish or
                              gex_ratio <= self.config.max_gex_ratio_bullish)
