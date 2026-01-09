@@ -204,17 +204,30 @@ export default function HyperionPage() {
     }
   }, [selectedSymbol, selectedExpiration])
 
+  // Track if we're doing a fresh symbol load (need to force new expiration)
+  const symbolChangeRef = useRef<string | null>(null)
+
   // Fetch available expirations for the selected symbol
   const fetchExpirations = useCallback(async () => {
     try {
+      // Track which symbol this fetch is for to prevent stale updates
+      const fetchSymbol = selectedSymbol
+      symbolChangeRef.current = fetchSymbol
+
       const response = await apiClient.getHyperionExpirations(selectedSymbol, 4)
+
+      // Verify we're still on the same symbol (user might have switched)
+      if (symbolChangeRef.current !== fetchSymbol) {
+        console.log('[HYPERION] Symbol changed during fetch, ignoring stale response')
+        return
+      }
 
       if (response.data?.success && response.data?.data?.expirations) {
         const exps = response.data.data.expirations as ExpirationInfo[]
         setExpirations(exps)
-        // Set default expiration if none selected
+        // Always set the first expiration to ensure fresh data for new symbol
         if (exps.length > 0) {
-          setSelectedExpiration(prev => prev || exps[0].date)
+          setSelectedExpiration(exps[0].date)
         }
       } else {
         // Fallback to generating mock expirations
@@ -238,9 +251,9 @@ export default function HyperionPage() {
         }
 
         setExpirations(mockExpirations)
-        // Set default expiration if none selected
+        // Always set the first expiration to ensure fresh data for new symbol
         if (mockExpirations.length > 0) {
-          setSelectedExpiration(prev => prev || mockExpirations[0].date)
+          setSelectedExpiration(mockExpirations[0].date)
         }
       }
     } catch (err) {
