@@ -168,14 +168,23 @@ class ATHENAConfig:
     max_daily_trades: int = 5
     max_open_positions: int = 3
 
-    # Strategy params
+    # Strategy params (aligned with Apache GEX backtest optimal settings)
     ticker: str = "SPY"
     spread_width: int = 2  # $2 spreads
-    wall_filter_pct: float = 3.0  # Trade within 3% of GEX wall (was 0.5% - too restrictive)
-    min_rr_ratio: float = 0.8  # Min risk:reward (realistic for 0DTE debit spreads)
+    wall_filter_pct: float = 1.0  # Trade within 1% of GEX wall (Apache backtest optimal)
+    min_rr_ratio: float = 1.5  # Min risk:reward (need edge to be profitable)
 
-    # Oracle thresholds
-    min_win_probability: float = 0.42  # Minimum Oracle win probability to trade (42%)
+    # Win probability thresholds - MUST be above 50% to have positive expectancy
+    min_win_probability: float = 0.55  # Minimum win probability to trade (55%)
+    min_confidence: float = 0.55  # Minimum signal confidence (55%)
+
+    # VIX filter (Apache backtest optimal range)
+    min_vix: float = 15.0  # Skip if VIX too low (no premium)
+    max_vix: float = 25.0  # Skip if VIX too high (spreads decay too fast)
+
+    # GEX ratio asymmetry requirement (Apache backtest - strong signal only)
+    min_gex_ratio_bearish: float = 1.5  # GEX ratio > 1.5 for bearish signal
+    max_gex_ratio_bullish: float = 0.67  # GEX ratio < 0.67 for bullish signal
 
     # Exit rules
     profit_target_pct: float = 50.0  # Take profit at 50% of max
@@ -311,10 +320,10 @@ class TradeSignal:
 
     @property
     def is_valid(self) -> bool:
-        """Check if signal passes basic validation"""
+        """Check if signal passes basic validation (Apache backtest thresholds)"""
         return (
-            self.confidence > 0.45 and  # Lowered to match signals.py threshold
-            self.rr_ratio >= 0.8 and  # Realistic for 0DTE debit spreads
+            self.confidence >= 0.55 and  # 55% confidence minimum
+            self.rr_ratio >= 1.5 and  # 1.5:1 R:R minimum for edge
             self.max_profit > 0 and
             self.long_strike > 0 and
             self.short_strike > 0
