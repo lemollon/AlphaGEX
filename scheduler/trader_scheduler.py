@@ -365,6 +365,7 @@ class AutonomousTraderScheduler:
 
     def _load_state(self):
         """Load scheduler state from database (PostgreSQL)"""
+        conn = None
         try:
             conn = get_connection()
             c = conn.cursor()
@@ -389,18 +390,23 @@ class AutonomousTraderScheduler:
                 # Auto-restart if it was running before
                 if should_restart and was_running:
                     logger.info(f"Previous session detected as running. Reason: {reason or 'App restart'}")
-                    conn.close()
                     return True  # Signal that auto-restart is needed
 
-            conn.close()
             return False
 
         except Exception as e:
             logger.error(f"Error loading scheduler state: {str(e)}")
             return False
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     def _save_state(self):
         """Save current scheduler state to database (PostgreSQL)"""
+        conn = None
         try:
             conn = get_connection()
             c = conn.cursor()
@@ -421,14 +427,20 @@ class AutonomousTraderScheduler:
             ))
 
             conn.commit()
-            conn.close()
             logger.debug("Scheduler state saved to database")
 
         except Exception as e:
             logger.error(f"Error saving scheduler state: {str(e)}")
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     def _mark_auto_restart(self, reason="App restart"):
         """Mark that scheduler should auto-restart on next launch (PostgreSQL)"""
+        conn = None
         try:
             conn = get_connection()
             c = conn.cursor()
@@ -442,13 +454,19 @@ class AutonomousTraderScheduler:
             ''', (reason,))
 
             conn.commit()
-            conn.close()
 
         except Exception as e:
             logger.error(f"Error marking auto-restart: {str(e)}")
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     def _clear_auto_restart(self):
         """Clear auto-restart flag after successful restart (PostgreSQL)"""
+        conn = None
         try:
             conn = get_connection()
             c = conn.cursor()
@@ -461,10 +479,15 @@ class AutonomousTraderScheduler:
             ''')
 
             conn.commit()
-            conn.close()
 
         except Exception as e:
             logger.error(f"Error clearing auto-restart: {str(e)}")
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     def get_market_status(self) -> tuple[bool, str]:
         """
@@ -938,6 +961,7 @@ class AutonomousTraderScheduler:
 
     def _log_no_trade_decision(self, bot_name: str, reason: str, context: dict = None):
         """Log a NO_TRADE decision to the database for visibility"""
+        conn = None
         try:
             conn = get_connection()
             c = conn.cursor()
@@ -971,13 +995,19 @@ class AutonomousTraderScheduler:
             ))
 
             conn.commit()
-            conn.close()
             logger.info(f"[HEARTBEAT] {bot_name} NO_TRADE logged: {reason}")
         except Exception as e:
             logger.debug(f"Could not log NO_TRADE decision: {e}")
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     def _save_heartbeat(self, bot_name: str, status: str = 'SCAN_COMPLETE', details: dict = None):
         """Save heartbeat to database for dashboard visibility"""
+        conn = None
         try:
             conn = get_connection()
             c = conn.cursor()
@@ -1011,9 +1041,14 @@ class AutonomousTraderScheduler:
             ''', (bot_name, now, status, json.dumps(details) if details else None))
 
             conn.commit()
-            conn.close()
         except Exception as e:
             logger.debug(f"Could not save heartbeat: {e}")
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     def scheduled_athena_logic(self):
         """
@@ -2461,8 +2496,16 @@ class AutonomousTraderScheduler:
         )
         logger.info("✅ EQUITY_SNAPSHOTS job scheduled (every 5 min, checks market hours internally)")
 
-        self.scheduler.start()
-        self.is_running = True
+        # Start the scheduler with proper exception handling
+        try:
+            self.scheduler.start()
+            self.is_running = True
+        except Exception as e:
+            logger.error(f"CRITICAL: Failed to start scheduler: {e}")
+            logger.error(traceback.format_exc())
+            self.is_running = False
+            self.scheduler = None
+            raise RuntimeError(f"Scheduler failed to start: {e}")
 
         # Mark that auto-restart should be enabled
         self._mark_auto_restart("User started")
@@ -2490,13 +2533,17 @@ class AutonomousTraderScheduler:
         logger.info("✓ Auto-restart enabled - will survive app restarts")
         logger.info("Next scheduled runs:")
 
-        # Log next 3 scheduled runs
-        jobs = self.scheduler.get_jobs()
-        if jobs:
-            for job in jobs:
-                next_run = job.next_run_time
-                if next_run:
-                    logger.info(f"  - {next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        # Log next scheduled runs with error handling
+        try:
+            if self.scheduler:
+                jobs = self.scheduler.get_jobs()
+                if jobs:
+                    for job in jobs[:5]:  # Limit to first 5
+                        next_run = job.next_run_time
+                        if next_run:
+                            logger.info(f"  - {job.name}: {next_run.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        except Exception as e:
+            logger.warning(f"Could not get scheduled jobs: {e}")
 
     def stop(self):
         """Stop the autonomous trading scheduler"""
@@ -2523,12 +2570,27 @@ class AutonomousTraderScheduler:
         logger.info("✓ Scheduler stopped")
         logger.info("✓ Auto-restart disabled - won't restart on app reload")
 
+    def is_scheduler_healthy(self) -> bool:
+        """Check if the scheduler thread is alive and running"""
+        if not self.is_running or not self.scheduler:
+            return False
+        try:
+            # Check if APScheduler's internal thread is alive
+            if hasattr(self.scheduler, '_thread') and self.scheduler._thread:
+                return self.scheduler._thread.is_alive()
+            # Fallback: try to get jobs (will fail if scheduler is dead)
+            self.scheduler.get_jobs()
+            return True
+        except Exception:
+            return False
+
     def get_status(self) -> dict:
         """Get current scheduler status for monitoring dashboard"""
         now = datetime.now(CENTRAL_TZ)
 
         status = {
             'is_running': self.is_running,
+            'scheduler_healthy': self.is_scheduler_healthy(),
             'market_open': self.is_market_open(),
             'current_time_ct': now.strftime('%Y-%m-%d %H:%M:%S %Z'),
             'last_trade_check': self.last_trade_check.strftime('%Y-%m-%d %H:%M:%S') if self.last_trade_check else 'Never',
@@ -2538,21 +2600,26 @@ class AutonomousTraderScheduler:
             'scheduled_jobs': [],
         }
 
-        # Get all scheduled jobs with their next run times
+        # Get all scheduled jobs with their next run times (with error handling)
         if self.is_running and self.scheduler:
-            jobs = self.scheduler.get_jobs()
-            for job in jobs:
-                job_info = {
-                    'id': job.id,
-                    'name': job.name,
-                    'next_run': job.next_run_time.strftime('%Y-%m-%d %H:%M:%S %Z') if job.next_run_time else 'Not scheduled'
-                }
-                status['scheduled_jobs'].append(job_info)
+            try:
+                jobs = self.scheduler.get_jobs()
+                for job in jobs:
+                    job_info = {
+                        'id': job.id,
+                        'name': job.name,
+                        'next_run': job.next_run_time.strftime('%Y-%m-%d %H:%M:%S %Z') if job.next_run_time else 'Not scheduled'
+                    }
+                    status['scheduled_jobs'].append(job_info)
 
-            if jobs:
-                status['next_run'] = jobs[0].next_run_time.strftime('%Y-%m-%d %H:%M:%S %Z') if jobs[0].next_run_time else 'Not scheduled'
-            else:
-                status['next_run'] = 'No jobs'
+                if jobs:
+                    status['next_run'] = jobs[0].next_run_time.strftime('%Y-%m-%d %H:%M:%S %Z') if jobs[0].next_run_time else 'Not scheduled'
+                else:
+                    status['next_run'] = 'No jobs'
+            except Exception as e:
+                logger.warning(f"Error getting scheduled jobs: {e}")
+                status['next_run'] = 'Error getting jobs'
+                status['scheduler_healthy'] = False
         else:
             status['next_run'] = 'Scheduler not running'
 
@@ -2654,45 +2721,116 @@ def run_standalone():
     logger.info(f"RESERVE:             ${CAPITAL_ALLOCATION['RESERVE']:,}")
     logger.info("=" * 80)
 
-    # Create and start scheduler
-    scheduler = get_scheduler()
-
     # Handle graceful shutdown
     shutdown_requested = False
+    scheduler = None
+    restart_count = 0
+    max_restarts = 10  # Maximum restarts before giving up
+    health_check_failures = 0
+    max_health_failures = 3  # Restart after 3 consecutive health check failures
 
     def signal_handler(signum, frame):
         nonlocal shutdown_requested
         logger.info(f"Received signal {signum}, requesting shutdown...")
         shutdown_requested = True
-        if scheduler.is_running:
-            scheduler.stop()
+        try:
+            if scheduler and scheduler.is_running:
+                scheduler.stop()
+        except Exception as e:
+            logger.error(f"Error stopping scheduler in signal handler: {e}")
 
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
 
-    # Start the scheduler
-    scheduler.start()
+    def start_scheduler():
+        """Start or restart the scheduler with error handling"""
+        nonlocal scheduler, restart_count
 
-    logger.info("Scheduler started. Running continuously...")
+        # Clear the singleton to force a fresh instance on restart
+        global _scheduler_instance
+        _scheduler_instance = None
+
+        scheduler = get_scheduler()
+        try:
+            scheduler.start()
+            restart_count += 1
+            logger.info(f"Scheduler started (attempt #{restart_count})")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to start scheduler: {e}")
+            logger.error(traceback.format_exc())
+            return False
+
+    # Initial start
+    if not start_scheduler():
+        logger.error("CRITICAL: Could not start scheduler on initial attempt")
+        return
+
+    logger.info("Scheduler started. Running continuously with health monitoring...")
     logger.info("Press Ctrl+C to stop (or send SIGTERM)")
 
-    # Keep the process alive
+    # Keep the process alive with health monitoring and auto-restart
     try:
         while not shutdown_requested:
             time.sleep(60)  # Check every minute
 
-            # Log status periodically
-            status = scheduler.get_status()
-            if status['market_open']:
-                logger.info(f"Market OPEN - Executions: PHOENIX={scheduler.execution_count}, ATLAS={scheduler.atlas_execution_count}, ARES={scheduler.ares_execution_count}, PEGASUS={scheduler.pegasus_execution_count}, ATHENA={scheduler.athena_execution_count}, ICARUS={scheduler.icarus_execution_count}, TITAN={scheduler.titan_execution_count}, ARGUS={scheduler.argus_execution_count}")
-            else:
-                logger.debug(f"Market closed. Next run: {status.get('next_run', 'Unknown')}")
+            # Health check - verify scheduler thread is alive
+            try:
+                if scheduler and scheduler.is_scheduler_healthy():
+                    health_check_failures = 0  # Reset on success
+
+                    # Log status periodically
+                    status = scheduler.get_status()
+                    if status.get('market_open'):
+                        logger.info(f"Market OPEN - Executions: PHOENIX={scheduler.execution_count}, ATLAS={scheduler.atlas_execution_count}, ARES={scheduler.ares_execution_count}, PEGASUS={scheduler.pegasus_execution_count}, ATHENA={scheduler.athena_execution_count}, ICARUS={scheduler.icarus_execution_count}, TITAN={scheduler.titan_execution_count}, ARGUS={scheduler.argus_execution_count}")
+                    else:
+                        logger.debug(f"Market closed. Next run: {status.get('next_run', 'Unknown')}")
+                else:
+                    health_check_failures += 1
+                    logger.warning(f"Scheduler health check FAILED ({health_check_failures}/{max_health_failures})")
+
+                    if health_check_failures >= max_health_failures:
+                        logger.error("SCHEDULER DEAD - Attempting auto-restart...")
+
+                        if restart_count >= max_restarts:
+                            logger.error(f"Max restarts ({max_restarts}) reached. Exiting.")
+                            shutdown_requested = True
+                            break
+
+                        # Stop the dead scheduler
+                        try:
+                            if scheduler:
+                                scheduler.stop()
+                        except Exception:
+                            pass
+
+                        # Wait before restart
+                        time.sleep(5)
+
+                        # Restart
+                        if start_scheduler():
+                            health_check_failures = 0
+                            logger.info("Scheduler auto-restart SUCCESSFUL")
+                        else:
+                            logger.error("Scheduler auto-restart FAILED")
+                            time.sleep(30)  # Wait longer before next attempt
+
+            except Exception as e:
+                logger.error(f"Error in health check loop: {e}")
+                logger.error(traceback.format_exc())
+                health_check_failures += 1
 
     except KeyboardInterrupt:
         logger.info("Keyboard interrupt received")
+    except Exception as e:
+        logger.error(f"CRITICAL ERROR in main loop: {e}")
+        logger.error(traceback.format_exc())
     finally:
-        if scheduler.is_running:
-            scheduler.stop()
+        try:
+            if scheduler and scheduler.is_running:
+                scheduler.stop()
+        except Exception as e:
+            logger.error(f"Error stopping scheduler during shutdown: {e}")
         logger.info("Autonomous trader shutdown complete")
 
 
