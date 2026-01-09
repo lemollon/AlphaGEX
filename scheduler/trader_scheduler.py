@@ -2527,10 +2527,47 @@ class AutonomousTraderScheduler:
         )
         logger.info("✅ EQUITY_SNAPSHOTS job scheduled (every 5 min, checks market hours internally)")
 
+        # =================================================================
+        # CRITICAL: Verify at least one trading bot is available
+        # If ALL bots failed to initialize, the scheduler will run but do NOTHING
+        # =================================================================
+        active_bots = []
+        if self.ares_trader:
+            active_bots.append("ARES")
+        if self.athena_trader:
+            active_bots.append("ATHENA")
+        if self.pegasus_trader:
+            active_bots.append("PEGASUS")
+        if self.icarus_trader:
+            active_bots.append("ICARUS")
+        if self.titan_trader:
+            active_bots.append("TITAN")
+        if self.atlas_trader:
+            active_bots.append("ATLAS")
+        if self.trader:
+            active_bots.append("PHOENIX")
+
+        if not active_bots:
+            logger.error("=" * 80)
+            logger.error("🚨 CRITICAL: NO TRADING BOTS INITIALIZED!")
+            logger.error("🚨 The scheduler will start but NO SCANS will run!")
+            logger.error("🚨 Check bot imports and initialization errors above!")
+            logger.error("=" * 80)
+        else:
+            logger.info(f"✅ Active bots: {', '.join(active_bots)}")
+
         # Start the scheduler with proper exception handling
         try:
             self.scheduler.start()
             self.is_running = True
+
+            # Verify jobs were actually scheduled
+            jobs = self.scheduler.get_jobs()
+            if len(jobs) == 0:
+                logger.error("🚨 CRITICAL: Scheduler started but NO JOBS scheduled!")
+            else:
+                logger.info(f"✅ Scheduler started with {len(jobs)} jobs scheduled")
+
         except Exception as e:
             logger.error(f"CRITICAL: Failed to start scheduler: {e}")
             logger.error(traceback.format_exc())
