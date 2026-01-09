@@ -358,6 +358,32 @@ export default function ArgusPage() {
   // EOD Strike Statistics
   const [eodStats, setEodStats] = useState<EODStrikeStat[]>([])
 
+  // ROC timeframe selector - allows switching between different ROC periods
+  type RocTimeframe = '1min' | '5min' | '30min' | '1hr' | '4hr' | 'day'
+  const [selectedRocTimeframe, setSelectedRocTimeframe] = useState<RocTimeframe>('5min')
+
+  const rocTimeframeOptions: { value: RocTimeframe; label: string; shortLabel: string }[] = [
+    { value: '1min', label: '1 Minute', shortLabel: '1m' },
+    { value: '5min', label: '5 Minutes', shortLabel: '5m' },
+    { value: '30min', label: '30 Minutes', shortLabel: '30m' },
+    { value: '1hr', label: '1 Hour', shortLabel: '1h' },
+    { value: '4hr', label: '4 Hours', shortLabel: '4h' },
+    { value: 'day', label: 'Trading Day', shortLabel: 'Day' },
+  ]
+
+  // Helper to get ROC value for selected timeframe
+  const getRocValue = (strike: StrikeData): number => {
+    switch (selectedRocTimeframe) {
+      case '1min': return strike.roc_1min
+      case '5min': return strike.roc_5min
+      case '30min': return strike.roc_30min ?? 0
+      case '1hr': return strike.roc_1hr ?? 0
+      case '4hr': return strike.roc_4hr ?? 0
+      case 'day': return strike.roc_trading_day ?? 0
+      default: return strike.roc_5min
+    }
+  }
+
   // EMA smoothed maxGamma state
   const [smoothedMaxGamma, setSmoothedMaxGamma] = useState<number>(1)
 
@@ -2283,8 +2309,17 @@ export default function ArgusPage() {
                       <th className="text-right py-2 px-2 text-gray-500 font-medium">Dist</th>
                       <th className="text-right py-2 px-2 text-gray-500 font-medium">Net Gamma</th>
                       <th className="text-right py-2 px-2 text-gray-500 font-medium">Prob %</th>
-                      <th className="text-right py-2 px-2 text-gray-500 font-medium">1m ROC</th>
-                      <th className="text-right py-2 px-2 text-gray-500 font-medium">5m ROC</th>
+                      <th className="text-right py-2 px-2 text-gray-500 font-medium">
+                        <select
+                          value={selectedRocTimeframe}
+                          onChange={(e) => setSelectedRocTimeframe(e.target.value as RocTimeframe)}
+                          className="bg-gray-800 border border-gray-600 rounded px-1 py-0.5 text-xs text-gray-300 cursor-pointer hover:border-purple-500 focus:outline-none focus:border-purple-500"
+                        >
+                          {rocTimeframeOptions.map(opt => (
+                            <option key={opt.value} value={opt.value}>{opt.shortLabel} ROC</option>
+                          ))}
+                        </select>
+                      </th>
                       <th className="text-center py-2 px-2 text-gray-500 font-medium">30m Trend</th>
                       <th className="text-center py-2 px-2 text-gray-500 font-medium">Status</th>
                     </tr>
@@ -2328,14 +2363,15 @@ export default function ArgusPage() {
                           {strike.probability.toFixed(1)}%
                         </td>
                         <td className={`py-2 px-2 text-right font-mono ${
-                          strike.roc_1min > 0 ? 'text-emerald-400' : strike.roc_1min < 0 ? 'text-rose-400' : 'text-gray-500'
+                          (() => {
+                            const roc = getRocValue(strike)
+                            return roc > 0 ? 'text-emerald-400' : roc < 0 ? 'text-rose-400' : 'text-gray-500'
+                          })()
                         }`}>
-                          {strike.roc_1min > 0 ? '+' : ''}{strike.roc_1min.toFixed(1)}%
-                        </td>
-                        <td className={`py-2 px-2 text-right font-mono ${
-                          strike.roc_5min > 0 ? 'text-emerald-400' : strike.roc_5min < 0 ? 'text-rose-400' : 'text-gray-500'
-                        }`}>
-                          {strike.roc_5min > 0 ? '+' : ''}{strike.roc_5min.toFixed(1)}%
+                          {(() => {
+                            const roc = getRocValue(strike)
+                            return `${roc > 0 ? '+' : ''}${roc.toFixed(1)}%`
+                          })()}
                         </td>
                         <td className="py-2 px-2 text-center">
                           {(() => {
@@ -2396,6 +2432,109 @@ export default function ArgusPage() {
                 </table>
               </div>
             </div>
+
+            {/* Selected Strike ROC Detail Panel */}
+            {selectedStrike && (
+              <div className="bg-gray-800/50 rounded-xl p-5 border border-purple-500/30">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-bold text-white flex items-center gap-2">
+                    <Activity className="w-5 h-5 text-purple-400" />
+                    ROC Analysis: ${selectedStrike.strike}
+                    {selectedStrike.is_pin && <span className="text-xs bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded">PIN</span>}
+                    {selectedStrike.is_magnet && <span className="text-xs bg-yellow-500/20 text-yellow-300 px-2 py-0.5 rounded">MAGNET</span>}
+                  </h3>
+                  <button
+                    onClick={() => setSelectedStrike(null)}
+                    className="text-gray-500 hover:text-white text-sm"
+                  >
+                    ✕ Close
+                  </button>
+                </div>
+
+                {/* ROC Grid - All Timeframes */}
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+                  {[
+                    { label: '1 Min', value: selectedStrike.roc_1min, key: '1min' },
+                    { label: '5 Min', value: selectedStrike.roc_5min, key: '5min' },
+                    { label: '30 Min', value: selectedStrike.roc_30min ?? 0, key: '30min' },
+                    { label: '1 Hour', value: selectedStrike.roc_1hr ?? 0, key: '1hr' },
+                    { label: '4 Hour', value: selectedStrike.roc_4hr ?? 0, key: '4hr' },
+                    { label: 'Today', value: selectedStrike.roc_trading_day ?? 0, key: 'day' },
+                  ].map(({ label, value, key }) => (
+                    <div
+                      key={key}
+                      className={`bg-gray-900/50 rounded-lg p-3 text-center cursor-pointer transition-all ${
+                        selectedRocTimeframe === key ? 'ring-2 ring-purple-500' : 'hover:bg-gray-800/50'
+                      }`}
+                      onClick={() => setSelectedRocTimeframe(key as RocTimeframe)}
+                    >
+                      <div className="text-xs text-gray-500 mb-1">{label}</div>
+                      <div className={`text-lg font-mono font-bold ${
+                        value > 0 ? 'text-emerald-400' : value < 0 ? 'text-rose-400' : 'text-gray-500'
+                      }`}>
+                        {value > 0 ? '+' : ''}{value.toFixed(1)}%
+                      </div>
+                      {/* Visual indicator bar */}
+                      <div className="mt-2 h-1 bg-gray-700 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all ${
+                            value > 0 ? 'bg-emerald-500' : value < 0 ? 'bg-rose-500' : 'bg-gray-600'
+                          }`}
+                          style={{
+                            width: `${Math.min(Math.abs(value) * 2, 100)}%`,
+                            marginLeft: value < 0 ? 'auto' : 0
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Additional Strike Info */}
+                <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                  <div className="bg-gray-900/30 rounded px-3 py-2">
+                    <span className="text-gray-500">Net Gamma:</span>
+                    <span className={`ml-2 font-mono ${selectedStrike.net_gamma > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {selectedStrike.net_gamma > 1e6
+                        ? `${(selectedStrike.net_gamma / 1e6).toFixed(1)}M`
+                        : selectedStrike.net_gamma > 1e3
+                          ? `${(selectedStrike.net_gamma / 1e3).toFixed(1)}K`
+                          : selectedStrike.net_gamma.toFixed(0)}
+                    </span>
+                  </div>
+                  <div className="bg-gray-900/30 rounded px-3 py-2">
+                    <span className="text-gray-500">Probability:</span>
+                    <span className="ml-2 font-mono text-blue-400">{selectedStrike.probability.toFixed(1)}%</span>
+                  </div>
+                  <div className="bg-gray-900/30 rounded px-3 py-2">
+                    <span className="text-gray-500">Distance:</span>
+                    <span className={`ml-2 font-mono ${
+                      gammaData?.spot_price && selectedStrike.strike > gammaData.spot_price ? 'text-emerald-400' : 'text-rose-400'
+                    }`}>
+                      {gammaData?.spot_price
+                        ? `${((selectedStrike.strike - gammaData.spot_price) / gammaData.spot_price * 100) > 0 ? '+' : ''}${((selectedStrike.strike - gammaData.spot_price) / gammaData.spot_price * 100).toFixed(2)}%`
+                        : '-'}
+                    </span>
+                  </div>
+                  <div className="bg-gray-900/30 rounded px-3 py-2">
+                    <span className="text-gray-500">Status:</span>
+                    <span className={`ml-2 ${
+                      selectedStrike.is_danger
+                        ? 'text-orange-400'
+                        : selectedStrike.gamma_flipped
+                          ? 'text-yellow-400'
+                          : 'text-gray-400'
+                    }`}>
+                      {selectedStrike.is_danger
+                        ? selectedStrike.danger_type
+                        : selectedStrike.gamma_flipped
+                          ? `Flipped ${selectedStrike.flip_direction}`
+                          : 'Normal'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Live Commentary / ARGUS Log */}
             <div className="bg-gray-800/50 rounded-xl p-5">
