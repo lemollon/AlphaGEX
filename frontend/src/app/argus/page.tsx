@@ -1803,8 +1803,7 @@ export default function ArgusPage() {
             <h3 className="font-bold text-white flex items-center gap-2 mb-4">
               <Repeat className="w-5 h-5 text-indigo-400" />
               Pattern Similarity
-              <span className="text-xs text-gray-500 font-normal">vs Historical Days</span>
-              <span className="text-xs text-yellow-500 font-normal ml-2">(Coming Soon)</span>
+              <span className="text-xs text-gray-500 font-normal">vs Historical Days (90d)</span>
             </h3>
             {patternMatches.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -1840,8 +1839,8 @@ export default function ArgusPage() {
             ) : (
               <div className="text-center py-6 text-gray-500">
                 <Repeat className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                <p className="text-sm">Pattern matching will be available after collecting more historical data</p>
-                <p className="text-xs text-gray-600 mt-1">Historical gamma patterns are being recorded for future analysis</p>
+                <p className="text-sm">No similar patterns found in historical data</p>
+                <p className="text-xs text-gray-600 mt-1">Comparing current gamma structure against 90 days of history</p>
               </div>
             )}
           </div>

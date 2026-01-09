@@ -1450,12 +1450,91 @@ def get_default_accuracy() -> dict:
     }
 
 
+def calculate_pattern_similarity(current: dict, historical: dict) -> float:
+    """
+    Calculate similarity score between current gamma structure and a historical day.
+    Returns a score from 0-100.
+    """
+    score = 0.0
+    weights = {
+        'regime': 30,      # Same regime is most important
+        'net_gex': 25,     # Similar net GEX level
+        'flip_dist': 20,   # Similar flip point distance from spot
+        'wall_ratio': 15,  # Similar call/put wall balance
+        'mm_state': 10,    # Same market maker state
+    }
+
+    # 1. Regime match (30 points)
+    if current.get('regime') and historical.get('regime'):
+        if current['regime'] == historical['regime']:
+            score += weights['regime']
+        elif (current['regime'] in ['POSITIVE', 'STRONG_POSITIVE'] and
+              historical['regime'] in ['POSITIVE', 'STRONG_POSITIVE']):
+            score += weights['regime'] * 0.7
+        elif (current['regime'] in ['NEGATIVE', 'STRONG_NEGATIVE'] and
+              historical['regime'] in ['NEGATIVE', 'STRONG_NEGATIVE']):
+            score += weights['regime'] * 0.7
+
+    # 2. Net GEX similarity (25 points) - compare magnitude
+    if current.get('net_gex') and historical.get('net_gex'):
+        curr_gex = abs(current['net_gex'])
+        hist_gex = abs(historical['net_gex'])
+        if curr_gex > 0 and hist_gex > 0:
+            ratio = min(curr_gex, hist_gex) / max(curr_gex, hist_gex)
+            # Same sign bonus
+            if (current['net_gex'] > 0) == (historical['net_gex'] > 0):
+                score += weights['net_gex'] * ratio
+            else:
+                score += weights['net_gex'] * ratio * 0.3
+
+    # 3. Flip point distance from spot (20 points)
+    if (current.get('flip_point') and current.get('spot_price') and
+        historical.get('flip_point') and historical.get('spot_price')):
+        curr_flip_dist = (current['flip_point'] - current['spot_price']) / current['spot_price'] * 100
+        hist_flip_dist = (historical['flip_point'] - historical['spot_price']) / historical['spot_price'] * 100
+        # Similar distance = higher score
+        dist_diff = abs(curr_flip_dist - hist_flip_dist)
+        if dist_diff < 0.5:
+            score += weights['flip_dist']
+        elif dist_diff < 1.0:
+            score += weights['flip_dist'] * 0.7
+        elif dist_diff < 2.0:
+            score += weights['flip_dist'] * 0.4
+
+    # 4. Call/Put wall ratio (15 points)
+    if (current.get('call_wall') and current.get('put_wall') and current.get('spot_price') and
+        historical.get('call_wall') and historical.get('put_wall') and historical.get('spot_price')):
+        curr_call_dist = (current['call_wall'] - current['spot_price']) / current['spot_price'] * 100
+        curr_put_dist = (current['spot_price'] - current['put_wall']) / current['spot_price'] * 100
+        hist_call_dist = (historical['call_wall'] - historical['spot_price']) / historical['spot_price'] * 100
+        hist_put_dist = (historical['spot_price'] - historical['put_wall']) / historical['spot_price'] * 100
+
+        call_diff = abs(curr_call_dist - hist_call_dist)
+        put_diff = abs(curr_put_dist - hist_put_dist)
+        avg_diff = (call_diff + put_diff) / 2
+
+        if avg_diff < 0.5:
+            score += weights['wall_ratio']
+        elif avg_diff < 1.0:
+            score += weights['wall_ratio'] * 0.7
+        elif avg_diff < 2.0:
+            score += weights['wall_ratio'] * 0.4
+
+    # 5. Market maker state (10 points)
+    if current.get('mm_state') and historical.get('mm_state'):
+        if current['mm_state'] == historical['mm_state']:
+            score += weights['mm_state']
+
+    return round(score, 1)
+
+
 @router.get("/patterns")
 async def get_pattern_matches():
     """
     Get pattern match analysis.
 
-    Compares current gamma structure to historical patterns.
+    Compares current gamma structure to historical patterns from gex_history table.
+    Returns similar historical days and their price outcomes.
     """
     engine = get_engine()
     if not engine or not engine.previous_snapshot:
@@ -1463,30 +1542,198 @@ async def get_pattern_matches():
             "success": True,
             "data": {
                 "patterns": [],
-                "message": "No pattern data available yet"
+                "message": "No current gamma data available"
             }
         }
 
     try:
-        # This would use historical data to find similar patterns
-        # For now, return placeholder
+        snapshot = engine.previous_snapshot
+
+        # Build current structure for comparison
+        current_structure = {
+            'regime': snapshot.gamma_regime,
+            'net_gex': snapshot.total_net_gamma,
+            'spot_price': snapshot.spot_price,
+            'flip_point': None,  # Will be calculated below
+            'call_wall': None,
+            'put_wall': None,
+            'mm_state': None,
+        }
+
+        # Get flip point, walls from strikes
+        if snapshot.strikes:
+            # Find flip point (where gamma crosses zero)
+            for i, strike in enumerate(snapshot.strikes[:-1]):
+                if hasattr(strike, 'net_gamma'):
+                    curr_gamma = strike.net_gamma
+                    next_gamma = snapshot.strikes[i + 1].net_gamma if hasattr(snapshot.strikes[i + 1], 'net_gamma') else 0
+                    if curr_gamma * next_gamma < 0:  # Sign change
+                        current_structure['flip_point'] = strike.strike
+                        break
+
+            # Find call and put walls (highest gamma strikes above/below spot)
+            above_spot = [s for s in snapshot.strikes if hasattr(s, 'strike') and s.strike > snapshot.spot_price]
+            below_spot = [s for s in snapshot.strikes if hasattr(s, 'strike') and s.strike < snapshot.spot_price]
+
+            if above_spot:
+                call_wall = max(above_spot, key=lambda s: abs(getattr(s, 'net_gamma', 0)))
+                current_structure['call_wall'] = call_wall.strike
+            if below_spot:
+                put_wall = max(below_spot, key=lambda s: abs(getattr(s, 'net_gamma', 0)))
+                current_structure['put_wall'] = put_wall.strike
+
+        # Query historical data from gex_history table
+        conn = get_connection()
+        if not conn:
+            return {
+                "success": True,
+                "data": {
+                    "patterns": [],
+                    "current_structure": {
+                        "gamma_regime": snapshot.gamma_regime,
+                        "top_magnet": snapshot.magnets[0]['strike'] if snapshot.magnets else None,
+                        "likely_pin": snapshot.likely_pin
+                    },
+                    "message": "Database not available for pattern matching"
+                }
+            }
+
+        cursor = conn.cursor()
+
+        # Get daily snapshots from gex_history (one per day, around 10:00 AM for consistency)
+        # Look back 90 days for pattern matching
+        cursor.execute("""
+            WITH daily_snapshots AS (
+                SELECT DISTINCT ON (DATE(timestamp))
+                    DATE(timestamp) as trade_date,
+                    net_gex,
+                    flip_point,
+                    call_wall,
+                    put_wall,
+                    spot_price,
+                    mm_state,
+                    regime
+                FROM gex_history
+                WHERE symbol = 'SPY'
+                AND timestamp > NOW() - INTERVAL '90 days'
+                AND timestamp < NOW() - INTERVAL '1 day'
+                AND EXTRACT(HOUR FROM timestamp) BETWEEN 9 AND 11
+                ORDER BY DATE(timestamp), timestamp
+            ),
+            daily_outcomes AS (
+                SELECT
+                    ds.trade_date,
+                    ds.net_gex,
+                    ds.flip_point,
+                    ds.call_wall,
+                    ds.put_wall,
+                    ds.spot_price,
+                    ds.mm_state,
+                    ds.regime,
+                    -- Get closing price from same day (latest entry)
+                    (SELECT spot_price FROM gex_history gh2
+                     WHERE DATE(gh2.timestamp) = ds.trade_date
+                     AND gh2.symbol = 'SPY'
+                     ORDER BY gh2.timestamp DESC LIMIT 1) as close_price
+                FROM daily_snapshots ds
+            )
+            SELECT
+                trade_date,
+                net_gex,
+                flip_point,
+                call_wall,
+                put_wall,
+                spot_price,
+                mm_state,
+                regime,
+                close_price,
+                CASE
+                    WHEN close_price > spot_price THEN 'UP'
+                    WHEN close_price < spot_price THEN 'DOWN'
+                    ELSE 'FLAT'
+                END as outcome_direction,
+                CASE
+                    WHEN spot_price > 0 THEN ROUND(((close_price - spot_price) / spot_price * 100)::numeric, 2)
+                    ELSE 0
+                END as outcome_pct
+            FROM daily_outcomes
+            WHERE net_gex IS NOT NULL
+            ORDER BY trade_date DESC
+        """)
+
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        if not rows:
+            return {
+                "success": True,
+                "data": {
+                    "patterns": [],
+                    "current_structure": {
+                        "gamma_regime": snapshot.gamma_regime,
+                        "top_magnet": snapshot.magnets[0]['strike'] if snapshot.magnets else None,
+                        "likely_pin": snapshot.likely_pin
+                    },
+                    "message": "No historical gamma data available for pattern matching"
+                }
+            }
+
+        # Calculate similarity for each historical day
+        pattern_matches = []
+        for row in rows:
+            trade_date, net_gex, flip_point, call_wall, put_wall, spot_price, mm_state, regime, close_price, outcome_dir, outcome_pct = row
+
+            historical = {
+                'net_gex': float(net_gex) if net_gex else None,
+                'flip_point': float(flip_point) if flip_point else None,
+                'call_wall': float(call_wall) if call_wall else None,
+                'put_wall': float(put_wall) if put_wall else None,
+                'spot_price': float(spot_price) if spot_price else None,
+                'mm_state': mm_state,
+                'regime': regime,
+            }
+
+            similarity = calculate_pattern_similarity(current_structure, historical)
+
+            if similarity >= 30:  # Only include matches with at least 30% similarity
+                pattern_matches.append({
+                    'date': trade_date.strftime('%Y-%m-%d') if trade_date else None,
+                    'similarity_score': similarity,
+                    'outcome_direction': outcome_dir or 'FLAT',
+                    'outcome_pct': float(outcome_pct) if outcome_pct else 0.0,
+                    'gamma_regime_then': regime or 'UNKNOWN',
+                })
+
+        # Sort by similarity score and take top 5
+        pattern_matches.sort(key=lambda x: x['similarity_score'], reverse=True)
+        top_matches = pattern_matches[:5]
+
         return {
             "success": True,
             "data": {
-                "patterns": [],
+                "patterns": top_matches,
                 "current_structure": {
-                    "gamma_regime": engine.previous_snapshot.gamma_regime,
-                    "top_magnet": engine.previous_snapshot.magnets[0]['strike']
-                        if engine.previous_snapshot.magnets else None,
-                    "likely_pin": engine.previous_snapshot.likely_pin
+                    "gamma_regime": snapshot.gamma_regime,
+                    "top_magnet": snapshot.magnets[0]['strike'] if snapshot.magnets else None,
+                    "likely_pin": snapshot.likely_pin
                 },
-                "message": "Pattern matching will be available after collecting more historical data"
+                "total_days_analyzed": len(rows),
+                "matches_found": len(pattern_matches)
             }
         }
 
     except Exception as e:
         logger.error(f"Error getting pattern matches: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": True,
+            "data": {
+                "patterns": [],
+                "message": f"Error analyzing patterns: {str(e)}"
+            }
+        }
 
 
 @router.get("/export")
