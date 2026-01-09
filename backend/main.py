@@ -1788,6 +1788,11 @@ async def startup_event():
                 """
                 Run ARES and ATLAS trading bots via APScheduler.
                 This function runs continuously and manages both bots.
+
+                CRITICAL: Includes health monitoring to detect zombie scheduler states.
+                If the APScheduler internal thread crashes but is_running stays True,
+                this function will detect the unhealthy state and raise an exception
+                so the watchdog can restart the thread.
                 """
                 import time
                 from scheduler.trader_scheduler import get_scheduler
@@ -1801,14 +1806,51 @@ async def startup_event():
                 else:
                     print("ℹ️  ARES + ATLAS Scheduler already running")
 
+                # Health monitoring variables
+                consecutive_unhealthy = 0
+                max_unhealthy_before_restart = 3  # Restart after 3 consecutive failures (3 min)
+
                 # Keep thread alive - APScheduler runs in background
                 while True:
                     time.sleep(60)
-                    # Periodic status check
+
+                    # CRITICAL: Health check to detect zombie scheduler state
+                    # The APScheduler internal thread can crash while is_running stays True.
+                    # is_scheduler_healthy() checks:
+                    # 1. If APScheduler's _thread is alive
+                    # 2. If jobs are actually executing (not stale >15 min)
                     if scheduler.is_running:
+                        is_healthy = scheduler.is_scheduler_healthy()
                         status = scheduler.get_status()
-                        if status.get('market_open'):
-                            print(f"📊 ARES/ATLAS Status: Market OPEN | PHOENIX={scheduler.execution_count}, ATLAS={scheduler.atlas_execution_count}, ARES={scheduler.ares_execution_count}")
+
+                        if is_healthy:
+                            consecutive_unhealthy = 0  # Reset counter on healthy check
+                            if status.get('market_open'):
+                                print(f"📊 ARES/ATLAS Status: Market OPEN | ARES={scheduler.ares_execution_count}, ATHENA={getattr(scheduler, 'athena_execution_count', 0)}, PEGASUS={getattr(scheduler, 'pegasus_execution_count', 0)}")
+                        else:
+                            consecutive_unhealthy += 1
+                            print(f"⚠️ SCHEDULER UNHEALTHY ({consecutive_unhealthy}/{max_unhealthy_before_restart})")
+                            print(f"   is_running={scheduler.is_running}, scheduler_healthy={status.get('scheduler_healthy')}")
+
+                            if consecutive_unhealthy >= max_unhealthy_before_restart:
+                                # CRITICAL: Raise exception so watchdog can restart this thread
+                                # This is the FIX for the 6:05 AM issue - scheduler was in zombie state
+                                raise RuntimeError(
+                                    f"Scheduler unhealthy for {consecutive_unhealthy} consecutive checks. "
+                                    f"APScheduler internal thread may have crashed. Forcing restart via watchdog."
+                                )
+                    else:
+                        # scheduler.is_running is False - try to restart
+                        print("⚠️ Scheduler not running - attempting restart...")
+                        try:
+                            scheduler.start()
+                            print("✅ Scheduler restarted")
+                            consecutive_unhealthy = 0
+                        except Exception as e:
+                            print(f"❌ Failed to restart scheduler: {e}")
+                            consecutive_unhealthy += 1
+                            if consecutive_unhealthy >= max_unhealthy_before_restart:
+                                raise RuntimeError(f"Failed to restart scheduler after {consecutive_unhealthy} attempts: {e}")
 
             watchdog.register(
                 name="ARES_ATLAS_Scheduler",

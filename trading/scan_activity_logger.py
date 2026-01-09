@@ -146,7 +146,13 @@ def _generate_scan_id(bot_name: str) -> str:
 
 
 def _get_scan_number_today(bot_name: str) -> int:
-    """Get the scan number for today from database"""
+    """Get the scan number for today from database.
+
+    CRITICAL: Uses finally block to prevent connection leaks.
+    This function is called on EVERY scan, so leaks here cause
+    pool exhaustion over time (the 6:05 AM stoppage root cause).
+    """
+    conn = None
     try:
         from database_adapter import get_connection
         conn = get_connection()
@@ -160,11 +166,17 @@ def _get_scan_number_today(bot_name: str) -> int:
         """, (bot_name, today))
 
         result = c.fetchone()
-        conn.close()
         return result[0] if result else 1
     except Exception as e:
         logger.debug(f"Could not get scan number: {e}")
         return _scan_counters.get(bot_name, 0) + 1
+    finally:
+        # CRITICAL: Always close connection to prevent pool exhaustion
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
 
 
 def log_scan_activity(
