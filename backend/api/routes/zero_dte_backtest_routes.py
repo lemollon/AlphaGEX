@@ -432,6 +432,25 @@ def save_backtest_results(results: Dict, config: ZeroDTEBacktestConfig, job_id: 
             )
         """)
 
+        # Migration: Update old 'hybrid_fixed' strategy names to actual strategy_type
+        cursor.execute("""
+            UPDATE zero_dte_backtest_results
+            SET strategy = CASE config->>'strategy_type'
+                WHEN 'iron_condor' THEN 'Iron Condor'
+                WHEN 'bull_put' THEN 'Bull Put Spread'
+                WHEN 'bear_call' THEN 'Bear Call Spread'
+                WHEN 'iron_butterfly' THEN 'Iron Butterfly'
+                WHEN 'diagonal_call' THEN 'Diagonal Call (PMCC)'
+                WHEN 'diagonal_put' THEN 'Diagonal Put (PMCP)'
+                WHEN 'gex_protected_iron_condor' THEN 'GEX-Protected IC'
+                WHEN 'bull_call' THEN 'Bull Call Spread'
+                WHEN 'bear_put' THEN 'Bear Put Spread'
+                WHEN 'apache_directional' THEN 'Apache Directional'
+                ELSE COALESCE(config->>'strategy_type', strategy)
+            END
+            WHERE strategy = 'hybrid_fixed' AND config->>'strategy_type' IS NOT NULL
+        """)
+
         s = results.get('summary', {})
         t = results.get('trades', {})
         c = results.get('costs', {})
