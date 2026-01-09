@@ -40,6 +40,10 @@ interface StrikeData {
   gamma_change_pct: number
   roc_1min: number
   roc_5min: number
+  roc_30min: number
+  roc_1hr: number
+  roc_4hr: number
+  roc_trading_day: number
   is_magnet: boolean
   magnet_rank: number | null
   is_pin: boolean
@@ -48,6 +52,9 @@ interface StrikeData {
   gamma_flipped: boolean
   flip_direction: string | null
 }
+
+// ROC timeframe options for dropdown (longer timeframes only)
+type RocTimeframe = '4hr' | 'day'
 
 interface Magnet {
   rank: number
@@ -141,6 +148,13 @@ export default function HyperionPage() {
   const [selectedSymbol, setSelectedSymbol] = useState<string>('AAPL')
   const [symbolSearch, setSymbolSearch] = useState<string>('')
   const [showSymbolDropdown, setShowSymbolDropdown] = useState(false)
+
+  // ROC timeframe selection
+  const [selectedRocTimeframe, setSelectedRocTimeframe] = useState<RocTimeframe>('4hr')
+  const rocTimeframeOptions: { value: RocTimeframe; label: string; shortLabel: string }[] = [
+    { value: '4hr', label: '4 Hours', shortLabel: '4h' },
+    { value: 'day', label: 'Trading Day', shortLabel: 'Day' },
+  ]
 
   // Expiration selection
   const [expirations, setExpirations] = useState<ExpirationInfo[]>([])
@@ -648,6 +662,19 @@ export default function HyperionPage() {
                       <Activity className="w-5 h-5 text-blue-400" />
                       Strike Analysis
                     </h3>
+                    {/* ROC Timeframe Selector */}
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-gray-500">ROC:</span>
+                      <select
+                        value={selectedRocTimeframe}
+                        onChange={(e) => setSelectedRocTimeframe(e.target.value as RocTimeframe)}
+                        className="px-2 py-1 bg-gray-700 border border-gray-600 rounded text-xs text-white focus:outline-none focus:border-purple-500"
+                      >
+                        {rocTimeframeOptions.map((opt) => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
@@ -656,9 +683,13 @@ export default function HyperionPage() {
                           <th className="text-left py-2 px-2 text-gray-500 font-medium">Strike</th>
                           <th className="text-right py-2 px-2 text-gray-500 font-medium">Dist</th>
                           <th className="text-right py-2 px-2 text-gray-500 font-medium">Net Gamma</th>
-                          <th className="text-right py-2 px-2 text-gray-500 font-medium">Prob %</th>
-                          <th className="text-right py-2 px-2 text-gray-500 font-medium">1m ROC</th>
-                          <th className="text-right py-2 px-2 text-gray-500 font-medium">5m ROC</th>
+                          <th className="text-right py-2 px-2 text-gray-500 font-medium">1m</th>
+                          <th className="text-right py-2 px-2 text-gray-500 font-medium">5m</th>
+                          <th className="text-right py-2 px-2 text-gray-500 font-medium">30m</th>
+                          <th className="text-right py-2 px-2 text-gray-500 font-medium">1hr</th>
+                          <th className="text-right py-2 px-2 text-gray-500 font-medium">
+                            {rocTimeframeOptions.find(o => o.value === selectedRocTimeframe)?.shortLabel}
+                          </th>
                           <th className="text-center py-2 px-2 text-gray-500 font-medium">Status</th>
                         </tr>
                       </thead>
@@ -695,18 +726,36 @@ export default function HyperionPage() {
                             }`}>
                               {formatGamma(strike.net_gamma)}
                             </td>
-                            <td className="py-2 px-2 text-right text-gray-300">
-                              {strike.probability?.toFixed(1) || '0.0'}%
-                            </td>
-                            <td className={`py-2 px-2 text-right font-mono ${
+                            <td className={`py-2 px-2 text-right font-mono text-xs ${
                               (strike.roc_1min || 0) > 0 ? 'text-emerald-400' : (strike.roc_1min || 0) < 0 ? 'text-rose-400' : 'text-gray-500'
                             }`}>
                               {(strike.roc_1min || 0) > 0 ? '+' : ''}{(strike.roc_1min || 0).toFixed(1)}%
                             </td>
-                            <td className={`py-2 px-2 text-right font-mono ${
+                            <td className={`py-2 px-2 text-right font-mono text-xs ${
                               (strike.roc_5min || 0) > 0 ? 'text-emerald-400' : (strike.roc_5min || 0) < 0 ? 'text-rose-400' : 'text-gray-500'
                             }`}>
                               {(strike.roc_5min || 0) > 0 ? '+' : ''}{(strike.roc_5min || 0).toFixed(1)}%
+                            </td>
+                            <td className={`py-2 px-2 text-right font-mono text-xs ${
+                              (strike.roc_30min || 0) > 0 ? 'text-emerald-400' : (strike.roc_30min || 0) < 0 ? 'text-rose-400' : 'text-gray-500'
+                            }`}>
+                              {(strike.roc_30min || 0) > 0 ? '+' : ''}{(strike.roc_30min || 0).toFixed(1)}%
+                            </td>
+                            <td className={`py-2 px-2 text-right font-mono text-xs ${
+                              (strike.roc_1hr || 0) > 0 ? 'text-emerald-400' : (strike.roc_1hr || 0) < 0 ? 'text-rose-400' : 'text-gray-500'
+                            }`}>
+                              {(strike.roc_1hr || 0) > 0 ? '+' : ''}{(strike.roc_1hr || 0).toFixed(1)}%
+                            </td>
+                            <td className={`py-2 px-2 text-right font-mono text-xs ${
+                              (() => {
+                                const rocValue = selectedRocTimeframe === '4hr' ? strike.roc_4hr : strike.roc_trading_day
+                                return (rocValue || 0) > 0 ? 'text-emerald-400' : (rocValue || 0) < 0 ? 'text-rose-400' : 'text-gray-500'
+                              })()
+                            }`}>
+                              {(() => {
+                                const rocValue = selectedRocTimeframe === '4hr' ? strike.roc_4hr : strike.roc_trading_day
+                                return `${(rocValue || 0) > 0 ? '+' : ''}${(rocValue || 0).toFixed(1)}%`
+                              })()}
                             </td>
                             <td className="py-2 px-2 text-center">
                               <div className="flex items-center justify-center gap-1 flex-wrap">
