@@ -193,7 +193,8 @@ try:
         ScanOutcome
     )
     SCAN_ACTIVITY_LOGGER_AVAILABLE = True
-except ImportError:
+    print("✅ Scan activity logger loaded - scans will be logged to database")
+except ImportError as e:
     SCAN_ACTIVITY_LOGGER_AVAILABLE = False
     log_ares_scan = None
     log_athena_scan = None
@@ -201,7 +202,8 @@ except ImportError:
     log_icarus_scan = None
     log_titan_scan = None
     ScanOutcome = None
-    print("Warning: Scan activity logger not available.")
+    print(f"❌ WARNING: Scan activity logger NOT available: {e}")
+    print("   Scans will NOT be logged to the database!")
 
 # Import VIX Hedge Manager for scheduled signal generation
 try:
@@ -809,11 +811,17 @@ class AutonomousTraderScheduler:
                     'HOLIDAY': ScanOutcome.MARKET_CLOSED,
                 }
                 outcome = outcome_mapping.get(market_status, ScanOutcome.MARKET_CLOSED)
-                log_ares_scan(
+                scan_id = log_ares_scan(
                     outcome=outcome,
                     decision_summary=message,
                     generate_ai_explanation=False
                 )
+                if scan_id:
+                    logger.info(f"📝 ARES scan logged to database: {scan_id}")
+                else:
+                    logger.warning("⚠️ ARES scan_activity logging FAILED - check database connection")
+            else:
+                logger.warning(f"⚠️ ARES scan NOT logged: SCAN_ACTIVITY_LOGGER_AVAILABLE={SCAN_ACTIVITY_LOGGER_AVAILABLE}")
             return
 
         # Check Solomon kill switch before trading
