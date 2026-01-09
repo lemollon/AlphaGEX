@@ -677,16 +677,20 @@ class AutonomousPaperTrader(
             ))
 
             # Also write to autonomous_trade_activity (consolidated table)
+            # Uses schema: activity_date, activity_time, activity_timestamp, action_type, symbol, details, success
             c.execute("""
                 INSERT INTO autonomous_trade_activity (
-                    timestamp, action, reason, success, symbol
-                ) VALUES (%s, %s, %s, %s, %s)
+                    activity_date, activity_time, activity_timestamp,
+                    action_type, symbol, details, success
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
             """, (
-                now,
+                now.strftime('%Y-%m-%d'),
+                now.strftime('%H:%M:%S'),
+                now.strftime('%Y-%m-%d %H:%M:%S'),
                 action,
+                'SPY',
                 details,
-                success,
-                'SPY'
+                success
             ))
 
             conn.commit()
