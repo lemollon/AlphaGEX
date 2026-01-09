@@ -79,6 +79,193 @@ class CommentaryRequest(BaseModel):
     force: bool = False
 
 
+# ==================== ROC HISTORY PERSISTENCE ====================
+# Persist gamma history to database for ROC calculation continuity
+
+_history_loaded: Dict[str, bool] = {}  # Track if we've loaded history from DB per symbol
+
+
+def ensure_gamma_history_table():
+    """Create the gamma history table if it doesn't exist"""
+    try:
+        conn = get_connection()
+        if not conn:
+            return False
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS argus_gamma_history (
+                id SERIAL PRIMARY KEY,
+                symbol VARCHAR(10) NOT NULL DEFAULT 'SPY',
+                strike DECIMAL(10, 2) NOT NULL,
+                gamma_value DECIMAL(20, 8) NOT NULL,
+                recorded_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+        """)
+        # Create index for efficient lookups
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_argus_gamma_history_strike_time
+            ON argus_gamma_history(symbol, strike, recorded_at DESC)
+        """)
+        # Create index for cleanup queries
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_argus_gamma_history_recorded_at
+            ON argus_gamma_history(recorded_at)
+        """)
+        conn.commit()
+        cursor.close()
+        conn.close()
+        logger.info("ARGUS: Gamma history table ensured")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to create gamma history table: {e}")
+        return False
+
+
+def persist_gamma_history(engine, symbol: str = "SPY"):
+    """
+    Persist current gamma history from engine to database.
+    Called periodically to ensure ROC data survives restarts.
+    """
+    if not engine or not engine.history:
+        return
+
+    try:
+        conn = get_connection()
+        if not conn:
+            return
+
+        cursor = conn.cursor()
+        ensure_gamma_history_table()
+
+        # Get the most recent timestamp we have in DB for this symbol
+        cursor.execute("""
+            SELECT MAX(recorded_at) FROM argus_gamma_history WHERE symbol = %s
+        """, (symbol,))
+        row = cursor.fetchone()
+        last_db_time = row[0] if row and row[0] else None
+
+        # Insert only new history entries (avoid duplicates)
+        inserted = 0
+        for strike, history_list in engine.history.items():
+            for recorded_time, gamma_value in history_list:
+                # Skip if we already have this or older
+                if last_db_time:
+                    # Handle timezone-aware comparison
+                    check_time = recorded_time
+                    if check_time.tzinfo is None:
+                        check_time = check_time.replace(tzinfo=CENTRAL_TZ)
+                    if last_db_time.tzinfo is None:
+                        last_db_time = last_db_time.replace(tzinfo=CENTRAL_TZ)
+                    if check_time <= last_db_time:
+                        continue
+
+                cursor.execute("""
+                    INSERT INTO argus_gamma_history (symbol, strike, gamma_value, recorded_at)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT DO NOTHING
+                """, (symbol, strike, gamma_value, recorded_time))
+                inserted += 1
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        if inserted > 0:
+            logger.debug(f"ARGUS: Persisted {inserted} gamma history entries for {symbol}")
+    except Exception as e:
+        logger.warning(f"Failed to persist gamma history: {e}")
+
+
+def load_gamma_history(engine, symbol: str = "SPY"):
+    """
+    Load gamma history from database into engine.
+    Called on engine startup to restore ROC calculation capability.
+    """
+    global _history_loaded
+
+    if not engine:
+        return
+
+    if _history_loaded.get(symbol, False):
+        logger.debug(f"ARGUS: Gamma history already loaded for {symbol}, skipping")
+        return
+
+    try:
+        conn = get_connection()
+        if not conn:
+            return
+
+        cursor = conn.cursor()
+        ensure_gamma_history_table()
+
+        # Load full trading day of history (7 hours = 420 minutes to support all ROC timeframes)
+        cursor.execute("""
+            SELECT strike, gamma_value, recorded_at
+            FROM argus_gamma_history
+            WHERE symbol = %s
+            AND recorded_at > NOW() - INTERVAL '420 minutes'
+            ORDER BY strike, recorded_at ASC
+        """, (symbol,))
+
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        if not rows:
+            logger.debug(f"ARGUS: No recent gamma history found for {symbol}")
+            _history_loaded[symbol] = True
+            return
+
+        # Populate engine history
+        for strike, gamma_value, recorded_at in rows:
+            strike_float = float(strike)
+            if strike_float not in engine.history:
+                engine.history[strike_float] = []
+
+            # Ensure timezone awareness
+            if recorded_at.tzinfo is None:
+                recorded_at = recorded_at.replace(tzinfo=CENTRAL_TZ)
+
+            engine.history[strike_float].append((recorded_at, float(gamma_value)))
+
+        _history_loaded[symbol] = True
+        unique_strikes = len(engine.history)
+        total_entries = sum(len(h) for h in engine.history.values())
+        logger.info(f"ARGUS: Loaded gamma history for {symbol}: {unique_strikes} strikes, {total_entries} entries")
+
+    except Exception as e:
+        logger.warning(f"Failed to load gamma history: {e}")
+        _history_loaded[symbol] = True  # Prevent repeated failures
+
+
+def cleanup_old_gamma_history():
+    """
+    Clean up gamma history older than 8 hours.
+    Called periodically to prevent table bloat.
+    Keeps full trading day data for ROC calculations.
+    """
+    try:
+        conn = get_connection()
+        if not conn:
+            return
+
+        cursor = conn.cursor()
+        cursor.execute("""
+            DELETE FROM argus_gamma_history
+            WHERE recorded_at < NOW() - INTERVAL '8 hours'
+        """)
+        deleted = cursor.rowcount
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        if deleted > 0:
+            logger.debug(f"ARGUS: Cleaned up {deleted} old gamma history entries")
+    except Exception as e:
+        logger.warning(f"Failed to cleanup gamma history: {e}")
+
+
 def get_engine() -> Optional[ArgusEngine]:
     """Get the ARGUS engine instance"""
     if not ARGUS_AVAILABLE:
@@ -335,6 +522,10 @@ async def get_gamma_data(
     if not engine:
         raise HTTPException(status_code=503, detail="ARGUS engine not available")
 
+    # Load persisted gamma history from database for ROC continuity
+    # This ensures ROC values persist across page navigation and server restarts
+    load_gamma_history(engine, symbol)
+
     try:
         # Determine expiration
         if day:
@@ -391,6 +582,10 @@ async def get_gamma_data(
             await persist_danger_zones_to_db(snapshot.danger_zones, snapshot.spot_price, expiration)
             if engine:
                 await persist_alerts_to_db(engine.get_active_alerts())
+                # Persist gamma history for ROC continuity across page navigation/server restarts
+                persist_gamma_history(engine, symbol)
+                # Periodically clean up old history entries
+                cleanup_old_gamma_history()
 
         # Build response
         return {

@@ -62,6 +62,10 @@ interface StrikeData {
   gamma_change_pct: number
   roc_1min: number
   roc_5min: number
+  roc_30min: number
+  roc_1hr: number
+  roc_4hr: number
+  roc_trading_day: number  // ROC since market open (8:30 AM CT)
   is_magnet: boolean
   magnet_rank: number | null
   is_pin: boolean
