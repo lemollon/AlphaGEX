@@ -2079,14 +2079,16 @@ class AutonomousTraderScheduler:
         logger.info(f"Timezone: America/Chicago (Texas Central Time)")
         logger.info(f"PHOENIX Schedule: DISABLED here - handled by AutonomousTrader (every 5 min)")
         logger.info(f"ATLAS Schedule: Daily at 9:05 AM CT, Mon-Fri")
-        logger.info(f"ARES Schedule: Every 5 min (8:30 AM - 3:30 PM CT), SPY Iron Condors")
-        logger.info(f"PEGASUS Schedule: Every 5 min (8:30 AM - 3:30 PM CT), SPX Iron Condors")
-        logger.info(f"ATHENA Schedule: Every 5 min (8:35 AM - 2:30 PM CT), SPY Spreads")
-        logger.info(f"ARGUS Schedule: Every 5 min (8:30 AM - 3:00 PM CT), Commentary")
+        logger.info(f"ARES Schedule: Every 5 min (runs 24/7, market hours checked internally)")
+        logger.info(f"PEGASUS Schedule: Every 5 min (runs 24/7, market hours checked internally)")
+        logger.info(f"ATHENA Schedule: Every 5 min (runs 24/7, market hours checked internally)")
+        logger.info(f"ICARUS Schedule: Every 5 min (runs 24/7, market hours checked internally)")
+        logger.info(f"TITAN Schedule: Every 5 min (runs 24/7, market hours checked internally)")
+        logger.info(f"ARGUS Schedule: Every 5 min (runs 24/7, market hours checked internally)")
         logger.info(f"VIX_SIGNAL Schedule: HOURLY (9 AM - 3 PM CT), Hedge Signal Generation")
         logger.info(f"SOLOMON Schedule: DAILY at 4:00 PM CT (after market close)")
         logger.info(f"QUANT Schedule: WEEKLY on Sunday at 5:00 PM CT (ML model training)")
-        logger.info(f"EQUITY_SNAPSHOTS Schedule: Every 5 min during market hours (intraday charts)")
+        logger.info(f"EQUITY_SNAPSHOTS Schedule: Every 5 min (runs 24/7, market hours checked internally)")
         logger.info(f"Log file: {LOG_FILE}")
         logger.info("=" * 80)
 
@@ -2137,24 +2139,23 @@ class AutonomousTraderScheduler:
             logger.warning("⚠️ ATLAS not available - wheel trading disabled")
 
         # =================================================================
-        # ARES JOB: Aggressive Iron Condor - runs every 5 minutes during market hours
+        # ARES JOB: Aggressive Iron Condor - runs every 5 minutes
         # Scans continuously for optimal 0DTE Iron Condor entry timing
+        # Jobs run immediately on startup and every 5 min thereafter.
+        # Market hours are checked inside the job (saves BEFORE_WINDOW heartbeat if early).
         # =================================================================
         if self.ares_trader:
             self.scheduler.add_job(
                 self.scheduled_ares_logic,
                 trigger=IntervalTrigger(
                     minutes=5,
-                    start_date=datetime.now(CENTRAL_TZ).replace(
-                        hour=8, minute=30, second=0, microsecond=0
-                    ),
                     timezone='America/Chicago'
                 ),
                 id='ares_trading',
                 name='ARES - Aggressive Iron Condor (5-min intervals)',
                 replace_existing=True
             )
-            logger.info("✅ ARES job scheduled (every 5 min, 8:30 AM - 3:30 PM CT)")
+            logger.info("✅ ARES job scheduled (every 5 min, checks market hours internally)")
 
             # =================================================================
             # ARES EOD JOB: Process expired positions - runs at 3:05 PM CT
@@ -2176,26 +2177,23 @@ class AutonomousTraderScheduler:
             logger.warning("⚠️ ARES not available - aggressive IC trading disabled")
 
         # =================================================================
-        # ATHENA JOB: GEX Directional Spreads - runs every 5 minutes during market hours
+        # ATHENA JOB: GEX Directional Spreads - runs every 5 minutes
         # Uses live Tradier GEX data to find intraday opportunities
+        # Jobs run immediately on startup and every 5 min thereafter.
+        # Market hours are checked inside the job (saves BEFORE_WINDOW heartbeat if early).
         # =================================================================
         if self.athena_trader:
-            # Run every 5 minutes during market hours (8:35 AM - 2:30 PM CT)
-            # First run at 8:35 AM CT, then 8:40, 8:45, etc.
             self.scheduler.add_job(
                 self.scheduled_athena_logic,
                 trigger=IntervalTrigger(
                     minutes=5,
-                    start_date=datetime.now(CENTRAL_TZ).replace(
-                        hour=8, minute=35, second=0, microsecond=0
-                    ),
                     timezone='America/Chicago'
                 ),
                 id='athena_trading',
                 name='ATHENA - GEX Directional Spreads (5-min intervals)',
                 replace_existing=True
             )
-            logger.info("✅ ATHENA job scheduled (every 5 min during market hours)")
+            logger.info("✅ ATHENA job scheduled (every 5 min, checks market hours internally)")
 
             # =================================================================
             # ATHENA EOD JOB: Process expired positions - runs at 3:10 PM CT
@@ -2217,24 +2215,23 @@ class AutonomousTraderScheduler:
             logger.warning("⚠️ ATHENA not available - GEX directional trading disabled")
 
         # =================================================================
-        # PEGASUS JOB: SPX Iron Condors - runs every 5 minutes during market hours
+        # PEGASUS JOB: SPX Iron Condors - runs every 5 minutes
         # Trades SPX options with $10 spread widths using SPXW symbols
+        # Jobs run immediately on startup and every 5 min thereafter.
+        # Market hours are checked inside the job (saves BEFORE_WINDOW heartbeat if early).
         # =================================================================
         if self.pegasus_trader:
             self.scheduler.add_job(
                 self.scheduled_pegasus_logic,
                 trigger=IntervalTrigger(
                     minutes=5,
-                    start_date=datetime.now(CENTRAL_TZ).replace(
-                        hour=8, minute=30, second=0, microsecond=0
-                    ),
                     timezone='America/Chicago'
                 ),
                 id='pegasus_trading',
                 name='PEGASUS - SPX Iron Condor (5-min intervals)',
                 replace_existing=True
             )
-            logger.info("✅ PEGASUS job scheduled (every 5 min, 8:30 AM - 3:30 PM CT)")
+            logger.info("✅ PEGASUS job scheduled (every 5 min, checks market hours internally)")
 
             # =================================================================
             # PEGASUS EOD JOB: Process expired positions - runs at 3:15 PM CT
@@ -2256,26 +2253,23 @@ class AutonomousTraderScheduler:
             logger.warning("⚠️ PEGASUS not available - SPX IC trading disabled")
 
         # =================================================================
-        # ICARUS JOB: Aggressive Directional Spreads - runs every 5 minutes during market hours
+        # ICARUS JOB: Aggressive Directional Spreads - runs every 5 minutes
         # Uses relaxed GEX filters for more aggressive trading
+        # Jobs run immediately on startup and every 5 min thereafter.
+        # Market hours are checked inside the job (saves BEFORE_WINDOW heartbeat if early).
         # =================================================================
         if self.icarus_trader:
-            # Run every 5 minutes during market hours (8:40 AM - 2:30 PM CT)
-            # Starts 5 minutes after ATHENA to stagger bot activity
             self.scheduler.add_job(
                 self.scheduled_icarus_logic,
                 trigger=IntervalTrigger(
                     minutes=5,
-                    start_date=datetime.now(CENTRAL_TZ).replace(
-                        hour=8, minute=40, second=0, microsecond=0
-                    ),
                     timezone='America/Chicago'
                 ),
                 id='icarus_trading',
                 name='ICARUS - Aggressive Directional Spreads (5-min intervals)',
                 replace_existing=True
             )
-            logger.info("✅ ICARUS job scheduled (every 5 min during market hours)")
+            logger.info("✅ ICARUS job scheduled (every 5 min, checks market hours internally)")
 
             # =================================================================
             # ICARUS EOD JOB: Process expired positions - runs at 3:12 PM CT
@@ -2297,26 +2291,23 @@ class AutonomousTraderScheduler:
             logger.warning("⚠️ ICARUS not available - aggressive directional trading disabled")
 
         # =================================================================
-        # TITAN JOB: Aggressive SPX Iron Condors - runs every 5 minutes during market hours
+        # TITAN JOB: Aggressive SPX Iron Condors - runs every 5 minutes
         # Trades SPX options with $12 spread widths, multiple trades per day with cooldown
+        # Jobs run immediately on startup and every 5 min thereafter.
+        # Market hours are checked inside the job (saves BEFORE_WINDOW heartbeat if early).
         # =================================================================
         if self.titan_trader:
-            # Run every 5 minutes during market hours (8:45 AM - 2:30 PM CT)
-            # Starts 5 minutes after ICARUS to stagger bot activity
             self.scheduler.add_job(
                 self.scheduled_titan_logic,
                 trigger=IntervalTrigger(
                     minutes=5,
-                    start_date=datetime.now(CENTRAL_TZ).replace(
-                        hour=8, minute=45, second=0, microsecond=0
-                    ),
                     timezone='America/Chicago'
                 ),
                 id='titan_trading',
                 name='TITAN - Aggressive SPX Iron Condor (5-min intervals)',
                 replace_existing=True
             )
-            logger.info("✅ TITAN job scheduled (every 5 min during market hours)")
+            logger.info("✅ TITAN job scheduled (every 5 min, checks market hours internally)")
 
             # =================================================================
             # TITAN EOD JOB: Process expired positions - runs at 3:17 PM CT
@@ -2338,23 +2329,22 @@ class AutonomousTraderScheduler:
             logger.warning("⚠️ TITAN not available - aggressive SPX IC trading disabled")
 
         # =================================================================
-        # ARGUS JOB: Commentary Generation - runs every 5 minutes during market hours
+        # ARGUS JOB: Commentary Generation - runs every 5 minutes
         # Generates AI-powered gamma commentary for the Live Log
+        # Jobs run immediately on startup and every 5 min thereafter.
+        # Market hours are checked inside the job.
         # =================================================================
         self.scheduler.add_job(
             self.scheduled_argus_logic,
             trigger=IntervalTrigger(
                 minutes=5,
-                start_date=datetime.now(CENTRAL_TZ).replace(
-                    hour=8, minute=30, second=0, microsecond=0
-                ),
                 timezone='America/Chicago'
             ),
             id='argus_commentary',
             name='ARGUS - Gamma Commentary (5-min intervals)',
             replace_existing=True
         )
-        logger.info("✅ ARGUS job scheduled (every 5 min during market hours)")
+        logger.info("✅ ARGUS job scheduled (every 5 min, checks market hours internally)")
 
         # =================================================================
         # VIX SIGNAL JOB: VIX Hedge Signal Generation - runs HOURLY during market hours
@@ -2457,18 +2447,19 @@ class AutonomousTraderScheduler:
         # =================================================================
         # EQUITY SNAPSHOTS JOB: Intraday chart data - runs every 5 minutes
         # Saves equity snapshots for all bots during market hours
+        # Jobs run immediately on startup and every 5 min thereafter.
         # =================================================================
         self.scheduler.add_job(
             self.scheduled_equity_snapshots_logic,
             trigger=IntervalTrigger(
                 minutes=5,
-                start_date=datetime.now(CENTRAL_TZ).replace(hour=8, minute=35, second=0)
+                timezone='America/Chicago'
             ),
             id='equity_snapshots',
             name='EQUITY_SNAPSHOTS - Intraday Chart Data',
             replace_existing=True
         )
-        logger.info("✅ EQUITY_SNAPSHOTS job scheduled (every 5 min during market hours)")
+        logger.info("✅ EQUITY_SNAPSHOTS job scheduled (every 5 min, checks market hours internally)")
 
         self.scheduler.start()
         self.is_running = True
@@ -2477,6 +2468,23 @@ class AutonomousTraderScheduler:
         self._mark_auto_restart("User started")
         self._clear_auto_restart()  # Clear immediately - we're running now
         self._save_state()  # Save running state
+
+        # =================================================================
+        # STARTUP HEARTBEAT: Save initial heartbeat for all bots
+        # This ensures dashboard shows the scheduler is alive immediately,
+        # even before the first job runs (which might be 5 minutes away).
+        # =================================================================
+        logger.info("Saving startup heartbeats for all bots...")
+        is_open, market_status = self.get_market_status()
+        startup_status = 'STARTING' if is_open else market_status
+        startup_details = {'event': 'scheduler_startup', 'market_status': market_status}
+
+        for bot_name in ['ARES', 'ATHENA', 'PEGASUS', 'ICARUS', 'TITAN', 'ATLAS', 'PHOENIX']:
+            try:
+                self._save_heartbeat(bot_name, startup_status, startup_details)
+            except Exception as e:
+                logger.debug(f"Could not save startup heartbeat for {bot_name}: {e}")
+        logger.info(f"✅ Startup heartbeats saved for all bots (status: {startup_status})")
 
         logger.info("✓ Scheduler started successfully")
         logger.info("✓ Auto-restart enabled - will survive app restarts")
