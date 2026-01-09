@@ -259,9 +259,26 @@ class VIXHedgeManager:
             }
 
         except Exception as e:
-            logger.error(f"Error getting VIX data: {e}")
-            # Re-raise - don't hide the error with fake data
-            raise
+            logger.warning(f"Error getting live VIX data: {e} - using fallback defaults")
+            # Return fallback data so signal generation can continue
+            # Mark as estimated/fallback so frontend can show warning
+            return {
+                'vix_spot': 18.0,  # Reasonable market average
+                'vix_source': 'fallback',
+                'vix_m1': 18.9,    # ~5% contango
+                'vix_m2': 19.4,    # ~8% contango
+                'is_estimated': True,
+                'is_fallback': True,  # Additional flag to indicate data source failure
+                'term_structure_m1_pct': 5.0,
+                'term_structure_m2_pct': 8.0,
+                'structure_type': 'contango',
+                'vvix': None,
+                'vvix_source': 'none',
+                'vix_stress_level': 'normal',
+                'position_size_multiplier': 1.0,
+                'timestamp': datetime.now(CENTRAL_TZ).isoformat(),
+                'error': str(e)
+            }
 
     def calculate_iv_percentile(self, vix_current: float) -> float:
         """
@@ -538,7 +555,9 @@ class VIXHedgeManager:
                 'realized_vol_20d': realized_vol,
                 'iv_rv_spread': iv_rv_spread,
                 'spy_spot': spy_spot,
-                'structure_type': vix_data.get('structure_type', 'unknown')
+                'structure_type': vix_data.get('structure_type', 'unknown'),
+                'vix_source': vix_data.get('vix_source', 'unknown'),
+                'is_fallback': vix_data.get('is_fallback', False),
             }
         )
 
@@ -556,13 +575,29 @@ class VIXHedgeManager:
             conn = get_connection()
             c = conn.cursor()
 
+            # Ensure new columns exist (migration)
+            try:
+                c.execute("""
+                    ALTER TABLE vix_hedge_signals
+                    ADD COLUMN IF NOT EXISTS vix_source VARCHAR(50) DEFAULT 'unknown',
+                    ADD COLUMN IF NOT EXISTS is_fallback BOOLEAN DEFAULT FALSE
+                """)
+                conn.commit()
+            except Exception:
+                conn.rollback()  # Column might already exist in different format
+
+            # Get fallback status from metrics
+            is_fallback = signal.metrics.get('is_fallback', False)
+            vix_source = signal.metrics.get('vix_source', 'unknown')
+
             c.execute("""
                 INSERT INTO vix_hedge_signals (
                     signal_date, signal_time, signal_type, confidence,
                     vol_regime, vix_spot, vix_futures_m1, vix_futures_m2,
                     term_structure_pct, iv_percentile, realized_vol_20d,
-                    iv_rv_spread, spy_spot, reasoning, recommended_action, risk_warning
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    iv_rv_spread, spy_spot, reasoning, recommended_action, risk_warning,
+                    vix_source, is_fallback
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 signal.timestamp.strftime('%Y-%m-%d'),
                 signal.timestamp.strftime('%H:%M:%S'),
@@ -579,14 +614,19 @@ class VIXHedgeManager:
                 signal.metrics.get('spy_spot', 0),
                 signal.reasoning,
                 signal.recommended_action,
-                signal.risk_warning
+                signal.risk_warning,
+                vix_source,
+                is_fallback
             ))
 
             conn.commit()
             conn.close()
-            logger.debug(f"VIX hedge signal saved: {signal.signal_type.value}")
+
+            source_info = f" (source: {vix_source})" if vix_source != 'unknown' else ""
+            fallback_info = " [FALLBACK DATA]" if is_fallback else ""
+            logger.info(f"VIX hedge signal saved: {signal.signal_type.value}{source_info}{fallback_info}")
         except Exception as e:
-            logger.error(f"Error saving signal: {e}")
+            logger.error(f"Error saving VIX signal: {e}")
 
     def get_signal_history(self, days: int = 30) -> pd.DataFrame:
         """Get historical signals"""
