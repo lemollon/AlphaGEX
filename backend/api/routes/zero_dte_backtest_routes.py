@@ -381,6 +381,23 @@ def _sanitize_numeric(value, default=0.0, max_value=999999999.99):
         return default
 
 
+def _format_strategy_name(strategy_type: str) -> str:
+    """Convert strategy_type to a human-readable display name"""
+    STRATEGY_NAMES = {
+        "iron_condor": "Iron Condor",
+        "bull_put": "Bull Put Spread",
+        "bear_call": "Bear Call Spread",
+        "iron_butterfly": "Iron Butterfly",
+        "diagonal_call": "Diagonal Call (PMCC)",
+        "diagonal_put": "Diagonal Put (PMCP)",
+        "gex_protected_iron_condor": "GEX-Protected IC",
+        "bull_call": "Bull Call Spread",
+        "bear_put": "Bear Put Spread",
+        "apache_directional": "Apache Directional",
+    }
+    return STRATEGY_NAMES.get(strategy_type, strategy_type.replace("_", " ").title())
+
+
 def save_backtest_results(results: Dict, config: ZeroDTEBacktestConfig, job_id: str):
     """Save backtest results to database"""
     try:
@@ -415,6 +432,25 @@ def save_backtest_results(results: Dict, config: ZeroDTEBacktestConfig, job_id: 
             )
         """)
 
+        # Migration: Update old 'hybrid_fixed' strategy names to actual strategy_type
+        cursor.execute("""
+            UPDATE zero_dte_backtest_results
+            SET strategy = CASE config->>'strategy_type'
+                WHEN 'iron_condor' THEN 'Iron Condor'
+                WHEN 'bull_put' THEN 'Bull Put Spread'
+                WHEN 'bear_call' THEN 'Bear Call Spread'
+                WHEN 'iron_butterfly' THEN 'Iron Butterfly'
+                WHEN 'diagonal_call' THEN 'Diagonal Call (PMCC)'
+                WHEN 'diagonal_put' THEN 'Diagonal Put (PMCP)'
+                WHEN 'gex_protected_iron_condor' THEN 'GEX-Protected IC'
+                WHEN 'bull_call' THEN 'Bull Call Spread'
+                WHEN 'bear_put' THEN 'Bear Put Spread'
+                WHEN 'apache_directional' THEN 'Apache Directional'
+                ELSE COALESCE(config->>'strategy_type', strategy)
+            END
+            WHERE strategy = 'hybrid_fixed' AND config->>'strategy_type' IS NOT NULL
+        """)
+
         s = results.get('summary', {})
         t = results.get('trades', {})
         c = results.get('costs', {})
@@ -440,8 +476,11 @@ def save_backtest_results(results: Dict, config: ZeroDTEBacktestConfig, job_id: 
         tier_stats_json = json.dumps(results.get('tier_stats', {}), default=str)
         monthly_returns_json = json.dumps(results.get('monthly_returns', {}), default=str)
 
+        # Get formatted strategy name from strategy_type
+        strategy_display_name = _format_strategy_name(config.strategy_type)
+
         # Debug logging
-        print(f"📝 KRONOS: Saving backtest - job_id={job_id}, trades={total_trades}, return={total_return_pct:.2f}%", flush=True)
+        print(f"📝 KRONOS: Saving backtest - job_id={job_id}, strategy={strategy_display_name}, trades={total_trades}, return={total_return_pct:.2f}%", flush=True)
 
         cursor.execute("""
             INSERT INTO zero_dte_backtest_results (
@@ -460,7 +499,7 @@ def save_backtest_results(results: Dict, config: ZeroDTEBacktestConfig, job_id: 
                 total_return_pct = EXCLUDED.total_return_pct
         """, (
             job_id,
-            config.strategy,
+            strategy_display_name,
             config.ticker,
             config.start_date,
             config.end_date,
