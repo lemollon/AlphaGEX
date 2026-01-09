@@ -4,11 +4,15 @@ ICARUS - Data Models
 
 All data classes for ICARUS aggressive directional spread trading.
 
-ICARUS uses more aggressive parameters than ATHENA:
-- 10% wall filter (trades far from walls)
-- 40% min win probability
-- 4% risk per trade
-- 10 max daily trades
+ICARUS uses MORE AGGRESSIVE Apache GEX backtest parameters than ATHENA:
+- 2% wall filter (vs ATHENA's 1%) - more room to trade
+- 48% min win probability (vs 55%) - lower threshold
+- 3% risk per trade (vs 2%) - larger positions
+- 8 max daily trades (vs 5) - more opportunities
+- VIX range 12-30 (vs 15-25) - wider volatility range
+- GEX ratio 1.3/0.77 (vs 1.5/0.67) - weaker asymmetry allowed
+
+Safety filters ARE ENABLED (unlike old ICARUS with everything disabled).
 """
 
 from dataclasses import dataclass, field, asdict
@@ -45,18 +49,21 @@ class TradingMode(Enum):
 @dataclass
 class ICARUSConfig:
     """
-    ICARUS configuration with AGGRESSIVE parameters.
+    ICARUS configuration with AGGRESSIVE Apache GEX backtest parameters.
 
-    Key differences from ATHENA:
-    - wall_filter_pct: 10% (vs 3%) - most relaxed, room to trade
-    - min_win_probability: 40% (vs 48%) - lower threshold
-    - min_rr_ratio: 0.5 (vs 0.8) - accept marginal setups
-    - risk_per_trade_pct: 4% (vs 2%) - larger positions
-    - max_daily_trades: 10 (vs 5) - more trades
-    - max_open_positions: 5 (vs 3) - more exposure
-    - spread_width: 3 (vs 2) - wider spreads
-    - profit_target_pct: 30% (vs 50%) - take profits earlier
-    - stop_loss_pct: 70% (vs 50%) - wider stops
+    Key differences from ATHENA (Apache optimal):
+    - wall_filter_pct: 2% (vs 1%) - more room to trade
+    - min_win_probability: 48% (vs 55%) - lower threshold but still positive expectancy
+    - min_confidence: 48% (vs 55%) - lower threshold
+    - min_rr_ratio: 1.2 (vs 1.5) - accept slightly lower R:R
+    - VIX range: 12-30 (vs 15-25) - wider volatility range
+    - GEX ratio: 1.3/0.77 (vs 1.5/0.67) - weaker asymmetry allowed
+    - risk_per_trade_pct: 3% (vs 2%) - larger positions
+    - max_daily_trades: 8 (vs 5) - more trades
+    - max_open_positions: 4 (vs 3) - more exposure
+    - spread_width: $3 (vs $2) - wider spreads
+    - profit_target_pct: 40% (vs 50%) - take profits earlier
+    - stop_loss_pct: 60% (vs 50%) - wider stops
     """
     # Mode
     mode: TradingMode = TradingMode.PAPER
@@ -64,23 +71,32 @@ class ICARUSConfig:
 
     # Capital management - AGGRESSIVE
     capital: float = 100_000.0
-    risk_per_trade_pct: float = 4.0  # 4% vs ATHENA's 2%
+    risk_per_trade_pct: float = 3.0  # 3% vs ATHENA's 2%
 
     # Trade limits - AGGRESSIVE
-    max_daily_trades: int = 10  # 10 vs ATHENA's 5
-    max_open_positions: int = 5  # 5 vs ATHENA's 3
+    max_daily_trades: int = 8  # 8 vs ATHENA's 5
+    max_open_positions: int = 4  # 4 vs ATHENA's 3
 
     # Spread parameters - AGGRESSIVE
     spread_width: int = 3  # $3 vs ATHENA's $2
 
-    # Signal thresholds - MOST RELAXED
-    wall_filter_pct: float = 10.0  # 10% vs ATHENA's 3% - room to trade!
-    min_rr_ratio: float = 0.5  # 0.5 vs ATHENA's 0.8
-    min_win_probability: float = 0.40  # 40% vs ATHENA's 48%
+    # Signal thresholds - AGGRESSIVE but with EDGE (Apache-based)
+    wall_filter_pct: float = 2.0  # 2% vs ATHENA's 1% - more room to trade
+    min_rr_ratio: float = 1.2  # 1.2 vs ATHENA's 1.5 - still need edge
+    min_win_probability: float = 0.48  # 48% vs ATHENA's 55% - lower but near breakeven
+    min_confidence: float = 0.48  # 48% vs ATHENA's 55%
+
+    # VIX filter (AGGRESSIVE - wider range than ATHENA)
+    min_vix: float = 12.0  # 12 vs ATHENA's 15 - allow lower vol
+    max_vix: float = 30.0  # 30 vs ATHENA's 25 - allow higher vol
+
+    # GEX ratio asymmetry (AGGRESSIVE - weaker asymmetry allowed)
+    min_gex_ratio_bearish: float = 1.3  # 1.3 vs ATHENA's 1.5 for bearish
+    max_gex_ratio_bullish: float = 0.77  # 0.77 vs ATHENA's 0.67 for bullish
 
     # Exit thresholds - AGGRESSIVE
-    profit_target_pct: float = 30.0  # 30% vs ATHENA's 50% - take profits earlier
-    stop_loss_pct: float = 70.0  # 70% vs ATHENA's 50% - wider stops
+    profit_target_pct: float = 40.0  # 40% vs ATHENA's 50% - take profits earlier
+    stop_loss_pct: float = 60.0  # 60% vs ATHENA's 50% - slightly wider stops
 
     # Trading hours (Central Time)
     entry_start: str = "08:35"
@@ -252,13 +268,15 @@ class TradeSignal:
 
     @property
     def is_valid(self) -> bool:
-        """Check if signal has all required fields"""
+        """Check if signal passes validation (aggressive Apache thresholds)"""
         return (
             self.direction in ("BULLISH", "BEARISH") and
             self.spot_price > 0 and
             self.long_strike > 0 and
             self.short_strike > 0 and
-            self.rr_ratio > 0
+            self.confidence >= 0.48 and  # 48% confidence minimum (vs ATHENA's 55%)
+            self.rr_ratio >= 1.2 and  # 1.2:1 R:R minimum (vs ATHENA's 1.5)
+            self.max_profit > 0
         )
 
 

@@ -4,10 +4,14 @@ ICARUS - Signal Generation
 
 Clean signal generation using GEX data, Oracle, and ML models.
 
-ICARUS uses aggressive parameters:
-- 10% wall filter (vs ATHENA's 3%)
-- 40% min win probability (vs 48%)
-- Trades far from walls for more opportunities
+ICARUS uses AGGRESSIVE Apache GEX backtest parameters (vs ATHENA):
+- 2% wall filter (vs 1%) - more room to trade
+- 48% min win probability (vs 55%) - lower threshold
+- VIX range 12-30 (vs 15-25) - wider volatility range
+- GEX ratio 1.3/0.77 (vs 1.5/0.67) - weaker asymmetry allowed
+- Uses Tradier LIVE GEX data only (no stale Kronos)
+
+Safety filters ARE ENABLED with aggressive thresholds.
 """
 
 import logging
@@ -109,9 +113,14 @@ class SignalGenerator:
     """
     Generates trading signals from GEX data and ML models.
 
-    ICARUS uses MORE AGGRESSIVE parameters than ATHENA:
-    - 10% wall_filter_pct (vs 3%)
-    - 40% min_win_probability (vs 48%)
+    ICARUS uses AGGRESSIVE Apache GEX backtest parameters (vs ATHENA):
+    - 2% wall_filter_pct (vs 1%) - more room to trade
+    - 48% min_win_probability (vs 55%) - lower threshold
+    - 1.2 min_rr_ratio (vs 1.5) - accept slightly lower R:R
+    - VIX range 12-30 (vs 15-25) - wider range
+    - GEX ratio 1.3/0.77 (vs 1.5/0.67) - weaker asymmetry allowed
+
+    Safety filters ARE ENABLED with aggressive thresholds.
     """
 
     def __init__(self, config: ICARUSConfig):
@@ -120,38 +129,10 @@ class SignalGenerator:
 
     def _init_components(self) -> None:
         """Initialize signal generation components"""
-        # GEX Calculator - Try Kronos first, but VERIFY it has FRESH data
+        # GEX Calculator - Use Tradier for LIVE data (Kronos is for backtesting only)
         self.gex_calculator = None
-        kronos_works = False
 
-        if KRONOS_AVAILABLE:
-            try:
-                kronos_calc = KronosGEXCalculator()
-                test_result = kronos_calc.calculate_gex(self.config.ticker)
-                if test_result and test_result.get('spot_price', 0) > 0:
-                    # Check data freshness - reject if older than 2 days
-                    trade_date = test_result.get('trade_date', '')
-                    if trade_date:
-                        from datetime import datetime
-                        try:
-                            data_date = datetime.strptime(trade_date, '%Y-%m-%d')
-                            days_old = (datetime.now() - data_date).days
-                            if days_old <= 2:
-                                self.gex_calculator = kronos_calc
-                                kronos_works = True
-                                logger.info(f"ICARUS: Kronos GEX verified (spot={test_result.get('spot_price')}, date={trade_date})")
-                            else:
-                                logger.warning(f"ICARUS: Kronos data too stale ({days_old} days old) - using Tradier")
-                        except ValueError:
-                            logger.warning("ICARUS: Kronos has invalid trade_date - using Tradier")
-                    else:
-                        logger.warning("ICARUS: Kronos returned no trade_date - using Tradier")
-                else:
-                    logger.warning("ICARUS: Kronos returned no data - using Tradier")
-            except Exception as e:
-                logger.warning(f"ICARUS: Kronos GEX init/test failed: {e}")
-
-        if not kronos_works and TRADIER_GEX_AVAILABLE:
+        if TRADIER_GEX_AVAILABLE:
             try:
                 tradier_calc = get_gex_calculator()
                 test_result = tradier_calc.calculate_gex(self.config.ticker)
@@ -164,7 +145,7 @@ class SignalGenerator:
                 logger.warning(f"ICARUS: Tradier GEX init/test failed: {e}")
 
         if not self.gex_calculator:
-            logger.error("ICARUS: NO GEX CALCULATOR AVAILABLE")
+            logger.error("ICARUS: NO GEX CALCULATOR AVAILABLE - Tradier required for live trading")
 
         # ML Signal Integration
         self.ml_signal = None
@@ -549,7 +530,7 @@ class SignalGenerator:
         """
         Check if price is near a GEX wall for entry.
 
-        ICARUS uses 10% wall filter (vs ATHENA's 3%) - MUCH MORE RELAXED!
+        ICARUS uses 2% wall filter (vs ATHENA's 1%) - more aggressive but still filtered.
 
         Returns: (is_valid, direction, reason)
         """
@@ -564,7 +545,7 @@ class SignalGenerator:
         dist_to_put_wall_pct = abs((spot - put_wall) / spot) * 100
         dist_to_call_wall_pct = abs((call_wall - spot) / spot) * 100
 
-        # ICARUS uses 10% threshold - much more relaxed!
+        # ICARUS uses 2% threshold (vs ATHENA's 1%) - more aggressive but still filtered
         threshold = self.config.wall_filter_pct
 
         # Check which wall is within threshold
@@ -664,15 +645,36 @@ class SignalGenerator:
         spot_price = gex_data['spot_price']
         vix = gex_data['vix']
 
-        # VIX filter DISABLED - always allow trading
-        logger.info(f"[ICARUS] VIX {vix:.1f} - skip check DISABLED")
+        # VIX filter - aggressive range (12-30 vs ATHENA's 15-25)
+        if vix < self.config.min_vix:
+            logger.info(f"[ICARUS SKIP] VIX {vix:.1f} below minimum {self.config.min_vix} (no premium)")
+            return None
+        if vix > self.config.max_vix:
+            logger.info(f"[ICARUS SKIP] VIX {vix:.1f} above maximum {self.config.max_vix} (too volatile)")
+            return None
+        logger.info(f"[ICARUS] VIX {vix:.1f} in range [{self.config.min_vix}-{self.config.max_vix}] ✓")
 
-        # Wall proximity check - get direction but don't block
+        # Wall proximity check - BLOCKING (aggressive 2% threshold)
         near_wall, wall_direction, wall_reason = self.check_wall_proximity(gex_data)
         if not near_wall:
-            logger.info(f"[ICARUS] Wall filter: {wall_reason} - but NOT blocking")
-            # Use FLAT direction if no wall proximity
-            wall_direction = "FLAT"
+            logger.info(f"[ICARUS SKIP] {wall_reason} - not near GEX wall")
+            return None
+        logger.info(f"[ICARUS] Wall proximity: {wall_reason} ✓")
+
+        # GEX Ratio Asymmetry Check (aggressive thresholds: 1.3/0.77)
+        total_put_gex = gex_data.get('put_gex', gex_data.get('kronos_raw', {}).get('total_put_gex', 0))
+        total_call_gex = gex_data.get('call_gex', gex_data.get('kronos_raw', {}).get('total_call_gex', 0))
+        gex_ratio = total_put_gex / total_call_gex if total_call_gex > 0 else 10.0
+
+        # Check if GEX ratio shows directional asymmetry (more relaxed than ATHENA)
+        has_gex_asymmetry = (gex_ratio >= self.config.min_gex_ratio_bearish or
+                             gex_ratio <= self.config.max_gex_ratio_bullish)
+        if not has_gex_asymmetry:
+            logger.info(f"[ICARUS SKIP] GEX ratio {gex_ratio:.2f} not asymmetric enough "
+                       f"(need >{self.config.min_gex_ratio_bearish} bearish or <{self.config.max_gex_ratio_bullish} bullish)")
+            return None
+        gex_bias = "BEARISH" if gex_ratio >= self.config.min_gex_ratio_bearish else "BULLISH"
+        logger.info(f"[ICARUS] GEX ratio {gex_ratio:.2f} shows {gex_bias} asymmetry ✓")
 
         # Step 3: Get ML signal from 5 GEX probability models (PREFERRED SOURCE)
         # ICARUS is AGGRESSIVE - ML models backtested with high win rates take precedence
@@ -735,14 +737,14 @@ class SignalGenerator:
                     logger.info(f"[ICARUS] Oracle advises SKIP_TODAY but ML override active")
                     logger.info(f"  ICARUS trusts ML: {ml_win_prob:.1%} win probability")
                 else:
-                    logger.info(f"[ICARUS] Oracle SKIP_TODAY - using aggressive 40% threshold")
+                    logger.info(f"[ICARUS] Oracle SKIP_TODAY - using aggressive 48% threshold")
 
-        # Win probability threshold check DISABLED - always trade
+        # Win probability threshold check - aggressive 48% (vs ATHENA's 55%)
         logger.info(f"[ICARUS DECISION] Using {prediction_source} win probability: {effective_win_prob:.1%}")
-        logger.info(f"[ICARUS] Win probability threshold check DISABLED - proceeding with trade")
-        if effective_win_prob <= 0:
-            effective_win_prob = 0.50  # Default to 50% if no prediction
-        logger.info(f"[ICARUS PASSED] {prediction_source} Win Prob {effective_win_prob:.1%} - threshold disabled")
+        if effective_win_prob < self.config.min_win_probability:
+            logger.info(f"[ICARUS SKIP] Win probability {effective_win_prob:.1%} below minimum {self.config.min_win_probability:.0%}")
+            return None
+        logger.info(f"[ICARUS] Win probability {effective_win_prob:.1%} >= {self.config.min_win_probability:.0%} ✓")
 
         # Step 4: Determine final direction
         direction = wall_direction
@@ -846,10 +848,11 @@ class SignalGenerator:
                     confidence, oracle['top_factors'], gex_data
                 )
 
-        # ICARUS has lower confidence threshold (0.40)
-        if confidence < 0.40:
-            logger.info(f"Confidence too low: {confidence:.2f}")
+        # Confidence threshold - aggressive 48% (vs ATHENA's 55%)
+        if confidence < self.config.min_confidence:
+            logger.info(f"[ICARUS SKIP] Confidence {confidence:.0%} below minimum {self.config.min_confidence:.0%}")
             return None
+        logger.info(f"[ICARUS] Confidence {confidence:.0%} >= {self.config.min_confidence:.0%} ✓")
 
         # Step 5: Determine spread type
         spread_type = SpreadType.BULL_CALL if direction == "BULLISH" else SpreadType.BEAR_PUT
@@ -867,12 +870,13 @@ class SignalGenerator:
             spread_type, long_strike, short_strike, spot_price, vix
         )
 
-        # Step 8: Calculate risk/reward (0.5 min for ICARUS)
+        # Step 8: Calculate risk/reward (1.2 min for ICARUS vs ATHENA's 1.5)
         rr_ratio = max_profit / max_loss if max_loss > 0 else 0
 
         if rr_ratio < self.config.min_rr_ratio:
-            logger.info(f"R:R ratio {rr_ratio:.2f} below minimum {self.config.min_rr_ratio}")
+            logger.info(f"[ICARUS SKIP] R:R ratio {rr_ratio:.2f} below minimum {self.config.min_rr_ratio}")
             return None
+        logger.info(f"[ICARUS] R:R ratio {rr_ratio:.2f} >= {self.config.min_rr_ratio} ✓")
 
         # Step 9: Build detailed reasoning
         reasoning_parts = []
