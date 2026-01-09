@@ -118,51 +118,23 @@ class SignalGenerator:
 
     def _init_components(self) -> None:
         """Initialize signal generation components"""
-        # GEX Calculator - Try Kronos first, but VERIFY it has FRESH data
+        # GEX Calculator - Use Tradier for LIVE data (Kronos is for backtesting only)
         self.gex_calculator = None
-        kronos_works = False
 
-        if KRONOS_AVAILABLE:
-            try:
-                kronos_calc = KronosGEXCalculator()
-                test_result = kronos_calc.calculate_gex(self.config.ticker)
-                if test_result and test_result.get('spot_price', 0) > 0:
-                    # Check data freshness - reject if older than 2 days
-                    trade_date = test_result.get('trade_date', '')
-                    if trade_date:
-                        from datetime import datetime
-                        try:
-                            data_date = datetime.strptime(trade_date, '%Y-%m-%d')
-                            days_old = (datetime.now() - data_date).days
-                            if days_old <= 2:
-                                self.gex_calculator = kronos_calc
-                                kronos_works = True
-                                logger.info(f"ATHENA: Kronos GEX verified (spot={test_result.get('spot_price')}, date={trade_date})")
-                            else:
-                                logger.warning(f"ATHENA: Kronos data too stale ({days_old} days old) - using Tradier")
-                        except ValueError:
-                            logger.warning("ATHENA: Kronos has invalid trade_date - using Tradier")
-                    else:
-                        logger.warning("ATHENA: Kronos returned no trade_date - using Tradier")
-                else:
-                    logger.warning("ATHENA: Kronos returned no data - using Tradier")
-            except Exception as e:
-                logger.warning(f"ATHENA: Kronos GEX init/test failed: {e}")
-
-        if not kronos_works and TRADIER_GEX_AVAILABLE:
+        if TRADIER_GEX_AVAILABLE:
             try:
                 tradier_calc = get_gex_calculator()
                 test_result = tradier_calc.calculate_gex(self.config.ticker)
                 if test_result and test_result.get('spot_price', 0) > 0:
                     self.gex_calculator = tradier_calc
-                    logger.info(f"ATHENA: Using Tradier GEX (live spot={test_result.get('spot_price')})")
+                    logger.info(f"ATHENA: Using Tradier GEX for LIVE trading (spot={test_result.get('spot_price')})")
                 else:
                     logger.error("ATHENA: Tradier GEX returned no data!")
             except Exception as e:
                 logger.warning(f"ATHENA: Tradier GEX init/test failed: {e}")
 
         if not self.gex_calculator:
-            logger.error("ATHENA: NO GEX CALCULATOR AVAILABLE")
+            logger.error("ATHENA: NO GEX CALCULATOR AVAILABLE - Tradier required for live trading")
 
         # ML Signal Integration
         self.ml_signal = None
@@ -370,8 +342,11 @@ class SignalGenerator:
                 'flip_point': gex.get('flip_point', gex.get('gamma_flip', 0)),
                 'vix': vix,
                 'timestamp': datetime.now(CENTRAL_TZ),
-                # Raw Kronos data for audit
-                'kronos_raw': gex,
+                # Raw GEX data for audit (Tradier live data)
+                'gex_raw': gex,
+                # GEX values for ratio calculation (Tradier uses call_gex/put_gex)
+                'call_gex': abs(gex.get('call_gex', 0)),
+                'put_gex': abs(gex.get('put_gex', 0)),
             }
         except Exception as e:
             logger.error(f"GEX fetch error: {e}")
@@ -658,15 +633,64 @@ class SignalGenerator:
         spot_price = gex_data['spot_price']
         vix = gex_data['vix']
 
-        # VIX filter DISABLED - always allow trading
-        logger.info(f"[ATHENA] VIX {vix:.1f} - skip check DISABLED")
+        # ============================================================
+        # VIX FILTER - Apache backtest optimal range: 15-25
+        # Below 15: Not enough premium to capture
+        # Above 25: Spreads decay too fast, high gamma risk
+        # ============================================================
+        if vix < self.config.min_vix:
+            logger.info(f"[ATHENA SKIP] VIX {vix:.1f} below minimum {self.config.min_vix} - insufficient premium")
+            return None
+        if vix > self.config.max_vix:
+            logger.info(f"[ATHENA SKIP] VIX {vix:.1f} above maximum {self.config.max_vix} - too volatile for debit spreads")
+            return None
+        logger.info(f"[ATHENA] VIX {vix:.1f} in optimal range ({self.config.min_vix}-{self.config.max_vix})")
 
-        # Wall proximity check - get direction but don't block
+        # ============================================================
+        # WALL PROXIMITY CHECK - Apache backtest: 1% threshold (BLOCKING)
+        # Must be near GEX wall to have edge
+        # ============================================================
         near_wall, wall_direction, wall_reason = self.check_wall_proximity(gex_data)
         if not near_wall:
-            logger.info(f"[ATHENA] Wall filter: {wall_reason} - but NOT blocking")
-            # Use FLAT direction if no wall proximity
-            wall_direction = "FLAT"
+            logger.info(f"[ATHENA SKIP] {wall_reason} - not near GEX wall (threshold: {self.config.wall_filter_pct}%)")
+            return None
+        logger.info(f"[ATHENA] Wall proximity: {wall_reason}")
+
+        # ============================================================
+        # GEX RATIO ASYMMETRY CHECK - Apache backtest requirement
+        # Need strong GEX asymmetry for directional edge:
+        # - Bearish: GEX ratio > 1.5 (put GEX dominates)
+        # - Bullish: GEX ratio < 0.67 (call GEX dominates)
+        # Ratio between 0.67-1.5 = no clear directional edge
+        # ============================================================
+        # Use Tradier live GEX data (call_gex/put_gex fields)
+        total_put_gex = gex_data.get('put_gex', 0)
+        total_call_gex = gex_data.get('call_gex', 0)
+
+        if total_call_gex > 0:
+            gex_ratio = total_put_gex / total_call_gex
+        else:
+            gex_ratio = 10.0 if total_put_gex > 0 else 1.0
+
+        logger.info(f"[ATHENA] GEX values - Put: {total_put_gex:,.0f}, Call: {total_call_gex:,.0f}, Ratio: {gex_ratio:.2f}")
+
+        has_gex_asymmetry = (gex_ratio >= self.config.min_gex_ratio_bearish or
+                             gex_ratio <= self.config.max_gex_ratio_bullish)
+
+        if not has_gex_asymmetry:
+            logger.info(f"[ATHENA SKIP] GEX ratio {gex_ratio:.2f} not asymmetric enough "
+                       f"(need >{self.config.min_gex_ratio_bearish} for bearish or <{self.config.max_gex_ratio_bullish} for bullish)")
+            return None
+
+        # Determine GEX-based direction from ratio
+        gex_direction = "BEARISH" if gex_ratio >= self.config.min_gex_ratio_bearish else "BULLISH"
+        logger.info(f"[ATHENA] GEX ratio {gex_ratio:.2f} -> {gex_direction} signal")
+
+        # Verify GEX direction aligns with wall direction
+        if gex_direction != wall_direction:
+            logger.info(f"[ATHENA SKIP] GEX direction {gex_direction} conflicts with wall direction {wall_direction}")
+            return None
+        logger.info(f"[ATHENA] GEX direction {gex_direction} confirms wall direction {wall_direction}")
 
         # Step 3: Get ML signal from 5 GEX probability models (PREFERRED SOURCE)
         ml_signal = self.get_ml_signal(gex_data)
@@ -732,12 +756,15 @@ class SignalGenerator:
                     logger.info(f"[ATHENA ORACLE INFO] Oracle advises SKIP_TODAY (informational only)")
                     logger.info(f"  Bot will use its own threshold: {self.config.min_win_probability:.1%}")
 
-        # Win probability threshold check DISABLED - always trade
+        # ============================================================
+        # WIN PROBABILITY THRESHOLD - Must be above 50% for positive expectancy
+        # Apache backtest used ML confirmation - we require min_win_probability (55%)
+        # ============================================================
         logger.info(f"[ATHENA DECISION] Using {prediction_source} win probability: {effective_win_prob:.1%}")
-        logger.info(f"[ATHENA] Win probability threshold check DISABLED - proceeding with trade")
-        if effective_win_prob <= 0:
-            effective_win_prob = 0.50  # Default to 50% if no prediction
-        logger.info(f"[ATHENA PASSED] {prediction_source} Win Prob {effective_win_prob:.1%} - threshold disabled")
+        if effective_win_prob < self.config.min_win_probability:
+            logger.info(f"[ATHENA SKIP] Win probability {effective_win_prob:.1%} below minimum {self.config.min_win_probability:.1%}")
+            return None
+        logger.info(f"[ATHENA PASSED] {prediction_source} Win Prob {effective_win_prob:.1%} >= {self.config.min_win_probability:.1%}")
 
         # Step 4: Determine final direction
         # IMPROVED: Oracle with very high confidence can override wall direction
@@ -854,10 +881,14 @@ class SignalGenerator:
                     confidence, oracle['top_factors'], gex_data
                 )
 
-        # Lower threshold since wall proximity is the core strategy
-        if confidence < 0.45:
-            logger.info(f"Confidence too low: {confidence:.2f}")
+        # ============================================================
+        # CONFIDENCE THRESHOLD - Apache backtest: 55% minimum
+        # Must have strong signal confidence for profitable trades
+        # ============================================================
+        if confidence < self.config.min_confidence:
+            logger.info(f"[ATHENA SKIP] Confidence {confidence:.1%} below minimum {self.config.min_confidence:.1%}")
             return None
+        logger.info(f"[ATHENA] Confidence {confidence:.1%} >= {self.config.min_confidence:.1%}")
 
         # Step 5: Determine spread type
         spread_type = SpreadType.BULL_CALL if direction == "BULLISH" else SpreadType.BEAR_PUT
