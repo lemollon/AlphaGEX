@@ -245,12 +245,19 @@ class AutonomousTraderScheduler:
 
         # PHOENIX - 0DTE SPY/SPX Options Trader
         # Capital: $400,000 (40% of total)
-        self.trader = AutonomousPaperTrader(
-            symbol='SPY',
-            capital=CAPITAL_ALLOCATION['PHOENIX']
-        )
-        self.api_client = TradingVolatilityAPI()
-        logger.info(f"✅ PHOENIX initialized with ${CAPITAL_ALLOCATION['PHOENIX']:,} capital")
+        # CRITICAL: Wrap in try-except to prevent scheduler crash if PHOENIX init fails
+        self.trader = None
+        self.api_client = None
+        try:
+            self.trader = AutonomousPaperTrader(
+                symbol='SPY',
+                capital=CAPITAL_ALLOCATION['PHOENIX']
+            )
+            self.api_client = TradingVolatilityAPI()
+            logger.info(f"✅ PHOENIX initialized with ${CAPITAL_ALLOCATION['PHOENIX']:,} capital")
+        except Exception as e:
+            logger.error(f"PHOENIX initialization failed: {e}")
+            logger.error("Scheduler will continue without PHOENIX - other bots will still run")
 
         # ATLAS - SPX Cash-Secured Put Wheel Trader
         # Capital: $400,000 (40% of total)
@@ -570,6 +577,12 @@ class AutonomousTraderScheduler:
 
         logger.info(f"=" * 80)
         logger.info(f"Scheduler triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        # Check if PHOENIX trader is available
+        if not self.trader:
+            logger.warning("PHOENIX trader not available - skipping")
+            self._save_heartbeat('PHOENIX', 'UNAVAILABLE')
+            return
 
         # Double-check market is open (belt and suspenders)
         if not self.is_market_open():
@@ -969,14 +982,14 @@ class AutonomousTraderScheduler:
             now = datetime.now(CENTRAL_TZ)
             decision_id = f"{bot_name}_{now.strftime('%Y%m%d_%H%M%S')}_NO_TRADE"
 
+            # Use bot_decision_logs table (correct table name)
             c.execute('''
-                INSERT INTO decision_logs
-                (decision_id, bot_name, symbol, decision_type, action, what, why, how, timestamp,
-                 market_context, gex_context, oracle_advice, ml_predictions)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO bot_decision_logs
+                (decision_id, bot_name, symbol, decision_type, action, entry_reasoning, timestamp,
+                 full_decision)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (decision_id) DO UPDATE SET
-                    what = EXCLUDED.what,
-                    why = EXCLUDED.why,
+                    entry_reasoning = EXCLUDED.entry_reasoning,
                     timestamp = EXCLUDED.timestamp
             ''', (
                 decision_id,
@@ -984,14 +997,17 @@ class AutonomousTraderScheduler:
                 context.get('symbol', 'SPY') if context else 'SPY',
                 'NO_TRADE',
                 'SKIP',
-                f"Scanned market but did not trade",
                 reason,
-                f"Next scan in 5 minutes",
                 now,
-                json.dumps(context.get('market', {})) if context and context.get('market') else None,
-                json.dumps(context.get('gex', {})) if context and context.get('gex') else None,
-                json.dumps(context.get('oracle', {})) if context and context.get('oracle') else None,
-                json.dumps(context.get('ml', {})) if context and context.get('ml') else None,
+                json.dumps({
+                    'what': 'Scanned market but did not trade',
+                    'why': reason,
+                    'how': 'Next scan in 5 minutes',
+                    'market': context.get('market', {}) if context else {},
+                    'gex': context.get('gex', {}) if context else {},
+                    'oracle': context.get('oracle', {}) if context else {},
+                    'ml': context.get('ml', {}) if context else {}
+                })
             ))
 
             conn.commit()

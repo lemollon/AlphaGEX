@@ -984,20 +984,65 @@ def init_database():
         except:
             pass  # Column may already exist
 
-    # Autonomous Equity Snapshots (used by autonomous_routes.py, trader_routes.py)
+    # Autonomous Equity Snapshots (used by autonomous_routes.py, trader_routes.py, performance_tracker.py)
+    # Extended schema to support performance tracking metrics
     c.execute('''
         CREATE TABLE IF NOT EXISTS autonomous_equity_snapshots (
             id SERIAL PRIMARY KEY,
             timestamp TIMESTAMPTZ DEFAULT NOW(),
+            snapshot_date TEXT,
+            snapshot_time TEXT,
+            snapshot_timestamp TEXT,
             equity REAL,
             cash REAL,
             positions_value REAL,
+            starting_capital REAL,
+            total_realized_pnl REAL,
+            total_unrealized_pnl REAL,
+            account_value REAL,
             daily_pnl REAL,
+            daily_return_pct REAL,
+            total_return_pct REAL,
             cumulative_pnl REAL,
             drawdown_pct REAL,
-            high_water_mark REAL
+            max_drawdown_pct REAL,
+            high_water_mark REAL,
+            sharpe_ratio REAL,
+            open_positions_count INTEGER,
+            total_trades INTEGER,
+            winning_trades INTEGER,
+            losing_trades INTEGER,
+            win_rate REAL
         )
     ''')
+
+    # Add missing columns to autonomous_equity_snapshots for existing production tables
+    equity_snapshot_columns = [
+        ('snapshot_date', 'TEXT'),
+        ('snapshot_time', 'TEXT'),
+        ('snapshot_timestamp', 'TEXT'),
+        ('starting_capital', 'REAL'),
+        ('total_realized_pnl', 'REAL'),
+        ('total_unrealized_pnl', 'REAL'),
+        ('account_value', 'REAL'),
+        ('daily_return_pct', 'REAL'),
+        ('total_return_pct', 'REAL'),
+        ('max_drawdown_pct', 'REAL'),
+        ('sharpe_ratio', 'REAL'),
+        ('open_positions_count', 'INTEGER'),
+        ('total_trades', 'INTEGER'),
+        ('winning_trades', 'INTEGER'),
+        ('losing_trades', 'INTEGER'),
+        ('win_rate', 'REAL'),
+    ]
+    for col_name, col_type in equity_snapshot_columns:
+        try:
+            c.execute(f'''
+                ALTER TABLE autonomous_equity_snapshots
+                ADD COLUMN IF NOT EXISTS {col_name} {col_type}
+            ''')
+        except:
+            pass  # Column may already exist
 
     # Autonomous Live Status (used by trader_routes.py)
     c.execute('''
@@ -1030,6 +1075,26 @@ def init_database():
             error_message TEXT
         )
     ''')
+
+    # Add missing columns to autonomous_trade_activity for existing production tables
+    trade_activity_columns = [
+        ('activity_date', 'TEXT'),
+        ('activity_time', 'TEXT'),
+        ('activity_timestamp', 'TEXT'),
+        ('action_type', 'TEXT'),
+        ('details', 'TEXT'),
+        ('position_id', 'INTEGER'),
+        ('pnl_impact', 'REAL'),
+        ('error_message', 'TEXT'),
+    ]
+    for col_name, col_type in trade_activity_columns:
+        try:
+            c.execute(f'''
+                ALTER TABLE autonomous_trade_activity
+                ADD COLUMN IF NOT EXISTS {col_name} {col_type}
+            ''')
+        except:
+            pass  # Column may already exist
 
     # Scanner History (used by scanner_routes.py)
     c.execute('''
