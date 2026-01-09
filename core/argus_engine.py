@@ -839,7 +839,9 @@ class ArgusEngine:
         Returns:
             GammaSnapshot with all calculated metrics
         """
-        timestamp = datetime.now()
+        from zoneinfo import ZoneInfo
+        CENTRAL_TZ = ZoneInfo("America/Chicago")
+        timestamp = datetime.now(CENTRAL_TZ)
         market_status = self.get_market_status()
 
         # Extract strikes and calculate metrics

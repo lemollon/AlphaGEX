@@ -282,7 +282,21 @@ interface PatternMatch {
   similarity_score: number
   outcome_direction: 'UP' | 'DOWN' | 'FLAT'
   outcome_pct: number
+  price_change: number
   gamma_regime_then: string
+  mm_state: string
+  // Price details
+  open_price: number | null
+  close_price: number | null
+  day_high: number | null
+  day_low: number | null
+  day_range: number | null
+  // Key levels
+  flip_point: number | null
+  call_wall: number | null
+  put_wall: number | null
+  // Summary
+  summary: string
 }
 
 interface PatternData {
@@ -1796,9 +1810,8 @@ export default function ArgusPage() {
           </div>
         </div>
 
-        {/* Pattern Similarity Section */}
+        {/* Pattern Similarity Section - Enhanced with price details */}
         <div className="mb-6">
-          {/* Pattern Similarity Scorecard */}
           <div className="bg-gray-800/50 rounded-xl p-5">
             <h3 className="font-bold text-white flex items-center gap-2 mb-4">
               <Repeat className="w-5 h-5 text-indigo-400" />
@@ -1806,33 +1819,104 @@ export default function ArgusPage() {
               <span className="text-xs text-gray-500 font-normal">vs Historical Days (90d)</span>
             </h3>
             {patternMatches.length > 0 ? (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                {patternMatches.slice(0, 3).map((match, idx) => (
-                  <div key={match.date} className="flex items-center justify-between p-3 bg-gray-900/50 rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <span className="text-xs text-gray-500">#{idx + 1}</span>
-                      <div>
-                        <div className="font-mono text-white text-sm">{match.date}</div>
-                        <div className="text-xs text-gray-500">{match.gamma_regime_then} regime</div>
+              <div className="space-y-4">
+                {patternMatches.slice(0, 5).map((match, idx) => (
+                  <div key={match.date} className="p-4 bg-gray-900/50 rounded-lg border border-gray-700/50">
+                    {/* Header row */}
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-3">
+                        <span className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
+                          idx === 0 ? 'bg-indigo-500/30 text-indigo-300' :
+                          idx === 1 ? 'bg-purple-500/30 text-purple-300' : 'bg-gray-700 text-gray-400'
+                        }`}>#{idx + 1}</span>
+                        <div>
+                          <div className="font-mono text-white text-sm font-bold">{match.date}</div>
+                          <div className="text-xs text-gray-500 flex items-center gap-2">
+                            <span className={`${match.gamma_regime_then === 'POSITIVE' ? 'text-emerald-400' : match.gamma_regime_then === 'NEGATIVE' ? 'text-rose-400' : 'text-gray-400'}`}>
+                              {match.gamma_regime_then} gamma
+                            </span>
+                            {match.mm_state && <span className="text-gray-600">• MMs {match.mm_state}</span>}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-4">
-                      <div className="text-center">
-                        <div className="text-xs text-gray-500">Match</div>
-                        <div className="font-bold text-indigo-400">{match.similarity_score.toFixed(0)}%</div>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-xs text-gray-500">Result</div>
-                        <div className={`font-bold flex items-center gap-1 ${
-                          match.outcome_direction === 'UP' ? 'text-emerald-400' :
-                          match.outcome_direction === 'DOWN' ? 'text-rose-400' : 'text-gray-400'
-                        }`}>
-                          {match.outcome_direction === 'UP' ? <ArrowUpRight className="w-3 h-3" /> :
-                           match.outcome_direction === 'DOWN' ? <ArrowDownRight className="w-3 h-3" /> : null}
-                          {match.outcome_pct > 0 ? '+' : ''}{match.outcome_pct.toFixed(2)}%
+                      <div className="flex items-center gap-4">
+                        <div className="text-center">
+                          <div className="text-[10px] text-gray-500 uppercase">Match</div>
+                          <div className="font-bold text-indigo-400">{match.similarity_score?.toFixed(0) || 0}%</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-[10px] text-gray-500 uppercase">Result</div>
+                          <div className={`font-bold flex items-center gap-1 ${
+                            match.outcome_direction === 'UP' ? 'text-emerald-400' :
+                            match.outcome_direction === 'DOWN' ? 'text-rose-400' : 'text-gray-400'
+                          }`}>
+                            {match.outcome_direction === 'UP' ? <ArrowUpRight className="w-4 h-4" /> :
+                             match.outcome_direction === 'DOWN' ? <ArrowDownRight className="w-4 h-4" /> : null}
+                            {match.outcome_pct > 0 ? '+' : ''}{(match.outcome_pct || 0).toFixed(2)}%
+                          </div>
                         </div>
                       </div>
                     </div>
+
+                    {/* Price details row */}
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3 py-2 border-t border-b border-gray-700/30">
+                      <div>
+                        <div className="text-[10px] text-gray-500 uppercase">Open</div>
+                        <div className="text-sm font-mono text-white">${match.open_price?.toFixed(2) || '-'}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-gray-500 uppercase">Close</div>
+                        <div className={`text-sm font-mono ${
+                          (match.price_change || 0) > 0 ? 'text-emerald-400' :
+                          (match.price_change || 0) < 0 ? 'text-rose-400' : 'text-white'
+                        }`}>
+                          ${match.close_price?.toFixed(2) || '-'}
+                          <span className="text-xs ml-1">
+                            ({(match.price_change || 0) > 0 ? '+' : ''}{(match.price_change || 0).toFixed(2)})
+                          </span>
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-gray-500 uppercase">High</div>
+                        <div className="text-sm font-mono text-emerald-400/80">${match.day_high?.toFixed(2) || '-'}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-gray-500 uppercase">Low</div>
+                        <div className="text-sm font-mono text-rose-400/80">${match.day_low?.toFixed(2) || '-'}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-gray-500 uppercase">Range</div>
+                        <div className="text-sm font-mono text-yellow-400">${match.day_range?.toFixed(2) || '-'}</div>
+                      </div>
+                    </div>
+
+                    {/* Key levels row */}
+                    {(match.flip_point || match.call_wall || match.put_wall) && (
+                      <div className="flex flex-wrap gap-3 mb-3 text-xs">
+                        {match.flip_point && (
+                          <span className="px-2 py-1 bg-purple-500/20 text-purple-300 rounded">
+                            Flip: ${match.flip_point.toFixed(0)}
+                          </span>
+                        )}
+                        {match.call_wall && (
+                          <span className="px-2 py-1 bg-emerald-500/20 text-emerald-300 rounded">
+                            Call Wall: ${match.call_wall.toFixed(0)}
+                          </span>
+                        )}
+                        {match.put_wall && (
+                          <span className="px-2 py-1 bg-rose-500/20 text-rose-300 rounded">
+                            Put Wall: ${match.put_wall.toFixed(0)}
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Summary */}
+                    {match.summary && (
+                      <div className="text-sm text-gray-400 leading-relaxed">
+                        <span className="text-indigo-400 font-medium">Summary:</span> {match.summary}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

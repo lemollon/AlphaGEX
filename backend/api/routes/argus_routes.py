@@ -1602,6 +1602,7 @@ async def get_pattern_matches():
 
         # Get daily snapshots from gex_history (one per day, around 10:00 AM for consistency)
         # Look back 90 days for pattern matching
+        # Enhanced to include high/low and more price context
         cursor.execute("""
             WITH daily_snapshots AS (
                 SELECT DISTINCT ON (DATE(timestamp))
@@ -1620,6 +1621,17 @@ async def get_pattern_matches():
                 AND EXTRACT(HOUR FROM timestamp) BETWEEN 9 AND 11
                 ORDER BY DATE(timestamp), timestamp
             ),
+            daily_price_stats AS (
+                SELECT
+                    DATE(timestamp) as trade_date,
+                    MAX(spot_price) as day_high,
+                    MIN(spot_price) as day_low,
+                    MAX(spot_price) - MIN(spot_price) as day_range
+                FROM gex_history
+                WHERE symbol = 'SPY'
+                AND timestamp > NOW() - INTERVAL '90 days'
+                GROUP BY DATE(timestamp)
+            ),
             daily_outcomes AS (
                 SELECT
                     ds.trade_date,
@@ -1627,15 +1639,19 @@ async def get_pattern_matches():
                     ds.flip_point,
                     ds.call_wall,
                     ds.put_wall,
-                    ds.spot_price,
+                    ds.spot_price as open_price,
                     ds.mm_state,
                     ds.regime,
                     -- Get closing price from same day (latest entry)
                     (SELECT spot_price FROM gex_history gh2
                      WHERE DATE(gh2.timestamp) = ds.trade_date
                      AND gh2.symbol = 'SPY'
-                     ORDER BY gh2.timestamp DESC LIMIT 1) as close_price
+                     ORDER BY gh2.timestamp DESC LIMIT 1) as close_price,
+                    dps.day_high,
+                    dps.day_low,
+                    dps.day_range
                 FROM daily_snapshots ds
+                LEFT JOIN daily_price_stats dps ON ds.trade_date = dps.trade_date
             )
             SELECT
                 trade_date,
@@ -1643,19 +1659,23 @@ async def get_pattern_matches():
                 flip_point,
                 call_wall,
                 put_wall,
-                spot_price,
+                open_price,
                 mm_state,
                 regime,
                 close_price,
+                day_high,
+                day_low,
+                day_range,
                 CASE
-                    WHEN close_price > spot_price THEN 'UP'
-                    WHEN close_price < spot_price THEN 'DOWN'
+                    WHEN close_price > open_price THEN 'UP'
+                    WHEN close_price < open_price THEN 'DOWN'
                     ELSE 'FLAT'
                 END as outcome_direction,
                 CASE
-                    WHEN spot_price > 0 THEN ROUND(((close_price - spot_price) / spot_price * 100)::numeric, 2)
+                    WHEN open_price > 0 THEN ROUND(((close_price - open_price) / open_price * 100)::numeric, 2)
                     ELSE 0
-                END as outcome_pct
+                END as outcome_pct,
+                ROUND((close_price - open_price)::numeric, 2) as price_change
             FROM daily_outcomes
             WHERE net_gex IS NOT NULL
             ORDER BY trade_date DESC
@@ -1682,14 +1702,16 @@ async def get_pattern_matches():
         # Calculate similarity for each historical day
         pattern_matches = []
         for row in rows:
-            trade_date, net_gex, flip_point, call_wall, put_wall, spot_price, mm_state, regime, close_price, outcome_dir, outcome_pct = row
+            (trade_date, net_gex, flip_point, call_wall, put_wall, open_price,
+             mm_state, regime, close_price, day_high, day_low, day_range,
+             outcome_dir, outcome_pct, price_change) = row
 
             historical = {
                 'net_gex': float(net_gex) if net_gex else None,
                 'flip_point': float(flip_point) if flip_point else None,
                 'call_wall': float(call_wall) if call_wall else None,
                 'put_wall': float(put_wall) if put_wall else None,
-                'spot_price': float(spot_price) if spot_price else None,
+                'spot_price': float(open_price) if open_price else None,
                 'mm_state': mm_state,
                 'regime': regime,
             }
@@ -1697,12 +1719,46 @@ async def get_pattern_matches():
             similarity = calculate_pattern_similarity(current_structure, historical)
 
             if similarity >= 30:  # Only include matches with at least 30% similarity
+                # Generate a summary of what happened that day
+                summary_parts = []
+                if regime:
+                    summary_parts.append(f"{regime} gamma regime")
+                if outcome_dir == 'UP':
+                    summary_parts.append(f"SPY rallied +${abs(float(price_change or 0)):.2f} ({abs(float(outcome_pct or 0)):.1f}%)")
+                elif outcome_dir == 'DOWN':
+                    summary_parts.append(f"SPY fell -${abs(float(price_change or 0)):.2f} ({abs(float(outcome_pct or 0)):.1f}%)")
+                else:
+                    summary_parts.append("SPY closed flat")
+
+                if day_range and float(day_range) > 0:
+                    range_pct = (float(day_range) / float(open_price) * 100) if open_price else 0
+                    summary_parts.append(f"Range: ${float(day_range):.2f} ({range_pct:.1f}%)")
+
+                if mm_state:
+                    summary_parts.append(f"MMs were {mm_state}")
+
+                summary = ". ".join(summary_parts) + "." if summary_parts else "No summary available."
+
                 pattern_matches.append({
                     'date': trade_date.strftime('%Y-%m-%d') if trade_date else None,
                     'similarity_score': similarity,
                     'outcome_direction': outcome_dir or 'FLAT',
                     'outcome_pct': float(outcome_pct) if outcome_pct else 0.0,
+                    'price_change': float(price_change) if price_change else 0.0,
                     'gamma_regime_then': regime or 'UNKNOWN',
+                    'mm_state': mm_state or 'UNKNOWN',
+                    # Price details
+                    'open_price': float(open_price) if open_price else None,
+                    'close_price': float(close_price) if close_price else None,
+                    'day_high': float(day_high) if day_high else None,
+                    'day_low': float(day_low) if day_low else None,
+                    'day_range': float(day_range) if day_range else None,
+                    # Key levels that day
+                    'flip_point': float(flip_point) if flip_point else None,
+                    'call_wall': float(call_wall) if call_wall else None,
+                    'put_wall': float(put_wall) if put_wall else None,
+                    # Summary
+                    'summary': summary,
                 })
 
         # Sort by similarity score and take top 5
