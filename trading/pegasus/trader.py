@@ -39,6 +39,16 @@ except ImportError as e:
     CheckResult = None
     print(f"❌ PEGASUS: Scan activity logger FAILED: {e}")
 
+# ML Data Gatherer for comprehensive ML analysis logging
+try:
+    from trading.ml_data_gatherer import gather_ml_data
+    ML_GATHERER_AVAILABLE = True
+    print("✅ PEGASUS: ML Data Gatherer loaded")
+except ImportError as e:
+    ML_GATHERER_AVAILABLE = False
+    gather_ml_data = None
+    print(f"⚠️ PEGASUS: ML Data Gatherer not available: {e}")
+
 # Bot decision logging (for bot_decision_logs table)
 try:
     from trading.bot_logger import (
@@ -888,6 +898,26 @@ class PEGASUSTrader(MathOptimizerMixin):
                 premium = position.total_credit * 100 * contracts
                 max_risk = position.max_loss
 
+            # Gather comprehensive ML data for logging
+            ml_kwargs = {}
+            if ML_GATHERER_AVAILABLE and gather_ml_data:
+                try:
+                    market_data = context.get('market_data', {})
+                    gex_data = context.get('gex_data', {})
+                    ml_kwargs = gather_ml_data(
+                        symbol="SPX",  # PEGASUS trades SPX
+                        spot_price=market_data.get('spot_price', 0) if market_data else 0,
+                        vix=market_data.get('vix', 0) if market_data else 0,
+                        gex_data=gex_data,
+                        market_data=market_data,
+                        bot_name="PEGASUS",
+                        win_rate=0.70,  # PEGASUS historical win rate
+                        avg_win=200,
+                        avg_loss=500,
+                    )
+                except Exception as ml_err:
+                    logger.debug(f"ML data gathering failed (non-critical): {ml_err}")
+
             log_pegasus_scan(
                 outcome=outcome,
                 decision_summary=decision,
@@ -907,6 +937,7 @@ class PEGASUSTrader(MathOptimizerMixin):
                 trade_executed=result.get('trade_opened', False),
                 error_message=error_msg,
                 generate_ai_explanation=False,
+                **ml_kwargs,  # Include all ML analysis data
             )
         except Exception as e:
             logger.warning(f"Failed to log scan activity: {e}")
