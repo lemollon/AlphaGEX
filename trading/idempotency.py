@@ -101,6 +101,7 @@ class IdempotencyManager:
 
     def _init_database(self) -> None:
         """Initialize database table for idempotency keys."""
+        conn = None
         try:
             from database_adapter import get_connection
 
@@ -129,12 +130,17 @@ class IdempotencyManager:
             """)
 
             conn.commit()
-            conn.close()
             self._db_available = True
 
         except Exception as e:
             logger.warning(f"Could not initialize idempotency database: {e}")
             self._db_available = False
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     def generate_key(
         self,
@@ -351,6 +357,7 @@ class IdempotencyManager:
 
     def _load_from_db(self, key: str) -> Optional[IdempotencyRecord]:
         """Load a record from database."""
+        conn = None
         try:
             from database_adapter import get_connection
             import json
@@ -366,7 +373,6 @@ class IdempotencyManager:
             """, (key,))
 
             row = cursor.fetchone()
-            conn.close()
 
             if row:
                 return IdempotencyRecord(
@@ -382,11 +388,18 @@ class IdempotencyManager:
 
         except Exception as e:
             logger.debug(f"Error loading idempotency key from DB: {e}")
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
         return None
 
     def _save_to_db(self, record: IdempotencyRecord) -> None:
         """Save a record to database."""
+        conn = None
         try:
             from database_adapter import get_connection
             import json
@@ -415,10 +428,15 @@ class IdempotencyManager:
             ))
 
             conn.commit()
-            conn.close()
 
         except Exception as e:
             logger.warning(f"Error saving idempotency key to DB: {e}")
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     def _update_status_in_db(
         self,
@@ -428,6 +446,7 @@ class IdempotencyManager:
         error: Optional[str] = None
     ) -> None:
         """Update status in database."""
+        conn = None
         try:
             from database_adapter import get_connection
             import json
@@ -450,10 +469,15 @@ class IdempotencyManager:
             ))
 
             conn.commit()
-            conn.close()
 
         except Exception as e:
             logger.debug(f"Error updating idempotency key in DB: {e}")
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     def cleanup_expired(self) -> int:
         """
@@ -465,6 +489,7 @@ class IdempotencyManager:
         if not self._db_available:
             return 0
 
+        conn = None
         try:
             from database_adapter import get_connection
 
@@ -478,7 +503,6 @@ class IdempotencyManager:
 
             deleted = cursor.rowcount
             conn.commit()
-            conn.close()
 
             logger.info(f"Cleaned up {deleted} expired idempotency keys")
             return deleted
@@ -486,6 +510,12 @@ class IdempotencyManager:
         except Exception as e:
             logger.warning(f"Error cleaning up idempotency keys: {e}")
             return 0
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
 
 # =============================================================================

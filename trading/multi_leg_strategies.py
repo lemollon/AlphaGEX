@@ -354,6 +354,7 @@ class IronCondor:
 
 def save_multi_leg_position(position: MultiLegPosition) -> int:
     """Save multi-leg position to database"""
+    conn = None
     try:
         from database_adapter import get_connection
 
@@ -387,7 +388,6 @@ def save_multi_leg_position(position: MultiLegPosition) -> int:
 
         position_id = cursor.fetchone()[0]
         conn.commit()
-        conn.close()
 
         logger.info(f"Saved multi-leg position {position_id}")
         return position_id
@@ -395,10 +395,17 @@ def save_multi_leg_position(position: MultiLegPosition) -> int:
     except Exception as e:
         logger.error(f"Error saving multi-leg position: {e}")
         return -1
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def get_open_multileg_positions() -> List[Dict]:
     """Get all open multi-leg positions"""
+    conn = None
     try:
         from database_adapter import get_connection
 
@@ -426,12 +433,17 @@ def get_open_multileg_positions() -> List[Dict]:
                 'status': row[8]
             })
 
-        conn.close()
         return positions
 
     except Exception as e:
         logger.error(f"Error getting multi-leg positions: {e}")
         return []
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

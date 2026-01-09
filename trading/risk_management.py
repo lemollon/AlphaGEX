@@ -213,6 +213,7 @@ def fetch_position_greeks(position: Dict) -> Optional[PositionGreeks]:
 
 def save_greeks_to_db(greeks: PositionGreeks):
     """Save position Greeks to database"""
+    conn = None
     try:
         from database_adapter import get_connection
 
@@ -239,11 +240,16 @@ def save_greeks_to_db(greeks: PositionGreeks):
         ))
 
         conn.commit()
-        conn.close()
         logger.info(f"Saved Greeks for position {greeks.position_id}")
 
     except Exception as e:
         logger.error(f"Error saving Greeks: {e}")
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def update_all_position_greeks(positions: List[Dict]) -> List[PositionGreeks]:
@@ -364,6 +370,7 @@ def get_broker_margin_requirement() -> Optional[Dict]:
 
 def get_db_positions() -> List[Dict]:
     """Get open positions from database"""
+    conn = None
     try:
         from database_adapter import get_connection
 
@@ -391,12 +398,17 @@ def get_db_positions() -> List[Dict]:
                 'source': 'DATABASE'
             })
 
-        conn.close()
         return positions
 
     except Exception as e:
         logger.error(f"Error getting DB positions: {e}")
         return []
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 def get_broker_positions() -> List[Dict]:
@@ -497,6 +509,7 @@ def reconcile_positions() -> Dict:
 
 def save_reconciliation_to_db(result: Dict):
     """Save reconciliation result to database"""
+    conn = None
     try:
         from database_adapter import get_connection
 
@@ -521,10 +534,15 @@ def save_reconciliation_to_db(result: Dict):
         ))
 
         conn.commit()
-        conn.close()
 
     except Exception as e:
         logger.error(f"Error saving reconciliation: {e}")
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 # =============================================================================

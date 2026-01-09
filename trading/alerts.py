@@ -392,6 +392,7 @@ def send_alert(subject: str, body: str, level: str = AlertLevel.INFO) -> bool:
 
 def save_alert_to_db(alert_type: str, level: str, subject: str, body: str, position_id: int = None):
     """Save alert to database for dashboard display"""
+    conn = None
     try:
         import sys
         sys.path.insert(0, '/home/user/AlphaGEX')
@@ -408,10 +409,15 @@ def save_alert_to_db(alert_type: str, level: str, subject: str, body: str, posit
         ''', (alert_type, level, subject, body[:1000], position_id))
 
         conn.commit()
-        conn.close()
 
     except Exception as e:
         logger.error(f"Failed to save alert to DB: {e}")
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":
