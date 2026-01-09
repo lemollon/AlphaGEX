@@ -14,30 +14,41 @@ import {
   Target,
   Shield,
   AlertTriangle,
-  Ban
+  Ban,
+  Flame,
+  Rocket
 } from 'lucide-react'
-import { useScanActivityAres, useScanActivityAthena, useScanActivityPegasus } from '@/lib/hooks/useMarketData'
+import { useScanActivityAres, useScanActivityAthena, useScanActivityPegasus, useICARUSScanActivity, useScanActivityTitan } from '@/lib/hooks/useMarketData'
 
 export default function DashboardScanFeed() {
   const [expanded, setExpanded] = useState(false)
 
+  // Live bots
   const { data: aresScans, isLoading: aresLoading, mutate: refreshAres } = useScanActivityAres(10)
   const { data: athenaScans, isLoading: athenaLoading, mutate: refreshAthena } = useScanActivityAthena(10)
   const { data: pegasusScans, isLoading: pegasusLoading, mutate: refreshPegasus } = useScanActivityPegasus(10)
 
-  const isLoading = aresLoading || athenaLoading || pegasusLoading
+  // Paper bots
+  const { data: icarusScans, isLoading: icarusLoading, mutate: refreshIcarus } = useICARUSScanActivity(10)
+  const { data: titanScans, isLoading: titanLoading, mutate: refreshTitan } = useScanActivityTitan(10)
+
+  const isLoading = aresLoading || athenaLoading || pegasusLoading || icarusLoading || titanLoading
 
   const refreshAll = () => {
     refreshAres()
     refreshAthena()
     refreshPegasus()
+    refreshIcarus()
+    refreshTitan()
   }
 
   // Combine and sort all scans by timestamp
   const allScans = [
     ...(aresScans?.data?.scans || []).map((s: any) => ({ ...s, bot: 'ARES' })),
     ...(athenaScans?.data?.scans || []).map((s: any) => ({ ...s, bot: 'ATHENA' })),
-    ...(pegasusScans?.data?.scans || []).map((s: any) => ({ ...s, bot: 'PEGASUS' }))
+    ...(pegasusScans?.data?.scans || []).map((s: any) => ({ ...s, bot: 'PEGASUS' })),
+    ...(icarusScans?.data?.scans || []).map((s: any) => ({ ...s, bot: 'ICARUS' })),
+    ...(titanScans?.data?.scans || []).map((s: any) => ({ ...s, bot: 'TITAN' }))
   ].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, 10)
 
   // Calculate stats
@@ -53,6 +64,10 @@ export default function DashboardScanFeed() {
         return <Target className="w-4 h-4 text-purple-500" />
       case 'PEGASUS':
         return <Shield className="w-4 h-4 text-amber-500" />
+      case 'ICARUS':
+        return <Flame className="w-4 h-4 text-cyan-500" />
+      case 'TITAN':
+        return <Rocket className="w-4 h-4 text-rose-500" />
       default:
         return <Activity className="w-4 h-4 text-text-muted" />
     }
