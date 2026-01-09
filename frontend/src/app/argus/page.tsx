@@ -1653,16 +1653,16 @@ export default function ArgusPage() {
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 mb-6">
           <div className="bg-gray-800/50 rounded-xl p-4">
             <div className="text-gray-500 text-xs mb-1">SPY Spot</div>
-            <div className="text-xl font-bold text-white">${gammaData?.spot_price.toFixed(2)}</div>
+            <div className="text-xl font-bold text-white">${gammaData?.spot_price?.toFixed(2) ?? '-'}</div>
           </div>
           <div className="bg-gray-800/50 rounded-xl p-4">
             <div className="text-gray-500 text-xs mb-1">Expected Move</div>
-            <div className="text-xl font-bold text-blue-400">±${gammaData?.expected_move.toFixed(2)}</div>
+            <div className="text-xl font-bold text-blue-400">±${gammaData?.expected_move?.toFixed(2) ?? '-'}</div>
           </div>
           <div className="bg-gray-800/50 rounded-xl p-4">
             <div className="text-gray-500 text-xs mb-1">VIX</div>
             <div className={`text-xl font-bold ${(gammaData?.vix || 0) > 20 ? 'text-orange-400' : 'text-emerald-400'}`}>
-              {gammaData?.vix.toFixed(1)}
+              {gammaData?.vix?.toFixed(1) ?? '-'}
             </div>
           </div>
           <div className="bg-gray-800/50 rounded-xl p-4">
