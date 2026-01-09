@@ -358,29 +358,26 @@ export default function ArgusPage() {
   // EOD Strike Statistics
   const [eodStats, setEodStats] = useState<EODStrikeStat[]>([])
 
-  // ROC timeframe selector - allows switching between different ROC periods
-  type RocTimeframe = '1min' | '5min' | '30min' | '1hr' | '4hr' | 'day'
-  const [selectedRocTimeframe, setSelectedRocTimeframe] = useState<RocTimeframe>('5min')
+  // ROC timeframe selector - for longer timeframes (30m, 1hr, 4hr, day)
+  // Keep 1m and 5m ROC always visible for quick comparison
+  type RocTimeframe = '30min' | '1hr' | '4hr' | 'day'
+  const [selectedRocTimeframe, setSelectedRocTimeframe] = useState<RocTimeframe>('1hr')
 
   const rocTimeframeOptions: { value: RocTimeframe; label: string; shortLabel: string }[] = [
-    { value: '1min', label: '1 Minute', shortLabel: '1m' },
-    { value: '5min', label: '5 Minutes', shortLabel: '5m' },
     { value: '30min', label: '30 Minutes', shortLabel: '30m' },
     { value: '1hr', label: '1 Hour', shortLabel: '1h' },
     { value: '4hr', label: '4 Hours', shortLabel: '4h' },
     { value: 'day', label: 'Trading Day', shortLabel: 'Day' },
   ]
 
-  // Helper to get ROC value for selected timeframe
-  const getRocValue = (strike: StrikeData): number => {
+  // Helper to get ROC value for selected longer timeframe
+  const getLongRocValue = (strike: StrikeData): number => {
     switch (selectedRocTimeframe) {
-      case '1min': return strike.roc_1min
-      case '5min': return strike.roc_5min
       case '30min': return strike.roc_30min ?? 0
       case '1hr': return strike.roc_1hr ?? 0
       case '4hr': return strike.roc_4hr ?? 0
       case 'day': return strike.roc_trading_day ?? 0
-      default: return strike.roc_5min
+      default: return strike.roc_1hr ?? 0
     }
   }
 
@@ -2309,6 +2306,8 @@ export default function ArgusPage() {
                       <th className="text-right py-2 px-2 text-gray-500 font-medium">Dist</th>
                       <th className="text-right py-2 px-2 text-gray-500 font-medium">Net Gamma</th>
                       <th className="text-right py-2 px-2 text-gray-500 font-medium">Prob %</th>
+                      <th className="text-right py-2 px-2 text-gray-500 font-medium">1m ROC</th>
+                      <th className="text-right py-2 px-2 text-gray-500 font-medium">5m ROC</th>
                       <th className="text-right py-2 px-2 text-gray-500 font-medium">
                         <select
                           value={selectedRocTimeframe}
@@ -2363,13 +2362,23 @@ export default function ArgusPage() {
                           {strike.probability.toFixed(1)}%
                         </td>
                         <td className={`py-2 px-2 text-right font-mono ${
+                          strike.roc_1min > 0 ? 'text-emerald-400' : strike.roc_1min < 0 ? 'text-rose-400' : 'text-gray-500'
+                        }`}>
+                          {strike.roc_1min > 0 ? '+' : ''}{strike.roc_1min.toFixed(1)}%
+                        </td>
+                        <td className={`py-2 px-2 text-right font-mono ${
+                          strike.roc_5min > 0 ? 'text-emerald-400' : strike.roc_5min < 0 ? 'text-rose-400' : 'text-gray-500'
+                        }`}>
+                          {strike.roc_5min > 0 ? '+' : ''}{strike.roc_5min.toFixed(1)}%
+                        </td>
+                        <td className={`py-2 px-2 text-right font-mono ${
                           (() => {
-                            const roc = getRocValue(strike)
+                            const roc = getLongRocValue(strike)
                             return roc > 0 ? 'text-emerald-400' : roc < 0 ? 'text-rose-400' : 'text-gray-500'
                           })()
                         }`}>
                           {(() => {
-                            const roc = getRocValue(strike)
+                            const roc = getLongRocValue(strike)
                             return `${roc > 0 ? '+' : ''}${roc.toFixed(1)}%`
                           })()}
                         </td>
@@ -2454,21 +2463,28 @@ export default function ArgusPage() {
                 {/* ROC Grid - All Timeframes */}
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
                   {[
-                    { label: '1 Min', value: selectedStrike.roc_1min, key: '1min' },
-                    { label: '5 Min', value: selectedStrike.roc_5min, key: '5min' },
-                    { label: '30 Min', value: selectedStrike.roc_30min ?? 0, key: '30min' },
-                    { label: '1 Hour', value: selectedStrike.roc_1hr ?? 0, key: '1hr' },
-                    { label: '4 Hour', value: selectedStrike.roc_4hr ?? 0, key: '4hr' },
-                    { label: 'Today', value: selectedStrike.roc_trading_day ?? 0, key: 'day' },
-                  ].map(({ label, value, key }) => (
+                    { label: '1 Min', value: selectedStrike.roc_1min, key: '1min', alwaysInTable: true },
+                    { label: '5 Min', value: selectedStrike.roc_5min, key: '5min', alwaysInTable: true },
+                    { label: '30 Min', value: selectedStrike.roc_30min ?? 0, key: '30min', alwaysInTable: false },
+                    { label: '1 Hour', value: selectedStrike.roc_1hr ?? 0, key: '1hr', alwaysInTable: false },
+                    { label: '4 Hour', value: selectedStrike.roc_4hr ?? 0, key: '4hr', alwaysInTable: false },
+                    { label: 'Today', value: selectedStrike.roc_trading_day ?? 0, key: 'day', alwaysInTable: false },
+                  ].map(({ label, value, key, alwaysInTable }) => (
                     <div
                       key={key}
-                      className={`bg-gray-900/50 rounded-lg p-3 text-center cursor-pointer transition-all ${
-                        selectedRocTimeframe === key ? 'ring-2 ring-purple-500' : 'hover:bg-gray-800/50'
+                      className={`bg-gray-900/50 rounded-lg p-3 text-center transition-all ${
+                        alwaysInTable
+                          ? 'border border-gray-600'  // 1m and 5m are always shown
+                          : selectedRocTimeframe === key
+                            ? 'ring-2 ring-purple-500 cursor-pointer'
+                            : 'hover:bg-gray-800/50 cursor-pointer'
                       }`}
-                      onClick={() => setSelectedRocTimeframe(key as RocTimeframe)}
+                      onClick={() => !alwaysInTable && setSelectedRocTimeframe(key as RocTimeframe)}
                     >
-                      <div className="text-xs text-gray-500 mb-1">{label}</div>
+                      <div className="text-xs text-gray-500 mb-1">
+                        {label}
+                        {alwaysInTable && <span className="ml-1 text-[9px] text-gray-600">(in table)</span>}
+                      </div>
                       <div className={`text-lg font-mono font-bold ${
                         value > 0 ? 'text-emerald-400' : value < 0 ? 'text-rose-400' : 'text-gray-500'
                       }`}>
