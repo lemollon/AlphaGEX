@@ -110,6 +110,67 @@ class ScanActivity:
     oracle_thresholds: Dict = field(default_factory=dict)  # What thresholds were evaluated
     min_win_probability_threshold: float = 0  # What the bot required
 
+    # Quant ML Advisor - ARES ML feedback loop (from quant/ares_ml_advisor.py)
+    quant_ml_advice: str = ""  # TRADE_FULL, TRADE_REDUCED, SKIP_TODAY
+    quant_ml_win_probability: float = 0
+    quant_ml_confidence: float = 0
+    quant_ml_suggested_risk_pct: float = 0
+    quant_ml_suggested_sd_multiplier: float = 0
+    quant_ml_top_factors: List[Dict] = field(default_factory=list)
+    quant_ml_model_version: str = ""
+
+    # ML Regime Classifier (from quant/ml_regime_classifier.py)
+    regime_predicted_action: str = ""  # SELL_PREMIUM, BUY_CALLS, BUY_PUTS, STAY_FLAT
+    regime_confidence: float = 0
+    regime_probabilities: Dict = field(default_factory=dict)
+    regime_feature_importance: Dict = field(default_factory=dict)
+    regime_model_version: str = ""
+
+    # GEX Directional ML (from quant/gex_directional_ml.py)
+    gex_ml_direction: str = ""  # BULLISH, BEARISH, FLAT
+    gex_ml_confidence: float = 0
+    gex_ml_probabilities: Dict = field(default_factory=dict)
+    gex_ml_features_used: Dict = field(default_factory=dict)
+
+    # Ensemble Strategy (from quant/ensemble_strategy.py)
+    ensemble_signal: str = ""  # STRONG_BUY, BUY, NEUTRAL, SELL, STRONG_SELL
+    ensemble_confidence: float = 0
+    ensemble_bullish_weight: float = 0
+    ensemble_bearish_weight: float = 0
+    ensemble_neutral_weight: float = 0
+    ensemble_should_trade: bool = False
+    ensemble_position_size_multiplier: float = 0
+    ensemble_component_signals: List[Dict] = field(default_factory=list)
+    ensemble_reasoning: str = ""
+
+    # Volatility Regime (from core/psychology_trap_detector.py)
+    volatility_regime: str = ""  # EXPLOSIVE_VOLATILITY, NEGATIVE_GAMMA_RISK, etc.
+    volatility_risk_level: str = ""  # extreme, high, medium, low
+    volatility_description: str = ""
+    at_flip_point: bool = False
+    flip_point: float = 0
+    flip_point_distance_pct: float = 0
+
+    # Psychology Patterns (Liberation, False Floor, Forward Magnets)
+    psychology_pattern: str = ""
+    liberation_setup: bool = False
+    false_floor_detected: bool = False
+    forward_magnets: List[Dict] = field(default_factory=list)
+
+    # Monte Carlo Kelly (from quant/monte_carlo_kelly.py)
+    kelly_optimal: float = 0
+    kelly_safe: float = 0
+    kelly_conservative: float = 0
+    kelly_prob_ruin: float = 0
+    kelly_recommendation: str = ""
+
+    # ARGUS Pattern Similarity / ROC Analysis
+    argus_pattern_match: str = ""
+    argus_similarity_score: float = 0
+    argus_historical_outcome: str = ""
+    argus_roc_value: float = 0
+    argus_roc_signal: str = ""
+
     # Checks
     checks_performed: List[CheckResult] = field(default_factory=list)
     all_checks_passed: bool = True
@@ -224,7 +285,60 @@ def log_scan_activity(
     # Additional context
     full_context: Optional[Dict] = None,
     # Generate AI explanation
-    generate_ai_explanation: bool = True
+    generate_ai_explanation: bool = True,
+    # === NEW: Quant ML Advisor ===
+    quant_ml_advice: str = "",
+    quant_ml_win_probability: float = 0,
+    quant_ml_confidence: float = 0,
+    quant_ml_suggested_risk_pct: float = 0,
+    quant_ml_suggested_sd_multiplier: float = 0,
+    quant_ml_top_factors: Optional[List[Dict]] = None,
+    quant_ml_model_version: str = "",
+    # === NEW: ML Regime Classifier ===
+    regime_predicted_action: str = "",
+    regime_confidence: float = 0,
+    regime_probabilities: Optional[Dict] = None,
+    regime_feature_importance: Optional[Dict] = None,
+    regime_model_version: str = "",
+    # === NEW: GEX Directional ML ===
+    gex_ml_direction: str = "",
+    gex_ml_confidence: float = 0,
+    gex_ml_probabilities: Optional[Dict] = None,
+    gex_ml_features_used: Optional[Dict] = None,
+    # === NEW: Ensemble Strategy ===
+    ensemble_signal: str = "",
+    ensemble_confidence: float = 0,
+    ensemble_bullish_weight: float = 0,
+    ensemble_bearish_weight: float = 0,
+    ensemble_neutral_weight: float = 0,
+    ensemble_should_trade: bool = False,
+    ensemble_position_size_multiplier: float = 0,
+    ensemble_component_signals: Optional[List[Dict]] = None,
+    ensemble_reasoning: str = "",
+    # === NEW: Volatility Regime ===
+    volatility_regime: str = "",
+    volatility_risk_level: str = "",
+    volatility_description: str = "",
+    at_flip_point: bool = False,
+    flip_point: float = 0,
+    flip_point_distance_pct: float = 0,
+    # === NEW: Psychology Patterns ===
+    psychology_pattern: str = "",
+    liberation_setup: bool = False,
+    false_floor_detected: bool = False,
+    forward_magnets: Optional[List[Dict]] = None,
+    # === NEW: Monte Carlo Kelly ===
+    kelly_optimal: float = 0,
+    kelly_safe: float = 0,
+    kelly_conservative: float = 0,
+    kelly_prob_ruin: float = 0,
+    kelly_recommendation: str = "",
+    # === NEW: ARGUS Pattern Analysis ===
+    argus_pattern_match: str = "",
+    argus_similarity_score: float = 0,
+    argus_historical_outcome: str = "",
+    argus_roc_value: float = 0,
+    argus_roc_signal: str = ""
 ) -> Optional[str]:
     """
     Log a scan activity to the database.
@@ -390,6 +504,59 @@ def log_scan_activity(
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS oracle_suggested_strikes JSONB")
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS oracle_thresholds JSONB")
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS min_win_probability_threshold DECIMAL(5, 4)")
+            # === NEW: Quant ML Advisor columns ===
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS quant_ml_advice VARCHAR(50)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS quant_ml_win_probability DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS quant_ml_confidence DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS quant_ml_suggested_risk_pct DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS quant_ml_suggested_sd_multiplier DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS quant_ml_top_factors JSONB")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS quant_ml_model_version VARCHAR(50)")
+            # === NEW: ML Regime Classifier columns ===
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS regime_predicted_action VARCHAR(50)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS regime_confidence DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS regime_probabilities JSONB")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS regime_feature_importance JSONB")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS regime_model_version VARCHAR(50)")
+            # === NEW: GEX Directional ML columns ===
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS gex_ml_direction VARCHAR(20)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS gex_ml_confidence DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS gex_ml_probabilities JSONB")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS gex_ml_features_used JSONB")
+            # === NEW: Ensemble Strategy columns ===
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ensemble_signal VARCHAR(50)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ensemble_confidence DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ensemble_bullish_weight DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ensemble_bearish_weight DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ensemble_neutral_weight DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ensemble_should_trade BOOLEAN")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ensemble_position_size_multiplier DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ensemble_component_signals JSONB")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ensemble_reasoning TEXT")
+            # === NEW: Volatility Regime columns ===
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS volatility_regime VARCHAR(50)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS volatility_risk_level VARCHAR(20)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS volatility_description TEXT")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS at_flip_point BOOLEAN")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS flip_point DECIMAL(15, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS flip_point_distance_pct DECIMAL(10, 4)")
+            # === NEW: Psychology Patterns columns ===
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS psychology_pattern VARCHAR(100)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS liberation_setup BOOLEAN")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS false_floor_detected BOOLEAN")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS forward_magnets JSONB")
+            # === NEW: Monte Carlo Kelly columns ===
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS kelly_optimal DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS kelly_safe DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS kelly_conservative DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS kelly_prob_ruin DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS kelly_recommendation TEXT")
+            # === NEW: ARGUS Pattern Analysis columns ===
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS argus_pattern_match VARCHAR(100)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS argus_similarity_score DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS argus_historical_outcome VARCHAR(50)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS argus_roc_value DECIMAL(10, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS argus_roc_signal VARCHAR(50)")
             conn.commit()  # Commit schema changes before INSERT
         except Exception as e:
             # Log the error but continue - columns likely already exist
@@ -480,27 +647,44 @@ def log_scan_activity(
                 premium_collected, max_risk,
                 error_message, error_type,
                 what_would_trigger, market_insight,
-                full_context
+                full_context,
+                -- NEW: Quant ML Advisor
+                quant_ml_advice, quant_ml_win_probability, quant_ml_confidence,
+                quant_ml_suggested_risk_pct, quant_ml_suggested_sd_multiplier,
+                quant_ml_top_factors, quant_ml_model_version,
+                -- NEW: ML Regime Classifier
+                regime_predicted_action, regime_confidence,
+                regime_probabilities, regime_feature_importance, regime_model_version,
+                -- NEW: GEX Directional ML
+                gex_ml_direction, gex_ml_confidence, gex_ml_probabilities, gex_ml_features_used,
+                -- NEW: Ensemble Strategy
+                ensemble_signal, ensemble_confidence, ensemble_bullish_weight,
+                ensemble_bearish_weight, ensemble_neutral_weight, ensemble_should_trade,
+                ensemble_position_size_multiplier, ensemble_component_signals, ensemble_reasoning,
+                -- NEW: Volatility Regime
+                volatility_regime, volatility_risk_level, volatility_description,
+                at_flip_point, flip_point, flip_point_distance_pct,
+                -- NEW: Psychology Patterns
+                psychology_pattern, liberation_setup, false_floor_detected, forward_magnets,
+                -- NEW: Monte Carlo Kelly
+                kelly_optimal, kelly_safe, kelly_conservative, kelly_prob_ruin, kelly_recommendation,
+                -- NEW: ARGUS Pattern Analysis
+                argus_pattern_match, argus_similarity_score, argus_historical_outcome,
+                argus_roc_value, argus_roc_signal
             ) VALUES (
-                %s, %s, %s,
-                %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s,
                 %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s,
-                %s, %s, %s, %s,
-                %s, %s,
-                %s, %s, %s, %s,
-                %s, %s,
-                %s, %s,
-                %s, %s,
-                %s, %s,
-                %s,
-                %s,
-                %s, %s,
-                %s, %s, %s, %s,
-                %s, %s,
-                %s, %s,
-                %s, %s,
-                %s
+                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s
             )
         """, (
             bot_name, scan_id, scan_number,
@@ -523,7 +707,35 @@ def log_scan_activity(
             premium_collected, max_risk,
             error_message, error_type,
             ai_what_trigger, ai_market_insight,
-            json.dumps(context)
+            json.dumps(context),
+            # NEW: Quant ML Advisor
+            quant_ml_advice, quant_ml_win_probability, quant_ml_confidence,
+            quant_ml_suggested_risk_pct, quant_ml_suggested_sd_multiplier,
+            json.dumps(quant_ml_top_factors) if quant_ml_top_factors else None, quant_ml_model_version,
+            # NEW: ML Regime Classifier
+            regime_predicted_action, regime_confidence,
+            json.dumps(regime_probabilities) if regime_probabilities else None,
+            json.dumps(regime_feature_importance) if regime_feature_importance else None, regime_model_version,
+            # NEW: GEX Directional ML
+            gex_ml_direction, gex_ml_confidence,
+            json.dumps(gex_ml_probabilities) if gex_ml_probabilities else None,
+            json.dumps(gex_ml_features_used) if gex_ml_features_used else None,
+            # NEW: Ensemble Strategy
+            ensemble_signal, ensemble_confidence, ensemble_bullish_weight,
+            ensemble_bearish_weight, ensemble_neutral_weight, ensemble_should_trade,
+            ensemble_position_size_multiplier,
+            json.dumps(ensemble_component_signals) if ensemble_component_signals else None, ensemble_reasoning,
+            # NEW: Volatility Regime
+            volatility_regime, volatility_risk_level, volatility_description,
+            at_flip_point, flip_point, flip_point_distance_pct,
+            # NEW: Psychology Patterns
+            psychology_pattern, liberation_setup, false_floor_detected,
+            json.dumps(forward_magnets) if forward_magnets else None,
+            # NEW: Monte Carlo Kelly
+            kelly_optimal, kelly_safe, kelly_conservative, kelly_prob_ruin, kelly_recommendation,
+            # NEW: ARGUS Pattern Analysis
+            argus_pattern_match, argus_similarity_score, argus_historical_outcome,
+            argus_roc_value, argus_roc_signal
         ))
 
         conn.commit()
@@ -588,7 +800,30 @@ def get_recent_scans(
                 trade_executed, position_id, strike_selection, contracts,
                 premium_collected, max_risk,
                 error_message, error_type,
-                what_would_trigger, market_insight
+                what_would_trigger, market_insight,
+                -- NEW: Quant ML Advisor
+                quant_ml_advice, quant_ml_win_probability, quant_ml_confidence,
+                quant_ml_suggested_risk_pct, quant_ml_suggested_sd_multiplier,
+                quant_ml_top_factors, quant_ml_model_version,
+                -- NEW: ML Regime Classifier
+                regime_predicted_action, regime_confidence,
+                regime_probabilities, regime_feature_importance, regime_model_version,
+                -- NEW: GEX Directional ML
+                gex_ml_direction, gex_ml_confidence, gex_ml_probabilities, gex_ml_features_used,
+                -- NEW: Ensemble Strategy
+                ensemble_signal, ensemble_confidence, ensemble_bullish_weight,
+                ensemble_bearish_weight, ensemble_neutral_weight, ensemble_should_trade,
+                ensemble_position_size_multiplier, ensemble_component_signals, ensemble_reasoning,
+                -- NEW: Volatility Regime
+                volatility_regime, volatility_risk_level, volatility_description,
+                at_flip_point, flip_point, flip_point_distance_pct,
+                -- NEW: Psychology Patterns
+                psychology_pattern, liberation_setup, false_floor_detected, forward_magnets,
+                -- NEW: Monte Carlo Kelly
+                kelly_optimal, kelly_safe, kelly_conservative, kelly_prob_ruin, kelly_recommendation,
+                -- NEW: ARGUS Pattern Analysis
+                argus_pattern_match, argus_similarity_score, argus_historical_outcome,
+                argus_roc_value, argus_roc_signal
             FROM scan_activity
             WHERE 1=1
         """
@@ -629,7 +864,30 @@ def get_recent_scans(
             'trade_executed', 'position_id', 'strike_selection', 'contracts',
             'premium_collected', 'max_risk',
             'error_message', 'error_type',
-            'what_would_trigger', 'market_insight'
+            'what_would_trigger', 'market_insight',
+            # NEW: Quant ML Advisor
+            'quant_ml_advice', 'quant_ml_win_probability', 'quant_ml_confidence',
+            'quant_ml_suggested_risk_pct', 'quant_ml_suggested_sd_multiplier',
+            'quant_ml_top_factors', 'quant_ml_model_version',
+            # NEW: ML Regime Classifier
+            'regime_predicted_action', 'regime_confidence',
+            'regime_probabilities', 'regime_feature_importance', 'regime_model_version',
+            # NEW: GEX Directional ML
+            'gex_ml_direction', 'gex_ml_confidence', 'gex_ml_probabilities', 'gex_ml_features_used',
+            # NEW: Ensemble Strategy
+            'ensemble_signal', 'ensemble_confidence', 'ensemble_bullish_weight',
+            'ensemble_bearish_weight', 'ensemble_neutral_weight', 'ensemble_should_trade',
+            'ensemble_position_size_multiplier', 'ensemble_component_signals', 'ensemble_reasoning',
+            # NEW: Volatility Regime
+            'volatility_regime', 'volatility_risk_level', 'volatility_description',
+            'at_flip_point', 'flip_point', 'flip_point_distance_pct',
+            # NEW: Psychology Patterns
+            'psychology_pattern', 'liberation_setup', 'false_floor_detected', 'forward_magnets',
+            # NEW: Monte Carlo Kelly
+            'kelly_optimal', 'kelly_safe', 'kelly_conservative', 'kelly_prob_ruin', 'kelly_recommendation',
+            # NEW: ARGUS Pattern Analysis
+            'argus_pattern_match', 'argus_similarity_score', 'argus_historical_outcome',
+            'argus_roc_value', 'argus_roc_signal'
         ]
 
         results = []
@@ -641,12 +899,25 @@ def get_recent_scans(
             if record.get('date'):
                 record['date'] = str(record['date'])
             # Convert Decimal to float for JSON serialization
-            for key in ['underlying_price', 'vix', 'expected_move', 'net_gex',
-                        'call_wall', 'put_wall', 'distance_to_call_wall_pct',
-                        'distance_to_put_wall_pct', 'signal_confidence',
-                        'signal_win_probability', 'premium_collected', 'max_risk',
-                        'risk_reward_ratio', 'oracle_win_probability', 'oracle_confidence',
-                        'min_win_probability_threshold']:
+            decimal_fields = [
+                'underlying_price', 'vix', 'expected_move', 'net_gex',
+                'call_wall', 'put_wall', 'distance_to_call_wall_pct',
+                'distance_to_put_wall_pct', 'signal_confidence',
+                'signal_win_probability', 'premium_collected', 'max_risk',
+                'risk_reward_ratio', 'oracle_win_probability', 'oracle_confidence',
+                'min_win_probability_threshold',
+                # NEW fields
+                'quant_ml_win_probability', 'quant_ml_confidence',
+                'quant_ml_suggested_risk_pct', 'quant_ml_suggested_sd_multiplier',
+                'regime_confidence', 'gex_ml_confidence',
+                'ensemble_confidence', 'ensemble_bullish_weight',
+                'ensemble_bearish_weight', 'ensemble_neutral_weight',
+                'ensemble_position_size_multiplier',
+                'flip_point', 'flip_point_distance_pct',
+                'kelly_optimal', 'kelly_safe', 'kelly_conservative', 'kelly_prob_ruin',
+                'argus_similarity_score', 'argus_roc_value'
+            ]
+            for key in decimal_fields:
                 if record.get(key) is not None:
                     record[key] = float(record[key])
             results.append(record)
