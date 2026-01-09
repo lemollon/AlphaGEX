@@ -358,26 +358,22 @@ export default function ArgusPage() {
   // EOD Strike Statistics
   const [eodStats, setEodStats] = useState<EODStrikeStat[]>([])
 
-  // ROC timeframe selector - for longer timeframes (30m, 1hr, 4hr, day)
-  // Keep 1m and 5m ROC always visible for quick comparison
-  type RocTimeframe = '30min' | '1hr' | '4hr' | 'day'
-  const [selectedRocTimeframe, setSelectedRocTimeframe] = useState<RocTimeframe>('1hr')
+  // ROC timeframe selector - for extra long timeframes only (4hr, day)
+  // 1m, 5m, 30m, 1hr ROC are always visible in the table
+  type RocTimeframe = '4hr' | 'day'
+  const [selectedRocTimeframe, setSelectedRocTimeframe] = useState<RocTimeframe>('4hr')
 
   const rocTimeframeOptions: { value: RocTimeframe; label: string; shortLabel: string }[] = [
-    { value: '30min', label: '30 Minutes', shortLabel: '30m' },
-    { value: '1hr', label: '1 Hour', shortLabel: '1h' },
     { value: '4hr', label: '4 Hours', shortLabel: '4h' },
     { value: 'day', label: 'Trading Day', shortLabel: 'Day' },
   ]
 
-  // Helper to get ROC value for selected longer timeframe
+  // Helper to get ROC value for selected longer timeframe (4hr or Day)
   const getLongRocValue = (strike: StrikeData): number => {
     switch (selectedRocTimeframe) {
-      case '30min': return strike.roc_30min ?? 0
-      case '1hr': return strike.roc_1hr ?? 0
       case '4hr': return strike.roc_4hr ?? 0
       case 'day': return strike.roc_trading_day ?? 0
-      default: return strike.roc_1hr ?? 0
+      default: return strike.roc_4hr ?? 0
     }
   }
 
@@ -1722,58 +1718,8 @@ export default function ArgusPage() {
           </div>
         </div>
 
-        {/* NEW: Accuracy Dashboard + Trade Ideas Row */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-          {/* Accuracy Dashboard */}
-          <div className="bg-gray-800/50 rounded-xl p-5">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold text-white flex items-center gap-2">
-                <Percent className="w-5 h-5 text-cyan-400" />
-                System Accuracy
-              </h3>
-              <button
-                onClick={() => setShowAccuracyPanel(!showAccuracyPanel)}
-                className="text-xs text-gray-500 hover:text-white"
-              >
-                {showAccuracyPanel ? 'Hide' : 'Show'}
-              </button>
-            </div>
-            {showAccuracyPanel && accuracyMetrics && accuracyMetrics.total_predictions > 0 ? (
-              <>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                  <div className="bg-gray-900/50 rounded-lg p-3 text-center">
-                    <div className="text-xs text-gray-500 mb-1">Pin Accuracy (7d)</div>
-                    <div className={`text-xl font-bold ${accuracyMetrics.pin_accuracy_7d >= 75 ? 'text-emerald-400' : accuracyMetrics.pin_accuracy_7d >= 50 ? 'text-yellow-400' : 'text-rose-400'}`}>
-                      {accuracyMetrics.pin_accuracy_7d.toFixed(0)}%
-                    </div>
-                  </div>
-                  <div className="bg-gray-900/50 rounded-lg p-3 text-center">
-                    <div className="text-xs text-gray-500 mb-1">Direction (7d)</div>
-                    <div className={`text-xl font-bold ${accuracyMetrics.direction_accuracy_7d >= 55 ? 'text-emerald-400' : accuracyMetrics.direction_accuracy_7d >= 50 ? 'text-yellow-400' : 'text-rose-400'}`}>
-                      {accuracyMetrics.direction_accuracy_7d.toFixed(0)}%
-                    </div>
-                  </div>
-                  <div className="bg-gray-900/50 rounded-lg p-3 text-center">
-                    <div className="text-xs text-gray-500 mb-1">Magnet Hit (7d)</div>
-                    <div className={`text-xl font-bold ${accuracyMetrics.magnet_hit_rate_7d >= 70 ? 'text-emerald-400' : accuracyMetrics.magnet_hit_rate_7d >= 50 ? 'text-yellow-400' : 'text-rose-400'}`}>
-                      {accuracyMetrics.magnet_hit_rate_7d.toFixed(0)}%
-                    </div>
-                  </div>
-                </div>
-                <div className="mt-3 text-xs text-gray-600 flex items-center gap-1">
-                  <Info className="w-3 h-3" />
-                  Based on {accuracyMetrics.total_predictions} predictions
-                </div>
-              </>
-            ) : showAccuracyPanel ? (
-              <div className="text-center py-4 text-gray-500">
-                <Percent className="w-6 h-6 mx-auto mb-2 opacity-30" />
-                <p className="text-sm">No accuracy data yet</p>
-                <p className="text-xs text-gray-600 mt-1">Predictions will be tracked over time</p>
-              </div>
-            ) : null}
-          </div>
-
+        {/* Trade Ideas Section */}
+        <div className="mb-6">
           {/* Trade Ideas Generator */}
           <div className="bg-gradient-to-r from-emerald-900/30 to-blue-900/30 border border-emerald-500/30 rounded-xl p-5">
             <div className="flex items-center justify-between mb-4">
@@ -1850,19 +1796,20 @@ export default function ArgusPage() {
           </div>
         </div>
 
-        {/* NEW: Pattern Similarity + Gamma Flips Row */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+        {/* Pattern Similarity Section */}
+        <div className="mb-6">
           {/* Pattern Similarity Scorecard */}
           <div className="bg-gray-800/50 rounded-xl p-5">
             <h3 className="font-bold text-white flex items-center gap-2 mb-4">
               <Repeat className="w-5 h-5 text-indigo-400" />
               Pattern Similarity
               <span className="text-xs text-gray-500 font-normal">vs Historical Days</span>
+              <span className="text-xs text-yellow-500 font-normal ml-2">(Coming Soon)</span>
             </h3>
             {patternMatches.length > 0 ? (
-              <div className="space-y-2">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 {patternMatches.slice(0, 3).map((match, idx) => (
-                  <div key={match.date} className="flex items-center justify-between p-2 bg-gray-900/50 rounded-lg">
+                  <div key={match.date} className="flex items-center justify-between p-3 bg-gray-900/50 rounded-lg">
                     <div className="flex items-center gap-3">
                       <span className="text-xs text-gray-500">#{idx + 1}</span>
                       <div>
@@ -1893,55 +1840,8 @@ export default function ArgusPage() {
             ) : (
               <div className="text-center py-6 text-gray-500">
                 <Repeat className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                <p className="text-sm">Analyzing historical patterns...</p>
-              </div>
-            )}
-          </div>
-
-          {/* Gamma Flip History with Outcomes */}
-          <div className="bg-gray-800/50 rounded-xl p-5">
-            <h3 className="font-bold text-white flex items-center gap-2 mb-4">
-              <Zap className="w-5 h-5 text-orange-400" />
-              Recent Gamma Flips
-              <span className="text-xs text-gray-500 font-normal">Last 30 min</span>
-            </h3>
-            {gammaFlips30m.length > 0 ? (
-              <div className="space-y-2 max-h-48 overflow-y-auto">
-                {gammaFlips30m.slice(0, 6).map((flip, idx) => (
-                  <div key={`${flip.strike}-${flip.flipped_at}`} className={`flex items-center justify-between p-2 rounded-lg ${
-                    flip.direction === 'POS_TO_NEG' ? 'bg-rose-500/10' : 'bg-emerald-500/10'
-                  }`}>
-                    <div className="flex items-center gap-3">
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                        flip.direction === 'POS_TO_NEG' ? 'bg-rose-500 text-white' : 'bg-emerald-500 text-white'
-                      }`}>
-                        {flip.direction === 'POS_TO_NEG' ? '→ -γ' : '→ +γ'}
-                      </span>
-                      <div>
-                        <div className="font-mono text-white">${flip.strike}</div>
-                        <div className="text-xs text-gray-500">{flip.mins_ago.toFixed(0)}m ago</div>
-                      </div>
-                    </div>
-                    <div className="text-right text-xs">
-                      <div className="text-gray-500">Before → After</div>
-                      <div className="font-mono">
-                        <span className={flip.gamma_before > 0 ? 'text-emerald-400' : 'text-rose-400'}>
-                          {formatGamma(flip.gamma_before)}
-                        </span>
-                        <span className="text-gray-500 mx-1">→</span>
-                        <span className={flip.gamma_after > 0 ? 'text-emerald-400' : 'text-rose-400'}>
-                          {formatGamma(flip.gamma_after)}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-6 text-gray-500">
-                <Zap className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                <p className="text-sm">No gamma flips in last 30 min</p>
-                <p className="text-xs text-gray-600 mt-1">Flips occur when gamma changes sign</p>
+                <p className="text-sm">Pattern matching will be available after collecting more historical data</p>
+                <p className="text-xs text-gray-600 mt-1">Historical gamma patterns are being recorded for future analysis</p>
               </div>
             )}
           </div>
@@ -2308,6 +2208,8 @@ export default function ArgusPage() {
                       <th className="text-right py-2 px-2 text-gray-500 font-medium">Prob %</th>
                       <th className="text-right py-2 px-2 text-gray-500 font-medium">1m ROC</th>
                       <th className="text-right py-2 px-2 text-gray-500 font-medium">5m ROC</th>
+                      <th className="text-right py-2 px-2 text-gray-500 font-medium">30m ROC</th>
+                      <th className="text-right py-2 px-2 text-gray-500 font-medium">1hr ROC</th>
                       <th className="text-right py-2 px-2 text-gray-500 font-medium">
                         <select
                           value={selectedRocTimeframe}
@@ -2370,6 +2272,16 @@ export default function ArgusPage() {
                           strike.roc_5min > 0 ? 'text-emerald-400' : strike.roc_5min < 0 ? 'text-rose-400' : 'text-gray-500'
                         }`}>
                           {strike.roc_5min > 0 ? '+' : ''}{strike.roc_5min.toFixed(1)}%
+                        </td>
+                        <td className={`py-2 px-2 text-right font-mono ${
+                          (strike.roc_30min ?? 0) > 0 ? 'text-emerald-400' : (strike.roc_30min ?? 0) < 0 ? 'text-rose-400' : 'text-gray-500'
+                        }`}>
+                          {(strike.roc_30min ?? 0) > 0 ? '+' : ''}{(strike.roc_30min ?? 0).toFixed(1)}%
+                        </td>
+                        <td className={`py-2 px-2 text-right font-mono ${
+                          (strike.roc_1hr ?? 0) > 0 ? 'text-emerald-400' : (strike.roc_1hr ?? 0) < 0 ? 'text-rose-400' : 'text-gray-500'
+                        }`}>
+                          {(strike.roc_1hr ?? 0) > 0 ? '+' : ''}{(strike.roc_1hr ?? 0).toFixed(1)}%
                         </td>
                         <td className={`py-2 px-2 text-right font-mono ${
                           (() => {
@@ -2465,8 +2377,8 @@ export default function ArgusPage() {
                   {[
                     { label: '1 Min', value: selectedStrike.roc_1min, key: '1min', alwaysInTable: true },
                     { label: '5 Min', value: selectedStrike.roc_5min, key: '5min', alwaysInTable: true },
-                    { label: '30 Min', value: selectedStrike.roc_30min ?? 0, key: '30min', alwaysInTable: false },
-                    { label: '1 Hour', value: selectedStrike.roc_1hr ?? 0, key: '1hr', alwaysInTable: false },
+                    { label: '30 Min', value: selectedStrike.roc_30min ?? 0, key: '30min', alwaysInTable: true },
+                    { label: '1 Hour', value: selectedStrike.roc_1hr ?? 0, key: '1hr', alwaysInTable: true },
                     { label: '4 Hour', value: selectedStrike.roc_4hr ?? 0, key: '4hr', alwaysInTable: false },
                     { label: 'Today', value: selectedStrike.roc_trading_day ?? 0, key: 'day', alwaysInTable: false },
                   ].map(({ label, value, key, alwaysInTable }) => (
