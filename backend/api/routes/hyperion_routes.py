@@ -249,16 +249,21 @@ def update_gamma_history(symbol: str, strike: float, gamma: float, timestamp: da
     if timestamp is None:
         timestamp = datetime.now(CENTRAL_TZ)
 
+    # Ensure timestamp is timezone-aware
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=CENTRAL_TZ)
+
     history_key = f"{symbol}_{strike}"
     if history_key not in _gamma_history:
         _gamma_history[history_key] = []
 
     _gamma_history[history_key].append((timestamp, gamma))
 
-    # Keep only last 30 minutes of history
+    # Keep only last HISTORY_MINUTES of history
     cutoff = timestamp - timedelta(minutes=HISTORY_MINUTES)
     _gamma_history[history_key] = [
-        (t, g) for t, g in _gamma_history[history_key] if t >= cutoff
+        (t, g) for t, g in _gamma_history[history_key]
+        if (t.replace(tzinfo=CENTRAL_TZ) if t.tzinfo is None else t) >= cutoff
     ]
 
 

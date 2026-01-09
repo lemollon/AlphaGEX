@@ -546,8 +546,15 @@ class ArgusEngine:
 
     def update_history(self, strike: float, gamma: float, timestamp: datetime = None):
         """Update gamma history for a strike"""
+        from zoneinfo import ZoneInfo
+        CENTRAL_TZ = ZoneInfo("America/Chicago")
+
         if timestamp is None:
-            timestamp = datetime.now()
+            timestamp = datetime.now(CENTRAL_TZ)
+
+        # Ensure timestamp is timezone-aware
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=CENTRAL_TZ)
 
         if strike not in self.history:
             self.history[strike] = []
@@ -557,7 +564,8 @@ class ArgusEngine:
         # Keep history for full trading day (7 hours = 420 minutes to cover pre-market to close)
         cutoff = timestamp - timedelta(minutes=420)
         self.history[strike] = [
-            (t, g) for t, g in self.history[strike] if t >= cutoff
+            (t, g) for t, g in self.history[strike]
+            if (t.replace(tzinfo=CENTRAL_TZ) if t.tzinfo is None else t) >= cutoff
         ]
 
     def identify_magnets(self, strikes: List[StrikeData], top_n: int = 3) -> List[Dict]:
