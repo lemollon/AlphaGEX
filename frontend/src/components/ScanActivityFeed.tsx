@@ -232,7 +232,6 @@ interface ScanActivity {
   volatility_risk_level?: string  // extreme, high, medium, low
   volatility_description?: string
   at_flip_point?: boolean
-  flip_point?: number
   flip_point_distance_pct?: number
 
   // === NEW: Monte Carlo Kelly (expanded) ===
