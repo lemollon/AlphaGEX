@@ -39,8 +39,8 @@ services:
 
   # SERVICE 2: Autonomous Trader (Background Worker)
   # Runs ALL trading bots:
-  #   - ARES: Aggressive Iron Condor (8:30 AM - 3:30 PM CT, every 5 min, once daily)
-  #   - ATHENA: GEX Directional Spreads (8:35 AM - 2:30 PM CT, every 5 min, up to 5/day)
+  #   - ARES: Aggressive Iron Condor (every 5 min, once daily)
+  #   - ATHENA: GEX Directional Spreads (every 5 min, up to 5/day)
   #   - PHOENIX: 0DTE SPY/SPX options (hourly during market hours)
   #   - ATLAS: SPX Wheel strategy (daily at 9:05 AM CT)
   - type: worker
@@ -50,10 +50,12 @@ services:
     branch: main
     autoDeploy: true
     buildCommand: pip install --no-cache-dir -r requirements.txt
-    startCommand: python scheduler/trader_scheduler.py
+    startCommand: cd /opt/render/project/src && PYTHONPATH=/opt/render/project/src python scheduler/trader_scheduler.py
     envVars:
       - key: TZ
         value: America/Chicago
+      - key: PYTHONPATH
+        value: /opt/render/project/src
       - key: PYTHON_VERSION
         value: 3.11.0
       - key: TV_USERNAME
