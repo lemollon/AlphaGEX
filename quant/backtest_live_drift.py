@@ -143,11 +143,34 @@ class BacktestLiveDriftDetector:
         except Exception as e:
             logger.error(f"Failed to create drift table: {e}")
 
+    def _get_positions_table(self, bot_name: str) -> str:
+        """Get the correct positions table name for each bot."""
+        tables = {
+            'ARES': 'ares_positions',
+            'ATHENA': 'athena_positions',
+            'ICARUS': 'icarus_positions',
+            'PEGASUS': 'pegasus_positions',
+            'TITAN': 'titan_positions'
+        }
+        return tables.get(bot_name.upper(), 'ares_positions')
+
+    def _get_backtest_patterns(self, bot_name: str) -> list:
+        """Get backtest pattern names that match each bot type."""
+        patterns = {
+            'ARES': ['ARES', 'IRON_CONDOR', 'SPY_IC', 'IC_'],
+            'ATHENA': ['ATHENA', 'DIRECTIONAL', 'SPREAD', 'GEX_'],
+            'ICARUS': ['ICARUS', 'AGGRESSIVE', 'DIRECTIONAL'],
+            'PEGASUS': ['PEGASUS', 'SPX_IC', 'SPX_IRON', 'CONDOR'],
+            'TITAN': ['TITAN', 'AGGRESSIVE_IC', 'SPX_AGGRESSIVE']
+        }
+        return patterns.get(bot_name.upper(), [bot_name])
+
     def get_backtest_stats(self, bot_name: str) -> Optional[Dict]:
         """
         Get backtest statistics for a bot.
 
-        Looks in backtest_results table for the most recent backtest.
+        Looks in backtest_results table for the most recent backtest
+        matching the bot's strategy type.
         """
         if not DB_AVAILABLE:
             return None
@@ -156,39 +179,42 @@ class BacktestLiveDriftDetector:
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Get most recent backtest results
-            cursor.execute("""
-                SELECT
-                    total_trades,
-                    winning_trades,
-                    win_rate,
-                    expectancy_pct,
-                    sharpe_ratio,
-                    avg_win_pct,
-                    avg_loss_pct,
-                    max_drawdown_pct
-                FROM backtest_results
-                WHERE UPPER(strategy_name) LIKE UPPER(%s)
-                ORDER BY timestamp DESC
-                LIMIT 1
-            """, (f'%{bot_name}%',))
+            # Try multiple pattern matches for this bot type
+            patterns = self._get_backtest_patterns(bot_name)
 
-            row = cursor.fetchone()
+            for pattern in patterns:
+                cursor.execute("""
+                    SELECT
+                        total_trades,
+                        winning_trades,
+                        win_rate,
+                        expectancy_pct,
+                        sharpe_ratio,
+                        avg_win_pct,
+                        avg_loss_pct,
+                        max_drawdown_pct
+                    FROM backtest_results
+                    WHERE UPPER(strategy_name) LIKE UPPER(%s)
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                """, (f'%{pattern}%',))
+
+                row = cursor.fetchone()
+                if row:
+                    conn.close()
+                    return {
+                        'total_trades': row[0] or 0,
+                        'winning_trades': row[1] or 0,
+                        'win_rate': float(row[2]) if row[2] else 0.5,
+                        'expectancy': float(row[3]) if row[3] else 0.0,
+                        'sharpe_ratio': float(row[4]) if row[4] else 0.0,
+                        'avg_win': float(row[5]) if row[5] else 5.0,
+                        'avg_loss': float(row[6]) if row[6] else 5.0,
+                        'max_drawdown': float(row[7]) if row[7] else 20.0
+                    }
+
             conn.close()
-
-            if not row:
-                return None
-
-            return {
-                'total_trades': row[0] or 0,
-                'winning_trades': row[1] or 0,
-                'win_rate': float(row[2]) if row[2] else 0.5,
-                'expectancy': float(row[3]) if row[3] else 0.0,
-                'sharpe_ratio': float(row[4]) if row[4] else 0.0,
-                'avg_win': float(row[5]) if row[5] else 5.0,
-                'avg_loss': float(row[6]) if row[6] else 5.0,
-                'max_drawdown': float(row[7]) if row[7] else 20.0
-            }
+            return None
 
         except Exception as e:
             logger.error(f"Failed to get backtest stats for {bot_name}: {e}")
@@ -198,7 +224,7 @@ class BacktestLiveDriftDetector:
         """
         Get live trading statistics for a bot.
 
-        Queries closed trades from the last N days.
+        Queries closed positions from the bot's positions table.
         """
         if not DB_AVAILABLE:
             return None
@@ -207,19 +233,33 @@ class BacktestLiveDriftDetector:
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Get live trading stats
-            cursor.execute("""
+            table_name = self._get_positions_table(bot_name)
+
+            # Query closed positions from bot-specific table
+            # Calculate pnl_pct as (realized_pnl / max_loss * 100) for losses
+            # or (realized_pnl / max_profit * 100) for wins
+            cursor.execute(f"""
                 SELECT
                     COUNT(*) as total_trades,
                     SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as winning_trades,
-                    AVG(realized_pnl_pct) as expectancy,
-                    AVG(CASE WHEN realized_pnl > 0 THEN realized_pnl_pct ELSE NULL END) as avg_win,
-                    AVG(CASE WHEN realized_pnl <= 0 THEN ABS(realized_pnl_pct) ELSE NULL END) as avg_loss,
-                    STDDEV(realized_pnl_pct) as pnl_stddev
-                FROM autonomous_closed_trades
-                WHERE UPPER(bot_name) = UPPER(%s)
-                AND closed_at > NOW() - INTERVAL '%s days'
-            """, (bot_name, lookback_days))
+                    AVG(
+                        CASE
+                            WHEN realized_pnl > 0 THEN (realized_pnl / NULLIF(max_profit, 0) * 100)
+                            ELSE (realized_pnl / NULLIF(max_loss, 0) * 100)
+                        END
+                    ) as expectancy,
+                    AVG(CASE WHEN realized_pnl > 0 THEN (realized_pnl / NULLIF(max_profit, 0) * 100) ELSE NULL END) as avg_win,
+                    AVG(CASE WHEN realized_pnl <= 0 THEN ABS(realized_pnl / NULLIF(max_loss, 0) * 100) ELSE NULL END) as avg_loss,
+                    STDDEV(
+                        CASE
+                            WHEN realized_pnl > 0 THEN (realized_pnl / NULLIF(max_profit, 0) * 100)
+                            ELSE (realized_pnl / NULLIF(max_loss, 0) * 100)
+                        END
+                    ) as pnl_stddev
+                FROM {table_name}
+                WHERE UPPER(status) = 'CLOSED'
+                AND close_time > NOW() - INTERVAL '%s days'
+            """, (lookback_days,))
 
             row = cursor.fetchone()
             conn.close()
