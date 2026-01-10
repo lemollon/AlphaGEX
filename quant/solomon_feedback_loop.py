@@ -144,6 +144,8 @@ class BotName(Enum):
     ATLAS = "ATLAS"       # SPX Wheel (Cash-Secured Puts)
     PEGASUS = "PEGASUS"
     PHOENIX = "PHOENIX"
+    ICARUS = "ICARUS"     # Aggressive Directional Spreads
+    TITAN = "TITAN"       # Aggressive SPX Iron Condor
 
 
 class ActionType(Enum):
