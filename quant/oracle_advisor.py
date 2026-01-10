@@ -2196,14 +2196,16 @@ class OracleAdvisor:
             reasoning_parts.append("Positive GEX favors mean reversion (good for IC)")
             base_pred['win_probability'] = min(0.85, base_pred['win_probability'] + 0.03)
         elif context.gex_regime == GEXRegime.NEGATIVE:
-            reasoning_parts.append("Negative GEX indicates trending market (risky for IC)")
-            base_pred['win_probability'] = max(0.40, base_pred['win_probability'] - 0.05)
+            reasoning_parts.append("Negative GEX indicates trending market (slightly risky for IC)")
+            # REDUCED: -5% was too aggressive, -2% is more realistic
+            base_pred['win_probability'] = max(0.50, base_pred['win_probability'] - 0.02)
 
         if context.gex_between_walls:
             reasoning_parts.append("Price between GEX walls (stable zone)")
         else:
-            reasoning_parts.append("Price outside GEX walls (breakout risk)")
-            base_pred['win_probability'] = max(0.40, base_pred['win_probability'] - 0.03)
+            reasoning_parts.append("Price outside GEX walls (minor breakout risk)")
+            # REDUCED: -3% was too aggressive, -1% is more realistic
+            base_pred['win_probability'] = max(0.50, base_pred['win_probability'] - 0.01)
 
         # =========================================================================
         # CLAUDE AI VALIDATION (if enabled)
@@ -2224,18 +2226,19 @@ class OracleAdvisor:
                     logger.info(f"Claude risk factors: {claude_analysis.risk_factors}")
 
             # VALIDATE hallucination_risk and reduce confidence if HIGH
+            # REDUCED penalties: original values were too aggressive and blocked trades
             hallucination_risk = getattr(claude_analysis, 'hallucination_risk', 'LOW')
             if hallucination_risk == 'HIGH':
-                penalty = 0.10  # 10% penalty for high hallucination risk
-                base_pred['win_probability'] = max(0.40, base_pred['win_probability'] - penalty)
+                penalty = 0.05  # REDUCED from 10% to 5%
+                base_pred['win_probability'] = max(0.50, base_pred['win_probability'] - penalty)
                 reasoning_parts.append(f"Claude hallucination risk HIGH (confidence reduced by {penalty:.0%})")
                 logger.warning(f"[ARES] Claude hallucination risk HIGH - reducing confidence by {penalty:.0%}")
                 if hasattr(claude_analysis, 'hallucination_warnings') and claude_analysis.hallucination_warnings:
                     for warning in claude_analysis.hallucination_warnings:
                         logger.warning(f"  - {warning}")
             elif hallucination_risk == 'MEDIUM':
-                penalty = 0.05  # 5% penalty for medium hallucination risk
-                base_pred['win_probability'] = max(0.40, base_pred['win_probability'] - penalty)
+                penalty = 0.02  # REDUCED from 5% to 2%
+                base_pred['win_probability'] = max(0.50, base_pred['win_probability'] - penalty)
                 reasoning_parts.append(f"Claude hallucination risk MEDIUM (confidence reduced by {penalty:.0%})")
                 logger.info(f"[ARES] Claude hallucination risk MEDIUM - reducing confidence by {penalty:.0%}")
 
@@ -2443,10 +2446,10 @@ class OracleAdvisor:
         # Negative GEX + below flip = potential rally
         if context.gex_regime == GEXRegime.NEGATIVE and context.gex_distance_to_flip_pct < 0:
             reasoning_parts.append("Negative GEX below flip = gamma squeeze potential")
-            base_pred['win_probability'] = min(0.75, base_pred['win_probability'] + 0.10)
+            base_pred['win_probability'] = min(0.75, base_pred['win_probability'] + 0.05)  # REDUCED from +10%
         elif context.gex_regime == GEXRegime.POSITIVE:
             reasoning_parts.append("Positive GEX = mean reversion, less directional opportunity")
-            base_pred['win_probability'] = max(0.30, base_pred['win_probability'] - 0.10)
+            base_pred['win_probability'] = max(0.45, base_pred['win_probability'] - 0.05)  # REDUCED from -10%
 
         # =========================================================================
         # CLAUDE AI VALIDATION (if enabled)
@@ -2457,21 +2460,21 @@ class OracleAdvisor:
 
             # Apply Claude's confidence adjustment
             if claude_analysis.recommendation in ["ADJUST", "OVERRIDE"]:
-                base_pred['win_probability'] = max(0.30, min(0.80,
+                base_pred['win_probability'] = max(0.45, min(0.80,
                     base_pred['win_probability'] + claude_analysis.confidence_adjustment
                 ))
                 reasoning_parts.append(f"Claude: {claude_analysis.analysis}")
 
-            # VALIDATE hallucination_risk and reduce confidence if HIGH
+            # VALIDATE hallucination_risk - REDUCED penalties
             hallucination_risk = getattr(claude_analysis, 'hallucination_risk', 'LOW')
             if hallucination_risk == 'HIGH':
-                penalty = 0.10
-                base_pred['win_probability'] = max(0.30, base_pred['win_probability'] - penalty)
+                penalty = 0.05  # REDUCED from 10%
+                base_pred['win_probability'] = max(0.45, base_pred['win_probability'] - penalty)
                 reasoning_parts.append(f"Claude hallucination risk HIGH (confidence reduced by {penalty:.0%})")
                 logger.warning(f"[PHOENIX] Claude hallucination risk HIGH - reducing confidence by {penalty:.0%}")
             elif hallucination_risk == 'MEDIUM':
-                penalty = 0.05
-                base_pred['win_probability'] = max(0.30, base_pred['win_probability'] - penalty)
+                penalty = 0.02  # REDUCED from 5%
+                base_pred['win_probability'] = max(0.45, base_pred['win_probability'] - penalty)
                 reasoning_parts.append(f"Claude hallucination risk MEDIUM (confidence reduced by {penalty:.0%})")
                 logger.info(f"[PHOENIX] Claude hallucination risk MEDIUM - reducing confidence by {penalty:.0%}")
 
@@ -2650,21 +2653,21 @@ class OracleAdvisor:
             claude_analysis = self.claude.validate_prediction(context, base_pred, BotName.ATHENA)
 
             if claude_analysis.recommendation in ["ADJUST", "OVERRIDE"]:
-                base_pred['win_probability'] = max(0.30, min(0.85,
+                base_pred['win_probability'] = max(0.45, min(0.85,
                     base_pred['win_probability'] + claude_analysis.confidence_adjustment
                 ))
                 reasoning_parts.append(f"Claude: {claude_analysis.analysis}")
 
-            # VALIDATE hallucination_risk and reduce confidence if HIGH
+            # VALIDATE hallucination_risk - REDUCED penalties
             hallucination_risk = getattr(claude_analysis, 'hallucination_risk', 'LOW')
             if hallucination_risk == 'HIGH':
-                penalty = 0.10
-                base_pred['win_probability'] = max(0.30, base_pred['win_probability'] - penalty)
+                penalty = 0.05  # REDUCED from 10%
+                base_pred['win_probability'] = max(0.45, base_pred['win_probability'] - penalty)
                 reasoning_parts.append(f"Claude hallucination risk HIGH (confidence reduced by {penalty:.0%})")
                 logger.warning(f"[ATHENA] Claude hallucination risk HIGH - reducing confidence by {penalty:.0%}")
             elif hallucination_risk == 'MEDIUM':
-                penalty = 0.05
-                base_pred['win_probability'] = max(0.30, base_pred['win_probability'] - penalty)
+                penalty = 0.02  # REDUCED from 5%
+                base_pred['win_probability'] = max(0.45, base_pred['win_probability'] - penalty)
                 reasoning_parts.append(f"Claude hallucination risk MEDIUM (confidence reduced by {penalty:.0%})")
                 logger.info(f"[ATHENA] Claude hallucination risk MEDIUM - reducing confidence by {penalty:.0%}")
 

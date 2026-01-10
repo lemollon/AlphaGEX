@@ -664,19 +664,21 @@ class AresMLAdvisor:
         - Positive GEX = better for Iron Condors (mean reversion)
         """
         # Base win probability from historical average
-        base_prob = 0.68
+        # Iron Condors historically have ~70% win rate
+        base_prob = 0.70
 
-        # VIX adjustment
+        # VIX adjustment - REDUCED penalties to avoid blocking too many trades
+        # High VIX actually means higher premiums, which can offset risk
         if vix > 35:
-            base_prob -= 0.10  # High VIX = more risk
+            base_prob -= 0.05  # REDUCED from -10%: High VIX = more risk but more premium
         elif vix > 25:
-            base_prob -= 0.05
+            base_prob -= 0.02  # REDUCED from -5%: Elevated but manageable
         elif vix < 12:
-            base_prob -= 0.03  # Very low VIX = low premium
+            base_prob -= 0.02  # REDUCED from -3%: Low VIX = low premium
 
-        # Day of week adjustment (based on typical patterns)
+        # Day of week adjustment - REDUCED to be less aggressive
         dow_adjustments = {
-            0: -0.02,  # Monday - gap risk
+            0: -0.01,  # REDUCED from -2%: Monday - gap risk
             1: 0.01,   # Tuesday
             2: 0.02,   # Wednesday - hump day stability
             3: 0.01,   # Thursday
@@ -684,16 +686,16 @@ class AresMLAdvisor:
         }
         base_prob += dow_adjustments.get(day_of_week, 0)
 
-        # GEX adjustment - KEY INSIGHT for Iron Condors
+        # GEX adjustment - REDUCED penalties
         # Positive GEX = market makers long gamma = mean reversion = good for Iron Condors
-        # Negative GEX = market makers short gamma = trending = bad for Iron Condors
+        # Negative GEX = market makers short gamma = trending = slightly risky for IC
         if gex_regime_positive == 1:
-            base_prob += 0.05  # Positive GEX favors Iron Condors
+            base_prob += 0.03  # REDUCED from +5%: Positive GEX favors Iron Condors
         else:
-            base_prob -= 0.03  # Negative/neutral GEX slightly unfavorable
+            base_prob -= 0.02  # REDUCED from -3%: Negative/neutral GEX slightly unfavorable
 
-        # Clip to reasonable range
-        win_probability = max(0.4, min(0.85, base_prob))
+        # Clip to reasonable range - raised floor from 0.4 to 0.5
+        win_probability = max(0.5, min(0.85, base_prob))
 
         # Determine advice
         if win_probability >= 0.65:
