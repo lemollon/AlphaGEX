@@ -494,8 +494,17 @@ class SignalGenerator:
 
         Returns (can_trade, reason).
         """
-        # VIX skip disabled - always allow trading
-        return True, "VIX check disabled"
+        # Get VIX skip threshold from config (e.g., 32.0 for MODERATE preset)
+        vix_skip = getattr(self.config, 'vix_skip', None)
+
+        if vix_skip is None:
+            # No VIX filtering configured (BASELINE preset)
+            return True, f"VIX={vix:.1f}, no skip threshold configured"
+
+        if vix > vix_skip:
+            return False, f"VIX ({vix:.1f}) exceeds skip threshold ({vix_skip})"
+
+        return True, f"VIX={vix:.1f} within threshold ({vix_skip})"
 
     def adjust_confidence_from_top_factors(
         self,
@@ -957,16 +966,41 @@ class SignalGenerator:
                     logger.info(f"[ARES ORACLE INFO] Oracle advises SKIP_TODAY (informational only)")
                     logger.info(f"  Bot will use its own threshold: {self.config.min_win_probability:.1%}")
 
-        # Win probability threshold check disabled - always trade
+        # Win probability threshold check - enforce minimum win probability
+        min_win_prob = getattr(self.config, 'min_win_probability', 0.42)
         logger.info(f"[ARES DECISION] Using {prediction_source} win probability: {effective_win_prob:.1%}")
-        logger.info(f"[ARES] Win probability threshold check DISABLED - proceeding with trade")
+        logger.info(f"[ARES THRESHOLD] Minimum required: {min_win_prob:.1%}")
+
+        if effective_win_prob < min_win_prob:
+            logger.info(f"[ARES BLOCKED] Win probability {effective_win_prob:.1%} < threshold {min_win_prob:.1%}")
+            # Return an invalid signal with the reason
+            return IronCondorSignal(
+                spot_price=spot,
+                vix=vix,
+                expected_move=expected_move,
+                call_wall=market_data.get('call_wall', 0),
+                put_wall=market_data.get('put_wall', 0),
+                gex_regime=market_data.get('gex_regime', 'NEUTRAL'),
+                put_short=0,
+                put_long=0,
+                call_short=0,
+                call_long=0,
+                expiration="",
+                total_credit=0,
+                max_loss=0,
+                max_profit=0,
+                confidence=effective_win_prob,
+                reasoning=f"Win probability {effective_win_prob:.1%} below threshold {min_win_prob:.1%}",
+                source="THRESHOLD_BLOCKED",
+                is_valid=False,
+            )
 
         # Use ML's suggested SD multiplier if available
         win_probability = effective_win_prob if effective_win_prob > 0 else 0.50  # Default to 50% if no prediction
         if use_ml_prediction and ml_prediction.get('suggested_sd_multiplier'):
             self._ml_suggested_sd = ml_prediction.get('suggested_sd_multiplier', 1.0)
 
-        logger.info(f"[ARES PASSED] {prediction_source} Win Prob {win_probability:.1%} - threshold disabled")
+        logger.info(f"[ARES PASSED] {prediction_source} Win Prob {win_probability:.1%} >= threshold {min_win_prob:.1%}")
 
         # ============================================================
         # GEX DIRECTIONAL ML - Check if market is too directional for IC

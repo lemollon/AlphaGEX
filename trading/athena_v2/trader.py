@@ -680,10 +680,22 @@ class ATHENATrader(MathOptimizerMixin):
         if now >= force_time and pos.expiration == today:
             return True, "FORCE_EXIT_TIME"
 
-        # Get current value
+        # Get current value with fallback handling
         current_value = self.executor.get_position_current_value(pos)
         if current_value is None:
-            return False, ""
+            # PRICING FALLBACK: Don't silently block exits when pricing fails
+            logger.warning(f"[ATHENA EXIT] Pricing unavailable for {pos.position_id}")
+
+            # If we're within 30 minutes of force exit time, force close anyway
+            force_time = self._get_force_exit_time(now, today)
+            minutes_to_force = (force_time - now).total_seconds() / 60
+            if minutes_to_force <= 30 and pos.expiration == today:
+                logger.warning(f"[ATHENA EXIT] Force closing {pos.position_id} - pricing failed but {minutes_to_force:.0f}min to force exit")
+                return True, "PRICING_FAILURE_NEAR_EXPIRY"
+
+            # Log but don't block - we'll retry next cycle
+            self.db.log("WARNING", f"Pricing unavailable for exit check: {pos.position_id}")
+            return False, "PRICING_UNAVAILABLE"
 
         # Calculate current P&L percentage
         entry_cost = pos.entry_debit

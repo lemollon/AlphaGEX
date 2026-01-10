@@ -640,22 +640,62 @@ class ARESTrader(MathOptimizerMixin):
             if should_close:
                 success, close_price, pnl = self.executor.close_position(pos, reason)
 
-                # Handle partial close (put closed but call failed)
+                # Handle partial close (put closed but call failed) with RETRY LOGIC
                 if success == 'partial_put':
-                    self.db.partial_close_position(
-                        position_id=pos.position_id,
-                        close_price=close_price,
-                        realized_pnl=pnl,
-                        close_reason=reason,
-                        closed_leg='put'
-                    )
-                    logger.error(
-                        f"PARTIAL CLOSE: {pos.position_id} put leg closed but call failed. "
-                        f"Manual intervention required to close call spread."
-                    )
-                    # Don't count as fully closed, but track the partial P&L
-                    total_pnl += pnl
-                    continue
+                    logger.warning(f"[ARES] Partial close detected for {pos.position_id} - attempting retry for call leg")
+
+                    # Retry closing the call leg up to 3 times with exponential backoff
+                    call_closed = False
+                    for attempt in range(3):
+                        import time
+                        time.sleep(2 ** attempt)  # 1s, 2s, 4s backoff
+
+                        logger.info(f"[ARES] Retry {attempt + 1}/3 for call leg of {pos.position_id}")
+                        call_result = self.executor.close_call_spread_only(pos, reason)
+
+                        if call_result and call_result[0]:  # (success, close_price, pnl)
+                            call_closed = True
+                            call_pnl = call_result[2]
+                            pnl += call_pnl  # Add call leg P&L to total
+                            logger.info(f"[ARES] Call leg closed on retry {attempt + 1}, total P&L: ${pnl:.2f}")
+                            break
+
+                    if call_closed:
+                        # Successfully recovered - mark as fully closed
+                        db_success = self.db.close_position(
+                            position_id=pos.position_id,
+                            close_price=close_price,
+                            realized_pnl=pnl,
+                            close_reason=f"{reason}_RECOVERED_RETRY"
+                        )
+                        if db_success:
+                            closed_count += 1
+                            total_pnl += pnl
+                            self.db.log("INFO", f"Position {pos.position_id} recovered via retry: P&L=${pnl:.2f}")
+                        continue
+                    else:
+                        # All retries failed - mark as partial close
+                        self.db.partial_close_position(
+                            position_id=pos.position_id,
+                            close_price=close_price,
+                            realized_pnl=pnl,
+                            close_reason=reason,
+                            closed_leg='put'
+                        )
+                        logger.error(
+                            f"PARTIAL CLOSE FAILED RECOVERY: {pos.position_id} put leg closed but call failed after 3 retries. "
+                            f"Manual intervention required to close call spread."
+                        )
+                        # Send alert for manual intervention
+                        self.db.log("CRITICAL", f"Manual intervention needed: {pos.position_id} call leg open", {
+                            'position_id': pos.position_id,
+                            'call_short': pos.call_short_strike,
+                            'call_long': pos.call_long_strike,
+                            'contracts': pos.contracts
+                        })
+                        # Don't count as fully closed, but track the partial P&L
+                        total_pnl += pnl
+                        continue
 
                 if success:
                     db_success = self.db.close_position(
@@ -975,10 +1015,22 @@ class ARESTrader(MathOptimizerMixin):
         if now >= force_time and pos.expiration == today:
             return True, "FORCE_EXIT_TIME"
 
-        # Get current value
+        # Get current value with fallback handling
         current_value = self.executor.get_position_current_value(pos)
         if current_value is None:
-            return False, ""
+            # PRICING FALLBACK: Don't silently block exits when pricing fails
+            logger.warning(f"[ARES EXIT] Pricing unavailable for {pos.position_id}")
+
+            # If we're within 30 minutes of force exit time, force close anyway
+            force_time = self._get_force_exit_time(now, today)
+            minutes_to_force = (force_time - now).total_seconds() / 60
+            if minutes_to_force <= 30 and pos.expiration == today:
+                logger.warning(f"[ARES EXIT] Force closing {pos.position_id} - pricing failed but {minutes_to_force:.0f}min to force exit")
+                return True, "PRICING_FAILURE_NEAR_EXPIRY"
+
+            # Log but don't block - we'll retry next cycle
+            self.db.log("WARNING", f"Pricing unavailable for exit check: {pos.position_id}")
+            return False, "PRICING_UNAVAILABLE"
 
         # MATH OPTIMIZER: Use HJB for dynamic exit timing
         if MATH_OPTIMIZER_AVAILABLE and hasattr(self, '_math_enabled') and self._math_enabled:
