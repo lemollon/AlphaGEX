@@ -241,21 +241,33 @@ class OrderExecutor:
 
         return None
 
-    def execute_iron_condor(self, signal: IronCondorSignal) -> Optional[IronCondorPosition]:
-        """Execute SPX Iron Condor"""
-        if self.config.mode == TradingMode.PAPER:
-            return self._execute_paper(signal)
-        else:
-            return self._execute_live(signal)
+    def execute_iron_condor(
+        self,
+        signal: IronCondorSignal,
+        thompson_weight: float = 1.0
+    ) -> Optional[IronCondorPosition]:
+        """Execute SPX Iron Condor
 
-    def _execute_paper(self, signal: IronCondorSignal) -> Optional[IronCondorPosition]:
+        Args:
+            signal: The Iron Condor signal to execute
+            thompson_weight: Thompson Sampling allocation weight (0.5-2.0)
+                            - 1.0 = neutral (standard sizing)
+                            - 1.5 = bot is performing well, increase size 50%
+                            - 0.7 = bot is underperforming, reduce size 30%
+        """
+        if self.config.mode == TradingMode.PAPER:
+            return self._execute_paper(signal, thompson_weight)
+        else:
+            return self._execute_live(signal, thompson_weight)
+
+    def _execute_paper(self, signal: IronCondorSignal, thompson_weight: float = 1.0) -> Optional[IronCondorPosition]:
         """Paper trade execution with FULL Oracle/Kronos context"""
         try:
             import json
             now = datetime.now(CENTRAL_TZ)
             position_id = f"TITAN-{now.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:4].upper()}"
 
-            contracts = self._calculate_position_size(signal.max_loss)
+            contracts = self._calculate_position_size(signal.max_loss, thompson_weight)
             max_profit = signal.total_credit * 100 * contracts
             max_loss = (self.config.spread_width - signal.total_credit) * 100 * contracts
 
@@ -310,7 +322,7 @@ class OrderExecutor:
             logger.error(f"Paper execution failed: {e}")
             return None
 
-    def _execute_live(self, signal: IronCondorSignal) -> Optional[IronCondorPosition]:
+    def _execute_live(self, signal: IronCondorSignal, thompson_weight: float = 1.0) -> Optional[IronCondorPosition]:
         """Live SPX execution with FULL Oracle/Kronos context"""
         if not self.tradier:
             logger.error("Tradier not available")
@@ -319,7 +331,7 @@ class OrderExecutor:
         try:
             import json
             now = datetime.now(CENTRAL_TZ)
-            contracts = self._calculate_position_size(signal.max_loss)
+            contracts = self._calculate_position_size(signal.max_loss, thompson_weight)
 
             # Execute put spread with retry
             put_result = self._tradier_place_spread_with_retry(
@@ -616,8 +628,19 @@ class OrderExecutor:
             logger.debug(f"[KELLY] Error: {e}")
             return None
 
-    def _calculate_position_size(self, max_loss_per_contract: float) -> int:
-        """Calculate position size using Monte Carlo Kelly criterion."""
+    def _calculate_position_size(self, max_loss_per_contract: float, thompson_weight: float = 1.0) -> int:
+        """Calculate position size using Monte Carlo Kelly criterion and Thompson Sampling.
+
+        Args:
+            max_loss_per_contract: Maximum loss per contract in dollars
+            thompson_weight: Thompson Sampling allocation weight (0.5-2.0)
+                            - 1.0 = neutral (standard sizing)
+                            - 1.5 = bot is performing well, increase size 50%
+                            - 0.7 = bot is underperforming, reduce size 30%
+
+        Returns:
+            Number of contracts to trade (minimum 1)
+        """
         capital = self.config.capital
 
         if max_loss_per_contract <= 0:
@@ -629,12 +652,26 @@ class OrderExecutor:
         if kelly_result and kelly_result.get('kelly_safe', 0) > 0:
             kelly_risk_pct = kelly_result['kelly_safe']
             max_risk = capital * (kelly_risk_pct / 100)
+            sizing_source = "KELLY"
             logger.info(f"[TITAN] Using Kelly-safe sizing: {kelly_risk_pct:.1f}% risk")
         else:
             max_risk = capital * (self.config.risk_per_trade_pct / 100)
+            sizing_source = "CONFIG"
 
-        contracts = int(max_risk / max_loss_per_contract)
-        return max(1, min(contracts, self.config.max_contracts))
+        # Base position size from risk calculation
+        base_contracts = max_risk / max_loss_per_contract
+
+        # Apply Thompson Sampling weight (clamped to reasonable bounds)
+        # Weight is normalized so 20% allocation (1/5 bots) = 1.0
+        # Higher allocation = larger positions, lower = smaller
+        clamped_weight = max(0.5, min(2.0, thompson_weight))
+        adjusted_contracts = int(base_contracts * clamped_weight)
+
+        # Log sizing decision
+        if abs(thompson_weight - 1.0) > 0.05:
+            logger.info(f"[TITAN {sizing_source}] Thompson: weight={thompson_weight:.2f}, base={base_contracts:.1f}, adjusted={adjusted_contracts}")
+
+        return max(1, min(adjusted_contracts, self.config.max_contracts))
 
     def _get_current_spx_price(self) -> Optional[float]:
         if DATA_AVAILABLE:

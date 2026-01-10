@@ -707,7 +707,18 @@ class TITANTrader(MathOptimizerMixin):
             reasoning=signal.reasoning,
         )
 
-        position = self.executor.execute_iron_condor(signal)
+        # Get Thompson Sampling allocation weight for position sizing
+        thompson_weight = 1.0  # Default neutral weight
+        if MATH_OPTIMIZER_AVAILABLE and hasattr(self, 'math_get_allocation'):
+            try:
+                allocation = self.math_get_allocation()
+                titan_alloc = allocation.get('allocations', {}).get('TITAN', 0.2)
+                thompson_weight = titan_alloc / 0.2  # Normalize to 20% baseline
+                logger.info(f"TITAN Thompson weight: {thompson_weight:.2f} (allocation: {titan_alloc:.1%})")
+            except Exception as e:
+                logger.debug(f"Thompson allocation not available: {e}")
+
+        position = self.executor.execute_iron_condor(signal, thompson_weight=thompson_weight)
         if not position:
             self.db.log("ERROR", "Execution failed", {'signal': signal.reasoning})
             return None, signal
