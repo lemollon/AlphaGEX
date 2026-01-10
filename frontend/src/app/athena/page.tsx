@@ -29,6 +29,7 @@ import {
   BotStatusBanner,
 } from '@/components/trader'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
+import DriftStatusCard from '@/components/DriftStatusCard'
 
 // ==============================================================================
 // INTERFACES
@@ -414,6 +415,9 @@ export default function AthenaPage() {
                   todayPnl={status?.daily_pnl || 0}
                   todayTrades={status?.daily_trades || 0}
                 />
+
+                {/* Performance Drift - Backtest vs Live */}
+                <DriftStatusCard botName="ATHENA" />
 
                 {/* Open Positions */}
                 <BotCard title="Open Positions" icon={<Crosshair className="h-5 w-5" />}>

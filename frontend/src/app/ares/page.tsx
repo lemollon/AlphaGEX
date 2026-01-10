@@ -32,6 +32,7 @@ import {
   LastScanSummary,
 } from '@/components/trader'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
+import DriftStatusCard from '@/components/DriftStatusCard'
 
 // ==============================================================================
 // INTERFACES
@@ -663,6 +664,9 @@ export default function AresPage() {
                     return closeTime.startsWith(today)
                   }).length}
                 />
+
+                {/* Performance Drift - Backtest vs Live */}
+                <DriftStatusCard botName="ARES" />
 
                 {/* Open Positions */}
                 <BotCard title="Open Positions" icon={<Crosshair className="h-5 w-5" />}>
