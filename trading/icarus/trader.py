@@ -84,6 +84,23 @@ except ImportError:
     MATH_OPTIMIZER_AVAILABLE = False
     MathOptimizerMixin = object
 
+# Solomon Enhanced for feedback loop recording
+try:
+    from quant.solomon_enhancements import get_solomon_enhanced
+    SOLOMON_ENHANCED_AVAILABLE = True
+except ImportError:
+    SOLOMON_ENHANCED_AVAILABLE = False
+    get_solomon_enhanced = None
+
+# Auto-Validation System for Thompson Sampling capital allocation
+try:
+    from quant.auto_validation_system import get_auto_validation_system, record_bot_outcome
+    AUTO_VALIDATION_AVAILABLE = True
+except ImportError:
+    AUTO_VALIDATION_AVAILABLE = False
+    get_auto_validation_system = None
+    record_bot_outcome = None
+
 # Market calendar for holiday checking
 try:
     from trading.market_calendar import MarketCalendar
@@ -362,6 +379,13 @@ class ICARUSTrader(MathOptimizerMixin):
 
                     self._record_oracle_outcome(pos, reason, pnl)
 
+                    # Record outcome to Solomon Enhanced for feedback loops
+                    trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+                    self._record_solomon_outcome(pnl, trade_date)
+
+                    # Record outcome to Thompson Sampling for capital allocation
+                    self._record_thompson_outcome(pnl)
+
                     if pos.position_id in self._prediction_ids:
                         self._record_learning_memory_outcome(
                             self._prediction_ids.pop(pos.position_id),
@@ -375,11 +399,12 @@ class ICARUSTrader(MathOptimizerMixin):
                         except Exception as e:
                             logger.warning(f"[ICARUS] Failed to record P&L to circuit breaker: {e}")
 
+                    # MATH OPTIMIZER: Record outcome for Thompson Sampling (via mixin)
                     if MATH_OPTIMIZER_AVAILABLE and hasattr(self, 'math_record_outcome'):
                         try:
                             self.math_record_outcome(win=(pnl > 0), pnl=pnl)
                         except Exception as e:
-                            logger.debug(f"Thompson outcome recording skipped: {e}")
+                            logger.debug(f"Math optimizer outcome recording skipped: {e}")
 
                     self.db.log("INFO", f"Closed {pos.position_id}: {reason}, P&L=${pnl:.2f}")
 
@@ -400,11 +425,10 @@ class ICARUSTrader(MathOptimizerMixin):
 
             trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
 
-            # Record to Oracle - use ATHENA bot name since ICARUS uses same model
-            # Note: In future could add ICARUS to OracleBotName enum
+            # Record to Oracle with ICARUS's own bot name for proper tracking
             success = oracle.update_outcome(
                 trade_date=trade_date,
-                bot_name=OracleBotName.ATHENA,  # Uses ATHENA model
+                bot_name=OracleBotName.ICARUS,
                 outcome=outcome,
                 actual_pnl=pnl,
             )
@@ -414,6 +438,48 @@ class ICARUSTrader(MathOptimizerMixin):
 
         except Exception as e:
             logger.warning(f"ICARUS: Oracle outcome recording failed: {e}")
+
+    def _record_solomon_outcome(self, pnl: float, trade_date: str):
+        """
+        Record trade outcome to Solomon Enhanced for feedback loop tracking.
+
+        This updates:
+        - Consecutive loss tracking (triggers kill if threshold reached)
+        - Bot performance metrics
+        - Performance tracking for version comparison
+        """
+        if not SOLOMON_ENHANCED_AVAILABLE or not get_solomon_enhanced:
+            return
+
+        try:
+            enhanced = get_solomon_enhanced()
+            alerts = enhanced.record_trade_outcome(
+                bot_name='ICARUS',
+                pnl=pnl,
+                trade_date=trade_date,
+                capital_base=getattr(self.config, 'capital', 150000.0)
+            )
+            if alerts:
+                for alert in alerts:
+                    logger.warning(f"ICARUS Solomon alert: {alert}")
+        except Exception as e:
+            logger.warning(f"ICARUS: Solomon outcome recording failed: {e}")
+
+    def _record_thompson_outcome(self, pnl: float):
+        """
+        Record trade outcome to Thompson Sampling for capital allocation.
+
+        This updates the Beta distribution parameters for ICARUS,
+        which affects future capital allocation across bots.
+        """
+        if not AUTO_VALIDATION_AVAILABLE or not record_bot_outcome:
+            return
+
+        try:
+            record_bot_outcome('ICARUS', win=(pnl > 0), pnl=pnl)
+            logger.debug(f"ICARUS: Recorded outcome to Thompson Sampling - P&L=${pnl:.2f}")
+        except Exception as e:
+            logger.warning(f"ICARUS: Thompson outcome recording failed: {e}")
 
     def _record_learning_memory_prediction(self, pos: SpreadPosition, signal) -> Optional[str]:
         """Record trade prediction to Learning Memory."""
@@ -507,7 +573,7 @@ class ICARUSTrader(MathOptimizerMixin):
                 advice = TradingAdvice.TRADE_FULL
 
             prediction = OraclePrediction(
-                bot_name=BotName.ATHENA,  # Uses ATHENA model
+                bot_name=BotName.ICARUS,
                 advice=advice,
                 win_probability=getattr(signal, 'oracle_win_probability', 0.6),
                 confidence=signal.confidence,

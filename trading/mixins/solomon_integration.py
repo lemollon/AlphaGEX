@@ -94,10 +94,16 @@ class SolomonIntegrationMixin:
         """
         Check if this bot is allowed to trade.
 
-        KILL SWITCH DISABLED - Always allow trading.
+        NOTE: Kill switch functionality has been removed.
+        This method always returns True (trading allowed).
+
+        Args:
+            cache_seconds: Ignored (kept for API compatibility)
+
+        Returns:
+            Always True - trading is always allowed
         """
-        # Kill switch check DISABLED - always allow trading
-        logger.info(f"[{getattr(self, '_solomon_bot_name', 'BOT')} SOLOMON] Kill switch check DISABLED - allowing trade")
+        # Kill switch removed - always allow trading
         return True
 
     def solomon_record_outcome(
@@ -244,10 +250,14 @@ def check_solomon_kill_switch(bot_name: str) -> bool:
     """
     Check if a bot's kill switch is active.
 
-    KILL SWITCH DISABLED - Always returns False (trading allowed)
+    NOTE: Kill switch functionality has been removed.
+    This function always returns False (trading allowed).
+
+    Returns:
+        Always False - kill switch is never active
     """
-    logger.info(f"[{bot_name} SOLOMON] Kill switch check DISABLED - allowing trade")
-    return False  # Kill switch disabled - always allow trading
+    # Kill switch removed - always allow trading
+    return False
 
 
 def record_bot_outcome(

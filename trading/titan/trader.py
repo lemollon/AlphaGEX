@@ -94,6 +94,23 @@ except ImportError:
     MATH_OPTIMIZER_AVAILABLE = False
     MathOptimizerMixin = object
 
+# Solomon Enhanced for feedback loop recording
+try:
+    from quant.solomon_enhancements import get_solomon_enhanced
+    SOLOMON_ENHANCED_AVAILABLE = True
+except ImportError:
+    SOLOMON_ENHANCED_AVAILABLE = False
+    get_solomon_enhanced = None
+
+# Auto-Validation System for Thompson Sampling capital allocation
+try:
+    from quant.auto_validation_system import get_auto_validation_system, record_bot_outcome
+    AUTO_VALIDATION_AVAILABLE = True
+except ImportError:
+    AUTO_VALIDATION_AVAILABLE = False
+    get_auto_validation_system = None
+    record_bot_outcome = None
+
 # Market calendar for holiday checking
 try:
     from trading.market_calendar import MarketCalendar
@@ -360,6 +377,13 @@ class TITANTrader(MathOptimizerMixin):
                     # Record outcome to Oracle for ML feedback
                     self._record_oracle_outcome(pos, reason, pnl)
 
+                    # Record outcome to Solomon Enhanced for feedback loops
+                    trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+                    self._record_solomon_outcome(pnl, trade_date)
+
+                    # Record outcome to Thompson Sampling for capital allocation
+                    self._record_thompson_outcome(pnl)
+
                     # Record outcome to Learning Memory
                     if pos.position_id in self._prediction_ids:
                         self._record_learning_memory_outcome(
@@ -368,12 +392,12 @@ class TITANTrader(MathOptimizerMixin):
                             reason
                         )
 
-                    # MATH OPTIMIZER: Record outcome for Thompson Sampling
+                    # MATH OPTIMIZER: Record outcome for Thompson Sampling (via mixin)
                     if MATH_OPTIMIZER_AVAILABLE and hasattr(self, 'math_record_outcome'):
                         try:
                             self.math_record_outcome(win=(pnl > 0), pnl=pnl)
                         except Exception as e:
-                            logger.debug(f"Thompson outcome recording skipped: {e}")
+                            logger.debug(f"Math optimizer outcome recording skipped: {e}")
 
         return closed, total_pnl
 
@@ -403,10 +427,10 @@ class TITANTrader(MathOptimizerMixin):
 
             trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
 
-            # Record to Oracle using TITAN bot name
+            # Record to Oracle using TITAN bot name for proper tracking
             success = oracle.update_outcome(
                 trade_date=trade_date,
-                bot_name=OracleBotName.TITAN if hasattr(OracleBotName, 'TITAN') else OracleBotName.PEGASUS,
+                bot_name=OracleBotName.TITAN,
                 outcome=outcome,
                 actual_pnl=pnl,
                 put_strike=pos.put_short_strike if hasattr(pos, 'put_short_strike') else None,
@@ -420,6 +444,48 @@ class TITANTrader(MathOptimizerMixin):
 
         except Exception as e:
             logger.warning(f"TITAN: Oracle outcome recording failed: {e}")
+
+    def _record_solomon_outcome(self, pnl: float, trade_date: str):
+        """
+        Record trade outcome to Solomon Enhanced for feedback loop tracking.
+
+        This updates:
+        - Consecutive loss tracking (triggers kill if threshold reached)
+        - Bot performance metrics
+        - Performance tracking for version comparison
+        """
+        if not SOLOMON_ENHANCED_AVAILABLE or not get_solomon_enhanced:
+            return
+
+        try:
+            enhanced = get_solomon_enhanced()
+            alerts = enhanced.record_trade_outcome(
+                bot_name='TITAN',
+                pnl=pnl,
+                trade_date=trade_date,
+                capital_base=getattr(self.config, 'capital', 200000.0)
+            )
+            if alerts:
+                for alert in alerts:
+                    logger.warning(f"TITAN Solomon alert: {alert}")
+        except Exception as e:
+            logger.warning(f"TITAN: Solomon outcome recording failed: {e}")
+
+    def _record_thompson_outcome(self, pnl: float):
+        """
+        Record trade outcome to Thompson Sampling for capital allocation.
+
+        This updates the Beta distribution parameters for TITAN,
+        which affects future capital allocation across bots.
+        """
+        if not AUTO_VALIDATION_AVAILABLE or not record_bot_outcome:
+            return
+
+        try:
+            record_bot_outcome('TITAN', win=(pnl > 0), pnl=pnl)
+            logger.debug(f"TITAN: Recorded outcome to Thompson Sampling - P&L=${pnl:.2f}")
+        except Exception as e:
+            logger.warning(f"TITAN: Thompson outcome recording failed: {e}")
 
     def _record_learning_memory_prediction(self, pos: IronCondorPosition, signal) -> Optional[str]:
         """Record trade prediction to Learning Memory for self-improvement tracking."""
@@ -513,7 +579,7 @@ class TITANTrader(MathOptimizerMixin):
                 advice = TradingAdvice.TRADE_FULL
 
             prediction = OraclePrediction(
-                bot_name=BotName.TITAN if hasattr(BotName, 'TITAN') else BotName.PEGASUS,
+                bot_name=BotName.TITAN,
                 advice=advice,
                 win_probability=getattr(signal, 'oracle_win_probability', 0.65),
                 confidence=signal.confidence,

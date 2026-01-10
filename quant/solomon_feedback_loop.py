@@ -144,6 +144,8 @@ class BotName(Enum):
     ATLAS = "ATLAS"       # SPX Wheel (Cash-Secured Puts)
     PEGASUS = "PEGASUS"
     PHOENIX = "PHOENIX"
+    ICARUS = "ICARUS"     # Aggressive Directional Spreads
+    TITAN = "TITAN"       # Aggressive SPX Iron Condor
 
 
 class ActionType(Enum):
@@ -1998,12 +2000,16 @@ class SolomonFeedbackLoop:
             return False
 
     def is_bot_killed(self, bot_name: str) -> bool:
-        """Check if a bot's kill switch is active
+        """Check if a bot's kill switch is active.
 
-        KILL SWITCH DISABLED - Always returns False to allow all bots to trade
+        NOTE: Kill switch functionality has been removed.
+        This method always returns False (trading allowed).
+
+        Returns:
+            Always False - kill switch is never active
         """
-        logger.debug(f"[SOLOMON] Kill switch check DISABLED for {bot_name} - allowing trade")
-        return False  # Kill switch completely disabled
+        # Kill switch removed - always allow trading
+        return False
 
     def get_kill_switch_status(self) -> Dict[str, Dict]:
         """Get kill switch status for all bots"""
