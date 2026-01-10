@@ -16,6 +16,12 @@ Measures:
 - Pattern accuracy
 """
 
+import sys
+import os
+
+# Add parent directory to path to allow imports from project root
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from database_adapter import get_connection
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
