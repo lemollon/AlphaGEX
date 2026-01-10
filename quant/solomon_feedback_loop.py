@@ -2000,12 +2000,54 @@ class SolomonFeedbackLoop:
             return False
 
     def is_bot_killed(self, bot_name: str) -> bool:
-        """Check if a bot's kill switch is active
+        """Check if a bot's kill switch is active.
 
-        KILL SWITCH DISABLED - Always returns False to allow all bots to trade
+        Returns True if the bot should NOT trade (kill switch is active).
+        Returns False if the bot CAN trade (kill switch is not active or auto-resumed).
         """
-        logger.debug(f"[SOLOMON] Kill switch check DISABLED for {bot_name} - allowing trade")
-        return False  # Kill switch completely disabled
+        if not DB_AVAILABLE:
+            # If database not available, allow trading (fail-open)
+            logger.warning(f"[SOLOMON] Kill switch check skipped for {bot_name} - DB not available")
+            return False
+
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT is_killed, auto_resume_at
+                FROM solomon_kill_switch
+                WHERE bot_name = %s
+            """, (bot_name,))
+
+            row = cursor.fetchone()
+            conn.close()
+
+            if not row:
+                # No kill switch record exists - allow trading
+                return False
+
+            is_killed, auto_resume_at = row
+
+            # Check for auto-resume
+            if is_killed and auto_resume_at:
+                from datetime import datetime
+                now = datetime.now(CENTRAL_TZ)
+                if auto_resume_at.astimezone(CENTRAL_TZ) <= now:
+                    # Auto-resume time has passed - deactivate and allow trading
+                    self.deactivate_kill_switch(bot_name, "AUTO_RESUME")
+                    logger.info(f"[SOLOMON] Kill switch auto-resumed for {bot_name}")
+                    return False
+
+            if is_killed:
+                logger.warning(f"[SOLOMON] Kill switch ACTIVE for {bot_name} - trading blocked")
+
+            return is_killed
+
+        except Exception as e:
+            logger.error(f"[SOLOMON] Kill switch check failed for {bot_name}: {e}")
+            # On error, allow trading (fail-open for production stability)
+            return False
 
     def get_kill_switch_status(self) -> Dict[str, Dict]:
         """Get kill switch status for all bots"""
