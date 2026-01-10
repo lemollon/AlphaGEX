@@ -471,3 +471,12 @@ def get_backtester() -> PatternBacktester:
     if _backtester is None:
         _backtester = PatternBacktester()
     return _backtester
+
+
+if __name__ == "__main__":
+    print("Running pattern backtests...")
+    backtester = get_backtester()
+    results = backtester.backtest_all_patterns_and_save(lookback_days=90, save_to_db=True)
+    print(f"\nCompleted {len(results)} pattern backtests")
+    for r in results:
+        print(f"  {r['pattern']}: {r['total_signals']} signals, {r['win_rate']:.1f}% win rate")
