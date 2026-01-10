@@ -92,49 +92,19 @@ class SolomonIntegrationMixin:
 
     def solomon_can_trade(self, cache_seconds: int = 60) -> bool:
         """
-        Check if this bot is allowed to trade based on Solomon kill switch.
+        Check if this bot is allowed to trade.
 
-        Uses caching to avoid excessive database calls.
+        NOTE: Kill switch functionality has been removed.
+        This method always returns True (trading allowed).
 
         Args:
-            cache_seconds: How long to cache the result (default 60s)
+            cache_seconds: Ignored (kept for API compatibility)
 
         Returns:
-            True if trading is allowed, False if kill switch is active
+            Always True - trading is always allowed
         """
-        import time
-        bot_name = getattr(self, '_solomon_bot_name', 'BOT')
-
-        # Check cache
-        if self._solomon_kill_check_cache is not None and self._solomon_kill_check_time:
-            elapsed = time.time() - self._solomon_kill_check_time
-            if elapsed < cache_seconds:
-                return self._solomon_kill_check_cache
-
-        solomon = _get_solomon()
-        if not solomon:
-            # Solomon not available - allow trading (fail-open)
-            logger.debug(f"[{bot_name} SOLOMON] Kill switch check skipped - Solomon not available")
-            return True
-
-        try:
-            is_killed = solomon.is_bot_killed(bot_name)
-
-            # Cache the result
-            self._solomon_kill_check_cache = not is_killed
-            self._solomon_kill_check_time = time.time()
-
-            if is_killed:
-                logger.warning(f"[{bot_name} SOLOMON] Kill switch ACTIVE - trading blocked")
-                return False
-            else:
-                logger.debug(f"[{bot_name} SOLOMON] Kill switch check passed - trading allowed")
-                return True
-
-        except Exception as e:
-            logger.error(f"[{bot_name} SOLOMON] Kill switch check failed: {e}")
-            # On error, allow trading (fail-open for production stability)
-            return True
+        # Kill switch removed - always allow trading
+        return True
 
     def solomon_record_outcome(
         self,
@@ -280,25 +250,14 @@ def check_solomon_kill_switch(bot_name: str) -> bool:
     """
     Check if a bot's kill switch is active.
 
-    Returns:
-        True if kill switch is ACTIVE (trading should be blocked)
-        False if kill switch is NOT active (trading allowed)
-    """
-    solomon = _get_solomon()
-    if not solomon:
-        # Solomon not available - allow trading (fail-open)
-        logger.debug(f"[{bot_name} SOLOMON] Kill switch check skipped - Solomon not available")
-        return False
+    NOTE: Kill switch functionality has been removed.
+    This function always returns False (trading allowed).
 
-    try:
-        is_killed = solomon.is_bot_killed(bot_name)
-        if is_killed:
-            logger.warning(f"[{bot_name} SOLOMON] Kill switch ACTIVE - trading blocked")
-        return is_killed
-    except Exception as e:
-        logger.error(f"[{bot_name} SOLOMON] Kill switch check failed: {e}")
-        # On error, allow trading (fail-open for production stability)
-        return False
+    Returns:
+        Always False - kill switch is never active
+    """
+    # Kill switch removed - always allow trading
+    return False
 
 
 def record_bot_outcome(
