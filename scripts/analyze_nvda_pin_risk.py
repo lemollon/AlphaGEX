@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
 """
-NVDA Pin Risk Analysis Script
+Pin Risk Analysis CLI Script
 
-Analyzes NVDA options data to determine pinning risk for long call holders.
+Analyzes options data for any symbol to determine pinning risk.
+Uses the same PinRiskAnalyzer engine integrated into Apollo.
+
+Usage:
+    python scripts/analyze_nvda_pin_risk.py NVDA
+    python scripts/analyze_nvda_pin_risk.py SPY AAPL TSLA
+    python scripts/analyze_nvda_pin_risk.py --batch SPY,QQQ,NVDA,AAPL,TSLA
 """
 
 import sys
 import os
+import argparse
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -17,205 +24,277 @@ from zoneinfo import ZoneInfo
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 
-def analyze_nvda_pin_risk():
-    """Analyze NVDA for pinning risk"""
-    print("=" * 70)
-    print("NVDA PIN RISK ANALYSIS")
-    print(f"Analysis Time: {datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d %H:%M:%S CT')}")
-    print("=" * 70)
+def print_separator(char: str = "=", width: int = 70):
+    print(char * width)
 
-    # Try to get GEX data
+
+def print_section(title: str, char: str = "-", width: int = 50):
+    print(f"\n[{title}]")
+    print(char * width)
+
+
+def format_pct(value: float, include_sign: bool = True) -> str:
+    """Format percentage with sign"""
+    if include_sign:
+        return f"{value:+.2f}%"
+    return f"{value:.2f}%"
+
+
+def analyze_symbol(symbol: str, verbose: bool = True) -> dict:
+    """Analyze pin risk for a single symbol"""
     try:
-        from data.gex_calculator import TradierGEXCalculator
-        gex_calc = TradierGEXCalculator(sandbox=False)  # Use production for real data
+        from core.pin_risk_analyzer import get_pin_risk_analyzer
 
-        print("\n[1] Fetching NVDA GEX Data...")
-        gex_data = gex_calc.get_gex('NVDA')
+        analyzer = get_pin_risk_analyzer()
+        analysis = analyzer.analyze(symbol)
 
-        if 'error' in gex_data:
-            print(f"Error fetching GEX: {gex_data['error']}")
-            return None
+        if verbose:
+            print_full_analysis(analysis)
 
-        print(f"\n[2] NVDA GAMMA EXPOSURE (GEX) ANALYSIS")
-        print("-" * 50)
-        print(f"Current Price:  ${gex_data.get('spot_price', 0):.2f}")
-        print(f"Net GEX:        ${gex_data.get('net_gex', 0):.4f}B")
-        print(f"Call GEX:       ${gex_data.get('call_gex', 0):.4f}B")
-        print(f"Put GEX:        ${gex_data.get('put_gex', 0):.4f}B")
-        print(f"Call Wall:      ${gex_data.get('call_wall', 0):.2f}")
-        print(f"Put Wall:       ${gex_data.get('put_wall', 0):.2f}")
-        print(f"Gamma Flip:     ${gex_data.get('gamma_flip', gex_data.get('flip_point', 0)):.2f}")
-        print(f"Max Pain:       ${gex_data.get('max_pain', 0):.2f}")
-        print(f"Data Source:    {gex_data.get('data_source', 'unknown')}")
-
-        # Analyze pinning conditions
-        spot = gex_data.get('spot_price', 0)
-        max_pain = gex_data.get('max_pain', 0)
-        call_wall = gex_data.get('call_wall', 0)
-        put_wall = gex_data.get('put_wall', 0)
-        flip_point = gex_data.get('gamma_flip', gex_data.get('flip_point', 0))
-        net_gex = gex_data.get('net_gex', 0)
-
-        print(f"\n[3] PIN RISK ASSESSMENT")
-        print("-" * 50)
-
-        # Distance calculations
-        if max_pain > 0 and spot > 0:
-            dist_to_max_pain = ((spot - max_pain) / spot) * 100
-            print(f"Distance to Max Pain:  {dist_to_max_pain:+.2f}% (${spot - max_pain:+.2f})")
-
-        if call_wall > 0 and spot > 0:
-            dist_to_call_wall = ((call_wall - spot) / spot) * 100
-            print(f"Distance to Call Wall: {dist_to_call_wall:+.2f}% (${call_wall - spot:+.2f})")
-
-        if put_wall > 0 and spot > 0:
-            dist_to_put_wall = ((spot - put_wall) / spot) * 100
-            print(f"Distance to Put Wall:  {dist_to_put_wall:+.2f}% (${spot - put_wall:+.2f})")
-
-        if flip_point > 0 and spot > 0:
-            dist_to_flip = ((spot - flip_point) / spot) * 100
-            print(f"Distance to Flip:      {dist_to_flip:+.2f}% (${spot - flip_point:+.2f})")
-
-        print(f"\n[4] GAMMA REGIME ANALYSIS")
-        print("-" * 50)
-
-        # Determine gamma regime
-        if flip_point > 0:
-            if spot > flip_point:
-                regime = "POSITIVE GAMMA (Above Flip)"
-                regime_desc = "Dealers are LONG gamma - they BUY dips, SELL rallies. Price moves get DAMPENED."
-            else:
-                regime = "NEGATIVE GAMMA (Below Flip)"
-                regime_desc = "Dealers are SHORT gamma - they SELL dips, BUY rallies. Price moves get AMPLIFIED."
-        else:
-            regime = "UNKNOWN"
-            regime_desc = "Unable to determine gamma regime"
-
-        print(f"Current Regime: {regime}")
-        print(f"Meaning:        {regime_desc}")
-
-        print(f"\n[5] PINNING PROBABILITY ASSESSMENT")
-        print("-" * 50)
-
-        # Calculate pin probability factors
-        pin_factors = []
-        pin_score = 0
-
-        # Factor 1: Distance to max pain
-        if max_pain > 0 and spot > 0:
-            pct_from_max_pain = abs(spot - max_pain) / spot * 100
-            if pct_from_max_pain < 1.0:
-                pin_factors.append(f"VERY CLOSE to max pain ({pct_from_max_pain:.2f}%) - HIGH pin risk")
-                pin_score += 30
-            elif pct_from_max_pain < 2.0:
-                pin_factors.append(f"Close to max pain ({pct_from_max_pain:.2f}%) - MODERATE pin risk")
-                pin_score += 20
-            elif pct_from_max_pain < 3.0:
-                pin_factors.append(f"Near max pain ({pct_from_max_pain:.2f}%) - SOME pin risk")
-                pin_score += 10
-            else:
-                pin_factors.append(f"Away from max pain ({pct_from_max_pain:.2f}%) - LOW pin risk from max pain")
-
-        # Factor 2: Positive gamma = price compression
-        if net_gex > 0:
-            pin_factors.append(f"Positive GEX ({net_gex:.4f}B) - Dealers dampen moves = higher pin probability")
-            pin_score += 25
-        elif net_gex < 0:
-            pin_factors.append(f"Negative GEX ({net_gex:.4f}B) - Dealers amplify moves = lower pin probability")
-            pin_score -= 10
-
-        # Factor 3: Between walls
-        if put_wall > 0 and call_wall > 0 and spot > 0:
-            if put_wall < spot < call_wall:
-                wall_range = call_wall - put_wall
-                wall_range_pct = (wall_range / spot) * 100
-                pin_factors.append(f"Price BETWEEN walls (range: {wall_range_pct:.1f}%) - Contained environment")
-                pin_score += 15
-            elif spot >= call_wall:
-                pin_factors.append(f"Price AT or ABOVE call wall - Resistance overhead")
-                pin_score += 10
-            elif spot <= put_wall:
-                pin_factors.append(f"Price AT or BELOW put wall - Support below")
-                pin_score += 10
-
-        # Factor 4: Friday/expiration approaching
-        today = datetime.now(CENTRAL_TZ)
-        days_to_friday = (4 - today.weekday()) % 7
-        if days_to_friday == 0:
-            pin_factors.append("TODAY is expiration day - HIGHEST pin risk")
-            pin_score += 30
-        elif days_to_friday == 1:
-            pin_factors.append("Tomorrow is expiration - HIGH pin gravity")
-            pin_score += 20
-        elif days_to_friday <= 2:
-            pin_factors.append(f"{days_to_friday} days to weekly expiry - Increasing pin gravity")
-            pin_score += 10
-
-        for factor in pin_factors:
-            print(f"  • {factor}")
-
-        print(f"\n  PIN RISK SCORE: {pin_score}/100")
-
-        if pin_score >= 60:
-            pin_assessment = "HIGH PIN RISK"
-            recommendation = "Long calls are DANGEROUS - price likely to stay range-bound near max pain"
-        elif pin_score >= 40:
-            pin_assessment = "MODERATE PIN RISK"
-            recommendation = "Long calls face headwinds - need catalyst to break through gamma walls"
-        elif pin_score >= 20:
-            pin_assessment = "LOW-MODERATE PIN RISK"
-            recommendation = "Some pin gravity but breakout possible with volume/news"
-        else:
-            pin_assessment = "LOW PIN RISK"
-            recommendation = "Gamma positioning doesn't favor pinning - directional moves possible"
-
-        print(f"  ASSESSMENT: {pin_assessment}")
-        print(f"  RECOMMENDATION: {recommendation}")
-
-        print(f"\n[6] TRADING IMPLICATIONS FOR LONG CALLS")
-        print("-" * 50)
-
-        # Specific advice for long call holders
-        if call_wall > 0 and spot > 0:
-            upside_to_wall = ((call_wall - spot) / spot) * 100
-            print(f"• Upside to call wall (resistance): {upside_to_wall:+.2f}%")
-            if upside_to_wall < 2:
-                print(f"  WARNING: Very close to call wall - expect resistance")
-            elif upside_to_wall < 5:
-                print(f"  CAUTION: Approaching call wall resistance")
-
-        if net_gex > 0:
-            print(f"• Positive gamma environment = Dealers will SELL rallies")
-            print(f"  This creates natural resistance to upward moves")
-
-        if max_pain > 0 and spot > max_pain:
-            print(f"• Price ABOVE max pain - gravitational pull DOWN toward ${max_pain:.2f}")
-        elif max_pain > 0 and spot < max_pain:
-            print(f"• Price BELOW max pain - gravitational pull UP toward ${max_pain:.2f}")
-
-        print(f"\n[7] WHAT WOULD BREAK THE PIN")
-        print("-" * 50)
-        print("For long calls to work, NVDA needs:")
-        if call_wall > 0:
-            print(f"  1. Break above call wall at ${call_wall:.2f} with volume")
-        print(f"  2. Significant news catalyst (earnings, product announcement)")
-        print(f"  3. Broader market momentum (SPY/QQQ rallying)")
-        if net_gex > 0:
-            print(f"  4. GEX to flip negative (dealer short gamma = amplify moves)")
-        print(f"  5. Decay of options expiring this week (reduces pin gravity)")
-
-        return gex_data
+        return analysis.to_dict()
 
     except ImportError as e:
         print(f"\nImport Error: {e}")
         print("Make sure you're running from the AlphaGEX project root")
+        print("Required: pip install pandas scipy aiohttp python-dotenv")
         return None
     except Exception as e:
-        print(f"\nError: {e}")
+        print(f"\nError analyzing {symbol}: {e}")
         import traceback
         traceback.print_exc()
         return None
 
 
+def print_full_analysis(analysis):
+    """Print comprehensive pin risk analysis"""
+    from core.pin_risk_analyzer import PinRiskLevel
+
+    print_separator()
+    print(f"{analysis.symbol} PIN RISK ANALYSIS")
+    print(f"Analysis Time: {analysis.timestamp.strftime('%Y-%m-%d %H:%M:%S CT')}")
+    print_separator()
+
+    # Current State
+    print_section("CURRENT MARKET STATE")
+    print(f"Spot Price:       ${analysis.spot_price:.2f}")
+    print(f"Data Sources:     {', '.join(analysis.data_sources)}")
+
+    # Gamma Levels
+    gl = analysis.gamma_levels
+    print_section("GAMMA LEVELS (GEX)")
+    print(f"Net GEX:          ${gl.net_gex:.4f}B")
+    print(f"Call GEX:         ${gl.call_gex:.4f}B")
+    print(f"Put GEX:          ${gl.put_gex:.4f}B")
+    print(f"Gamma Flip:       ${gl.flip_point:.2f}")
+    print(f"Call Wall:        ${gl.call_wall:.2f}")
+    print(f"Put Wall:         ${gl.put_wall:.2f}")
+    print(f"Max Pain:         ${gl.max_pain:.2f}")
+
+    # Distance Metrics
+    print_section("DISTANCE FROM KEY LEVELS")
+    print(f"To Max Pain:      {format_pct(analysis.distance_to_max_pain_pct)} (${analysis.spot_price - gl.max_pain:+.2f})")
+    print(f"To Gamma Flip:    {format_pct(analysis.distance_to_flip_pct)} (${analysis.spot_price - gl.flip_point:+.2f})")
+    print(f"To Call Wall:     {format_pct(analysis.distance_to_call_wall_pct)} (${gl.call_wall - analysis.spot_price:+.2f})")
+    print(f"To Put Wall:      {format_pct(analysis.distance_to_put_wall_pct)} (${analysis.spot_price - gl.put_wall:+.2f})")
+
+    # Gamma Regime
+    print_section("GAMMA REGIME ANALYSIS")
+    regime_color = {
+        'positive': '🟢 POSITIVE (Dampening)',
+        'negative': '🔴 NEGATIVE (Amplifying)',
+        'neutral': '🟡 NEUTRAL (Unstable)',
+        'unknown': '⚪ UNKNOWN'
+    }
+    print(f"Regime:           {regime_color.get(analysis.gamma_regime.value, analysis.gamma_regime.value)}")
+    print(f"\n{analysis.gamma_regime_description}")
+
+    # Pin Risk Score
+    print_section("PIN RISK ASSESSMENT")
+    score = analysis.pin_risk_score
+    level = analysis.pin_risk_level
+
+    # Visual score bar
+    bar_filled = int(score / 5)
+    bar_empty = 20 - bar_filled
+    bar = "█" * bar_filled + "░" * bar_empty
+
+    level_emoji = {
+        PinRiskLevel.HIGH: "🔴 HIGH",
+        PinRiskLevel.MODERATE: "🟠 MODERATE",
+        PinRiskLevel.LOW_MODERATE: "🟡 LOW-MODERATE",
+        PinRiskLevel.LOW: "🟢 LOW"
+    }
+
+    print(f"Score:            [{bar}] {score}/100")
+    print(f"Risk Level:       {level_emoji.get(level, level.value.upper())}")
+
+    # Pin Factors
+    print("\nContributing Factors:")
+    for factor in analysis.pin_factors:
+        print(f"  • {factor.description} (+{factor.score} pts)")
+
+    # Expected Range
+    print_section("EXPECTED PRICE RANGE")
+    print(f"Range:            ${analysis.expected_range_low:.2f} - ${analysis.expected_range_high:.2f}")
+    print(f"Range Width:      {analysis.expected_range_pct:.1f}%")
+
+    # Expiration Timing
+    print_section("EXPIRATION CONTEXT")
+    if analysis.is_expiration_day:
+        print("⚠️  TODAY IS EXPIRATION DAY - Maximum gamma effect")
+    else:
+        print(f"Days to Weekly Expiry: {analysis.days_to_weekly_expiry}")
+
+    # Trading Implications
+    print_section("TRADING IMPLICATIONS")
+    for impl in analysis.trading_implications:
+        outlook_emoji = {
+            'favorable': '✅',
+            'unfavorable': '❌',
+            'neutral': '➖'
+        }
+        emoji = outlook_emoji.get(impl.outlook, '❓')
+        print(f"\n{emoji} {impl.position_type.upper().replace('_', ' ')}: {impl.outlook.upper()}")
+        print(f"   {impl.reasoning}")
+        if impl.recommendation:
+            print(f"   → {impl.recommendation}")
+
+    # Long Call Specific
+    print_section("LONG CALL ASSESSMENT")
+    outlook_desc = {
+        'dangerous': "🔴 DANGEROUS - High pin risk, dealers selling rallies",
+        'challenging': "🟠 CHALLENGING - Moderate headwinds from gamma positioning",
+        'favorable': "🟢 FAVORABLE - Gamma supports directional moves",
+        'neutral': "🟡 NEUTRAL - No strong gamma bias"
+    }
+    print(outlook_desc.get(analysis.long_call_outlook, analysis.long_call_outlook))
+
+    # What Would Break the Pin
+    print_section("WHAT WOULD BREAK THE PIN")
+    for i, breaker in enumerate(analysis.pin_breakers, 1):
+        print(f"  {i}. {breaker}")
+
+    # Summary
+    print_section("SUMMARY", "=", 70)
+    print(f"\n{analysis.summary}")
+
+    # Warnings
+    if analysis.warnings:
+        print_section("WARNINGS")
+        for warning in analysis.warnings:
+            print(f"  ⚠️  {warning}")
+
+    print_separator()
+
+
+def analyze_batch(symbols: list, verbose: bool = False):
+    """Analyze multiple symbols and display summary"""
+    from core.pin_risk_analyzer import get_pin_risk_analyzer
+
+    analyzer = get_pin_risk_analyzer()
+    results = []
+
+    print_separator()
+    print("BATCH PIN RISK ANALYSIS")
+    print(f"Symbols: {', '.join(symbols)}")
+    print(f"Time: {datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d %H:%M:%S CT')}")
+    print_separator()
+
+    for symbol in symbols:
+        try:
+            analysis = analyzer.analyze(symbol)
+            results.append({
+                'symbol': symbol,
+                'score': analysis.pin_risk_score,
+                'level': analysis.pin_risk_level.value,
+                'gamma': analysis.gamma_regime.value,
+                'outlook': analysis.long_call_outlook,
+                'price': analysis.spot_price,
+                'max_pain': analysis.gamma_levels.max_pain,
+                'summary': analysis.summary[:100] + '...' if len(analysis.summary) > 100 else analysis.summary
+            })
+            print(f"  ✓ {symbol} analyzed")
+        except Exception as e:
+            results.append({
+                'symbol': symbol,
+                'error': str(e)
+            })
+            print(f"  ✗ {symbol} failed: {e}")
+
+    # Sort by score (highest first)
+    results.sort(key=lambda x: x.get('score', 0), reverse=True)
+
+    # Print summary table
+    print_section("RESULTS (sorted by pin risk)")
+    print(f"{'Symbol':<8} {'Score':>6} {'Level':<15} {'Gamma':<10} {'Calls':<12} {'Price':>10} {'Max Pain':>10}")
+    print("-" * 85)
+
+    for r in results:
+        if 'error' in r:
+            print(f"{r['symbol']:<8} {'ERROR':<60} {r['error']}")
+        else:
+            level_short = r['level'].replace('_', ' ').title()
+            gamma_short = r['gamma'].title()
+            outlook_short = r['outlook'].title() if r['outlook'] else 'N/A'
+            print(f"{r['symbol']:<8} {r['score']:>5}/100 {level_short:<15} {gamma_short:<10} {outlook_short:<12} ${r['price']:>8.2f} ${r['max_pain']:>8.2f}")
+
+    print_separator()
+
+    # Print detailed analysis for highest risk symbol
+    if results and 'error' not in results[0]:
+        highest_risk = results[0]['symbol']
+        print(f"\n🔍 DETAILED ANALYSIS FOR HIGHEST RISK: {highest_risk}")
+        analyze_symbol(highest_risk, verbose=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Analyze options pin risk for stocks",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python scripts/analyze_nvda_pin_risk.py NVDA
+  python scripts/analyze_nvda_pin_risk.py SPY AAPL TSLA
+  python scripts/analyze_nvda_pin_risk.py --batch SPY,QQQ,NVDA,AAPL,TSLA
+  python scripts/analyze_nvda_pin_risk.py --batch SPY,QQQ,NVDA --quiet
+        """
+    )
+
+    parser.add_argument(
+        'symbols',
+        nargs='*',
+        help='Stock symbol(s) to analyze'
+    )
+
+    parser.add_argument(
+        '--batch',
+        type=str,
+        help='Comma-separated list of symbols for batch analysis'
+    )
+
+    parser.add_argument(
+        '--quiet', '-q',
+        action='store_true',
+        help='Quiet mode - only show summary for batch analysis'
+    )
+
+    args = parser.parse_args()
+
+    # Determine symbols to analyze
+    if args.batch:
+        symbols = [s.strip().upper() for s in args.batch.split(',')]
+        analyze_batch(symbols, verbose=not args.quiet)
+    elif args.symbols:
+        symbols = [s.upper() for s in args.symbols]
+        if len(symbols) == 1:
+            analyze_symbol(symbols[0], verbose=True)
+        else:
+            analyze_batch(symbols, verbose=not args.quiet)
+    else:
+        # Default to NVDA if no symbol specified
+        print("No symbol specified, analyzing NVDA...")
+        analyze_symbol('NVDA', verbose=True)
+
+
 if __name__ == "__main__":
-    analyze_nvda_pin_risk()
+    main()

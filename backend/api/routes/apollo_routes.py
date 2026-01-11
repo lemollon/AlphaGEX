@@ -161,9 +161,41 @@ def ensure_apollo_tables():
             )
         ''')
 
+        # APOLLO Pin Risk History table
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS apollo_pin_risk_history (
+                id SERIAL PRIMARY KEY,
+                symbol VARCHAR(20) NOT NULL,
+                timestamp TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                spot_price REAL,
+                pin_risk_score INTEGER,
+                pin_risk_level VARCHAR(20),
+                gamma_regime VARCHAR(20),
+                max_pain REAL,
+                call_wall REAL,
+                put_wall REAL,
+                flip_point REAL,
+                net_gex REAL,
+                distance_to_max_pain_pct REAL,
+                distance_to_flip_pct REAL,
+                long_call_outlook VARCHAR(20),
+                days_to_expiry INTEGER,
+                is_expiration_day BOOLEAN,
+                expected_range_low REAL,
+                expected_range_high REAL,
+                expected_range_pct REAL,
+                pin_factors JSONB,
+                trading_implications JSONB,
+                pin_breakers JSONB,
+                summary TEXT
+            )
+        ''')
+
         # Indexes
         c.execute("CREATE INDEX IF NOT EXISTS idx_apollo_scans_timestamp ON apollo_scans(timestamp)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_apollo_predictions_symbol ON apollo_predictions(symbol)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_apollo_pin_risk_symbol ON apollo_pin_risk_history(symbol)")
+        c.execute("CREATE INDEX IF NOT EXISTS idx_apollo_pin_risk_timestamp ON apollo_pin_risk_history(timestamp)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_apollo_predictions_scan ON apollo_predictions(scan_id)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_apollo_outcomes_symbol ON apollo_outcomes(symbol)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_apollo_outcomes_prediction ON apollo_outcomes(prediction_id)")
@@ -225,6 +257,59 @@ def save_scan_result(scan_id: str, symbols: List[str], results: List[Dict], vix:
         conn.commit()
     except Exception as e:
         logger.error(f"Failed to save scan: {e}")
+    finally:
+        conn.close()
+
+
+def save_pin_risk_analysis(analysis_data: Dict):
+    """Save pin risk analysis to database"""
+    conn = get_db_connection()
+    if not conn:
+        return
+
+    try:
+        c = conn.cursor()
+
+        c.execute('''
+            INSERT INTO apollo_pin_risk_history (
+                symbol, spot_price, pin_risk_score, pin_risk_level, gamma_regime,
+                max_pain, call_wall, put_wall, flip_point, net_gex,
+                distance_to_max_pain_pct, distance_to_flip_pct, long_call_outlook,
+                days_to_expiry, is_expiration_day, expected_range_low, expected_range_high,
+                expected_range_pct, pin_factors, trading_implications, pin_breakers, summary
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            )
+        ''', (
+            analysis_data.get('symbol'),
+            analysis_data.get('spot_price'),
+            analysis_data.get('pin_risk_score'),
+            analysis_data.get('pin_risk_level'),
+            analysis_data.get('gamma_regime'),
+            analysis_data.get('gamma_levels', {}).get('max_pain'),
+            analysis_data.get('gamma_levels', {}).get('call_wall'),
+            analysis_data.get('gamma_levels', {}).get('put_wall'),
+            analysis_data.get('gamma_levels', {}).get('flip_point'),
+            analysis_data.get('gamma_levels', {}).get('net_gex'),
+            analysis_data.get('distance_to_max_pain_pct'),
+            analysis_data.get('distance_to_flip_pct'),
+            analysis_data.get('long_call_outlook'),
+            analysis_data.get('days_to_weekly_expiry'),
+            analysis_data.get('is_expiration_day'),
+            analysis_data.get('expected_range_low'),
+            analysis_data.get('expected_range_high'),
+            analysis_data.get('expected_range_pct'),
+            json.dumps(analysis_data.get('pin_factors', [])),
+            json.dumps(analysis_data.get('trading_implications', [])),
+            json.dumps(analysis_data.get('pin_breakers', [])),
+            analysis_data.get('summary')
+        ))
+
+        conn.commit()
+        logger.info(f"✅ Saved pin risk analysis for {analysis_data.get('symbol')}")
+
+    except Exception as e:
+        logger.error(f"Failed to save pin risk analysis: {e}")
     finally:
         conn.close()
 
@@ -796,6 +881,171 @@ async def get_features(symbol: str):
     except Exception as e:
         logger.error(f"Failed to get features: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/pin-risk/{symbol}")
+async def get_pin_risk(symbol: str):
+    """
+    Get comprehensive pin risk analysis for a symbol.
+
+    Analyzes gamma exposure, max pain, and dealer positioning to assess
+    the probability of price pinning.
+
+    Returns:
+        - Pin risk score (0-100)
+        - Gamma regime (positive/negative/neutral)
+        - Key levels (max pain, walls, flip point)
+        - Trading implications for different strategies
+        - What would break the pin pattern
+    """
+    try:
+        from core.pin_risk_analyzer import get_pin_risk_analyzer
+
+        analyzer = get_pin_risk_analyzer()
+        analysis = analyzer.analyze(symbol.upper())
+        analysis_dict = analysis.to_dict()
+
+        # Save to database for historical tracking
+        save_pin_risk_analysis(analysis_dict)
+
+        return {
+            "success": True,
+            "data": analysis_dict,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except ImportError as e:
+        logger.error(f"Pin risk analyzer not available: {e}")
+        raise HTTPException(status_code=500, detail="Pin risk analyzer not available")
+    except Exception as e:
+        logger.error(f"Pin risk analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/pin-risk-batch")
+async def get_pin_risk_batch(symbols: str = "SPY,QQQ,NVDA,AAPL,TSLA"):
+    """
+    Get pin risk analysis for multiple symbols.
+
+    Args:
+        symbols: Comma-separated list of stock symbols
+
+    Returns:
+        List of pin risk analyses sorted by risk score (highest first)
+    """
+    try:
+        from core.pin_risk_analyzer import get_pin_risk_analyzer
+
+        analyzer = get_pin_risk_analyzer()
+        symbol_list = [s.strip().upper() for s in symbols.split(',')][:10]  # Limit to 10
+
+        results = []
+        for sym in symbol_list:
+            try:
+                analysis = analyzer.analyze(sym)
+                results.append({
+                    'symbol': sym,
+                    'pin_risk_score': analysis.pin_risk_score,
+                    'pin_risk_level': analysis.pin_risk_level.value,
+                    'gamma_regime': analysis.gamma_regime.value,
+                    'spot_price': analysis.spot_price,
+                    'max_pain': analysis.gamma_levels.max_pain,
+                    'long_call_outlook': analysis.long_call_outlook,
+                    'summary': analysis.summary
+                })
+            except Exception as e:
+                logger.error(f"Pin risk failed for {sym}: {e}")
+                results.append({
+                    'symbol': sym,
+                    'error': str(e)
+                })
+
+        # Sort by pin risk score (highest first)
+        results.sort(key=lambda x: x.get('pin_risk_score', 0), reverse=True)
+
+        return {
+            "success": True,
+            "data": results,
+            "count": len(results),
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except ImportError as e:
+        logger.error(f"Pin risk analyzer not available: {e}")
+        raise HTTPException(status_code=500, detail="Pin risk analyzer not available")
+    except Exception as e:
+        logger.error(f"Batch pin risk analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/pin-risk-history/{symbol}")
+async def get_pin_risk_history(
+    symbol: str,
+    limit: int = Query(default=50, le=200),
+    days: int = Query(default=7, le=30)
+):
+    """
+    Get historical pin risk data for a symbol.
+
+    Args:
+        symbol: Stock symbol
+        limit: Maximum number of records (default 50)
+        days: Number of days to look back (default 7)
+
+    Returns:
+        Historical pin risk scores and levels
+    """
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database unavailable")
+
+    try:
+        c = conn.cursor()
+        c.execute('''
+            SELECT
+                timestamp, spot_price, pin_risk_score, pin_risk_level,
+                gamma_regime, max_pain, call_wall, put_wall, flip_point,
+                long_call_outlook, days_to_expiry, expected_range_pct, summary
+            FROM apollo_pin_risk_history
+            WHERE symbol = %s
+            AND timestamp > NOW() - INTERVAL '%s days'
+            ORDER BY timestamp DESC
+            LIMIT %s
+        ''', (symbol.upper(), days, limit))
+
+        rows = c.fetchall()
+
+        history = []
+        for row in rows:
+            history.append({
+                "timestamp": row[0].isoformat() if row[0] else None,
+                "spot_price": row[1],
+                "pin_risk_score": row[2],
+                "pin_risk_level": row[3],
+                "gamma_regime": row[4],
+                "max_pain": row[5],
+                "call_wall": row[6],
+                "put_wall": row[7],
+                "flip_point": row[8],
+                "long_call_outlook": row[9],
+                "days_to_expiry": row[10],
+                "expected_range_pct": row[11],
+                "summary": row[12]
+            })
+
+        return {
+            "success": True,
+            "symbol": symbol.upper(),
+            "data": history,
+            "count": len(history),
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get pin risk history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()
 
 
 @router.post("/train")
