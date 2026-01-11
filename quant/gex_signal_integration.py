@@ -104,11 +104,19 @@ class GEXSignalIntegration:
         self._prev_date: Optional[str] = None
 
     def load_models(self) -> bool:
-        """Load trained GEX probability models"""
+        """Load trained GEX probability models (database first, then file fallback)"""
         try:
             from quant.gex_probability_models import GEXSignalGenerator
 
             self.generator = GEXSignalGenerator()
+
+            # Try loading from database first (persists across Render deploys)
+            if self.generator.load_from_db():
+                self.is_loaded = True
+                logger.info("GEX signal models loaded from database")
+                return True
+
+            # Fall back to file
             self.generator.load(self.model_path)
             self.is_loaded = True
             logger.info(f"GEX signal models loaded from {self.model_path}")
