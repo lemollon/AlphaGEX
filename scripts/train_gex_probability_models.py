@@ -133,17 +133,25 @@ def main():
             end_date=args.end
         )
 
-        # Save models
+        # Save models to file
         generator.save(args.output)
+
+        # Also save to database for Render persistence
+        print("\nSaving to database for persistence...")
+        generator.save_to_db(
+            metrics=results if isinstance(results, dict) else None,
+            training_records=results.get('total_records') if isinstance(results, dict) else None
+        )
 
         print("\n" + "=" * 70)
         print("TRAINING COMPLETE")
         print("=" * 70)
         print(f"\nModels saved to: {args.output}")
+        print("Models also saved to database (persists across Render deploys)")
         print("\nUsage in code:")
         print("  from quant.gex_probability_models import GEXSignalGenerator")
         print("  generator = GEXSignalGenerator()")
-        print("  generator.load()")
+        print("  generator.load_from_db()  # Load from database")
         print("  signal = generator.predict(features)")
         print("  print(signal.trade_recommendation)")
 

@@ -1180,6 +1180,100 @@ class GEXSignalGenerator:
         self.is_trained = True
         print(f"Models loaded from {filepath}")
 
+    def save_to_db(self, metrics: dict = None, training_records: int = None):
+        """Save models to PostgreSQL database for persistence across Render deploys"""
+        if not self.is_trained:
+            raise ValueError("Models not trained")
+
+        try:
+            from quant.model_persistence import save_model_to_db, MODEL_GEX_PROBABILITY
+
+            model_data = {
+                'direction_model': {
+                    'model': self.direction_model.model,
+                    'scaler': self.direction_model.scaler,
+                    'label_encoder': self.direction_model.label_encoder,
+                    'feature_names': self.direction_model.feature_names
+                },
+                'flip_gravity_model': {
+                    'model': self.flip_gravity_model.model,
+                    'scaler': self.flip_gravity_model.scaler,
+                    'feature_names': self.flip_gravity_model.feature_names
+                },
+                'magnet_attraction_model': {
+                    'model': self.magnet_attraction_model.model,
+                    'scaler': self.magnet_attraction_model.scaler,
+                    'feature_names': self.magnet_attraction_model.feature_names
+                },
+                'volatility_model': {
+                    'model': self.volatility_model.model,
+                    'scaler': self.volatility_model.scaler,
+                    'feature_names': self.volatility_model.feature_names
+                },
+                'pin_zone_model': {
+                    'model': self.pin_zone_model.model,
+                    'scaler': self.pin_zone_model.scaler,
+                    'feature_names': self.pin_zone_model.feature_names
+                }
+            }
+
+            return save_model_to_db(
+                MODEL_GEX_PROBABILITY,
+                model_data,
+                metrics=metrics,
+                training_records=training_records
+            )
+        except Exception as e:
+            print(f"Error saving to database: {e}")
+            return False
+
+    def load_from_db(self) -> bool:
+        """Load models from PostgreSQL database"""
+        try:
+            from quant.model_persistence import load_model_from_db, MODEL_GEX_PROBABILITY
+
+            model_data = load_model_from_db(MODEL_GEX_PROBABILITY)
+            if model_data is None:
+                return False
+
+            # Load direction model
+            self.direction_model.model = model_data['direction_model']['model']
+            self.direction_model.scaler = model_data['direction_model']['scaler']
+            self.direction_model.label_encoder = model_data['direction_model']['label_encoder']
+            self.direction_model.feature_names = model_data['direction_model']['feature_names']
+            self.direction_model.is_trained = True
+
+            # Load flip gravity model
+            self.flip_gravity_model.model = model_data['flip_gravity_model']['model']
+            self.flip_gravity_model.scaler = model_data['flip_gravity_model']['scaler']
+            self.flip_gravity_model.feature_names = model_data['flip_gravity_model']['feature_names']
+            self.flip_gravity_model.is_trained = True
+
+            # Load magnet attraction model
+            self.magnet_attraction_model.model = model_data['magnet_attraction_model']['model']
+            self.magnet_attraction_model.scaler = model_data['magnet_attraction_model']['scaler']
+            self.magnet_attraction_model.feature_names = model_data['magnet_attraction_model']['feature_names']
+            self.magnet_attraction_model.is_trained = True
+
+            # Load volatility model
+            self.volatility_model.model = model_data['volatility_model']['model']
+            self.volatility_model.scaler = model_data['volatility_model']['scaler']
+            self.volatility_model.feature_names = model_data['volatility_model']['feature_names']
+            self.volatility_model.is_trained = True
+
+            # Load pin zone model
+            self.pin_zone_model.model = model_data['pin_zone_model']['model']
+            self.pin_zone_model.scaler = model_data['pin_zone_model']['scaler']
+            self.pin_zone_model.feature_names = model_data['pin_zone_model']['feature_names']
+            self.pin_zone_model.is_trained = True
+
+            self.is_trained = True
+            return True
+
+        except Exception as e:
+            print(f"Error loading from database: {e}")
+            return False
+
 
 def main():
     """Train all GEX probability models"""

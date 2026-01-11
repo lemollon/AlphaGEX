@@ -134,14 +134,14 @@ def check_table_count(cursor, table: str) -> Tuple[int, Optional[str], Optional[
         return -1, None, None  # Table doesn't exist
 
 
-def check_model_exists(model_config: Dict) -> bool:
-    """Check if trained model already exists"""
+def check_model_exists(model_config: Dict, model_id: str = None) -> bool:
+    """Check if trained model already exists (file, legacy DB table, or ml_models table)"""
     # Check file-based model
     if model_config.get('model_path'):
         if os.path.exists(model_config['model_path']):
             return True
 
-    # Check database-stored model
+    # Check legacy database-stored model (oracle_trained_models, prometheus_live_model)
     if model_config.get('db_model_table'):
         try:
             conn = get_connection()
@@ -149,7 +149,17 @@ def check_model_exists(model_config: Dict) -> bool:
             cursor.execute(f"SELECT COUNT(*) FROM {model_config['db_model_table']}")
             count = cursor.fetchone()[0]
             conn.close()
-            return count > 0
+            if count > 0:
+                return True
+        except:
+            pass
+
+    # Check new unified ml_models table
+    if model_id:
+        try:
+            from quant.model_persistence import model_exists
+            if model_exists(model_id):
+                return True
         except:
             pass
 
@@ -236,8 +246,8 @@ def check_all_models() -> Dict:
             'tables_checked': {},
         }
 
-        # Check if model already exists
-        if check_model_exists(config):
+        # Check if model already exists (file, legacy DB, or ml_models table)
+        if check_model_exists(config, model_id):
             model_result['status'] = 'TRAINED'
             results['summary']['trained'] += 1
             results['models'][model_id] = model_result
