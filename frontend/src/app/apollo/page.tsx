@@ -26,7 +26,11 @@ import {
   Plus,
   History,
   Settings,
-  Sparkles
+  Sparkles,
+  Shield,
+  AlertTriangle,
+  TrendingUp as ArrowUp,
+  TrendingDown as ArrowDown
 } from 'lucide-react'
 
 // ============================================================================
@@ -91,6 +95,43 @@ interface ApolloStrategy {
   position_theta: number
 }
 
+interface PinFactor {
+  name: string
+  score: number
+  description: string
+  is_bullish: boolean | null
+}
+
+interface TradingImplication {
+  position_type: string
+  outlook: string
+  reasoning: string
+  recommendation: string
+}
+
+interface PinRisk {
+  score: number
+  level: string
+  gamma_regime: string
+  gamma_regime_description: string
+  long_call_outlook: string
+  max_pain: number
+  call_wall: number
+  put_wall: number
+  flip_point: number
+  expected_range: {
+    low: number
+    high: number
+    pct: number
+  }
+  days_to_expiry: number
+  is_expiration_day: boolean
+  pin_factors: PinFactor[]
+  trading_implications: TradingImplication[]
+  pin_breakers: string[]
+  summary: string
+}
+
 interface ApolloScanResult {
   symbol: string
   timestamp: string
@@ -100,6 +141,7 @@ interface ApolloScanResult {
   strategies: ApolloStrategy[]
   market_regime: string
   gex_regime: string
+  pin_risk: PinRisk | null
   data_quality_score: number
   warnings: string[]
 }
@@ -395,6 +437,201 @@ function StrategyCard({ strategy, expanded, onToggle }: {
           {/* Best For */}
           <div className="text-xs text-gray-400">
             <span className="text-primary">Best for:</span> {info.bestFor}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Pin Risk Score Bar Component
+function PinRiskScoreBar({ score, level }: { score: number, level: string }) {
+  const getColor = (l: string) => {
+    switch (l) {
+      case 'high': return { bar: 'bg-red-500', text: 'text-red-400', bg: 'bg-red-500/20' }
+      case 'moderate': return { bar: 'bg-orange-500', text: 'text-orange-400', bg: 'bg-orange-500/20' }
+      case 'low_moderate': return { bar: 'bg-yellow-500', text: 'text-yellow-400', bg: 'bg-yellow-500/20' }
+      default: return { bar: 'bg-green-500', text: 'text-green-400', bg: 'bg-green-500/20' }
+    }
+  }
+
+  const colors = getColor(level)
+
+  return (
+    <div className="space-y-2">
+      <div className="flex justify-between items-center">
+        <span className="text-sm text-gray-400">Pin Risk Score</span>
+        <span className={`font-mono font-bold ${colors.text}`}>{score}/100</span>
+      </div>
+      <div className="h-3 bg-gray-700 rounded-full overflow-hidden">
+        <div
+          className={`h-full ${colors.bar} transition-all duration-500`}
+          style={{ width: `${score}%` }}
+        />
+      </div>
+      <div className={`text-center text-sm font-semibold px-3 py-1 rounded ${colors.bg} ${colors.text}`}>
+        {level.replace(/_/g, ' ').toUpperCase()} RISK
+      </div>
+    </div>
+  )
+}
+
+// Pin Risk Card Component
+function PinRiskCard({ pinRisk, symbol }: { pinRisk: PinRisk, symbol: string }) {
+  const [expanded, setExpanded] = useState(false)
+
+  const outlookConfig: Record<string, { icon: typeof AlertTriangle, color: string, bg: string, text: string }> = {
+    dangerous: { icon: AlertTriangle, color: 'text-red-400', bg: 'bg-red-500/20', text: 'DANGEROUS - High pin risk' },
+    challenging: { icon: AlertCircle, color: 'text-orange-400', bg: 'bg-orange-500/20', text: 'CHALLENGING - Moderate headwinds' },
+    favorable: { icon: CheckCircle, color: 'text-green-400', bg: 'bg-green-500/20', text: 'FAVORABLE - Gamma supports moves' },
+    neutral: { icon: Minus, color: 'text-yellow-400', bg: 'bg-yellow-500/20', text: 'NEUTRAL - No strong gamma bias' }
+  }
+
+  const outlook = outlookConfig[pinRisk.long_call_outlook] || outlookConfig.neutral
+  const OutlookIcon = outlook.icon
+
+  return (
+    <div className="bg-background-card border border-gray-800 rounded-lg overflow-hidden">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full p-4 flex items-center justify-between hover:bg-background-hover transition-colors"
+      >
+        <div className="flex items-center gap-3">
+          <Shield className={`w-5 h-5 ${pinRisk.score >= 60 ? 'text-red-400' : pinRisk.score >= 40 ? 'text-orange-400' : 'text-green-400'}`} />
+          <div className="text-left">
+            <div className="font-semibold">Pin Risk Analysis</div>
+            <div className="text-xs text-gray-400">
+              Score: {pinRisk.score}/100 • {pinRisk.gamma_regime.toUpperCase()} gamma
+              {pinRisk.is_expiration_day && ' • EXPIRATION DAY'}
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className={`flex items-center gap-1 px-2 py-1 rounded ${outlook.bg}`}>
+            <OutlookIcon className={`w-4 h-4 ${outlook.color}`} />
+            <span className={`text-xs font-medium ${outlook.color}`}>
+              {pinRisk.long_call_outlook.toUpperCase()}
+            </span>
+          </div>
+          {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="p-4 border-t border-gray-800 space-y-4">
+          {/* Score Bar */}
+          <PinRiskScoreBar score={pinRisk.score} level={pinRisk.level} />
+
+          {/* Long Call Assessment */}
+          <div className={`p-3 rounded-lg ${outlook.bg} border border-opacity-30`}>
+            <div className={`font-semibold ${outlook.color} mb-1 flex items-center gap-2`}>
+              <OutlookIcon className="w-4 h-4" />
+              Long Calls: {outlook.text}
+            </div>
+            <div className="text-sm text-gray-300">
+              {pinRisk.gamma_regime_description}
+            </div>
+          </div>
+
+          {/* Key Levels */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="p-3 bg-background rounded-lg text-center">
+              <div className="text-xs text-gray-400">Max Pain</div>
+              <div className="text-lg font-mono font-bold text-yellow-400">${pinRisk.max_pain.toFixed(0)}</div>
+            </div>
+            <div className="p-3 bg-background rounded-lg text-center">
+              <div className="text-xs text-gray-400">Call Wall</div>
+              <div className="text-lg font-mono font-bold text-green-400">${pinRisk.call_wall.toFixed(0)}</div>
+            </div>
+            <div className="p-3 bg-background rounded-lg text-center">
+              <div className="text-xs text-gray-400">Put Wall</div>
+              <div className="text-lg font-mono font-bold text-red-400">${pinRisk.put_wall.toFixed(0)}</div>
+            </div>
+            <div className="p-3 bg-background rounded-lg text-center">
+              <div className="text-xs text-gray-400">Gamma Flip</div>
+              <div className="text-lg font-mono font-bold text-blue-400">${pinRisk.flip_point.toFixed(0)}</div>
+            </div>
+          </div>
+
+          {/* Expected Range */}
+          <div className="p-3 bg-background rounded-lg">
+            <div className="text-xs text-gray-400 mb-2">Expected Price Range</div>
+            <div className="flex items-center justify-between">
+              <span className="font-mono text-red-400">${pinRisk.expected_range.low.toFixed(2)}</span>
+              <div className="flex-1 mx-4 h-2 bg-gray-700 rounded-full relative">
+                <div className="absolute inset-0 bg-gradient-to-r from-red-500 via-yellow-500 to-green-500 rounded-full opacity-30" />
+              </div>
+              <span className="font-mono text-green-400">${pinRisk.expected_range.high.toFixed(2)}</span>
+            </div>
+            <div className="text-center text-xs text-gray-400 mt-1">
+              Range Width: {pinRisk.expected_range.pct.toFixed(1)}%
+            </div>
+          </div>
+
+          {/* Pin Factors */}
+          <div>
+            <div className="text-sm font-semibold mb-2">Contributing Factors</div>
+            <div className="space-y-2">
+              {pinRisk.pin_factors.map((factor, i) => (
+                <div key={i} className="flex items-start gap-2 text-sm">
+                  <span className="text-primary font-mono">+{factor.score}</span>
+                  <span className="text-gray-300">{factor.description}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Trading Implications */}
+          <div>
+            <div className="text-sm font-semibold mb-2">Trading Implications</div>
+            <div className="grid md:grid-cols-2 gap-2">
+              {pinRisk.trading_implications.slice(0, 4).map((impl, i) => {
+                const implColors: Record<string, string> = {
+                  favorable: 'border-green-500/50 bg-green-500/10',
+                  unfavorable: 'border-red-500/50 bg-red-500/10',
+                  neutral: 'border-yellow-500/50 bg-yellow-500/10'
+                }
+                return (
+                  <div key={i} className={`p-2 rounded border ${implColors[impl.outlook] || implColors.neutral}`}>
+                    <div className="flex items-center gap-1 text-xs font-semibold mb-1">
+                      {impl.outlook === 'favorable' && <CheckCircle className="w-3 h-3 text-green-400" />}
+                      {impl.outlook === 'unfavorable' && <X className="w-3 h-3 text-red-400" />}
+                      {impl.outlook === 'neutral' && <Minus className="w-3 h-3 text-yellow-400" />}
+                      {impl.position_type.replace(/_/g, ' ').toUpperCase()}
+                    </div>
+                    <div className="text-xs text-gray-400">{impl.recommendation}</div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* What Would Break the Pin */}
+          <div className="p-3 bg-primary/10 border border-primary/30 rounded-lg">
+            <div className="text-sm font-semibold text-primary mb-2">What Would Break the Pin</div>
+            <ul className="space-y-1">
+              {pinRisk.pin_breakers.slice(0, 4).map((breaker, i) => (
+                <li key={i} className="text-xs text-gray-300 flex items-start gap-2">
+                  <span className="text-primary">•</span>
+                  {breaker}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* Expiration Context */}
+          {(pinRisk.is_expiration_day || pinRisk.days_to_expiry <= 2) && (
+            <div className={`p-2 rounded text-center text-sm ${pinRisk.is_expiration_day ? 'bg-red-500/20 text-red-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
+              {pinRisk.is_expiration_day
+                ? 'TODAY IS EXPIRATION DAY - Maximum gamma effect!'
+                : `${pinRisk.days_to_expiry} days to weekly expiry - Pin gravity increasing`
+              }
+            </div>
+          )}
+
+          {/* Summary */}
+          <div className="text-sm text-gray-400 italic">
+            {pinRisk.summary}
           </div>
         </div>
       )}
@@ -971,6 +1208,13 @@ export default function ApolloPage() {
                           <div className="font-mono">{result.features.put_call_ratio.toFixed(2)}</div>
                         </div>
                       </div>
+                    </div>
+                  )}
+
+                  {/* Pin Risk Analysis */}
+                  {result.pin_risk && (
+                    <div className="p-6 border-b border-gray-800">
+                      <PinRiskCard pinRisk={result.pin_risk} symbol={result.symbol} />
                     </div>
                   )}
 
