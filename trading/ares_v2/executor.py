@@ -668,6 +668,159 @@ class OrderExecutor:
             logger.error(f"Live close failed: {e}")
             return False, 0, 0
 
+    def close_call_spread_only(
+        self,
+        position: IronCondorPosition,
+        reason: str
+    ) -> Tuple[bool, float, float]:
+        """
+        Close only the call spread leg of a partially closed Iron Condor.
+
+        This is used for retry logic when put leg closed but call leg failed.
+
+        Returns: (success, close_price, realized_pnl)
+        """
+        if self.config.mode == TradingMode.PAPER:
+            # Paper mode: simulate call leg close
+            try:
+                current_price = self._get_current_price()
+                if not current_price:
+                    current_price = position.underlying_at_entry
+
+                # Estimate call spread value only
+                call_value = self._estimate_spread_value(
+                    position.call_short_strike,
+                    position.call_long_strike,
+                    current_price,
+                    'call'
+                )
+                call_pnl = (position.call_credit - call_value) * 100 * position.contracts
+
+                logger.info(f"PAPER CLOSE (call only): {position.position_id}, P&L: ${call_pnl:.2f}")
+                return True, call_value, call_pnl
+
+            except Exception as e:
+                logger.error(f"Paper close (call only) failed: {e}")
+                return False, 0, 0
+
+        # Live mode: close call spread via Tradier
+        if not self.tradier:
+            logger.error("Cannot close call spread - Tradier not available")
+            return False, 0, 0
+
+        try:
+            # Get current call spread quote
+            call_quote = self._get_spread_quote(
+                position.ticker,
+                position.expiration,
+                position.call_short_strike,
+                position.call_long_strike,
+                'call'
+            )
+
+            if not call_quote:
+                logger.error("Failed to get call spread quote for retry")
+                return False, 0, 0
+
+            call_value = call_quote.get('value', 0)
+
+            # Close call spread by reversing
+            call_result = self._tradier_place_spread_with_retry(
+                symbol=position.ticker,
+                expiration=position.expiration,
+                long_strike=position.call_short_strike,  # Buy back what we sold
+                short_strike=position.call_long_strike,   # Sell what we bought
+                option_type="call",
+                quantity=position.contracts,
+                limit_price=round(call_value, 2),
+            )
+
+            if not call_result or not call_result.get('order'):
+                logger.error(f"Retry: Failed to close call spread: {call_result}")
+                return False, 0, 0
+
+            # Calculate call leg P&L
+            call_pnl = (position.call_credit - call_value) * 100 * position.contracts
+
+            logger.info(
+                f"LIVE CLOSE (call only): {position.position_id} "
+                f"@ ${call_value:.2f}, P&L: ${call_pnl:.2f} [{reason}]"
+            )
+
+            return True, call_value, call_pnl
+
+        except Exception as e:
+            logger.error(f"Live close (call only) failed: {e}")
+            return False, 0, 0
+
+    def _estimate_spread_value(
+        self,
+        short_strike: float,
+        long_strike: float,
+        current_price: float,
+        option_type: str
+    ) -> float:
+        """Estimate value of a single spread for paper trading."""
+        spread_width = abs(short_strike - long_strike)
+
+        if option_type == 'call':
+            if current_price >= long_strike:
+                return spread_width  # Max loss
+            elif current_price <= short_strike:
+                return 0.01  # Near worthless
+            else:
+                return current_price - short_strike
+        else:  # put
+            if current_price <= long_strike:
+                return spread_width  # Max loss
+            elif current_price >= short_strike:
+                return 0.01  # Near worthless
+            else:
+                return short_strike - current_price
+
+    def _get_spread_quote(
+        self,
+        symbol: str,
+        expiration: str,
+        short_strike: float,
+        long_strike: float,
+        option_type: str
+    ) -> Optional[Dict]:
+        """Get current quote for a single spread."""
+        if not self.tradier:
+            return None
+
+        try:
+            # Get individual option quotes
+            short_symbol = self._build_option_symbol(symbol, expiration, short_strike, option_type)
+            long_symbol = self._build_option_symbol(symbol, expiration, long_strike, option_type)
+
+            quotes = self.tradier.get_quotes([short_symbol, long_symbol])
+            if not quotes or len(quotes) < 2:
+                return None
+
+            short_quote = next((q for q in quotes if str(int(short_strike)) in q.get('symbol', '')), None)
+            long_quote = next((q for q in quotes if str(int(long_strike)) in q.get('symbol', '')), None)
+
+            if not short_quote or not long_quote:
+                return None
+
+            # For closing a credit spread, we buy back the short and sell the long
+            # Value = short ask - long bid (what we pay to close)
+            short_ask = short_quote.get('ask', 0) or 0
+            long_bid = long_quote.get('bid', 0) or 0
+            value = short_ask - long_bid
+
+            return {
+                'value': max(0.01, value),
+                'short_ask': short_ask,
+                'long_bid': long_bid
+            }
+
+        except Exception as e:
+            logger.error(f"Get spread quote failed: {e}")
+            return None
+
     def _get_kelly_position_size(self, max_loss_per_contract: float) -> Optional[Dict]:
         """
         Get Monte Carlo Kelly-based position sizing recommendation.

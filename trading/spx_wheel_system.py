@@ -1119,13 +1119,14 @@ class SPXWheelTrader(MathOptimizerMixin):
             print(f"  {reason}")
             return False, reason
 
-        # Market hours check (simplified - 9:30 AM to 4 PM ET)
-        if now.hour < 9 or now.hour >= 16:
-            reason = "Outside market hours"
+        # Market hours check in CENTRAL TIME (8:30 AM - 3:00 PM CT)
+        # Note: Market opens 8:30 AM CT (9:30 AM ET), closes 3:00 PM CT (4:00 PM ET)
+        if now.hour < 8 or now.hour >= 15:
+            reason = f"Outside market hours (CT): {now.strftime('%H:%M')} not in 08:30-15:00"
             print(f"  {reason}")
             return False, reason
-        if now.hour == 9 and now.minute < 30:
-            reason = "Market not open yet"
+        if now.hour == 8 and now.minute < 30:
+            reason = f"Market not open yet (CT): {now.strftime('%H:%M')} < 08:30"
             print(f"  {reason}")
             return False, reason
 
@@ -1861,10 +1862,28 @@ class SPXWheelTrader(MathOptimizerMixin):
                     price=exit_price
                 )
 
-                order_id = result.get('order', {}).get('id')
-                print(f"     Order ID: {order_id}")
+                # CRITICAL: Verify order was placed before updating DB
+                if not result:
+                    logger.error(f"ATLAS: Buy-to-close order failed - no result returned for {tradier_symbol}")
+                    return False
 
-            # Update database
+                order_id = result.get('order', {}).get('id')
+                order_status = result.get('order', {}).get('status', 'UNKNOWN')
+                print(f"     Order ID: {order_id}, Status: {order_status}")
+
+                # Verify order was accepted (not rejected)
+                if not order_id:
+                    error_msg = result.get('error', result.get('errors', 'Unknown error'))
+                    logger.error(f"ATLAS: Buy-to-close order rejected for {tradier_symbol}: {error_msg}")
+                    return False
+
+                if order_status in ['rejected', 'canceled', 'error']:
+                    logger.error(f"ATLAS: Buy-to-close order {order_id} status={order_status}")
+                    return False
+
+                logger.info(f"ATLAS: Buy-to-close order {order_id} placed successfully for {tradier_symbol}")
+
+            # Update database (only after order is verified)
             conn = get_connection()
             cursor = conn.cursor()
 

@@ -609,8 +609,20 @@ class SignalGenerator:
         return round(spot * daily_vol, 2)
 
     def check_vix_filter(self, vix: float) -> Tuple[bool, str]:
-        # VIX skip disabled - always allow trading
-        return True, "VIX check disabled"
+        """
+        Check if VIX conditions allow trading.
+
+        Returns (can_trade, reason).
+
+        Only blocks in extreme crisis conditions (VIX > 50) to ensure
+        the bot can trade every day under normal market conditions.
+        """
+        # VIX filter - only block in extreme conditions (VIX > 50)
+        # This ensures the bot can trade daily under normal market conditions
+        if vix > 50:
+            return False, f"VIX ({vix:.1f}) extremely elevated - market crisis conditions"
+
+        return True, f"VIX={vix:.1f} - trading allowed"
 
     def adjust_confidence_from_top_factors(
         self,
@@ -855,12 +867,38 @@ class SignalGenerator:
                     logger.info(f"[PEGASUS ORACLE INFO] Oracle advises SKIP_TODAY (informational only)")
                     logger.info(f"  Bot will use its own threshold: {self.config.min_win_probability:.1%}")
 
-        # Win probability threshold check DISABLED - always trade
+        # Win probability threshold check - enforce minimum win probability
+        min_win_prob = getattr(self.config, 'min_win_probability', 0.42)
         logger.info(f"[PEGASUS DECISION] Using {prediction_source} win probability: {effective_win_prob:.1%}")
-        logger.info(f"[PEGASUS] Win probability threshold check DISABLED - proceeding with trade")
+        logger.info(f"[PEGASUS THRESHOLD] Minimum required: {min_win_prob:.1%}")
+
+        if effective_win_prob < min_win_prob:
+            logger.info(f"[PEGASUS BLOCKED] Win probability {effective_win_prob:.1%} < threshold {min_win_prob:.1%}")
+            # Return an invalid signal with the reason
+            return IronCondorSignal(
+                spot_price=market['spot_price'],
+                vix=market['vix'],
+                expected_move=market['expected_move'],
+                call_wall=market.get('call_wall', 0),
+                put_wall=market.get('put_wall', 0),
+                gex_regime=market.get('gex_regime', 'NEUTRAL'),
+                put_short=0,
+                put_long=0,
+                call_short=0,
+                call_long=0,
+                expiration="",
+                total_credit=0,
+                max_loss=0,
+                max_profit=0,
+                confidence=effective_win_prob,
+                reasoning=f"Win probability {effective_win_prob:.1%} below threshold {min_win_prob:.1%}",
+                source="THRESHOLD_BLOCKED",
+                is_valid=False,
+            )
+
         if effective_win_prob <= 0:
             effective_win_prob = 0.50  # Default to 50% if no prediction
-        logger.info(f"[PEGASUS PASSED] {prediction_source} Win Prob {effective_win_prob:.1%} - threshold disabled")
+        logger.info(f"[PEGASUS PASSED] {prediction_source} Win Prob {effective_win_prob:.1%} >= threshold {min_win_prob:.1%}")
 
         # Get Oracle suggested strikes if available
         oracle_put = oracle.get('suggested_put_strike') if oracle else None
