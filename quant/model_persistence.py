@@ -53,7 +53,7 @@ def get_connection():
 
 
 def ensure_table(conn):
-    """Create ml_models table if it doesn't exist"""
+    """Create ml_models table if it doesn't exist, and add missing columns"""
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS ml_models (
@@ -70,6 +70,20 @@ def ensure_table(conn):
             UNIQUE(model_name, model_version)
         )
     """)
+
+    # Add is_active column if it doesn't exist (for existing tables)
+    cursor.execute("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'ml_models' AND column_name = 'is_active'
+            ) THEN
+                ALTER TABLE ml_models ADD COLUMN is_active BOOLEAN DEFAULT TRUE;
+            END IF;
+        END $$;
+    """)
+
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_ml_models_name ON ml_models(model_name)
     """)
