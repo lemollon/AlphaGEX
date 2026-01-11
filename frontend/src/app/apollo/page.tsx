@@ -658,6 +658,13 @@ export default function ApolloPage() {
   const [scanProgress, setScanProgress] = useState<{ current: number, total: number, symbol: string } | null>(null)
   const [selectedResult, setSelectedResult] = useState<ApolloScanResult | null>(null)
 
+  // Quick Pin Risk Checker State
+  const [quickPinSymbol, setQuickPinSymbol] = useState('')
+  const [quickPinLoading, setQuickPinLoading] = useState(false)
+  const [quickPinResult, setQuickPinResult] = useState<PinRisk | null>(null)
+  const [quickPinError, setQuickPinError] = useState<string | null>(null)
+  const [quickPinExpanded, setQuickPinExpanded] = useState(true)
+
   const popularSymbols = ['SPY', 'QQQ', 'IWM', 'DIA', 'TSLA', 'NVDA', 'AAPL', 'MSFT', 'AMD', 'META']
 
   // Fetch model performance on mount
@@ -673,6 +680,36 @@ export default function ApolloPage() {
       }
     } catch (e) {
       console.error('Failed to fetch performance:', e)
+    }
+  }
+
+  // Quick Pin Risk Check
+  const checkPinRisk = async (symbol?: string) => {
+    const sym = (symbol || quickPinSymbol).toUpperCase().trim()
+    if (!sym) return
+
+    setQuickPinLoading(true)
+    setQuickPinError(null)
+    setQuickPinResult(null)
+
+    try {
+      const response = await apiClient.get(`/api/apollo/pin-risk/${sym}`)
+      if (response.data?.success) {
+        setQuickPinResult(response.data.data)
+        setQuickPinExpanded(true)
+      } else {
+        throw new Error('Pin risk check failed')
+      }
+    } catch (e: any) {
+      let errorMsg = 'Failed to check pin risk'
+      if (e.response?.data?.detail) {
+        errorMsg = e.response.data.detail
+      } else if (e.message) {
+        errorMsg = e.message
+      }
+      setQuickPinError(errorMsg)
+    } finally {
+      setQuickPinLoading(false)
     }
   }
 
@@ -868,6 +905,138 @@ export default function ApolloPage() {
                 </button>
               </div>
             </div>
+          </div>
+
+          {/* Quick Pin Risk Checker */}
+          <div className="bg-gradient-to-r from-red-500/10 via-orange-500/10 to-yellow-500/10 rounded-xl p-4 border border-orange-500/30">
+            <div className="flex flex-col md:flex-row gap-4">
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-2">
+                  <Shield className="w-5 h-5 text-orange-400" />
+                  <span className="font-semibold text-orange-400">Quick Pin Risk Check</span>
+                  <span className="text-xs text-gray-400">Instant analysis for any symbol</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={quickPinSymbol}
+                    onChange={e => setQuickPinSymbol(e.target.value.toUpperCase())}
+                    onKeyPress={e => e.key === 'Enter' && checkPinRisk()}
+                    placeholder="Enter symbol (e.g., NVDA)"
+                    className="flex-1 max-w-xs px-4 py-2 bg-gray-900 border border-gray-700 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500"
+                  />
+                  <button
+                    onClick={() => checkPinRisk()}
+                    disabled={quickPinLoading || !quickPinSymbol.trim()}
+                    className="flex items-center gap-2 px-4 py-2 bg-orange-500 hover:bg-orange-600 disabled:bg-gray-700 disabled:cursor-not-allowed rounded-lg font-semibold transition-colors"
+                  >
+                    {quickPinLoading ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Shield className="w-4 h-4" />
+                    )}
+                    Check
+                  </button>
+                </div>
+                {/* Quick Symbol Buttons */}
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {['NVDA', 'TSLA', 'AAPL', 'AMD', 'META', 'AMZN', 'GOOGL', 'MSFT'].map(s => (
+                    <button
+                      key={s}
+                      onClick={() => {
+                        setQuickPinSymbol(s)
+                        checkPinRisk(s)
+                      }}
+                      disabled={quickPinLoading}
+                      className="px-2 py-1 text-xs bg-gray-800 hover:bg-gray-700 rounded transition-colors disabled:opacity-50"
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Quick Result Display */}
+              {quickPinResult && (
+                <div className="md:w-80 p-3 bg-background rounded-lg border border-gray-700">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-bold text-lg">{quickPinSymbol}</span>
+                    <button
+                      onClick={() => setQuickPinResult(null)}
+                      className="text-gray-400 hover:text-white"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-gray-400">Pin Risk</span>
+                      <span className={`font-mono font-bold ${
+                        quickPinResult.score >= 60 ? 'text-red-400' :
+                        quickPinResult.score >= 40 ? 'text-orange-400' : 'text-green-400'
+                      }`}>
+                        {quickPinResult.score}/100
+                      </span>
+                    </div>
+                    <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+                      <div
+                        className={`h-full transition-all ${
+                          quickPinResult.score >= 60 ? 'bg-red-500' :
+                          quickPinResult.score >= 40 ? 'bg-orange-500' : 'bg-green-500'
+                        }`}
+                        style={{ width: `${quickPinResult.score}%` }}
+                      />
+                    </div>
+                    <div className={`text-center text-xs font-semibold py-1 rounded ${
+                      quickPinResult.long_call_outlook === 'dangerous' ? 'bg-red-500/20 text-red-400' :
+                      quickPinResult.long_call_outlook === 'challenging' ? 'bg-orange-500/20 text-orange-400' :
+                      quickPinResult.long_call_outlook === 'favorable' ? 'bg-green-500/20 text-green-400' :
+                      'bg-yellow-500/20 text-yellow-400'
+                    }`}>
+                      Long Calls: {quickPinResult.long_call_outlook.toUpperCase()}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div className="text-center p-1 bg-gray-800 rounded">
+                        <div className="text-gray-400">Max Pain</div>
+                        <div className="font-mono text-yellow-400">${quickPinResult.max_pain.toFixed(0)}</div>
+                      </div>
+                      <div className="text-center p-1 bg-gray-800 rounded">
+                        <div className="text-gray-400">Gamma</div>
+                        <div className={`font-mono ${
+                          quickPinResult.gamma_regime === 'positive' ? 'text-green-400' :
+                          quickPinResult.gamma_regime === 'negative' ? 'text-red-400' : 'text-yellow-400'
+                        }`}>
+                          {quickPinResult.gamma_regime.toUpperCase()}
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setQuickPinExpanded(!quickPinExpanded)}
+                      className="w-full text-xs text-primary hover:underline"
+                    >
+                      {quickPinExpanded ? 'Hide Details' : 'Show Details'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Error Display */}
+              {quickPinError && (
+                <div className="md:w-80 p-3 bg-red-500/10 border border-red-500/30 rounded-lg">
+                  <div className="flex items-center gap-2 text-red-400">
+                    <AlertCircle className="w-4 h-4" />
+                    <span className="text-sm">{quickPinError}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Expanded Quick Result */}
+            {quickPinResult && quickPinExpanded && (
+              <div className="mt-4 pt-4 border-t border-gray-700">
+                <PinRiskCard pinRisk={quickPinResult} symbol={quickPinSymbol} />
+              </div>
+            )}
           </div>
 
           {/* Scanning Progress */}
