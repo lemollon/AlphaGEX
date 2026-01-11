@@ -26,6 +26,7 @@ import sys
 import pickle
 import base64
 import zlib
+import json
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -137,7 +138,7 @@ def save_model_to_db(
             WHERE model_name = %s AND is_active = TRUE
         """, (model_name,))
 
-        # Insert new model
+        # Insert new model (use json.dumps for JSONB column)
         cursor.execute("""
             INSERT INTO ml_models (
                 model_name, model_version, model_data, metrics,
@@ -148,7 +149,7 @@ def save_model_to_db(
             model_name,
             next_version,
             compressed,
-            metrics if metrics else {},
+            json.dumps(metrics if metrics else {}),
             training_records,
             training_date_start,
             training_date_end
