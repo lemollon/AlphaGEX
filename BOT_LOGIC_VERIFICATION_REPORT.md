@@ -342,15 +342,15 @@ def _reconcile_positions_on_startup(self):
 All critical issues have been fixed:
 
 ### ARES (SPY Iron Condor)
-- **Re-enabled VIX filter** - Uses `config.vix_skip` threshold (default: 32.0)
-- **Re-enabled win probability threshold** - Blocks trades below `config.min_win_probability` (default: 42%)
+- **Permissive VIX filter** - Only blocks at VIX > 50 (extreme crisis conditions) to allow daily trading
+- **Win probability threshold** - Blocks trades below `config.min_win_probability` (default: 42%)
 - **Added pricing fallback** - Force close positions near expiry if pricing fails
 - **Added partial close retry** - 3 attempts with exponential backoff (1s, 2s, 4s)
 - **Added `close_call_spread_only`** - Allows recovery from partial close failures
 
 ### PEGASUS (SPX Iron Condor)
-- **Re-enabled VIX filter** - Same fix as ARES
-- **Re-enabled win probability threshold** - Returns invalid signal when below threshold
+- **Permissive VIX filter** - Only blocks at VIX > 50 (extreme crisis conditions) to allow daily trading
+- **Win probability threshold** - Returns invalid signal when below threshold
 
 ### ATHENA (Directional Spreads)
 - **Added pricing fallback** - Force close near expiry, log warnings for pricing failures
@@ -362,14 +362,21 @@ All critical issues have been fixed:
 - **Fixed timezone bug** - Now uses Central Time (8:30 AM - 3:00 PM CT)
 - **Added buy-to-close verification** - Returns False if order fails before updating DB
 
+### Oracle Advisor Improvements
+- **Removed Monday/Friday penalties** - Day of week no longer penalizes Monday (-8%→0%) or Friday (-5%→0%)
+- **Disabled VIX day-specific skips** - `vix_monday_friday_skip` set to 0 (was 30.0) to allow daily trading
+- **Reduced win probability penalties** - Less aggressive penalty stack for realistic trading
+
 ### Files Modified
-- `trading/ares_v2/signals.py` - VIX filter, win probability threshold
+- `trading/ares_v2/signals.py` - VIX filter, win probability threshold, disabled day-specific VIX skips
 - `trading/ares_v2/trader.py` - Pricing fallback, partial close retry
 - `trading/ares_v2/executor.py` - `close_call_spread_only` method
-- `trading/pegasus/signals.py` - VIX filter, win probability threshold
+- `trading/pegasus/signals.py` - VIX filter (only blocks VIX > 50)
 - `trading/athena_v2/trader.py` - Pricing fallback
 - `trading/icarus/trader.py` - Pricing fallback
 - `trading/spx_wheel_system.py` - Timezone fix, order verification
+- `quant/oracle_advisor.py` - Removed Monday/Friday penalties, reduced penalty stack
+- `quant/ares_ml_advisor.py` - Reduced fallback prediction penalties
 
 ---
 

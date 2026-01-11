@@ -3097,8 +3097,9 @@ class OracleAdvisor:
         elif 14 <= context.vix <= 18:
             base_prob += 0.08  # Sweet spot for premium selling
 
-        # Day of week (Monday/Friday are historically worse)
-        dow_adj = {0: -0.08, 1: 0.02, 2: 0.03, 3: 0.02, 4: -0.05}
+        # Day of week - all days are tradable (removed penalties to allow daily trading)
+        # Previously: Monday -8%, Friday -5% - now neutral to enable consistent daily trading
+        dow_adj = {0: 0.0, 1: 0.02, 2: 0.03, 3: 0.02, 4: 0.0}
         base_prob += dow_adj.get(context.day_of_week, 0)
 
         # GEX regime (major factor for mean reversion)

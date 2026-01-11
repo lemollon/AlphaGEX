@@ -494,17 +494,13 @@ class SignalGenerator:
 
         Returns (can_trade, reason).
         """
-        # Get VIX skip threshold from config (e.g., 32.0 for MODERATE preset)
-        vix_skip = getattr(self.config, 'vix_skip', None)
+        # VIX filter - only block in extreme conditions (VIX > 50)
+        # Normal trading should happen every day regardless of VIX
+        # High VIX actually means higher premiums which can offset risk
+        if vix > 50:
+            return False, f"VIX ({vix:.1f}) extremely elevated - market crisis conditions"
 
-        if vix_skip is None:
-            # No VIX filtering configured (BASELINE preset)
-            return True, f"VIX={vix:.1f}, no skip threshold configured"
-
-        if vix > vix_skip:
-            return False, f"VIX ({vix:.1f}) exceeds skip threshold ({vix_skip})"
-
-        return True, f"VIX={vix:.1f} within threshold ({vix_skip})"
+        return True, f"VIX={vix:.1f} - trading allowed"
 
     def adjust_confidence_from_top_factors(
         self,
@@ -810,13 +806,14 @@ class SignalGenerator:
 
             # Call correct method: get_ares_advice instead of get_prediction
             # Pass all VIX filtering parameters for proper skip logic
+            # NOTE: VIX skips are disabled to allow daily trading (only extreme VIX > 50 blocked in check_vix_filter)
             prediction = self.oracle.get_ares_advice(
                 context=context,
                 use_gex_walls=True,
                 use_claude_validation=False,  # Skip Claude for performance during live trading
-                vix_hard_skip=getattr(self.config, 'vix_skip', 32.0) or 32.0,
-                vix_monday_friday_skip=getattr(self.config, 'vix_monday_friday_skip', 30.0) or 0.0,
-                vix_streak_skip=getattr(self.config, 'vix_streak_skip', 28.0) or 0.0,
+                vix_hard_skip=0.0,  # Disabled - main VIX filter only blocks VIX > 50
+                vix_monday_friday_skip=0.0,  # Disabled - trade every day
+                vix_streak_skip=0.0,  # Disabled - allow trading after losses
                 recent_losses=getattr(self, '_recent_losses', 0),
             )
 

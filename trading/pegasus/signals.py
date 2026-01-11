@@ -613,18 +613,16 @@ class SignalGenerator:
         Check if VIX conditions allow trading.
 
         Returns (can_trade, reason).
+
+        Only blocks in extreme crisis conditions (VIX > 50) to ensure
+        the bot can trade every day under normal market conditions.
         """
-        # Get VIX skip threshold from config (e.g., 32.0 for MODERATE preset)
-        vix_skip = getattr(self.config, 'vix_skip', None)
+        # VIX filter - only block in extreme conditions (VIX > 50)
+        # This ensures the bot can trade daily under normal market conditions
+        if vix > 50:
+            return False, f"VIX ({vix:.1f}) extremely elevated - market crisis conditions"
 
-        if vix_skip is None:
-            # No VIX filtering configured (BASELINE preset)
-            return True, f"VIX={vix:.1f}, no skip threshold configured"
-
-        if vix > vix_skip:
-            return False, f"VIX ({vix:.1f}) exceeds skip threshold ({vix_skip})"
-
-        return True, f"VIX={vix:.1f} within threshold ({vix_skip})"
+        return True, f"VIX={vix:.1f} - trading allowed"
 
     def adjust_confidence_from_top_factors(
         self,
