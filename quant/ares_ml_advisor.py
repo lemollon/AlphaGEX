@@ -224,11 +224,16 @@ class AresMLAdvisor:
         # Create models directory
         os.makedirs(self.MODEL_PATH, exist_ok=True)
 
-        # Try to load existing model
+        # Try to load existing model (database first, then file)
         self._load_model()
 
     def _load_model(self) -> bool:
-        """Load pre-trained model if available"""
+        """Load pre-trained model if available (database first, then file)"""
+        # Try database first (persists across Render deploys)
+        if self.load_from_db():
+            return True
+
+        # Fall back to file
         model_file = os.path.join(self.MODEL_PATH, 'ares_advisor_model.pkl')
 
         if os.path.exists(model_file):
@@ -241,10 +246,10 @@ class AresMLAdvisor:
                     self.training_metrics = saved.get('metrics')
                     self.model_version = saved.get('version', '1.0.0')
                     self.is_trained = True
-                    logger.info(f"Loaded ARES ML Advisor v{self.model_version}")
+                    logger.info(f"Loaded ARES ML Advisor v{self.model_version} from file")
                     return True
             except Exception as e:
-                logger.warning(f"Failed to load model: {e}")
+                logger.warning(f"Failed to load model from file: {e}")
 
         return False
 
@@ -265,6 +270,65 @@ class AresMLAdvisor:
             logger.info(f"Saved ARES ML Advisor to {model_file}")
         except Exception as e:
             logger.error(f"Failed to save model: {e}")
+
+    def save_to_db(self, training_records: int = None) -> bool:
+        """Save model to database for persistence across Render deploys"""
+        if not self.is_trained:
+            logger.warning("Cannot save untrained model to database")
+            return False
+
+        try:
+            from quant.model_persistence import save_model_to_db, MODEL_ARES_ML
+
+            model_data = {
+                'model': self.model,
+                'calibrated_model': self.calibrated_model,
+                'scaler': self.scaler,
+                'metrics': self.training_metrics,
+                'version': self.model_version,
+            }
+
+            metrics = None
+            if self.training_metrics:
+                metrics = {
+                    'accuracy': self.training_metrics.accuracy,
+                    'auc_roc': self.training_metrics.auc_roc,
+                    'brier_score': self.training_metrics.brier_score,
+                    'win_rate': self.training_metrics.actual_win_rate,
+                }
+
+            return save_model_to_db(
+                MODEL_ARES_ML,
+                model_data,
+                metrics=metrics,
+                training_records=training_records
+            )
+        except Exception as e:
+            logger.error(f"Failed to save model to database: {e}")
+            return False
+
+    def load_from_db(self) -> bool:
+        """Load model from database"""
+        try:
+            from quant.model_persistence import load_model_from_db, MODEL_ARES_ML
+
+            model_data = load_model_from_db(MODEL_ARES_ML)
+            if model_data is None:
+                return False
+
+            self.model = model_data.get('model')
+            self.calibrated_model = model_data.get('calibrated_model')
+            self.scaler = model_data.get('scaler')
+            self.training_metrics = model_data.get('metrics')
+            self.model_version = model_data.get('version', '1.0.0')
+            self.is_trained = True
+
+            logger.info(f"Loaded ARES ML Advisor v{self.model_version} from database")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to load model from database: {e}")
+            return False
 
     def extract_features_from_kronos(
         self,

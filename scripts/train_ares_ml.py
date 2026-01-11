@@ -107,6 +107,14 @@ def main():
                     for feat, imp in sorted(metrics.feature_importances.items(), key=lambda x: -x[1])[:5]:
                         print(f"  {feat}: {imp:.3f}")
 
+                    # Save to database for Render persistence
+                    print("\nSaving to database for persistence...")
+                    advisor = get_advisor()
+                    if advisor.save_to_db(training_records=metrics.total_samples):
+                        print("  Model saved to database (persists across Render deploys)")
+                    else:
+                        print("  Warning: Failed to save to database")
+
                 except Exception as e:
                     print(f"\n[ERROR] Training failed: {e}")
                     print("Continuing with existing model if available...")

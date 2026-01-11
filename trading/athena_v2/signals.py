@@ -162,10 +162,16 @@ class SignalGenerator:
         if GEX_DIRECTIONAL_ML_AVAILABLE:
             try:
                 self.gex_directional_ml = GEXDirectionalPredictor()
-                # Try to load pre-trained model
-                if hasattr(self.gex_directional_ml, 'load_model'):
+                # Try to load from database first (persists across Render deploys)
+                loaded = False
+                if hasattr(self.gex_directional_ml, 'load_from_db'):
+                    loaded = self.gex_directional_ml.load_from_db()
+                    if loaded:
+                        logger.info("SignalGenerator: GEX Directional ML loaded from database")
+                # Fall back to file if DB load failed
+                if not loaded and hasattr(self.gex_directional_ml, 'load_model'):
                     self.gex_directional_ml.load_model()
-                logger.info("SignalGenerator: GEX Directional ML initialized")
+                    logger.info("SignalGenerator: GEX Directional ML loaded from file")
             except Exception as e:
                 logger.warning(f"GEX Directional ML init failed: {e}")
 
