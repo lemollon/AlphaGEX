@@ -2069,6 +2069,15 @@ export default function ZeroDTEBacktestPage() {
                 <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
                   <div className="px-6 py-4 border-b border-gray-800 flex justify-between items-center">
                     <h3 className="font-bold">Trade Log ({liveJobResult.all_trades.length} trades)</h3>
+                    {completedJobId && (
+                      <button
+                        onClick={() => exportTrades(completedJobId)}
+                        className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm"
+                      >
+                        <FileSpreadsheet className="w-4 h-4" />
+                        Export Trades CSV
+                      </button>
+                    )}
                   </div>
                   <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
                     <table className="w-full text-sm">
