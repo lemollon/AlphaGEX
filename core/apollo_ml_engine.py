@@ -272,6 +272,9 @@ class ApolloScanResult:
     market_regime: str = "normal"
     gex_regime: str = "neutral"
 
+    # Pin risk analysis
+    pin_risk: Optional[Dict] = None
+
     # Data quality
     data_quality_score: float = 100.0
     data_sources: List[str] = field(default_factory=list)
@@ -289,6 +292,7 @@ class ApolloScanResult:
             'strategies': [s.to_dict() for s in self.strategies],
             'market_regime': self.market_regime,
             'gex_regime': self.gex_regime,
+            'pin_risk': self.pin_risk,
             'data_quality_score': self.data_quality_score,
             'data_sources': self.data_sources,
             'warnings': self.warnings
@@ -1322,6 +1326,37 @@ class ApolloMLEngine:
 
             # 5. Calculate data quality
             result.data_quality_score = self._calculate_data_quality(features)
+
+            # 6. Add pin risk analysis
+            try:
+                from core.pin_risk_analyzer import get_pin_risk_analyzer
+                pin_analyzer = get_pin_risk_analyzer()
+                pin_analysis = pin_analyzer.analyze(symbol)
+                result.pin_risk = {
+                    'score': pin_analysis.pin_risk_score,
+                    'level': pin_analysis.pin_risk_level.value,
+                    'gamma_regime': pin_analysis.gamma_regime.value,
+                    'gamma_regime_description': pin_analysis.gamma_regime_description,
+                    'long_call_outlook': pin_analysis.long_call_outlook,
+                    'max_pain': pin_analysis.gamma_levels.max_pain,
+                    'call_wall': pin_analysis.gamma_levels.call_wall,
+                    'put_wall': pin_analysis.gamma_levels.put_wall,
+                    'flip_point': pin_analysis.gamma_levels.flip_point,
+                    'expected_range': {
+                        'low': pin_analysis.expected_range_low,
+                        'high': pin_analysis.expected_range_high,
+                        'pct': pin_analysis.expected_range_pct
+                    },
+                    'days_to_expiry': pin_analysis.days_to_weekly_expiry,
+                    'is_expiration_day': pin_analysis.is_expiration_day,
+                    'pin_factors': [f.to_dict() for f in pin_analysis.pin_factors],
+                    'trading_implications': [t.to_dict() for t in pin_analysis.trading_implications],
+                    'pin_breakers': pin_analysis.pin_breakers,
+                    'summary': pin_analysis.summary
+                }
+            except Exception as pin_err:
+                logger.warning(f"Pin risk analysis failed for {symbol}: {pin_err}")
+                result.warnings.append(f"Pin risk unavailable: {str(pin_err)}")
 
         except Exception as e:
             logger.error(f"Scan failed for {symbol}: {e}")

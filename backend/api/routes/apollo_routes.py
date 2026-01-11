@@ -798,6 +798,97 @@ async def get_features(symbol: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/pin-risk/{symbol}")
+async def get_pin_risk(symbol: str):
+    """
+    Get comprehensive pin risk analysis for a symbol.
+
+    Analyzes gamma exposure, max pain, and dealer positioning to assess
+    the probability of price pinning.
+
+    Returns:
+        - Pin risk score (0-100)
+        - Gamma regime (positive/negative/neutral)
+        - Key levels (max pain, walls, flip point)
+        - Trading implications for different strategies
+        - What would break the pin pattern
+    """
+    try:
+        from core.pin_risk_analyzer import get_pin_risk_analyzer
+
+        analyzer = get_pin_risk_analyzer()
+        analysis = analyzer.analyze(symbol.upper())
+
+        return {
+            "success": True,
+            "data": analysis.to_dict(),
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except ImportError as e:
+        logger.error(f"Pin risk analyzer not available: {e}")
+        raise HTTPException(status_code=500, detail="Pin risk analyzer not available")
+    except Exception as e:
+        logger.error(f"Pin risk analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/pin-risk-batch")
+async def get_pin_risk_batch(symbols: str = "SPY,QQQ,NVDA,AAPL,TSLA"):
+    """
+    Get pin risk analysis for multiple symbols.
+
+    Args:
+        symbols: Comma-separated list of stock symbols
+
+    Returns:
+        List of pin risk analyses sorted by risk score (highest first)
+    """
+    try:
+        from core.pin_risk_analyzer import get_pin_risk_analyzer
+
+        analyzer = get_pin_risk_analyzer()
+        symbol_list = [s.strip().upper() for s in symbols.split(',')][:10]  # Limit to 10
+
+        results = []
+        for sym in symbol_list:
+            try:
+                analysis = analyzer.analyze(sym)
+                results.append({
+                    'symbol': sym,
+                    'pin_risk_score': analysis.pin_risk_score,
+                    'pin_risk_level': analysis.pin_risk_level.value,
+                    'gamma_regime': analysis.gamma_regime.value,
+                    'spot_price': analysis.spot_price,
+                    'max_pain': analysis.gamma_levels.max_pain,
+                    'long_call_outlook': analysis.long_call_outlook,
+                    'summary': analysis.summary
+                })
+            except Exception as e:
+                logger.error(f"Pin risk failed for {sym}: {e}")
+                results.append({
+                    'symbol': sym,
+                    'error': str(e)
+                })
+
+        # Sort by pin risk score (highest first)
+        results.sort(key=lambda x: x.get('pin_risk_score', 0), reverse=True)
+
+        return {
+            "success": True,
+            "data": results,
+            "count": len(results),
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except ImportError as e:
+        logger.error(f"Pin risk analyzer not available: {e}")
+        raise HTTPException(status_code=500, detail="Pin risk analyzer not available")
+    except Exception as e:
+        logger.error(f"Batch pin risk analysis failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/train")
 async def trigger_training():
     """
