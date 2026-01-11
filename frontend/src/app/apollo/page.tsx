@@ -693,7 +693,7 @@ export default function ApolloPage() {
     setQuickPinResult(null)
 
     try {
-      const response = await apiClient.get(`/api/apollo/pin-risk/${sym}`)
+      const response = await apiClient.getApolloPinRisk(sym)
       if (response.data?.success) {
         setQuickPinResult(response.data.data)
         setQuickPinExpanded(true)

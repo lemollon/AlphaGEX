@@ -964,6 +964,11 @@ export const apiClient = {
     api.get(`/api/apollo/options-chain/${symbol}`, { params: { expiration } }),
   getApolloFeatures: (symbol: string) => api.get(`/api/apollo/features/${symbol}`),
   triggerApolloTraining: () => api.post('/api/apollo/train'),
+  getApolloPinRisk: (symbol: string) => api.get(`/api/apollo/pin-risk/${symbol}`),
+  getApolloPinRiskBatch: (symbols: string[]) =>
+    api.get('/api/apollo/pin-risk-batch', { params: { symbols: symbols.join(',') } }),
+  getApolloPinRiskHistory: (symbol: string, limit: number = 30) =>
+    api.get(`/api/apollo/pin-risk-history/${symbol}`, { params: { limit } }),
 
   // Daily Manna - Economic news with faith-based devotionals
   getDailyManna: (forceRefresh: boolean = false) =>
