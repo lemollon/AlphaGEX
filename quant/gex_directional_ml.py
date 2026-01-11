@@ -771,6 +771,61 @@ class GEXDirectionalPredictor:
         joblib.dump(model_data, filepath)
         logger.info(f"Model saved to {filepath}")
 
+    def save_to_db(self, metrics: dict = None, training_records: int = None) -> bool:
+        """Save model to database for Render persistence"""
+        if not self.is_trained:
+            raise ValueError("Model not trained")
+
+        try:
+            from quant.model_persistence import save_model_to_db, MODEL_GEX_DIRECTIONAL
+
+            model_data = {
+                'model': self.model,
+                'scaler': self.scaler,
+                'label_encoder': self.label_encoder,
+                'feature_names': self.feature_names,
+                'feature_importance': self.feature_importance,
+                'ticker': self.ticker,
+                'thresholds': {
+                    'bullish': self.BULLISH_THRESHOLD,
+                    'bearish': self.BEARISH_THRESHOLD
+                }
+            }
+
+            return save_model_to_db(
+                MODEL_GEX_DIRECTIONAL,
+                model_data,
+                metrics=metrics,
+                training_records=training_records
+            )
+        except Exception as e:
+            logger.error(f"Error saving to database: {e}")
+            return False
+
+    def load_from_db(self) -> bool:
+        """Load model from database"""
+        try:
+            from quant.model_persistence import load_model_from_db, MODEL_GEX_DIRECTIONAL
+
+            model_data = load_model_from_db(MODEL_GEX_DIRECTIONAL)
+            if model_data is None:
+                return False
+
+            self.model = model_data['model']
+            self.scaler = model_data['scaler']
+            self.label_encoder = model_data['label_encoder']
+            self.feature_names = model_data['feature_names']
+            self.feature_importance = model_data['feature_importance']
+            self.ticker = model_data['ticker']
+            self.is_trained = True
+
+            logger.info("Model loaded from database")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error loading from database: {e}")
+            return False
+
     def load_model(self, filepath: str = 'models/gex_directional_model.joblib'):
         """Load trained model from disk"""
         if not os.path.exists(filepath):

@@ -50,9 +50,17 @@ def main():
         print(f"   Accuracy: {result.accuracy:.1%}")
         print(f"   Training samples: {result.training_samples}")
 
-        # Save model
+        # Save model to file
         predictor.save_model(args.output)
         print(f"\n💾 Model saved to: {args.output}")
+
+        # Also save to database for Render persistence
+        print("💾 Saving to database for persistence...")
+        predictor.save_to_db(
+            metrics={'accuracy': result.accuracy},
+            training_records=result.training_samples
+        )
+        print("   Model saved to database (persists across Render deploys)")
 
         # Print feature importance
         if result.feature_importance:
