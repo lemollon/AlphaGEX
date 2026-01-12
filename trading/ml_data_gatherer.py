@@ -687,10 +687,16 @@ class MLDataGatherer:
         return 10 <= now.day <= 15 and now.hour < 10
 
     def _gather_recent_performance(self, bundle: MLDataBundle, bot_name: str):
-        """Gather recent performance context from trade history"""
+        """Gather recent performance context from trade history.
+
+        CRITICAL: Uses finally block to prevent connection leaks.
+        This function is called on EVERY scan, so leaks here cause
+        pool exhaustion over time (the 6:05 AM stoppage root cause).
+        """
         if not DB_AVAILABLE:
             return
 
+        conn = None  # Initialize to prevent NameError in finally block
         try:
             conn = get_connection()
             c = conn.cursor()
@@ -747,9 +753,15 @@ class MLDataGatherer:
             result = c.fetchone()
             bundle.weekly_pnl = float(result[0]) if result and result[0] else 0
 
-            conn.close()
         except Exception as e:
             logger.debug(f"Recent performance gather failed: {e}")
+        finally:
+            # CRITICAL: Always close connection to prevent pool exhaustion
+            try:
+                if conn:
+                    conn.close()
+            except Exception:
+                pass
 
     def _compute_consensus(self, bundle: MLDataBundle):
         """Compute ML consensus and detect conflicts"""
