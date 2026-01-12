@@ -646,6 +646,124 @@ class ATHENATrader(MathOptimizerMixin):
             import traceback
             traceback.print_exc()
 
+    def _store_oracle_prediction_for_scan(
+        self,
+        signal,
+        oracle_data: Dict[str, Any],
+        market_data: Dict[str, Any],
+        decision: str
+    ):
+        """
+        Store Oracle prediction to database for ALL scans (not just traded).
+
+        This provides visibility into Oracle decisions even when no trade is executed.
+        Critical for debugging "why isn't the bot trading?" scenarios.
+
+        Args:
+            signal: The generated signal (may be invalid)
+            oracle_data: Oracle advice dict from get_oracle_advice()
+            market_data: Market conditions at scan time
+            decision: The decision made (TRADED, NO_TRADE, SKIP, etc.)
+        """
+        if not ORACLE_AVAILABLE:
+            return
+
+        try:
+            oracle = OracleAdvisor()
+            from quant.oracle_advisor import MarketContext as OracleMarketContext, GEXRegime
+            from quant.oracle_advisor import OraclePrediction, TradingAdvice, BotName
+
+            # Build MarketContext
+            gex_regime_str = market_data.get('gex_regime', market_data.get('regime', 'NEUTRAL'))
+            if isinstance(gex_regime_str, str):
+                gex_regime_str = gex_regime_str.upper()
+            else:
+                gex_regime_str = 'NEUTRAL'
+            try:
+                gex_regime = GEXRegime[gex_regime_str]
+            except (KeyError, AttributeError):
+                gex_regime = GEXRegime.NEUTRAL
+
+            spot_price = market_data.get('underlying_price', market_data.get('spot_price', 0))
+            context = OracleMarketContext(
+                spot_price=spot_price,
+                vix=market_data.get('vix', 0),
+                gex_regime=gex_regime,
+                gex_call_wall=market_data.get('call_wall', 0),
+                gex_put_wall=market_data.get('put_wall', 0),
+                gex_flip_point=market_data.get('flip_point', 0),
+                gex_net=market_data.get('net_gex', 0),
+                day_of_week=datetime.now(CENTRAL_TZ).weekday(),
+            )
+
+            # Get advice from oracle_data or signal
+            advice_str = oracle_data.get('advice', 'SKIP_TODAY') if oracle_data else 'SKIP_TODAY'
+            if signal and hasattr(signal, 'oracle_advice') and signal.oracle_advice:
+                advice_str = signal.oracle_advice
+            try:
+                advice = TradingAdvice[advice_str] if advice_str else TradingAdvice.SKIP_TODAY
+            except (KeyError, ValueError):
+                advice = TradingAdvice.SKIP_TODAY
+
+            # Get win probability
+            win_prob = 0
+            if oracle_data:
+                win_prob = oracle_data.get('win_probability', 0)
+            if signal and hasattr(signal, 'oracle_win_probability') and signal.oracle_win_probability > win_prob:
+                win_prob = signal.oracle_win_probability
+
+            # Get confidence
+            confidence = 0
+            if oracle_data:
+                confidence = oracle_data.get('confidence', 0)
+            if signal and hasattr(signal, 'confidence') and signal.confidence > confidence:
+                confidence = signal.confidence
+
+            # Get top factors
+            top_factors = []
+            if oracle_data and oracle_data.get('top_factors'):
+                factors = oracle_data['top_factors']
+                if isinstance(factors, list):
+                    for f in factors:
+                        if isinstance(f, dict):
+                            top_factors.append((f.get('factor', 'unknown'), f.get('impact', 0)))
+                        elif isinstance(f, tuple):
+                            top_factors.append(f)
+
+            # Build reasoning
+            reasoning = f"Decision: {decision}"
+            if oracle_data and oracle_data.get('reasoning'):
+                reasoning = oracle_data['reasoning']
+            if signal and signal.reasoning:
+                reasoning = signal.reasoning
+
+            prediction = OraclePrediction(
+                bot_name=BotName.ATHENA,
+                advice=advice,
+                win_probability=win_prob,
+                confidence=confidence,
+                suggested_risk_pct=oracle_data.get('suggested_risk_pct', 0) if oracle_data else 0,
+                suggested_sd_multiplier=1.0,
+                use_gex_walls=True,
+                suggested_put_strike=signal.long_strike if signal and signal.direction == 'BEARISH' else None,
+                suggested_call_strike=signal.long_strike if signal and signal.direction == 'BULLISH' else None,
+                top_factors=top_factors,
+                reasoning=reasoning,
+                probabilities=oracle_data.get('probabilities', {}) if oracle_data else {},
+            )
+
+            # Store to database - use today's date for non-traded scans
+            trade_date = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+            success = oracle.store_prediction(prediction, context, trade_date)
+
+            if success:
+                logger.debug(f"ATHENA: Oracle scan prediction stored (Win Prob: {win_prob:.0%}, Decision: {decision})")
+            else:
+                logger.debug(f"ATHENA: Oracle scan prediction storage returned False")
+
+        except Exception as e:
+            logger.debug(f"ATHENA: Oracle scan prediction storage skipped: {e}")
+
     def _get_force_exit_time(self, now: datetime, today: str) -> datetime:
         """
         Get the effective force exit time, accounting for early close days.
@@ -997,6 +1115,24 @@ class ATHENATrader(MathOptimizerMixin):
                 logger.info(f"[ATHENA] Scan logged: {scan_id}")
             else:
                 logger.warning("[ATHENA] Scan logging returned None - possible DB issue")
+
+            # Store Oracle prediction for NON-TRADED scans to provide visibility
+            # This enables the Oracle Knowledge Base to show all bot interactions,
+            # not just executed trades. Critical for debugging "why no trades?"
+            if outcome != ScanOutcome.TRADED and (oracle_data or (signal and oracle_win_probability > 0)):
+                try:
+                    market_data_for_oracle = context.get('market_data', {})
+                    if context.get('gex_data'):
+                        market_data_for_oracle.update(context['gex_data'])
+                    self._store_oracle_prediction_for_scan(
+                        signal=signal,
+                        oracle_data=oracle_data,
+                        market_data=market_data_for_oracle,
+                        decision=decision
+                    )
+                except Exception as oracle_store_err:
+                    logger.debug(f"[ATHENA] Oracle scan prediction storage skipped: {oracle_store_err}")
+
         except Exception as e:
             logger.error(f"[ATHENA] CRITICAL: Failed to log scan activity: {e}")
             import traceback
