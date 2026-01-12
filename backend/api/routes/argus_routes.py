@@ -1600,18 +1600,23 @@ async def get_pattern_matches():
 
         cursor = conn.cursor()
 
-        # Get daily snapshots from gex_history (one per day, around 10:00 AM for consistency)
+        # Get daily snapshots from gex_history for gamma structure
+        # Join with price_history AND market_data_daily for ACTUAL daily OHLC data
         # Look back 90 days for pattern matching
-        # Enhanced to include high/low and more price context
+        #
+        # BUG FIX: Previously used gex_history spot_price as open/close which was
+        # just the price at snapshot time (e.g., 10 AM), NOT actual market open/close.
+        # Now uses price_history OR market_data_daily (Yahoo Finance) for real OHLC.
         cursor.execute("""
             WITH daily_snapshots AS (
+                -- Get one GEX snapshot per day (morning snapshot for gamma structure)
                 SELECT DISTINCT ON (DATE(timestamp))
                     DATE(timestamp) as trade_date,
                     net_gex,
                     flip_point,
                     call_wall,
                     put_wall,
-                    spot_price,
+                    spot_price as snapshot_price,
                     mm_state,
                     regime
                 FROM gex_history
@@ -1621,16 +1626,46 @@ async def get_pattern_matches():
                 AND EXTRACT(HOUR FROM timestamp) BETWEEN 9 AND 11
                 ORDER BY DATE(timestamp), timestamp
             ),
-            daily_price_stats AS (
+            price_history_ohlc AS (
+                -- Get daily OHLC from price_history table (Tradier/Polygon)
                 SELECT
                     DATE(timestamp) as trade_date,
-                    MAX(spot_price) as day_high,
-                    MIN(spot_price) as day_low,
-                    MAX(spot_price) - MIN(spot_price) as day_range
-                FROM gex_history
+                    open as day_open,
+                    high as day_high,
+                    low as day_low,
+                    close as day_close,
+                    volume as day_volume
+                FROM price_history
                 WHERE symbol = 'SPY'
+                AND timeframe = '1d'
                 AND timestamp > NOW() - INTERVAL '90 days'
-                GROUP BY DATE(timestamp)
+            ),
+            yahoo_ohlc AS (
+                -- Fallback: Get daily OHLC from market_data_daily (Yahoo Finance)
+                SELECT
+                    date as trade_date,
+                    open as day_open,
+                    high as day_high,
+                    low as day_low,
+                    close as day_close,
+                    volume as day_volume
+                FROM market_data_daily
+                WHERE symbol = 'SPY'
+                AND date > NOW() - INTERVAL '90 days'
+            ),
+            combined_ohlc AS (
+                -- Combine both sources, preferring price_history over yahoo
+                SELECT DISTINCT ON (trade_date)
+                    COALESCE(ph.trade_date, yh.trade_date) as trade_date,
+                    COALESCE(ph.day_open, yh.day_open) as day_open,
+                    COALESCE(ph.day_high, yh.day_high) as day_high,
+                    COALESCE(ph.day_low, yh.day_low) as day_low,
+                    COALESCE(ph.day_close, yh.day_close) as day_close,
+                    COALESCE(ph.day_volume, yh.day_volume) as day_volume,
+                    CASE WHEN ph.trade_date IS NOT NULL THEN 'price_history' ELSE 'yahoo' END as data_source
+                FROM price_history_ohlc ph
+                FULL OUTER JOIN yahoo_ohlc yh ON ph.trade_date = yh.trade_date
+                ORDER BY trade_date, data_source
             ),
             daily_outcomes AS (
                 SELECT
@@ -1639,19 +1674,19 @@ async def get_pattern_matches():
                     ds.flip_point,
                     ds.call_wall,
                     ds.put_wall,
-                    ds.spot_price as open_price,
                     ds.mm_state,
                     ds.regime,
-                    -- Get closing price from same day (latest entry)
-                    (SELECT spot_price FROM gex_history gh2
-                     WHERE DATE(gh2.timestamp) = ds.trade_date
-                     AND gh2.symbol = 'SPY'
-                     ORDER BY gh2.timestamp DESC LIMIT 1) as close_price,
-                    dps.day_high,
-                    dps.day_low,
-                    dps.day_range
+                    ds.snapshot_price,
+                    -- Use ACTUAL OHLC from combined sources, fallback to gex snapshot prices
+                    COALESCE(ohlc.day_open, ds.snapshot_price) as open_price,
+                    COALESCE(ohlc.day_close, ds.snapshot_price) as close_price,
+                    COALESCE(ohlc.day_high, ds.snapshot_price) as day_high,
+                    COALESCE(ohlc.day_low, ds.snapshot_price) as day_low,
+                    COALESCE(ohlc.day_high - ohlc.day_low, 0) as day_range,
+                    -- Flag to indicate if we have real OHLC data
+                    CASE WHEN ohlc.day_open IS NOT NULL THEN TRUE ELSE FALSE END as has_real_ohlc
                 FROM daily_snapshots ds
-                LEFT JOIN daily_price_stats dps ON ds.trade_date = dps.trade_date
+                LEFT JOIN combined_ohlc ohlc ON ds.trade_date = ohlc.trade_date
             )
             SELECT
                 trade_date,
@@ -1675,7 +1710,8 @@ async def get_pattern_matches():
                     WHEN open_price > 0 THEN ROUND(((close_price - open_price) / open_price * 100)::numeric, 2)
                     ELSE 0
                 END as outcome_pct,
-                ROUND((close_price - open_price)::numeric, 2) as price_change
+                ROUND((close_price - open_price)::numeric, 2) as price_change,
+                has_real_ohlc
             FROM daily_outcomes
             WHERE net_gex IS NOT NULL
             ORDER BY trade_date DESC
@@ -1701,10 +1737,15 @@ async def get_pattern_matches():
 
         # Calculate similarity for each historical day
         pattern_matches = []
+        days_with_real_ohlc = 0
         for row in rows:
             (trade_date, net_gex, flip_point, call_wall, put_wall, open_price,
              mm_state, regime, close_price, day_high, day_low, day_range,
-             outcome_dir, outcome_pct, price_change) = row
+             outcome_dir, outcome_pct, price_change, has_real_ohlc) = row
+
+            # Track how many days have real OHLC data
+            if has_real_ohlc:
+                days_with_real_ohlc += 1
 
             historical = {
                 'net_gex': float(net_gex) if net_gex else None,
@@ -1728,7 +1769,11 @@ async def get_pattern_matches():
                 elif outcome_dir == 'DOWN':
                     summary_parts.append(f"SPY fell -${abs(float(price_change or 0)):.2f} ({abs(float(outcome_pct or 0)):.1f}%)")
                 else:
-                    summary_parts.append("SPY closed flat")
+                    # Only show "flat" if we have real OHLC and it truly was flat
+                    if has_real_ohlc:
+                        summary_parts.append("SPY closed flat")
+                    else:
+                        summary_parts.append("SPY outcome unknown (no price data)")
 
                 if day_range and float(day_range) > 0:
                     range_pct = (float(day_range) / float(open_price) * 100) if open_price else 0
@@ -1742,7 +1787,7 @@ async def get_pattern_matches():
                 pattern_matches.append({
                     'date': trade_date.strftime('%Y-%m-%d') if trade_date else None,
                     'similarity_score': similarity,
-                    'outcome_direction': outcome_dir or 'FLAT',
+                    'outcome_direction': outcome_dir if has_real_ohlc else 'UNKNOWN',
                     'outcome_pct': float(outcome_pct) if outcome_pct else 0.0,
                     'price_change': float(price_change) if price_change else 0.0,
                     'gamma_regime_then': regime or 'UNKNOWN',
@@ -1757,6 +1802,8 @@ async def get_pattern_matches():
                     'flip_point': float(flip_point) if flip_point else None,
                     'call_wall': float(call_wall) if call_wall else None,
                     'put_wall': float(put_wall) if put_wall else None,
+                    # Data quality indicator
+                    'has_real_ohlc': bool(has_real_ohlc),
                     # Summary
                     'summary': summary,
                 })
@@ -1775,7 +1822,9 @@ async def get_pattern_matches():
                     "likely_pin": snapshot.likely_pin
                 },
                 "total_days_analyzed": len(rows),
-                "matches_found": len(pattern_matches)
+                "matches_found": len(pattern_matches),
+                "days_with_real_ohlc": days_with_real_ohlc,
+                "data_quality_note": f"{days_with_real_ohlc}/{len(rows)} days have verified daily OHLC data" if rows else None
             }
         }
 
