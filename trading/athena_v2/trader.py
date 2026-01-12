@@ -282,10 +282,20 @@ class ATHENATrader(MathOptimizerMixin):
             traceback.print_exc()
             result['errors'].append(str(e))
             result['action'] = 'error'
-            self.db.log("ERROR", f"Cycle error: {e}")
 
-            # Log error to scan activity
-            self._log_scan_activity(result, scan_context, error_msg=str(e))
+            # CRITICAL: Log scan activity FIRST, before any other DB operations
+            # This ensures we always have visibility into what happened, even if
+            # subsequent database operations fail (which could cause silent scan stoppage)
+            try:
+                self._log_scan_activity(result, scan_context, error_msg=str(e))
+            except Exception as log_err:
+                logger.error(f"CRITICAL: Failed to log scan activity: {log_err}")
+
+            # Then try to log to bot's own log (non-critical)
+            try:
+                self.db.log("ERROR", f"Cycle error: {e}")
+            except Exception as db_err:
+                logger.error(f"Failed to log to bot DB: {db_err}")
 
         return result
 
