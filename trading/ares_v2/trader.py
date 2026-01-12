@@ -364,6 +364,7 @@ class ARESTrader(MathOptimizerMixin):
     ):
         """Log scan activity for visibility"""
         if not SCAN_LOGGER_AVAILABLE or not log_ares_scan:
+            logger.warning(f"[ARES] Scan logging SKIPPED: SCAN_LOGGER_AVAILABLE={SCAN_LOGGER_AVAILABLE}, log_ares_scan={log_ares_scan is not None}")
             return
 
         try:
