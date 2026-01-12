@@ -294,7 +294,7 @@ class AresMLAdvisor:
                     'accuracy': self.training_metrics.accuracy,
                     'auc_roc': self.training_metrics.auc_roc,
                     'brier_score': self.training_metrics.brier_score,
-                    'win_rate': self.training_metrics.actual_win_rate,
+                    'win_rate': self.training_metrics.win_rate_actual,
                 }
 
             return save_model_to_db(
