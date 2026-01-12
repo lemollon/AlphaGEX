@@ -409,6 +409,19 @@ class SignalGenerator:
         if not self.oracle or not ORACLE_AVAILABLE:
             return None
 
+        # Validate required market data before calling Oracle
+        spot_price = gex_data.get('spot_price', 0)
+        if not spot_price or spot_price <= 0:
+            logger.debug("ICARUS Oracle skipped: No valid spot price available")
+            return {
+                'confidence': 0,
+                'win_probability': 0,
+                'advice': 'NO_DATA',
+                'direction': 'FLAT',
+                'top_factors': [],
+                'reasoning': 'No valid spot price available for Oracle analysis',
+            }
+
         try:
             # Convert gex_regime string to GEXRegime enum
             gex_regime_str = gex_data.get('gex_regime', 'NEUTRAL').upper()
@@ -463,7 +476,17 @@ class SignalGenerator:
             }
         except Exception as e:
             logger.warning(f"ICARUS Oracle error: {e}")
-            return None
+            import traceback
+            traceback.print_exc()
+            # Return fallback values instead of None so scan activity shows meaningful data
+            return {
+                'confidence': 0,
+                'win_probability': 0,
+                'advice': 'ERROR',
+                'direction': 'FLAT',
+                'top_factors': [{'factor': 'error', 'impact': 0}],
+                'reasoning': f"Oracle error: {str(e)[:100]}",
+            }
 
     def adjust_confidence_from_top_factors(
         self,

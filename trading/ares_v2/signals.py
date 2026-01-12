@@ -203,7 +203,19 @@ class SignalGenerator:
         if GEX_DIRECTIONAL_ML_AVAILABLE:
             try:
                 self.gex_directional_ml = GEXDirectionalPredictor()
-                logger.info("ARES SignalGenerator: GEX Directional ML initialized")
+                # Try to load from database (persists across Render deploys)
+                if not self.gex_directional_ml.is_trained:
+                    try:
+                        if self.gex_directional_ml.load_from_db():
+                            logger.info("ARES SignalGenerator: GEX Directional ML loaded from database")
+                        else:
+                            logger.debug("ARES SignalGenerator: GEX Directional ML not found in database")
+                    except Exception as db_e:
+                        logger.debug(f"GEX Directional ML database load failed: {db_e}")
+                if self.gex_directional_ml.is_trained:
+                    logger.info("ARES SignalGenerator: GEX Directional ML initialized (trained)")
+                else:
+                    logger.info("ARES SignalGenerator: GEX Directional ML initialized (not trained)")
             except Exception as e:
                 logger.debug(f"GEX Directional ML init failed: {e}")
 
@@ -793,6 +805,24 @@ class SignalGenerator:
         if not self.oracle:
             return None
 
+        # Validate required market data before calling Oracle
+        spot_price = market_data.get('spot_price', 0)
+        if not spot_price or spot_price <= 0:
+            logger.debug("Oracle skipped: No valid spot price available")
+            return {
+                'confidence': 0,
+                'win_probability': 0,
+                'advice': 'NO_DATA',
+                'reasoning': 'No valid spot price available for Oracle analysis',
+                'top_factors': [],
+                'probabilities': {},
+                'suggested_sd_multiplier': 1.0,
+                'use_gex_walls': False,
+                'suggested_put_strike': None,
+                'suggested_call_strike': None,
+                'suggested_risk_pct': 0,
+            }
+
         try:
             # Build context for Oracle using correct field names
             from quant.oracle_advisor import MarketContext as OracleMarketContext, GEXRegime
@@ -857,6 +887,21 @@ class SignalGenerator:
             logger.warning(f"Oracle advice error: {e}")
             import traceback
             traceback.print_exc()
+            # Return fallback values instead of None so scan activity shows meaningful data
+            # This helps debugging - we can see Oracle was attempted but failed
+            return {
+                'confidence': 0,
+                'win_probability': 0,
+                'advice': 'ERROR',
+                'reasoning': f"Oracle error: {str(e)[:100]}",
+                'top_factors': [{'factor': 'error', 'impact': 0}],
+                'probabilities': {},
+                'suggested_sd_multiplier': 1.0,
+                'use_gex_walls': False,
+                'suggested_put_strike': None,
+                'suggested_call_strike': None,
+                'suggested_risk_pct': 0,
+            }
 
         return None
 

@@ -99,6 +99,17 @@ try:
 except ImportError:
     logger.warning("Database not available for Quant logging")
 
+# Model persistence - check if models exist in database
+MODEL_PERSISTENCE_AVAILABLE = False
+model_exists = None
+get_model_info = None
+try:
+    from quant.model_persistence import model_exists, get_model_info, MODEL_GEX_DIRECTIONAL
+    MODEL_PERSISTENCE_AVAILABLE = True
+except ImportError:
+    MODEL_GEX_DIRECTIONAL = 'gex_directional'
+    logger.warning("Model persistence not available")
+
 
 # =============================================================================
 # REQUEST/RESPONSE MODELS
@@ -192,13 +203,39 @@ async def quant_status():
     # GEX Directional ML
     if GEX_DIRECTIONAL_AVAILABLE:
         try:
-            predictor = GEXDirectionalPredictor()
-            status["models"].append({
-                "name": "GEX Directional ML",
-                "available": True,
-                "is_trained": getattr(predictor, 'is_trained', True),
-                "description": "Predicts market direction: BULLISH, BEARISH, FLAT"
-            })
+            # Check database for trained model first (persists across Render deploys)
+            model_info = None
+            is_trained_in_db = False
+            model_version = None
+            if MODEL_PERSISTENCE_AVAILABLE and get_model_info:
+                try:
+                    model_info = get_model_info(MODEL_GEX_DIRECTIONAL)
+                    if model_info:
+                        is_trained_in_db = True
+                        model_version = f"v{model_info.get('version', '?')}"
+                        logger.debug(f"GEX Directional ML found in database: {model_info}")
+                except Exception as db_e:
+                    logger.debug(f"Could not check database for GEX Directional model: {db_e}")
+
+            # If model exists in DB, report as trained
+            if is_trained_in_db:
+                status["models"].append({
+                    "name": "GEX Directional ML",
+                    "available": True,
+                    "is_trained": True,
+                    "model_version": model_version,
+                    "trained_at": model_info.get('created_at') if model_info else None,
+                    "description": "Predicts market direction: BULLISH, BEARISH, FLAT"
+                })
+            else:
+                # Fall back to checking local instance (may not have loaded)
+                predictor = GEXDirectionalPredictor()
+                status["models"].append({
+                    "name": "GEX Directional ML",
+                    "available": True,
+                    "is_trained": getattr(predictor, 'is_trained', False),
+                    "description": "Predicts market direction: BULLISH, BEARISH, FLAT"
+                })
         except Exception as e:
             status["models"].append({
                 "name": "GEX Directional ML",
