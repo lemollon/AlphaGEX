@@ -83,6 +83,7 @@ const SYSTEM_ROUTES: Record<string, string> = {
   phoenix: '/phoenix',
   atlas: '/atlas',
   gexcore: '/gex',
+  vix: '/vix',
 }
 
 // =============================================================================
@@ -2511,6 +2512,27 @@ const SOLAR_SYSTEMS = [
       { name: 'Delta', color: '#ef4444', size: 0.20, orbit: 3.5, speed: 0.6, effect: 'electric' as const, moons: 1 },
       { name: 'Vanna', color: '#8b5cf6', size: 0.18, orbit: 4.5, speed: 0.45, effect: 'spiral' as const, moons: 2 },
       { name: 'Charm', color: '#10b981', size: 0.15, orbit: 5.5, speed: 0.3, effect: 'glow' as const, moons: 1 },
+    ]
+  },
+  // =============================================================================
+  // VIX - The Fear Index Solar System (Volatility Analysis)
+  // =============================================================================
+  {
+    id: 'vix',
+    name: 'VIX',
+    subtitle: 'Fear Index',
+    route: '/vix',
+    position: [55, -100, -60] as [number, number, number],  // Near GEX CORE - volatility metrics
+    sunColor: '#ef4444',  // Red - fear/volatility signature color
+    glowColor: '#f87171',
+    flareType: 'eruption' as const,
+    planets: [
+      { name: 'Spot', color: '#ef4444', size: 0.26, orbit: 2.5, speed: 0.7, effect: 'fire' as const, moons: 1 },
+      { name: 'IV Percentile', color: '#f97316', size: 0.22, orbit: 3.5, speed: 0.55, effect: 'pulse' as const, moons: 2 },
+      { name: 'Term Structure', color: '#eab308', size: 0.20, orbit: 4.5, speed: 0.45, effect: 'rings' as const, moons: 1 },
+      { name: 'VVIX', color: '#22c55e', size: 0.24, orbit: 5.5, speed: 0.35, effect: 'electric' as const, moons: 2 },
+      { name: 'Real Vol', color: '#06b6d4', size: 0.18, orbit: 6.5, speed: 0.28, effect: 'glow' as const, moons: 1 },
+      { name: 'IV-RV Spread', color: '#8b5cf6', size: 0.16, orbit: 7.5, speed: 0.2, effect: 'spiral' as const, moons: 0 },
     ]
   },
 ]
