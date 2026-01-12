@@ -331,6 +331,18 @@ class SignalGenerator:
             if not gex:
                 return None
 
+            # Get spot price - try GEX calculator first, then data provider fallback
+            spot = gex.get('spot_price', gex.get('underlying_price', 0))
+            if not spot or spot <= 0:
+                # Fallback to data provider if GEX calculator didn't return spot
+                if DATA_PROVIDER_AVAILABLE:
+                    spot = get_price(self.config.ticker)
+                    if spot and spot > 0:
+                        logger.debug(f"Using spot price from data provider fallback: ${spot:.2f}")
+                if not spot or spot <= 0:
+                    logger.warning("Could not get spot price from GEX calculator or data provider")
+                    return None
+
             # Get VIX
             vix = 20.0
             if DATA_PROVIDER_AVAILABLE:
@@ -340,7 +352,7 @@ class SignalGenerator:
                     pass
 
             return {
-                'spot_price': gex.get('spot_price', gex.get('underlying_price', 0)),
+                'spot_price': spot,
                 'call_wall': gex.get('call_wall', gex.get('major_call_wall', 0)),
                 'put_wall': gex.get('put_wall', gex.get('major_put_wall', 0)),
                 'gex_regime': gex.get('regime', gex.get('gex_regime', 'NEUTRAL')),
