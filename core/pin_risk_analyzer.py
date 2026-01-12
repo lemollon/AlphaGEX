@@ -136,11 +136,28 @@ class PinRiskAnalysis:
     warnings: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict:
+        """
+        Serialize to dict with frontend-compatible field names.
+
+        Frontend expects:
+        - score (not pin_risk_score)
+        - level (not pin_risk_level)
+        - days_to_expiry (not days_to_weekly_expiry)
+        - expected_range.low/high/pct (nested, not flat)
+        - max_pain/call_wall/put_wall/flip_point (flat, not nested in gamma_levels)
+        """
         return {
             'symbol': self.symbol,
             'timestamp': self.timestamp.isoformat(),
             'spot_price': self.spot_price,
             'friday_range_pct': self.friday_range_pct,
+            # Frontend-compatible flat gamma levels
+            'max_pain': self.gamma_levels.max_pain,
+            'call_wall': self.gamma_levels.call_wall,
+            'put_wall': self.gamma_levels.put_wall,
+            'flip_point': self.gamma_levels.flip_point,
+            'net_gex': self.gamma_levels.net_gex,
+            # Keep gamma_levels for backward compatibility
             'gamma_levels': self.gamma_levels.to_dict(),
             'gamma_regime': self.gamma_regime.value,
             'gamma_regime_description': self.gamma_regime_description,
@@ -148,12 +165,26 @@ class PinRiskAnalysis:
             'distance_to_flip_pct': self.distance_to_flip_pct,
             'distance_to_call_wall_pct': self.distance_to_call_wall_pct,
             'distance_to_put_wall_pct': self.distance_to_put_wall_pct,
+            # Frontend-compatible field names
+            'score': self.pin_risk_score,
+            'level': self.pin_risk_level.value,
+            # Keep original names for backward compatibility
             'pin_risk_score': self.pin_risk_score,
             'pin_risk_level': self.pin_risk_level.value,
             'pin_factors': [f.to_dict() for f in self.pin_factors],
+            # Frontend-compatible nested expected_range
+            'expected_range': {
+                'low': self.expected_range_low,
+                'high': self.expected_range_high,
+                'pct': self.expected_range_pct
+            },
+            # Keep flat versions for backward compatibility
             'expected_range_low': self.expected_range_low,
             'expected_range_high': self.expected_range_high,
             'expected_range_pct': self.expected_range_pct,
+            # Frontend-compatible field name
+            'days_to_expiry': self.days_to_weekly_expiry,
+            # Keep original name for backward compatibility
             'days_to_weekly_expiry': self.days_to_weekly_expiry,
             'is_expiration_day': self.is_expiration_day,
             'trading_implications': [t.to_dict() for t in self.trading_implications],
