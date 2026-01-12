@@ -371,13 +371,25 @@ class SignalGenerator:
     def get_market_data(self) -> Optional[Dict[str, Any]]:
         """Get current market data including price, VIX, and GEX"""
         try:
-            # Get spot price
-            spot = None
-            if DATA_PROVIDER_AVAILABLE:
-                spot = get_price(self.config.ticker)
+            # Get GEX data FIRST - it includes spot price from production API
+            gex_data = self._get_gex_data()
 
-            if not spot:
-                logger.warning("Could not get spot price")
+            # Get spot price - try multiple sources for reliability
+            spot = None
+
+            # Source 1: GEX calculator (uses production Tradier API)
+            if gex_data and gex_data.get('spot_price', 0) > 0:
+                spot = gex_data.get('spot_price')
+                logger.debug(f"Using spot price from GEX calculator: ${spot:.2f}")
+
+            # Source 2: Data provider (fallback)
+            if not spot and DATA_PROVIDER_AVAILABLE:
+                spot = get_price(self.config.ticker)
+                if spot and spot > 0:
+                    logger.debug(f"Using spot price from data provider: ${spot:.2f}")
+
+            if not spot or spot <= 0:
+                logger.warning("Could not get spot price from any source (GEX calc or data provider)")
                 return None
 
             # Get VIX
@@ -387,9 +399,6 @@ class SignalGenerator:
                     vix = get_vix() or 20.0
                 except Exception:
                     pass
-
-            # Get GEX data
-            gex_data = self._get_gex_data()
 
             # Calculate expected move (1 SD)
             expected_move = self._calculate_expected_move(spot, vix)
@@ -412,7 +421,7 @@ class SignalGenerator:
             return None
 
     def _get_gex_data(self) -> Optional[Dict[str, Any]]:
-        """Get GEX data from calculator"""
+        """Get GEX data from calculator (includes spot_price for fallback)"""
         if not self.gex_calculator:
             return None
 
@@ -425,6 +434,8 @@ class SignalGenerator:
                     'regime': gex.get('regime', gex.get('gex_regime', 'NEUTRAL')),
                     'net_gex': gex.get('net_gex', 0),
                     'flip_point': gex.get('flip_point', gex.get('gamma_flip', 0)),
+                    # CRITICAL: Include spot_price for fallback when data provider fails
+                    'spot_price': gex.get('spot_price', gex.get('underlying_price', 0)),
                 }
         except Exception as e:
             logger.warning(f"GEX fetch error: {e}")
