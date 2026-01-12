@@ -734,6 +734,27 @@ class SignalGenerator:
         effective_win_prob = ml_win_prob if use_ml_prediction else oracle_win_prob
         prediction_source = "ML_5_MODEL_ENSEMBLE" if use_ml_prediction else "ORACLE"
 
+        # CRITICAL FALLBACK: If neither ML nor Oracle provides a win probability,
+        # use market-conditions-based baseline. ICARUS is aggressive so lower threshold.
+        if effective_win_prob <= 0:
+            gex_regime = gex_data.get('gex_regime', 'NEUTRAL')
+            baseline = 0.52  # ICARUS is aggressive - lower baseline
+
+            vix = gex_data.get('vix', 20)
+            if vix < 15:
+                baseline += 0.05
+            elif vix > 30:
+                baseline -= 0.08
+            elif vix > 25:
+                baseline -= 0.04
+
+            if gex_regime in ('POSITIVE', 'NEGATIVE'):
+                baseline += 0.03  # Either direction works for directional
+
+            effective_win_prob = max(0.48, min(0.65, baseline))
+            prediction_source = "MARKET_CONDITIONS_FALLBACK"
+            logger.info(f"[ICARUS FALLBACK] No ML/Oracle prediction - using market baseline: {effective_win_prob:.1%}")
+
         # Log ML analysis FIRST (it's the preferred source for ICARUS)
         if ml_signal:
             logger.info(f"[ICARUS ML ANALYSIS] *** PRIMARY PREDICTION SOURCE ***")
