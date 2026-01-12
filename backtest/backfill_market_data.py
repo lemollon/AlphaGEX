@@ -137,7 +137,9 @@ def ensure_table_exists():
 
 def store_market_data(symbol: str, data: List[Dict], source: str = "yahoo") -> int:
     """
-    Store market data in the database.
+    Store market data in BOTH database tables:
+    1. market_data_daily - Primary storage for daily OHLC
+    2. price_history - Used by Argus pattern similarity (with timeframe='1d')
 
     Args:
         symbol: Normalized symbol (e.g., SPX, VIX)
@@ -155,10 +157,11 @@ def store_market_data(symbol: str, data: List[Dict], source: str = "yahoo") -> i
     cursor = conn.cursor()
 
     total_inserted = 0
+    price_history_inserted = 0
 
     for record in data:
         try:
-            # Use INSERT ... ON CONFLICT DO UPDATE for upsert
+            # Store in market_data_daily (primary table)
             cursor.execute("""
                 INSERT INTO market_data_daily (symbol, date, open, high, low, close, adj_close, volume, source)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
@@ -182,13 +185,43 @@ def store_market_data(symbol: str, data: List[Dict], source: str = "yahoo") -> i
                 source
             ))
             total_inserted += 1
+
+            # Also store in price_history table (used by Argus pattern similarity)
+            # This ensures pattern matching has access to real OHLC data
+            try:
+                cursor.execute("""
+                    INSERT INTO price_history (timestamp, symbol, timeframe, open, high, low, close, volume, data_source)
+                    VALUES (%s, %s, '1d', %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (symbol, timeframe, timestamp) DO UPDATE SET
+                        open = EXCLUDED.open,
+                        high = EXCLUDED.high,
+                        low = EXCLUDED.low,
+                        close = EXCLUDED.close,
+                        volume = EXCLUDED.volume,
+                        data_source = EXCLUDED.data_source
+                """, (
+                    record["date"],  # Use date as timestamp for daily data
+                    symbol,
+                    record["open"],
+                    record["high"],
+                    record["low"],
+                    record["close"],
+                    record.get("volume", 0),
+                    source
+                ))
+                price_history_inserted += 1
+            except Exception as e:
+                # price_history insert failed, but market_data_daily succeeded
+                pass
+
         except Exception as e:
             print(f"  Error inserting record for {record['date']}: {e}")
 
     conn.commit()
     conn.close()
 
-    print(f"  Stored {total_inserted} records for {symbol}")
+    print(f"  Stored {total_inserted} records in market_data_daily for {symbol}")
+    print(f"  Stored {price_history_inserted} records in price_history for {symbol}")
     return total_inserted
 
 
