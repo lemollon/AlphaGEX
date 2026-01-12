@@ -252,22 +252,22 @@ export default function VIXDashboard() {
                 )}
 
                 {loading && !vixData ? (
-              <div className="text-center py-12">
-                <Activity className="w-8 h-8 text-primary mx-auto animate-spin" />
-                <p className="text-text-secondary mt-2">Loading VIX data...</p>
-              </div>
-            ) : error ? (
-              <div className="card bg-danger/10 border-danger/20">
-                <div className="flex items-center gap-3">
-                  <AlertTriangle className="w-6 h-6 text-danger" />
-                  <div>
-                    <p className="text-danger font-semibold">Error Loading Data</p>
-                    <p className="text-text-secondary text-sm">{error}</p>
+                  <div className="text-center py-12">
+                    <Activity className="w-8 h-8 text-primary mx-auto animate-spin" />
+                    <p className="text-text-secondary mt-2">Loading VIX data...</p>
                   </div>
-                </div>
-              </div>
-            ) : (
-              <>
+                ) : error ? (
+                  <div className="card bg-danger/10 border-danger/20">
+                    <div className="flex items-center gap-3">
+                      <AlertTriangle className="w-6 h-6 text-danger" />
+                      <div>
+                        <p className="text-danger font-semibold">Error Loading Data</p>
+                        <p className="text-text-secondary text-sm">{error}</p>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <>
                 {/* VIX Overview Cards */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div className="card">
@@ -657,6 +657,8 @@ export default function VIXDashboard() {
                     </div>
                   )}
                 </div>
+                  </>
+                )}
               </>
             )}
           </div>
