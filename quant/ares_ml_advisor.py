@@ -290,11 +290,17 @@ class AresMLAdvisor:
 
             metrics = None
             if self.training_metrics:
+                # Helper to sanitize NaN values (not valid JSON)
+                def safe_float(val):
+                    if val is None or (isinstance(val, float) and math.isnan(val)):
+                        return None
+                    return val
+
                 metrics = {
-                    'accuracy': self.training_metrics.accuracy,
-                    'auc_roc': self.training_metrics.auc_roc,
-                    'brier_score': self.training_metrics.brier_score,
-                    'win_rate': self.training_metrics.win_rate_actual,
+                    'accuracy': safe_float(self.training_metrics.accuracy),
+                    'auc_roc': safe_float(self.training_metrics.auc_roc),
+                    'brier_score': safe_float(self.training_metrics.brier_score),
+                    'win_rate': safe_float(self.training_metrics.win_rate_actual),
                 }
 
             return save_model_to_db(
