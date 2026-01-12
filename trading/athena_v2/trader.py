@@ -969,7 +969,7 @@ class ATHENATrader(MathOptimizerMixin):
                 except Exception as ml_err:
                     logger.debug(f"ML data gathering failed (non-critical): {ml_err}")
 
-            log_athena_scan(
+            scan_id = log_athena_scan(
                 outcome=outcome,
                 decision_summary=decision,
                 market_data=context.get('market_data'),
@@ -993,8 +993,31 @@ class ATHENATrader(MathOptimizerMixin):
                 generate_ai_explanation=False,  # Keep it simple
                 **ml_kwargs,  # Include all ML analysis data
             )
+            if scan_id:
+                logger.info(f"[ATHENA] Scan logged: {scan_id}")
+            else:
+                logger.warning("[ATHENA] Scan logging returned None - possible DB issue")
         except Exception as e:
-            logger.warning(f"Failed to log scan activity: {e}")
+            logger.error(f"[ATHENA] CRITICAL: Failed to log scan activity: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            # FALLBACK: Try simple logging without ML kwargs
+            try:
+                fallback_scan_id = log_athena_scan(
+                    outcome=outcome,
+                    decision_summary=f"{decision} [FALLBACK - ML data excluded]",
+                    market_data=context.get('market_data'),
+                    gex_data=context.get('gex_data'),
+                    trade_executed=result.get('trades_opened', 0) > 0,
+                    error_message=error_msg or f"Original logging failed: {str(e)[:100]}",
+                    generate_ai_explanation=False,
+                )
+                if fallback_scan_id:
+                    logger.info(f"[ATHENA] Fallback scan logged: {fallback_scan_id}")
+                else:
+                    logger.error("[ATHENA] FALLBACK scan logging also failed!")
+            except Exception as fallback_err:
+                logger.error(f"[ATHENA] FALLBACK logging failed: {fallback_err}")
 
     def _update_daily_summary(self, today: str, cycle_result: Dict) -> None:
         """Update daily performance summary"""

@@ -497,7 +497,7 @@ class ARESTrader(MathOptimizerMixin):
                 except Exception as ml_err:
                     logger.debug(f"ML data gathering failed (non-critical): {ml_err}")
 
-            log_ares_scan(
+            scan_id = log_ares_scan(
                 outcome=outcome,
                 decision_summary=decision,
                 action_taken=result.get('action', 'none'),
@@ -525,8 +525,32 @@ class ARESTrader(MathOptimizerMixin):
                 generate_ai_explanation=False,  # Keep it simple for now
                 **ml_kwargs,  # Include all ML analysis data
             )
+            if scan_id:
+                logger.info(f"[ARES] Scan logged: {scan_id}")
+            else:
+                logger.warning("[ARES] Scan logging returned None - possible DB issue")
         except Exception as e:
-            logger.warning(f"Failed to log scan activity: {e}")
+            logger.error(f"[ARES] CRITICAL: Failed to log scan activity: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            # FALLBACK: Try simple logging without ML kwargs
+            try:
+                fallback_scan_id = log_ares_scan(
+                    outcome=outcome,
+                    decision_summary=f"{decision} [FALLBACK - ML data excluded]",
+                    action_taken=result.get('action', 'none'),
+                    market_data=context.get('market_data'),
+                    gex_data=context.get('gex_data'),
+                    trade_executed=result.get('trade_opened', False),
+                    error_message=error_msg or f"Original logging failed: {str(e)[:100]}",
+                    generate_ai_explanation=False,
+                )
+                if fallback_scan_id:
+                    logger.info(f"[ARES] Fallback scan logged: {fallback_scan_id}")
+                else:
+                    logger.error("[ARES] FALLBACK scan logging also failed!")
+            except Exception as fallback_err:
+                logger.error(f"[ARES] FALLBACK logging failed: {fallback_err}")
 
     def _check_basic_conditions(self, now: datetime) -> tuple[bool, str]:
         """Check basic trading conditions (time window, weekend, holidays, circuit breaker)"""

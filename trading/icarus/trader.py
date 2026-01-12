@@ -860,7 +860,7 @@ class ICARUSTrader(MathOptimizerMixin):
                 except Exception as ml_err:
                     logger.debug(f"ML data gathering failed (non-critical): {ml_err}")
 
-            log_icarus_scan(
+            scan_id = log_icarus_scan(
                 outcome=outcome,
                 decision_summary=decision,
                 market_data=context.get('market_data'),
@@ -879,8 +879,30 @@ class ICARUSTrader(MathOptimizerMixin):
                 error_message=error_msg,
                 **ml_kwargs,  # Include all ML analysis data
             )
+            if scan_id:
+                logger.info(f"[ICARUS] Scan logged: {scan_id}")
+            else:
+                logger.warning("[ICARUS] Scan logging returned None - possible DB issue")
         except Exception as e:
-            logger.warning(f"Failed to log scan activity: {e}")
+            logger.error(f"[ICARUS] CRITICAL: Failed to log scan activity: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+            # FALLBACK: Try simple logging without ML kwargs
+            try:
+                fallback_scan_id = log_icarus_scan(
+                    outcome=outcome,
+                    decision_summary=f"{decision} [FALLBACK - ML data excluded]",
+                    market_data=context.get('market_data'),
+                    gex_data=context.get('gex_data'),
+                    trade_executed=result.get('trades_opened', 0) > 0,
+                    error_message=error_msg or f"Original logging failed: {str(e)[:100]}",
+                )
+                if fallback_scan_id:
+                    logger.info(f"[ICARUS] Fallback scan logged: {fallback_scan_id}")
+                else:
+                    logger.error("[ICARUS] FALLBACK scan logging also failed!")
+            except Exception as fallback_err:
+                logger.error(f"[ICARUS] FALLBACK logging failed: {fallback_err}")
 
     def _log_bot_decision(
         self,
