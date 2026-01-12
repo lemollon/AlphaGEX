@@ -833,7 +833,7 @@ class AutonomousPaperTrader(
             # Step 2: Find trade setup
             trade = self._analyze_and_find_trade(gex_data, skew_data, spot_price, vix, momentum, time_context, put_call_ratio)
 
-            if not trade or trade.get('confidence', 0) < 70:
+            if not trade or trade.get('confidence', 0) < 51:
                 return {
                     'signal': None,
                     'reason': 'No high-confidence setup found',
@@ -1163,7 +1163,7 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
                     f"• Action: {trade.get('action', 'Unknown')}\n"
                     f"• Strike: ${trade.get('strike', 0):.0f}\n"
                     f"• Confidence: {confidence}%\n\n"
-                    f"DECISION: {'✅ EXECUTING (meets 70%+ threshold)' if confidence >= 70 else '❌ SKIPPING (below 70% threshold)'}"
+                    f"DECISION: {'✅ EXECUTING (meets 51%+ threshold)' if confidence >= 51 else '❌ SKIPPING (below 51% threshold)'}"
                 )
                 self.log_action(
                     'ANALYSIS',
@@ -1172,7 +1172,7 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
                 )
 
             # GUARANTEED TRADE - MINIMUM ONE PER DAY: Multi-level fallback system
-            if not trade or trade.get('confidence', 0) < 70:
+            if not trade or trade.get('confidence', 0) < 51:
                 # CRITICAL LOGGING: Explain EXACTLY why we're falling back
                 if not trade:
                     reason = "❌ NO STRATEGY FOUND - _analyze_and_find_trade() returned None"
@@ -1189,7 +1189,7 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
                         success=False
                     )
                 else:
-                    reason = f"⚠️ CONFIDENCE TOO LOW: {trade.get('confidence', 0)}% < 70% threshold"
+                    reason = f"⚠️ CONFIDENCE TOO LOW: {trade.get('confidence', 0)}% < 51% threshold"
                     self.log_action(
                         'FALLBACK_REASON',
                         f"{reason}\n"
@@ -2626,7 +2626,7 @@ Downside target: {forward_magnet_below:.0f} (monthly OPEX magnet)"""
                 return None  # Skip this trade
 
         # ====== PRIORITY 3: USE PATTERN + FORWARD MAGNETS ======
-        if confidence >= 70:
+        if confidence >= 51:
             # High-conviction patterns with psychology confirmation
             if trade_direction == 'BULLISH':
                 # Target forward magnet above

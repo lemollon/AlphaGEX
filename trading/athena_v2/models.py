@@ -171,20 +171,20 @@ class ATHENAConfig:
     # Strategy params (aligned with Apache GEX backtest optimal settings)
     ticker: str = "SPY"
     spread_width: int = 2  # $2 spreads
-    wall_filter_pct: float = 1.0  # Trade within 1% of GEX wall (Apache backtest optimal)
+    wall_filter_pct: float = 3.0  # Trade within 3% of GEX wall (relaxed from 1%)
     min_rr_ratio: float = 1.5  # Min risk:reward (need edge to be profitable)
 
-    # Win probability thresholds - MUST be above 50% to have positive expectancy
-    min_win_probability: float = 0.55  # Minimum win probability to trade (55%)
-    min_confidence: float = 0.55  # Minimum signal confidence (55%)
+    # Win probability thresholds - 51% = better than coin flip
+    min_win_probability: float = 0.51  # Minimum win probability to trade (51%)
+    min_confidence: float = 0.51  # Minimum signal confidence (51%)
 
-    # VIX filter (Apache backtest optimal range)
-    min_vix: float = 15.0  # Skip if VIX too low (no premium)
-    max_vix: float = 25.0  # Skip if VIX too high (spreads decay too fast)
+    # VIX filter (relaxed to allow more trading)
+    min_vix: float = 12.0  # Skip if VIX too low (was 15.0)
+    max_vix: float = 35.0  # Skip if VIX too high (was 25.0)
 
-    # GEX ratio asymmetry requirement (Apache backtest - strong signal only)
-    min_gex_ratio_bearish: float = 1.5  # GEX ratio > 1.5 for bearish signal
-    max_gex_ratio_bullish: float = 0.67  # GEX ratio < 0.67 for bullish signal
+    # GEX ratio asymmetry requirement (relaxed for more opportunities)
+    min_gex_ratio_bearish: float = 1.2  # GEX ratio > 1.2 for bearish (was 1.5)
+    max_gex_ratio_bullish: float = 0.85  # GEX ratio < 0.85 for bullish (was 0.67)
 
     # Exit rules
     profit_target_pct: float = 50.0  # Take profit at 50% of max
