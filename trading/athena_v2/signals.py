@@ -756,6 +756,32 @@ class SignalGenerator:
         effective_win_prob = ml_win_prob if use_ml_prediction else oracle_win_prob
         prediction_source = "ML_5_MODEL_ENSEMBLE" if use_ml_prediction else "ORACLE"
 
+        # CRITICAL FALLBACK: If neither ML nor Oracle provides a win probability,
+        # use market-conditions-based baseline. This prevents blocking ALL trades
+        # when prediction models aren't available.
+        if effective_win_prob <= 0:
+            gex_regime = gex_data.get('gex_regime', 'NEUTRAL')
+            baseline = 0.55  # Directional trades are riskier than IC
+
+            # VIX adjustments
+            vix = gex_data.get('vix', 20)
+            if vix < 15:
+                baseline += 0.05
+            elif vix > 30:
+                baseline -= 0.10
+            elif vix > 25:
+                baseline -= 0.05
+
+            # GEX regime adjustments for directional trades
+            if gex_regime == 'POSITIVE':
+                baseline += 0.03
+            elif gex_regime == 'NEGATIVE':
+                baseline += 0.03  # Negative gamma can mean bigger moves (good for directional)
+
+            effective_win_prob = max(0.50, min(0.70, baseline))
+            prediction_source = "MARKET_CONDITIONS_FALLBACK"
+            logger.info(f"[ATHENA FALLBACK] No ML/Oracle prediction - using market baseline: {effective_win_prob:.1%}")
+
         # Log ML analysis FIRST (it's the preferred source)
         if ml_signal:
             logger.info(f"[ATHENA ML ANALYSIS] *** PRIMARY PREDICTION SOURCE ***")

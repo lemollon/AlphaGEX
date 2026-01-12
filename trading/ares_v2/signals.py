@@ -970,6 +970,34 @@ class SignalGenerator:
         confidence = ml_confidence if use_ml_prediction else oracle_confidence
         prediction_source = "ARES_ML_ADVISOR" if use_ml_prediction else "ORACLE"
 
+        # CRITICAL FALLBACK: If neither ML nor Oracle provides a win probability,
+        # use a market-conditions-based baseline. Iron Condors historically win ~70%
+        # in normal VIX conditions (15-25). This prevents blocking ALL trades when
+        # prediction models aren't available.
+        if effective_win_prob <= 0:
+            # Calculate baseline win prob from market conditions
+            gex_regime = market_data.get('gex_regime', 'NEUTRAL')
+            baseline = 0.65  # Historical IC win rate baseline
+
+            # VIX adjustments
+            if vix < 15:
+                baseline += 0.05  # Low VIX = stable market
+            elif vix > 30:
+                baseline -= 0.10  # High VIX = more risk
+            elif vix > 25:
+                baseline -= 0.05
+
+            # GEX regime adjustments
+            if gex_regime == 'POSITIVE':
+                baseline += 0.05  # Positive gamma = dealer hedging supports range
+            elif gex_regime == 'NEGATIVE':
+                baseline -= 0.05  # Negative gamma = more volatile
+
+            effective_win_prob = max(0.50, min(0.80, baseline))
+            confidence = 0.60  # Moderate confidence for fallback
+            prediction_source = "MARKET_CONDITIONS_FALLBACK"
+            logger.info(f"[ARES FALLBACK] No ML/Oracle prediction - using market conditions baseline: {effective_win_prob:.1%}")
+
         # Log ML analysis FIRST (PRIMARY source)
         if ml_prediction:
             logger.info(f"[ARES ML ANALYSIS] *** PRIMARY PREDICTION SOURCE ***")

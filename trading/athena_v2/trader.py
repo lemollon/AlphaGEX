@@ -983,6 +983,7 @@ class ATHENATrader(MathOptimizerMixin):
     ):
         """Log scan activity for visibility and tracking"""
         if not SCAN_LOGGER_AVAILABLE or not log_athena_scan:
+            logger.warning(f"[ATHENA] Scan logging SKIPPED: SCAN_LOGGER_AVAILABLE={SCAN_LOGGER_AVAILABLE}, log_athena_scan={log_athena_scan is not None}")
             return
 
         try:
