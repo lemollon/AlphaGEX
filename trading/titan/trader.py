@@ -285,8 +285,17 @@ class TITANTrader(MathOptimizerMixin):
             result['errors'].append(str(e))
             result['action'] = 'error'
 
-            self._log_scan_activity(result, scan_context, error_msg=str(e))
-            self._log_bot_decision(result, scan_context, error_msg=str(e))
+            # CRITICAL: Log scan activity with try/except to ensure we always have visibility
+            # even if subsequent operations fail (preventing silent scan stoppage)
+            try:
+                self._log_scan_activity(result, scan_context, error_msg=str(e))
+            except Exception as log_err:
+                logger.error(f"CRITICAL: Failed to log scan activity: {log_err}")
+
+            try:
+                self._log_bot_decision(result, scan_context, error_msg=str(e))
+            except Exception as log_err:
+                logger.error(f"Failed to log bot decision: {log_err}")
 
         return result
 

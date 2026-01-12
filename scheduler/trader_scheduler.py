@@ -873,6 +873,18 @@ class AutonomousTraderScheduler:
             logger.error(f"ERROR in ARES V2: {str(e)}")
             logger.error(traceback.format_exc())
             self._save_heartbeat('ARES', 'ERROR', {'error': str(e)})
+            # BACKUP: Log to scan_activity in case bot's internal logging failed
+            # This ensures we always have visibility into what happened
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_ares_scan:
+                try:
+                    log_ares_scan(
+                        outcome=ScanOutcome.ERROR,
+                        decision_summary=f"Scheduler-level error: {str(e)[:200]}",
+                        error_message=str(e),
+                        generate_ai_explanation=False
+                    )
+                except Exception as log_err:
+                    logger.error(f"CRITICAL: Backup scan_activity logging also failed: {log_err}")
             logger.info(f"=" * 80)
 
     def scheduled_ares_eod_logic(self):
@@ -1186,6 +1198,17 @@ class AutonomousTraderScheduler:
             logger.error(f"ERROR in ATHENA V2: {str(e)}")
             logger.error(traceback.format_exc())
             self._save_heartbeat('ATHENA', 'ERROR', {'error': str(e)})
+            # BACKUP: Log to scan_activity in case bot's internal logging failed
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_athena_scan:
+                try:
+                    log_athena_scan(
+                        outcome=ScanOutcome.ERROR,
+                        decision_summary=f"Scheduler-level error: {str(e)[:200]}",
+                        error_message=str(e),
+                        generate_ai_explanation=False
+                    )
+                except Exception as log_err:
+                    logger.error(f"CRITICAL: Backup scan_activity logging also failed: {log_err}")
             logger.info(f"=" * 80)
 
     def scheduled_pegasus_logic(self):
@@ -1297,6 +1320,17 @@ class AutonomousTraderScheduler:
             logger.error(f"ERROR in PEGASUS: {str(e)}")
             logger.error(traceback.format_exc())
             self._save_heartbeat('PEGASUS', 'ERROR', {'error': str(e)})
+            # BACKUP: Log to scan_activity in case bot's internal logging failed
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_pegasus_scan:
+                try:
+                    log_pegasus_scan(
+                        outcome=ScanOutcome.ERROR,
+                        decision_summary=f"Scheduler-level error: {str(e)[:200]}",
+                        error_message=str(e),
+                        generate_ai_explanation=False
+                    )
+                except Exception as log_err:
+                    logger.error(f"CRITICAL: Backup scan_activity logging also failed: {log_err}")
             logger.info(f"=" * 80)
 
     def scheduled_pegasus_eod_logic(self):
@@ -1446,6 +1480,17 @@ class AutonomousTraderScheduler:
             logger.error(f"ERROR in ICARUS: {str(e)}")
             logger.error(traceback.format_exc())
             self._save_heartbeat('ICARUS', 'ERROR', {'error': str(e)})
+            # BACKUP: Log to scan_activity in case bot's internal logging failed
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_icarus_scan:
+                try:
+                    log_icarus_scan(
+                        outcome=ScanOutcome.ERROR,
+                        decision_summary=f"Scheduler-level error: {str(e)[:200]}",
+                        error_message=str(e),
+                        generate_ai_explanation=False
+                    )
+                except Exception as log_err:
+                    logger.error(f"CRITICAL: Backup scan_activity logging also failed: {log_err}")
             logger.info(f"=" * 80)
 
     def scheduled_icarus_eod_logic(self):
@@ -1606,6 +1651,17 @@ class AutonomousTraderScheduler:
             logger.error(f"ERROR in TITAN: {str(e)}")
             logger.error(traceback.format_exc())
             self._save_heartbeat('TITAN', 'ERROR', {'error': str(e)})
+            # BACKUP: Log to scan_activity in case bot's internal logging failed
+            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_titan_scan:
+                try:
+                    log_titan_scan(
+                        outcome=ScanOutcome.ERROR,
+                        decision_summary=f"Scheduler-level error: {str(e)[:200]}",
+                        error_message=str(e),
+                        generate_ai_explanation=False
+                    )
+                except Exception as log_err:
+                    logger.error(f"CRITICAL: Backup scan_activity logging also failed: {log_err}")
             logger.info(f"=" * 80)
 
     def scheduled_titan_eod_logic(self):
