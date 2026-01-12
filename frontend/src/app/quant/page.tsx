@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { apiClient } from '@/lib/api'
+import Navigation from '@/components/Navigation'
 import {
   Calculator,
   TrendingUp,
@@ -411,12 +412,17 @@ export default function QuantPage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-900 p-6 flex items-center justify-center">
-        <div className="text-center">
-          <RefreshCw className="h-8 w-8 text-blue-400 animate-spin mx-auto mb-4" />
-          <p className="text-gray-400">Loading Quant ML Models...</p>
-        </div>
-      </div>
+      <>
+        <Navigation />
+        <main className="min-h-screen bg-black text-white px-4 pb-4 md:px-6 md:pb-6 pt-28">
+          <div className="flex items-center justify-center h-[60vh]">
+            <div className="text-center">
+              <RefreshCw className="h-8 w-8 text-blue-400 animate-spin mx-auto mb-4" />
+              <p className="text-gray-400">Loading Quant ML Models...</p>
+            </div>
+          </div>
+        </main>
+      </>
     )
   }
 
@@ -434,17 +440,20 @@ export default function QuantPage() {
   const unackedAlertCount = alerts.filter(a => !a.acknowledged).length
 
   return (
-    <div className="min-h-screen bg-gray-900 p-6">
-      {/* Header */}
-      <div className="mb-6">
-        <div className="flex items-center gap-3 mb-2">
-          <Calculator className="h-8 w-8 text-blue-400" />
-          <h1 className="text-2xl font-bold text-white">QUANT - ML Models Dashboard</h1>
-        </div>
-        <p className="text-gray-400">
-          Quantitative ML models for market regime classification, direction prediction, and signal ensemble
-        </p>
-      </div>
+    <>
+      <Navigation />
+      <main className="min-h-screen bg-black text-white px-4 pb-4 md:px-6 md:pb-6 pt-28">
+        <div className="max-w-7xl mx-auto space-y-6">
+          {/* Header */}
+          <div className="mb-6">
+            <div className="flex items-center gap-3 mb-2">
+              <Calculator className="h-8 w-8 text-blue-400" />
+              <h1 className="text-2xl font-bold text-white">QUANT - ML Models Dashboard</h1>
+            </div>
+            <p className="text-gray-400">
+              Quantitative ML models for market regime classification, direction prediction, and signal ensemble
+            </p>
+          </div>
 
       {/* Error Banner */}
       {error && (
@@ -1278,6 +1287,8 @@ export default function QuantPage() {
           )}
         </div>
       )}
-    </div>
+        </div>
+      </main>
+    </>
   )
 }
