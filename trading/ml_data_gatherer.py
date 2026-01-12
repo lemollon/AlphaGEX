@@ -51,11 +51,12 @@ except ImportError as e:
     logger.debug(f"MLRegimeClassifier not available: {e}")
 
 try:
-    from quant.gex_directional_ml import GEXDirectionalML
+    from quant.gex_directional_ml import GEXDirectionalPredictor
     GEX_ML_AVAILABLE = True
 except ImportError as e:
     GEX_ML_AVAILABLE = False
-    logger.debug(f"GEXDirectionalML not available: {e}")
+    GEXDirectionalPredictor = None
+    logger.debug(f"GEXDirectionalPredictor not available: {e}")
 
 try:
     from quant.ensemble_strategy import get_ensemble_signal
@@ -358,12 +359,27 @@ class MLDataGatherer:
         gex_data: Dict
     ):
         """Gather GEX Directional ML data"""
-        if not GEX_ML_AVAILABLE:
+        if not GEX_ML_AVAILABLE or GEXDirectionalPredictor is None:
             return
 
         try:
             if self._gex_ml is None:
-                self._gex_ml = GEXDirectionalML(symbol=symbol)
+                self._gex_ml = GEXDirectionalPredictor(ticker=symbol)
+                # Try to load from database (trained model persisted across deploys)
+                if hasattr(self._gex_ml, 'load_from_db'):
+                    try:
+                        if self._gex_ml.load_from_db():
+                            logger.debug("MLDataGatherer: GEX Directional ML loaded from database")
+                        else:
+                            logger.debug("MLDataGatherer: GEX Directional ML not found in database")
+                            return  # No model to predict with
+                    except Exception as load_err:
+                        logger.debug(f"MLDataGatherer: Failed to load GEX ML from DB: {load_err}")
+                        return
+
+            # Check if model is trained
+            if not getattr(self._gex_ml, 'is_trained', False) and self._gex_ml.model is None:
+                return  # No trained model
 
             features = {
                 'vix': vix,

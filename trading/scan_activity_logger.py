@@ -449,6 +449,7 @@ def log_scan_activity(
     Returns:
         scan_id if logged successfully, None otherwise
     """
+    conn = None  # Initialize to prevent NameError in finally block
     try:
         from database_adapter import get_connection
 
