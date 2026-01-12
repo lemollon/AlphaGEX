@@ -2129,7 +2129,12 @@ class AutonomousTraderScheduler:
     def _record_training_history(self, model_name: str, status: str, accuracy_after: float = None,
                                   training_samples: int = None, triggered_by: str = 'SCHEDULED',
                                   error: str = None):
-        """Record training run to quant_training_history table"""
+        """Record training run to quant_training_history table.
+
+        CRITICAL: Uses finally block to prevent connection leaks.
+        Connection pool exhaustion causes scan stoppage.
+        """
+        conn = None  # Initialize to prevent NameError in finally block
         try:
             conn = get_connection()
             cursor = conn.cursor()
@@ -2143,9 +2148,15 @@ class AutonomousTraderScheduler:
 
             conn.commit()
             cursor.close()
-            conn.close()
         except Exception as e:
             logger.error(f"Failed to record training history: {e}")
+        finally:
+            # CRITICAL: Always close connection to prevent pool exhaustion
+            try:
+                if conn:
+                    conn.close()
+            except Exception:
+                pass
 
     def scheduled_equity_snapshots_logic(self):
         """
