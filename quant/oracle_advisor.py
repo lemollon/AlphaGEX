@@ -3582,6 +3582,31 @@ class OracleAdvisor:
         trade_date: str
     ) -> bool:
         """Store prediction to database for feedback loop - FULL data persistence"""
+        # Helper to convert numpy types to Python native types
+        def _convert_numpy(val):
+            try:
+                import numpy as np
+                if isinstance(val, (np.integer, np.int64, np.int32)):
+                    return int(val)
+                elif isinstance(val, (np.floating, np.float64, np.float32)):
+                    return float(val)
+                elif isinstance(val, np.bool_):
+                    return bool(val)
+                elif isinstance(val, np.ndarray):
+                    return val.tolist()
+            except ImportError:
+                pass
+            return val
+
+        def _convert_dict_numpy(d):
+            if d is None:
+                return None
+            if isinstance(d, dict):
+                return {k: _convert_dict_numpy(v) for k, v in d.items()}
+            elif isinstance(d, list):
+                return [_convert_dict_numpy(item) for item in d]
+            return _convert_numpy(d)
+
         if not DB_AVAILABLE:
             logger.warning("Database not available")
             return False
@@ -3661,20 +3686,20 @@ class OracleAdvisor:
 
                 conn.commit()
 
-                # Serialize top_factors as JSON
+                # Serialize top_factors as JSON (convert numpy types)
                 top_factors_json = json.dumps([
-                    {"feature": f[0], "importance": f[1]}
+                    {"feature": f[0], "importance": _convert_numpy(f[1])}
                     for f in (prediction.top_factors or [])
                 ]) if prediction.top_factors else None
 
-                # Serialize probabilities as JSON
-                probabilities_json = json.dumps(prediction.probabilities) if prediction.probabilities else None
+                # Serialize probabilities as JSON (convert numpy types)
+                probabilities_json = json.dumps(_convert_dict_numpy(prediction.probabilities)) if prediction.probabilities else None
 
                 # Serialize Claude analysis as JSON (full transparency)
                 claude_json = None
                 if prediction.claude_analysis:
                     ca = prediction.claude_analysis
-                    claude_json = json.dumps({
+                    claude_json = json.dumps(_convert_dict_numpy({
                         "analysis": ca.analysis,
                         "confidence_adjustment": ca.confidence_adjustment,
                         "risk_factors": ca.risk_factors,
@@ -3712,24 +3737,24 @@ class OracleAdvisor:
                 """, (
                     trade_date,
                     prediction.bot_name.value,
-                    context.spot_price,
-                    context.vix,
-                    context.gex_net,
-                    context.gex_normalized,
+                    _convert_numpy(context.spot_price),
+                    _convert_numpy(context.vix),
+                    _convert_numpy(context.gex_net),
+                    _convert_numpy(context.gex_normalized),
                     context.gex_regime.value,
-                    context.gex_flip_point,
-                    context.gex_call_wall,
-                    context.gex_put_wall,
-                    context.day_of_week,
+                    _convert_numpy(context.gex_flip_point),
+                    _convert_numpy(context.gex_call_wall),
+                    _convert_numpy(context.gex_put_wall),
+                    _convert_numpy(context.day_of_week),
                     prediction.advice.value,
-                    prediction.win_probability,
-                    prediction.confidence,
-                    prediction.suggested_risk_pct,
-                    prediction.suggested_sd_multiplier,
+                    _convert_numpy(prediction.win_probability),
+                    _convert_numpy(prediction.confidence),
+                    _convert_numpy(prediction.suggested_risk_pct),
+                    _convert_numpy(prediction.suggested_sd_multiplier),
                     prediction.model_version,
                     prediction.use_gex_walls,
-                    prediction.suggested_put_strike,
-                    prediction.suggested_call_strike,
+                    _convert_numpy(prediction.suggested_put_strike),
+                    _convert_numpy(prediction.suggested_call_strike),
                     prediction.reasoning,
                     top_factors_json,
                     probabilities_json,
