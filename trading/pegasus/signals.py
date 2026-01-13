@@ -513,51 +513,10 @@ class SignalGenerator:
         vix = market_data.get('vix', 20)
         gex_regime = market_data.get('gex_regime', 'NEUTRAL')
 
-        # Extract factor names and impacts
-        factor_map = {}
-        for f in top_factors[:5]:  # Only consider top 5 factors
-            name = f.get('factor', f.get('feature', '')).lower()
-            impact = f.get('impact', f.get('importance', 0))
-            factor_map[name] = impact
-
-        # 1. VIX factor adjustment - SPX is sensitive to VIX
-        vix_importance = factor_map.get('vix', factor_map.get('vix_level', 0))
-        if vix_importance > 0.2:  # VIX is significant factor
-            if vix > 25:
-                penalty = min(0.10, (vix - 25) * 0.015)  # SPX more sensitive
-                confidence -= penalty
-                adjustments.append(f"VIX factor high ({vix_importance:.2f}) + VIX elevated ({vix:.1f}): -{penalty:.0%}")
-            elif vix < 14:
-                boost = min(0.05, (14 - vix) * 0.01)
-                confidence += boost
-                adjustments.append(f"VIX factor high ({vix_importance:.2f}) + VIX low ({vix:.1f}): +{boost:.0%}")
-
-        # 2. GEX regime factor adjustment
-        gex_importance = factor_map.get('gex_regime', factor_map.get('net_gex', 0))
-        if gex_importance > 0.15:
-            if gex_regime == 'NEGATIVE':
-                penalty = 0.06
-                confidence -= penalty
-                adjustments.append(f"GEX factor high ({gex_importance:.2f}) + NEGATIVE regime: -{penalty:.0%}")
-            elif gex_regime == 'POSITIVE':
-                boost = 0.04
-                confidence += boost
-                adjustments.append(f"GEX factor high ({gex_importance:.2f}) + POSITIVE regime: +{boost:.0%}")
-
-        # 3. Day of week factor
-        dow_importance = factor_map.get('day_of_week', 0)
-        if dow_importance > 0.15:
-            from datetime import datetime
-            from zoneinfo import ZoneInfo
-            day = datetime.now(ZoneInfo("America/Chicago")).weekday()
-            if day in [0, 1]:  # Monday, Tuesday
-                boost = 0.03
-                confidence += boost
-                adjustments.append(f"Day factor high ({dow_importance:.2f}) + favorable day: +{boost:.0%}")
-            elif day == 4:  # Friday
-                penalty = 0.04
-                confidence -= penalty
-                adjustments.append(f"Day factor high ({dow_importance:.2f}) + Friday: -{penalty:.0%}")
+        # REMOVED: VIX, GEX regime, day of week adjustments
+        # Oracle already analyzed all these factors in MarketContext.
+        # Re-adjusting confidence based on the same factors is redundant.
+        # Trust Oracle's win_probability output directly.
 
         # Clamp confidence to reasonable range
         confidence = max(0.4, min(0.95, confidence))
@@ -704,27 +663,12 @@ class SignalGenerator:
                 logger.info(f"[PEGASUS SKIP] VIX filter: {vix_reason}, ML/Oracle also insufficient")
                 return None
 
-            # FALLBACK: If neither ML nor Oracle provides a win probability
+            # REMOVED: Market conditions fallback baseline
+            # If Oracle returns 0 win probability, trust that decision.
+            # Don't manufacture a baseline - Oracle already analyzed VIX, GEX, etc.
             if effective_win_prob <= 0:
-                gex_regime = market.get('gex_regime', 'NEUTRAL')
-                baseline = 0.65  # SPX IC historical baseline
-
-                if vix < 15:
-                    baseline += 0.05
-                elif vix > 30:
-                    baseline -= 0.10
-                elif vix > 25:
-                    baseline -= 0.05
-
-                if gex_regime == 'POSITIVE':
-                    baseline += 0.05
-                elif gex_regime == 'NEGATIVE':
-                    baseline -= 0.05
-
-                effective_win_prob = max(0.50, min(0.80, baseline))
-                confidence = 0.60
-                prediction_source = "MARKET_CONDITIONS_FALLBACK"
-                logger.info(f"[PEGASUS FALLBACK] Using market baseline: {effective_win_prob:.1%}")
+                logger.info(f"[PEGASUS BLOCKED] ML/Oracle returned 0 win probability - no trade signal")
+                return None
 
         # Log ML analysis FIRST (PRIMARY source)
         if ml_prediction:

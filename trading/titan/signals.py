@@ -496,48 +496,10 @@ class SignalGenerator:
         vix = market_data.get('vix', 20)
         gex_regime = market_data.get('gex_regime', 'NEUTRAL')
 
-        # Extract factor names and impacts
-        factor_map = {}
-        for f in top_factors[:5]:  # Only consider top 5 factors
-            name = f.get('factor', f.get('feature', '')).lower()
-            impact = f.get('impact', f.get('importance', 0))
-            factor_map[name] = impact
-
-        # 1. VIX factor adjustment - SMALLER penalties for TITAN
-        vix_importance = factor_map.get('vix', factor_map.get('vix_level', 0))
-        if vix_importance > 0.2:
-            if vix > 30:  # Higher threshold than PEGASUS (25)
-                penalty = min(0.05, (vix - 30) * 0.008)  # Smaller penalty
-                confidence -= penalty
-                adjustments.append(f"VIX factor high + VIX elevated ({vix:.1f}): -{penalty:.0%}")
-            elif vix < 14:
-                boost = min(0.06, (14 - vix) * 0.012)  # Slightly larger boost
-                confidence += boost
-                adjustments.append(f"VIX factor high + VIX low ({vix:.1f}): +{boost:.0%}")
-
-        # 2. GEX regime factor adjustment - SMALLER penalties
-        gex_importance = factor_map.get('gex_regime', factor_map.get('net_gex', 0))
-        if gex_importance > 0.15:
-            if gex_regime == 'NEGATIVE':
-                penalty = 0.03  # Smaller penalty (PEGASUS: 0.06)
-                confidence -= penalty
-                adjustments.append(f"GEX factor high + NEGATIVE regime: -{penalty:.0%}")
-            elif gex_regime == 'POSITIVE':
-                boost = 0.05  # Slightly larger boost
-                confidence += boost
-                adjustments.append(f"GEX factor high + POSITIVE regime: +{boost:.0%}")
-
-        # 3. Day of week factor - TITAN trades any day
-        dow_importance = factor_map.get('day_of_week', 0)
-        if dow_importance > 0.15:
-            from datetime import datetime
-            from zoneinfo import ZoneInfo
-            day = datetime.now(ZoneInfo("America/Chicago")).weekday()
-            if day in [0, 1]:  # Monday, Tuesday
-                boost = 0.04
-                confidence += boost
-                adjustments.append(f"Day factor high + favorable day: +{boost:.0%}")
-            # No Friday penalty for TITAN - we trade every day
+        # REMOVED: VIX, GEX regime, day of week adjustments
+        # Oracle already analyzed all these factors in MarketContext.
+        # Re-adjusting confidence based on the same factors is redundant.
+        # Trust Oracle's win_probability output directly.
 
         # Clamp confidence to reasonable range - LOWER minimum for TITAN
         confidence = max(0.35, min(0.95, confidence))  # Lower min (PEGASUS: 0.4)
@@ -685,27 +647,12 @@ class SignalGenerator:
                 logger.info(f"[TITAN SKIP] VIX filter: {vix_reason}, ML/Oracle also insufficient")
                 return None
 
-            # FALLBACK: TITAN is aggressive SPX IC bot - use lower threshold
+            # REMOVED: Market conditions fallback baseline
+            # If Oracle returns 0 win probability, trust that decision.
+            # Don't manufacture a baseline - Oracle already analyzed VIX, GEX, etc.
             if effective_win_prob <= 0:
-                gex_regime = market.get('gex_regime', 'NEUTRAL')
-                baseline = 0.55  # TITAN is aggressive
-
-                if vix < 15:
-                    baseline += 0.05
-                elif vix > 30:
-                    baseline -= 0.08
-                elif vix > 25:
-                    baseline -= 0.04
-
-                if gex_regime == 'POSITIVE':
-                    baseline += 0.05
-                elif gex_regime == 'NEGATIVE':
-                    baseline -= 0.03
-
-                effective_win_prob = max(0.48, min(0.70, baseline))
-                confidence = 0.55
-                prediction_source = "MARKET_CONDITIONS_FALLBACK"
-                logger.info(f"[TITAN FALLBACK] Using market baseline: {effective_win_prob:.1%}")
+                logger.info(f"[TITAN BLOCKED] ML/Oracle returned 0 win probability - no trade signal")
+                return None
 
         # Log ML analysis FIRST (PRIMARY source)
         if ml_prediction:
