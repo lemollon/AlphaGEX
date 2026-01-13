@@ -605,8 +605,8 @@ class SignalGenerator:
                 ml_win_probability=effective_win_prob,
             )
 
-        # Get wall direction for logging (Oracle already provided direction)
-        near_wall, wall_direction, wall_reason = self.check_wall_proximity(gex_data)
+        # Get wall info for logging only (Oracle already provided direction above)
+        near_wall, _, wall_reason = self.check_wall_proximity(gex_data)
         if not near_wall:
             wall_reason = f"Oracle overriding wall proximity (direction: {effective_direction})"
 
