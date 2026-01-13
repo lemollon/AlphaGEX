@@ -110,6 +110,31 @@ class ScanActivity:
     oracle_thresholds: Dict = field(default_factory=dict)  # What thresholds were evaluated
     min_win_probability_threshold: float = 0  # What the bot required
 
+    # === NEUTRAL REGIME ANALYSIS (new fields for trend-based direction) ===
+    neutral_derived_direction: str = ""  # Direction derived for NEUTRAL regime
+    neutral_confidence: float = 0  # Confidence in derived direction
+    neutral_reasoning: str = ""  # Full reasoning for NEUTRAL direction
+
+    # Strategy suitability scores (0-1)
+    ic_suitability: float = 0  # Iron Condor suitability
+    bullish_suitability: float = 0  # Bull spread suitability
+    bearish_suitability: float = 0  # Bear spread suitability
+    recommended_strategy: str = ""  # IRON_CONDOR, BULL_SPREAD, BEAR_SPREAD, SKIP
+
+    # Trend analysis data
+    trend_direction: str = ""  # UPTREND, DOWNTREND, SIDEWAYS
+    trend_strength: float = 0  # 0-1
+    position_in_range_pct: float = 50.0  # 0% = at put wall, 100% = at call wall
+    is_contained: bool = True  # Price between walls
+    wall_filter_passed: bool = False  # Whether wall filter check passed
+
+    # Price history for trend
+    price_5m_ago: float = 0
+    price_30m_ago: float = 0
+    price_60m_ago: float = 0
+    high_of_day: float = 0
+    low_of_day: float = 0
+
     # Quant ML Advisor - ARES ML feedback loop (from quant/ares_ml_advisor.py)
     quant_ml_advice: str = ""  # TRADE_FULL, TRADE_REDUCED, SKIP_TODAY
     quant_ml_win_probability: float = 0
@@ -414,7 +439,25 @@ def log_scan_activity(
     ml_conflicts: Optional[List[Dict]] = None,
     ml_conflict_severity: str = "",
     ml_highest_confidence_system: str = "",
-    ml_highest_confidence_value: float = 0
+    ml_highest_confidence_value: float = 0,
+    # === NEW: NEUTRAL Regime Analysis (trend-based direction) ===
+    neutral_derived_direction: str = "",
+    neutral_confidence: float = 0,
+    neutral_reasoning: str = "",
+    ic_suitability: float = 0,
+    bullish_suitability: float = 0,
+    bearish_suitability: float = 0,
+    recommended_strategy: str = "",
+    trend_direction: str = "",
+    trend_strength: float = 0,
+    position_in_range_pct: float = 50.0,
+    is_contained: bool = True,
+    wall_filter_passed: bool = False,
+    price_5m_ago: float = 0,
+    price_30m_ago: float = 0,
+    price_60m_ago: float = 0,
+    high_of_day: float = 0,
+    low_of_day: float = 0
 ) -> Optional[str]:
     """
     Log a scan activity to the database.
@@ -839,7 +882,13 @@ def log_scan_activity(
                 daily_pnl, weekly_pnl,
                 -- NEW: ML Consensus & Conflict Detection
                 ml_consensus, ml_consensus_score, ml_systems_agree, ml_systems_total,
-                ml_conflicts, ml_conflict_severity, ml_highest_confidence_system, ml_highest_confidence_value
+                ml_conflicts, ml_conflict_severity, ml_highest_confidence_system, ml_highest_confidence_value,
+                -- NEW: NEUTRAL Regime Analysis
+                neutral_derived_direction, neutral_confidence, neutral_reasoning,
+                ic_suitability, bullish_suitability, bearish_suitability, recommended_strategy,
+                trend_direction, trend_strength, position_in_range_pct,
+                is_contained, wall_filter_passed,
+                price_5m_ago, price_30m_ago, price_60m_ago, high_of_day, low_of_day
             ) VALUES (
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
@@ -857,7 +906,8 @@ def log_scan_activity(
                 %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
         """, (
             bot_name, scan_id, _convert_numpy(scan_number),
@@ -921,7 +971,14 @@ def log_scan_activity(
             # NEW: ML Consensus & Conflict Detection
             ml_consensus, _clamp_decimal(ml_consensus_score), _convert_numpy(ml_systems_agree), _convert_numpy(ml_systems_total),
             json.dumps(_convert_dict_numpy(ml_conflicts)) if ml_conflicts else None, ml_conflict_severity,
-            ml_highest_confidence_system, _clamp_decimal(ml_highest_confidence_value)
+            ml_highest_confidence_system, _clamp_decimal(ml_highest_confidence_value),
+            # NEW: NEUTRAL Regime Analysis
+            neutral_derived_direction, _clamp_decimal(neutral_confidence), neutral_reasoning,
+            _clamp_decimal(ic_suitability), _clamp_decimal(bullish_suitability), _clamp_decimal(bearish_suitability), recommended_strategy,
+            trend_direction, _clamp_decimal(trend_strength), _convert_numpy(position_in_range_pct),
+            is_contained, wall_filter_passed,
+            _convert_numpy(price_5m_ago), _convert_numpy(price_30m_ago), _convert_numpy(price_60m_ago),
+            _convert_numpy(high_of_day), _convert_numpy(low_of_day)
         ))
 
         conn.commit()

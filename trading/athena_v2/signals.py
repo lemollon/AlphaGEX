@@ -342,9 +342,9 @@ class SignalGenerator:
                 for factor_name, impact in prediction.top_factors:
                     top_factors.append({'factor': factor_name, 'impact': impact})
 
-            # Determine Oracle's direction from reasoning
-            oracle_direction = "FLAT"
-            if hasattr(prediction, 'reasoning') and prediction.reasoning:
+            # Get direction - prefer neutral_derived_direction for NEUTRAL regime, else parse reasoning
+            oracle_direction = getattr(prediction, 'neutral_derived_direction', '') or "FLAT"
+            if oracle_direction == "FLAT" and hasattr(prediction, 'reasoning') and prediction.reasoning:
                 if "BULLISH" in prediction.reasoning.upper() or "BULL" in prediction.reasoning.upper():
                     oracle_direction = "BULLISH"
                 elif "BEARISH" in prediction.reasoning.upper() or "BEAR" in prediction.reasoning.upper():
@@ -357,6 +357,18 @@ class SignalGenerator:
                 'direction': oracle_direction,
                 'top_factors': top_factors,
                 'reasoning': prediction.reasoning or '',
+
+                # NEUTRAL Regime Analysis (trend-based direction for NEUTRAL GEX)
+                'neutral_derived_direction': getattr(prediction, 'neutral_derived_direction', ''),
+                'neutral_confidence': getattr(prediction, 'neutral_confidence', 0),
+                'neutral_reasoning': getattr(prediction, 'neutral_reasoning', ''),
+                'ic_suitability': getattr(prediction, 'ic_suitability', 0),
+                'bullish_suitability': getattr(prediction, 'bullish_suitability', 0),
+                'bearish_suitability': getattr(prediction, 'bearish_suitability', 0),
+                'trend_direction': getattr(prediction, 'trend_direction', ''),
+                'trend_strength': getattr(prediction, 'trend_strength', 0),
+                'position_in_range_pct': getattr(prediction, 'position_in_range_pct', 50.0),
+                'wall_filter_passed': getattr(prediction, 'wall_filter_passed', False),
             }
         except Exception as e:
             logger.warning(f"ATHENA Oracle error: {e}")

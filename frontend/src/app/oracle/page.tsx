@@ -175,6 +175,19 @@ interface BotInteraction {
   gex_put_wall?: number
   gex_flip_point?: number
   day_of_week?: number
+  // NEUTRAL Regime Analysis fields
+  neutral_derived_direction?: string
+  neutral_confidence?: number
+  neutral_reasoning?: string
+  ic_suitability?: number
+  bullish_suitability?: number
+  bearish_suitability?: number
+  recommended_strategy?: string
+  trend_direction?: string
+  trend_strength?: number
+  position_in_range_pct?: number
+  is_contained?: boolean
+  wall_filter_passed?: boolean
   suggested_risk_pct?: number
   suggested_sd_multiplier?: number
   use_gex_walls?: boolean
@@ -975,6 +988,109 @@ export default function OraclePage() {
                             <div className="text-xs">
                               <span className="text-text-muted">Flip Point:</span>
                               <span className="text-text-primary ml-1 font-medium">${interaction.gex_flip_point.toFixed(0)}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* NEUTRAL Regime Analysis Row - Shows trend-based direction and strategy suitability */}
+                      {interaction.gex_regime === 'NEUTRAL' && (interaction.neutral_derived_direction || interaction.ic_suitability != null || interaction.trend_direction) && (
+                        <div className="mb-3 p-3 bg-yellow-500/5 border border-yellow-500/20 rounded-lg">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-yellow-400 text-xs font-medium">NEUTRAL Regime Analysis</span>
+                            {interaction.wall_filter_passed != null && (
+                              <span className={`text-xs px-2 py-0.5 rounded ${
+                                interaction.wall_filter_passed ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                              }`}>
+                                Wall Filter: {interaction.wall_filter_passed ? 'PASSED' : 'FAILED'}
+                              </span>
+                            )}
+                          </div>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                            {interaction.neutral_derived_direction && (
+                              <div className="text-xs">
+                                <span className="text-text-muted">Derived Direction:</span>
+                                <span className={`ml-1 font-medium ${
+                                  interaction.neutral_derived_direction === 'BULLISH' ? 'text-green-400' :
+                                  interaction.neutral_derived_direction === 'BEARISH' ? 'text-red-400' : 'text-yellow-400'
+                                }`}>{interaction.neutral_derived_direction}</span>
+                              </div>
+                            )}
+                            {interaction.neutral_confidence != null && (
+                              <div className="text-xs">
+                                <span className="text-text-muted">Confidence:</span>
+                                <span className="text-text-primary ml-1 font-medium">{(interaction.neutral_confidence * 100).toFixed(0)}%</span>
+                              </div>
+                            )}
+                            {interaction.trend_direction && (
+                              <div className="text-xs">
+                                <span className="text-text-muted">Trend:</span>
+                                <span className={`ml-1 font-medium ${
+                                  interaction.trend_direction === 'UPTREND' ? 'text-green-400' :
+                                  interaction.trend_direction === 'DOWNTREND' ? 'text-red-400' : 'text-yellow-400'
+                                }`}>{interaction.trend_direction}</span>
+                              </div>
+                            )}
+                            {interaction.trend_strength != null && (
+                              <div className="text-xs">
+                                <span className="text-text-muted">Trend Strength:</span>
+                                <span className="text-text-primary ml-1 font-medium">{(interaction.trend_strength * 100).toFixed(0)}%</span>
+                              </div>
+                            )}
+                            {interaction.position_in_range_pct != null && (
+                              <div className="text-xs">
+                                <span className="text-text-muted">Position in Range:</span>
+                                <span className={`ml-1 font-medium ${
+                                  interaction.position_in_range_pct > 70 ? 'text-green-400' :
+                                  interaction.position_in_range_pct < 30 ? 'text-red-400' : 'text-yellow-400'
+                                }`}>{interaction.position_in_range_pct.toFixed(0)}%</span>
+                              </div>
+                            )}
+                            {interaction.is_contained != null && (
+                              <div className="text-xs">
+                                <span className="text-text-muted">Contained:</span>
+                                <span className={`ml-1 font-medium ${interaction.is_contained ? 'text-green-400' : 'text-red-400'}`}>
+                                  {interaction.is_contained ? 'Yes' : 'No'}
+                                </span>
+                              </div>
+                            )}
+                          </div>
+                          {/* Strategy Suitability Scores */}
+                          {(interaction.ic_suitability != null || interaction.bullish_suitability != null || interaction.bearish_suitability != null) && (
+                            <div className="mt-2 pt-2 border-t border-yellow-500/20">
+                              <div className="text-xs text-text-muted mb-1">Strategy Suitability:</div>
+                              <div className="flex gap-4">
+                                {interaction.ic_suitability != null && (
+                                  <div className="text-xs">
+                                    <span className="text-cyan-400">IC:</span>
+                                    <span className="text-text-primary ml-1 font-medium">{interaction.ic_suitability.toFixed(0)}</span>
+                                  </div>
+                                )}
+                                {interaction.bullish_suitability != null && (
+                                  <div className="text-xs">
+                                    <span className="text-green-400">Bullish:</span>
+                                    <span className="text-text-primary ml-1 font-medium">{interaction.bullish_suitability.toFixed(0)}</span>
+                                  </div>
+                                )}
+                                {interaction.bearish_suitability != null && (
+                                  <div className="text-xs">
+                                    <span className="text-red-400">Bearish:</span>
+                                    <span className="text-text-primary ml-1 font-medium">{interaction.bearish_suitability.toFixed(0)}</span>
+                                  </div>
+                                )}
+                                {interaction.recommended_strategy && (
+                                  <div className="text-xs">
+                                    <span className="text-purple-400">Recommended:</span>
+                                    <span className="text-text-primary ml-1 font-medium">{interaction.recommended_strategy}</span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                          {/* NEUTRAL Reasoning */}
+                          {interaction.neutral_reasoning && (
+                            <div className="mt-2 pt-2 border-t border-yellow-500/20">
+                              <p className="text-xs text-text-secondary">{interaction.neutral_reasoning}</p>
                             </div>
                           )}
                         </div>

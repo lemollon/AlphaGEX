@@ -96,6 +96,18 @@ try:
 except ImportError:
     DB_AVAILABLE = False
 
+# Price Trend Tracker for NEUTRAL regime handling
+try:
+    from quant.price_trend_tracker import (
+        get_trend_tracker, PriceTrendTracker, TrendDirection,
+        TrendAnalysis, WallPositionAnalysis, StrategySuitability
+    )
+    TREND_TRACKER_AVAILABLE = True
+except ImportError:
+    TREND_TRACKER_AVAILABLE = False
+    get_trend_tracker = None
+    logger.info("Price trend tracker not available - NEUTRAL regime will use legacy logic")
+
 # Context manager for safe database connections (prevents connection leaks)
 from contextlib import contextmanager
 
@@ -227,6 +239,20 @@ class MarketContext:
     win_rate_30d: float = 0.68
     expected_move_pct: float = 1.0
 
+    # =========================================================================
+    # TREND DATA (for NEUTRAL regime direction determination)
+    # These fields are populated by PriceTrendTracker on every 5-min scan
+    # =========================================================================
+    trend_direction: str = "SIDEWAYS"  # UPTREND, DOWNTREND, SIDEWAYS
+    trend_strength: float = 0.0  # 0-1
+    price_5m_ago: float = 0.0
+    price_30m_ago: float = 0.0
+    price_60m_ago: float = 0.0
+    is_higher_high: bool = False
+    is_higher_low: bool = False
+    position_in_range_pct: float = 50.0  # 0% = at put wall, 100% = at call wall
+    is_contained: bool = True  # Price between walls
+
 
 @dataclass
 class OraclePrediction:
@@ -258,6 +284,24 @@ class OraclePrediction:
     # e.g., ARES skip due to high VIX -> suggest ATHENA directional
     suggested_alternative: Optional[BotName] = None
     strategy_recommendation: Optional['StrategyRecommendation'] = None
+
+    # =========================================================================
+    # NEUTRAL REGIME ANALYSIS (new fields for trend-based direction)
+    # =========================================================================
+    neutral_derived_direction: str = ""  # Direction derived for NEUTRAL regime
+    neutral_confidence: float = 0.0  # Confidence in derived direction
+    neutral_reasoning: str = ""  # Full reasoning for the derivation
+
+    # Strategy suitability scores (0-1)
+    ic_suitability: float = 0.0  # Iron Condor suitability
+    bullish_suitability: float = 0.0  # Bull spread suitability
+    bearish_suitability: float = 0.0  # Bear spread suitability
+
+    # Trend analysis data
+    trend_direction: str = ""  # UPTREND, DOWNTREND, SIDEWAYS
+    trend_strength: float = 0.0
+    position_in_range_pct: float = 50.0  # Where price sits in wall range
+    wall_filter_passed: bool = False
 
 
 @dataclass
@@ -2130,23 +2174,97 @@ class OracleAdvisor:
             logger.info(f"GEX-Protected strikes: Put ${suggested_put:.0f} (wall ${gex_put_wall:.0f} - ${buffer:.0f}), "
                        f"Call ${suggested_call:.0f} (wall ${gex_call_wall:.0f} + ${buffer:.0f})")
 
-        # Adjust advice based on GEX regime
+        # =====================================================================
+        # GEX REGIME HANDLING - Now properly handles NEUTRAL for IC
+        # NEUTRAL regime is actually FAVORABLE for Iron Condors:
+        # - Walls are holding (mean reversion)
+        # - Price is contained within range
+        # - Less trending behavior = less breach risk
+        # =====================================================================
         reasoning_parts = []
+        ic_suitability = 0.50  # Start neutral
+        position_in_range_pct = 50.0
+        trend_direction_str = "SIDEWAYS"
+        trend_strength = 0.0
+
+        # Calculate position in wall range
+        wall_range = context.gex_call_wall - context.gex_put_wall
+        if wall_range > 0 and context.spot_price > 0:
+            position_in_range_pct = (context.spot_price - context.gex_put_wall) / wall_range * 100
 
         if context.gex_regime == GEXRegime.POSITIVE:
             reasoning_parts.append("Positive GEX favors mean reversion (good for IC)")
             base_pred['win_probability'] = min(0.85, base_pred['win_probability'] + 0.03)
+            ic_suitability += 0.20
+
         elif context.gex_regime == GEXRegime.NEGATIVE:
             reasoning_parts.append("Negative GEX indicates trending market (slightly risky for IC)")
-            # REDUCED: -5% was too aggressive, -2% is more realistic
             base_pred['win_probability'] = max(0.50, base_pred['win_probability'] - 0.02)
+            ic_suitability -= 0.15
+
+        elif context.gex_regime == GEXRegime.NEUTRAL:
+            # =====================================================================
+            # NEUTRAL REGIME - GOOD FOR IC! Walls are holding, price contained
+            # This is the key fix - NEUTRAL should NOT penalize IC strategies
+            # =====================================================================
+            reasoning_parts.append("NEUTRAL GEX: Balanced market, walls likely to hold (good for IC)")
+
+            # NEUTRAL with contained price = ideal IC environment
+            if context.gex_between_walls:
+                base_pred['win_probability'] = min(0.85, base_pred['win_probability'] + 0.05)
+                ic_suitability += 0.15
+                reasoning_parts.append("Price contained within walls (IC sweet spot)")
+
+            # Use trend tracker if available for additional confidence
+            if TREND_TRACKER_AVAILABLE and get_trend_tracker is not None:
+                try:
+                    tracker = get_trend_tracker()
+                    tracker.update("SPY", context.spot_price)
+
+                    trend_analysis = tracker.analyze_trend("SPY")
+                    if trend_analysis:
+                        trend_direction_str = trend_analysis.direction.value
+                        trend_strength = trend_analysis.strength
+
+                        # Sideways trend is IDEAL for IC
+                        if trend_analysis.direction.value == "SIDEWAYS":
+                            ic_suitability += 0.10
+                            reasoning_parts.append("Sideways trend (range-bound = IC paradise)")
+                        elif trend_strength > 0.6:
+                            # Strong trend in either direction is risky for IC
+                            ic_suitability -= 0.10
+                            reasoning_parts.append(f"Strong {trend_direction_str} trend ({trend_strength:.0%}) - caution")
+
+                    # Calculate full IC suitability
+                    wall_position = tracker.analyze_wall_position(
+                        "SPY", context.spot_price,
+                        context.gex_call_wall, context.gex_put_wall,
+                        trend_analysis
+                    )
+                    suitability = tracker.calculate_strategy_suitability(
+                        trend_analysis, wall_position, context.vix,
+                        context.gex_regime.value
+                    )
+                    ic_suitability = suitability.ic_suitability
+                    position_in_range_pct = wall_position.position_in_range_pct
+
+                    logger.info(f"[ARES NEUTRAL] IC suitability: {ic_suitability:.0%}, trend: {trend_direction_str}")
+
+                except Exception as e:
+                    logger.warning(f"[ARES] Trend tracker error: {e}")
+                    # Still boost IC for NEUTRAL regime even without tracker
+                    ic_suitability += 0.10
 
         if context.gex_between_walls:
             reasoning_parts.append("Price between GEX walls (stable zone)")
+            ic_suitability += 0.10
         else:
             reasoning_parts.append("Price outside GEX walls (minor breakout risk)")
-            # REDUCED: -3% was too aggressive, -1% is more realistic
             base_pred['win_probability'] = max(0.50, base_pred['win_probability'] - 0.01)
+            ic_suitability -= 0.10
+
+        # Normalize IC suitability
+        ic_suitability = max(0.0, min(1.0, ic_suitability))
 
         # =========================================================================
         # CLAUDE AI VALIDATION (if enabled)
@@ -2210,7 +2328,12 @@ class OracleAdvisor:
             reasoning=" | ".join(reasoning_parts),
             model_version=self.model_version,
             probabilities=base_pred['probabilities'],
-            claude_analysis=claude_analysis  # Include real Claude data for logging
+            claude_analysis=claude_analysis,
+            # New NEUTRAL regime fields for IC
+            ic_suitability=ic_suitability,
+            trend_direction=trend_direction_str,
+            trend_strength=trend_strength,
+            position_in_range_pct=position_in_range_pct
         )
 
         # Log prediction result
@@ -2521,64 +2644,165 @@ class OracleAdvisor:
 
         reasoning_parts = []
 
-        # Determine directional bias from GEX structure
-        direction = "FLAT"
-        direction_confidence = 0.5
-
         # Calculate distance to walls
         dist_to_call_wall = 0
         dist_to_put_wall = 0
+        position_in_range_pct = 50.0
 
         if context.gex_call_wall > 0 and context.spot_price > 0:
             dist_to_call_wall = (context.gex_call_wall - context.spot_price) / context.spot_price * 100
         if context.gex_put_wall > 0 and context.spot_price > 0:
             dist_to_put_wall = (context.spot_price - context.gex_put_wall) / context.spot_price * 100
 
-        # GEX-based directional logic
+        # Calculate position in range
+        wall_range = context.gex_call_wall - context.gex_put_wall
+        if wall_range > 0:
+            position_in_range_pct = (context.spot_price - context.gex_put_wall) / wall_range * 100
+
+        # =====================================================================
+        # NEW NEUTRAL REGIME HANDLING - Use trend tracker for direction
+        # This replaces the broken logic that always returned FLAT for NEUTRAL
+        # =====================================================================
+        direction = "FLAT"
+        direction_confidence = 0.50
+        wall_filter_passed = False
+        neutral_derived_direction = ""
+        neutral_confidence = 0.0
+        neutral_reasoning = ""
+        trend_direction_str = "SIDEWAYS"
+        trend_strength = 0.0
+        ic_suitability = 0.50
+        bullish_suitability = 0.50
+        bearish_suitability = 0.50
+
+        # GEX-based directional logic with NEUTRAL regime handling
         if context.gex_regime == GEXRegime.NEGATIVE:
             # Negative GEX = trending market, directional opportunity
             if context.gex_distance_to_flip_pct < -1:
-                # Price well below flip point = bearish momentum
                 direction = "BEARISH"
                 direction_confidence = 0.60
                 reasoning_parts.append("Negative GEX below flip = bearish momentum")
             elif context.gex_distance_to_flip_pct > 1:
-                # Price above flip in negative GEX = potential reversal
                 direction = "BULLISH"
                 direction_confidence = 0.55
                 reasoning_parts.append("Price above flip in negative GEX = squeeze potential")
+
         elif context.gex_regime == GEXRegime.POSITIVE:
-            # Positive GEX = mean reversion
-            if dist_to_put_wall < 1.0 and dist_to_put_wall > 0:
-                # Near support
+            # Positive GEX = mean reversion, use wall proximity
+            if dist_to_put_wall < wall_filter_pct and dist_to_put_wall > 0:
                 direction = "BULLISH"
                 direction_confidence = 0.65
-                reasoning_parts.append(f"Near put wall support ({dist_to_put_wall:.1f}%)")
-            elif dist_to_call_wall < 1.0 and dist_to_call_wall > 0:
-                # Near resistance
+                reasoning_parts.append(f"POSITIVE GEX near put wall support ({dist_to_put_wall:.1f}%)")
+            elif dist_to_call_wall < wall_filter_pct and dist_to_call_wall > 0:
                 direction = "BEARISH"
                 direction_confidence = 0.65
-                reasoning_parts.append(f"Near call wall resistance ({dist_to_call_wall:.1f}%)")
+                reasoning_parts.append(f"POSITIVE GEX near call wall resistance ({dist_to_call_wall:.1f}%)")
 
-        # Wall filter check - use configurable parameter (backtest: 0.5% = 98% WR, 1.0% = 90% WR)
-        wall_filter_passed = False
-        if use_gex_walls:
-            if direction == "BULLISH" and dist_to_put_wall < wall_filter_pct:
-                wall_filter_passed = True
-                reasoning_parts.append(f"Wall filter PASSED: {dist_to_put_wall:.2f}% from put wall (threshold: {wall_filter_pct}%)")
-            elif direction == "BEARISH" and dist_to_call_wall < wall_filter_pct:
-                wall_filter_passed = True
-                reasoning_parts.append(f"Wall filter PASSED: {dist_to_call_wall:.2f}% from call wall (threshold: {wall_filter_pct}%)")
+        elif context.gex_regime == GEXRegime.NEUTRAL:
+            # =====================================================================
+            # NEUTRAL REGIME - The key fix! Use trend + wall proximity
+            # =====================================================================
+            reasoning_parts.append("NEUTRAL GEX: Using trend + wall proximity for direction")
+
+            # Try to use the trend tracker for dynamic direction
+            if TREND_TRACKER_AVAILABLE and get_trend_tracker is not None:
+                try:
+                    tracker = get_trend_tracker()
+                    # Update tracker with current price
+                    tracker.update("SPY", context.spot_price)
+
+                    # Get direction from trend tracker
+                    direction, direction_confidence, neutral_reasoning, wall_filter_passed = \
+                        tracker.get_neutral_regime_direction(
+                            symbol="SPY",
+                            spot_price=context.spot_price,
+                            call_wall=context.gex_call_wall,
+                            put_wall=context.gex_put_wall,
+                            wall_filter_pct=wall_filter_pct
+                        )
+
+                    neutral_derived_direction = direction
+                    neutral_confidence = direction_confidence
+                    reasoning_parts.append(f"Trend tracker: {neutral_reasoning}")
+
+                    # Get trend analysis for additional context
+                    trend_analysis = tracker.analyze_trend("SPY")
+                    if trend_analysis:
+                        trend_direction_str = trend_analysis.direction.value
+                        trend_strength = trend_analysis.strength
+
+                    # Get strategy suitability
+                    wall_position = tracker.analyze_wall_position(
+                        "SPY", context.spot_price,
+                        context.gex_call_wall, context.gex_put_wall,
+                        trend_analysis
+                    )
+                    suitability = tracker.calculate_strategy_suitability(
+                        trend_analysis, wall_position, context.vix,
+                        context.gex_regime.value
+                    )
+                    ic_suitability = suitability.ic_suitability
+                    bullish_suitability = suitability.bullish_suitability
+                    bearish_suitability = suitability.bearish_suitability
+
+                    logger.info(f"[ATHENA NEUTRAL] Trend tracker: {direction} ({direction_confidence:.0%})")
+
+                except Exception as e:
+                    logger.warning(f"[ATHENA] Trend tracker error: {e}, using fallback")
+                    # Fallback to wall-proximity based direction
+                    direction, direction_confidence, neutral_reasoning = \
+                        self._get_neutral_direction_fallback(
+                            context.spot_price, context.gex_call_wall, context.gex_put_wall,
+                            position_in_range_pct, wall_filter_pct
+                        )
+                    neutral_derived_direction = direction
+                    neutral_confidence = direction_confidence
+                    reasoning_parts.append(f"Fallback: {neutral_reasoning}")
             else:
-                reasoning_parts.append(f"Wall filter FAILED: Call wall {dist_to_call_wall:.1f}%, Put wall {dist_to_put_wall:.1f}% (need < {wall_filter_pct}%)")
+                # Fallback when trend tracker not available
+                direction, direction_confidence, neutral_reasoning = \
+                    self._get_neutral_direction_fallback(
+                        context.spot_price, context.gex_call_wall, context.gex_put_wall,
+                        position_in_range_pct, wall_filter_pct
+                    )
+                neutral_derived_direction = direction
+                neutral_confidence = direction_confidence
+                reasoning_parts.append(f"Fallback: {neutral_reasoning}")
 
-        # Adjust win probability based on direction confidence
+        # =====================================================================
+        # Wall filter check (now properly handles all directions)
+        # =====================================================================
+        if not wall_filter_passed and use_gex_walls:
+            if direction == "BULLISH":
+                if dist_to_put_wall <= wall_filter_pct:
+                    wall_filter_passed = True
+                    reasoning_parts.append(f"Wall filter PASSED: {dist_to_put_wall:.2f}% from put wall (threshold: {wall_filter_pct}%)")
+                else:
+                    reasoning_parts.append(f"Wall filter: {dist_to_put_wall:.2f}% from put wall (threshold: {wall_filter_pct}%)")
+            elif direction == "BEARISH":
+                if dist_to_call_wall <= wall_filter_pct:
+                    wall_filter_passed = True
+                    reasoning_parts.append(f"Wall filter PASSED: {dist_to_call_wall:.2f}% from call wall (threshold: {wall_filter_pct}%)")
+                else:
+                    reasoning_parts.append(f"Wall filter: {dist_to_call_wall:.2f}% from call wall (threshold: {wall_filter_pct}%)")
+
+        # =====================================================================
+        # Win probability calculation (NO MORE HARDCODED 0.45!)
+        # =====================================================================
         if direction != "FLAT":
-            base_pred['win_probability'] = max(0.40, min(0.85, direction_confidence))
+            # Base probability from direction confidence
+            base_pred['win_probability'] = max(0.50, min(0.85, direction_confidence))
+
+            # Boost if wall filter passed
             if wall_filter_passed:
                 base_pred['win_probability'] = min(0.90, base_pred['win_probability'] + 0.10)
+
+            # Boost for strong trends
+            if trend_strength > 0.6:
+                base_pred['win_probability'] = min(0.90, base_pred['win_probability'] + 0.05)
         else:
-            base_pred['win_probability'] = 0.45  # No directional bias
+            # FLAT direction - still give reasonable probability, not 0.45!
+            base_pred['win_probability'] = 0.50  # Neutral, not negative expectancy
 
         # VIX impact
         if context.vix > 25:
@@ -2644,7 +2868,18 @@ class OracleAdvisor:
             reasoning=" | ".join(reasoning_parts) + f" | Direction: {direction}",
             model_version=self.model_version,
             probabilities=base_pred.get('probabilities', {}),
-            claude_analysis=claude_analysis
+            claude_analysis=claude_analysis,
+            # New NEUTRAL regime fields
+            neutral_derived_direction=neutral_derived_direction,
+            neutral_confidence=neutral_confidence,
+            neutral_reasoning=neutral_reasoning,
+            ic_suitability=ic_suitability,
+            bullish_suitability=bullish_suitability,
+            bearish_suitability=bearish_suitability,
+            trend_direction=trend_direction_str,
+            trend_strength=trend_strength,
+            position_in_range_pct=position_in_range_pct,
+            wall_filter_passed=wall_filter_passed
         )
 
         # Log prediction result
@@ -2832,15 +3067,74 @@ class OracleAdvisor:
         })
 
         reasoning_parts = []
+        ic_suitability = 0.50  # Start neutral
+        position_in_range_pct = 50.0
+        trend_direction_str = "SIDEWAYS"
+        trend_strength = 0.0
 
-        # SPX-specific GEX analysis (use SPX values from context)
-        # SPX typically has ~10x the notional of SPY
-        gex_context = f"GEX Regime: {context.gex_regime.value}"
+        # Calculate position in wall range
+        wall_range = context.gex_call_wall - context.gex_put_wall
+        if wall_range > 0 and context.spot_price > 0:
+            position_in_range_pct = (context.spot_price - context.gex_put_wall) / wall_range * 100
+
+        # =====================================================================
+        # GEX REGIME HANDLING - NEUTRAL is GOOD for SPX IC
+        # =====================================================================
+        if context.gex_regime == GEXRegime.POSITIVE:
+            reasoning_parts.append("Positive GEX favors pinning (ideal for SPX IC)")
+            base_pred['win_probability'] = min(0.85, base_pred['win_probability'] + 0.03)
+            ic_suitability += 0.20
+
+        elif context.gex_regime == GEXRegime.NEGATIVE:
+            reasoning_parts.append("Negative GEX = trending (risky for SPX IC)")
+            base_pred['win_probability'] = max(0.45, base_pred['win_probability'] - 0.03)
+            ic_suitability -= 0.15
+
+        elif context.gex_regime == GEXRegime.NEUTRAL:
+            # NEUTRAL is good for IC - walls holding, balanced market
+            reasoning_parts.append("NEUTRAL GEX: Balanced market, walls likely to hold (good for SPX IC)")
+            ic_suitability += 0.10
+
+            # Use trend tracker if available
+            if TREND_TRACKER_AVAILABLE and get_trend_tracker is not None:
+                try:
+                    tracker = get_trend_tracker()
+                    tracker.update("SPY", context.spot_price / 10)  # Scale SPX to SPY for GEX
+
+                    trend_analysis = tracker.analyze_trend("SPY")
+                    if trend_analysis:
+                        trend_direction_str = trend_analysis.direction.value
+                        trend_strength = trend_analysis.strength
+
+                        if trend_analysis.direction.value == "SIDEWAYS":
+                            ic_suitability += 0.15
+                            reasoning_parts.append("Sideways trend (IC paradise)")
+                        elif trend_strength > 0.6:
+                            ic_suitability -= 0.10
+                            reasoning_parts.append(f"Strong {trend_direction_str} ({trend_strength:.0%})")
+
+                    # Get full suitability
+                    wall_position = tracker.analyze_wall_position(
+                        "SPY", context.spot_price / 10,
+                        context.gex_call_wall / 10, context.gex_put_wall / 10,
+                        trend_analysis
+                    )
+                    suitability = tracker.calculate_strategy_suitability(
+                        trend_analysis, wall_position, context.vix, "NEUTRAL"
+                    )
+                    ic_suitability = suitability.ic_suitability
+
+                except Exception as e:
+                    logger.warning(f"[PEGASUS] Trend tracker error: {e}")
+
         if context.gex_between_walls:
-            gex_context += " - Price between walls (pinning expected)"
             reasoning_parts.append("SPX between GEX walls - favorable for Iron Condor")
+            ic_suitability += 0.10
         else:
             reasoning_parts.append(f"SPX GEX regime: {context.gex_regime.value}")
+            ic_suitability -= 0.05
+
+        ic_suitability = max(0.0, min(1.0, ic_suitability))
 
         # Weekly expiration considerations
         if context.days_to_opex <= 2:
@@ -2925,7 +3219,12 @@ class OracleAdvisor:
             model_version=self.model_version,
             suggested_put_strike=suggested_put,
             suggested_call_strike=suggested_call,
-            claude_analysis=claude_analysis,  # Include Claude analysis for transparency
+            claude_analysis=claude_analysis,
+            # New NEUTRAL regime fields for IC
+            ic_suitability=ic_suitability,
+            trend_direction=trend_direction_str,
+            trend_strength=trend_strength,
+            position_in_range_pct=position_in_range_pct
         )
 
         # Log prediction result
@@ -3090,6 +3389,72 @@ class OracleAdvisor:
             return TradingAdvice.TRADE_REDUCED, risk
         else:
             return TradingAdvice.SKIP_TODAY, 0.0
+
+    def _get_neutral_direction_fallback(
+        self,
+        spot_price: float,
+        call_wall: float,
+        put_wall: float,
+        position_in_range_pct: float,
+        wall_filter_pct: float
+    ) -> Tuple[str, float, str]:
+        """
+        Fallback direction determination for NEUTRAL regime when trend tracker unavailable.
+
+        Uses wall proximity to determine direction instead of defaulting to FLAT.
+
+        Args:
+            spot_price: Current spot price
+            call_wall: Call wall level
+            put_wall: Put wall level
+            position_in_range_pct: Where price sits in range (0-100)
+            wall_filter_pct: Wall filter threshold
+
+        Returns:
+            Tuple of (direction, confidence, reasoning)
+        """
+        # Calculate distances
+        dist_to_call = 0
+        dist_to_put = 0
+
+        if call_wall > 0 and spot_price > 0:
+            dist_to_call = (call_wall - spot_price) / spot_price * 100
+        if put_wall > 0 and spot_price > 0:
+            dist_to_put = (spot_price - put_wall) / spot_price * 100
+
+        # Determine direction based on wall proximity
+        if position_in_range_pct < 35:
+            # Lower third = near put wall = expect bounce = BULLISH
+            direction = "BULLISH"
+            confidence = 0.60
+            reasoning = f"Near put wall support ({position_in_range_pct:.0f}% of range)"
+        elif position_in_range_pct > 65:
+            # Upper third = near call wall = expect pullback = BEARISH
+            direction = "BEARISH"
+            confidence = 0.60
+            reasoning = f"Near call wall resistance ({position_in_range_pct:.0f}% of range)"
+        else:
+            # Middle of range - use nearest wall
+            if dist_to_put < dist_to_call:
+                direction = "BULLISH"
+                confidence = 0.55
+                reasoning = f"Mid-range, closer to put wall ({dist_to_put:.1f}%)"
+            else:
+                direction = "BEARISH"
+                confidence = 0.55
+                reasoning = f"Mid-range, closer to call wall ({dist_to_call:.1f}%)"
+
+        # Adjust confidence if within wall filter threshold
+        if direction == "BULLISH" and dist_to_put <= wall_filter_pct:
+            confidence = min(0.75, confidence + 0.10)
+            reasoning += f" | Within {wall_filter_pct}% of support"
+        elif direction == "BEARISH" and dist_to_call <= wall_filter_pct:
+            confidence = min(0.75, confidence + 0.10)
+            reasoning += f" | Within {wall_filter_pct}% of resistance"
+
+        logger.info(f"[NEUTRAL Fallback] {direction} ({confidence:.0%}): {reasoning}")
+
+        return direction, confidence, reasoning
 
     # =========================================================================
     # CLAUDE AI METHODS
