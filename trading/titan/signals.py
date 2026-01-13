@@ -981,12 +981,12 @@ class SignalGenerator:
             elif regime_action == 'STAY_FLAT':
                 confidence = min(0.90, confidence + 0.02)
 
-        # Ensemble Strategy - Multi-signal confirmation
+        # Ensemble Strategy - Position sizing info only (Oracle decides trades)
+        # ORACLE IS THE GOD OF ALL TRADE DECISIONS - Ensemble cannot block
         ensemble_result = self.get_ensemble_boost(market, ml_prediction, oracle)
         if ensemble_result:
-            if not ensemble_result.get('should_trade', True):
-                logger.info(f"[TITAN ENSEMBLE BLOCKED] {ensemble_result.get('reasoning', 'No reason')}")
-                return None
+            should_trade = ensemble_result.get('should_trade', True)
+            logger.info(f"[TITAN ENSEMBLE] Info: should_trade={should_trade} (NOT blocking, Oracle decides)")
 
         return IronCondorSignal(
             spot_price=market['spot_price'],

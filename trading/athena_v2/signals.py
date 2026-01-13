@@ -920,12 +920,12 @@ class SignalGenerator:
                 confidence = max(0.45, confidence - penalty)
                 logger.info(f"  Regime suggests rangebound (-{penalty:.1%} confidence)")
 
-        # Ensemble Strategy - Multi-signal confirmation
+        # Ensemble Strategy - Position sizing info only (Oracle decides trades)
+        # ORACLE IS THE GOD OF ALL TRADE DECISIONS - Ensemble cannot block
         ensemble_result = self.get_ensemble_boost(gex_data, direction, oracle)
         if ensemble_result:
-            if not ensemble_result.get('should_trade', True):
-                logger.info(f"[ATHENA ENSEMBLE BLOCKED] {ensemble_result.get('reasoning', 'No reason')}")
-                return None
+            should_trade = ensemble_result.get('should_trade', True)
+            logger.info(f"[ATHENA ENSEMBLE] Info: should_trade={should_trade} (NOT blocking, Oracle decides)")
 
         # Oracle adjustments (when not overriding)
         if oracle and direction_source != "ORACLE_OVERRIDE":

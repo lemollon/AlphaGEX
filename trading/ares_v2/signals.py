@@ -1146,16 +1146,17 @@ class SignalGenerator:
                 logger.info(f"  STAY_FLAT regime = neutral for IC, confidence: {confidence:.1%}")
 
         # ============================================================
-        # Step 3.5: ENSEMBLE STRATEGY - Multi-signal confirmation
-        # Combines GEX, ML, and learned regime weights for position sizing
+        # Step 3.5: ENSEMBLE STRATEGY - Position sizing info only
+        # ORACLE IS THE GOD OF ALL TRADE DECISIONS - Ensemble cannot block
+        # Combines GEX, ML, and learned regime weights for position sizing only
         # ============================================================
         ensemble_result = self.get_ensemble_boost(market_data, ml_prediction, oracle)
         if ensemble_result:
-            if not ensemble_result.get('should_trade', True):
-                logger.info(f"[ARES ENSEMBLE BLOCKED] Ensemble says don't trade: {ensemble_result.get('reasoning', 'No reason')}")
-                return None
-
+            # NOTE: Ensemble does NOT block trades - Oracle has already approved
+            # Log ensemble for informational purposes only
             ensemble_boost = ensemble_result.get('boost', 1.0)
+            should_trade = ensemble_result.get('should_trade', True)
+            logger.info(f"[ARES ENSEMBLE] Info: should_trade={should_trade}, boost={ensemble_boost:.0%} (NOT blocking, Oracle decides)")
             if ensemble_boost != 1.0:
                 logger.info(f"[ARES ENSEMBLE] Position size multiplier: {ensemble_boost:.0%}")
 

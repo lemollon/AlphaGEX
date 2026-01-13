@@ -109,18 +109,15 @@ class TradeExecutorMixin:
             )
             return None
 
-        # BACKTEST VALIDATION: Check historical performance before trading
+        # BACKTEST VALIDATION: Historical performance check (INFORMATIONAL ONLY)
+        # ORACLE IS THE GOD OF ALL TRADE DECISIONS - backtest validation cannot block
         strategy_name = trade.get('strategy', '')
         backtest_validation = self.get_backtest_validation_for_pattern(strategy_name)
 
         if not backtest_validation['should_trade']:
-            self.log_action(
-                'SKIP',
-                f"Pattern '{strategy_name}' blocked by backtest validation: {backtest_validation['reason']}",
-                success=True
-            )
-            logger.info(f"Trade blocked by backtest validation: {strategy_name} - {backtest_validation['reason']}")
-            return None
+            # Log warning but DO NOT block - Oracle has approved this trade
+            logger.warning(f"Backtest validation warning for '{strategy_name}': {backtest_validation['reason']} - PROCEEDING (Oracle approved)")
+            # Removed return None - Oracle decision takes precedence
 
         # Check for duplicate trades
         now = datetime.now(CENTRAL_TZ)
