@@ -764,18 +764,6 @@ class AutonomousTraderScheduler:
 
         logger.info("Market is OPEN. Running ATLAS wheel strategy...")
 
-        # Check Solomon kill switch before trading
-        if SOLOMON_AVAILABLE:
-            try:
-                solomon = get_solomon()
-                if solomon.is_bot_killed('ATLAS'):
-                    logger.warning("ATLAS: Kill switch is ACTIVE - skipping trade")
-                    self._save_heartbeat('ATLAS', 'KILLED', {'reason': 'Solomon kill switch active'})
-                    logger.info(f"=" * 80)
-                    return
-            except Exception as e:
-                logger.debug(f"ATLAS: Could not check Solomon kill switch: {e}")
-
         try:
             self.last_atlas_check = now
             traded = False
@@ -900,25 +888,6 @@ class AutonomousTraderScheduler:
             else:
                 logger.warning(f"⚠️ ARES scan NOT logged: SCAN_ACTIVITY_LOGGER_AVAILABLE={SCAN_ACTIVITY_LOGGER_AVAILABLE}")
             return
-
-        # Check Solomon kill switch before trading
-        if SOLOMON_AVAILABLE:
-            try:
-                solomon = get_solomon()
-                if solomon.is_bot_killed('ARES'):
-                    logger.warning("ARES: Kill switch is ACTIVE - skipping")
-                    self._save_heartbeat('ARES', 'KILLED', {'reason': 'Solomon kill switch'})
-                    # Log to scan_activity for visibility
-                    if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_ares_scan:
-                        log_ares_scan(
-                            outcome=ScanOutcome.SKIP,
-                            decision_summary="Kill switch is active (Solomon)",
-                            generate_ai_explanation=False
-                        )
-                    logger.info(f"=" * 80)
-                    return
-            except Exception as e:
-                logger.debug(f"ARES: Could not check Solomon: {e}")
 
         try:
             # Run the V2 cycle
@@ -1233,25 +1202,6 @@ class AutonomousTraderScheduler:
                 )
             return
 
-        # Check Solomon kill switch before trading
-        if SOLOMON_AVAILABLE:
-            try:
-                solomon = get_solomon()
-                if solomon.is_bot_killed('ATHENA'):
-                    logger.warning("ATHENA: Kill switch is ACTIVE - skipping")
-                    self._save_heartbeat('ATHENA', 'KILLED', {'reason': 'Solomon kill switch'})
-                    # Log to scan_activity for visibility
-                    if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_athena_scan:
-                        log_athena_scan(
-                            outcome=ScanOutcome.SKIP,
-                            decision_summary="Kill switch is active (Solomon)",
-                            generate_ai_explanation=False
-                        )
-                    logger.info(f"=" * 80)
-                    return
-            except Exception as e:
-                logger.debug(f"ATHENA: Could not check Solomon: {e}")
-
         try:
             # Run the V2 cycle
             result = self.athena_trader.run_cycle()
@@ -1360,25 +1310,6 @@ class AutonomousTraderScheduler:
                     generate_ai_explanation=False
                 )
             return
-
-        # Check Solomon kill switch before trading
-        if SOLOMON_AVAILABLE:
-            try:
-                solomon = get_solomon()
-                if solomon.is_bot_killed('PEGASUS'):
-                    logger.warning("PEGASUS: Kill switch is ACTIVE - skipping")
-                    self._save_heartbeat('PEGASUS', 'KILLED', {'reason': 'Solomon kill switch'})
-                    # Log to scan_activity for visibility
-                    if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_pegasus_scan:
-                        log_pegasus_scan(
-                            outcome=ScanOutcome.SKIP,
-                            decision_summary="Kill switch is active (Solomon)",
-                            generate_ai_explanation=False
-                        )
-                    logger.info(f"=" * 80)
-                    return
-            except Exception as e:
-                logger.debug(f"PEGASUS: Could not check Solomon: {e}")
 
         try:
             # Run the cycle
@@ -1526,24 +1457,6 @@ class AutonomousTraderScheduler:
                     generate_ai_explanation=False
                 )
             return
-
-        # Check Solomon kill switch
-        if SOLOMON_AVAILABLE:
-            try:
-                solomon = get_solomon()
-                if solomon.is_bot_killed('ICARUS'):
-                    logger.warning("ICARUS: Kill switch is ACTIVE - skipping")
-                    self._save_heartbeat('ICARUS', 'KILLED', {'reason': 'Solomon kill switch'})
-                    # Log to scan_activity for visibility
-                    if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_icarus_scan:
-                        log_icarus_scan(
-                            outcome=ScanOutcome.SKIP,
-                            decision_summary="Kill switch is active (Solomon)",
-                            generate_ai_explanation=False
-                        )
-                    return
-            except Exception as e:
-                logger.debug(f"ICARUS: Could not check Solomon: {e}")
 
         try:
             # Run the cycle
@@ -1703,24 +1616,6 @@ class AutonomousTraderScheduler:
                     generate_ai_explanation=False
                 )
             return
-
-        # Check Solomon kill switch
-        if SOLOMON_AVAILABLE:
-            try:
-                solomon = get_solomon()
-                if solomon.is_bot_killed('TITAN'):
-                    logger.warning("TITAN: Kill switch is ACTIVE - skipping")
-                    self._save_heartbeat('TITAN', 'KILLED', {'reason': 'Solomon kill switch'})
-                    # Log to scan_activity for visibility
-                    if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_titan_scan:
-                        log_titan_scan(
-                            outcome=ScanOutcome.SKIP,
-                            decision_summary="Kill switch is active (Solomon)",
-                            generate_ai_explanation=False
-                        )
-                    return
-            except Exception as e:
-                logger.debug(f"TITAN: Could not check Solomon: {e}")
 
         try:
             # Run the cycle
