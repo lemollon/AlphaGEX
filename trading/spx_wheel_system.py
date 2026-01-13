@@ -1083,36 +1083,7 @@ class SPXWheelTrader(MathOptimizerMixin):
                 )
                 return False, reason
 
-        # Check VIX levels
-        if vix < self.params.min_vix:
-            reason = f"VIX ({vix:.1f}) below minimum ({self.params.min_vix})"
-            print(f"  {reason}")
-            self._log_decision(
-                decision_type="NO_TRADE",
-                action="SKIP",
-                what=f"NO TRADE for SPX - VIX too low",
-                why=f"VIX at {vix:.1f} is below minimum threshold of {self.params.min_vix}. Low VIX = low premium = bad risk/reward for CSP sellers.",
-                how=f"Checked VIX level against calibrated range {self.params.min_vix}-{self.params.max_vix}. Trade skipped.",
-                spot_price=spot,
-                vix=vix
-            )
-            return False, reason
-
-        if vix > self.params.max_vix:
-            reason = f"VIX ({vix:.1f}) above maximum ({self.params.max_vix})"
-            print(f"  {reason}")
-            self._log_decision(
-                decision_type="NO_TRADE",
-                action="SKIP",
-                what=f"NO TRADE for SPX - VIX too high",
-                why=f"VIX at {vix:.1f} exceeds maximum threshold of {self.params.max_vix}. High VIX = excessive assignment risk.",
-                how=f"Checked VIX level against calibrated range {self.params.min_vix}-{self.params.max_vix}. Trade skipped.",
-                spot_price=spot,
-                vix=vix
-            )
-            return False, reason
-
-        # Check if market is open
+        # Check if market is open FIRST (before Oracle)
         now = datetime.now(CENTRAL_TZ)
         if now.weekday() > 4:  # Weekend
             reason = "Weekend - market closed"
@@ -1120,7 +1091,6 @@ class SPXWheelTrader(MathOptimizerMixin):
             return False, reason
 
         # Market hours check in CENTRAL TIME (8:30 AM - 3:00 PM CT)
-        # Note: Market opens 8:30 AM CT (9:30 AM ET), closes 3:00 PM CT (4:00 PM ET)
         if now.hour < 8 or now.hour >= 15:
             reason = f"Outside market hours (CT): {now.strftime('%H:%M')} not in 08:30-15:00"
             print(f"  {reason}")
@@ -1131,14 +1101,23 @@ class SPXWheelTrader(MathOptimizerMixin):
             return False, reason
 
         # =========================================================================
-        # CONSULT ORACLE AI FOR TRADING ADVICE
+        # CONSULT ORACLE AI FIRST (SUPERSEDES VIX FILTER)
+        #
+        # CRITICAL: Oracle already accounts for VIX in its predictions.
+        # If Oracle provides a good win probability, we TRADE regardless of VIX.
         # =========================================================================
         oracle_advice = self.consult_oracle(spot, vix)
+        min_win_prob = 0.55  # ATLAS minimum win probability
 
-        if oracle_advice:
-            # Honor Oracle's SKIP advice
+        if oracle_advice and oracle_advice.win_probability >= min_win_prob:
+            # Oracle says trade - bypass VIX filter
+            vix_ok = self.params.min_vix <= vix <= self.params.max_vix
+            if not vix_ok:
+                print(f"  ATLAS: Oracle SUPERSEDES VIX filter - Oracle predicts {oracle_advice.win_probability:.1%} win prob")
+                print(f"         VIX {vix:.1f} outside {self.params.min_vix}-{self.params.max_vix} but Oracle says TRADE")
+
             if ORACLE_AVAILABLE and TradingAdvice and oracle_advice.advice == TradingAdvice.SKIP:
-                reason = f"Oracle advises SKIP: {oracle_advice.reasoning}"
+                reason = f"Oracle advises SKIP despite {oracle_advice.win_probability:.1%} win prob: {oracle_advice.reasoning}"
                 print(f"  {reason}")
                 self._log_decision(
                     decision_type="NO_TRADE",
@@ -1155,8 +1134,42 @@ class SPXWheelTrader(MathOptimizerMixin):
             self._last_oracle_advice = oracle_advice
             print(f"  Oracle: {oracle_advice.advice.value} (Win Prob: {oracle_advice.win_probability:.1%})")
         else:
-            self._last_oracle_advice = None
-            print("  Oracle: Not available, using default parameters")
+            # Oracle not available or win probability too low - apply VIX filter
+            oracle_win_prob = oracle_advice.win_probability if oracle_advice else 0
+            print(f"  Oracle: {oracle_win_prob:.1%} win prob (threshold: {min_win_prob:.1%})")
+
+            # Check VIX levels only when Oracle doesn't give strong signal
+            if vix < self.params.min_vix:
+                reason = f"VIX ({vix:.1f}) below min ({self.params.min_vix}), Oracle also insufficient ({oracle_win_prob:.1%})"
+                print(f"  {reason}")
+                self._log_decision(
+                    decision_type="NO_TRADE",
+                    action="SKIP",
+                    what=f"NO TRADE for SPX - VIX low and Oracle insufficient",
+                    why=f"VIX at {vix:.1f} below {self.params.min_vix}. Oracle win prob {oracle_win_prob:.1%} below {min_win_prob:.1%}.",
+                    how=f"Both VIX filter and Oracle failed to pass thresholds.",
+                    spot_price=spot,
+                    vix=vix
+                )
+                return False, reason
+
+            if vix > self.params.max_vix:
+                reason = f"VIX ({vix:.1f}) above max ({self.params.max_vix}), Oracle also insufficient ({oracle_win_prob:.1%})"
+                print(f"  {reason}")
+                self._log_decision(
+                    decision_type="NO_TRADE",
+                    action="SKIP",
+                    what=f"NO TRADE for SPX - VIX high and Oracle insufficient",
+                    why=f"VIX at {vix:.1f} exceeds {self.params.max_vix}. Oracle win prob {oracle_win_prob:.1%} below {min_win_prob:.1%}.",
+                    how=f"Both VIX filter and Oracle failed to pass thresholds.",
+                    spot_price=spot,
+                    vix=vix
+                )
+                return False, reason
+
+            self._last_oracle_advice = oracle_advice
+            if oracle_advice:
+                print(f"  Oracle: {oracle_advice.advice.value} (Win Prob: {oracle_win_prob:.1%})")
 
         return True, "Market conditions favorable"
 

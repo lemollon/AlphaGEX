@@ -774,15 +774,13 @@ class SignalGenerator:
         if not market:
             return None
 
-        can_trade, reason = self.check_vix_filter(market['vix'])
-        if not can_trade:
-            logger.info(f"VIX filter: {reason}")
-            return None
+        vix = market['vix']
 
         # ============================================================
-        # ML MODEL TAKES PRECEDENCE OVER ORACLE
-        # ARES ML Advisor trained on KRONOS backtests (~70% win rate)
-        # Oracle is only used as backup when ML is not available
+        # ML/ORACLE PREDICTIONS FIRST (SUPERSEDES VIX FILTER)
+        #
+        # CRITICAL: Oracle and ML already account for VIX in their predictions.
+        # TITAN is aggressive - if ML/Oracle provides good win prob, we TRADE.
         # ============================================================
 
         # Get ML prediction first (PRIMARY SOURCE)
@@ -801,27 +799,46 @@ class SignalGenerator:
         confidence = ml_confidence if use_ml_prediction else oracle_confidence
         prediction_source = "ARES_ML_ADVISOR" if use_ml_prediction else "ORACLE"
 
-        # CRITICAL FALLBACK: TITAN is aggressive SPX IC bot - use lower threshold
-        if effective_win_prob <= 0:
-            gex_regime = market_data.get('gex_regime', 'NEUTRAL')
-            baseline = 0.55  # TITAN is aggressive
+        # Check if ML/Oracle gives us a tradeable signal (TITAN uses aggressive threshold)
+        min_win_prob = self.config.min_win_probability
+        ml_oracle_says_trade = effective_win_prob >= min_win_prob
 
-            if vix < 15:
-                baseline += 0.05
-            elif vix > 30:
-                baseline -= 0.08
-            elif vix > 25:
-                baseline -= 0.04
+        # Log ML/Oracle decision
+        if ml_oracle_says_trade:
+            logger.info(f"[TITAN] ML/Oracle SUPERSEDES VIX filter: {prediction_source} = {effective_win_prob:.0%} (>={min_win_prob:.0%})")
+            # Check what VIX would have done (for logging only)
+            can_trade, vix_reason = self.check_vix_filter(vix)
+            if not can_trade:
+                logger.info(f"[TITAN] VIX would have blocked ({vix_reason}) but ML/Oracle supersedes")
+        else:
+            logger.info(f"[TITAN] ML/Oracle: {effective_win_prob:.0%} (threshold: {min_win_prob:.0%})")
+            # Only apply VIX filter if ML/Oracle doesn't give tradeable signal
+            can_trade, vix_reason = self.check_vix_filter(vix)
+            if not can_trade:
+                logger.info(f"[TITAN SKIP] VIX filter: {vix_reason}, ML/Oracle also insufficient")
+                return None
 
-            if gex_regime == 'POSITIVE':
-                baseline += 0.05
-            elif gex_regime == 'NEGATIVE':
-                baseline -= 0.03
+            # FALLBACK: TITAN is aggressive SPX IC bot - use lower threshold
+            if effective_win_prob <= 0:
+                gex_regime = market.get('gex_regime', 'NEUTRAL')
+                baseline = 0.55  # TITAN is aggressive
 
-            effective_win_prob = max(0.48, min(0.70, baseline))
-            confidence = 0.55
-            prediction_source = "MARKET_CONDITIONS_FALLBACK"
-            logger.info(f"[TITAN FALLBACK] No ML/Oracle prediction - using market baseline: {effective_win_prob:.1%}")
+                if vix < 15:
+                    baseline += 0.05
+                elif vix > 30:
+                    baseline -= 0.08
+                elif vix > 25:
+                    baseline -= 0.04
+
+                if gex_regime == 'POSITIVE':
+                    baseline += 0.05
+                elif gex_regime == 'NEGATIVE':
+                    baseline -= 0.03
+
+                effective_win_prob = max(0.48, min(0.70, baseline))
+                confidence = 0.55
+                prediction_source = "MARKET_CONDITIONS_FALLBACK"
+                logger.info(f"[TITAN FALLBACK] Using market baseline: {effective_win_prob:.1%}")
 
         # Log ML analysis FIRST (PRIMARY source)
         if ml_prediction:

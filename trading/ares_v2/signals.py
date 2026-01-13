@@ -962,39 +962,20 @@ class SignalGenerator:
                 vix = market_data['vix']
                 expected_move = market_data['expected_move']
 
-        # Step 2: Check VIX filter
-        can_trade, vix_reason = self.check_vix_filter(vix)
-        if not can_trade:
-            logger.info(f"VIX filter blocked: {vix_reason}")
-            # Return blocked signal WITH Oracle prediction for visibility
-            oracle = self.get_oracle_advice(market_data)
-            oracle_win_prob = oracle.get('win_probability', 0) if oracle else 0
-            return IronCondorSignal(
-                spot_price=spot,
-                vix=vix,
-                expected_move=expected_move,
-                call_wall=market_data.get('call_wall', 0),
-                put_wall=market_data.get('put_wall', 0),
-                gex_regime=market_data.get('gex_regime', 'UNKNOWN'),
-                confidence=0,
-                reasoning=f"VIX_BLOCKED: {vix_reason} (Oracle would have predicted {oracle_win_prob:.0%} win prob)",
-                source="BLOCKED_VIX",
-                oracle_win_probability=oracle_win_prob,
-                oracle_advice=oracle.get('advice', '') if oracle else '',
-            )
-
         # ============================================================
-        # Step 3: ML MODEL TAKES PRECEDENCE OVER ORACLE
-        # ARES ML Advisor trained on KRONOS backtests (~70% win rate)
-        # Oracle is only used as backup when ML is not available
+        # Step 2: GET ML/ORACLE PREDICTIONS FIRST (SUPERSEDES OTHER FILTERS)
+        #
+        # CRITICAL: Oracle and ML predictions take precedence over VIX, wall,
+        # and other traditional filters. If ML/Oracle provides a good prediction
+        # (above min_win_probability threshold), we TRADE regardless of VIX.
         # ============================================================
 
-        # Step 3a: Try ML prediction first (PRIMARY SOURCE)
+        # Step 2a: Try ML prediction first (PRIMARY SOURCE)
         ml_prediction = self.get_ml_prediction(market_data)
         ml_win_prob = ml_prediction.get('win_probability', 0) if ml_prediction else 0
         ml_confidence = ml_prediction.get('confidence', 0) if ml_prediction else 0
 
-        # Step 3b: Get Oracle advice (BACKUP SOURCE)
+        # Step 2b: Get Oracle advice (BACKUP SOURCE)
         oracle = self.get_oracle_advice(market_data)
         oracle_win_prob = oracle.get('win_probability', 0) if oracle else 0
         oracle_confidence = oracle.get('confidence', 0.7) if oracle else 0.7
@@ -1005,33 +986,65 @@ class SignalGenerator:
         confidence = ml_confidence if use_ml_prediction else oracle_confidence
         prediction_source = "ARES_ML_ADVISOR" if use_ml_prediction else "ORACLE"
 
-        # CRITICAL FALLBACK: If neither ML nor Oracle provides a win probability,
-        # use a market-conditions-based baseline. Iron Condors historically win ~70%
-        # in normal VIX conditions (15-25). This prevents blocking ALL trades when
-        # prediction models aren't available.
-        if effective_win_prob <= 0:
-            # Calculate baseline win prob from market conditions
-            gex_regime = market_data.get('gex_regime', 'NEUTRAL')
-            baseline = 0.65  # Historical IC win rate baseline
+        # Check if ML/Oracle gives us a tradeable signal
+        min_win_prob = self.config.min_win_probability
+        ml_oracle_says_trade = effective_win_prob >= min_win_prob
 
-            # VIX adjustments
-            if vix < 15:
-                baseline += 0.05  # Low VIX = stable market
-            elif vix > 30:
-                baseline -= 0.10  # High VIX = more risk
-            elif vix > 25:
-                baseline -= 0.05
+        # Log ML/Oracle decision
+        if ml_oracle_says_trade:
+            logger.info(f"[ARES] ML/Oracle SUPERSEDES other filters: {prediction_source} predicts {effective_win_prob:.0%} win prob (>={min_win_prob:.0%} threshold)")
+        else:
+            logger.info(f"[ARES] ML/Oracle win prob {effective_win_prob:.0%} below threshold {min_win_prob:.0%}")
 
-            # GEX regime adjustments
-            if gex_regime == 'POSITIVE':
-                baseline += 0.05  # Positive gamma = dealer hedging supports range
-            elif gex_regime == 'NEGATIVE':
-                baseline -= 0.05  # Negative gamma = more volatile
+        # Step 3: ONLY check VIX filter if ML/Oracle doesn't give a tradeable signal
+        # ML/Oracle predictions SUPERSEDE VIX and other traditional filters
+        if not ml_oracle_says_trade:
+            can_trade, vix_reason = self.check_vix_filter(vix)
+            if not can_trade:
+                logger.info(f"VIX filter blocked (ML/Oracle also didn't help): {vix_reason}")
+                return IronCondorSignal(
+                    spot_price=spot,
+                    vix=vix,
+                    expected_move=expected_move,
+                    call_wall=market_data.get('call_wall', 0),
+                    put_wall=market_data.get('put_wall', 0),
+                    gex_regime=market_data.get('gex_regime', 'UNKNOWN'),
+                    confidence=0,
+                    reasoning=f"BLOCKED: VIX={vix_reason}, ML/Oracle={effective_win_prob:.0%} (both insufficient)",
+                    source="BLOCKED_NO_SIGNAL",
+                    oracle_win_probability=oracle_win_prob,
+                    oracle_advice=oracle.get('advice', '') if oracle else '',
+                )
 
-            effective_win_prob = max(0.50, min(0.80, baseline))
-            confidence = 0.60  # Moderate confidence for fallback
-            prediction_source = "MARKET_CONDITIONS_FALLBACK"
-            logger.info(f"[ARES FALLBACK] No ML/Oracle prediction - using market conditions baseline: {effective_win_prob:.1%}")
+            # FALLBACK: If neither ML nor Oracle provides a win probability,
+            # use a market-conditions-based baseline.
+            if effective_win_prob <= 0:
+                gex_regime = market_data.get('gex_regime', 'NEUTRAL')
+                baseline = 0.65  # Historical IC win rate baseline
+
+                # VIX adjustments
+                if vix < 15:
+                    baseline += 0.05
+                elif vix > 30:
+                    baseline -= 0.10
+                elif vix > 25:
+                    baseline -= 0.05
+
+                # GEX regime adjustments
+                if gex_regime == 'POSITIVE':
+                    baseline += 0.05
+                elif gex_regime == 'NEGATIVE':
+                    baseline -= 0.05
+
+                effective_win_prob = max(0.50, min(0.80, baseline))
+                confidence = 0.60
+                prediction_source = "MARKET_CONDITIONS_FALLBACK"
+                logger.info(f"[ARES FALLBACK] No ML/Oracle prediction - using market conditions baseline: {effective_win_prob:.1%}")
+        else:
+            # ML/Oracle says trade - log that we're bypassing VIX filter
+            can_trade, vix_reason = self.check_vix_filter(vix)
+            if not can_trade:
+                logger.info(f"[ARES] VIX would have blocked ({vix_reason}) but ML/Oracle SUPERSEDES with {effective_win_prob:.0%} win prob")
 
         # Log ML analysis FIRST (PRIMARY source)
         if ml_prediction:

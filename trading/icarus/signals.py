@@ -680,80 +680,147 @@ class SignalGenerator:
         spot_price = gex_data['spot_price']
         vix = gex_data['vix']
 
-        # VIX filter - aggressive range (12-30 vs ATHENA's 15-25)
-        if vix < self.config.min_vix:
-            logger.info(f"[ICARUS SKIP] VIX {vix:.1f} below minimum {self.config.min_vix} (no premium)")
-            return None
-        if vix > self.config.max_vix:
-            logger.info(f"[ICARUS SKIP] VIX {vix:.1f} above maximum {self.config.max_vix} (too volatile)")
-            return None
-        logger.info(f"[ICARUS] VIX {vix:.1f} in range [{self.config.min_vix}-{self.config.max_vix}] ✓")
+        # ============================================================
+        # STEP 2: GET ML/ORACLE PREDICTIONS FIRST (SUPERSEDES OTHER FILTERS)
+        #
+        # ICARUS is AGGRESSIVE: Oracle and ML predictions SUPERSEDE VIX, wall,
+        # and GEX filters. If ML/Oracle provides a good prediction, we TRADE.
+        # ============================================================
 
-        # Wall proximity check - BLOCKING (aggressive 2% threshold)
-        near_wall, wall_direction, wall_reason = self.check_wall_proximity(gex_data)
-        if not near_wall:
-            logger.info(f"[ICARUS SKIP] {wall_reason} - not near GEX wall")
-            return None
-        logger.info(f"[ICARUS] Wall proximity: {wall_reason} ✓")
-
-        # GEX Ratio Asymmetry Check (aggressive thresholds: 1.3/0.77)
-        total_put_gex = gex_data.get('put_gex', gex_data.get('kronos_raw', {}).get('total_put_gex', 0))
-        total_call_gex = gex_data.get('call_gex', gex_data.get('kronos_raw', {}).get('total_call_gex', 0))
-        gex_ratio = total_put_gex / total_call_gex if total_call_gex > 0 else 10.0
-
-        # Check if GEX ratio shows directional asymmetry (more relaxed than ATHENA)
-        has_gex_asymmetry = (gex_ratio >= self.config.min_gex_ratio_bearish or
-                             gex_ratio <= self.config.max_gex_ratio_bullish)
-        if not has_gex_asymmetry:
-            logger.info(f"[ICARUS SKIP] GEX ratio {gex_ratio:.2f} not asymmetric enough "
-                       f"(need >{self.config.min_gex_ratio_bearish} bearish or <{self.config.max_gex_ratio_bullish} bullish)")
-            return None
-        gex_bias = "BEARISH" if gex_ratio >= self.config.min_gex_ratio_bearish else "BULLISH"
-        logger.info(f"[ICARUS] GEX ratio {gex_ratio:.2f} shows {gex_bias} asymmetry ✓")
-
-        # Step 3: Get ML signal from 5 GEX probability models (PREFERRED SOURCE)
-        # ICARUS is AGGRESSIVE - ML models backtested with high win rates take precedence
+        # Step 2a: Get ML signal from 5 GEX probability models (PRIMARY SOURCE)
         ml_signal = self.get_ml_signal(gex_data)
         ml_direction = ml_signal.get('direction') if ml_signal else None
         ml_confidence = ml_signal.get('confidence', 0) if ml_signal else 0
         ml_win_prob = ml_signal.get('win_probability', 0) if ml_signal else 0
 
-        # Step 3.5: Get Oracle advice (BACKUP SOURCE - ML takes precedence)
+        # Step 2b: Get Oracle advice (BACKUP SOURCE)
         oracle = self.get_oracle_advice(gex_data)
         oracle_direction = oracle.get('direction', 'FLAT') if oracle else 'FLAT'
         oracle_confidence = oracle.get('confidence', 0) if oracle else 0
         oracle_win_prob = oracle.get('win_probability', 0) if oracle else 0
 
-        # ============================================================
-        # ICARUS: ML MODEL TAKES PRECEDENCE OVER ORACLE
-        # ICARUS is aggressive - trusts ML models with 40% threshold
-        # Oracle's conservative 55% threshold is ignored
-        # ============================================================
-
+        # Determine which source to use
         use_ml_prediction = ml_signal is not None and ml_win_prob > 0
         effective_win_prob = ml_win_prob if use_ml_prediction else oracle_win_prob
+        effective_direction = ml_direction if use_ml_prediction else oracle_direction
         prediction_source = "ML_5_MODEL_ENSEMBLE" if use_ml_prediction else "ORACLE"
 
-        # CRITICAL FALLBACK: If neither ML nor Oracle provides a win probability,
-        # use market-conditions-based baseline. ICARUS is aggressive so lower threshold.
-        if effective_win_prob <= 0:
-            gex_regime = gex_data.get('gex_regime', 'NEUTRAL')
-            baseline = 0.52  # ICARUS is aggressive - lower baseline
+        # Check if ML/Oracle gives us a tradeable signal (aggressive 40% threshold)
+        min_win_prob = self.config.min_win_probability
+        ml_oracle_says_trade = effective_win_prob >= min_win_prob and effective_direction in ('BULLISH', 'BEARISH')
 
-            vix = gex_data.get('vix', 20)
-            if vix < 15:
-                baseline += 0.05
-            elif vix > 30:
-                baseline -= 0.08
-            elif vix > 25:
-                baseline -= 0.04
+        # Log ML/Oracle decision
+        if ml_oracle_says_trade:
+            logger.info(f"[ICARUS] ML/Oracle SUPERSEDES filters: {prediction_source} = {effective_direction} @ {effective_win_prob:.0%} (>={min_win_prob:.0%})")
+        else:
+            logger.info(f"[ICARUS] ML/Oracle: {effective_direction} @ {effective_win_prob:.0%} (threshold: {min_win_prob:.0%})")
 
-            if gex_regime in ('POSITIVE', 'NEGATIVE'):
-                baseline += 0.03  # Either direction works for directional
+        # ============================================================
+        # STEP 3: IF ML/ORACLE SAYS TRADE, BYPASS TRADITIONAL FILTERS
+        # ============================================================
+        if ml_oracle_says_trade:
+            # ML/Oracle supersedes all traditional filters for ICARUS
+            filters_bypassed = []
 
-            effective_win_prob = max(0.48, min(0.65, baseline))
-            prediction_source = "MARKET_CONDITIONS_FALLBACK"
-            logger.info(f"[ICARUS FALLBACK] No ML/Oracle prediction - using market baseline: {effective_win_prob:.1%}")
+            if vix < self.config.min_vix or vix > self.config.max_vix:
+                filters_bypassed.append(f"VIX={vix:.1f}")
+            near_wall, wall_direction, wall_reason = self.check_wall_proximity(gex_data)
+            if not near_wall:
+                filters_bypassed.append(f"Wall={wall_reason}")
+
+            total_put_gex = gex_data.get('put_gex', gex_data.get('kronos_raw', {}).get('total_put_gex', 0))
+            total_call_gex = gex_data.get('call_gex', gex_data.get('kronos_raw', {}).get('total_call_gex', 0))
+            gex_ratio = total_put_gex / total_call_gex if total_call_gex > 0 else 10.0
+            has_gex_asymmetry = (gex_ratio >= self.config.min_gex_ratio_bearish or
+                                 gex_ratio <= self.config.max_gex_ratio_bullish)
+            if not has_gex_asymmetry:
+                filters_bypassed.append(f"GEX_ratio={gex_ratio:.2f}")
+
+            if filters_bypassed:
+                logger.info(f"[ICARUS] ML/Oracle BYPASSES: {', '.join(filters_bypassed)}")
+
+            # Use ML/Oracle direction
+            gex_bias = effective_direction
+            wall_direction = effective_direction
+            logger.info(f"[ICARUS] Using ML/Oracle direction: {gex_bias}")
+
+        else:
+            # ============================================================
+            # NO STRONG ML/ORACLE SIGNAL - USE TRADITIONAL FILTERS
+            # ============================================================
+
+            # VIX filter
+            if vix < self.config.min_vix:
+                logger.info(f"[ICARUS SKIP] VIX {vix:.1f} low, ML/Oracle also insufficient")
+                return TradeSignal(
+                    direction="UNKNOWN", spread_type=SpreadType.CALL_DEBIT, confidence=0,
+                    spot_price=spot_price, call_wall=gex_data.get('call_wall', 0),
+                    put_wall=gex_data.get('put_wall', 0), gex_regime=gex_data.get('gex_regime', 'UNKNOWN'),
+                    vix=vix, source="BLOCKED_NO_SIGNAL",
+                    reasoning=f"BLOCKED: VIX={vix:.1f} low, ML/Oracle={effective_win_prob:.0%}",
+                    ml_win_probability=oracle_win_prob,
+                )
+            if vix > self.config.max_vix:
+                logger.info(f"[ICARUS SKIP] VIX {vix:.1f} high, ML/Oracle also insufficient")
+                return TradeSignal(
+                    direction="UNKNOWN", spread_type=SpreadType.CALL_DEBIT, confidence=0,
+                    spot_price=spot_price, call_wall=gex_data.get('call_wall', 0),
+                    put_wall=gex_data.get('put_wall', 0), gex_regime=gex_data.get('gex_regime', 'UNKNOWN'),
+                    vix=vix, source="BLOCKED_NO_SIGNAL",
+                    reasoning=f"BLOCKED: VIX={vix:.1f} high, ML/Oracle={effective_win_prob:.0%}",
+                    ml_win_probability=oracle_win_prob,
+                )
+            logger.info(f"[ICARUS] VIX {vix:.1f} in range ✓")
+
+            # Wall proximity check
+            near_wall, wall_direction, wall_reason = self.check_wall_proximity(gex_data)
+            if not near_wall:
+                logger.info(f"[ICARUS SKIP] {wall_reason}, ML/Oracle also insufficient")
+                return TradeSignal(
+                    direction=oracle_direction, spread_type=SpreadType.CALL_DEBIT if oracle_direction == "BULLISH" else SpreadType.PUT_DEBIT,
+                    confidence=0, spot_price=spot_price, call_wall=gex_data.get('call_wall', 0),
+                    put_wall=gex_data.get('put_wall', 0), gex_regime=gex_data.get('gex_regime', 'UNKNOWN'),
+                    vix=vix, source="BLOCKED_NO_SIGNAL",
+                    reasoning=f"BLOCKED: Wall far, ML/Oracle={effective_win_prob:.0%}",
+                    ml_win_probability=oracle_win_prob,
+                )
+            logger.info(f"[ICARUS] Wall proximity: {wall_reason} ✓")
+
+            # GEX Ratio Asymmetry Check
+            total_put_gex = gex_data.get('put_gex', gex_data.get('kronos_raw', {}).get('total_put_gex', 0))
+            total_call_gex = gex_data.get('call_gex', gex_data.get('kronos_raw', {}).get('total_call_gex', 0))
+            gex_ratio = total_put_gex / total_call_gex if total_call_gex > 0 else 10.0
+
+            has_gex_asymmetry = (gex_ratio >= self.config.min_gex_ratio_bearish or
+                                 gex_ratio <= self.config.max_gex_ratio_bullish)
+            if not has_gex_asymmetry:
+                logger.info(f"[ICARUS SKIP] GEX ratio {gex_ratio:.2f} not asymmetric, ML/Oracle insufficient")
+                return TradeSignal(
+                    direction=oracle_direction, spread_type=SpreadType.CALL_DEBIT if oracle_direction == "BULLISH" else SpreadType.PUT_DEBIT,
+                    confidence=0, spot_price=spot_price, call_wall=gex_data.get('call_wall', 0),
+                    put_wall=gex_data.get('put_wall', 0), gex_regime=gex_data.get('gex_regime', 'UNKNOWN'),
+                    vix=vix, source="BLOCKED_NO_SIGNAL",
+                    reasoning=f"BLOCKED: GEX not asymmetric, ML/Oracle={effective_win_prob:.0%}",
+                    ml_win_probability=oracle_win_prob,
+                )
+            gex_bias = "BEARISH" if gex_ratio >= self.config.min_gex_ratio_bearish else "BULLISH"
+            logger.info(f"[ICARUS] GEX ratio {gex_ratio:.2f} -> {gex_bias} ✓")
+
+            # FALLBACK
+            if effective_win_prob <= 0:
+                gex_regime = gex_data.get('gex_regime', 'NEUTRAL')
+                baseline = 0.52
+                if vix < 15:
+                    baseline += 0.05
+                elif vix > 30:
+                    baseline -= 0.08
+                elif vix > 25:
+                    baseline -= 0.04
+                if gex_regime in ('POSITIVE', 'NEGATIVE'):
+                    baseline += 0.03
+                effective_win_prob = max(0.48, min(0.65, baseline))
+                prediction_source = "MARKET_CONDITIONS_FALLBACK"
+                logger.info(f"[ICARUS FALLBACK] Using market baseline: {effective_win_prob:.1%}")
 
         # Log ML analysis FIRST (it's the preferred source for ICARUS)
         if ml_signal:
@@ -795,12 +862,8 @@ class SignalGenerator:
                 else:
                     logger.info(f"[ICARUS] Oracle SKIP_TODAY - using aggressive 48% threshold")
 
-        # Win probability threshold check - aggressive 48% (vs ATHENA's 55%)
-        logger.info(f"[ICARUS DECISION] Using {prediction_source} win probability: {effective_win_prob:.1%}")
-        if effective_win_prob < self.config.min_win_probability:
-            logger.info(f"[ICARUS SKIP] Win probability {effective_win_prob:.1%} below minimum {self.config.min_win_probability:.0%}")
-            return None
-        logger.info(f"[ICARUS] Win probability {effective_win_prob:.1%} >= {self.config.min_win_probability:.0%} ✓")
+        # Win probability threshold already checked in Step 2/3 above
+        logger.info(f"[ICARUS] Proceeding with {prediction_source}: {effective_win_prob:.1%} win prob")
 
         # Step 4: Determine final direction
         direction = wall_direction
