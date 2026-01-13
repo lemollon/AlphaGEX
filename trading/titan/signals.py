@@ -15,6 +15,13 @@ from .models import IronCondorSignal, TITANConfig, CENTRAL_TZ
 
 logger = logging.getLogger(__name__)
 
+# Oracle authority configuration
+try:
+    from config import OracleConfig
+    ORACLE_IS_FINAL = OracleConfig.ORACLE_IS_FINAL
+except ImportError:
+    ORACLE_IS_FINAL = True  # Default to Oracle authority
+
 # Optional imports
 try:
     from quant.oracle_advisor import OracleAdvisor
@@ -897,10 +904,12 @@ class SignalGenerator:
             market['vix'],
         )
 
-        # TITAN: Credit check (ORACLE IS GOD - no blocking, info only)
+        # TITAN: Credit check - When ORACLE_IS_FINAL=True, cannot block
         if pricing['total_credit'] < self.config.min_credit:
-            logger.warning(f"Credit ${pricing['total_credit']:.2f} < ${self.config.min_credit} - PROCEEDING (Oracle approved)")
-            # Removed return None - Oracle decision takes precedence
+            if not ORACLE_IS_FINAL:
+                logger.info(f"Credit ${pricing['total_credit']:.2f} < ${self.config.min_credit}")
+                return None
+            logger.warning(f"Credit ${pricing['total_credit']:.2f} < ${self.config.min_credit} (ORACLE_IS_FINAL=True, proceeding)")
 
         # Calculate expiration for SPXW weekly options (next Friday)
         now = datetime.now(CENTRAL_TZ)
@@ -981,12 +990,15 @@ class SignalGenerator:
             elif regime_action == 'STAY_FLAT':
                 confidence = min(0.90, confidence + 0.02)
 
-        # Ensemble Strategy - Position sizing info only (Oracle decides trades)
-        # ORACLE IS THE GOD OF ALL TRADE DECISIONS - Ensemble cannot block
+        # Ensemble Strategy - When ORACLE_IS_FINAL=True, ensemble cannot block trades
         ensemble_result = self.get_ensemble_boost(market, ml_prediction, oracle)
         if ensemble_result:
             should_trade = ensemble_result.get('should_trade', True)
-            logger.info(f"[TITAN ENSEMBLE] Info: should_trade={should_trade} (NOT blocking, Oracle decides)")
+            if not should_trade and not ORACLE_IS_FINAL:
+                logger.info(f"[TITAN ENSEMBLE BLOCKED] {ensemble_result.get('reasoning', 'No reason')}")
+                return None
+            if not should_trade:
+                logger.info(f"[TITAN ENSEMBLE] would_block=True (ORACLE_IS_FINAL=True, proceeding)")
 
         return IronCondorSignal(
             spot_price=market['spot_price'],

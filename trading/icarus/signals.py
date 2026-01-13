@@ -23,6 +23,13 @@ from .models import TradeSignal, SpreadType, ICARUSConfig, CENTRAL_TZ
 
 logger = logging.getLogger(__name__)
 
+# Oracle authority configuration
+try:
+    from config import OracleConfig
+    ORACLE_IS_FINAL = OracleConfig.ORACLE_IS_FINAL
+except ImportError:
+    ORACLE_IS_FINAL = True  # Default to Oracle authority
+
 # Optional imports with clear fallbacks
 try:
     from quant.oracle_advisor import OracleAdvisor, OraclePrediction, TradingAdvice, MarketContext as OracleMarketContext, GEXRegime
@@ -882,12 +889,15 @@ class SignalGenerator:
                 confidence = max(0.40, confidence - penalty)
                 logger.info(f"  Regime suggests rangebound (-{penalty:.1%} confidence)")
 
-        # Ensemble Strategy - Position sizing info only (Oracle decides trades)
-        # ORACLE IS THE GOD OF ALL TRADE DECISIONS - Ensemble cannot block
+        # Ensemble Strategy - When ORACLE_IS_FINAL=True, ensemble cannot block trades
         ensemble_result = self.get_ensemble_boost(gex_data, direction, oracle)
         if ensemble_result:
             should_trade = ensemble_result.get('should_trade', True)
-            logger.info(f"[ICARUS ENSEMBLE] Info: should_trade={should_trade} (NOT blocking, Oracle decides)")
+            if not should_trade and not ORACLE_IS_FINAL:
+                logger.info(f"[ICARUS ENSEMBLE BLOCKED] {ensemble_result.get('reasoning', 'No reason')}")
+                return None
+            if not should_trade:
+                logger.info(f"[ICARUS ENSEMBLE] would_block=True (ORACLE_IS_FINAL=True, proceeding)")
 
         # Oracle adjustments (when not overriding)
         if oracle and direction_source != "ORACLE_OVERRIDE":
@@ -904,9 +914,12 @@ class SignalGenerator:
                     confidence, oracle['top_factors'], gex_data
                 )
 
-        # Confidence check (ORACLE IS GOD - no blocking, info only)
+        # Confidence check - When ORACLE_IS_FINAL=True, cannot block
         if confidence < self.config.min_confidence:
-            logger.warning(f"[ICARUS] Confidence {confidence:.0%} below {self.config.min_confidence:.0%} - PROCEEDING (Oracle approved)")
+            if not ORACLE_IS_FINAL:
+                logger.info(f"[ICARUS SKIP] Confidence {confidence:.0%} below {self.config.min_confidence:.0%}")
+                return None
+            logger.warning(f"[ICARUS] Confidence {confidence:.0%} below {self.config.min_confidence:.0%} (ORACLE_IS_FINAL=True, proceeding)")
         else:
             logger.info(f"[ICARUS] Confidence {confidence:.0%} >= {self.config.min_confidence:.0%} ✓")
 
@@ -930,7 +943,10 @@ class SignalGenerator:
         rr_ratio = max_profit / max_loss if max_loss > 0 else 0
 
         if rr_ratio < self.config.min_rr_ratio:
-            logger.warning(f"[ICARUS] R:R ratio {rr_ratio:.2f} below {self.config.min_rr_ratio} - PROCEEDING (Oracle approved)")
+            if not ORACLE_IS_FINAL:
+                logger.info(f"[ICARUS SKIP] R:R ratio {rr_ratio:.2f} below {self.config.min_rr_ratio}")
+                return None
+            logger.warning(f"[ICARUS] R:R ratio {rr_ratio:.2f} below {self.config.min_rr_ratio} (ORACLE_IS_FINAL=True, proceeding)")
         else:
             logger.info(f"[ICARUS] R:R ratio {rr_ratio:.2f} >= {self.config.min_rr_ratio} ✓")
 

@@ -19,6 +19,13 @@ from .models import TradeSignal, SpreadType, ATHENAConfig, CENTRAL_TZ
 
 logger = logging.getLogger(__name__)
 
+# Oracle authority configuration
+try:
+    from config import OracleConfig
+    ORACLE_IS_FINAL = OracleConfig.ORACLE_IS_FINAL
+except ImportError:
+    ORACLE_IS_FINAL = True  # Default to Oracle authority
+
 # Optional imports with clear fallbacks
 try:
     from quant.oracle_advisor import OracleAdvisor, OraclePrediction, TradingAdvice, MarketContext as OracleMarketContext, GEXRegime
@@ -920,12 +927,16 @@ class SignalGenerator:
                 confidence = max(0.45, confidence - penalty)
                 logger.info(f"  Regime suggests rangebound (-{penalty:.1%} confidence)")
 
-        # Ensemble Strategy - Position sizing info only (Oracle decides trades)
-        # ORACLE IS THE GOD OF ALL TRADE DECISIONS - Ensemble cannot block
+        # Ensemble Strategy - Multi-signal confirmation
+        # When ORACLE_IS_FINAL=True, ensemble cannot block trades
         ensemble_result = self.get_ensemble_boost(gex_data, direction, oracle)
         if ensemble_result:
             should_trade = ensemble_result.get('should_trade', True)
-            logger.info(f"[ATHENA ENSEMBLE] Info: should_trade={should_trade} (NOT blocking, Oracle decides)")
+            if not should_trade and not ORACLE_IS_FINAL:
+                logger.info(f"[ATHENA ENSEMBLE BLOCKED] {ensemble_result.get('reasoning', 'No reason')}")
+                return None
+            if not should_trade:
+                logger.info(f"[ATHENA ENSEMBLE] would_block=True (ORACLE_IS_FINAL=True, proceeding)")
 
         # Oracle adjustments (when not overriding)
         if oracle and direction_source != "ORACLE_OVERRIDE":
@@ -949,10 +960,13 @@ class SignalGenerator:
                 )
 
         # ============================================================
-        # CONFIDENCE CHECK (ORACLE IS GOD - no blocking, info only)
+        # CONFIDENCE CHECK - When ORACLE_IS_FINAL=True, cannot block
         # ============================================================
         if confidence < self.config.min_confidence:
-            logger.warning(f"[ATHENA] Confidence {confidence:.1%} below {self.config.min_confidence:.1%} - PROCEEDING (Oracle approved)")
+            if not ORACLE_IS_FINAL:
+                logger.info(f"[ATHENA SKIP] Confidence {confidence:.1%} below {self.config.min_confidence:.1%}")
+                return None
+            logger.warning(f"[ATHENA] Confidence {confidence:.1%} below {self.config.min_confidence:.1%} (ORACLE_IS_FINAL=True, proceeding)")
         else:
             logger.info(f"[ATHENA] Confidence {confidence:.1%} >= {self.config.min_confidence:.1%}")
 
@@ -977,8 +991,10 @@ class SignalGenerator:
         rr_ratio = max_profit / max_loss if max_loss > 0 else 0
 
         if rr_ratio < self.config.min_rr_ratio:
-            logger.warning(f"R:R ratio {rr_ratio:.2f} below minimum {self.config.min_rr_ratio} - PROCEEDING (Oracle approved)")
-            # Removed return None - Oracle decision takes precedence
+            if not ORACLE_IS_FINAL:
+                logger.info(f"R:R ratio {rr_ratio:.2f} below minimum {self.config.min_rr_ratio}")
+                return None
+            logger.warning(f"R:R ratio {rr_ratio:.2f} below minimum {self.config.min_rr_ratio} (ORACLE_IS_FINAL=True, proceeding)")
 
         # Step 9: Build detailed reasoning (FULL audit trail)
         reasoning_parts = []

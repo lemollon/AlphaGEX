@@ -17,6 +17,13 @@ from database_adapter import get_connection
 
 logger = logging.getLogger('autonomous_paper_trader.position_sizer')
 
+# Oracle authority configuration
+try:
+    from config import OracleConfig
+    ORACLE_IS_FINAL = OracleConfig.ORACLE_IS_FINAL
+except ImportError:
+    ORACLE_IS_FINAL = True  # Default to Oracle authority
+
 # Import strategy stats if available
 try:
     from core.strategy_stats import get_strategy_stats
@@ -92,18 +99,23 @@ class PositionSizerMixin:
                 if result['total_trades'] >= min_trades:
                     result['is_validated'] = True
 
-                    # ORACLE IS THE GOD OF ALL TRADE DECISIONS
-                    # Backtest validation is INFORMATIONAL ONLY - does not block trades
+                    # Backtest validation - when ORACLE_IS_FINAL=True, cannot block
                     if result['expectancy'] < 0.0:
-                        # WARNING only - Oracle decision takes precedence
-                        result['should_trade'] = True  # Changed: Oracle decides, not backtest
-                        result['reason'] = f"WARNING: Negative expectancy ({result['expectancy']:.1f}%) - Oracle override active"
-                        logger.warning(f"Position sizer: negative expectancy ({result['expectancy']:.1f}%) but Oracle approves trade")
+                        if not ORACLE_IS_FINAL:
+                            result['should_trade'] = False
+                            result['reason'] = f"BLOCKED: Negative expectancy ({result['expectancy']:.1f}%)"
+                        else:
+                            result['should_trade'] = True
+                            result['reason'] = f"WARNING: Negative expectancy ({result['expectancy']:.1f}%) (ORACLE_IS_FINAL=True)"
+                            logger.warning(f"Position sizer: negative expectancy ({result['expectancy']:.1f}%) but ORACLE_IS_FINAL=True")
                     elif result['win_rate'] < 40.0:
-                        # WARNING only - Oracle decision takes precedence
-                        result['should_trade'] = True  # Changed: Oracle decides, not backtest
-                        result['reason'] = f"WARNING: Win rate low ({result['win_rate']:.0f}% < 40%) - Oracle override active"
-                        logger.warning(f"Position sizer: low win rate ({result['win_rate']:.0f}%) but Oracle approves trade")
+                        if not ORACLE_IS_FINAL:
+                            result['should_trade'] = False
+                            result['reason'] = f"BLOCKED: Win rate too low ({result['win_rate']:.0f}% < 40%)"
+                        else:
+                            result['should_trade'] = True
+                            result['reason'] = f"WARNING: Win rate low ({result['win_rate']:.0f}% < 40%) (ORACLE_IS_FINAL=True)"
+                            logger.warning(f"Position sizer: low win rate ({result['win_rate']:.0f}%) but ORACLE_IS_FINAL=True")
                     else:
                         result['reason'] = f"Validated: {result['total_trades']} trades, {result['win_rate']:.0f}% win rate, {result['expectancy']:.1f}% expectancy"
                 else:
@@ -133,16 +145,23 @@ class PositionSizerMixin:
                 if result['total_trades'] >= min_trades:
                     result['is_validated'] = True
 
-                    # ORACLE IS THE GOD OF ALL TRADE DECISIONS
-                    # Live trade validation is INFORMATIONAL ONLY - does not block trades
+                    # Live trade validation - when ORACLE_IS_FINAL=True, cannot block
                     if result['expectancy'] < 0.0:
-                        result['should_trade'] = True  # Changed: Oracle decides, not live stats
-                        result['reason'] = f"WARNING: Live negative expectancy ({result['expectancy']:.1f}%) - Oracle override active"
-                        logger.warning(f"Position sizer: live negative expectancy ({result['expectancy']:.1f}%) but Oracle approves trade")
+                        if not ORACLE_IS_FINAL:
+                            result['should_trade'] = False
+                            result['reason'] = f"BLOCKED: Live negative expectancy ({result['expectancy']:.1f}%)"
+                        else:
+                            result['should_trade'] = True
+                            result['reason'] = f"WARNING: Live negative expectancy ({result['expectancy']:.1f}%) (ORACLE_IS_FINAL=True)"
+                            logger.warning(f"Position sizer: live negative expectancy ({result['expectancy']:.1f}%) but ORACLE_IS_FINAL=True")
                     elif result['win_rate'] < 40.0:
-                        result['should_trade'] = True  # Changed: Oracle decides, not live stats
-                        result['reason'] = f"WARNING: Live win rate low ({result['win_rate']:.0f}% < 40%) - Oracle override active"
-                        logger.warning(f"Position sizer: live low win rate ({result['win_rate']:.0f}%) but Oracle approves trade")
+                        if not ORACLE_IS_FINAL:
+                            result['should_trade'] = False
+                            result['reason'] = f"BLOCKED: Live win rate too low ({result['win_rate']:.0f}% < 40%)"
+                        else:
+                            result['should_trade'] = True
+                            result['reason'] = f"WARNING: Live win rate low ({result['win_rate']:.0f}% < 40%) (ORACLE_IS_FINAL=True)"
+                            logger.warning(f"Position sizer: live low win rate ({result['win_rate']:.0f}%) but ORACLE_IS_FINAL=True")
                     else:
                         result['reason'] = f"Live validated: {result['total_trades']} trades, {result['win_rate']:.0f}% win rate, {result['expectancy']:.1f}% expectancy"
                 else:

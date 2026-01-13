@@ -24,6 +24,13 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
+# Oracle authority configuration
+try:
+    from config import OracleConfig
+    ORACLE_IS_FINAL = OracleConfig.ORACLE_IS_FINAL
+except ImportError:
+    ORACLE_IS_FINAL = True  # Default to Oracle authority
+
 # Optional imports with fallbacks
 try:
     from quant.oracle_advisor import OracleAdvisor, OraclePrediction
@@ -1146,17 +1153,21 @@ class SignalGenerator:
                 logger.info(f"  STAY_FLAT regime = neutral for IC, confidence: {confidence:.1%}")
 
         # ============================================================
-        # Step 3.5: ENSEMBLE STRATEGY - Position sizing info only
-        # ORACLE IS THE GOD OF ALL TRADE DECISIONS - Ensemble cannot block
-        # Combines GEX, ML, and learned regime weights for position sizing only
+        # Step 3.5: ENSEMBLE STRATEGY - Multi-signal confirmation
+        # When ORACLE_IS_FINAL=True, ensemble cannot block trades
         # ============================================================
         ensemble_result = self.get_ensemble_boost(market_data, ml_prediction, oracle)
         if ensemble_result:
-            # NOTE: Ensemble does NOT block trades - Oracle has already approved
-            # Log ensemble for informational purposes only
             ensemble_boost = ensemble_result.get('boost', 1.0)
             should_trade = ensemble_result.get('should_trade', True)
-            logger.info(f"[ARES ENSEMBLE] Info: should_trade={should_trade}, boost={ensemble_boost:.0%} (NOT blocking, Oracle decides)")
+
+            if not should_trade and not ORACLE_IS_FINAL:
+                logger.info(f"[ARES ENSEMBLE BLOCKED] {ensemble_result.get('reasoning', 'No reason')}")
+                return None
+
+            # When ORACLE_IS_FINAL=True, log but don't block
+            if not should_trade:
+                logger.info(f"[ARES ENSEMBLE] would_block={not should_trade}, boost={ensemble_boost:.0%} (ORACLE_IS_FINAL=True, proceeding)")
             if ensemble_boost != 1.0:
                 logger.info(f"[ARES ENSEMBLE] Position size multiplier: {ensemble_boost:.0%}")
 
@@ -1184,10 +1195,12 @@ class SignalGenerator:
             vix=vix,
         )
 
-        # Step 6: Log credit info (ORACLE IS GOD - no blocking)
+        # Step 6: Validate minimum credit
         if pricing['total_credit'] < self.config.min_credit:
-            logger.warning(f"Credit ${pricing['total_credit']:.2f} below minimum ${self.config.min_credit} - PROCEEDING (Oracle approved)")
-            # Removed return None - Oracle decision takes precedence
+            if not ORACLE_IS_FINAL:
+                logger.info(f"Credit ${pricing['total_credit']:.2f} below minimum ${self.config.min_credit}")
+                return None
+            logger.warning(f"Credit ${pricing['total_credit']:.2f} below minimum ${self.config.min_credit} (ORACLE_IS_FINAL=True, proceeding)")
 
         # Step 7: Get expiration (0DTE)
         now = datetime.now(CENTRAL_TZ)
