@@ -921,8 +921,18 @@ class SignalGenerator:
         # Step 1: Get market data (includes Kronos GEX)
         market_data = self.get_market_data()
         if not market_data:
-            logger.info("No market data available")
-            return None
+            logger.info("No market data available - returning blocked signal for diagnostics")
+            return IronCondorSignal(
+                spot_price=0,
+                vix=0,
+                expected_move=0,
+                call_wall=0,
+                put_wall=0,
+                gex_regime="UNKNOWN",
+                confidence=0,
+                reasoning="NO_MARKET_DATA: GEX data not available",
+                source="BLOCKED_NO_DATA",
+            )
 
         spot = market_data['spot_price']
         vix = market_data['vix']
@@ -936,8 +946,18 @@ class SignalGenerator:
                 logger.warning(f"Market data is {data_age:.0f}s old (>120s), refetching...")
                 market_data = self.get_market_data()
                 if not market_data:
-                    logger.info("No fresh market data available")
-                    return None
+                    logger.info("No fresh market data available - returning blocked signal")
+                    return IronCondorSignal(
+                        spot_price=spot,
+                        vix=vix,
+                        expected_move=expected_move,
+                        call_wall=0,
+                        put_wall=0,
+                        gex_regime="UNKNOWN",
+                        confidence=0,
+                        reasoning=f"STALE_DATA: Market data is {data_age:.0f}s old",
+                        source="BLOCKED_STALE_DATA",
+                    )
                 spot = market_data['spot_price']
                 vix = market_data['vix']
                 expected_move = market_data['expected_move']
@@ -946,7 +966,22 @@ class SignalGenerator:
         can_trade, vix_reason = self.check_vix_filter(vix)
         if not can_trade:
             logger.info(f"VIX filter blocked: {vix_reason}")
-            return None
+            # Return blocked signal WITH Oracle prediction for visibility
+            oracle = self.get_oracle_advice(market_data)
+            oracle_win_prob = oracle.get('win_probability', 0) if oracle else 0
+            return IronCondorSignal(
+                spot_price=spot,
+                vix=vix,
+                expected_move=expected_move,
+                call_wall=market_data.get('call_wall', 0),
+                put_wall=market_data.get('put_wall', 0),
+                gex_regime=market_data.get('gex_regime', 'UNKNOWN'),
+                confidence=0,
+                reasoning=f"VIX_BLOCKED: {vix_reason} (Oracle would have predicted {oracle_win_prob:.0%} win prob)",
+                source="BLOCKED_VIX",
+                oracle_win_probability=oracle_win_prob,
+                oracle_advice=oracle.get('advice', '') if oracle else '',
+            )
 
         # ============================================================
         # Step 3: ML MODEL TAKES PRECEDENCE OVER ORACLE

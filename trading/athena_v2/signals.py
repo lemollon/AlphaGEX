@@ -668,8 +668,19 @@ class SignalGenerator:
         # Step 1: Get GEX data
         gex_data = self.get_gex_data()
         if not gex_data:
-            logger.info("No GEX data available")
-            return None
+            logger.info("No GEX data available - returning blocked signal for diagnostics")
+            return TradeSignal(
+                direction="UNKNOWN",
+                spread_type=SpreadType.CALL_DEBIT,
+                confidence=0,
+                spot_price=0,
+                call_wall=0,
+                put_wall=0,
+                gex_regime="UNKNOWN",
+                vix=0,
+                source="BLOCKED_NO_DATA",
+                reasoning="NO_GEX_DATA: GEX data not available for signal generation",
+            )
 
         spot_price = gex_data['spot_price']
         vix = gex_data['vix']
@@ -681,10 +692,40 @@ class SignalGenerator:
         # ============================================================
         if vix < self.config.min_vix:
             logger.info(f"[ATHENA SKIP] VIX {vix:.1f} below minimum {self.config.min_vix} - insufficient premium")
-            return None
+            # Return blocked signal WITH Oracle prediction for visibility
+            oracle = self.get_oracle_advice(gex_data)
+            oracle_win_prob = oracle.get('win_probability', 0) if oracle else 0
+            return TradeSignal(
+                direction="UNKNOWN",
+                spread_type=SpreadType.CALL_DEBIT,
+                confidence=0,
+                spot_price=spot_price,
+                call_wall=gex_data.get('call_wall', 0),
+                put_wall=gex_data.get('put_wall', 0),
+                gex_regime=gex_data.get('gex_regime', 'UNKNOWN'),
+                vix=vix,
+                source="BLOCKED_VIX_LOW",
+                reasoning=f"VIX_LOW: VIX {vix:.1f} below minimum {self.config.min_vix} (Oracle: {oracle_win_prob:.0%} win prob)",
+                ml_win_probability=oracle_win_prob,
+            )
         if vix > self.config.max_vix:
             logger.info(f"[ATHENA SKIP] VIX {vix:.1f} above maximum {self.config.max_vix} - too volatile for debit spreads")
-            return None
+            # Return blocked signal WITH Oracle prediction for visibility
+            oracle = self.get_oracle_advice(gex_data)
+            oracle_win_prob = oracle.get('win_probability', 0) if oracle else 0
+            return TradeSignal(
+                direction="UNKNOWN",
+                spread_type=SpreadType.CALL_DEBIT,
+                confidence=0,
+                spot_price=spot_price,
+                call_wall=gex_data.get('call_wall', 0),
+                put_wall=gex_data.get('put_wall', 0),
+                gex_regime=gex_data.get('gex_regime', 'UNKNOWN'),
+                vix=vix,
+                source="BLOCKED_VIX_HIGH",
+                reasoning=f"VIX_HIGH: VIX {vix:.1f} above maximum {self.config.max_vix} (Oracle: {oracle_win_prob:.0%} win prob)",
+                ml_win_probability=oracle_win_prob,
+            )
         logger.info(f"[ATHENA] VIX {vix:.1f} in optimal range ({self.config.min_vix}-{self.config.max_vix})")
 
         # ============================================================
@@ -694,7 +735,23 @@ class SignalGenerator:
         near_wall, wall_direction, wall_reason = self.check_wall_proximity(gex_data)
         if not near_wall:
             logger.info(f"[ATHENA SKIP] {wall_reason} - not near GEX wall (threshold: {self.config.wall_filter_pct}%)")
-            return None
+            # Return blocked signal WITH Oracle prediction for visibility
+            oracle = self.get_oracle_advice(gex_data)
+            oracle_win_prob = oracle.get('win_probability', 0) if oracle else 0
+            oracle_direction = oracle.get('direction', 'FLAT') if oracle else 'FLAT'
+            return TradeSignal(
+                direction=oracle_direction,
+                spread_type=SpreadType.CALL_DEBIT if oracle_direction == "BULLISH" else SpreadType.PUT_DEBIT,
+                confidence=0,
+                spot_price=spot_price,
+                call_wall=gex_data.get('call_wall', 0),
+                put_wall=gex_data.get('put_wall', 0),
+                gex_regime=gex_data.get('gex_regime', 'UNKNOWN'),
+                vix=vix,
+                source="BLOCKED_WALL_DISTANCE",
+                reasoning=f"WALL_FAR: {wall_reason} (Oracle: {oracle_direction} @ {oracle_win_prob:.0%} win prob)",
+                ml_win_probability=oracle_win_prob,
+            )
         logger.info(f"[ATHENA] Wall proximity: {wall_reason}")
 
         # ============================================================
@@ -719,9 +776,26 @@ class SignalGenerator:
                              gex_ratio <= self.config.max_gex_ratio_bullish)
 
         if not has_gex_asymmetry:
-            logger.info(f"[ATHENA SKIP] GEX ratio {gex_ratio:.2f} not asymmetric enough "
-                       f"(need >{self.config.min_gex_ratio_bearish} for bearish or <{self.config.max_gex_ratio_bullish} for bullish)")
-            return None
+            reason = (f"GEX ratio {gex_ratio:.2f} not asymmetric enough "
+                     f"(need >{self.config.min_gex_ratio_bearish} for bearish or <{self.config.max_gex_ratio_bullish} for bullish)")
+            logger.info(f"[ATHENA SKIP] {reason}")
+            # Return blocked signal WITH Oracle prediction for visibility
+            oracle = self.get_oracle_advice(gex_data)
+            oracle_win_prob = oracle.get('win_probability', 0) if oracle else 0
+            oracle_direction = oracle.get('direction', 'FLAT') if oracle else 'FLAT'
+            return TradeSignal(
+                direction=oracle_direction,
+                spread_type=SpreadType.CALL_DEBIT if oracle_direction == "BULLISH" else SpreadType.PUT_DEBIT,
+                confidence=0,
+                spot_price=spot_price,
+                call_wall=gex_data.get('call_wall', 0),
+                put_wall=gex_data.get('put_wall', 0),
+                gex_regime=gex_data.get('gex_regime', 'UNKNOWN'),
+                vix=vix,
+                source="BLOCKED_GEX_ASYMMETRY",
+                reasoning=f"GEX_ASYMMETRY: {reason} (Oracle: {oracle_direction} @ {oracle_win_prob:.0%})",
+                ml_win_probability=oracle_win_prob,
+            )
 
         # Determine GEX-based direction from ratio
         gex_direction = "BEARISH" if gex_ratio >= self.config.min_gex_ratio_bearish else "BULLISH"
@@ -729,8 +803,25 @@ class SignalGenerator:
 
         # Verify GEX direction aligns with wall direction
         if gex_direction != wall_direction:
-            logger.info(f"[ATHENA SKIP] GEX direction {gex_direction} conflicts with wall direction {wall_direction}")
-            return None
+            reason = f"GEX direction {gex_direction} conflicts with wall direction {wall_direction}"
+            logger.info(f"[ATHENA SKIP] {reason}")
+            # Return blocked signal WITH Oracle prediction for visibility
+            oracle = self.get_oracle_advice(gex_data)
+            oracle_win_prob = oracle.get('win_probability', 0) if oracle else 0
+            oracle_direction = oracle.get('direction', 'FLAT') if oracle else 'FLAT'
+            return TradeSignal(
+                direction=gex_direction,  # Show the conflicting direction
+                spread_type=SpreadType.CALL_DEBIT if gex_direction == "BULLISH" else SpreadType.PUT_DEBIT,
+                confidence=0,
+                spot_price=spot_price,
+                call_wall=gex_data.get('call_wall', 0),
+                put_wall=gex_data.get('put_wall', 0),
+                gex_regime=gex_data.get('gex_regime', 'UNKNOWN'),
+                vix=vix,
+                source="BLOCKED_DIRECTION_CONFLICT",
+                reasoning=f"DIRECTION_CONFLICT: {reason} (Oracle: {oracle_direction} @ {oracle_win_prob:.0%})",
+                ml_win_probability=oracle_win_prob,
+            )
         logger.info(f"[ATHENA] GEX direction {gex_direction} confirms wall direction {wall_direction}")
 
         # Step 3: Get ML signal from 5 GEX probability models (PREFERRED SOURCE)
