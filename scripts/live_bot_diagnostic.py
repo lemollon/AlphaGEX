@@ -307,6 +307,105 @@ def run_diagnostic():
     except Exception as e:
         print(f"  [ERROR] {e}")
 
+    # 8. Circuit Breaker Status
+    print("\n" + "-" * 60)
+    print("CIRCUIT BREAKER / KILL SWITCH")
+    print("-" * 60)
+
+    try:
+        from trading.circuit_breaker import get_circuit_breaker, is_trading_enabled
+        cb = get_circuit_breaker()
+        can_trade, reason = is_trading_enabled(current_positions=0, margin_used=0)
+        state = cb.state.value if hasattr(cb, 'state') else 'UNKNOWN'
+        daily_pnl = getattr(cb, 'daily_pnl', 0)
+        consec_losses = getattr(cb, 'consecutive_losses', 0)
+
+        status_icon = "🟢" if can_trade else "🔴"
+        print(f"  {status_icon} State: {state}")
+        print(f"     Can Trade: {can_trade}")
+        if not can_trade:
+            print(f"     Reason: {reason}")
+        print(f"     Daily P&L: ${daily_pnl:,.2f}")
+        print(f"     Consecutive Losses: {consec_losses}")
+    except ImportError:
+        print("  [INFO] Circuit breaker module not available")
+    except Exception as e:
+        print(f"  [ERROR] {e}")
+
+    # 9. Solomon Kill Switch
+    print("\n" + "-" * 60)
+    print("SOLOMON FEEDBACK LOOP")
+    print("-" * 60)
+
+    try:
+        from quant.solomon_feedback_loop import get_solomon
+        solomon = get_solomon()
+        for bot in ['ARES', 'ATHENA', 'PEGASUS', 'ICARUS', 'TITAN']:
+            can_trade = solomon.can_trade(bot)
+            status_icon = "🟢" if can_trade else "🔴"
+            print(f"  {status_icon} {bot:10} : {'Can trade' if can_trade else 'BLOCKED'}")
+    except ImportError:
+        print("  [INFO] Solomon module not available")
+    except Exception as e:
+        print(f"  [ERROR] {e}")
+
+    # 10. Current Market Data (VIX, Spot)
+    print("\n" + "-" * 60)
+    print("CURRENT MARKET CONDITIONS")
+    print("-" * 60)
+
+    try:
+        from data.unified_data_provider import get_vix, get_price
+        vix = get_vix()
+        spy_price = get_price('SPY')
+
+        vix_status = "🟢 Normal" if vix and vix < 20 else "🟡 Elevated" if vix and vix < 30 else "🔴 High" if vix and vix < 40 else "🔴 EXTREME" if vix else "❓ Unknown"
+        print(f"  VIX: {vix:.2f if vix else 'N/A'} ({vix_status})")
+        print(f"  SPY: ${spy_price:.2f if spy_price else 'N/A'}")
+
+        if vix and vix >= 40:
+            print(f"  ⚠️ VIX > 40 - ALL IRON CONDOR TRADES BLOCKED")
+        elif vix and vix >= 30:
+            print(f"  ⚠️ VIX > 30 - Mon/Fri trades may be blocked")
+    except ImportError:
+        print("  [INFO] Data provider not available")
+    except Exception as e:
+        print(f"  [ERROR] {e}")
+
+    # 11. Market Calendar Checks
+    print("\n" + "-" * 60)
+    print("MARKET CALENDAR")
+    print("-" * 60)
+
+    try:
+        from trading.market_calendar import MarketCalendar
+        cal = MarketCalendar()
+
+        is_trading_day = cal.is_trading_day(today)
+        is_open = cal.is_market_open()
+        is_early_close = cal.is_early_close_day(today) if hasattr(cal, 'is_early_close_day') else False
+
+        print(f"  Trading Day: {'✅ Yes' if is_trading_day else '❌ No (Holiday)'}")
+        print(f"  Market Open: {'✅ Yes' if is_open else '❌ No'}")
+        if is_early_close:
+            print(f"  ⚠️ Early Close Day (12:00 PM CT)")
+
+        # Check FOMC
+        if hasattr(cal, 'is_fomc_week'):
+            is_fomc = cal.is_fomc_week()
+            if is_fomc:
+                print(f"  ⚠️ FOMC Week - Trading may be restricted")
+
+        # Check earnings
+        if hasattr(cal, 'has_major_earnings_soon'):
+            has_earnings = cal.has_major_earnings_soon(days_ahead=2)
+            if has_earnings:
+                print(f"  ⚠️ Major Earnings Soon - Trading may be restricted")
+    except ImportError:
+        print("  [INFO] Market calendar not available")
+    except Exception as e:
+        print(f"  [ERROR] {e}")
+
     # Summary
     print("\n" + "=" * 80)
     print("DIAGNOSTIC SUMMARY")
@@ -338,6 +437,40 @@ def run_diagnostic():
                 issues.append("No market-hours scans logged today - bots may not be scanning")
         except:
             pass
+
+    # Check circuit breaker
+    try:
+        from trading.circuit_breaker import is_trading_enabled
+        can_trade, reason = is_trading_enabled(current_positions=0, margin_used=0)
+        if not can_trade:
+            issues.append(f"Circuit breaker BLOCKING trades: {reason}")
+    except:
+        pass
+
+    # Check VIX level
+    try:
+        from data.unified_data_provider import get_vix
+        vix = get_vix()
+        if vix and vix >= 40:
+            issues.append(f"VIX at {vix:.1f} - EXTREME level blocking all IC trades")
+    except:
+        pass
+
+    # Check for low win probability in recent scans
+    try:
+        rows = safe_execute("""
+            SELECT AVG(oracle_win_probability::numeric), AVG(min_win_probability_threshold::numeric)
+            FROM scan_activity
+            WHERE date = %s AND outcome = 'NO_TRADE'
+            AND oracle_win_probability IS NOT NULL
+        """, (today,))
+        if rows and rows[0][0] is not None:
+            avg_wp = float(rows[0][0])
+            avg_thresh = float(rows[0][1]) if rows[0][1] else 0.42
+            if avg_wp < avg_thresh:
+                issues.append(f"Avg Oracle win prob ({avg_wp:.0%}) below threshold ({avg_thresh:.0%})")
+    except:
+        pass
 
     if issues:
         print("\n[ISSUES FOUND]:")
