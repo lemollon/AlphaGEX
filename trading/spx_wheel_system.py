@@ -910,7 +910,8 @@ class SPXWheelTrader(MathOptimizerMixin):
                         strike_reasoning=f"Strike ${strike} at delta {self.params.put_delta}",
                         size_reasoning=f"{contracts} contracts",
                         exit_reasoning=why if dt_str == "EXIT" else "",
-                        kelly_pct=self.params.position_size_pct,
+                        # Calculate approx position size % from margin allocation / max positions
+                        kelly_pct=self.params.max_margin_pct / max(self.params.max_open_positions, 1),
                         position_size_dollars=premium if premium > 0 else 0,
                         max_risk_dollars=strike * 100 * contracts if strike > 0 else 0,
                         backtest_win_rate=self.params.backtest_win_rate,

@@ -177,6 +177,18 @@ try:
 except ImportError:
     AUTO_VALIDATION_AVAILABLE = False
     get_auto_validation_system = None
+
+# Import OracleAdvisor for PHOENIX signal generation
+try:
+    from quant.oracle_advisor import OracleAdvisor, MarketContext as OracleMarketContext, GEXRegime, TradingAdvice
+    ORACLE_AVAILABLE = True
+except ImportError:
+    ORACLE_AVAILABLE = False
+    OracleAdvisor = None
+    OracleMarketContext = None
+    GEXRegime = None
+    TradingAdvice = None
+    print("Warning: OracleAdvisor not available for PHOENIX.")
     run_validation = None
     get_validation_status = None
     print("Warning: AutoValidationSystem not available. ML validation will be disabled.")
@@ -245,13 +257,19 @@ class AutonomousTraderScheduler:
         # CRITICAL: Wrap in try-except to prevent scheduler crash if PHOENIX init fails
         self.trader = None
         self.api_client = None
+        self.phoenix_oracle = None  # Oracle for PHOENIX signal validation
         try:
             self.trader = AutonomousPaperTrader(
                 symbol='SPY',
                 capital=CAPITAL_ALLOCATION['PHOENIX']
             )
             self.api_client = TradingVolatilityAPI()
-            logger.info(f"✅ PHOENIX initialized with ${CAPITAL_ALLOCATION['PHOENIX']:,} capital")
+            # Initialize Oracle for PHOENIX signal validation
+            if ORACLE_AVAILABLE:
+                self.phoenix_oracle = OracleAdvisor()
+                logger.info(f"✅ PHOENIX initialized with ${CAPITAL_ALLOCATION['PHOENIX']:,} capital + Oracle")
+            else:
+                logger.info(f"✅ PHOENIX initialized with ${CAPITAL_ALLOCATION['PHOENIX']:,} capital (no Oracle)")
         except Exception as e:
             logger.error(f"PHOENIX initialization failed: {e}")
             logger.error("Scheduler will continue without PHOENIX - other bots will still run")
@@ -590,6 +608,70 @@ class AutonomousTraderScheduler:
         logger.info("Market is OPEN. Running autonomous trading logic...")
 
         try:
+            # Step 0: Consult Oracle for trade signal (if available)
+            oracle_approved = True  # Default to True if Oracle unavailable
+            oracle_prediction = None
+            if self.phoenix_oracle and ORACLE_AVAILABLE:
+                try:
+                    # Get GEX data for Oracle context
+                    gex_data = self.api_client.get_gex_data() if self.api_client else {}
+                    spot_price = gex_data.get('spot_price', 0)
+                    vix = gex_data.get('vix', 20)
+
+                    if spot_price > 0:
+                        # Build Oracle context
+                        gex_regime_str = gex_data.get('gex_regime', 'NEUTRAL').upper()
+                        try:
+                            gex_regime = GEXRegime[gex_regime_str] if gex_regime_str in GEXRegime.__members__ else GEXRegime.NEUTRAL
+                        except (KeyError, AttributeError):
+                            gex_regime = GEXRegime.NEUTRAL
+
+                        context = OracleMarketContext(
+                            spot_price=spot_price,
+                            vix=vix,
+                            gex_put_wall=gex_data.get('put_wall', 0),
+                            gex_call_wall=gex_data.get('call_wall', 0),
+                            gex_regime=gex_regime,
+                            gex_net=gex_data.get('net_gex', 0),
+                            gex_flip_point=gex_data.get('flip_point', 0),
+                            day_of_week=now.weekday(),
+                        )
+
+                        # Get PHOENIX advice from Oracle
+                        oracle_prediction = self.phoenix_oracle.get_phoenix_advice(
+                            context=context,
+                            use_claude_validation=False  # Skip Claude for scheduler performance
+                        )
+
+                        if oracle_prediction:
+                            logger.info(f"PHOENIX Oracle: {oracle_prediction.advice.value} "
+                                       f"(win_prob={oracle_prediction.win_probability:.1%})")
+
+                            # Oracle must approve with at least TRADE_REDUCED advice
+                            if oracle_prediction.advice in [TradingAdvice.SKIP_TODAY, TradingAdvice.STAY_OUT]:
+                                oracle_approved = False
+                                logger.info(f"PHOENIX Oracle says SKIP: {oracle_prediction.reasoning}")
+                                self._log_no_trade_decision('PHOENIX', f'Oracle: {oracle_prediction.reasoning}', {
+                                    'symbol': 'SPY',
+                                    'oracle_advice': oracle_prediction.advice.value,
+                                    'win_probability': oracle_prediction.win_probability,
+                                    'market': {'spot': spot_price, 'vix': vix, 'time': now.isoformat()}
+                                })
+                    else:
+                        logger.warning("PHOENIX: No spot price for Oracle - proceeding without Oracle validation")
+                except Exception as oracle_e:
+                    logger.warning(f"PHOENIX Oracle check failed: {oracle_e} - proceeding without Oracle")
+
+            # Skip trading if Oracle says no
+            if not oracle_approved:
+                self._save_heartbeat('PHOENIX', 'ORACLE_SKIP', {
+                    'oracle_advice': oracle_prediction.advice.value if oracle_prediction else 'UNKNOWN',
+                    'win_probability': oracle_prediction.win_probability if oracle_prediction else 0
+                })
+                logger.info("PHOENIX skipping trade due to Oracle advice")
+                logger.info(f"=" * 80)
+                return
+
             # Step 1: Find and execute new daily trade (if we haven't traded today)
             logger.info("Step 1: Checking for new trade opportunities...")
             self.last_trade_check = now
@@ -681,18 +763,6 @@ class AutonomousTraderScheduler:
             return
 
         logger.info("Market is OPEN. Running ATLAS wheel strategy...")
-
-        # Check Solomon kill switch before trading
-        if SOLOMON_AVAILABLE:
-            try:
-                solomon = get_solomon()
-                if solomon.is_bot_killed('ATLAS'):
-                    logger.warning("ATLAS: Kill switch is ACTIVE - skipping trade")
-                    self._save_heartbeat('ATLAS', 'KILLED', {'reason': 'Solomon kill switch active'})
-                    logger.info(f"=" * 80)
-                    return
-            except Exception as e:
-                logger.debug(f"ATLAS: Could not check Solomon kill switch: {e}")
 
         try:
             self.last_atlas_check = now
@@ -818,25 +888,6 @@ class AutonomousTraderScheduler:
             else:
                 logger.warning(f"⚠️ ARES scan NOT logged: SCAN_ACTIVITY_LOGGER_AVAILABLE={SCAN_ACTIVITY_LOGGER_AVAILABLE}")
             return
-
-        # Check Solomon kill switch before trading
-        if SOLOMON_AVAILABLE:
-            try:
-                solomon = get_solomon()
-                if solomon.is_bot_killed('ARES'):
-                    logger.warning("ARES: Kill switch is ACTIVE - skipping")
-                    self._save_heartbeat('ARES', 'KILLED', {'reason': 'Solomon kill switch'})
-                    # Log to scan_activity for visibility
-                    if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_ares_scan:
-                        log_ares_scan(
-                            outcome=ScanOutcome.SKIP,
-                            decision_summary="Kill switch is active (Solomon)",
-                            generate_ai_explanation=False
-                        )
-                    logger.info(f"=" * 80)
-                    return
-            except Exception as e:
-                logger.debug(f"ARES: Could not check Solomon: {e}")
 
         try:
             # Run the V2 cycle
@@ -1151,31 +1202,13 @@ class AutonomousTraderScheduler:
                 )
             return
 
-        # Check Solomon kill switch before trading
-        if SOLOMON_AVAILABLE:
-            try:
-                solomon = get_solomon()
-                if solomon.is_bot_killed('ATHENA'):
-                    logger.warning("ATHENA: Kill switch is ACTIVE - skipping")
-                    self._save_heartbeat('ATHENA', 'KILLED', {'reason': 'Solomon kill switch'})
-                    # Log to scan_activity for visibility
-                    if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_athena_scan:
-                        log_athena_scan(
-                            outcome=ScanOutcome.SKIP,
-                            decision_summary="Kill switch is active (Solomon)",
-                            generate_ai_explanation=False
-                        )
-                    logger.info(f"=" * 80)
-                    return
-            except Exception as e:
-                logger.debug(f"ATHENA: Could not check Solomon: {e}")
-
         try:
             # Run the V2 cycle
             result = self.athena_trader.run_cycle()
 
-            traded = result.get('trade_opened', False)
-            closed = result.get('positions_closed', 0)
+            # ATHENA V2 returns 'trades_opened' (int), not 'trade_opened' (bool)
+            traded = result.get('trades_opened', result.get('trade_opened', 0)) > 0
+            closed = result.get('trades_closed', result.get('positions_closed', 0))
             action = result.get('action', 'none')
 
             logger.info(f"ATHENA V2 cycle completed: {action}")
@@ -1277,25 +1310,6 @@ class AutonomousTraderScheduler:
                     generate_ai_explanation=False
                 )
             return
-
-        # Check Solomon kill switch before trading
-        if SOLOMON_AVAILABLE:
-            try:
-                solomon = get_solomon()
-                if solomon.is_bot_killed('PEGASUS'):
-                    logger.warning("PEGASUS: Kill switch is ACTIVE - skipping")
-                    self._save_heartbeat('PEGASUS', 'KILLED', {'reason': 'Solomon kill switch'})
-                    # Log to scan_activity for visibility
-                    if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_pegasus_scan:
-                        log_pegasus_scan(
-                            outcome=ScanOutcome.SKIP,
-                            decision_summary="Kill switch is active (Solomon)",
-                            generate_ai_explanation=False
-                        )
-                    logger.info(f"=" * 80)
-                    return
-            except Exception as e:
-                logger.debug(f"PEGASUS: Could not check Solomon: {e}")
 
         try:
             # Run the cycle
@@ -1444,30 +1458,13 @@ class AutonomousTraderScheduler:
                 )
             return
 
-        # Check Solomon kill switch
-        if SOLOMON_AVAILABLE:
-            try:
-                solomon = get_solomon()
-                if solomon.is_bot_killed('ICARUS'):
-                    logger.warning("ICARUS: Kill switch is ACTIVE - skipping")
-                    self._save_heartbeat('ICARUS', 'KILLED', {'reason': 'Solomon kill switch'})
-                    # Log to scan_activity for visibility
-                    if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_icarus_scan:
-                        log_icarus_scan(
-                            outcome=ScanOutcome.SKIP,
-                            decision_summary="Kill switch is active (Solomon)",
-                            generate_ai_explanation=False
-                        )
-                    return
-            except Exception as e:
-                logger.debug(f"ICARUS: Could not check Solomon: {e}")
-
         try:
             # Run the cycle
             result = self.icarus_trader.run_cycle()
 
-            traded = result.get('trade_opened', False)
-            closed = result.get('positions_closed', 0)
+            # ICARUS returns 'trades_opened' (int), not 'trade_opened' (bool)
+            traded = result.get('trades_opened', result.get('trade_opened', 0)) > 0
+            closed = result.get('trades_closed', result.get('positions_closed', 0))
             action = result.get('action', 'none')
 
             logger.info(f"ICARUS cycle completed: {action}")
@@ -1619,24 +1616,6 @@ class AutonomousTraderScheduler:
                     generate_ai_explanation=False
                 )
             return
-
-        # Check Solomon kill switch
-        if SOLOMON_AVAILABLE:
-            try:
-                solomon = get_solomon()
-                if solomon.is_bot_killed('TITAN'):
-                    logger.warning("TITAN: Kill switch is ACTIVE - skipping")
-                    self._save_heartbeat('TITAN', 'KILLED', {'reason': 'Solomon kill switch'})
-                    # Log to scan_activity for visibility
-                    if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_titan_scan:
-                        log_titan_scan(
-                            outcome=ScanOutcome.SKIP,
-                            decision_summary="Kill switch is active (Solomon)",
-                            generate_ai_explanation=False
-                        )
-                    return
-            except Exception as e:
-                logger.debug(f"TITAN: Could not check Solomon: {e}")
 
         try:
             # Run the cycle

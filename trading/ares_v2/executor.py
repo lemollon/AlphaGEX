@@ -235,6 +235,46 @@ class OrderExecutor:
             except Exception as e:
                 logger.debug(f"Position Management Agent init failed: {e}")
 
+    def _send_orphaned_order_alert(
+        self,
+        order_id: str,
+        order_type: str,
+        strikes: Dict,
+        contracts: int,
+        error_msg: str
+    ):
+        """
+        Send critical push notification for orphaned orders requiring manual intervention.
+
+        This is called when an Iron Condor spread fails mid-execution and rollback also fails,
+        leaving one leg open that requires manual closing.
+        """
+        try:
+            from backend.push_notification_service import get_push_service
+            push_service = get_push_service()
+            if not push_service:
+                logger.warning("Push service unavailable for orphaned order alert")
+                return
+
+            title = f"🚨 ARES ORPHANED ORDER - MANUAL ACTION REQUIRED"
+            body = (
+                f"Order {order_id} ({order_type}) stuck open!\n"
+                f"Strikes: {strikes}\n"
+                f"Contracts: {contracts}\n"
+                f"Error: {error_msg[:100]}"
+            )
+
+            stats = push_service.broadcast_notification(
+                title=title,
+                body=body,
+                alert_type='orphaned_order',
+                alert_level='CRITICAL'
+            )
+            logger.info(f"Orphaned order alert sent: {stats.get('sent', 0)} delivered")
+
+        except Exception as e:
+            logger.error(f"Failed to send orphaned order alert: {e}")
+
     def _tradier_place_spread_with_retry(
         self,
         max_retries: int = 3,
@@ -488,6 +528,14 @@ class OrderExecutor:
                         contracts=contracts,
                         reason='ROLLBACK_FAILED_AFTER_CALL_SPREAD_ERROR',
                         error_details=rollback_error_msg
+                    )
+                    # CRITICAL: Send push notification for orphaned order requiring manual intervention
+                    self._send_orphaned_order_alert(
+                        order_id=put_order_id,
+                        order_type='put_spread',
+                        strikes={'put_long': signal.put_long, 'put_short': signal.put_short},
+                        contracts=contracts,
+                        error_msg=rollback_error_msg
                     )
                 return None
 
