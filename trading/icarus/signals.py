@@ -904,11 +904,11 @@ class SignalGenerator:
                     confidence, oracle['top_factors'], gex_data
                 )
 
-        # Confidence threshold - aggressive 48% (vs ATHENA's 55%)
+        # Confidence check (ORACLE IS GOD - no blocking, info only)
         if confidence < self.config.min_confidence:
-            logger.info(f"[ICARUS SKIP] Confidence {confidence:.0%} below minimum {self.config.min_confidence:.0%}")
-            return None
-        logger.info(f"[ICARUS] Confidence {confidence:.0%} >= {self.config.min_confidence:.0%} ✓")
+            logger.warning(f"[ICARUS] Confidence {confidence:.0%} below {self.config.min_confidence:.0%} - PROCEEDING (Oracle approved)")
+        else:
+            logger.info(f"[ICARUS] Confidence {confidence:.0%} >= {self.config.min_confidence:.0%} ✓")
 
         # Step 5: Determine spread type
         spread_type = SpreadType.BULL_CALL if direction == "BULLISH" else SpreadType.BEAR_PUT
@@ -930,9 +930,9 @@ class SignalGenerator:
         rr_ratio = max_profit / max_loss if max_loss > 0 else 0
 
         if rr_ratio < self.config.min_rr_ratio:
-            logger.info(f"[ICARUS SKIP] R:R ratio {rr_ratio:.2f} below minimum {self.config.min_rr_ratio}")
-            return None
-        logger.info(f"[ICARUS] R:R ratio {rr_ratio:.2f} >= {self.config.min_rr_ratio} ✓")
+            logger.warning(f"[ICARUS] R:R ratio {rr_ratio:.2f} below {self.config.min_rr_ratio} - PROCEEDING (Oracle approved)")
+        else:
+            logger.info(f"[ICARUS] R:R ratio {rr_ratio:.2f} >= {self.config.min_rr_ratio} ✓")
 
         # Step 9: Build detailed reasoning
         reasoning_parts = []

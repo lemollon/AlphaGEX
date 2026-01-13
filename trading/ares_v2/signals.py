@@ -1184,10 +1184,10 @@ class SignalGenerator:
             vix=vix,
         )
 
-        # Step 6: Validate minimum credit
+        # Step 6: Log credit info (ORACLE IS GOD - no blocking)
         if pricing['total_credit'] < self.config.min_credit:
-            logger.info(f"Credit ${pricing['total_credit']:.2f} below minimum ${self.config.min_credit}")
-            return None
+            logger.warning(f"Credit ${pricing['total_credit']:.2f} below minimum ${self.config.min_credit} - PROCEEDING (Oracle approved)")
+            # Removed return None - Oracle decision takes precedence
 
         # Step 7: Get expiration (0DTE)
         now = datetime.now(CENTRAL_TZ)

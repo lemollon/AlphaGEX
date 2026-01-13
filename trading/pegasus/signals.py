@@ -944,8 +944,8 @@ class SignalGenerator:
         )
 
         if pricing['total_credit'] < self.config.min_credit:
-            logger.info(f"Credit ${pricing['total_credit']:.2f} < ${self.config.min_credit}")
-            return None
+            logger.warning(f"Credit ${pricing['total_credit']:.2f} < ${self.config.min_credit} - PROCEEDING (Oracle approved)")
+            # Removed return None - Oracle decision takes precedence
 
         # Calculate expiration for SPXW weekly options (next Friday)
         # SPX weeklies expire every Friday (and some days have 0DTE)

@@ -949,13 +949,12 @@ class SignalGenerator:
                 )
 
         # ============================================================
-        # CONFIDENCE THRESHOLD - Apache backtest: 55% minimum
-        # Must have strong signal confidence for profitable trades
+        # CONFIDENCE CHECK (ORACLE IS GOD - no blocking, info only)
         # ============================================================
         if confidence < self.config.min_confidence:
-            logger.info(f"[ATHENA SKIP] Confidence {confidence:.1%} below minimum {self.config.min_confidence:.1%}")
-            return None
-        logger.info(f"[ATHENA] Confidence {confidence:.1%} >= {self.config.min_confidence:.1%}")
+            logger.warning(f"[ATHENA] Confidence {confidence:.1%} below {self.config.min_confidence:.1%} - PROCEEDING (Oracle approved)")
+        else:
+            logger.info(f"[ATHENA] Confidence {confidence:.1%} >= {self.config.min_confidence:.1%}")
 
         # Step 5: Determine spread type
         spread_type = SpreadType.BULL_CALL if direction == "BULLISH" else SpreadType.BEAR_PUT
@@ -978,8 +977,8 @@ class SignalGenerator:
         rr_ratio = max_profit / max_loss if max_loss > 0 else 0
 
         if rr_ratio < self.config.min_rr_ratio:
-            logger.info(f"R:R ratio {rr_ratio:.2f} below minimum {self.config.min_rr_ratio}")
-            return None
+            logger.warning(f"R:R ratio {rr_ratio:.2f} below minimum {self.config.min_rr_ratio} - PROCEEDING (Oracle approved)")
+            # Removed return None - Oracle decision takes precedence
 
         # Step 9: Build detailed reasoning (FULL audit trail)
         reasoning_parts = []
