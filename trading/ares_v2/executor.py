@@ -840,8 +840,9 @@ class OrderExecutor:
 
         try:
             # Get individual option quotes
-            short_symbol = self._build_option_symbol(symbol, expiration, short_strike, option_type)
-            long_symbol = self._build_option_symbol(symbol, expiration, long_strike, option_type)
+            # Note: _build_option_symbol gets ticker from self.config.ticker
+            short_symbol = self._build_option_symbol(short_strike, expiration, option_type)
+            long_symbol = self._build_option_symbol(long_strike, expiration, option_type)
 
             quotes = self.tradier.get_quotes([short_symbol, long_symbol])
             if not quotes or len(quotes) < 2:

@@ -295,9 +295,8 @@ class ARESTrader(MathOptimizerMixin):
                 result['trade_opened'] = True
                 result['action'] = 'opened' if result['action'] == 'none' else 'both'
                 result['details']['position'] = position.to_dict()
-                result['details']['trade_number'] = trades_today + 1
                 scan_context['position'] = position
-                self.db.log("INFO", f"Opened trade #{trades_today + 1} of {max_trades} today")
+                self.db.log("INFO", f"Opened new ARES position: {position.position_id}")
             if signal:
                 scan_context['signal'] = signal
                 scan_context['market_data'] = {
@@ -490,7 +489,7 @@ class ARESTrader(MathOptimizerMixin):
                     market_data = context.get('market_data', {})
                     gex_data = context.get('gex_data', {})
                     ml_kwargs = gather_ml_data(
-                        symbol=self.config.symbol,
+                        symbol=self.config.ticker,  # ARESConfig uses 'ticker' not 'symbol'
                         spot_price=market_data.get('spot_price', 0) if market_data else 0,
                         vix=market_data.get('vix', 0) if market_data else 0,
                         gex_data=gex_data,

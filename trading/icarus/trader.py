@@ -844,7 +844,7 @@ class ICARUSTrader(MathOptimizerMixin):
                     market_data = context.get('market_data', {})
                     gex_data = context.get('gex_data', {})
                     ml_kwargs = gather_ml_data(
-                        symbol=self.config.symbol,
+                        symbol=self.config.ticker,  # ICARUSConfig uses 'ticker' not 'symbol'
                         spot_price=market_data.get('spot_price', 0) if market_data else 0,
                         vix=market_data.get('vix', 0) if market_data else 0,
                         gex_data=gex_data,
