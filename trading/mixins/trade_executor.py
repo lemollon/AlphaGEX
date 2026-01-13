@@ -21,6 +21,8 @@ from database_adapter import get_connection
 
 logger = logging.getLogger('autonomous_paper_trader.trade_executor')
 
+# Oracle is the god of all trade decisions - validation is informational only
+
 # Central Time timezone
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 
@@ -109,18 +111,12 @@ class TradeExecutorMixin:
             )
             return None
 
-        # BACKTEST VALIDATION: Check historical performance before trading
+        # BACKTEST VALIDATION: Historical performance check (informational only - Oracle decides)
         strategy_name = trade.get('strategy', '')
         backtest_validation = self.get_backtest_validation_for_pattern(strategy_name)
 
         if not backtest_validation['should_trade']:
-            self.log_action(
-                'SKIP',
-                f"Pattern '{strategy_name}' blocked by backtest validation: {backtest_validation['reason']}",
-                success=True
-            )
-            logger.info(f"Trade blocked by backtest validation: {strategy_name} - {backtest_validation['reason']}")
-            return None
+            logger.info(f"Backtest validation note for '{strategy_name}': {backtest_validation['reason']} (proceeding - Oracle decides)")
 
         # Check for duplicate trades
         now = datetime.now(CENTRAL_TZ)

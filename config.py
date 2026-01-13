@@ -247,6 +247,21 @@ class SystemConfig:
     REQUEST_TIMEOUT = 120  # seconds
 
 
+class OracleConfig:
+    """
+    Oracle Decision Authority Configuration
+
+    ORACLE IS THE GOD OF ALL TRADE DECISIONS.
+    - Oracle win probability is the ONLY gate for trade execution
+    - GEX + VIX analysis is the fallback when Oracle is unavailable
+    - Ensemble and ML Regime Classifier have been removed as dead code
+    - All other checks (confidence, R:R, credit) are INFORMATIONAL ONLY
+    """
+
+    # Default win probability threshold (42% based on KRONOS backtests)
+    DEFAULT_MIN_WIN_PROBABILITY = 0.42
+
+
 # ===== HELPER FUNCTIONS =====
 
 def get_gex_thresholds(symbol: str = 'SPY', avg_gex: Optional[float] = None) -> Dict[str, float]:

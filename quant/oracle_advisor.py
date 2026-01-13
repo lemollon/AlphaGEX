@@ -1359,28 +1359,18 @@ class OracleAdvisor:
         })
 
     # =========================================================================
-    # ENSEMBLE INTEGRATION (Option B - Ensemble feeds into Oracle)
+    # ENSEMBLE INTEGRATION - REMOVED
+    # Oracle is the god of all trade decisions. Ensemble is dead code.
+    # GEX + VIX analysis is the fallback when Oracle is unavailable.
     # =========================================================================
 
     def get_ensemble_weighter(self, symbol: str = "SPY"):
-        """Get or create ensemble weighter"""
-        if self._ensemble_weighter is None:
-            try:
-                from quant.ensemble_strategy import get_ensemble_weighter
-                self._ensemble_weighter = get_ensemble_weighter(symbol)
-            except ImportError:
-                logger.warning("Could not load ensemble_strategy module")
-        return self._ensemble_weighter
+        """REMOVED: Ensemble Strategy is dead code. Oracle is god."""
+        return None
 
     def get_dynamic_weight_updater(self, symbol: str = "SPY"):
-        """Get or create dynamic weight updater (Gap 5)"""
-        if self._dynamic_weight_updater is None:
-            try:
-                from quant.ensemble_strategy import get_dynamic_weight_updater
-                self._dynamic_weight_updater = get_dynamic_weight_updater(symbol)
-            except ImportError:
-                logger.warning("Could not load dynamic weight updater")
-        return self._dynamic_weight_updater
+        """REMOVED: Ensemble Strategy is dead code. Oracle is god."""
+        return None
 
     def get_ensemble_context(
         self,
@@ -1391,50 +1381,19 @@ class OracleAdvisor:
         vol_surface_data: Optional[Dict] = None
     ) -> Optional[Dict]:
         """
-        Get ensemble market context for Oracle decisions.
-
-        This implements Option B: Ensemble FEEDS INTO Oracle.
-        Ensemble provides market context that Oracle uses for bot-specific adaptation.
+        REMOVED: Ensemble Strategy is dead code. Oracle is god.
+        Returns neutral context for any callers that haven't been updated yet.
         """
-        ensemble = self.get_ensemble_weighter()
-        if ensemble is None:
-            return None
-
-        # Build GEX data from context if not provided
-        if gex_data is None:
-            gex_data = {
-                'recommended_action': 'HOLD',
-                'confidence': 50,
-                'gex_net': context.gex_net,
-                'gex_regime': context.gex_regime.value,
-                'gex_normalized': context.gex_normalized,
-                'gex_flip_point': context.gex_flip_point,
-                'gex_call_wall': context.gex_call_wall,
-                'gex_put_wall': context.gex_put_wall
-            }
-
-        try:
-            signal = ensemble.get_ensemble_signal(
-                gex_data=gex_data,
-                psychology_data=psychology_data,
-                rsi_data=rsi_data,
-                vol_surface_data=vol_surface_data,
-                current_regime=context.gex_regime.value
-            )
-
-            return {
-                'signal': signal.final_signal.value,
-                'confidence': signal.confidence,
-                'should_trade': signal.should_trade,
-                'position_size_multiplier': signal.position_size_multiplier,
-                'bullish_weight': signal.bullish_weight,
-                'bearish_weight': signal.bearish_weight,
-                'neutral_weight': signal.neutral_weight,
-                'component_count': len(signal.component_signals)
-            }
-        except Exception as e:
-            logger.error(f"Failed to get ensemble context: {e}")
-            return None
+        return {
+            'signal': 'NEUTRAL',
+            'confidence': 50,
+            'should_trade': True,
+            'position_size_multiplier': 1.0,
+            'bullish_weight': 0.33,
+            'bearish_weight': 0.33,
+            'neutral_weight': 0.34,
+            'component_count': 0
+        }
 
     def update_ensemble_from_outcome(
         self,
@@ -1444,26 +1403,8 @@ class OracleAdvisor:
         actual_pnl_pct: float,
         current_regime: str
     ) -> Optional[Dict[str, float]]:
-        """
-        Update ensemble weights based on trade outcome (Gap 5).
-
-        This feeds outcome data back to the ensemble for dynamic weight updates.
-        """
-        updater = self.get_dynamic_weight_updater()
-        if updater is None:
-            return None
-
-        try:
-            return updater.update_weights_from_outcome(
-                strategy_name=strategy_name,
-                was_correct=was_correct,
-                confidence_at_prediction=confidence_at_prediction,
-                actual_pnl_pct=actual_pnl_pct,
-                current_regime=current_regime
-            )
-        except Exception as e:
-            logger.error(f"Failed to update ensemble weights: {e}")
-            return None
+        """REMOVED: Ensemble Strategy is dead code. Oracle is god."""
+        return None
 
     @property
     def claude_available(self) -> bool:

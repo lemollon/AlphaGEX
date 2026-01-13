@@ -155,15 +155,10 @@ except ImportError:
     run_feedback_loop = None
     print("Warning: Solomon not available. Feedback loop will be disabled.")
 
-# Import QUANT Training Modules (ML model retraining)
-try:
-    from quant.ml_regime_classifier import MLRegimeClassifier, train_regime_classifier
-    REGIME_CLASSIFIER_AVAILABLE = True
-except ImportError:
-    REGIME_CLASSIFIER_AVAILABLE = False
-    MLRegimeClassifier = None
-    train_regime_classifier = None
-    print("Warning: MLRegimeClassifier not available. Regime classifier training will be disabled.")
+# REMOVED: ML Regime Classifier - Oracle is god
+# The MLRegimeClassifier import and training code has been removed.
+# Oracle decides all trades.
+REGIME_CLASSIFIER_AVAILABLE = False
 
 try:
     from quant.gex_directional_ml import GEXDirectionalPredictor
@@ -1961,52 +1956,10 @@ class AutonomousTraderScheduler:
         }
 
         # =================================================================
-        # REGIME_CLASSIFIER Training
+        # REMOVED: ML Regime Classifier - Oracle is god
+        # The REGIME_CLASSIFIER training code has been removed.
+        # Oracle decides all trades.
         # =================================================================
-        if REGIME_CLASSIFIER_AVAILABLE:
-            try:
-                logger.info("QUANT: Training REGIME_CLASSIFIER...")
-                metrics = train_regime_classifier(symbol="SPY", lookback_days=365)
-
-                if metrics:
-                    logger.info(f"  ✅ REGIME_CLASSIFIER trained successfully")
-                    logger.info(f"     Accuracy: {metrics.accuracy:.2%}")
-                    logger.info(f"     F1 Score: {metrics.f1:.2%}")
-                    logger.info(f"     Samples: {metrics.samples_trained}")
-
-                    training_results['models_trained'].append('REGIME_CLASSIFIER')
-                    training_results['details']['REGIME_CLASSIFIER'] = {
-                        'accuracy': metrics.accuracy,
-                        'f1': metrics.f1,
-                        'precision': metrics.precision,
-                        'recall': metrics.recall,
-                        'samples': metrics.samples_trained
-                    }
-
-                    # Record to database
-                    self._record_training_history(
-                        model_name='REGIME_CLASSIFIER',
-                        status='COMPLETED',
-                        accuracy_after=metrics.accuracy * 100,
-                        training_samples=metrics.samples_trained,
-                        triggered_by='SCHEDULED'
-                    )
-                else:
-                    logger.warning("  ⚠️ REGIME_CLASSIFIER training returned no metrics")
-                    training_results['models_failed'].append('REGIME_CLASSIFIER')
-
-            except Exception as e:
-                logger.error(f"  ❌ REGIME_CLASSIFIER training failed: {e}")
-                logger.error(traceback.format_exc())
-                training_results['models_failed'].append('REGIME_CLASSIFIER')
-                self._record_training_history(
-                    model_name='REGIME_CLASSIFIER',
-                    status='FAILED',
-                    triggered_by='SCHEDULED',
-                    error=str(e)
-                )
-        else:
-            logger.warning("QUANT: REGIME_CLASSIFIER not available - skipping")
 
         # =================================================================
         # GEX_DIRECTIONAL Training

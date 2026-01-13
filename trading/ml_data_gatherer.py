@@ -283,7 +283,8 @@ class MLDataGatherer:
         self._gather_quant_ml(bundle, symbol, spot_price, vix, gex_data)
         self._gather_regime_classifier(bundle, symbol, spot_price, vix, gex_data)
         self._gather_gex_ml(bundle, symbol, spot_price, vix, gex_data)
-        self._gather_ensemble(bundle, symbol, spot_price, vix, gex_data)
+        # REMOVED: Ensemble gathering - Oracle is god
+        # self._gather_ensemble(bundle, symbol, spot_price, vix, gex_data)
         self._gather_volatility_regime(bundle, spot_price, vix, gex_data)
         self._gather_psychology(bundle, symbol, spot_price, gex_data)
         self._gather_kelly(bundle, win_rate, avg_win, avg_loss)
@@ -426,33 +427,9 @@ class MLDataGatherer:
         vix: float,
         gex_data: Dict
     ):
-        """Gather Ensemble Strategy data"""
-        if not ENSEMBLE_AVAILABLE:
-            return
-
-        try:
-            result = get_ensemble_signal(
-                symbol=symbol,
-                spot_price=spot_price,
-                vix=vix,
-                net_gex=gex_data.get('net_gex', 0),
-                call_wall=gex_data.get('call_wall', 0),
-                put_wall=gex_data.get('put_wall', 0),
-            )
-            if result:
-                bundle.ensemble_signal = getattr(result, 'signal', '') or getattr(result, 'final_signal', '')
-                if hasattr(bundle.ensemble_signal, 'value'):
-                    bundle.ensemble_signal = bundle.ensemble_signal.value
-                bundle.ensemble_confidence = getattr(result, 'confidence', 0)
-                bundle.ensemble_bullish_weight = getattr(result, 'bullish_weight', 0)
-                bundle.ensemble_bearish_weight = getattr(result, 'bearish_weight', 0)
-                bundle.ensemble_neutral_weight = getattr(result, 'neutral_weight', 0)
-                bundle.ensemble_should_trade = getattr(result, 'should_trade', False)
-                bundle.ensemble_position_size_multiplier = getattr(result, 'position_size_multiplier', 1.0)
-                bundle.ensemble_component_signals = getattr(result, 'component_signals', None)
-                bundle.ensemble_reasoning = getattr(result, 'reasoning', '')
-        except Exception as e:
-            logger.debug(f"Ensemble gather failed: {e}")
+        # REMOVED: Ensemble gathering - Oracle is god
+        # Ensemble fields in MLDataBundle will remain empty/default
+        pass
 
     def _gather_volatility_regime(
         self,

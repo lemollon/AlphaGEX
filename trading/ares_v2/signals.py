@@ -24,6 +24,9 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
+# Oracle is the god of all trade decisions
+# No config flag needed - Oracle always decides, GEX + VIX is fallback
+
 # Optional imports with fallbacks
 try:
     from quant.oracle_advisor import OracleAdvisor, OraclePrediction
@@ -60,25 +63,9 @@ try:
 except ImportError:
     DATA_PROVIDER_AVAILABLE = False
 
-# Ensemble Strategy - combines multiple signal sources with learned weights
-ENSEMBLE_AVAILABLE = False
-try:
-    from quant.ensemble_strategy import get_ensemble_signal, EnsembleSignal, StrategySignal
-    ENSEMBLE_AVAILABLE = True
-except ImportError:
-    get_ensemble_signal = None
-    EnsembleSignal = None
-    StrategySignal = None
-
-# ML Regime Classifier - replaces hard-coded GEX thresholds with learned models
-ML_REGIME_AVAILABLE = False
-try:
-    from quant.ml_regime_classifier import MLRegimeClassifier, MLPrediction as RegimePrediction, MLRegimeAction
-    ML_REGIME_AVAILABLE = True
-except ImportError:
-    MLRegimeClassifier = None
-    RegimePrediction = None
-    MLRegimeAction = None
+# REMOVED: Ensemble Strategy and ML Regime Classifier
+# Oracle is the god of all trade decisions. GEX + VIX is the fallback.
+# These systems were dead code that only blocked trades unnecessarily.
 
 # IV Solver - accurate implied volatility calculation
 IV_SOLVER_AVAILABLE = False
@@ -121,55 +108,25 @@ class SignalGenerator:
 
     def _init_components(self) -> None:
         """Initialize signal generation components"""
-        # GEX Calculator - Try Kronos first, but VERIFY it has FRESH data
-        # Kronos uses ORAT database which is historical (EOD) and may be stale
+        # GEX Calculator - Use Tradier for LIVE trading data
+        # Kronos uses ORAT database (EOD) - only for backtesting, NOT live trading
         self.gex_calculator = None
-        kronos_works = False
 
-        if KRONOS_AVAILABLE:
-            try:
-                kronos_calc = KronosGEXCalculator()
-                # CRITICAL: Test if Kronos has RECENT data (within 2 trading days)
-                test_result = kronos_calc.calculate_gex(self.config.ticker)
-                if test_result and test_result.get('spot_price', 0) > 0:
-                    # Check data freshness - reject if older than 2 days
-                    trade_date = test_result.get('trade_date', '')
-                    if trade_date:
-                        from datetime import datetime
-                        try:
-                            data_date = datetime.strptime(trade_date, '%Y-%m-%d')
-                            days_old = (datetime.now() - data_date).days
-                            if days_old <= 2:
-                                self.gex_calculator = kronos_calc
-                                kronos_works = True
-                                logger.info(f"ARES: Kronos GEX verified (spot={test_result.get('spot_price')}, date={trade_date})")
-                            else:
-                                logger.warning(f"ARES: Kronos data too stale ({days_old} days old) - falling back to Tradier")
-                        except ValueError:
-                            logger.warning(f"ARES: Kronos has invalid trade_date format - falling back")
-                    else:
-                        logger.warning("ARES: Kronos returned no trade_date - falling back")
-                else:
-                    logger.warning("ARES: Kronos returned no data - falling back")
-            except Exception as e:
-                logger.warning(f"ARES: Kronos init/test failed: {e}")
-
-        # Fall back to Tradier for LIVE data if Kronos didn't work
-        if not kronos_works and TRADIER_GEX_AVAILABLE:
+        if TRADIER_GEX_AVAILABLE:
             try:
                 tradier_calc = get_gex_calculator()
                 # Verify Tradier works with live data
                 test_result = tradier_calc.calculate_gex(self.config.ticker)
                 if test_result and test_result.get('spot_price', 0) > 0:
                     self.gex_calculator = tradier_calc
-                    logger.info(f"ARES: Using Tradier GEX (live spot={test_result.get('spot_price')})")
+                    logger.info(f"ARES: Using Tradier GEX for LIVE trading (spot={test_result.get('spot_price')})")
                 else:
                     logger.error("ARES: Tradier GEX returned no data!")
             except Exception as e:
                 logger.warning(f"ARES: Tradier GEX init/test failed: {e}")
 
         if not self.gex_calculator:
-            logger.error("ARES: NO GEX CALCULATOR AVAILABLE - trading will be limited")
+            logger.error("ARES: NO GEX CALCULATOR AVAILABLE - Tradier required for live trading")
 
         # ARES ML Advisor (PRIMARY - trained on KRONOS backtests with ~70% win rate)
         self.ares_ml = None
@@ -192,10 +149,7 @@ class SignalGenerator:
             except Exception as e:
                 logger.warning(f"Oracle init failed: {e}")
 
-        # Ensemble Strategy Weighter - combines multiple signal sources
-        self.ensemble_available = ENSEMBLE_AVAILABLE
-        if ENSEMBLE_AVAILABLE:
-            logger.info("ARES SignalGenerator: Ensemble Strategy available")
+        # REMOVED: Ensemble Strategy - dead code that only blocked trades
 
         # GEX Directional ML - predicts market direction from GEX structure
         # For Iron Condors: if strongly directional, may want to skip or adjust strikes
@@ -219,36 +173,43 @@ class SignalGenerator:
             except Exception as e:
                 logger.debug(f"GEX Directional ML init failed: {e}")
 
-        # ML Regime Classifier - replaces hard-coded GEX thresholds
-        # For Iron Condors: SELL_PREMIUM = good, directional = reduce confidence
-        self.ml_regime_classifier = None
-        if ML_REGIME_AVAILABLE and MLRegimeClassifier:
-            try:
-                self.ml_regime_classifier = MLRegimeClassifier(symbol=self.config.ticker)
-                logger.info("ARES SignalGenerator: ML Regime Classifier initialized")
-            except Exception as e:
-                logger.debug(f"ML Regime Classifier init failed: {e}")
+        # REMOVED: ML Regime Classifier - dead code that only blocked trades
 
     def get_gex_directional_prediction(self, gex_data: Dict, vix: float = None) -> Optional[Dict]:
         """
         Get GEX Directional ML prediction for market direction.
 
-        For Iron Condors: Strong directional signal suggests caution.
-        - FLAT/NEUTRAL = good for IC (rangebound)
-        - BULLISH with high confidence = may want to widen call side
-        - BEARISH with high confidence = may want to widen put side
+        For Iron Condors: Strong directional signal is INFORMATIONAL ONLY.
+        - FLAT/NEUTRAL = confirms IC is appropriate
+        - BULLISH/BEARISH = may want to adjust strikes, but does NOT block
         """
         if not self.gex_directional_ml:
             return None
 
         try:
-            # Build features from GEX data
+            # Build proper gex_data dict for predict() method
+            # Map incoming keys to expected keys
+            spot = gex_data.get('spot_price', 0)
+            call_wall = gex_data.get('major_pos_vol_level', gex_data.get('call_wall', spot))
+            put_wall = gex_data.get('major_neg_vol_level', gex_data.get('put_wall', spot))
+            flip_point = gex_data.get('flip_point', spot)
+
+            ml_gex_data = {
+                'spot_price': spot,
+                'net_gex': gex_data.get('net_gex', 0),
+                'gex_normalized': gex_data.get('gex_normalized', 0),
+                'gex_regime': gex_data.get('gex_regime', 'NEUTRAL'),
+                'call_wall': call_wall,
+                'put_wall': put_wall,
+                'flip_point': flip_point,
+                'distance_to_flip_pct': ((flip_point - spot) / spot * 100) if spot > 0 else 0,
+                'between_walls': put_wall < spot < call_wall if spot > 0 else True,
+                'above_call_wall': spot > call_wall if spot > 0 else False,
+                'below_put_wall': spot < put_wall if spot > 0 else False,
+            }
+
             prediction = self.gex_directional_ml.predict(
-                net_gex=gex_data.get('net_gex', 0),
-                call_wall=gex_data.get('major_pos_vol_level', 0),
-                put_wall=gex_data.get('major_neg_vol_level', 0),
-                flip_point=gex_data.get('flip_point', 0),
-                spot_price=gex_data.get('spot_price', 0),
+                gex_data=ml_gex_data,
                 vix=vix or 20.0
             )
 
@@ -259,126 +220,13 @@ class SignalGenerator:
                     'probabilities': prediction.probabilities if hasattr(prediction, 'probabilities') else {}
                 }
         except Exception as e:
-            logger.debug(f"GEX Directional ML prediction failed: {e}")
+            logger.warning(f"GEX Directional ML prediction failed: {e}")
 
         return None
 
-    def get_ml_regime_prediction(self, gex_data: Dict, market_data: Dict) -> Optional[Dict]:
-        """
-        Get ML Regime Classifier prediction for market action.
-
-        For Iron Condors:
-        - SELL_PREMIUM = ideal, boost confidence
-        - BUY_CALLS/BUY_PUTS = directional, reduce IC confidence
-        - STAY_FLAT = neutral, slight boost
-        """
-        if not self.ml_regime_classifier:
-            return None
-
-        try:
-            from datetime import datetime
-            now = datetime.now()
-
-            # Extract features from market data
-            gex_normalized = gex_data.get('net_gex', 0) / 1e9 if gex_data.get('net_gex', 0) != 0 else 1.0
-            vix = market_data.get('vix', 20.0)
-            spot = market_data.get('spot_price', 0)
-            flip_point = gex_data.get('flip_point', spot)
-
-            # Calculate distance to flip as percentage
-            distance_to_flip = ((spot - flip_point) / spot * 100) if spot > 0 else 0
-
-            prediction = self.ml_regime_classifier.predict(
-                gex_normalized=gex_normalized,
-                gex_percentile=50.0,  # Use neutral if not available
-                gex_change_1d=0.0,
-                gex_change_5d=0.0,
-                vix=vix,
-                vix_percentile=50.0,
-                vix_change_1d=0.0,
-                iv_rank=market_data.get('iv_rank', 50.0),
-                iv_hv_ratio=1.1,
-                distance_to_flip=distance_to_flip,
-                momentum_1h=0.0,
-                momentum_4h=0.0,
-                above_20ma=True,
-                above_50ma=True,
-                regime_duration=1,
-                day_of_week=now.weekday(),
-                days_to_opex=market_data.get('days_to_expiry', 0)
-            )
-
-            if prediction:
-                return {
-                    'action': prediction.predicted_action.value if hasattr(prediction.predicted_action, 'value') else str(prediction.predicted_action),
-                    'confidence': prediction.confidence,
-                    'probabilities': prediction.probabilities,
-                    'is_trained': prediction.is_trained
-                }
-        except Exception as e:
-            logger.debug(f"ML Regime Classifier prediction failed: {e}")
-
-        return None
-
-    def get_ensemble_boost(self, market_data: Dict, ml_prediction: Dict = None, oracle: Dict = None) -> Dict:
-        """
-        Get ensemble signal boost/confirmation from multiple strategy sources.
-
-        The ensemble combines: GEX signals, ML predictions, and Oracle with learned weights.
-        Returns a multiplier for position sizing based on signal agreement.
-        """
-        if not ENSEMBLE_AVAILABLE:
-            return {'boost': 1.0, 'should_trade': True, 'confidence': 0.7, 'reasoning': 'Ensemble not available'}
-
-        try:
-            # Build GEX data for ensemble
-            gex_data = {
-                'recommended_action': 'SELL_IC',  # Iron Condor is neutral/range-bound
-                'confidence': 70,
-                'reasoning': f"VIX={market_data.get('vix', 20):.1f}, EM=${market_data.get('expected_move', 0):.0f}"
-            }
-
-            # Build ML prediction data
-            ml_data = None
-            if ml_prediction:
-                ml_data = {
-                    'predicted_action': 'SELL_IC',
-                    'confidence': ml_prediction.get('confidence', 0) * 100,
-                    'is_trained': True
-                }
-
-            # Get current regime from GEX
-            current_regime = market_data.get('gex_regime', 'UNKNOWN')
-            if current_regime == 'POSITIVE':
-                current_regime = 'POSITIVE_GAMMA'
-            elif current_regime == 'NEGATIVE':
-                current_regime = 'NEGATIVE_GAMMA'
-
-            # Get ensemble signal
-            ensemble = get_ensemble_signal(
-                symbol=self.config.ticker,
-                gex_data=gex_data,
-                ml_prediction=ml_data,
-                current_regime=current_regime
-            )
-
-            if ensemble:
-                logger.info(f"[ARES ENSEMBLE] Signal: {ensemble.final_signal.value}, "
-                           f"Confidence: {ensemble.confidence:.0f}%, "
-                           f"Size Multiplier: {ensemble.position_size_multiplier:.0%}")
-
-                return {
-                    'boost': ensemble.position_size_multiplier,
-                    'should_trade': ensemble.should_trade,
-                    'confidence': ensemble.confidence / 100,
-                    'signal': ensemble.final_signal.value,
-                    'reasoning': ensemble.reasoning
-                }
-
-        except Exception as e:
-            logger.debug(f"Ensemble signal error: {e}")
-
-        return {'boost': 1.0, 'should_trade': True, 'confidence': 0.7, 'reasoning': 'Ensemble fallback'}
+    # REMOVED: get_ml_regime_prediction - dead code
+    # REMOVED: get_ensemble_boost - dead code
+    # Oracle is the god of all trade decisions. GEX + VIX is the fallback.
 
     def get_market_data(self) -> Optional[Dict[str, Any]]:
         """Get current market data including price, VIX, and GEX"""
@@ -1166,46 +1014,9 @@ class SignalGenerator:
                 confidence = max(0.45, confidence - penalty)
                 logger.info(f"  Moderate {gex_dir} signal - IC confidence adjusted to {confidence:.1%}")
 
-        # ============================================================
-        # ML REGIME CLASSIFIER - Learned market regime detection
-        # For Iron Condors: SELL_PREMIUM = ideal, directional = reduce confidence
-        # ============================================================
-        regime_prediction = self.get_ml_regime_prediction(gex_data, market_data)
-        if regime_prediction:
-            regime_action = regime_prediction.get('action', 'STAY_FLAT')
-            regime_conf = regime_prediction.get('confidence', 50) / 100.0
-
-            logger.info(f"[ARES ML REGIME] Action: {regime_action}, Confidence: {regime_conf:.1%}")
-
-            if regime_action == 'SELL_PREMIUM':
-                # Perfect for Iron Condors - boost confidence
-                boost = min(0.08, regime_conf * 0.10)
-                confidence = min(0.95, confidence + boost)
-                logger.info(f"  SELL_PREMIUM regime = ideal for IC, confidence boosted to {confidence:.1%}")
-            elif regime_action in ('BUY_CALLS', 'BUY_PUTS'):
-                # Directional regime - reduce IC confidence
-                if regime_conf > 0.70:
-                    penalty = (regime_conf - 0.70) * 0.25
-                    confidence = max(0.40, confidence - penalty)
-                    logger.info(f"  {regime_action} regime ({regime_conf:.0%}) - IC confidence reduced to {confidence:.1%}")
-            elif regime_action == 'STAY_FLAT':
-                # Neutral - slight boost for IC
-                confidence = min(0.90, confidence + 0.02)
-                logger.info(f"  STAY_FLAT regime = neutral for IC, confidence: {confidence:.1%}")
-
-        # ============================================================
-        # Step 3.5: ENSEMBLE STRATEGY - Multi-signal confirmation
-        # Combines GEX, ML, and learned regime weights for position sizing
-        # ============================================================
-        ensemble_result = self.get_ensemble_boost(market_data, ml_prediction, oracle)
-        if ensemble_result:
-            if not ensemble_result.get('should_trade', True):
-                logger.info(f"[ARES ENSEMBLE BLOCKED] Ensemble says don't trade: {ensemble_result.get('reasoning', 'No reason')}")
-                return None
-
-            ensemble_boost = ensemble_result.get('boost', 1.0)
-            if ensemble_boost != 1.0:
-                logger.info(f"[ARES ENSEMBLE] Position size multiplier: {ensemble_boost:.0%}")
+        # REMOVED: ML Regime Classifier - dead code
+        # REMOVED: Ensemble Strategy - dead code
+        # Oracle is the god of all trade decisions. GEX + VIX is the fallback.
 
         # Step 4: Calculate strikes (Oracle > GEX > SD priority)
         use_gex_walls = oracle.get('use_gex_walls', False) if oracle else False
@@ -1231,10 +1042,9 @@ class SignalGenerator:
             vix=vix,
         )
 
-        # Step 6: Validate minimum credit
+        # Step 6: Log credit info (no blocking - Oracle decides)
         if pricing['total_credit'] < self.config.min_credit:
-            logger.info(f"Credit ${pricing['total_credit']:.2f} below minimum ${self.config.min_credit}")
-            return None
+            logger.warning(f"Credit ${pricing['total_credit']:.2f} below minimum ${self.config.min_credit} - proceeding (Oracle approved)")
 
         # Step 7: Get expiration (0DTE)
         now = datetime.now(CENTRAL_TZ)
