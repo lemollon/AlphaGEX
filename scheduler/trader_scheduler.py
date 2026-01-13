@@ -1174,8 +1174,9 @@ class AutonomousTraderScheduler:
             # Run the V2 cycle
             result = self.athena_trader.run_cycle()
 
-            traded = result.get('trade_opened', False)
-            closed = result.get('positions_closed', 0)
+            # ATHENA V2 returns 'trades_opened' (int), not 'trade_opened' (bool)
+            traded = result.get('trades_opened', result.get('trade_opened', 0)) > 0
+            closed = result.get('trades_closed', result.get('positions_closed', 0))
             action = result.get('action', 'none')
 
             logger.info(f"ATHENA V2 cycle completed: {action}")
@@ -1466,8 +1467,9 @@ class AutonomousTraderScheduler:
             # Run the cycle
             result = self.icarus_trader.run_cycle()
 
-            traded = result.get('trade_opened', False)
-            closed = result.get('positions_closed', 0)
+            # ICARUS returns 'trades_opened' (int), not 'trade_opened' (bool)
+            traded = result.get('trades_opened', result.get('trade_opened', 0)) > 0
+            closed = result.get('trades_closed', result.get('positions_closed', 0))
             action = result.get('action', 'none')
 
             logger.info(f"ICARUS cycle completed: {action}")
