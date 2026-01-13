@@ -867,31 +867,11 @@ class AutonomousTraderScheduler:
                 'action': action
             })
 
-            # BACKUP: Log to scan_activity from scheduler since trader's logger may have failed
-            # This ensures we ALWAYS have visibility into market-hours scans
-            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_ares_scan:
-                try:
-                    # Determine outcome and summary from result
-                    if traded:
-                        outcome = ScanOutcome.TRADED
-                        summary = f"Iron Condor opened: {result.get('details', {}).get('position_id', 'N/A')}"
-                    elif result.get('errors'):
-                        outcome = ScanOutcome.NO_TRADE
-                        summary = result['errors'][0] if result['errors'] else "No trade - see details"
-                    else:
-                        outcome = ScanOutcome.NO_TRADE
-                        summary = result.get('details', {}).get('skip_reason', action)
-
-                    scan_id = log_ares_scan(
-                        outcome=outcome,
-                        decision_summary=summary[:500],
-                        action_taken=action,
-                        generate_ai_explanation=False
-                    )
-                    if scan_id:
-                        logger.info(f"  [BACKUP] Scan logged: {scan_id}")
-                except Exception as log_err:
-                    logger.warning(f"  Backup scan logging failed: {log_err}")
+            # NOTE: Removed duplicate "BACKUP" logging here.
+            # The ARES V2 trader.py already logs comprehensive scan activity
+            # with full Oracle/ML data via _log_scan_activity().
+            # The old backup created duplicate entries with incomplete data
+            # (Oracle:0%, ML:0%, Thresh:0%) which caused diagnostic confusion.
 
             logger.info(f"ARES V2 scan #{self.ares_execution_count} completed")
             logger.info(f"=" * 80)
@@ -1219,29 +1199,9 @@ class AutonomousTraderScheduler:
                 'action': action
             })
 
-            # BACKUP: Log to scan_activity from scheduler since trader's logger may have failed
-            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_athena_scan:
-                try:
-                    if traded:
-                        outcome = ScanOutcome.TRADED
-                        summary = f"Directional spread opened: {result.get('details', {}).get('position_id', 'N/A')}"
-                    elif result.get('errors'):
-                        outcome = ScanOutcome.NO_TRADE
-                        summary = result['errors'][0] if result['errors'] else "No trade - see details"
-                    else:
-                        outcome = ScanOutcome.NO_TRADE
-                        summary = result.get('details', {}).get('skip_reason', action)
-
-                    scan_id = log_athena_scan(
-                        outcome=outcome,
-                        decision_summary=summary[:500],
-                        action_taken=action,
-                        generate_ai_explanation=False
-                    )
-                    if scan_id:
-                        logger.info(f"  [BACKUP] Scan logged: {scan_id}")
-                except Exception as log_err:
-                    logger.warning(f"  Backup scan logging failed: {log_err}")
+            # NOTE: Removed duplicate "BACKUP" logging here.
+            # ATHENA V2 trader already logs comprehensive scan activity
+            # with full Oracle/ML data via _log_scan_activity().
 
             logger.info(f"ATHENA V2 scan #{self.athena_execution_count} completed")
             logger.info(f"=" * 80)
@@ -1366,29 +1326,9 @@ class AutonomousTraderScheduler:
                 'action': action
             })
 
-            # BACKUP: Log to scan_activity from scheduler
-            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_pegasus_scan:
-                try:
-                    if traded:
-                        outcome = ScanOutcome.TRADED
-                        summary = f"SPX Iron Condor opened"
-                    elif result.get('errors'):
-                        outcome = ScanOutcome.NO_TRADE
-                        summary = result['errors'][0] if result['errors'] else "No trade"
-                    else:
-                        outcome = ScanOutcome.NO_TRADE
-                        summary = result.get('details', {}).get('skip_reason', action)
-
-                    scan_id = log_pegasus_scan(
-                        outcome=outcome,
-                        decision_summary=summary[:500],
-                        action_taken=action,
-                        generate_ai_explanation=False
-                    )
-                    if scan_id:
-                        logger.info(f"  [BACKUP] Scan logged: {scan_id}")
-                except Exception as log_err:
-                    logger.warning(f"  Backup scan logging failed: {log_err}")
+            # NOTE: Removed duplicate "BACKUP" logging here.
+            # PEGASUS trader already logs comprehensive scan activity
+            # with full Oracle/ML data via its internal logger.
 
             logger.info(f"PEGASUS scan #{self.pegasus_execution_count} completed")
             logger.info(f"=" * 80)
@@ -1551,29 +1491,9 @@ class AutonomousTraderScheduler:
                 'action': action
             })
 
-            # BACKUP: Log to scan_activity from scheduler
-            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_icarus_scan:
-                try:
-                    if traded:
-                        outcome = ScanOutcome.TRADED
-                        summary = f"Aggressive directional spread opened"
-                    elif result.get('errors'):
-                        outcome = ScanOutcome.NO_TRADE
-                        summary = result['errors'][0] if result['errors'] else "No trade"
-                    else:
-                        outcome = ScanOutcome.NO_TRADE
-                        summary = result.get('details', {}).get('skip_reason', action)
-
-                    scan_id = log_icarus_scan(
-                        outcome=outcome,
-                        decision_summary=summary[:500],
-                        action_taken=action,
-                        generate_ai_explanation=False
-                    )
-                    if scan_id:
-                        logger.info(f"  [BACKUP] Scan logged: {scan_id}")
-                except Exception as log_err:
-                    logger.warning(f"  Backup scan logging failed: {log_err}")
+            # NOTE: Removed duplicate "BACKUP" logging here.
+            # ICARUS trader already logs comprehensive scan activity
+            # with full Oracle/ML data via its internal logger.
 
             logger.info(f"ICARUS scan #{self.icarus_execution_count} completed")
             logger.info(f"=" * 80)
@@ -1747,29 +1667,9 @@ class AutonomousTraderScheduler:
                 'action': action
             })
 
-            # BACKUP: Log to scan_activity from scheduler
-            if SCAN_ACTIVITY_LOGGER_AVAILABLE and log_titan_scan:
-                try:
-                    if traded:
-                        outcome = ScanOutcome.TRADED
-                        summary = f"Aggressive SPX Iron Condor opened"
-                    elif result.get('errors'):
-                        outcome = ScanOutcome.NO_TRADE
-                        summary = result['errors'][0] if result['errors'] else "No trade"
-                    else:
-                        outcome = ScanOutcome.NO_TRADE
-                        summary = result.get('details', {}).get('skip_reason', action)
-
-                    scan_id = log_titan_scan(
-                        outcome=outcome,
-                        decision_summary=summary[:500],
-                        action_taken=action,
-                        generate_ai_explanation=False
-                    )
-                    if scan_id:
-                        logger.info(f"  [BACKUP] Scan logged: {scan_id}")
-                except Exception as log_err:
-                    logger.warning(f"  Backup scan logging failed: {log_err}")
+            # NOTE: Removed duplicate "BACKUP" logging here.
+            # TITAN trader already logs comprehensive scan activity
+            # with full Oracle/ML data via its internal logger.
 
             logger.info(f"TITAN scan #{self.titan_execution_count} completed")
             logger.info(f"=" * 80)

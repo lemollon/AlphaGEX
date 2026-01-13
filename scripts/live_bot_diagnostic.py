@@ -71,6 +71,202 @@ def run_diagnostic():
             conn.rollback()  # Critical: rollback to clear aborted transaction
             raise e
 
+    def ensure_position_tables():
+        """Ensure all bot position tables exist - auto-create if missing"""
+        tables_created = []
+
+        def table_exists(table_name):
+            """Check if a table exists"""
+            try:
+                cursor.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_name = %s
+                    )
+                """, (table_name,))
+                result = cursor.fetchone()
+                return result[0] if result else False
+            except Exception:
+                conn.rollback()
+                return False
+
+        # ARES positions table
+        try:
+            existed = table_exists('ares_positions')
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS ares_positions (
+                    id SERIAL PRIMARY KEY,
+                    position_id VARCHAR(50) UNIQUE NOT NULL,
+                    ticker VARCHAR(10) NOT NULL DEFAULT 'SPY',
+                    expiration DATE NOT NULL,
+                    put_short_strike DECIMAL(10, 2) NOT NULL,
+                    put_long_strike DECIMAL(10, 2) NOT NULL,
+                    put_credit DECIMAL(10, 4) NOT NULL DEFAULT 0,
+                    call_short_strike DECIMAL(10, 2) NOT NULL,
+                    call_long_strike DECIMAL(10, 2) NOT NULL,
+                    call_credit DECIMAL(10, 4) NOT NULL DEFAULT 0,
+                    contracts INTEGER NOT NULL DEFAULT 1,
+                    spread_width DECIMAL(10, 2) NOT NULL DEFAULT 2,
+                    total_credit DECIMAL(10, 4) NOT NULL DEFAULT 0,
+                    max_loss DECIMAL(10, 2) NOT NULL DEFAULT 0,
+                    max_profit DECIMAL(10, 2) NOT NULL DEFAULT 0,
+                    underlying_at_entry DECIMAL(10, 2) NOT NULL,
+                    vix_at_entry DECIMAL(6, 2),
+                    expected_move DECIMAL(10, 2),
+                    call_wall DECIMAL(10, 2),
+                    put_wall DECIMAL(10, 2),
+                    gex_regime VARCHAR(30),
+                    oracle_confidence DECIMAL(5, 4),
+                    oracle_reasoning TEXT,
+                    status VARCHAR(20) NOT NULL DEFAULT 'open',
+                    open_time TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                    close_time TIMESTAMP WITH TIME ZONE,
+                    close_reason VARCHAR(100),
+                    realized_pnl DECIMAL(10, 2),
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )
+            """)
+            conn.commit()
+            if not existed:
+                tables_created.append('ares_positions')
+        except Exception as e:
+            conn.rollback()
+
+        # ATHENA positions table
+        try:
+            existed = table_exists('athena_positions')
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS athena_positions (
+                    id SERIAL PRIMARY KEY,
+                    position_id VARCHAR(50) UNIQUE NOT NULL,
+                    ticker VARCHAR(10) NOT NULL DEFAULT 'SPY',
+                    expiration DATE NOT NULL,
+                    strategy VARCHAR(50) NOT NULL,
+                    direction VARCHAR(20) NOT NULL,
+                    long_strike DECIMAL(10, 2) NOT NULL,
+                    short_strike DECIMAL(10, 2) NOT NULL,
+                    contracts INTEGER NOT NULL DEFAULT 1,
+                    entry_credit DECIMAL(10, 4) NOT NULL DEFAULT 0,
+                    max_loss DECIMAL(10, 2) NOT NULL DEFAULT 0,
+                    max_profit DECIMAL(10, 2) NOT NULL DEFAULT 0,
+                    underlying_at_entry DECIMAL(10, 2) NOT NULL,
+                    vix_at_entry DECIMAL(6, 2),
+                    gex_regime VARCHAR(30),
+                    oracle_confidence DECIMAL(5, 4),
+                    status VARCHAR(20) NOT NULL DEFAULT 'open',
+                    open_time TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                    close_time TIMESTAMP WITH TIME ZONE,
+                    close_reason VARCHAR(100),
+                    realized_pnl DECIMAL(10, 2),
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )
+            """)
+            conn.commit()
+            if not existed:
+                tables_created.append('athena_positions')
+        except Exception as e:
+            conn.rollback()
+
+        # PEGASUS positions table (SPX Iron Condors)
+        try:
+            existed = table_exists('pegasus_positions')
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS pegasus_positions (
+                    id SERIAL PRIMARY KEY,
+                    position_id VARCHAR(50) UNIQUE NOT NULL,
+                    ticker VARCHAR(10) NOT NULL DEFAULT 'SPX',
+                    expiration DATE NOT NULL,
+                    put_short_strike DECIMAL(10, 2) NOT NULL,
+                    put_long_strike DECIMAL(10, 2) NOT NULL,
+                    call_short_strike DECIMAL(10, 2) NOT NULL,
+                    call_long_strike DECIMAL(10, 2) NOT NULL,
+                    contracts INTEGER NOT NULL DEFAULT 1,
+                    total_credit DECIMAL(10, 4) NOT NULL DEFAULT 0,
+                    max_loss DECIMAL(10, 2) NOT NULL DEFAULT 0,
+                    underlying_at_entry DECIMAL(10, 2) NOT NULL,
+                    vix_at_entry DECIMAL(6, 2),
+                    status VARCHAR(20) NOT NULL DEFAULT 'open',
+                    open_time TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                    close_time TIMESTAMP WITH TIME ZONE,
+                    realized_pnl DECIMAL(10, 2),
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )
+            """)
+            conn.commit()
+            if not existed:
+                tables_created.append('pegasus_positions')
+        except Exception as e:
+            conn.rollback()
+
+        # ICARUS positions table (Aggressive directional)
+        try:
+            existed = table_exists('icarus_positions')
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS icarus_positions (
+                    id SERIAL PRIMARY KEY,
+                    position_id VARCHAR(50) UNIQUE NOT NULL,
+                    ticker VARCHAR(10) NOT NULL DEFAULT 'SPY',
+                    expiration DATE NOT NULL,
+                    strategy VARCHAR(50) NOT NULL,
+                    direction VARCHAR(20) NOT NULL,
+                    long_strike DECIMAL(10, 2) NOT NULL,
+                    short_strike DECIMAL(10, 2) NOT NULL,
+                    contracts INTEGER NOT NULL DEFAULT 1,
+                    entry_credit DECIMAL(10, 4) NOT NULL DEFAULT 0,
+                    max_loss DECIMAL(10, 2) NOT NULL DEFAULT 0,
+                    underlying_at_entry DECIMAL(10, 2) NOT NULL,
+                    vix_at_entry DECIMAL(6, 2),
+                    status VARCHAR(20) NOT NULL DEFAULT 'open',
+                    open_time TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                    close_time TIMESTAMP WITH TIME ZONE,
+                    realized_pnl DECIMAL(10, 2),
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )
+            """)
+            conn.commit()
+            if not existed:
+                tables_created.append('icarus_positions')
+        except Exception as e:
+            conn.rollback()
+
+        # TITAN positions table (Aggressive SPX IC)
+        try:
+            existed = table_exists('titan_positions')
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS titan_positions (
+                    id SERIAL PRIMARY KEY,
+                    position_id VARCHAR(50) UNIQUE NOT NULL,
+                    ticker VARCHAR(10) NOT NULL DEFAULT 'SPX',
+                    expiration DATE NOT NULL,
+                    put_short_strike DECIMAL(10, 2) NOT NULL,
+                    put_long_strike DECIMAL(10, 2) NOT NULL,
+                    call_short_strike DECIMAL(10, 2) NOT NULL,
+                    call_long_strike DECIMAL(10, 2) NOT NULL,
+                    contracts INTEGER NOT NULL DEFAULT 1,
+                    total_credit DECIMAL(10, 4) NOT NULL DEFAULT 0,
+                    max_loss DECIMAL(10, 2) NOT NULL DEFAULT 0,
+                    underlying_at_entry DECIMAL(10, 2) NOT NULL,
+                    vix_at_entry DECIMAL(6, 2),
+                    status VARCHAR(20) NOT NULL DEFAULT 'open',
+                    open_time TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                    close_time TIMESTAMP WITH TIME ZONE,
+                    realized_pnl DECIMAL(10, 2),
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )
+            """)
+            conn.commit()
+            if not existed:
+                tables_created.append('titan_positions')
+        except Exception as e:
+            conn.rollback()
+
+        return tables_created
+
+    # Ensure position tables exist before checking them
+    created = ensure_position_tables()
+    if created:
+        print(f"\n[AUTO-FIX] Created missing tables: {', '.join(created)}")
+
     # 1. Bot Heartbeats (are bots running?)
     print("\n" + "-" * 60)
     print("BOT HEARTBEATS (Last 30 minutes)")
@@ -155,28 +351,47 @@ def run_diagnostic():
 
     # Correct table names matching actual database schema
     position_tables = [
-        ('ares_ic_positions', 'ARES'),
-        ('athena_directional_positions', 'ATHENA'),
-        ('pegasus_ic_positions', 'PEGASUS'),
-        ('icarus_directional_positions', 'ICARUS'),
-        ('titan_ic_positions', 'TITAN'),
+        ('ares_positions', 'ARES'),
+        ('athena_positions', 'ATHENA'),
+        ('pegasus_positions', 'PEGASUS'),
+        ('icarus_positions', 'ICARUS'),
+        ('titan_positions', 'TITAN'),
     ]
 
     for table, bot in position_tables:
         try:
+            # First just get count - this is the most important check
+            # Use UPPER() for case-insensitive matching since some tables use 'open' vs 'OPEN'
             rows = safe_execute(f"""
-                SELECT COUNT(*), MAX(entry_time), SUM(COALESCE(entry_credit, 0))
-                FROM {table}
-                WHERE status = 'OPEN'
+                SELECT COUNT(*) FROM {table} WHERE UPPER(status) = 'OPEN'
             """)
-            row = rows[0] if rows else None
-            if row and row[0] > 0:
-                entry_time = row[1]
-                # Convert entry_time to CT for display
-                if entry_time and entry_time.tzinfo is None:
-                    entry_time = entry_time.replace(tzinfo=ZoneInfo("UTC"))
-                entry_ct = entry_time.astimezone(CENTRAL_TZ).strftime('%I:%M %p CT') if entry_time else 'N/A'
-                print(f"  {bot:10} : {row[0]} open | Entry: {entry_ct} | Credit: ${row[2] or 0:.2f}")
+            count = rows[0][0] if rows and rows[0] else 0
+
+            if count > 0:
+                # Try to get additional details with flexible column names
+                # Different tables use different column names (open_time vs entry_time, total_credit vs entry_credit)
+                try:
+                    detail_rows = safe_execute(f"""
+                        SELECT
+                            COALESCE(open_time, entry_time, created_at) as entry,
+                            COALESCE(total_credit, entry_credit, 0) as credit
+                        FROM {table}
+                        WHERE UPPER(status) = 'OPEN'
+                        ORDER BY COALESCE(open_time, entry_time, created_at) DESC
+                        LIMIT 1
+                    """)
+                    if detail_rows and detail_rows[0]:
+                        entry_time = detail_rows[0][0]
+                        credit = detail_rows[0][1] or 0
+                        # Convert entry_time to CT for display
+                        if entry_time and entry_time.tzinfo is None:
+                            entry_time = entry_time.replace(tzinfo=ZoneInfo("UTC"))
+                        entry_ct = entry_time.astimezone(CENTRAL_TZ).strftime('%I:%M %p CT') if entry_time else 'N/A'
+                        print(f"  {bot:10} : {count} open | Entry: {entry_ct} | Credit: ${float(credit):.2f}")
+                    else:
+                        print(f"  {bot:10} : {count} open positions")
+                except Exception:
+                    print(f"  {bot:10} : {count} open positions")
             else:
                 print(f"  {bot:10} : No open positions")
         except Exception as e:
@@ -341,9 +556,10 @@ def run_diagnostic():
         from quant.solomon_feedback_loop import get_solomon
         solomon = get_solomon()
         for bot in ['ARES', 'ATHENA', 'PEGASUS', 'ICARUS', 'TITAN']:
-            can_trade = solomon.can_trade(bot)
-            status_icon = "🟢" if can_trade else "🔴"
-            print(f"  {status_icon} {bot:10} : {'Can trade' if can_trade else 'BLOCKED'}")
+            # Check if bot is killed via kill switch
+            is_killed = solomon.is_bot_killed(bot) if hasattr(solomon, 'is_bot_killed') else False
+            status_icon = "🔴" if is_killed else "🟢"
+            print(f"  {status_icon} {bot:10} : {'KILLED' if is_killed else 'Active'}")
     except ImportError:
         print("  [INFO] Solomon module not available")
     except Exception as e:
@@ -360,8 +576,10 @@ def run_diagnostic():
         spy_price = get_price('SPY')
 
         vix_status = "🟢 Normal" if vix and vix < 20 else "🟡 Elevated" if vix and vix < 30 else "🔴 High" if vix and vix < 40 else "🔴 EXTREME" if vix else "❓ Unknown"
-        print(f"  VIX: {vix:.2f if vix else 'N/A'} ({vix_status})")
-        print(f"  SPY: ${spy_price:.2f if spy_price else 'N/A'}")
+        vix_str = f"{vix:.2f}" if vix else "N/A"
+        spy_str = f"${spy_price:.2f}" if spy_price else "N/A"
+        print(f"  VIX: {vix_str} ({vix_status})")
+        print(f"  SPY: {spy_str}")
 
         if vix and vix >= 40:
             print(f"  ⚠️ VIX > 40 - ALL IRON CONDOR TRADES BLOCKED")
@@ -383,24 +601,35 @@ def run_diagnostic():
 
         is_trading_day = cal.is_trading_day(today)
         is_open = cal.is_market_open()
-        is_early_close = cal.is_early_close_day(today) if hasattr(cal, 'is_early_close_day') else False
 
         print(f"  Trading Day: {'✅ Yes' if is_trading_day else '❌ No (Holiday)'}")
         print(f"  Market Open: {'✅ Yes' if is_open else '❌ No'}")
-        if is_early_close:
-            print(f"  ⚠️ Early Close Day (12:00 PM CT)")
 
-        # Check FOMC
-        if hasattr(cal, 'is_fomc_week'):
-            is_fomc = cal.is_fomc_week()
-            if is_fomc:
-                print(f"  ⚠️ FOMC Week - Trading may be restricted")
+        # Check early close (wrap in try/except for timezone issues)
+        try:
+            is_early_close = cal.is_early_close_day(today) if hasattr(cal, 'is_early_close_day') else False
+            if is_early_close:
+                print(f"  ⚠️ Early Close Day (12:00 PM CT)")
+        except:
+            pass
+
+        # Check FOMC (wrap in try/except for timezone issues)
+        try:
+            if hasattr(cal, 'is_fomc_week'):
+                is_fomc = cal.is_fomc_week()
+                if is_fomc:
+                    print(f"  ⚠️ FOMC Week - Trading may be restricted")
+        except:
+            pass
 
         # Check earnings
-        if hasattr(cal, 'has_major_earnings_soon'):
-            has_earnings = cal.has_major_earnings_soon(days_ahead=2)
-            if has_earnings:
-                print(f"  ⚠️ Major Earnings Soon - Trading may be restricted")
+        try:
+            if hasattr(cal, 'has_major_earnings_soon'):
+                has_earnings = cal.has_major_earnings_soon(days_ahead=2)
+                if has_earnings:
+                    print(f"  ⚠️ Major Earnings Soon - Trading may be restricted")
+        except:
+            pass
     except ImportError:
         print("  [INFO] Market calendar not available")
     except Exception as e:
