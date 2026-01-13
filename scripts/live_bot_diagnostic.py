@@ -622,14 +622,7 @@ def run_diagnostic():
         except:
             pass
 
-        # Check earnings
-        try:
-            if hasattr(cal, 'has_major_earnings_soon'):
-                has_earnings = cal.has_major_earnings_soon(days_ahead=2)
-                if has_earnings:
-                    print(f"  ⚠️ Major Earnings Soon - Trading may be restricted")
-        except:
-            pass
+        # Note: Removed earnings check - it was buggy and earnings don't restrict trading
     except ImportError:
         print("  [INFO] Market calendar not available")
     except Exception as e:
