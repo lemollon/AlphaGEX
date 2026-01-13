@@ -1026,28 +1026,49 @@ class ATHENATrader(MathOptimizerMixin):
             oracle_thresholds = None
             min_win_prob_threshold = self.config.min_win_probability
 
-            # Extract Oracle data from context (fetched early for all scans)
-            if oracle_data and not signal:
+            # ALWAYS set thresholds - this should never be 0
+            oracle_thresholds = {
+                'min_win_probability': min_win_prob_threshold,
+                'wall_distance_threshold': getattr(self.config, 'wall_distance_threshold', 0.01),
+            }
+
+            # Extract Oracle data from context FIRST (fetched early for all scans)
+            # This ensures we always have Oracle data even if signal doesn't have it
+            if oracle_data:
                 oracle_advice = oracle_data.get('advice', oracle_data.get('recommendation', ''))
                 oracle_reasoning = oracle_data.get('reasoning', oracle_data.get('full_reasoning', ''))
                 oracle_win_probability = oracle_data.get('win_probability', 0)
                 oracle_confidence = oracle_data.get('confidence', 0)
                 oracle_top_factors = oracle_data.get('top_factors', oracle_data.get('factors', []))
-                oracle_thresholds = {
-                    'min_win_probability': min_win_prob_threshold,
-                    'wall_distance_threshold': getattr(self.config, 'wall_distance_threshold', 0.01),
-                }
 
+            # If we have a signal, use signal data (but don't override Oracle data with zeros)
             if signal:
                 signal_direction = signal.direction
                 signal_confidence = signal.confidence
                 signal_win_probability = getattr(signal, 'ml_win_probability', 0)
-                oracle_advice = getattr(signal, 'oracle_advice', '') or ("ENTER" if signal.is_valid else "SKIP")
-                oracle_reasoning = signal.reasoning
-                oracle_win_probability = getattr(signal, 'oracle_win_probability', 0)
-                oracle_confidence = getattr(signal, 'oracle_confidence', signal.confidence)
 
-                # Get top factors (may be JSON string or list)
+                # Only override Oracle data if signal has it (don't replace with zeros)
+                signal_oracle_advice = getattr(signal, 'oracle_advice', '')
+                if signal_oracle_advice:
+                    oracle_advice = signal_oracle_advice
+                elif not oracle_advice:
+                    oracle_advice = "ENTER" if signal.is_valid else "SKIP"
+
+                if signal.reasoning:
+                    oracle_reasoning = signal.reasoning
+
+                # Only override win probability if signal has a non-zero value
+                signal_oracle_wp = getattr(signal, 'oracle_win_probability', 0)
+                if signal_oracle_wp > 0:
+                    oracle_win_probability = signal_oracle_wp
+
+                signal_oracle_conf = getattr(signal, 'oracle_confidence', 0)
+                if signal_oracle_conf > 0:
+                    oracle_confidence = signal_oracle_conf
+                elif oracle_confidence == 0:
+                    oracle_confidence = signal.confidence
+
+                # Get top factors (may be JSON string or list) - only if signal has them
                 top_factors_raw = getattr(signal, 'oracle_top_factors', None)
                 if top_factors_raw:
                     if isinstance(top_factors_raw, str):
@@ -1055,15 +1076,9 @@ class ATHENATrader(MathOptimizerMixin):
                             import json
                             oracle_top_factors = json.loads(top_factors_raw)
                         except Exception:
-                            oracle_top_factors = [{'factor': 'parse_error', 'impact': 0}]
+                            pass  # Keep existing oracle_top_factors
                     elif isinstance(top_factors_raw, list):
                         oracle_top_factors = top_factors_raw
-
-                # Build thresholds context (what we evaluated against)
-                oracle_thresholds = {
-                    'min_win_probability': min_win_prob_threshold,
-                    'wall_distance_threshold': getattr(self.config, 'wall_distance_threshold', 0.01),
-                }
 
             # Build trade details if position opened
             position = context.get('position')

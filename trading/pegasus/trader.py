@@ -916,27 +916,47 @@ class PEGASUSTrader(MathOptimizerMixin):
             oracle_thresholds = None
             min_win_prob_threshold = self.config.min_win_probability
 
-            # Extract Oracle data from context (fetched early for all scans)
-            if oracle_data and not signal:
+            # ALWAYS set thresholds - this should never be 0
+            oracle_thresholds = {
+                'min_win_probability': min_win_prob_threshold,
+                'vix_skip': getattr(self.config, 'vix_skip', 35.0),
+                'vix_monday_friday_skip': getattr(self.config, 'vix_monday_friday_skip', 30.0),
+            }
+
+            # Extract Oracle data from context FIRST (fetched early for all scans)
+            if oracle_data:
                 oracle_advice = oracle_data.get('advice', oracle_data.get('recommendation', ''))
                 oracle_reasoning = oracle_data.get('reasoning', oracle_data.get('full_reasoning', ''))
                 oracle_win_probability = oracle_data.get('win_probability', 0)
                 oracle_confidence = oracle_data.get('confidence', 0)
                 oracle_top_factors = oracle_data.get('top_factors', oracle_data.get('factors', []))
-                oracle_thresholds = {
-                    'min_win_probability': min_win_prob_threshold,
-                    'vix_skip': getattr(self.config, 'vix_skip', 32.0),
-                }
 
+            # If we have a signal, use signal data (but don't override Oracle data with zeros)
             if signal:
                 signal_source = signal.source
                 signal_confidence = signal.confidence
-                oracle_advice = getattr(signal, 'oracle_advice', '') or ("ENTER" if signal.is_valid else "SKIP")
-                oracle_reasoning = signal.reasoning
-                oracle_win_probability = getattr(signal, 'oracle_win_probability', 0)
-                oracle_confidence = getattr(signal, 'oracle_confidence', signal.confidence)
 
-                # Get top factors (may be JSON string or list)
+                # Only override Oracle data if signal has it
+                signal_oracle_advice = getattr(signal, 'oracle_advice', '')
+                if signal_oracle_advice:
+                    oracle_advice = signal_oracle_advice
+                elif not oracle_advice:
+                    oracle_advice = "ENTER" if signal.is_valid else "SKIP"
+
+                if signal.reasoning:
+                    oracle_reasoning = signal.reasoning
+
+                signal_oracle_wp = getattr(signal, 'oracle_win_probability', 0)
+                if signal_oracle_wp > 0:
+                    oracle_win_probability = signal_oracle_wp
+
+                signal_oracle_conf = getattr(signal, 'oracle_confidence', 0)
+                if signal_oracle_conf > 0:
+                    oracle_confidence = signal_oracle_conf
+                elif oracle_confidence == 0:
+                    oracle_confidence = signal.confidence
+
+                # Get top factors - only if signal has them
                 top_factors_raw = getattr(signal, 'oracle_top_factors', None)
                 if top_factors_raw:
                     if isinstance(top_factors_raw, str):
@@ -944,12 +964,14 @@ class PEGASUSTrader(MathOptimizerMixin):
                             import json
                             oracle_top_factors = json.loads(top_factors_raw)
                         except Exception:
-                            oracle_top_factors = [{'factor': 'parse_error', 'impact': 0}]
+                            pass
                     elif isinstance(top_factors_raw, list):
                         oracle_top_factors = top_factors_raw
 
-                # Get probabilities
-                oracle_probabilities = getattr(signal, 'oracle_probabilities', None)
+                # Get probabilities - only if signal has them
+                signal_probs = getattr(signal, 'oracle_probabilities', None)
+                if signal_probs:
+                    oracle_probabilities = signal_probs
 
                 # Get suggested strikes
                 if hasattr(signal, 'oracle_suggested_sd'):
@@ -957,13 +979,6 @@ class PEGASUSTrader(MathOptimizerMixin):
                         'sd_multiplier': getattr(signal, 'oracle_suggested_sd', 1.0),
                         'use_gex_walls': getattr(signal, 'oracle_use_gex_walls', False)
                     }
-
-                # Build thresholds context (what we evaluated against)
-                oracle_thresholds = {
-                    'min_win_probability': min_win_prob_threshold,
-                    'vix_skip': getattr(self.config, 'vix_skip', 35.0),
-                    'vix_monday_friday_skip': getattr(self.config, 'vix_monday_friday_skip', 30.0),
-                }
 
             # Build trade details if position opened
             position = context.get('position')
