@@ -687,6 +687,18 @@ class SignalGenerator:
                     'suggested_put_strike': getattr(prediction, 'suggested_put_strike', None),
                     'suggested_call_strike': getattr(prediction, 'suggested_call_strike', None),
                     'suggested_risk_pct': getattr(prediction, 'suggested_risk_pct', 10.0),
+
+                    # NEUTRAL Regime Analysis (trend-based direction for NEUTRAL GEX)
+                    'neutral_derived_direction': getattr(prediction, 'neutral_derived_direction', ''),
+                    'neutral_confidence': getattr(prediction, 'neutral_confidence', 0),
+                    'neutral_reasoning': getattr(prediction, 'neutral_reasoning', ''),
+                    'ic_suitability': getattr(prediction, 'ic_suitability', 0),
+                    'bullish_suitability': getattr(prediction, 'bullish_suitability', 0),
+                    'bearish_suitability': getattr(prediction, 'bearish_suitability', 0),
+                    'trend_direction': getattr(prediction, 'trend_direction', ''),
+                    'trend_strength': getattr(prediction, 'trend_strength', 0),
+                    'position_in_range_pct': getattr(prediction, 'position_in_range_pct', 50.0),
+                    'wall_filter_passed': getattr(prediction, 'wall_filter_passed', False),
                 }
         except Exception as e:
             logger.warning(f"Oracle advice error: {e}")

@@ -1034,12 +1034,35 @@ class ATHENATrader(MathOptimizerMixin):
 
             # Extract Oracle data from context FIRST (fetched early for all scans)
             # This ensures we always have Oracle data even if signal doesn't have it
+            # Initialize NEUTRAL regime analysis fields
+            neutral_derived_direction = ""
+            neutral_confidence = 0
+            neutral_reasoning = ""
+            ic_suitability = 0
+            bullish_suitability = 0
+            bearish_suitability = 0
+            trend_direction = ""
+            trend_strength = 0
+            position_in_range_pct = 50.0
+            wall_filter_passed = False
+
             if oracle_data:
                 oracle_advice = oracle_data.get('advice', oracle_data.get('recommendation', ''))
                 oracle_reasoning = oracle_data.get('reasoning', oracle_data.get('full_reasoning', ''))
                 oracle_win_probability = oracle_data.get('win_probability', 0)
                 oracle_confidence = oracle_data.get('confidence', 0)
                 oracle_top_factors = oracle_data.get('top_factors', oracle_data.get('factors', []))
+                # Extract NEUTRAL regime analysis fields
+                neutral_derived_direction = oracle_data.get('neutral_derived_direction', '')
+                neutral_confidence = oracle_data.get('neutral_confidence', 0)
+                neutral_reasoning = oracle_data.get('neutral_reasoning', '')
+                ic_suitability = oracle_data.get('ic_suitability', 0)
+                bullish_suitability = oracle_data.get('bullish_suitability', 0)
+                bearish_suitability = oracle_data.get('bearish_suitability', 0)
+                trend_direction = oracle_data.get('trend_direction', '')
+                trend_strength = oracle_data.get('trend_strength', 0)
+                position_in_range_pct = oracle_data.get('position_in_range_pct', 50.0)
+                wall_filter_passed = oracle_data.get('wall_filter_passed', False)
 
             # If we have a signal, use signal data (but don't override Oracle data with zeros)
             if signal:
@@ -1125,6 +1148,17 @@ class ATHENATrader(MathOptimizerMixin):
                 trade_executed=result.get('trades_opened', 0) > 0,
                 error_message=error_msg,
                 generate_ai_explanation=False,  # Keep it simple
+                # NEUTRAL Regime Analysis fields
+                neutral_derived_direction=neutral_derived_direction,
+                neutral_confidence=neutral_confidence,
+                neutral_reasoning=neutral_reasoning,
+                ic_suitability=ic_suitability,
+                bullish_suitability=bullish_suitability,
+                bearish_suitability=bearish_suitability,
+                trend_direction=trend_direction,
+                trend_strength=trend_strength,
+                position_in_range_pct=position_in_range_pct,
+                wall_filter_passed=wall_filter_passed,
                 **ml_kwargs,  # Include all ML analysis data
             )
             if scan_id:
