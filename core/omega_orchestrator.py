@@ -858,14 +858,8 @@ class OmegaOrchestrator:
         return self._solomon_enhanced
 
     def _get_ensemble_weighter(self, symbol: str = "SPY"):
-        """Lazy load Ensemble Weighter"""
-        if self._ensemble_weighter is None:
-            try:
-                from quant.ensemble_strategy import get_ensemble_weighter
-                self._ensemble_weighter = get_ensemble_weighter(symbol)
-            except ImportError as e:
-                logger.warning(f"Could not load Ensemble Weighter: {e}")
-        return self._ensemble_weighter
+        # REMOVED: Ensemble Strategy - Oracle is god
+        return None
 
     def _get_ml_advisor(self):
         """Lazy load ML Advisor"""
@@ -956,6 +950,7 @@ class OmegaOrchestrator:
 
     # =========================================================================
     # LAYER 2: ENSEMBLE - INFORMATIONAL
+    # REMOVED: Ensemble Strategy - Oracle is god
     # =========================================================================
 
     def _get_ensemble_context(
@@ -967,53 +962,16 @@ class OmegaOrchestrator:
         ml_prediction: Optional[Dict] = None,
         current_regime: str = "UNKNOWN"
     ) -> EnsembleContext:
-        """
-        Get ensemble market context.
-
-        Combines multiple signals into a unified market view.
-        """
-        ensemble = self._get_ensemble_weighter()
-
-        if ensemble is None:
-            # Fallback: neutral context
-            return EnsembleContext(
-                signal="NEUTRAL",
-                confidence=50.0,
-                bullish_weight=0.33,
-                bearish_weight=0.33,
-                neutral_weight=0.34,
-                component_signals={},
-                position_size_multiplier=0.5,
-                regime=current_regime
-            )
-
-        # Get ensemble signal
-        signal = ensemble.get_ensemble_signal(
-            gex_data=gex_data,
-            psychology_data=psychology_data,
-            rsi_data=rsi_data,
-            vol_surface_data=vol_surface_data,
-            ml_prediction=ml_prediction,
-            current_regime=current_regime
-        )
-
-        # Convert component signals to dict
-        component_signals = {}
-        for comp in signal.component_signals:
-            component_signals[comp.strategy_name] = {
-                'signal': comp.signal.value,
-                'confidence': comp.confidence,
-                'weight': comp.weight
-            }
-
+        # REMOVED: Ensemble Strategy - Oracle is god
+        # Returns neutral context - Oracle decides all trades
         return EnsembleContext(
-            signal=signal.final_signal.value,
-            confidence=signal.confidence,
-            bullish_weight=signal.bullish_weight,
-            bearish_weight=signal.bearish_weight,
-            neutral_weight=signal.neutral_weight,
-            component_signals=component_signals,
-            position_size_multiplier=signal.position_size_multiplier,
+            signal="NEUTRAL",
+            confidence=50.0,
+            bullish_weight=0.33,
+            bearish_weight=0.33,
+            neutral_weight=0.34,
+            component_signals={},
+            position_size_multiplier=1.0,  # Full size - let Oracle decide
             regime=current_regime
         )
 
@@ -1464,7 +1422,7 @@ class OmegaOrchestrator:
             'recent_decisions': len(self.decision_history),
             'layers': {
                 'solomon': 'ACTIVE',
-                'ensemble': 'ACTIVE',
+                'ensemble': 'REMOVED',  # REMOVED: Ensemble Strategy - Oracle is god
                 'ml_advisor': 'ACTIVE' if self._get_ml_advisor() and self._get_ml_advisor().is_trained else 'FALLBACK',
                 'oracle': 'ACTIVE'
             }
