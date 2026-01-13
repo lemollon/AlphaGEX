@@ -110,6 +110,31 @@ class ScanActivity:
     oracle_thresholds: Dict = field(default_factory=dict)  # What thresholds were evaluated
     min_win_probability_threshold: float = 0  # What the bot required
 
+    # === NEUTRAL REGIME ANALYSIS (new fields for trend-based direction) ===
+    neutral_derived_direction: str = ""  # Direction derived for NEUTRAL regime
+    neutral_confidence: float = 0  # Confidence in derived direction
+    neutral_reasoning: str = ""  # Full reasoning for NEUTRAL direction
+
+    # Strategy suitability scores (0-1)
+    ic_suitability: float = 0  # Iron Condor suitability
+    bullish_suitability: float = 0  # Bull spread suitability
+    bearish_suitability: float = 0  # Bear spread suitability
+    recommended_strategy: str = ""  # IRON_CONDOR, BULL_SPREAD, BEAR_SPREAD, SKIP
+
+    # Trend analysis data
+    trend_direction: str = ""  # UPTREND, DOWNTREND, SIDEWAYS
+    trend_strength: float = 0  # 0-1
+    position_in_range_pct: float = 50.0  # 0% = at put wall, 100% = at call wall
+    is_contained: bool = True  # Price between walls
+    wall_filter_passed: bool = False  # Whether wall filter check passed
+
+    # Price history for trend
+    price_5m_ago: float = 0
+    price_30m_ago: float = 0
+    price_60m_ago: float = 0
+    high_of_day: float = 0
+    low_of_day: float = 0
+
     # Quant ML Advisor - ARES ML feedback loop (from quant/ares_ml_advisor.py)
     quant_ml_advice: str = ""  # TRADE_FULL, TRADE_REDUCED, SKIP_TODAY
     quant_ml_win_probability: float = 0
