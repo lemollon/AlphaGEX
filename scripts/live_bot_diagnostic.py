@@ -164,19 +164,38 @@ def run_diagnostic():
 
     for table, bot in position_tables:
         try:
+            # First just get count - this is the most important check
+            # Use UPPER() for case-insensitive matching since some tables use 'open' vs 'OPEN'
             rows = safe_execute(f"""
-                SELECT COUNT(*), MAX(entry_time), SUM(COALESCE(entry_credit, 0))
-                FROM {table}
-                WHERE status = 'OPEN'
+                SELECT COUNT(*) FROM {table} WHERE UPPER(status) = 'OPEN'
             """)
-            row = rows[0] if rows else None
-            if row and row[0] > 0:
-                entry_time = row[1]
-                # Convert entry_time to CT for display
-                if entry_time and entry_time.tzinfo is None:
-                    entry_time = entry_time.replace(tzinfo=ZoneInfo("UTC"))
-                entry_ct = entry_time.astimezone(CENTRAL_TZ).strftime('%I:%M %p CT') if entry_time else 'N/A'
-                print(f"  {bot:10} : {row[0]} open | Entry: {entry_ct} | Credit: ${row[2] or 0:.2f}")
+            count = rows[0][0] if rows and rows[0] else 0
+
+            if count > 0:
+                # Try to get additional details with flexible column names
+                # Different tables use different column names (open_time vs entry_time, total_credit vs entry_credit)
+                try:
+                    detail_rows = safe_execute(f"""
+                        SELECT
+                            COALESCE(open_time, entry_time, created_at) as entry,
+                            COALESCE(total_credit, entry_credit, 0) as credit
+                        FROM {table}
+                        WHERE UPPER(status) = 'OPEN'
+                        ORDER BY COALESCE(open_time, entry_time, created_at) DESC
+                        LIMIT 1
+                    """)
+                    if detail_rows and detail_rows[0]:
+                        entry_time = detail_rows[0][0]
+                        credit = detail_rows[0][1] or 0
+                        # Convert entry_time to CT for display
+                        if entry_time and entry_time.tzinfo is None:
+                            entry_time = entry_time.replace(tzinfo=ZoneInfo("UTC"))
+                        entry_ct = entry_time.astimezone(CENTRAL_TZ).strftime('%I:%M %p CT') if entry_time else 'N/A'
+                        print(f"  {bot:10} : {count} open | Entry: {entry_ct} | Credit: ${float(credit):.2f}")
+                    else:
+                        print(f"  {bot:10} : {count} open positions")
+                except Exception:
+                    print(f"  {bot:10} : {count} open positions")
             else:
                 print(f"  {bot:10} : No open positions")
         except Exception as e:
