@@ -147,18 +147,34 @@ class SignalGenerator:
         """
         Get GEX Directional ML prediction for market direction.
 
-        For Iron Condors: Strong directional signal suggests caution.
+        For Iron Condors: Strong directional signal is INFORMATIONAL ONLY.
         """
         if not self.gex_directional_ml:
             return None
 
         try:
+            # Build proper gex_data dict for predict() method
+            spot = gex_data.get('spot_price', 0)
+            call_wall = gex_data.get('major_pos_vol_level', gex_data.get('call_wall', spot))
+            put_wall = gex_data.get('major_neg_vol_level', gex_data.get('put_wall', spot))
+            flip_point = gex_data.get('flip_point', spot)
+
+            ml_gex_data = {
+                'spot_price': spot,
+                'net_gex': gex_data.get('net_gex', 0),
+                'gex_normalized': gex_data.get('gex_normalized', 0),
+                'gex_regime': gex_data.get('gex_regime', 'NEUTRAL'),
+                'call_wall': call_wall,
+                'put_wall': put_wall,
+                'flip_point': flip_point,
+                'distance_to_flip_pct': ((flip_point - spot) / spot * 100) if spot > 0 else 0,
+                'between_walls': put_wall < spot < call_wall if spot > 0 else True,
+                'above_call_wall': spot > call_wall if spot > 0 else False,
+                'below_put_wall': spot < put_wall if spot > 0 else False,
+            }
+
             prediction = self.gex_directional_ml.predict(
-                net_gex=gex_data.get('net_gex', 0),
-                call_wall=gex_data.get('major_pos_vol_level', 0),
-                put_wall=gex_data.get('major_neg_vol_level', 0),
-                flip_point=gex_data.get('flip_point', 0),
-                spot_price=gex_data.get('spot_price', 0),
+                gex_data=ml_gex_data,
                 vix=vix or 20.0
             )
 
@@ -169,7 +185,7 @@ class SignalGenerator:
                     'probabilities': prediction.probabilities if hasattr(prediction, 'probabilities') else {}
                 }
         except Exception as e:
-            logger.debug(f"GEX Directional ML prediction failed: {e}")
+            logger.warning(f"GEX Directional ML prediction failed: {e}")
 
         return None
 
