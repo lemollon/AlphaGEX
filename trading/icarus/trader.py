@@ -342,10 +342,7 @@ class ICARUSTrader(MathOptimizerMixin):
         if now > end_time:
             return False, f"After trading window ({self.config.entry_end})"
 
-        # Daily trade limit (10 for ICARUS)
-        daily_trades = self.db.get_daily_trades_count(today)
-        if daily_trades >= self.config.max_daily_trades:
-            return False, f"Daily limit reached ({self.config.max_daily_trades})"
+        # NOTE: Daily trade limit removed - Oracle decides trade frequency
 
         # Position limit (5 for ICARUS)
         open_count = self.db.get_position_count()

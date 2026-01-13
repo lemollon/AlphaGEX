@@ -243,22 +243,10 @@ class ARESTrader(MathOptimizerMixin):
                 self.db.update_heartbeat("IDLE", f"Cycle complete: {result['action']}")
                 return result
 
-            # Step 3: Check daily trade limit (max 3 trades per day)
-            trades_today = self.db.get_trades_today_count(today)
-            max_trades = getattr(self.config, 'max_trades_per_day', 3)
+            # Step 3: Check if we already have an open position (only 1 at a time)
+            # NOTE: Daily trade limit removed - Oracle decides trade frequency
             open_positions = self.db.get_position_count()
 
-            if trades_today >= max_trades:
-                if result['action'] == 'none':
-                    result['action'] = 'monitoring'
-                result['details']['skip_reason'] = f'Daily limit reached ({trades_today}/{max_trades} trades)'
-                self.db.log("DEBUG", f"Daily trade limit reached: {trades_today}/{max_trades}")
-                self._log_scan_activity(result, scan_context, result['details']['skip_reason'])
-                self._update_daily_summary(today, result)
-                self.db.update_heartbeat("IDLE", f"Cycle complete: {result['action']}")
-                return result
-
-            # Step 4: Check if we already have an open position (only 1 at a time)
             if open_positions > 0:
                 if result['action'] == 'none':
                     result['action'] = 'monitoring'
@@ -269,7 +257,7 @@ class ARESTrader(MathOptimizerMixin):
                 self.db.update_heartbeat("IDLE", f"Cycle complete: {result['action']}")
                 return result
 
-            # Step 5: Check Oracle strategy recommendation
+            # Step 4: Check Oracle strategy recommendation
             strategy_rec = self._check_strategy_recommendation()
             if strategy_rec:
                 scan_context['strategy_recommendation'] = {
