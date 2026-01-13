@@ -449,6 +449,33 @@ def log_scan_activity(
     Returns:
         scan_id if logged successfully, None otherwise
     """
+    # Helper to convert numpy types to Python native types
+    def _convert_numpy(val):
+        """Convert numpy types to Python native types for database compatibility"""
+        try:
+            import numpy as np
+            if isinstance(val, (np.integer, np.int64, np.int32)):
+                return int(val)
+            elif isinstance(val, (np.floating, np.float64, np.float32)):
+                return float(val)
+            elif isinstance(val, np.bool_):
+                return bool(val)
+            elif isinstance(val, np.ndarray):
+                return val.tolist()
+        except ImportError:
+            pass
+        return val
+
+    def _convert_dict_numpy(d):
+        """Recursively convert numpy types in a dict"""
+        if d is None:
+            return None
+        if isinstance(d, dict):
+            return {k: _convert_dict_numpy(v) for k, v in d.items()}
+        elif isinstance(d, list):
+            return [_convert_dict_numpy(item) for item in d]
+        return _convert_numpy(d)
+
     conn = None  # Initialize to prevent NameError in finally block
     try:
         from database_adapter import get_connection
@@ -816,68 +843,68 @@ def log_scan_activity(
                 %s, %s, %s, %s, %s, %s, %s, %s
             )
         """, (
-            bot_name, scan_id, scan_number,
+            bot_name, scan_id, _convert_numpy(scan_number),
             now, now.date(), now.strftime('%I:%M:%S %p'),
             outcome.value, action_taken, decision_summary, full_reasoning,
-            underlying_price, underlying_symbol, vix, expected_move,
-            gex_regime, net_gex, call_wall, put_wall,
-            distance_to_call_wall_pct, distance_to_put_wall_pct,
-            signal_source, signal_direction, signal_confidence, signal_win_probability,
+            _convert_numpy(underlying_price), underlying_symbol, _convert_numpy(vix), _convert_numpy(expected_move),
+            gex_regime, _convert_numpy(net_gex), _convert_numpy(call_wall), _convert_numpy(put_wall),
+            _convert_numpy(distance_to_call_wall_pct), _convert_numpy(distance_to_put_wall_pct),
+            signal_source, signal_direction, _convert_numpy(signal_confidence), _convert_numpy(signal_win_probability),
             oracle_advice, oracle_reasoning,
-            oracle_win_probability, oracle_confidence,
-            json.dumps(oracle_top_factors) if oracle_top_factors else None,
-            json.dumps(oracle_probabilities) if oracle_probabilities else None,
-            json.dumps(oracle_suggested_strikes) if oracle_suggested_strikes else None,
-            json.dumps(oracle_thresholds) if oracle_thresholds else None,
-            min_win_probability_threshold,
-            risk_reward_ratio,
-            json.dumps(checks_json) if checks_json else None, all_checks_passed,
-            trade_executed, position_id, json.dumps(strike_selection) if strike_selection else None, contracts,
-            premium_collected, max_risk,
+            _convert_numpy(oracle_win_probability), _convert_numpy(oracle_confidence),
+            json.dumps(_convert_dict_numpy(oracle_top_factors)) if oracle_top_factors else None,
+            json.dumps(_convert_dict_numpy(oracle_probabilities)) if oracle_probabilities else None,
+            json.dumps(_convert_dict_numpy(oracle_suggested_strikes)) if oracle_suggested_strikes else None,
+            json.dumps(_convert_dict_numpy(oracle_thresholds)) if oracle_thresholds else None,
+            _convert_numpy(min_win_probability_threshold),
+            _convert_numpy(risk_reward_ratio),
+            json.dumps(_convert_dict_numpy(checks_json)) if checks_json else None, all_checks_passed,
+            trade_executed, position_id, json.dumps(_convert_dict_numpy(strike_selection)) if strike_selection else None, _convert_numpy(contracts),
+            _convert_numpy(premium_collected), _convert_numpy(max_risk),
             error_message, error_type,
             ai_what_trigger, ai_market_insight,
-            json.dumps(context),
+            json.dumps(_convert_dict_numpy(context)),
             # NEW: Quant ML Advisor
-            quant_ml_advice, quant_ml_win_probability, quant_ml_confidence,
-            quant_ml_suggested_risk_pct, quant_ml_suggested_sd_multiplier,
-            json.dumps(quant_ml_top_factors) if quant_ml_top_factors else None, quant_ml_model_version,
+            _convert_numpy(quant_ml_advice), _convert_numpy(quant_ml_win_probability), _convert_numpy(quant_ml_confidence),
+            _convert_numpy(quant_ml_suggested_risk_pct), _convert_numpy(quant_ml_suggested_sd_multiplier),
+            json.dumps(_convert_dict_numpy(quant_ml_top_factors)) if quant_ml_top_factors else None, quant_ml_model_version,
             # NEW: ML Regime Classifier
-            regime_predicted_action, regime_confidence,
-            json.dumps(regime_probabilities) if regime_probabilities else None,
-            json.dumps(regime_feature_importance) if regime_feature_importance else None, regime_model_version,
+            regime_predicted_action, _convert_numpy(regime_confidence),
+            json.dumps(_convert_dict_numpy(regime_probabilities)) if regime_probabilities else None,
+            json.dumps(_convert_dict_numpy(regime_feature_importance)) if regime_feature_importance else None, regime_model_version,
             # NEW: GEX Directional ML
-            gex_ml_direction, gex_ml_confidence,
-            json.dumps(gex_ml_probabilities) if gex_ml_probabilities else None,
-            json.dumps(gex_ml_features_used) if gex_ml_features_used else None,
+            gex_ml_direction, _convert_numpy(gex_ml_confidence),
+            json.dumps(_convert_dict_numpy(gex_ml_probabilities)) if gex_ml_probabilities else None,
+            json.dumps(_convert_dict_numpy(gex_ml_features_used)) if gex_ml_features_used else None,
             # NEW: Ensemble Strategy
-            ensemble_signal, ensemble_confidence, ensemble_bullish_weight,
-            ensemble_bearish_weight, ensemble_neutral_weight, ensemble_should_trade,
-            ensemble_position_size_multiplier,
-            json.dumps(ensemble_component_signals) if ensemble_component_signals else None, ensemble_reasoning,
+            ensemble_signal, _convert_numpy(ensemble_confidence), _convert_numpy(ensemble_bullish_weight),
+            _convert_numpy(ensemble_bearish_weight), _convert_numpy(ensemble_neutral_weight), ensemble_should_trade,
+            _convert_numpy(ensemble_position_size_multiplier),
+            json.dumps(_convert_dict_numpy(ensemble_component_signals)) if ensemble_component_signals else None, ensemble_reasoning,
             # NEW: Volatility Regime
             volatility_regime, volatility_risk_level, volatility_description,
-            at_flip_point, flip_point, flip_point_distance_pct,
+            at_flip_point, _convert_numpy(flip_point), _convert_numpy(flip_point_distance_pct),
             # NEW: Psychology Patterns
             psychology_pattern, liberation_setup, false_floor_detected,
-            json.dumps(forward_magnets) if forward_magnets else None,
+            json.dumps(_convert_dict_numpy(forward_magnets)) if forward_magnets else None,
             # NEW: Monte Carlo Kelly
-            kelly_optimal, kelly_safe, kelly_conservative, kelly_prob_ruin, kelly_recommendation,
+            _convert_numpy(kelly_optimal), _convert_numpy(kelly_safe), _convert_numpy(kelly_conservative), _convert_numpy(kelly_prob_ruin), kelly_recommendation,
             # NEW: ARGUS Pattern Analysis
-            argus_pattern_match, argus_similarity_score, argus_historical_outcome,
-            argus_roc_value, argus_roc_signal,
+            argus_pattern_match, _convert_numpy(argus_similarity_score), argus_historical_outcome,
+            _convert_numpy(argus_roc_value), argus_roc_signal,
             # NEW: IV Context
-            iv_rank, iv_percentile, iv_hv_ratio, iv_30d, hv_30d,
+            _convert_numpy(iv_rank), _convert_numpy(iv_percentile), _convert_numpy(iv_hv_ratio), _convert_numpy(iv_30d), _convert_numpy(hv_30d),
             # NEW: Time Context
-            day_of_week, day_of_week_num, time_of_day, hour_ct, minute_ct,
-            days_to_monthly_opex, days_to_weekly_opex, is_opex_week, is_fomc_day, is_cpi_day,
+            day_of_week, _convert_numpy(day_of_week_num), time_of_day, _convert_numpy(hour_ct), _convert_numpy(minute_ct),
+            _convert_numpy(days_to_monthly_opex), _convert_numpy(days_to_weekly_opex), is_opex_week, is_fomc_day, is_cpi_day,
             # NEW: Recent Performance Context
-            similar_setup_win_rate, similar_setup_count, similar_setup_avg_pnl,
-            current_streak, streak_type, last_5_trades_win_rate, last_10_trades_win_rate,
-            daily_pnl, weekly_pnl,
+            _convert_numpy(similar_setup_win_rate), _convert_numpy(similar_setup_count), _convert_numpy(similar_setup_avg_pnl),
+            _convert_numpy(current_streak), streak_type, _convert_numpy(last_5_trades_win_rate), _convert_numpy(last_10_trades_win_rate),
+            _convert_numpy(daily_pnl), _convert_numpy(weekly_pnl),
             # NEW: ML Consensus & Conflict Detection
-            ml_consensus, ml_consensus_score, ml_systems_agree, ml_systems_total,
-            json.dumps(ml_conflicts) if ml_conflicts else None, ml_conflict_severity,
-            ml_highest_confidence_system, ml_highest_confidence_value
+            ml_consensus, _convert_numpy(ml_consensus_score), _convert_numpy(ml_systems_agree), _convert_numpy(ml_systems_total),
+            json.dumps(_convert_dict_numpy(ml_conflicts)) if ml_conflicts else None, ml_conflict_severity,
+            ml_highest_confidence_system, _convert_numpy(ml_highest_confidence_value)
         ))
 
         conn.commit()
