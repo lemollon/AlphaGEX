@@ -251,29 +251,15 @@ class OracleConfig:
     """
     Oracle Decision Authority Configuration
 
-    ORACLE_IS_FINAL = True means:
+    ORACLE IS THE GOD OF ALL TRADE DECISIONS.
     - Oracle win probability is the ONLY gate for trade execution
-    - All other checks (ensemble, confidence, R:R, credit) are INFORMATIONAL ONLY
-    - No system can veto Oracle's decision to trade
-
-    This centralizes the authority model and prevents future code from
-    accidentally adding blocking gates that override Oracle.
+    - GEX + VIX analysis is the fallback when Oracle is unavailable
+    - Ensemble and ML Regime Classifier have been removed as dead code
+    - All other checks (confidence, R:R, credit) are INFORMATIONAL ONLY
     """
-
-    # MASTER SWITCH: When True, Oracle decision cannot be overridden
-    # Set to False to enable traditional multi-gate blocking behavior
-    ORACLE_IS_FINAL = True
 
     # Default win probability threshold (42% based on KRONOS backtests)
     DEFAULT_MIN_WIN_PROBABILITY = 0.42
-
-    # When Oracle is final, these checks become WARNINGS only:
-    # - Ensemble should_trade check
-    # - Confidence threshold check
-    # - Risk/Reward ratio check
-    # - Minimum credit check
-    # - Backtest validation check
-    # - Position sizer validation
 
 
 # ===== HELPER FUNCTIONS =====

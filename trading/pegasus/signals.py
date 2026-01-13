@@ -15,12 +15,7 @@ from .models import IronCondorSignal, PEGASUSConfig, CENTRAL_TZ
 
 logger = logging.getLogger(__name__)
 
-# Oracle authority configuration
-try:
-    from config import OracleConfig
-    ORACLE_IS_FINAL = OracleConfig.ORACLE_IS_FINAL
-except ImportError:
-    ORACLE_IS_FINAL = True  # Default to Oracle authority
+# Oracle is the god of all trade decisions
 
 # Optional imports
 try:
@@ -56,25 +51,7 @@ try:
 except ImportError:
     DATA_AVAILABLE = False
 
-# Ensemble Strategy - combines multiple signal sources with learned weights
-ENSEMBLE_AVAILABLE = False
-try:
-    from quant.ensemble_strategy import get_ensemble_signal, EnsembleSignal, StrategySignal
-    ENSEMBLE_AVAILABLE = True
-except ImportError:
-    get_ensemble_signal = None
-    EnsembleSignal = None
-    StrategySignal = None
-
-# ML Regime Classifier - replaces hard-coded GEX thresholds with learned models
-ML_REGIME_AVAILABLE = False
-try:
-    from quant.ml_regime_classifier import MLRegimeClassifier, MLPrediction as RegimePrediction, MLRegimeAction
-    ML_REGIME_AVAILABLE = True
-except ImportError:
-    MLRegimeClassifier = None
-    RegimePrediction = None
-    MLRegimeAction = None
+# REMOVED: Ensemble Strategy and ML Regime Classifier - dead code
 
 # IV Solver - accurate implied volatility calculation
 IV_SOLVER_AVAILABLE = False
@@ -191,14 +168,7 @@ class SignalGenerator:
             except Exception as e:
                 logger.debug(f"PEGASUS: GEX Directional ML init failed: {e}")
 
-        # ML Regime Classifier - replaces hard-coded GEX thresholds
-        self.ml_regime_classifier = None
-        if ML_REGIME_AVAILABLE and MLRegimeClassifier:
-            try:
-                self.ml_regime_classifier = MLRegimeClassifier(symbol="SPX")
-                logger.info("PEGASUS: ML Regime Classifier initialized")
-            except Exception as e:
-                logger.debug(f"PEGASUS: ML Regime Classifier init failed: {e}")
+        # REMOVED: ML Regime Classifier initialization - dead code
 
     def get_gex_directional_prediction(self, gex_data: Dict, vix: float = None) -> Optional[Dict]:
         """
@@ -230,108 +200,9 @@ class SignalGenerator:
 
         return None
 
-    def get_ml_regime_prediction(self, gex_data: Dict, market_data: Dict) -> Optional[Dict]:
-        """
-        Get ML Regime Classifier prediction for market action.
+    # REMOVED: get_ml_regime_prediction method - dead code
 
-        For Iron Condors:
-        - SELL_PREMIUM = ideal, boost confidence
-        - BUY_CALLS/BUY_PUTS = directional, reduce IC confidence
-        - STAY_FLAT = neutral, slight boost
-        """
-        if not self.ml_regime_classifier:
-            return None
-
-        try:
-            from datetime import datetime
-            now = datetime.now()
-
-            gex_normalized = gex_data.get('net_gex', 0) / 1e9 if gex_data.get('net_gex', 0) != 0 else 1.0
-            vix = market_data.get('vix', 20.0)
-            spot = market_data.get('spot_price', 0)
-            flip_point = gex_data.get('flip_point', spot)
-            distance_to_flip = ((spot - flip_point) / spot * 100) if spot > 0 else 0
-
-            prediction = self.ml_regime_classifier.predict(
-                gex_normalized=gex_normalized,
-                gex_percentile=50.0,
-                gex_change_1d=0.0,
-                gex_change_5d=0.0,
-                vix=vix,
-                vix_percentile=50.0,
-                vix_change_1d=0.0,
-                iv_rank=market_data.get('iv_rank', 50.0),
-                iv_hv_ratio=1.1,
-                distance_to_flip=distance_to_flip,
-                momentum_1h=0.0,
-                momentum_4h=0.0,
-                above_20ma=True,
-                above_50ma=True,
-                regime_duration=1,
-                day_of_week=now.weekday(),
-                days_to_opex=market_data.get('days_to_expiry', 0)
-            )
-
-            if prediction:
-                return {
-                    'action': prediction.predicted_action.value if hasattr(prediction.predicted_action, 'value') else str(prediction.predicted_action),
-                    'confidence': prediction.confidence,
-                    'probabilities': prediction.probabilities,
-                    'is_trained': prediction.is_trained
-                }
-        except Exception as e:
-            logger.debug(f"ML Regime Classifier prediction failed: {e}")
-
-        return None
-
-    def get_ensemble_boost(self, market_data: Dict, ml_prediction: Dict = None, oracle: Dict = None) -> Dict:
-        """
-        Get ensemble signal boost/confirmation for Iron Condor.
-        """
-        if not ENSEMBLE_AVAILABLE:
-            return {'boost': 1.0, 'should_trade': True, 'confidence': 0.7, 'reasoning': 'Ensemble not available'}
-
-        try:
-            gex_data = {
-                'recommended_action': 'SELL_IC',
-                'confidence': 70,
-                'reasoning': f"VIX={market_data.get('vix', 20):.1f}, EM=${market_data.get('expected_move', 0):.0f}"
-            }
-
-            ml_data = None
-            if ml_prediction:
-                ml_data = {
-                    'predicted_action': 'SELL_IC',
-                    'confidence': ml_prediction.get('confidence', 0) * 100,
-                    'is_trained': True
-                }
-
-            current_regime = market_data.get('gex_regime', 'UNKNOWN')
-            if current_regime == 'POSITIVE':
-                current_regime = 'POSITIVE_GAMMA'
-            elif current_regime == 'NEGATIVE':
-                current_regime = 'NEGATIVE_GAMMA'
-
-            ensemble = get_ensemble_signal(
-                symbol="SPX",
-                gex_data=gex_data,
-                ml_prediction=ml_data,
-                current_regime=current_regime
-            )
-
-            if ensemble:
-                logger.info(f"[PEGASUS ENSEMBLE] Confidence: {ensemble.confidence:.0f}%, Size: {ensemble.position_size_multiplier:.0%}")
-                return {
-                    'boost': ensemble.position_size_multiplier,
-                    'should_trade': ensemble.should_trade,
-                    'confidence': ensemble.confidence / 100,
-                    'reasoning': ensemble.reasoning
-                }
-
-        except Exception as e:
-            logger.debug(f"Ensemble signal error: {e}")
-
-        return {'boost': 1.0, 'should_trade': True, 'confidence': 0.7, 'reasoning': 'Ensemble fallback'}
+    # REMOVED: get_ensemble_boost method - dead code
 
     def get_market_data(self) -> Optional[Dict[str, Any]]:
         """Get SPX market data"""
@@ -951,10 +822,7 @@ class SignalGenerator:
         )
 
         if pricing['total_credit'] < self.config.min_credit:
-            if not ORACLE_IS_FINAL:
-                logger.info(f"Credit ${pricing['total_credit']:.2f} < ${self.config.min_credit}")
-                return None
-            logger.warning(f"Credit ${pricing['total_credit']:.2f} < ${self.config.min_credit} (ORACLE_IS_FINAL=True, proceeding)")
+            logger.warning(f"Credit ${pricing['total_credit']:.2f} < ${self.config.min_credit} (proceeding anyway)")
 
         # Calculate expiration for SPXW weekly options (next Friday)
         # SPX weeklies expire every Friday (and some days have 0DTE)
@@ -1021,32 +889,9 @@ class SignalGenerator:
                 confidence = max(0.40, confidence - penalty)
                 logger.info(f"  Strong {gex_dir} signal - IC confidence reduced to {confidence:.1%}")
 
-        # ML Regime Classifier - Learned market regime detection
-        regime_prediction = self.get_ml_regime_prediction(gex_data, market)
-        if regime_prediction:
-            regime_action = regime_prediction.get('action', 'STAY_FLAT')
-            regime_conf = regime_prediction.get('confidence', 50) / 100.0
+        # REMOVED: ML Regime Classifier call - dead code
 
-            logger.info(f"[PEGASUS ML REGIME] Action: {regime_action}, Confidence: {regime_conf:.1%}")
-
-            if regime_action == 'SELL_PREMIUM':
-                boost = min(0.08, regime_conf * 0.10)
-                confidence = min(0.95, confidence + boost)
-            elif regime_action in ('BUY_CALLS', 'BUY_PUTS') and regime_conf > 0.70:
-                penalty = (regime_conf - 0.70) * 0.25
-                confidence = max(0.40, confidence - penalty)
-            elif regime_action == 'STAY_FLAT':
-                confidence = min(0.90, confidence + 0.02)
-
-        # Ensemble Strategy - When ORACLE_IS_FINAL=True, ensemble cannot block trades
-        ensemble_result = self.get_ensemble_boost(market, ml_prediction, oracle)
-        if ensemble_result:
-            should_trade = ensemble_result.get('should_trade', True)
-            if not should_trade and not ORACLE_IS_FINAL:
-                logger.info(f"[PEGASUS ENSEMBLE BLOCKED] {ensemble_result.get('reasoning', 'No reason')}")
-                return None
-            if not should_trade:
-                logger.info(f"[PEGASUS ENSEMBLE] would_block=True (ORACLE_IS_FINAL=True, proceeding)")
+        # REMOVED: Ensemble Strategy call - dead code
 
         return IronCondorSignal(
             spot_price=market['spot_price'],
