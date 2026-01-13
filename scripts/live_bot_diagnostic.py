@@ -59,26 +59,53 @@ def run_diagnostic():
 
     today = now.strftime("%Y-%m-%d")
 
+    def safe_execute(query, params=None):
+        """Execute query with automatic rollback on error"""
+        try:
+            if params:
+                cursor.execute(query, params)
+            else:
+                cursor.execute(query)
+            return cursor.fetchall()
+        except Exception as e:
+            conn.rollback()  # Critical: rollback to clear aborted transaction
+            raise e
+
     # 1. Bot Heartbeats (are bots running?)
     print("\n" + "-" * 60)
     print("BOT HEARTBEATS (Last 30 minutes)")
     print("-" * 60)
 
     try:
-        cursor.execute("""
+        rows = safe_execute("""
             SELECT bot_name, status, scan_count, last_heartbeat, details
             FROM bot_heartbeats
-            WHERE last_heartbeat >= NOW() - INTERVAL '30 minutes'
             ORDER BY last_heartbeat DESC
         """)
-        rows = cursor.fetchall()
         if rows:
+            recent_count = 0
             for row in rows:
                 bot, status, scans, last_hb, details = row
-                age = (now.replace(tzinfo=None) - last_hb.replace(tzinfo=None)).total_seconds() if last_hb else 0
-                print(f"  {bot:10} | {status:15} | Scans: {scans:5} | {age:.0f}s ago")
+                # Handle timezone-aware timestamps from database (stored as UTC)
+                if last_hb:
+                    if last_hb.tzinfo is None:
+                        # Assume UTC if no timezone
+                        from zoneinfo import ZoneInfo
+                        last_hb = last_hb.replace(tzinfo=ZoneInfo("UTC"))
+                    # Convert to Central Time for comparison
+                    last_hb_ct = last_hb.astimezone(CENTRAL_TZ)
+                    age = (now - last_hb_ct).total_seconds()
+                    if age < 1800:  # 30 minutes
+                        recent_count += 1
+                else:
+                    age = 99999
+                age_str = f"{int(age)}s ago" if age < 3600 else f"{int(age/3600)}h ago"
+                status_flag = "🟢" if age < 600 else "🟡" if age < 1800 else "🔴"
+                print(f"  {status_flag} {bot:10} | {status:15} | Scans: {scans:5} | {age_str}")
+            if recent_count == 0:
+                print("\n  [WARNING] No heartbeats in last 30 minutes - bots may not be running!")
         else:
-            print("  [WARNING] No heartbeats in last 30 minutes - bots may not be running!")
+            print("  [WARNING] No heartbeats found - scheduler has never run!")
     except Exception as e:
         print(f"  [ERROR] Could not check heartbeats: {e}")
 
@@ -88,7 +115,7 @@ def run_diagnostic():
     print("-" * 60)
 
     try:
-        cursor.execute("""
+        rows = safe_execute("""
             SELECT
                 bot_name,
                 outcome,
@@ -99,7 +126,6 @@ def run_diagnostic():
             GROUP BY bot_name, outcome
             ORDER BY bot_name, count DESC
         """, (today,))
-        rows = cursor.fetchall()
         if rows:
             current_bot = None
             for row in rows:
@@ -109,7 +135,14 @@ def run_diagnostic():
                         print()
                     current_bot = bot
                     print(f"  {bot}:")
-                print(f"    {outcome:15} : {count:4} scans (last: {last_scan.strftime('%I:%M %p') if last_scan else 'N/A'})")
+                # Convert timestamp to CT for display
+                if last_scan:
+                    if last_scan.tzinfo is None:
+                        last_scan = last_scan.replace(tzinfo=ZoneInfo("UTC"))
+                    last_ct = last_scan.astimezone(CENTRAL_TZ).strftime('%I:%M %p CT')
+                else:
+                    last_ct = 'N/A'
+                print(f"    {outcome:15} : {count:4} scans (last: {last_ct})")
         else:
             print("  [WARNING] No scan activity logged today!")
     except Exception as e:
@@ -120,27 +153,34 @@ def run_diagnostic():
     print("OPEN POSITIONS")
     print("-" * 60)
 
+    # Correct table names matching actual database schema
     position_tables = [
-        ('ares_positions', 'ARES'),
-        ('athena_positions', 'ATHENA'),
-        ('pegasus_positions', 'PEGASUS'),
-        ('icarus_positions', 'ICARUS'),
-        ('titan_positions', 'TITAN'),
+        ('ares_ic_positions', 'ARES'),
+        ('athena_directional_positions', 'ATHENA'),
+        ('pegasus_ic_positions', 'PEGASUS'),
+        ('icarus_directional_positions', 'ICARUS'),
+        ('titan_ic_positions', 'TITAN'),
     ]
 
     for table, bot in position_tables:
         try:
-            cursor.execute(f"""
+            rows = safe_execute(f"""
                 SELECT COUNT(*), MAX(entry_time), SUM(COALESCE(entry_credit, 0))
                 FROM {table}
                 WHERE status = 'OPEN'
             """)
-            row = cursor.fetchone()
+            row = rows[0] if rows else None
             if row and row[0] > 0:
-                print(f"  {bot:10} : {row[0]} open | Last entry: {row[1]} | Credit: ${row[2] or 0:.2f}")
+                entry_time = row[1]
+                # Convert entry_time to CT for display
+                if entry_time and entry_time.tzinfo is None:
+                    entry_time = entry_time.replace(tzinfo=ZoneInfo("UTC"))
+                entry_ct = entry_time.astimezone(CENTRAL_TZ).strftime('%I:%M %p CT') if entry_time else 'N/A'
+                print(f"  {bot:10} : {row[0]} open | Entry: {entry_ct} | Credit: ${row[2] or 0:.2f}")
             else:
                 print(f"  {bot:10} : No open positions")
         except Exception as e:
+            conn.rollback()  # Rollback on error to clear transaction
             if 'does not exist' in str(e).lower():
                 print(f"  {bot:10} : Table not found ({table})")
             else:
@@ -152,7 +192,7 @@ def run_diagnostic():
     print("-" * 60)
 
     try:
-        cursor.execute("""
+        rows = safe_execute("""
             SELECT bot_name, COUNT(*),
                    AVG(win_probability::numeric),
                    AVG(confidence::numeric),
@@ -162,7 +202,6 @@ def run_diagnostic():
             GROUP BY bot_name
             ORDER BY bot_name
         """, (today,))
-        rows = cursor.fetchall()
         if rows:
             for row in rows:
                 bot, count, avg_wp, avg_conf, last = row
@@ -180,10 +219,10 @@ def run_diagnostic():
     print("-" * 60)
 
     try:
-        cursor.execute("""
+        rows = safe_execute("""
             SELECT
                 bot_name,
-                time_ct,
+                timestamp,
                 decision_summary,
                 oracle_win_probability,
                 quant_ml_win_probability,
@@ -193,14 +232,17 @@ def run_diagnostic():
             ORDER BY timestamp DESC
             LIMIT 20
         """, (today,))
-        rows = cursor.fetchall()
         if rows:
             for row in rows:
-                bot, time_ct, decision, oracle_wp, ml_wp, threshold = row
+                bot, ts, decision, oracle_wp, ml_wp, threshold = row
+                # Convert timestamp to CT
+                if ts and ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=ZoneInfo("UTC"))
+                time_ct = ts.astimezone(CENTRAL_TZ).strftime('%I:%M %p') if ts else 'N/A'
                 oracle_wp = float(oracle_wp) if oracle_wp else 0
                 ml_wp = float(ml_wp) if ml_wp else 0
                 threshold = float(threshold) if threshold else 0
-                print(f"  {bot:8} @ {time_ct or 'N/A':>10} | Oracle:{oracle_wp:.0%} ML:{ml_wp:.0%} Thresh:{threshold:.0%}")
+                print(f"  {bot:8} @ {time_ct:>10} | Oracle:{oracle_wp:.0%} ML:{ml_wp:.0%} Thresh:{threshold:.0%}")
                 if decision:
                     print(f"           Reason: {decision[:60]}")
         else:
@@ -214,13 +256,12 @@ def run_diagnostic():
     print("-" * 60)
 
     try:
-        cursor.execute("""
+        rows = safe_execute("""
             SELECT bot_name, config_key, config_value
             FROM autonomous_config
             WHERE config_key LIKE '%min_win%' OR config_key LIKE '%confidence%' OR config_key LIKE '%threshold%'
             ORDER BY bot_name, config_key
         """)
-        rows = cursor.fetchall()
         if rows:
             current_bot = None
             for row in rows:
@@ -243,7 +284,7 @@ def run_diagnostic():
     print("-" * 60)
 
     try:
-        cursor.execute("""
+        rows = safe_execute("""
             SELECT bot_name,
                    COUNT(*) FILTER (WHERE timestamp >= NOW() - INTERVAL '1 hour') as last_hour,
                    COUNT(*) FILTER (WHERE timestamp >= NOW() - INTERVAL '5 minutes') as last_5min,
@@ -252,14 +293,116 @@ def run_diagnostic():
             WHERE date = %s
             GROUP BY bot_name
         """, (today,))
-        rows = cursor.fetchall()
         if rows:
             for row in rows:
                 bot, last_hour, last_5min, last_scan = row
-                status = "ACTIVE" if last_5min > 0 else ("SLOW" if last_hour > 0 else "STALE")
-                print(f"  {bot:10} | Last hour: {last_hour:3} | Last 5min: {last_5min:2} | Status: {status}")
+                status = "🟢 ACTIVE" if last_5min > 0 else ("🟡 SLOW" if last_hour > 0 else "🔴 STALE")
+                # Convert last_scan to CT
+                if last_scan and last_scan.tzinfo is None:
+                    last_scan = last_scan.replace(tzinfo=ZoneInfo("UTC"))
+                last_ct = last_scan.astimezone(CENTRAL_TZ).strftime('%I:%M %p CT') if last_scan else 'N/A'
+                print(f"  {bot:10} | Last hour: {last_hour:3} | Last 5min: {last_5min:2} | {status} | Last: {last_ct}")
         else:
             print("  [WARNING] No scans today - scheduler may not be running")
+    except Exception as e:
+        print(f"  [ERROR] {e}")
+
+    # 8. Circuit Breaker Status
+    print("\n" + "-" * 60)
+    print("CIRCUIT BREAKER / KILL SWITCH")
+    print("-" * 60)
+
+    try:
+        from trading.circuit_breaker import get_circuit_breaker, is_trading_enabled
+        cb = get_circuit_breaker()
+        can_trade, reason = is_trading_enabled(current_positions=0, margin_used=0)
+        state = cb.state.value if hasattr(cb, 'state') else 'UNKNOWN'
+        daily_pnl = getattr(cb, 'daily_pnl', 0)
+        consec_losses = getattr(cb, 'consecutive_losses', 0)
+
+        status_icon = "🟢" if can_trade else "🔴"
+        print(f"  {status_icon} State: {state}")
+        print(f"     Can Trade: {can_trade}")
+        if not can_trade:
+            print(f"     Reason: {reason}")
+        print(f"     Daily P&L: ${daily_pnl:,.2f}")
+        print(f"     Consecutive Losses: {consec_losses}")
+    except ImportError:
+        print("  [INFO] Circuit breaker module not available")
+    except Exception as e:
+        print(f"  [ERROR] {e}")
+
+    # 9. Solomon Kill Switch
+    print("\n" + "-" * 60)
+    print("SOLOMON FEEDBACK LOOP")
+    print("-" * 60)
+
+    try:
+        from quant.solomon_feedback_loop import get_solomon
+        solomon = get_solomon()
+        for bot in ['ARES', 'ATHENA', 'PEGASUS', 'ICARUS', 'TITAN']:
+            can_trade = solomon.can_trade(bot)
+            status_icon = "🟢" if can_trade else "🔴"
+            print(f"  {status_icon} {bot:10} : {'Can trade' if can_trade else 'BLOCKED'}")
+    except ImportError:
+        print("  [INFO] Solomon module not available")
+    except Exception as e:
+        print(f"  [ERROR] {e}")
+
+    # 10. Current Market Data (VIX, Spot)
+    print("\n" + "-" * 60)
+    print("CURRENT MARKET CONDITIONS")
+    print("-" * 60)
+
+    try:
+        from data.unified_data_provider import get_vix, get_price
+        vix = get_vix()
+        spy_price = get_price('SPY')
+
+        vix_status = "🟢 Normal" if vix and vix < 20 else "🟡 Elevated" if vix and vix < 30 else "🔴 High" if vix and vix < 40 else "🔴 EXTREME" if vix else "❓ Unknown"
+        print(f"  VIX: {vix:.2f if vix else 'N/A'} ({vix_status})")
+        print(f"  SPY: ${spy_price:.2f if spy_price else 'N/A'}")
+
+        if vix and vix >= 40:
+            print(f"  ⚠️ VIX > 40 - ALL IRON CONDOR TRADES BLOCKED")
+        elif vix and vix >= 30:
+            print(f"  ⚠️ VIX > 30 - Mon/Fri trades may be blocked")
+    except ImportError:
+        print("  [INFO] Data provider not available")
+    except Exception as e:
+        print(f"  [ERROR] {e}")
+
+    # 11. Market Calendar Checks
+    print("\n" + "-" * 60)
+    print("MARKET CALENDAR")
+    print("-" * 60)
+
+    try:
+        from trading.market_calendar import MarketCalendar
+        cal = MarketCalendar()
+
+        is_trading_day = cal.is_trading_day(today)
+        is_open = cal.is_market_open()
+        is_early_close = cal.is_early_close_day(today) if hasattr(cal, 'is_early_close_day') else False
+
+        print(f"  Trading Day: {'✅ Yes' if is_trading_day else '❌ No (Holiday)'}")
+        print(f"  Market Open: {'✅ Yes' if is_open else '❌ No'}")
+        if is_early_close:
+            print(f"  ⚠️ Early Close Day (12:00 PM CT)")
+
+        # Check FOMC
+        if hasattr(cal, 'is_fomc_week'):
+            is_fomc = cal.is_fomc_week()
+            if is_fomc:
+                print(f"  ⚠️ FOMC Week - Trading may be restricted")
+
+        # Check earnings
+        if hasattr(cal, 'has_major_earnings_soon'):
+            has_earnings = cal.has_major_earnings_soon(days_ahead=2)
+            if has_earnings:
+                print(f"  ⚠️ Major Earnings Soon - Trading may be restricted")
+    except ImportError:
+        print("  [INFO] Market calendar not available")
     except Exception as e:
         print(f"  [ERROR] {e}")
 
@@ -273,11 +416,11 @@ def run_diagnostic():
 
     # Check heartbeats
     try:
-        cursor.execute("""
+        rows = safe_execute("""
             SELECT COUNT(*) FROM bot_heartbeats
             WHERE last_heartbeat >= NOW() - INTERVAL '10 minutes'
         """)
-        if cursor.fetchone()[0] == 0:
+        if rows and rows[0][0] == 0:
             issues.append("No bot heartbeats in last 10 minutes - scheduler may be down")
     except:
         pass
@@ -285,15 +428,49 @@ def run_diagnostic():
     # Check scan activity during market hours
     if is_weekday and market_open <= now < market_close:
         try:
-            cursor.execute("""
+            rows = safe_execute("""
                 SELECT COUNT(*) FROM scan_activity
                 WHERE date = %s
                 AND outcome NOT IN ('BEFORE_WINDOW', 'AFTER_WINDOW', 'MARKET_CLOSED')
             """, (today,))
-            if cursor.fetchone()[0] == 0:
+            if rows and rows[0][0] == 0:
                 issues.append("No market-hours scans logged today - bots may not be scanning")
         except:
             pass
+
+    # Check circuit breaker
+    try:
+        from trading.circuit_breaker import is_trading_enabled
+        can_trade, reason = is_trading_enabled(current_positions=0, margin_used=0)
+        if not can_trade:
+            issues.append(f"Circuit breaker BLOCKING trades: {reason}")
+    except:
+        pass
+
+    # Check VIX level
+    try:
+        from data.unified_data_provider import get_vix
+        vix = get_vix()
+        if vix and vix >= 40:
+            issues.append(f"VIX at {vix:.1f} - EXTREME level blocking all IC trades")
+    except:
+        pass
+
+    # Check for low win probability in recent scans
+    try:
+        rows = safe_execute("""
+            SELECT AVG(oracle_win_probability::numeric), AVG(min_win_probability_threshold::numeric)
+            FROM scan_activity
+            WHERE date = %s AND outcome = 'NO_TRADE'
+            AND oracle_win_probability IS NOT NULL
+        """, (today,))
+        if rows and rows[0][0] is not None:
+            avg_wp = float(rows[0][0])
+            avg_thresh = float(rows[0][1]) if rows[0][1] else 0.42
+            if avg_wp < avg_thresh:
+                issues.append(f"Avg Oracle win prob ({avg_wp:.0%}) below threshold ({avg_thresh:.0%})")
+    except:
+        pass
 
     if issues:
         print("\n[ISSUES FOUND]:")
