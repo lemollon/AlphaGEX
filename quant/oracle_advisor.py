@@ -3714,7 +3714,7 @@ class OracleAdvisor:
                         # Store raw prompt/response for full transparency
                         "raw_prompt": ca.raw_prompt[:2000] if ca.raw_prompt else None,
                         "raw_response": ca.raw_response[:5000] if ca.raw_response else None,
-                    })
+                    }))
 
                 cursor.execute("""
                     INSERT INTO oracle_predictions (
