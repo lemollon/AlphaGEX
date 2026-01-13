@@ -363,9 +363,12 @@ class ARESTrader(MathOptimizerMixin):
         error_msg: str = ""
     ):
         """Log scan activity for visibility"""
+        print(f"[ARES DEBUG] _log_scan_activity called at {datetime.now(CENTRAL_TZ).strftime('%I:%M:%S %p CT')}")
         if not SCAN_LOGGER_AVAILABLE or not log_ares_scan:
+            print(f"[ARES DEBUG] Scan logging SKIPPED: SCAN_LOGGER_AVAILABLE={SCAN_LOGGER_AVAILABLE}, log_ares_scan={log_ares_scan is not None}")
             logger.warning(f"[ARES] Scan logging SKIPPED: SCAN_LOGGER_AVAILABLE={SCAN_LOGGER_AVAILABLE}, log_ares_scan={log_ares_scan is not None}")
             return
+        print(f"[ARES DEBUG] Proceeding with scan logging...")
 
         try:
             # Determine outcome
@@ -541,8 +544,10 @@ class ARESTrader(MathOptimizerMixin):
                 **ml_kwargs,  # Include all ML analysis data
             )
             if scan_id:
+                print(f"[ARES DEBUG] ✅ Scan logged successfully: {scan_id}")
                 logger.info(f"[ARES] Scan logged: {scan_id}")
             else:
+                print(f"[ARES DEBUG] ❌ Scan logging returned None - check database!")
                 logger.warning("[ARES] Scan logging returned None - possible DB issue")
 
             # Store Oracle prediction for NON-TRADED scans to provide visibility
@@ -563,8 +568,10 @@ class ARESTrader(MathOptimizerMixin):
                     logger.debug(f"[ARES] Oracle scan prediction storage skipped: {oracle_store_err}")
 
         except Exception as e:
-            logger.error(f"[ARES] CRITICAL: Failed to log scan activity: {e}")
+            print(f"[ARES DEBUG] ❌ EXCEPTION in _log_scan_activity: {e}")
             import traceback
+            print(traceback.format_exc())
+            logger.error(f"[ARES] CRITICAL: Failed to log scan activity: {e}")
             logger.error(traceback.format_exc())
             # FALLBACK: Try simple logging without ML kwargs
             try:

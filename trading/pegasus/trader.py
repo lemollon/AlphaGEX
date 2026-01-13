@@ -874,8 +874,13 @@ class PEGASUSTrader(MathOptimizerMixin):
         error_msg: str = ""
     ):
         """Log scan activity for visibility"""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        print(f"[PEGASUS DEBUG] _log_scan_activity called at {datetime.now(ZoneInfo('America/Chicago')).strftime('%I:%M:%S %p CT')}")
         if not SCAN_LOGGER_AVAILABLE or not log_pegasus_scan:
+            print(f"[PEGASUS DEBUG] Scan logging SKIPPED: SCAN_LOGGER_AVAILABLE={SCAN_LOGGER_AVAILABLE}, log_pegasus_scan={log_pegasus_scan is not None}")
             return
+        print(f"[PEGASUS DEBUG] Proceeding with scan logging...")
 
         try:
             # Determine outcome
@@ -1018,7 +1023,7 @@ class PEGASUSTrader(MathOptimizerMixin):
                 except Exception as ml_err:
                     logger.debug(f"ML data gathering failed (non-critical): {ml_err}")
 
-            log_pegasus_scan(
+            scan_id = log_pegasus_scan(
                 outcome=outcome,
                 decision_summary=decision,
                 market_data=context.get('market_data'),
@@ -1039,7 +1044,14 @@ class PEGASUSTrader(MathOptimizerMixin):
                 generate_ai_explanation=False,
                 **ml_kwargs,  # Include all ML analysis data
             )
+            if scan_id:
+                print(f"[PEGASUS DEBUG] ✅ Scan logged successfully: {scan_id}")
+            else:
+                print(f"[PEGASUS DEBUG] ❌ Scan logging returned None - check database!")
         except Exception as e:
+            print(f"[PEGASUS DEBUG] ❌ EXCEPTION in _log_scan_activity: {e}")
+            import traceback
+            print(traceback.format_exc())
             logger.warning(f"Failed to log scan activity: {e}")
 
     def _log_bot_decision(

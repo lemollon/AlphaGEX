@@ -756,8 +756,13 @@ class TITANTrader(MathOptimizerMixin):
         error_msg: str = ""
     ):
         """Log scan activity for visibility"""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        print(f"[TITAN DEBUG] _log_scan_activity called at {datetime.now(ZoneInfo('America/Chicago')).strftime('%I:%M:%S %p CT')}")
         if not SCAN_LOGGER_AVAILABLE or not log_titan_scan:
+            print(f"[TITAN DEBUG] Scan logging SKIPPED: SCAN_LOGGER_AVAILABLE={SCAN_LOGGER_AVAILABLE}, log_titan_scan={log_titan_scan is not None}")
             return
+        print(f"[TITAN DEBUG] Proceeding with scan logging...")
 
         try:
             # Determine outcome
@@ -877,7 +882,7 @@ class TITANTrader(MathOptimizerMixin):
                 except Exception as ml_err:
                     logger.debug(f"ML data gathering failed (non-critical): {ml_err}")
 
-            log_titan_scan(
+            scan_id = log_titan_scan(
                 outcome=outcome,
                 decision_summary=decision,
                 market_data=context.get('market_data'),
@@ -895,7 +900,14 @@ class TITANTrader(MathOptimizerMixin):
                 generate_ai_explanation=False,
                 **ml_kwargs,  # Include all ML analysis data
             )
+            if scan_id:
+                print(f"[TITAN DEBUG] ✅ Scan logged successfully: {scan_id}")
+            else:
+                print(f"[TITAN DEBUG] ❌ Scan logging returned None - check database!")
         except Exception as e:
+            print(f"[TITAN DEBUG] ❌ EXCEPTION in _log_scan_activity: {e}")
+            import traceback
+            print(traceback.format_exc())
             logger.warning(f"Failed to log scan activity: {e}")
 
     def _log_bot_decision(
