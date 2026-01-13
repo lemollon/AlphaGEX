@@ -108,55 +108,25 @@ class SignalGenerator:
 
     def _init_components(self) -> None:
         """Initialize signal generation components"""
-        # GEX Calculator - Try Kronos first, but VERIFY it has FRESH data
-        # Kronos uses ORAT database which is historical (EOD) and may be stale
+        # GEX Calculator - Use Tradier for LIVE trading data
+        # Kronos uses ORAT database (EOD) - only for backtesting, NOT live trading
         self.gex_calculator = None
-        kronos_works = False
 
-        if KRONOS_AVAILABLE:
-            try:
-                kronos_calc = KronosGEXCalculator()
-                # CRITICAL: Test if Kronos has RECENT data (within 2 trading days)
-                test_result = kronos_calc.calculate_gex(self.config.ticker)
-                if test_result and test_result.get('spot_price', 0) > 0:
-                    # Check data freshness - reject if older than 2 days
-                    trade_date = test_result.get('trade_date', '')
-                    if trade_date:
-                        from datetime import datetime
-                        try:
-                            data_date = datetime.strptime(trade_date, '%Y-%m-%d')
-                            days_old = (datetime.now() - data_date).days
-                            if days_old <= 2:
-                                self.gex_calculator = kronos_calc
-                                kronos_works = True
-                                logger.info(f"ARES: Kronos GEX verified (spot={test_result.get('spot_price')}, date={trade_date})")
-                            else:
-                                logger.warning(f"ARES: Kronos data too stale ({days_old} days old) - falling back to Tradier")
-                        except ValueError:
-                            logger.warning(f"ARES: Kronos has invalid trade_date format - falling back")
-                    else:
-                        logger.warning("ARES: Kronos returned no trade_date - falling back")
-                else:
-                    logger.warning("ARES: Kronos returned no data - falling back")
-            except Exception as e:
-                logger.warning(f"ARES: Kronos init/test failed: {e}")
-
-        # Fall back to Tradier for LIVE data if Kronos didn't work
-        if not kronos_works and TRADIER_GEX_AVAILABLE:
+        if TRADIER_GEX_AVAILABLE:
             try:
                 tradier_calc = get_gex_calculator()
                 # Verify Tradier works with live data
                 test_result = tradier_calc.calculate_gex(self.config.ticker)
                 if test_result and test_result.get('spot_price', 0) > 0:
                     self.gex_calculator = tradier_calc
-                    logger.info(f"ARES: Using Tradier GEX (live spot={test_result.get('spot_price')})")
+                    logger.info(f"ARES: Using Tradier GEX for LIVE trading (spot={test_result.get('spot_price')})")
                 else:
                     logger.error("ARES: Tradier GEX returned no data!")
             except Exception as e:
                 logger.warning(f"ARES: Tradier GEX init/test failed: {e}")
 
         if not self.gex_calculator:
-            logger.error("ARES: NO GEX CALCULATOR AVAILABLE - trading will be limited")
+            logger.error("ARES: NO GEX CALCULATOR AVAILABLE - Tradier required for live trading")
 
         # ARES ML Advisor (PRIMARY - trained on KRONOS backtests with ~70% win rate)
         self.ares_ml = None
@@ -209,22 +179,37 @@ class SignalGenerator:
         """
         Get GEX Directional ML prediction for market direction.
 
-        For Iron Condors: Strong directional signal suggests caution.
-        - FLAT/NEUTRAL = good for IC (rangebound)
-        - BULLISH with high confidence = may want to widen call side
-        - BEARISH with high confidence = may want to widen put side
+        For Iron Condors: Strong directional signal is INFORMATIONAL ONLY.
+        - FLAT/NEUTRAL = confirms IC is appropriate
+        - BULLISH/BEARISH = may want to adjust strikes, but does NOT block
         """
         if not self.gex_directional_ml:
             return None
 
         try:
-            # Build features from GEX data
+            # Build proper gex_data dict for predict() method
+            # Map incoming keys to expected keys
+            spot = gex_data.get('spot_price', 0)
+            call_wall = gex_data.get('major_pos_vol_level', gex_data.get('call_wall', spot))
+            put_wall = gex_data.get('major_neg_vol_level', gex_data.get('put_wall', spot))
+            flip_point = gex_data.get('flip_point', spot)
+
+            ml_gex_data = {
+                'spot_price': spot,
+                'net_gex': gex_data.get('net_gex', 0),
+                'gex_normalized': gex_data.get('gex_normalized', 0),
+                'gex_regime': gex_data.get('gex_regime', 'NEUTRAL'),
+                'call_wall': call_wall,
+                'put_wall': put_wall,
+                'flip_point': flip_point,
+                'distance_to_flip_pct': ((flip_point - spot) / spot * 100) if spot > 0 else 0,
+                'between_walls': put_wall < spot < call_wall if spot > 0 else True,
+                'above_call_wall': spot > call_wall if spot > 0 else False,
+                'below_put_wall': spot < put_wall if spot > 0 else False,
+            }
+
             prediction = self.gex_directional_ml.predict(
-                net_gex=gex_data.get('net_gex', 0),
-                call_wall=gex_data.get('major_pos_vol_level', 0),
-                put_wall=gex_data.get('major_neg_vol_level', 0),
-                flip_point=gex_data.get('flip_point', 0),
-                spot_price=gex_data.get('spot_price', 0),
+                gex_data=ml_gex_data,
                 vix=vix or 20.0
             )
 
@@ -235,7 +220,7 @@ class SignalGenerator:
                     'probabilities': prediction.probabilities if hasattr(prediction, 'probabilities') else {}
                 }
         except Exception as e:
-            logger.debug(f"GEX Directional ML prediction failed: {e}")
+            logger.warning(f"GEX Directional ML prediction failed: {e}")
 
         return None
 
