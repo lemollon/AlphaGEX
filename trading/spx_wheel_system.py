@@ -1135,42 +1135,21 @@ class SPXWheelTrader(MathOptimizerMixin):
             self._last_oracle_advice = oracle_advice
             print(f"  Oracle: {oracle_advice.advice.value} (Win Prob: {oracle_advice.win_probability:.1%})")
         else:
-            # Oracle not available or win probability too low - apply VIX filter
+            # Oracle win probability below threshold - trust Oracle's decision
+            # REMOVED: Redundant VIX filter - Oracle already analyzed VIX in MarketContext
             oracle_win_prob = oracle_advice.win_probability if oracle_advice else 0
-            print(f"  Oracle: {oracle_win_prob:.1%} win prob (threshold: {min_win_prob:.1%})")
-
-            # Check VIX levels only when Oracle doesn't give strong signal
-            if vix < self.params.min_vix:
-                reason = f"VIX ({vix:.1f}) below min ({self.params.min_vix}), Oracle also insufficient ({oracle_win_prob:.1%})"
-                print(f"  {reason}")
-                self._log_decision(
-                    decision_type="NO_TRADE",
-                    action="SKIP",
-                    what=f"NO TRADE for SPX - VIX low and Oracle insufficient",
-                    why=f"VIX at {vix:.1f} below {self.params.min_vix}. Oracle win prob {oracle_win_prob:.1%} below {min_win_prob:.1%}.",
-                    how=f"Both VIX filter and Oracle failed to pass thresholds.",
-                    spot_price=spot,
-                    vix=vix
-                )
-                return False, reason
-
-            if vix > self.params.max_vix:
-                reason = f"VIX ({vix:.1f}) above max ({self.params.max_vix}), Oracle also insufficient ({oracle_win_prob:.1%})"
-                print(f"  {reason}")
-                self._log_decision(
-                    decision_type="NO_TRADE",
-                    action="SKIP",
-                    what=f"NO TRADE for SPX - VIX high and Oracle insufficient",
-                    why=f"VIX at {vix:.1f} exceeds {self.params.max_vix}. Oracle win prob {oracle_win_prob:.1%} below {min_win_prob:.1%}.",
-                    how=f"Both VIX filter and Oracle failed to pass thresholds.",
-                    spot_price=spot,
-                    vix=vix
-                )
-                return False, reason
-
-            self._last_oracle_advice = oracle_advice
-            if oracle_advice:
-                print(f"  Oracle: {oracle_advice.advice.value} (Win Prob: {oracle_win_prob:.1%})")
+            reason = f"Oracle win prob {oracle_win_prob:.1%} below threshold {min_win_prob:.1%}"
+            print(f"  ATLAS: {reason}")
+            self._log_decision(
+                decision_type="NO_TRADE",
+                action="SKIP",
+                what=f"NO TRADE for SPX - Oracle win probability insufficient",
+                why=f"Oracle win prob {oracle_win_prob:.1%} below {min_win_prob:.1%}. Oracle already analyzed VIX, GEX, and market conditions.",
+                how=f"Oracle is the authority - no additional VIX filtering needed.",
+                spot_price=spot,
+                vix=vix
+            )
+            return False, reason
 
         return True, "Market conditions favorable"
 

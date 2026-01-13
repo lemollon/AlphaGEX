@@ -401,44 +401,10 @@ class SignalGenerator:
             impact = f.get('impact', f.get('importance', 0))
             factor_map[name] = impact
 
-        # 1. VIX factor - Higher VIX can be GOOD for directional trades
-        vix_importance = factor_map.get('vix', factor_map.get('vix_level', 0))
-        if vix_importance > 0.2:
-            if 18 < vix < 28:  # Sweet spot for directional
-                boost = 0.03
-                confidence += boost
-                adjustments.append(f"VIX factor high ({vix_importance:.2f}) + VIX in sweet spot ({vix:.1f}): +{boost:.0%}")
-            elif vix > 35:  # Too volatile
-                penalty = 0.05
-                confidence -= penalty
-                adjustments.append(f"VIX factor high ({vix_importance:.2f}) + VIX extreme ({vix:.1f}): -{penalty:.0%}")
-
-        # 2. GEX regime - NEGATIVE regime favors directional trades
-        gex_importance = factor_map.get('gex_regime', factor_map.get('net_gex', 0))
-        if gex_importance > 0.15:
-            if gex_regime == 'NEGATIVE':
-                boost = 0.04  # ATHENA likes negative gamma
-                confidence += boost
-                adjustments.append(f"GEX factor high ({gex_importance:.2f}) + NEGATIVE regime (favors directional): +{boost:.0%}")
-            elif gex_regime == 'POSITIVE':
-                penalty = 0.03  # Mean reversion more likely
-                confidence -= penalty
-                adjustments.append(f"GEX factor high ({gex_importance:.2f}) + POSITIVE regime (mean reverting): -{penalty:.0%}")
-
-        # 3. Day of week - Early week better for trends
-        dow_importance = factor_map.get('day_of_week', 0)
-        if dow_importance > 0.15:
-            from datetime import datetime
-            from zoneinfo import ZoneInfo
-            day = datetime.now(ZoneInfo("America/Chicago")).weekday()
-            if day in [0, 1, 2]:  # Mon-Wed
-                boost = 0.02
-                confidence += boost
-                adjustments.append(f"Day factor high ({dow_importance:.2f}) + early week: +{boost:.0%}")
-            elif day == 4:  # Friday
-                penalty = 0.03
-                confidence -= penalty
-                adjustments.append(f"Day factor high ({dow_importance:.2f}) + Friday expiry risk: -{penalty:.0%}")
+        # REMOVED: VIX, GEX regime, day of week adjustments
+        # Oracle already analyzed all these factors in MarketContext.
+        # Re-adjusting confidence based on the same factors is redundant.
+        # Trust Oracle's win_probability output directly.
 
         # Clamp confidence
         confidence = max(0.4, min(0.95, confidence))
@@ -634,122 +600,30 @@ class SignalGenerator:
 
         else:
             # ============================================================
-            # STEP 4: NO STRONG ML/ORACLE SIGNAL - USE TRADITIONAL FILTERS
+            # STEP 4: ORACLE SAYS NO - TRUST ORACLE'S DECISION
             # ============================================================
+            # Oracle already analyzed VIX, GEX, walls, regime, day of week.
+            # If Oracle's win probability is below threshold, don't trade.
+            # No fallback to "traditional filters" - Oracle is the authority.
+            logger.info(f"[ATHENA SKIP] Oracle/ML win prob {effective_win_prob:.0%} < threshold {min_win_prob:.0%}")
+            return TradeSignal(
+                direction=effective_direction if effective_direction in ('BULLISH', 'BEARISH') else "UNKNOWN",
+                spread_type=SpreadType.CALL_DEBIT if effective_direction == "BULLISH" else SpreadType.PUT_DEBIT,
+                confidence=0,
+                spot_price=spot_price,
+                call_wall=gex_data.get('call_wall', 0),
+                put_wall=gex_data.get('put_wall', 0),
+                gex_regime=gex_data.get('gex_regime', 'UNKNOWN'),
+                vix=vix,
+                source="BLOCKED_ORACLE_NO_TRADE",
+                reasoning=f"BLOCKED: Oracle/ML win prob {effective_win_prob:.0%} below {min_win_prob:.0%} threshold",
+                ml_win_probability=effective_win_prob,
+            )
 
-            # VIX FILTER
-            if vix < self.config.min_vix:
-                logger.info(f"[ATHENA SKIP] VIX {vix:.1f} below min {self.config.min_vix}, ML/Oracle also insufficient")
-                return TradeSignal(
-                    direction="UNKNOWN",
-                    spread_type=SpreadType.CALL_DEBIT,
-                    confidence=0,
-                    spot_price=spot_price,
-                    call_wall=gex_data.get('call_wall', 0),
-                    put_wall=gex_data.get('put_wall', 0),
-                    gex_regime=gex_data.get('gex_regime', 'UNKNOWN'),
-                    vix=vix,
-                    source="BLOCKED_NO_SIGNAL",
-                    reasoning=f"BLOCKED: VIX={vix:.1f} low, ML/Oracle={effective_win_prob:.0%} insufficient",
-                    ml_win_probability=oracle_win_prob,
-                )
-            if vix > self.config.max_vix:
-                logger.info(f"[ATHENA SKIP] VIX {vix:.1f} above max {self.config.max_vix}, ML/Oracle also insufficient")
-                return TradeSignal(
-                    direction="UNKNOWN",
-                    spread_type=SpreadType.CALL_DEBIT,
-                    confidence=0,
-                    spot_price=spot_price,
-                    call_wall=gex_data.get('call_wall', 0),
-                    put_wall=gex_data.get('put_wall', 0),
-                    gex_regime=gex_data.get('gex_regime', 'UNKNOWN'),
-                    vix=vix,
-                    source="BLOCKED_NO_SIGNAL",
-                    reasoning=f"BLOCKED: VIX={vix:.1f} high, ML/Oracle={effective_win_prob:.0%} insufficient",
-                    ml_win_probability=oracle_win_prob,
-                )
-            logger.info(f"[ATHENA] VIX {vix:.1f} in range [{self.config.min_vix}-{self.config.max_vix}]")
-
-            # WALL PROXIMITY CHECK
-            near_wall, wall_direction, wall_reason = self.check_wall_proximity(gex_data)
-            if not near_wall:
-                logger.info(f"[ATHENA SKIP] {wall_reason}, ML/Oracle also insufficient")
-                return TradeSignal(
-                    direction=oracle_direction,
-                    spread_type=SpreadType.CALL_DEBIT if oracle_direction == "BULLISH" else SpreadType.PUT_DEBIT,
-                    confidence=0,
-                    spot_price=spot_price,
-                    call_wall=gex_data.get('call_wall', 0),
-                    put_wall=gex_data.get('put_wall', 0),
-                    gex_regime=gex_data.get('gex_regime', 'UNKNOWN'),
-                    vix=vix,
-                    source="BLOCKED_NO_SIGNAL",
-                    reasoning=f"BLOCKED: Wall far, ML/Oracle={effective_win_prob:.0%} insufficient",
-                    ml_win_probability=oracle_win_prob,
-                )
-            logger.info(f"[ATHENA] Wall proximity: {wall_reason}")
-
-            # GEX RATIO ASYMMETRY CHECK
-            total_put_gex = gex_data.get('put_gex', 0)
-            total_call_gex = gex_data.get('call_gex', 0)
-            gex_ratio = total_put_gex / total_call_gex if total_call_gex > 0 else (10.0 if total_put_gex > 0 else 1.0)
-            logger.info(f"[ATHENA] GEX: Put={total_put_gex:,.0f}, Call={total_call_gex:,.0f}, Ratio={gex_ratio:.2f}")
-
-            has_gex_asymmetry = (gex_ratio >= self.config.min_gex_ratio_bearish or
-                                 gex_ratio <= self.config.max_gex_ratio_bullish)
-            if not has_gex_asymmetry:
-                logger.info(f"[ATHENA SKIP] GEX ratio {gex_ratio:.2f} not asymmetric, ML/Oracle also insufficient")
-                return TradeSignal(
-                    direction=oracle_direction,
-                    spread_type=SpreadType.CALL_DEBIT if oracle_direction == "BULLISH" else SpreadType.PUT_DEBIT,
-                    confidence=0,
-                    spot_price=spot_price,
-                    call_wall=gex_data.get('call_wall', 0),
-                    put_wall=gex_data.get('put_wall', 0),
-                    gex_regime=gex_data.get('gex_regime', 'UNKNOWN'),
-                    vix=vix,
-                    source="BLOCKED_NO_SIGNAL",
-                    reasoning=f"BLOCKED: GEX not asymmetric, ML/Oracle={effective_win_prob:.0%} insufficient",
-                    ml_win_probability=oracle_win_prob,
-                )
-
-            # Determine GEX-based direction
-            gex_direction = "BEARISH" if gex_ratio >= self.config.min_gex_ratio_bearish else "BULLISH"
-            logger.info(f"[ATHENA] GEX ratio -> {gex_direction}")
-
-            # Direction conflict check
-            if gex_direction != wall_direction:
-                logger.info(f"[ATHENA SKIP] GEX={gex_direction} vs Wall={wall_direction} conflict, ML/Oracle insufficient")
-                return TradeSignal(
-                    direction=gex_direction,
-                    spread_type=SpreadType.CALL_DEBIT if gex_direction == "BULLISH" else SpreadType.PUT_DEBIT,
-                    confidence=0,
-                    spot_price=spot_price,
-                    call_wall=gex_data.get('call_wall', 0),
-                    put_wall=gex_data.get('put_wall', 0),
-                    gex_regime=gex_data.get('gex_regime', 'UNKNOWN'),
-                    vix=vix,
-                    source="BLOCKED_NO_SIGNAL",
-                    reasoning=f"BLOCKED: Direction conflict, ML/Oracle={effective_win_prob:.0%} insufficient",
-                    ml_win_probability=oracle_win_prob,
-                )
-            logger.info(f"[ATHENA] GEX direction {gex_direction} confirms wall direction")
-
-            # FALLBACK: If no ML/Oracle prediction, use market baseline
-            if effective_win_prob <= 0:
-                gex_regime = gex_data.get('gex_regime', 'NEUTRAL')
-                baseline = 0.55
-                if vix < 15:
-                    baseline += 0.05
-                elif vix > 30:
-                    baseline -= 0.10
-                elif vix > 25:
-                    baseline -= 0.05
-                if gex_regime in ('POSITIVE', 'NEGATIVE'):
-                    baseline += 0.03
-                effective_win_prob = max(0.50, min(0.70, baseline))
-                prediction_source = "MARKET_CONDITIONS_FALLBACK"
-                logger.info(f"[ATHENA FALLBACK] Using market baseline: {effective_win_prob:.1%}")
+        # Get wall info for logging only (Oracle already provided direction above)
+        near_wall, _, wall_reason = self.check_wall_proximity(gex_data)
+        if not near_wall:
+            wall_reason = f"Oracle overriding wall proximity (direction: {effective_direction})"
 
         # ============================================================
         # STEP 5: LOG ML/ORACLE ANALYSIS
