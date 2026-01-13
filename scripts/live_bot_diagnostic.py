@@ -155,11 +155,11 @@ def run_diagnostic():
 
     # Correct table names matching actual database schema
     position_tables = [
-        ('ares_ic_positions', 'ARES'),
-        ('athena_directional_positions', 'ATHENA'),
-        ('pegasus_ic_positions', 'PEGASUS'),
-        ('icarus_directional_positions', 'ICARUS'),
-        ('titan_ic_positions', 'TITAN'),
+        ('ares_positions', 'ARES'),
+        ('athena_positions', 'ATHENA'),
+        ('pegasus_positions', 'PEGASUS'),
+        ('icarus_positions', 'ICARUS'),
+        ('titan_positions', 'TITAN'),
     ]
 
     for table, bot in position_tables:
@@ -341,9 +341,10 @@ def run_diagnostic():
         from quant.solomon_feedback_loop import get_solomon
         solomon = get_solomon()
         for bot in ['ARES', 'ATHENA', 'PEGASUS', 'ICARUS', 'TITAN']:
-            can_trade = solomon.can_trade(bot)
-            status_icon = "🟢" if can_trade else "🔴"
-            print(f"  {status_icon} {bot:10} : {'Can trade' if can_trade else 'BLOCKED'}")
+            # Check if bot is killed via kill switch
+            is_killed = solomon.is_bot_killed(bot) if hasattr(solomon, 'is_bot_killed') else False
+            status_icon = "🔴" if is_killed else "🟢"
+            print(f"  {status_icon} {bot:10} : {'KILLED' if is_killed else 'Active'}")
     except ImportError:
         print("  [INFO] Solomon module not available")
     except Exception as e:
@@ -360,8 +361,10 @@ def run_diagnostic():
         spy_price = get_price('SPY')
 
         vix_status = "🟢 Normal" if vix and vix < 20 else "🟡 Elevated" if vix and vix < 30 else "🔴 High" if vix and vix < 40 else "🔴 EXTREME" if vix else "❓ Unknown"
-        print(f"  VIX: {vix:.2f if vix else 'N/A'} ({vix_status})")
-        print(f"  SPY: ${spy_price:.2f if spy_price else 'N/A'}")
+        vix_str = f"{vix:.2f}" if vix else "N/A"
+        spy_str = f"${spy_price:.2f}" if spy_price else "N/A"
+        print(f"  VIX: {vix_str} ({vix_status})")
+        print(f"  SPY: {spy_str}")
 
         if vix and vix >= 40:
             print(f"  ⚠️ VIX > 40 - ALL IRON CONDOR TRADES BLOCKED")
@@ -383,24 +386,35 @@ def run_diagnostic():
 
         is_trading_day = cal.is_trading_day(today)
         is_open = cal.is_market_open()
-        is_early_close = cal.is_early_close_day(today) if hasattr(cal, 'is_early_close_day') else False
 
         print(f"  Trading Day: {'✅ Yes' if is_trading_day else '❌ No (Holiday)'}")
         print(f"  Market Open: {'✅ Yes' if is_open else '❌ No'}")
-        if is_early_close:
-            print(f"  ⚠️ Early Close Day (12:00 PM CT)")
 
-        # Check FOMC
-        if hasattr(cal, 'is_fomc_week'):
-            is_fomc = cal.is_fomc_week()
-            if is_fomc:
-                print(f"  ⚠️ FOMC Week - Trading may be restricted")
+        # Check early close (wrap in try/except for timezone issues)
+        try:
+            is_early_close = cal.is_early_close_day(today) if hasattr(cal, 'is_early_close_day') else False
+            if is_early_close:
+                print(f"  ⚠️ Early Close Day (12:00 PM CT)")
+        except:
+            pass
+
+        # Check FOMC (wrap in try/except for timezone issues)
+        try:
+            if hasattr(cal, 'is_fomc_week'):
+                is_fomc = cal.is_fomc_week()
+                if is_fomc:
+                    print(f"  ⚠️ FOMC Week - Trading may be restricted")
+        except:
+            pass
 
         # Check earnings
-        if hasattr(cal, 'has_major_earnings_soon'):
-            has_earnings = cal.has_major_earnings_soon(days_ahead=2)
-            if has_earnings:
-                print(f"  ⚠️ Major Earnings Soon - Trading may be restricted")
+        try:
+            if hasattr(cal, 'has_major_earnings_soon'):
+                has_earnings = cal.has_major_earnings_soon(days_ahead=2)
+                if has_earnings:
+                    print(f"  ⚠️ Major Earnings Soon - Trading may be restricted")
+        except:
+            pass
     except ImportError:
         print("  [INFO] Market calendar not available")
     except Exception as e:
