@@ -476,6 +476,23 @@ def log_scan_activity(
             return [_convert_dict_numpy(item) for item in d]
         return _convert_numpy(d)
 
+    def _clamp_decimal(val, max_val=9.9999):
+        """Clamp numeric values to fit DECIMAL(5,4) constraints.
+
+        DECIMAL(5,4) can hold values from -9.9999 to 9.9999.
+        Values > 1 are assumed to be percentages and divided by 100.
+        """
+        if val is None:
+            return None
+        val = _convert_numpy(val)
+        if not isinstance(val, (int, float)):
+            return val
+        # If value > 1, assume it's a percentage (e.g., 95.5% instead of 0.955)
+        if val > 1:
+            val = val / 100.0
+        # Clamp to valid range
+        return max(-max_val, min(max_val, val))
+
     conn = None  # Initialize to prevent NameError in finally block
     try:
         from database_adapter import get_connection
@@ -849,14 +866,14 @@ def log_scan_activity(
             _convert_numpy(underlying_price), underlying_symbol, _convert_numpy(vix), _convert_numpy(expected_move),
             gex_regime, _convert_numpy(net_gex), _convert_numpy(call_wall), _convert_numpy(put_wall),
             _convert_numpy(distance_to_call_wall_pct), _convert_numpy(distance_to_put_wall_pct),
-            signal_source, signal_direction, _convert_numpy(signal_confidence), _convert_numpy(signal_win_probability),
+            signal_source, signal_direction, _clamp_decimal(signal_confidence), _clamp_decimal(signal_win_probability),
             oracle_advice, oracle_reasoning,
-            _convert_numpy(oracle_win_probability), _convert_numpy(oracle_confidence),
+            _clamp_decimal(oracle_win_probability), _clamp_decimal(oracle_confidence),
             json.dumps(_convert_dict_numpy(oracle_top_factors)) if oracle_top_factors else None,
             json.dumps(_convert_dict_numpy(oracle_probabilities)) if oracle_probabilities else None,
             json.dumps(_convert_dict_numpy(oracle_suggested_strikes)) if oracle_suggested_strikes else None,
             json.dumps(_convert_dict_numpy(oracle_thresholds)) if oracle_thresholds else None,
-            _convert_numpy(min_win_probability_threshold),
+            _clamp_decimal(min_win_probability_threshold),
             _convert_numpy(risk_reward_ratio),
             json.dumps(_convert_dict_numpy(checks_json)) if checks_json else None, all_checks_passed,
             trade_executed, position_id, json.dumps(_convert_dict_numpy(strike_selection)) if strike_selection else None, _convert_numpy(contracts),
@@ -865,21 +882,21 @@ def log_scan_activity(
             ai_what_trigger, ai_market_insight,
             json.dumps(_convert_dict_numpy(context)),
             # NEW: Quant ML Advisor
-            _convert_numpy(quant_ml_advice), _convert_numpy(quant_ml_win_probability), _convert_numpy(quant_ml_confidence),
-            _convert_numpy(quant_ml_suggested_risk_pct), _convert_numpy(quant_ml_suggested_sd_multiplier),
+            _convert_numpy(quant_ml_advice), _clamp_decimal(quant_ml_win_probability), _clamp_decimal(quant_ml_confidence),
+            _clamp_decimal(quant_ml_suggested_risk_pct), _clamp_decimal(quant_ml_suggested_sd_multiplier),
             json.dumps(_convert_dict_numpy(quant_ml_top_factors)) if quant_ml_top_factors else None, quant_ml_model_version,
             # NEW: ML Regime Classifier
-            regime_predicted_action, _convert_numpy(regime_confidence),
+            regime_predicted_action, _clamp_decimal(regime_confidence),
             json.dumps(_convert_dict_numpy(regime_probabilities)) if regime_probabilities else None,
             json.dumps(_convert_dict_numpy(regime_feature_importance)) if regime_feature_importance else None, regime_model_version,
             # NEW: GEX Directional ML
-            gex_ml_direction, _convert_numpy(gex_ml_confidence),
+            gex_ml_direction, _clamp_decimal(gex_ml_confidence),
             json.dumps(_convert_dict_numpy(gex_ml_probabilities)) if gex_ml_probabilities else None,
             json.dumps(_convert_dict_numpy(gex_ml_features_used)) if gex_ml_features_used else None,
             # NEW: Ensemble Strategy
-            ensemble_signal, _convert_numpy(ensemble_confidence), _convert_numpy(ensemble_bullish_weight),
-            _convert_numpy(ensemble_bearish_weight), _convert_numpy(ensemble_neutral_weight), ensemble_should_trade,
-            _convert_numpy(ensemble_position_size_multiplier),
+            ensemble_signal, _clamp_decimal(ensemble_confidence), _clamp_decimal(ensemble_bullish_weight),
+            _clamp_decimal(ensemble_bearish_weight), _clamp_decimal(ensemble_neutral_weight), ensemble_should_trade,
+            _clamp_decimal(ensemble_position_size_multiplier),
             json.dumps(_convert_dict_numpy(ensemble_component_signals)) if ensemble_component_signals else None, ensemble_reasoning,
             # NEW: Volatility Regime
             volatility_regime, volatility_risk_level, volatility_description,
@@ -888,9 +905,9 @@ def log_scan_activity(
             psychology_pattern, liberation_setup, false_floor_detected,
             json.dumps(_convert_dict_numpy(forward_magnets)) if forward_magnets else None,
             # NEW: Monte Carlo Kelly
-            _convert_numpy(kelly_optimal), _convert_numpy(kelly_safe), _convert_numpy(kelly_conservative), _convert_numpy(kelly_prob_ruin), kelly_recommendation,
+            _clamp_decimal(kelly_optimal), _clamp_decimal(kelly_safe), _clamp_decimal(kelly_conservative), _clamp_decimal(kelly_prob_ruin), kelly_recommendation,
             # NEW: ARGUS Pattern Analysis
-            argus_pattern_match, _convert_numpy(argus_similarity_score), argus_historical_outcome,
+            argus_pattern_match, _clamp_decimal(argus_similarity_score), argus_historical_outcome,
             _convert_numpy(argus_roc_value), argus_roc_signal,
             # NEW: IV Context
             _convert_numpy(iv_rank), _convert_numpy(iv_percentile), _convert_numpy(iv_hv_ratio), _convert_numpy(iv_30d), _convert_numpy(hv_30d),
@@ -898,13 +915,13 @@ def log_scan_activity(
             day_of_week, _convert_numpy(day_of_week_num), time_of_day, _convert_numpy(hour_ct), _convert_numpy(minute_ct),
             _convert_numpy(days_to_monthly_opex), _convert_numpy(days_to_weekly_opex), is_opex_week, is_fomc_day, is_cpi_day,
             # NEW: Recent Performance Context
-            _convert_numpy(similar_setup_win_rate), _convert_numpy(similar_setup_count), _convert_numpy(similar_setup_avg_pnl),
-            _convert_numpy(current_streak), streak_type, _convert_numpy(last_5_trades_win_rate), _convert_numpy(last_10_trades_win_rate),
+            _clamp_decimal(similar_setup_win_rate), _convert_numpy(similar_setup_count), _convert_numpy(similar_setup_avg_pnl),
+            _convert_numpy(current_streak), streak_type, _clamp_decimal(last_5_trades_win_rate), _clamp_decimal(last_10_trades_win_rate),
             _convert_numpy(daily_pnl), _convert_numpy(weekly_pnl),
             # NEW: ML Consensus & Conflict Detection
-            ml_consensus, _convert_numpy(ml_consensus_score), _convert_numpy(ml_systems_agree), _convert_numpy(ml_systems_total),
+            ml_consensus, _clamp_decimal(ml_consensus_score), _convert_numpy(ml_systems_agree), _convert_numpy(ml_systems_total),
             json.dumps(_convert_dict_numpy(ml_conflicts)) if ml_conflicts else None, ml_conflict_severity,
-            ml_highest_confidence_system, _convert_numpy(ml_highest_confidence_value)
+            ml_highest_confidence_system, _clamp_decimal(ml_highest_confidence_value)
         ))
 
         conn.commit()
