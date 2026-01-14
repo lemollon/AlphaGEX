@@ -656,7 +656,7 @@ class SignalGenerator:
             prediction = self.oracle.get_ares_advice(
                 context=context,
                 use_gex_walls=True,
-                use_claude_validation=False,  # Skip Claude for performance during live trading
+                use_claude_validation=True,  # Enable Claude for transparency logging
                 vix_hard_skip=0.0,  # Disabled - main VIX filter only blocks VIX > 50
                 vix_monday_friday_skip=0.0,  # Disabled - trade every day
                 vix_streak_skip=0.0,  # Disabled - allow trading after losses
