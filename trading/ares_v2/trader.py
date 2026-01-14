@@ -267,27 +267,17 @@ class ARESTrader(MathOptimizerMixin):
                     'reasoning': strategy_rec.reasoning if hasattr(strategy_rec, 'reasoning') else ''
                 }
 
+                # NOTE: Strategy recommendation is INFORMATIONAL ONLY
+                # Oracle's final trade advice in signals.py is the ONLY decision maker
                 if hasattr(strategy_rec, 'recommended_strategy'):
                     if strategy_rec.recommended_strategy == StrategyType.SKIP:
-                        if result['action'] == 'none':
-                            result['action'] = 'skip'
-                        result['details']['skip_reason'] = f"Oracle recommends SKIP: {strategy_rec.reasoning}"
-                        self.db.log("INFO", f"Oracle SKIP: {strategy_rec.reasoning}")
-                        self._log_scan_activity(result, scan_context, result['details']['skip_reason'])
-                        self._update_daily_summary(today, result)
-                        self.db.update_heartbeat("IDLE", f"Cycle complete: {result['action']}")
-                        return result
+                        # Log but DON'T block - let signals.py Oracle check decide
+                        self.db.log("INFO", f"Oracle strategy suggests SKIP: {strategy_rec.reasoning} (proceeding to trade check)")
+                        result['details']['strategy_suggestion'] = f"SKIP: {strategy_rec.reasoning}"
                     elif strategy_rec.recommended_strategy == StrategyType.DIRECTIONAL:
-                        self.db.log("INFO", f"Oracle suggests ATHENA: {strategy_rec.reasoning}")
+                        self.db.log("INFO", f"Oracle suggests ATHENA: {strategy_rec.reasoning} (ARES will still check)")
                         result['details']['oracle_suggests_athena'] = True
-                        if strategy_rec.ic_suitability < 0.4:
-                            if result['action'] == 'none':
-                                result['action'] = 'skip'
-                            result['details']['skip_reason'] = f"IC suitability too low ({strategy_rec.ic_suitability:.0%})"
-                            self._log_scan_activity(result, scan_context, result['details']['skip_reason'])
-                            self._update_daily_summary(today, result)
-                            self.db.update_heartbeat("IDLE", f"Cycle complete: {result['action']}")
-                            return result
+                        result['details']['ic_suitability'] = strategy_rec.ic_suitability
 
             # Step 6: Try to open new position
             position, signal = self._try_new_entry_with_context()

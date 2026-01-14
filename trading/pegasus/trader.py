@@ -252,24 +252,17 @@ class PEGASUSTrader(MathOptimizerMixin):
                     'reasoning': strategy_rec.reasoning if hasattr(strategy_rec, 'reasoning') else ''
                 }
 
-                # If Oracle recommends SKIP or DIRECTIONAL, log and potentially skip
+                # NOTE: Strategy recommendation is INFORMATIONAL ONLY
+                # Oracle's final trade advice in signals.py is the ONLY decision maker
                 if hasattr(strategy_rec, 'recommended_strategy'):
                     if strategy_rec.recommended_strategy == StrategyType.SKIP:
-                        result['action'] = 'skip'
-                        result['details']['skip_reason'] = f"Oracle recommends SKIP: {strategy_rec.reasoning}"
-                        self.db.log("INFO", f"Oracle SKIP recommendation: {strategy_rec.reasoning}")
-                        self._log_scan_activity(result, scan_context, skip_reason=f"Oracle SKIP: {strategy_rec.reasoning}")
-                        return result
+                        # Log but DON'T block - let signals.py Oracle check decide
+                        self.db.log("INFO", f"Oracle strategy suggests SKIP: {strategy_rec.reasoning} (proceeding to trade check)")
+                        result['details']['strategy_suggestion'] = f"SKIP: {strategy_rec.reasoning}"
                     elif strategy_rec.recommended_strategy == StrategyType.DIRECTIONAL:
-                        # Log that ATHENA would be better, but continue with reduced confidence
-                        self.db.log("INFO", f"Oracle suggests ATHENA (directional): {strategy_rec.reasoning}")
+                        self.db.log("INFO", f"Oracle suggests ATHENA: {strategy_rec.reasoning} (PEGASUS will still check)")
                         result['details']['oracle_suggests_athena'] = True
-                        # Apply size reduction based on IC suitability (use config threshold)
-                        if strategy_rec.ic_suitability < self.config.min_ic_suitability:
-                            result['action'] = 'skip'
-                            result['details']['skip_reason'] = f"IC suitability too low ({strategy_rec.ic_suitability:.0%}), consider ATHENA"
-                            self._log_scan_activity(result, scan_context, skip_reason=f"Low IC suitability, consider ATHENA")
-                            return result
+                        result['details']['ic_suitability'] = strategy_rec.ic_suitability
 
             # Manage positions
             closed, pnl = self._manage_positions()
