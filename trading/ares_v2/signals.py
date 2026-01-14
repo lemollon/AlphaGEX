@@ -85,16 +85,6 @@ except ImportError:
     WalkForwardOptimizer = None
     WalkForwardResult = None
 
-# GEX Directional ML - predicts BULLISH/BEARISH/FLAT from GEX structure
-# Can confirm or contradict IC positioning
-GEX_DIRECTIONAL_ML_AVAILABLE = False
-try:
-    from quant.gex_directional_ml import GEXDirectionalPredictor, Direction, DirectionalPrediction
-    GEX_DIRECTIONAL_ML_AVAILABLE = True
-except ImportError:
-    GEXDirectionalPredictor = None
-    Direction = None
-    DirectionalPrediction = None
 
 
 class SignalGenerator:
@@ -149,84 +139,9 @@ class SignalGenerator:
             except Exception as e:
                 logger.warning(f"Oracle init failed: {e}")
 
-        # REMOVED: Ensemble Strategy - dead code that only blocked trades
+        # REMOVED: Ensemble Strategy, GEX Directional ML, ML Regime Classifier
+        # All redundant - Oracle is the god of all trade decisions
 
-        # GEX Directional ML - predicts market direction from GEX structure
-        # For Iron Condors: if strongly directional, may want to skip or adjust strikes
-        self.gex_directional_ml = None
-        if GEX_DIRECTIONAL_ML_AVAILABLE:
-            try:
-                self.gex_directional_ml = GEXDirectionalPredictor()
-                # Try to load from database (persists across Render deploys)
-                if not self.gex_directional_ml.is_trained:
-                    try:
-                        if self.gex_directional_ml.load_from_db():
-                            logger.info("ARES SignalGenerator: GEX Directional ML loaded from database")
-                        else:
-                            logger.debug("ARES SignalGenerator: GEX Directional ML not found in database")
-                    except Exception as db_e:
-                        logger.debug(f"GEX Directional ML database load failed: {db_e}")
-                if self.gex_directional_ml.is_trained:
-                    logger.info("ARES SignalGenerator: GEX Directional ML initialized (trained)")
-                else:
-                    logger.info("ARES SignalGenerator: GEX Directional ML initialized (not trained)")
-            except Exception as e:
-                logger.debug(f"GEX Directional ML init failed: {e}")
-
-        # REMOVED: ML Regime Classifier - dead code that only blocked trades
-
-    def get_gex_directional_prediction(self, gex_data: Dict, vix: float = None) -> Optional[Dict]:
-        """
-        Get GEX Directional ML prediction for market direction.
-
-        For Iron Condors: Strong directional signal is INFORMATIONAL ONLY.
-        - FLAT/NEUTRAL = confirms IC is appropriate
-        - BULLISH/BEARISH = may want to adjust strikes, but does NOT block
-        """
-        if not self.gex_directional_ml:
-            return None
-
-        try:
-            # Build proper gex_data dict for predict() method
-            # Map incoming keys to expected keys
-            spot = gex_data.get('spot_price', 0)
-            call_wall = gex_data.get('major_pos_vol_level', gex_data.get('call_wall', spot))
-            put_wall = gex_data.get('major_neg_vol_level', gex_data.get('put_wall', spot))
-            flip_point = gex_data.get('flip_point', spot)
-
-            ml_gex_data = {
-                'spot_price': spot,
-                'net_gex': gex_data.get('net_gex', 0),
-                'gex_normalized': gex_data.get('gex_normalized', 0),
-                'gex_regime': gex_data.get('gex_regime', 'NEUTRAL'),
-                'call_wall': call_wall,
-                'put_wall': put_wall,
-                'flip_point': flip_point,
-                'distance_to_flip_pct': ((flip_point - spot) / spot * 100) if spot > 0 else 0,
-                'between_walls': put_wall < spot < call_wall if spot > 0 else True,
-                'above_call_wall': spot > call_wall if spot > 0 else False,
-                'below_put_wall': spot < put_wall if spot > 0 else False,
-            }
-
-            prediction = self.gex_directional_ml.predict(
-                gex_data=ml_gex_data,
-                vix=vix or 20.0
-            )
-
-            if prediction:
-                return {
-                    'direction': prediction.direction.value if hasattr(prediction.direction, 'value') else str(prediction.direction),
-                    'confidence': prediction.confidence,
-                    'probabilities': prediction.probabilities if hasattr(prediction, 'probabilities') else {}
-                }
-        except Exception as e:
-            logger.warning(f"GEX Directional ML prediction failed: {e}")
-
-        return None
-
-    # REMOVED: get_ml_regime_prediction - dead code
-    # REMOVED: get_ensemble_boost - dead code
-    # Oracle is the god of all trade decisions. GEX + VIX is the fallback.
 
     def get_market_data(self) -> Optional[Dict[str, Any]]:
         """Get current market data including price, VIX, and GEX"""
@@ -903,49 +818,6 @@ class SignalGenerator:
             self._ml_suggested_sd = ml_prediction.get('suggested_sd_multiplier', 1.0)
 
         logger.info(f"[ARES PASSED] {prediction_source} Win Prob {win_probability:.1%} >= threshold {self.config.min_win_probability:.1%}")
-
-        # ============================================================
-        # GEX DIRECTIONAL ML - Check if market is too directional for IC
-        # Iron Condors work best in rangebound markets (FLAT prediction)
-        # Strong directional signal = reduce confidence or skip
-        # ============================================================
-        # Build GEX data dict from market_data for ML predictions
-        gex_data = {
-            'net_gex': market_data.get('net_gex', 0),
-            'major_pos_vol_level': market_data.get('call_wall', 0),
-            'major_neg_vol_level': market_data.get('put_wall', 0),
-            'flip_point': market_data.get('flip_point', 0),
-            'spot_price': market_data.get('spot_price', 0),
-        }
-        gex_dir_prediction = self.get_gex_directional_prediction(gex_data, vix)
-        if gex_dir_prediction:
-            gex_dir = gex_dir_prediction.get('direction', 'FLAT')
-            gex_dir_conf = gex_dir_prediction.get('confidence', 0)
-
-            logger.info(f"[ARES GEX DIRECTIONAL ML] Direction: {gex_dir}, Confidence: {gex_dir_conf:.1%}")
-
-            # CRITICAL FIX: When Oracle says TRADE_FULL, maintain minimum 0.5 confidence
-            # to ensure signal passes is_valid check. Oracle's word is law.
-            min_confidence_floor = 0.50 if oracle_advice == 'TRADE_FULL' else 0.40
-
-            if gex_dir == 'FLAT':
-                # FLAT is ideal for Iron Condors - boost confidence
-                confidence = min(0.95, confidence + 0.05)
-                logger.info(f"  FLAT prediction = ideal for IC, confidence boosted to {confidence:.1%}")
-            elif gex_dir_conf > 0.80:
-                # Strong directional signal - reduce confidence for IC
-                penalty = (gex_dir_conf - 0.80) * 0.30  # Max 6% penalty at 100% confidence
-                confidence = max(min_confidence_floor, confidence - penalty)
-                logger.info(f"  Strong {gex_dir} signal ({gex_dir_conf:.0%}) - IC confidence reduced to {confidence:.1%}")
-            elif gex_dir_conf > 0.65:
-                # Moderate directional signal - small penalty
-                penalty = (gex_dir_conf - 0.65) * 0.15  # Max 2.25% penalty
-                confidence = max(min_confidence_floor, confidence - penalty)
-                logger.info(f"  Moderate {gex_dir} signal - IC confidence adjusted to {confidence:.1%}")
-
-        # REMOVED: ML Regime Classifier - dead code
-        # REMOVED: Ensemble Strategy - dead code
-        # Oracle is the god of all trade decisions. GEX + VIX is the fallback.
 
         # Step 4: Calculate strikes (Oracle > GEX > SD priority)
         use_gex_walls = oracle.get('use_gex_walls', False) if oracle else False
