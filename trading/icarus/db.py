@@ -180,6 +180,8 @@ class ICARUSDatabase:
             ("wall_distance_pct", "DECIMAL(6, 4)"),
             # Full trade reasoning
             ("trade_reasoning", "TEXT"),
+            # Oracle advice (for audit trail)
+            ("oracle_advice", "VARCHAR(50)"),
         ]
 
         for col_name, col_type in columns_to_add:
@@ -214,7 +216,7 @@ class ICARUSDatabase:
                         underlying_at_entry, call_wall, put_wall,
                         gex_regime, vix_at_entry,
                         flip_point, net_gex,
-                        oracle_confidence, ml_direction, ml_confidence,
+                        oracle_confidence, oracle_advice, ml_direction, ml_confidence,
                         ml_model_name, ml_win_probability, ml_top_features,
                         wall_type, wall_distance_pct, trade_reasoning,
                         order_id, status, open_time, close_time,
@@ -246,22 +248,23 @@ class ICARUSDatabase:
                         net_gex=float(row[16] or 0),
                         # ML context (FULL audit trail)
                         oracle_confidence=float(row[17] or 0),
-                        ml_direction=row[18] or "",
-                        ml_confidence=float(row[19] or 0),
-                        ml_model_name=row[20] or "",
-                        ml_win_probability=float(row[21] or 0),
-                        ml_top_features=row[22] or "",
+                        oracle_advice=row[18] or "",
+                        ml_direction=row[19] or "",
+                        ml_confidence=float(row[20] or 0),
+                        ml_model_name=row[21] or "",
+                        ml_win_probability=float(row[22] or 0),
+                        ml_top_features=row[23] or "",
                         # Wall proximity context
-                        wall_type=row[23] or "",
-                        wall_distance_pct=float(row[24] or 0),
-                        trade_reasoning=row[25] or "",
-                        order_id=row[26] or "",
-                        status=PositionStatus(row[27]),
-                        open_time=row[28],
-                        close_time=row[29],
-                        close_price=float(row[30] or 0),
-                        close_reason=row[31] or "",
-                        realized_pnl=float(row[32] or 0),
+                        wall_type=row[24] or "",
+                        wall_distance_pct=float(row[25] or 0),
+                        trade_reasoning=row[26] or "",
+                        order_id=row[27] or "",
+                        status=PositionStatus(row[28]),
+                        open_time=row[29],
+                        close_time=row[30],
+                        close_price=float(row[31] or 0),
+                        close_reason=row[32] or "",
+                        realized_pnl=float(row[33] or 0),
                     )
                     positions.append(pos)
 
@@ -288,14 +291,14 @@ class ICARUSDatabase:
                         underlying_at_entry, call_wall, put_wall,
                         gex_regime, vix_at_entry,
                         flip_point, net_gex,
-                        oracle_confidence, ml_direction, ml_confidence,
+                        oracle_confidence, oracle_advice, ml_direction, ml_confidence,
                         ml_model_name, ml_win_probability, ml_top_features,
                         wall_type, wall_distance_pct, trade_reasoning,
                         order_id, status, open_time
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                 """, (
                     pos.position_id,
@@ -318,6 +321,7 @@ class ICARUSDatabase:
                     _to_python(pos.net_gex) if pos.net_gex else None,
                     # ML context (FULL audit trail)
                     _to_python(pos.oracle_confidence) if pos.oracle_confidence else None,
+                    pos.oracle_advice or None,
                     pos.ml_direction or None,
                     _to_python(pos.ml_confidence) if pos.ml_confidence else None,
                     pos.ml_model_name or None,
@@ -630,7 +634,7 @@ class ICARUSDatabase:
                         underlying_at_entry, call_wall, put_wall,
                         gex_regime, vix_at_entry,
                         flip_point, net_gex,
-                        oracle_confidence, ml_direction, ml_confidence,
+                        oracle_confidence, oracle_advice, ml_direction, ml_confidence,
                         ml_model_name, ml_win_probability, ml_top_features,
                         wall_type, wall_distance_pct, trade_reasoning,
                         order_id, status, open_time, close_time,
@@ -660,21 +664,22 @@ class ICARUSDatabase:
                         flip_point=float(row[15]) if row[15] else None,
                         net_gex=float(row[16]) if row[16] else None,
                         oracle_confidence=float(row[17]) if row[17] else None,
-                        ml_direction=row[18] or "",
-                        ml_confidence=float(row[19]) if row[19] else None,
-                        ml_model_name=row[20] or "",
-                        ml_win_probability=float(row[21]) if row[21] else None,
-                        ml_top_features=row[22] or "",
-                        wall_type=row[23] or "",
-                        wall_distance_pct=float(row[24]) if row[24] else None,
-                        trade_reasoning=row[25] or "",
-                        order_id=row[26] or "",
-                        status=PositionStatus(row[27]),
-                        open_time=row[28],
-                        close_time=row[29],
-                        close_price=float(row[30]) if row[30] else None,
-                        close_reason=row[31] or "",
-                        realized_pnl=float(row[32]) if row[32] else None,
+                        oracle_advice=row[18] or "",
+                        ml_direction=row[19] or "",
+                        ml_confidence=float(row[20]) if row[20] else None,
+                        ml_model_name=row[21] or "",
+                        ml_win_probability=float(row[22]) if row[22] else None,
+                        ml_top_features=row[23] or "",
+                        wall_type=row[24] or "",
+                        wall_distance_pct=float(row[25]) if row[25] else None,
+                        trade_reasoning=row[26] or "",
+                        order_id=row[27] or "",
+                        status=PositionStatus(row[28]),
+                        open_time=row[29],
+                        close_time=row[30],
+                        close_price=float(row[31]) if row[31] else None,
+                        close_reason=row[32] or "",
+                        realized_pnl=float(row[33]) if row[33] else None,
                     )
                     positions.append(pos)
 

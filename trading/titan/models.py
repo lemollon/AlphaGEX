@@ -339,6 +339,7 @@ class IronCondorSignal:
     # Oracle prediction details (CRITICAL for audit)
     oracle_win_probability: float = 0
     oracle_advice: str = ""  # ENTER, HOLD, EXIT
+    oracle_confidence: float = 0  # Oracle's confidence in its prediction
     oracle_top_factors: List[Dict[str, Any]] = field(default_factory=list)
     oracle_suggested_sd: float = 0.8  # TITAN default
     oracle_use_gex_walls: bool = False

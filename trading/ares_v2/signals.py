@@ -908,6 +908,7 @@ class SignalGenerator:
             # BUG FIX: Use the oracle_advice variable from line 714 for consistency
             oracle_win_probability=win_probability,
             oracle_advice=oracle_advice,  # Use local var, not re-fetch with different default
+            oracle_confidence=oracle.get('confidence', 0) if oracle else 0,
             oracle_top_factors=oracle.get('top_factors', []) if oracle else [],
             oracle_suggested_sd=oracle.get('suggested_sd_multiplier', 1.0) if oracle else 1.0,
             oracle_use_gex_walls=oracle.get('use_gex_walls', False) if oracle else False,

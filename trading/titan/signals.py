@@ -745,6 +745,7 @@ class SignalGenerator:
             # Oracle context (CRITICAL for audit)
             oracle_win_probability=oracle['win_probability'] if oracle else 0,
             oracle_advice=oracle['advice'] if oracle else '',
+            oracle_confidence=oracle['confidence'] if oracle else 0,
             oracle_top_factors=oracle['top_factors'] if oracle else [],
             oracle_suggested_sd=oracle['suggested_sd_multiplier'] if oracle else self.config.sd_multiplier,
             oracle_use_gex_walls=oracle['use_gex_walls'] if oracle else False,

@@ -163,6 +163,7 @@ class SpreadPosition:
 
     # ML context (FULL audit trail)
     oracle_confidence: float = 0
+    oracle_advice: str = ""  # Oracle's trade decision for audit trail
     ml_direction: str = ""
     ml_confidence: float = 0
     ml_model_name: str = ""

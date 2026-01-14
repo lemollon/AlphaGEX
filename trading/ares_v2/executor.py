@@ -411,7 +411,7 @@ class OrderExecutor:
                 flip_point=signal.flip_point,
                 net_gex=signal.net_gex,
                 # Oracle context (FULL audit trail)
-                oracle_confidence=signal.confidence,
+                oracle_confidence=signal.oracle_confidence,
                 oracle_win_probability=signal.oracle_win_probability,
                 oracle_advice=signal.oracle_advice,
                 oracle_reasoning=signal.reasoning,
@@ -575,7 +575,7 @@ class OrderExecutor:
                 flip_point=signal.flip_point,
                 net_gex=signal.net_gex,
                 # Oracle context (FULL audit trail)
-                oracle_confidence=signal.confidence,
+                oracle_confidence=signal.oracle_confidence,
                 oracle_win_probability=signal.oracle_win_probability,
                 oracle_advice=signal.oracle_advice,
                 oracle_reasoning=signal.reasoning,
