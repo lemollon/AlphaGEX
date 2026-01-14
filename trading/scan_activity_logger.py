@@ -1078,7 +1078,12 @@ def get_recent_scans(
                 daily_pnl, weekly_pnl,
                 -- NEW: ML Consensus & Conflict Detection
                 ml_consensus, ml_consensus_score, ml_systems_agree, ml_systems_total,
-                ml_conflicts, ml_conflict_severity, ml_highest_confidence_system, ml_highest_confidence_value
+                ml_conflicts, ml_conflict_severity, ml_highest_confidence_system, ml_highest_confidence_value,
+                -- NEW: NEUTRAL Regime Analysis
+                neutral_derived_direction, neutral_confidence, neutral_reasoning,
+                ic_suitability, bullish_suitability, bearish_suitability, recommended_strategy,
+                trend_direction, trend_strength, position_in_range_pct, is_contained, wall_filter_passed,
+                price_5m_ago, price_30m_ago, price_60m_ago, high_of_day, low_of_day
             FROM scan_activity
             WHERE 1=1
         """
@@ -1154,7 +1159,12 @@ def get_recent_scans(
             'daily_pnl', 'weekly_pnl',
             # NEW: ML Consensus & Conflict Detection
             'ml_consensus', 'ml_consensus_score', 'ml_systems_agree', 'ml_systems_total',
-            'ml_conflicts', 'ml_conflict_severity', 'ml_highest_confidence_system', 'ml_highest_confidence_value'
+            'ml_conflicts', 'ml_conflict_severity', 'ml_highest_confidence_system', 'ml_highest_confidence_value',
+            # NEW: NEUTRAL Regime Analysis
+            'neutral_derived_direction', 'neutral_confidence', 'neutral_reasoning',
+            'ic_suitability', 'bullish_suitability', 'bearish_suitability', 'recommended_strategy',
+            'trend_direction', 'trend_strength', 'position_in_range_pct', 'is_contained', 'wall_filter_passed',
+            'price_5m_ago', 'price_30m_ago', 'price_60m_ago', 'high_of_day', 'low_of_day'
         ]
 
         results = []
@@ -1190,7 +1200,11 @@ def get_recent_scans(
                 'last_5_trades_win_rate', 'last_10_trades_win_rate',
                 'daily_pnl', 'weekly_pnl',
                 # ML Consensus
-                'ml_consensus_score', 'ml_highest_confidence_value'
+                'ml_consensus_score', 'ml_highest_confidence_value',
+                # NEUTRAL Regime Analysis
+                'neutral_confidence', 'ic_suitability', 'bullish_suitability', 'bearish_suitability',
+                'trend_strength', 'position_in_range_pct',
+                'price_5m_ago', 'price_30m_ago', 'price_60m_ago', 'high_of_day', 'low_of_day'
             ]
             for key in decimal_fields:
                 if record.get(key) is not None:
