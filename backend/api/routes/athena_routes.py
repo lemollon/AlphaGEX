@@ -1973,74 +1973,74 @@ async def get_athena_intraday_equity(date: str = None):
 
         conn.close()
 
-        # Build intraday curve from snapshots
-        intraday_curve = []
+        # Build intraday data points (frontend expects data_points with cumulative_pnl)
+        data_points = []
 
         # Add market open point
         prev_day_realized = total_realized - today_realized
-        intraday_curve.append({
-            "date": today,
+        market_open_equity = round(starting_capital + prev_day_realized, 2)
+        data_points.append({
+            "timestamp": f"{today}T08:30:00",
             "time": "08:30:00",
-            "equity": round(starting_capital + prev_day_realized, 2),
-            "pnl": round(prev_day_realized, 2),
-            "daily_pnl": 0,
-            "unrealized_pnl": 0,
-            "realized_pnl": round(prev_day_realized, 2),
-            "source": "market_open",
-            "label": "Market Open"
+            "equity": market_open_equity,
+            "cumulative_pnl": round(prev_day_realized, 2),
+            "open_positions": 0,
+            "unrealized_pnl": 0
         })
+
+        # Track high/low for summary
+        all_equities = [market_open_equity]
 
         # Add snapshots
         for snapshot in snapshots:
             ts, balance, snap_unrealized, snap_realized, open_count, note = snapshot
             snap_time = ts.astimezone(CENTRAL_TZ) if ts.tzinfo else ts
-            intraday_curve.append({
-                "date": today,
+            snap_unrealized_val = float(snap_unrealized or 0)
+            snap_realized_val = float(snap_realized or 0)
+            snap_equity = round(float(balance) if balance else starting_capital, 2)
+            all_equities.append(snap_equity)
+
+            data_points.append({
+                "timestamp": snap_time.isoformat(),
                 "time": snap_time.strftime('%H:%M:%S'),
-                "equity": round(float(balance) if balance else starting_capital, 2),
-                "pnl": round(float(snap_realized or 0) + float(snap_unrealized or 0), 2),
-                "daily_pnl": round(float(snap_realized or 0) + float(snap_unrealized or 0) - prev_day_realized, 2),
-                "unrealized_pnl": round(float(snap_unrealized or 0), 2),
-                "realized_pnl": round(float(snap_realized or 0), 2),
-                "open_positions": open_count,
-                "source": "snapshot"
+                "equity": snap_equity,
+                "cumulative_pnl": round(snap_realized_val + snap_unrealized_val, 2),
+                "open_positions": open_count or 0,
+                "unrealized_pnl": round(snap_unrealized_val, 2)
             })
 
         # Add current live point if viewing today
+        current_equity = starting_capital + total_realized + unrealized_pnl
         if today == now.strftime('%Y-%m-%d'):
             total_pnl = total_realized + unrealized_pnl
             current_equity = starting_capital + total_pnl
-            today_total_pnl = today_realized + unrealized_pnl
+            all_equities.append(round(current_equity, 2))
 
-            intraday_curve.append({
-                "date": today,
+            data_points.append({
+                "timestamp": now.isoformat(),
                 "time": current_time,
                 "equity": round(current_equity, 2),
-                "pnl": round(total_pnl, 2),
-                "daily_pnl": round(today_total_pnl, 2),
-                "unrealized_pnl": round(unrealized_pnl, 2),
-                "realized_pnl": round(total_realized, 2),
+                "cumulative_pnl": round(total_pnl, 2),
                 "open_positions": len(open_positions),
-                "source": "live",
-                "label": "Current"
+                "unrealized_pnl": round(unrealized_pnl, 2)
             })
+
+        # Calculate high/low of day
+        high_of_day = max(all_equities) if all_equities else starting_capital
+        low_of_day = min(all_equities) if all_equities else starting_capital
+        day_pnl = today_realized + unrealized_pnl
 
         return {
             "success": True,
-            "data": {
-                "intraday_curve": intraday_curve,
-                "date": today,
-                "starting_capital": round(starting_capital, 2),
-                "current_equity": round(starting_capital + total_realized + unrealized_pnl, 2),
-                "total_pnl": round(total_realized + unrealized_pnl, 2),
-                "total_realized_pnl": round(total_realized, 2),
-                "total_unrealized_pnl": round(unrealized_pnl, 2),
-                "today_realized_pnl": round(today_realized, 2),
-                "today_closed_count": today_closed_count,
-                "open_positions_count": len(open_positions),
-                "snapshot_count": len(snapshots),
-                "last_updated": now.isoformat()
-            }
+            "date": today,
+            "bot": "ATHENA",
+            "data_points": data_points,
+            "current_equity": round(current_equity, 2),
+            "day_pnl": round(day_pnl, 2),
+            "starting_equity": round(starting_capital, 2),
+            "high_of_day": round(high_of_day, 2),
+            "low_of_day": round(low_of_day, 2),
+            "snapshots_count": len(snapshots)
         }
 
     except Exception as e:
@@ -2050,17 +2050,22 @@ async def get_athena_intraday_equity(date: str = None):
         return {
             "success": False,
             "error": str(e),
-            "data": {
-                "intraday_curve": [{
-                    "date": today,
-                    "time": current_time,
-                    "equity": starting_capital,
-                    "pnl": 0,
-                    "daily_pnl": 0,
-                    "source": "fallback"
-                }],
-                "starting_capital": starting_capital
-            }
+            "date": today,
+            "bot": "ATHENA",
+            "data_points": [{
+                "timestamp": now.isoformat(),
+                "time": current_time,
+                "equity": starting_capital,
+                "cumulative_pnl": 0,
+                "open_positions": 0,
+                "unrealized_pnl": 0
+            }],
+            "current_equity": starting_capital,
+            "day_pnl": 0,
+            "starting_equity": starting_capital,
+            "high_of_day": starting_capital,
+            "low_of_day": starting_capital,
+            "snapshots_count": 0
         }
 
 
