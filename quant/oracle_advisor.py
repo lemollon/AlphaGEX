@@ -3026,8 +3026,14 @@ class OracleAdvisor:
             spread_direction = "BEAR_PUT_SPREAD"
             reasoning_parts.append(f"Recommend: {spread_direction}")
 
+        # Map bot_name string to BotName enum
+        try:
+            prediction_bot_name = BotName[bot_name.upper()] if bot_name else BotName.ATHENA
+        except (KeyError, AttributeError):
+            prediction_bot_name = BotName.ATHENA
+
         prediction = OraclePrediction(
-            bot_name=BotName.ATHENA,
+            bot_name=prediction_bot_name,
             advice=advice,
             win_probability=base_pred['win_probability'],
             confidence=min(100, direction_confidence * 100),
@@ -3055,7 +3061,7 @@ class OracleAdvisor:
         )
 
         # Log prediction result
-        self.live_log.log("PREDICT_DONE", f"ATHENA: {advice.value} ({base_pred['win_probability']:.1%})", {
+        self.live_log.log("PREDICT_DONE", f"{bot_name}: {advice.value} ({base_pred['win_probability']:.1%})", {
             "advice": advice.value,
             "win_probability": base_pred['win_probability'],
             "direction": direction,
