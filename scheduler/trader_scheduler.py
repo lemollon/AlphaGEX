@@ -180,7 +180,10 @@ except ImportError:
 
 # Import OracleAdvisor for PHOENIX signal generation
 try:
-    from quant.oracle_advisor import OracleAdvisor, MarketContext as OracleMarketContext, GEXRegime, TradingAdvice
+    from quant.oracle_advisor import (
+        OracleAdvisor, MarketContext as OracleMarketContext, GEXRegime, TradingAdvice,
+        BotName as OracleBotName, TradeOutcome  # Issue #2: PHOENIX feedback loop
+    )
     ORACLE_AVAILABLE = True
 except ImportError:
     ORACLE_AVAILABLE = False
@@ -188,6 +191,8 @@ except ImportError:
     OracleMarketContext = None
     GEXRegime = None
     TradingAdvice = None
+    OracleBotName = None
+    TradeOutcome = None
     print("Warning: OracleAdvisor not available for PHOENIX.")
     run_validation = None
     get_validation_status = None
@@ -647,6 +652,21 @@ class AutonomousTraderScheduler:
                             logger.info(f"PHOENIX Oracle: {oracle_prediction.advice.value} "
                                        f"(win_prob={oracle_prediction.win_probability:.1%})")
 
+                            # =========================================================
+                            # Issue #2 fix: Store PHOENIX prediction in Oracle feedback loop
+                            # This enables Oracle to learn from PHOENIX outcomes
+                            # =========================================================
+                            try:
+                                trade_date = now.strftime('%Y-%m-%d')
+                                self.phoenix_oracle.store_prediction(
+                                    prediction=oracle_prediction,
+                                    context=context,
+                                    trade_date=trade_date
+                                )
+                                logger.info(f"PHOENIX: Stored Oracle prediction for feedback loop (date={trade_date})")
+                            except Exception as store_e:
+                                logger.warning(f"PHOENIX: Failed to store prediction: {store_e}")
+
                             # Oracle must approve with at least TRADE_REDUCED advice
                             if oracle_prediction.advice in [TradingAdvice.SKIP_TODAY, TradingAdvice.STAY_OUT]:
                                 oracle_approved = False
@@ -702,6 +722,37 @@ class AutonomousTraderScheduler:
                 logger.info(f"Position management completed:")
                 for result in management_results:
                     logger.info(f"  - {result.get('symbol', 'Unknown')}: {result.get('action', 'N/A')}")
+
+                    # =========================================================
+                    # Issue #2 fix: Record PHOENIX outcomes in Oracle feedback loop
+                    # When positions are closed, record the outcome for ML training
+                    # =========================================================
+                    if self.phoenix_oracle and ORACLE_AVAILABLE and OracleBotName and TradeOutcome:
+                        action = result.get('action', '').upper()
+                        pnl = result.get('pnl', 0) or result.get('realized_pnl', 0) or 0
+
+                        # Map action to TradeOutcome
+                        outcome = None
+                        if 'PROFIT' in action or 'WIN' in action or pnl > 0:
+                            outcome = TradeOutcome.MAX_PROFIT if pnl > 100 else TradeOutcome.PARTIAL_PROFIT
+                        elif 'STOP' in action or 'LOSS' in action or pnl < 0:
+                            outcome = TradeOutcome.LOSS
+                        elif 'CLOSE' in action or 'EXIT' in action:
+                            outcome = TradeOutcome.PARTIAL_PROFIT if pnl >= 0 else TradeOutcome.LOSS
+
+                        if outcome:
+                            try:
+                                trade_date = now.strftime('%Y-%m-%d')
+                                self.phoenix_oracle.update_outcome(
+                                    trade_date=trade_date,
+                                    bot_name=OracleBotName.PHOENIX,
+                                    outcome=outcome,
+                                    actual_pnl=float(pnl),
+                                    spot_at_exit=gex_data.get('spot_price', 0) if 'gex_data' in dir() else 0
+                                )
+                                logger.info(f"PHOENIX: Recorded outcome {outcome.value} (PnL=${pnl:.2f}) for Oracle feedback")
+                            except Exception as outcome_e:
+                                logger.warning(f"PHOENIX: Failed to record outcome: {outcome_e}")
             else:
                 logger.info("No positions to manage or no actions taken")
 

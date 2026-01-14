@@ -303,6 +303,15 @@ class OraclePrediction:
     position_in_range_pct: float = 50.0  # Where price sits in wall range
     wall_filter_passed: bool = False
 
+    # =========================================================================
+    # MODEL STALENESS TRACKING (Issue #1 & #4 fix)
+    # Allows bots to know how fresh the model is and adjust confidence
+    # =========================================================================
+    prediction_id: Optional[int] = None  # Links prediction to outcome (Issue #3)
+    hours_since_training: float = 0.0  # Hours since model was last trained
+    model_loaded_at: Optional[str] = None  # ISO timestamp when model was loaded
+    is_model_fresh: bool = True  # True if model < 24 hours old
+
 
 @dataclass
 class StrategyRecommendation:
@@ -1368,6 +1377,15 @@ class OracleAdvisor:
         self.model_version = "0.0.0"
         self._has_gex_features = False
 
+        # =========================================================================
+        # MODEL STALENESS TRACKING (Issue #1 fix)
+        # Track when model was loaded/trained to detect stale models
+        # =========================================================================
+        self._model_loaded_at: Optional[datetime] = None  # When model was loaded into memory
+        self._model_trained_at: Optional[datetime] = None  # When model was last trained
+        self._last_version_check: Optional[datetime] = None  # Throttle version checks
+        self._version_check_interval_seconds = 300  # Check for new model every 5 minutes
+
         # OMEGA mode - trust ML Advisor, use Oracle for adaptation only
         self.omega_mode = omega_mode
 
@@ -1456,6 +1474,98 @@ class OracleAdvisor:
         return self.claude is not None and self.claude.is_enabled
 
     # =========================================================================
+    # MODEL STALENESS DETECTION & AUTO-RELOAD (Issue #1 fix)
+    # Ensures bots always use the most recent model version
+    # =========================================================================
+
+    def _get_hours_since_training(self) -> float:
+        """Calculate hours since model was last trained"""
+        if self._model_trained_at is None:
+            return 0.0
+        delta = datetime.now() - self._model_trained_at
+        return delta.total_seconds() / 3600.0
+
+    def _is_model_fresh(self, max_age_hours: float = 24.0) -> bool:
+        """Check if model is considered fresh (< max_age_hours old)"""
+        return self._get_hours_since_training() < max_age_hours
+
+    def _get_db_model_version(self) -> Optional[str]:
+        """Get the current active model version from database"""
+        if not DB_AVAILABLE:
+            return None
+
+        with get_db_connection() as conn:
+            if conn is None:
+                return None
+            try:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT model_version
+                    FROM oracle_trained_models
+                    WHERE is_active = TRUE
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """)
+                row = cursor.fetchone()
+                return row[0] if row else None
+            except Exception as e:
+                logger.debug(f"Failed to check DB model version: {e}")
+                return None
+
+    def _check_and_reload_model_if_stale(self) -> bool:
+        """
+        Check if a newer model exists in DB and reload if so.
+
+        This fixes Issue #1: Model staleness after retraining.
+        Called before every prediction to ensure fresh model is used.
+
+        Returns:
+            True if model was reloaded, False otherwise
+        """
+        # Throttle version checks to avoid DB spam (every 5 minutes)
+        now = datetime.now()
+        if self._last_version_check is not None:
+            seconds_since_check = (now - self._last_version_check).total_seconds()
+            if seconds_since_check < self._version_check_interval_seconds:
+                return False
+
+        self._last_version_check = now
+
+        # Check DB for newer version
+        db_version = self._get_db_model_version()
+        if db_version is None:
+            return False
+
+        # If DB has different version, reload
+        if db_version != self.model_version:
+            logger.info(f"Oracle detected new model version in DB: {db_version} (current: {self.model_version})")
+            old_version = self.model_version
+            if self._load_model_from_db():
+                self.live_log.log("MODEL_RELOAD", f"Auto-reloaded model: {old_version} → {self.model_version}", {
+                    "old_version": old_version,
+                    "new_version": self.model_version,
+                    "hours_since_training": self._get_hours_since_training()
+                })
+                return True
+            else:
+                logger.warning(f"Failed to reload new model version {db_version}")
+
+        return False
+
+    def _add_staleness_to_prediction(self, prediction: OraclePrediction) -> OraclePrediction:
+        """
+        Add staleness tracking fields to a prediction.
+
+        This fixes Issue #4: Bots can now see how fresh the model is
+        and optionally adjust their confidence based on model age.
+        """
+        hours_since = self._get_hours_since_training()
+        prediction.hours_since_training = hours_since
+        prediction.model_loaded_at = self._model_loaded_at.isoformat() if self._model_loaded_at else None
+        prediction.is_model_fresh = hours_since < 24.0
+        return prediction
+
+    # =========================================================================
     # MODEL PERSISTENCE
     # =========================================================================
 
@@ -1514,9 +1624,9 @@ class OracleAdvisor:
                 if not cursor.fetchone()[0]:
                     return False
 
-                # Get the most recent active model
+                # Get the most recent active model (including created_at for staleness tracking)
                 cursor.execute("""
-                    SELECT model_version, model_data, training_metrics, has_gex_features
+                    SELECT model_version, model_data, training_metrics, has_gex_features, created_at
                     FROM oracle_trained_models
                     WHERE is_active = TRUE
                     ORDER BY created_at DESC
@@ -1525,7 +1635,7 @@ class OracleAdvisor:
                 row = cursor.fetchone()
 
                 if row:
-                    model_version, model_data, metrics_json, has_gex = row
+                    model_version, model_data, metrics_json, has_gex, created_at = row
 
                     # Deserialize model data
                     saved = pickle.loads(model_data)
@@ -1536,6 +1646,17 @@ class OracleAdvisor:
                     self._has_gex_features = has_gex or False
                     self.is_trained = True
 
+                    # Track when model was trained and loaded (Issue #1 fix)
+                    self._model_loaded_at = datetime.now()
+                    if created_at:
+                        # Handle both timezone-aware and naive datetimes
+                        if hasattr(created_at, 'tzinfo') and created_at.tzinfo is not None:
+                            self._model_trained_at = created_at.replace(tzinfo=None)
+                        else:
+                            self._model_trained_at = created_at
+                    else:
+                        self._model_trained_at = self._model_loaded_at
+
                     # Restore training metrics
                     if metrics_json:
                         if isinstance(metrics_json, str):
@@ -1544,7 +1665,9 @@ class OracleAdvisor:
                             metrics_dict = metrics_json
                         self.training_metrics = TrainingMetrics(**metrics_dict)
 
-                    logger.info(f"Loaded Oracle model v{self.model_version} from DATABASE (persistent)")
+                    hours_since = self._get_hours_since_training()
+                    logger.info(f"Loaded Oracle model v{self.model_version} from DATABASE "
+                               f"(trained {hours_since:.1f}h ago)")
                     return True
 
             except Exception as e:
@@ -2002,6 +2125,9 @@ class OracleAdvisor:
         Returns:
             OraclePrediction with IC-specific advice
         """
+        # Check for newer model version in DB and reload if available (Issue #1 fix)
+        self._check_and_reload_model_if_stale()
+
         # Log prediction request
         self.live_log.log("PREDICT", "ARES advice requested", {
             "vix": context.vix,
@@ -2011,7 +2137,9 @@ class OracleAdvisor:
             "use_claude": use_claude_validation,
             "vix_hard_skip": vix_hard_skip,
             "vix_monday_friday_skip": vix_monday_friday_skip,
-            "vix_streak_skip": vix_streak_skip
+            "vix_streak_skip": vix_streak_skip,
+            "model_version": self.model_version,
+            "hours_since_training": self._get_hours_since_training()
         })
 
         # =========================================================================
@@ -2079,7 +2207,7 @@ class OracleAdvisor:
                 "suggest_athena": suggest_athena,
                 "strategy_rec": strategy_rec.recommended_strategy.value
             })
-            return OraclePrediction(
+            skip_prediction = OraclePrediction(
                 bot_name=BotName.ARES,
                 advice=TradingAdvice.SKIP_TODAY,
                 win_probability=0.35,
@@ -2098,6 +2226,7 @@ class OracleAdvisor:
                 suggested_alternative=BotName.ATHENA if suggest_athena else None,
                 strategy_recommendation=strategy_rec
             )
+            return self._add_staleness_to_prediction(skip_prediction)
 
         # === FULL DATA FLOW LOGGING: INPUT ===
         input_data = {
@@ -2386,11 +2515,12 @@ class OracleAdvisor:
             "claude_recommendation": claude_analysis.recommendation if claude_analysis else None,
             "claude_confidence_adj": claude_analysis.confidence_adjustment if claude_analysis else None,
             "claude_risk_factors": claude_analysis.risk_factors if claude_analysis else [],
-            "model_version": self.model_version
+            "model_version": self.model_version,
+            "hours_since_training": self._get_hours_since_training()
         }
         self.live_log.log_data_flow("ARES", "DECISION", decision_data)
 
-        return prediction
+        return self._add_staleness_to_prediction(prediction)
 
     def get_atlas_advice(self, context: MarketContext) -> OraclePrediction:
         """
@@ -2482,7 +2612,7 @@ class OracleAdvisor:
         }
         self.live_log.log_data_flow("ATLAS", "DECISION", decision_data)
 
-        return prediction
+        return self._add_staleness_to_prediction(prediction)
 
     def get_phoenix_advice(
         self,
@@ -2494,12 +2624,17 @@ class OracleAdvisor:
 
         PHOENIX trades long calls, needs directional bias.
         """
+        # Check for newer model version in DB and reload if available (Issue #1 fix)
+        self._check_and_reload_model_if_stale()
+
         # Log prediction request
         self.live_log.log("PREDICT", "PHOENIX advice requested", {
             "vix": context.vix,
             "gex_regime": context.gex_regime.value,
             "spot_price": context.spot_price,
-            "claude_validation": use_claude_validation
+            "claude_validation": use_claude_validation,
+            "model_version": self.model_version,
+            "hours_since_training": self._get_hours_since_training()
         })
 
         # === FULL DATA FLOW LOGGING: INPUT ===
@@ -2603,11 +2738,12 @@ class OracleAdvisor:
             "claude_validated": claude_analysis is not None,
             "claude_recommendation": claude_analysis.recommendation if claude_analysis else None,
             "claude_confidence_adj": claude_analysis.confidence_adjustment if claude_analysis else None,
-            "model_version": self.model_version
+            "model_version": self.model_version,
+            "hours_since_training": self._get_hours_since_training()
         }
         self.live_log.log_data_flow("PHOENIX", "DECISION", decision_data)
 
-        return prediction
+        return self._add_staleness_to_prediction(prediction)
 
     def get_athena_advice(
         self,
@@ -2631,12 +2767,17 @@ class OracleAdvisor:
         - Near Call Wall (resistance) + BEARISH signal = Strong entry for Bear Call Spread
         """
         # Log prediction request
+        # Check for newer model version in DB and reload if available (Issue #1 fix)
+        self._check_and_reload_model_if_stale()
+
         self.live_log.log("PREDICT", "ATHENA advice requested", {
             "vix": context.vix,
             "gex_regime": context.gex_regime.value,
             "spot_price": context.spot_price,
             "use_gex_walls": use_gex_walls,
-            "claude_validation": use_claude_validation
+            "claude_validation": use_claude_validation,
+            "model_version": self.model_version,
+            "hours_since_training": self._get_hours_since_training()
         })
 
         # === FULL DATA FLOW LOGGING: INPUT ===
@@ -2935,11 +3076,12 @@ class OracleAdvisor:
             "claude_validated": claude_analysis is not None,
             "claude_recommendation": claude_analysis.recommendation if claude_analysis else None,
             "claude_confidence_adj": claude_analysis.confidence_adjustment if claude_analysis else None,
-            "model_version": self.model_version
+            "model_version": self.model_version,
+            "hours_since_training": self._get_hours_since_training()
         }
         self.live_log.log_data_flow("ATHENA", "DECISION", decision_data)
 
-        return prediction
+        return self._add_staleness_to_prediction(prediction)
 
     # =========================================================================
     # PEGASUS ADVICE (SPX IRON CONDOR - WEEKLY)
@@ -2979,6 +3121,9 @@ class OracleAdvisor:
         Returns:
             OraclePrediction with SPX IC-specific advice
         """
+        # Check for newer model version in DB and reload if available (Issue #1 fix)
+        self._check_and_reload_model_if_stale()
+
         # Log prediction request
         self.live_log.log("PREDICT", "PEGASUS advice requested", {
             "vix": context.vix,
@@ -2987,7 +3132,9 @@ class OracleAdvisor:
             "use_gex_walls": use_gex_walls,
             "use_claude": use_claude_validation,
             "vix_hard_skip": vix_hard_skip,
-            "spread_width": spread_width
+            "spread_width": spread_width,
+            "model_version": self.model_version,
+            "hours_since_training": self._get_hours_since_training()
         })
 
         # =========================================================================
@@ -3041,7 +3188,7 @@ class OracleAdvisor:
                 "suggest_athena": suggest_athena,
                 "strategy_rec": strategy_rec.recommended_strategy.value
             })
-            return OraclePrediction(
+            skip_prediction = OraclePrediction(
                 bot_name=BotName.PEGASUS,
                 advice=TradingAdvice.SKIP_TODAY,
                 win_probability=0.35,
@@ -3060,6 +3207,7 @@ class OracleAdvisor:
                 suggested_alternative=BotName.ATHENA if suggest_athena else None,
                 strategy_recommendation=strategy_rec
             )
+            return self._add_staleness_to_prediction(skip_prediction)
 
         # === FULL DATA FLOW LOGGING: INPUT ===
         input_data = {
@@ -3301,11 +3449,12 @@ class OracleAdvisor:
             "suggested_call_strike": suggested_call,
             "reasoning": prediction.reasoning,
             "claude_validated": claude_analysis is not None,
-            "model_version": self.model_version
+            "model_version": self.model_version,
+            "hours_since_training": self._get_hours_since_training()
         }
         self.live_log.log_data_flow("PEGASUS", "DECISION", decision_data)
 
-        return prediction
+        return self._add_staleness_to_prediction(prediction)
 
     # =========================================================================
     # BASE PREDICTION
@@ -4077,6 +4226,7 @@ class OracleAdvisor:
                         "raw_response": ca.raw_response[:5000] if ca.raw_response else None,
                     }))
 
+                # Issue #3 fix: Use RETURNING to get prediction_id for outcome linking
                 cursor.execute("""
                     INSERT INTO oracle_predictions (
                         trade_date, bot_name, spot_price, vix, gex_net, gex_normalized, gex_regime,
@@ -4095,6 +4245,7 @@ class OracleAdvisor:
                         probabilities = EXCLUDED.probabilities,
                         claude_analysis = EXCLUDED.claude_analysis,
                         timestamp = NOW()
+                    RETURNING id
                 """, (
                     trade_date,
                     prediction.bot_name.value,
@@ -4122,8 +4273,16 @@ class OracleAdvisor:
                     claude_json
                 ))
 
+                # Issue #3 fix: Fetch the returned prediction_id for linking
+                row = cursor.fetchone()
+                prediction_id = row[0] if row else None
+
                 conn.commit()
-                logger.info(f"Stored Oracle prediction for {prediction.bot_name.value}")
+                logger.info(f"Stored Oracle prediction for {prediction.bot_name.value} (id={prediction_id})")
+
+                # Update prediction object with the stored ID
+                if prediction_id:
+                    prediction.prediction_id = prediction_id
 
                 # === COMPREHENSIVE BOT LOGGER ===
                 if BOT_LOGGER_AVAILABLE and log_bot_decision:
@@ -4159,7 +4318,8 @@ class OracleAdvisor:
                     except Exception as comp_e:
                         logger.warning(f"Could not log Oracle to comprehensive table: {comp_e}")
 
-                return True
+                # Issue #3 fix: Return prediction_id for linking, or True for backward compatibility
+                return prediction_id if prediction_id else True
 
             except Exception as e:
                 logger.error(f"Failed to store prediction: {e}")
@@ -4173,9 +4333,15 @@ class OracleAdvisor:
         actual_pnl: float,
         spot_at_exit: float = None,
         put_strike: float = None,
-        call_strike: float = None
+        call_strike: float = None,
+        prediction_id: int = None  # Issue #3: Optional direct linking by ID
     ) -> bool:
-        """Update prediction with actual outcome and store training data for ML feedback loop"""
+        """
+        Update prediction with actual outcome and store training data for ML feedback loop.
+
+        Issue #3 fix: Supports both (trade_date, bot_name) linking and direct prediction_id linking.
+        The prediction_id provides a more robust link when available.
+        """
         if not DB_AVAILABLE:
             return False
 
@@ -4183,26 +4349,51 @@ class OracleAdvisor:
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Update the prediction with outcome
-            cursor.execute("""
-                UPDATE oracle_predictions
-                SET prediction_used = TRUE,
-                    actual_outcome = %s,
-                    actual_pnl = %s,
-                    outcome_date = CURRENT_DATE
-                WHERE trade_date = %s AND bot_name = %s
-            """, (outcome.value, actual_pnl, trade_date, bot_name.value))
+            # Issue #3: Support both linking methods
+            # If prediction_id is provided, use it for direct linking (more robust)
+            # Otherwise, fall back to (trade_date, bot_name) composite key
+            if prediction_id:
+                # Direct linking by prediction_id
+                cursor.execute("""
+                    UPDATE oracle_predictions
+                    SET prediction_used = TRUE,
+                        actual_outcome = %s,
+                        actual_pnl = %s,
+                        outcome_date = CURRENT_DATE
+                    WHERE id = %s
+                """, (outcome.value, actual_pnl, prediction_id))
+                logger.info(f"Updated outcome for prediction_id={prediction_id}")
+            else:
+                # Fall back to composite key linking
+                cursor.execute("""
+                    UPDATE oracle_predictions
+                    SET prediction_used = TRUE,
+                        actual_outcome = %s,
+                        actual_pnl = %s,
+                        outcome_date = CURRENT_DATE
+                    WHERE trade_date = %s AND bot_name = %s
+                """, (outcome.value, actual_pnl, trade_date, bot_name.value))
 
             # Also store in oracle_training_outcomes for ML feedback loop
             # First, get the original prediction features
-            cursor.execute("""
-                SELECT spot_price, vix, gex_net, gex_normalized, gex_regime,
-                       gex_flip_point, gex_call_wall, gex_put_wall, day_of_week,
-                       win_probability, suggested_put_strike, suggested_call_strike,
-                       model_version
-                FROM oracle_predictions
-                WHERE trade_date = %s AND bot_name = %s
-            """, (trade_date, bot_name.value))
+            if prediction_id:
+                cursor.execute("""
+                    SELECT spot_price, vix, gex_net, gex_normalized, gex_regime,
+                           gex_flip_point, gex_call_wall, gex_put_wall, day_of_week,
+                           win_probability, suggested_put_strike, suggested_call_strike,
+                           model_version
+                    FROM oracle_predictions
+                    WHERE id = %s
+                """, (prediction_id,))
+            else:
+                cursor.execute("""
+                    SELECT spot_price, vix, gex_net, gex_normalized, gex_regime,
+                           gex_flip_point, gex_call_wall, gex_put_wall, day_of_week,
+                           win_probability, suggested_put_strike, suggested_call_strike,
+                           model_version
+                    FROM oracle_predictions
+                    WHERE trade_date = %s AND bot_name = %s
+                """, (trade_date, bot_name.value))
 
             row = cursor.fetchone()
             if row:
