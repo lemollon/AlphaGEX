@@ -51,7 +51,7 @@ import json
 import pickle
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple, Any, TYPE_CHECKING
 from dataclasses import dataclass, asdict, field
 from enum import Enum
@@ -434,7 +434,7 @@ class OracleLiveLog:
     def log(self, event_type: str, message: str, data: Optional[Dict] = None):
         """Add a log entry (thread-safe)"""
         entry = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
             "type": event_type,
             "message": message,
             "data": data
@@ -466,7 +466,7 @@ class OracleLiveLog:
                 DECISION, SENT_TO_BOT, ANTI_HALLUCINATION_CHECK
         """
         entry = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
             "bot_name": bot_name,
             "stage": stage,
             "data": data
@@ -498,7 +498,7 @@ class OracleLiveLog:
         Includes anti-hallucination validation results.
         """
         exchange = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
             "bot_name": bot_name,
             "market_context": market_context,
             "ml_prediction": ml_prediction,

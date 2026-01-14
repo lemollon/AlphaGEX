@@ -645,7 +645,7 @@ class AutonomousTraderScheduler:
                         # Get PHOENIX advice from Oracle
                         oracle_prediction = self.phoenix_oracle.get_phoenix_advice(
                             context=context,
-                            use_claude_validation=False  # Skip Claude for scheduler performance
+                            use_claude_validation=True  # Enable Claude for transparency logging
                         )
 
                         if oracle_prediction:

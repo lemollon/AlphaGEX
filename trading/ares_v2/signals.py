@@ -656,7 +656,7 @@ class SignalGenerator:
             prediction = self.oracle.get_ares_advice(
                 context=context,
                 use_gex_walls=True,
-                use_claude_validation=False,  # Skip Claude for performance during live trading
+                use_claude_validation=True,  # Enable Claude for transparency logging
                 vix_hard_skip=0.0,  # Disabled - main VIX filter only blocks VIX > 50
                 vix_monday_friday_skip=0.0,  # Disabled - trade every day
                 vix_streak_skip=0.0,  # Disabled - allow trading after losses
@@ -902,7 +902,7 @@ class SignalGenerator:
         if use_ml_prediction and ml_prediction.get('suggested_sd_multiplier'):
             self._ml_suggested_sd = ml_prediction.get('suggested_sd_multiplier', 1.0)
 
-        logger.info(f"[ARES PASSED] {prediction_source} Win Prob {win_probability:.1%} >= threshold {min_win_prob:.1%}")
+        logger.info(f"[ARES PASSED] {prediction_source} Win Prob {win_probability:.1%} >= threshold {self.config.min_win_probability:.1%}")
 
         # ============================================================
         # GEX DIRECTIONAL ML - Check if market is too directional for IC

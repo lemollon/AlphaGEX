@@ -175,15 +175,20 @@ class SignalGenerator:
             prediction = self.gex_directional_ml.predict(gex_data, vix)
 
             if prediction:
+                # Safe attribute access - prediction.direction might be enum or string
+                direction_val = prediction.direction.value if hasattr(prediction.direction, 'value') else str(prediction.direction)
+                confidence_val = getattr(prediction, 'confidence', 0.0)
+                probabilities_val = getattr(prediction, 'probabilities', {})
+
                 result = {
-                    'direction': prediction.direction.value,  # BULLISH/BEARISH/FLAT
-                    'confidence': prediction.confidence,
-                    'probabilities': prediction.probabilities,
+                    'direction': direction_val,
+                    'confidence': confidence_val,
+                    'probabilities': probabilities_val,
                     'model_name': 'GEX_DIRECTIONAL_ML',
                 }
 
-                logger.info(f"[ATHENA GEX DIRECTIONAL ML] Direction: {prediction.direction.value}, "
-                           f"Confidence: {prediction.confidence:.1%}")
+                logger.info(f"[ATHENA GEX DIRECTIONAL ML] Direction: {direction_val}, "
+                           f"Confidence: {confidence_val:.1%}")
 
                 return result
 
@@ -329,7 +334,7 @@ class SignalGenerator:
             prediction = self.oracle.get_athena_advice(
                 context=context,
                 use_gex_walls=True,
-                use_claude_validation=False,  # Skip Claude for performance
+                use_claude_validation=True,  # Enable Claude for transparency logging
                 wall_filter_pct=self.config.wall_filter_pct,
             )
 
@@ -529,7 +534,7 @@ class SignalGenerator:
             logger.info("No GEX data available - returning blocked signal for diagnostics")
             return TradeSignal(
                 direction="UNKNOWN",
-                spread_type=SpreadType.CALL_DEBIT,
+                spread_type=SpreadType.BULL_CALL,
                 confidence=0,
                 spot_price=0,
                 call_wall=0,
@@ -623,7 +628,7 @@ class SignalGenerator:
             logger.info(f"[ATHENA SKIP] Oracle says {oracle_advice} - respecting Oracle's decision")
             return TradeSignal(
                 direction=effective_direction if effective_direction in ('BULLISH', 'BEARISH') else "UNKNOWN",
-                spread_type=SpreadType.CALL_DEBIT if effective_direction == "BULLISH" else SpreadType.PUT_DEBIT,
+                spread_type=SpreadType.BULL_CALL if effective_direction == "BULLISH" else SpreadType.BEAR_PUT,
                 confidence=0,
                 spot_price=spot_price,
                 call_wall=gex_data.get('call_wall', 0),

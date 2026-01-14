@@ -440,7 +440,7 @@ class SignalGenerator:
             prediction = self.oracle.get_pegasus_advice(
                 context=context,
                 use_gex_walls=True,
-                use_claude_validation=False,  # Skip Claude for performance
+                use_claude_validation=True,  # Enable Claude for transparency logging
                 spread_width=self.config.spread_width,
             )
 
