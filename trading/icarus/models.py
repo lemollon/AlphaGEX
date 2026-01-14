@@ -269,13 +269,25 @@ class TradeSignal:
     @property
     def is_valid(self) -> bool:
         """Check if signal passes validation (aggressive Apache thresholds)"""
+        # ORACLE IS GOD: When Oracle says TRADE, nothing blocks it
+        oracle_approved = self.oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
+
+        if oracle_approved:
+            return (
+                self.direction in ("BULLISH", "BEARISH") and
+                self.spot_price > 0 and
+                self.long_strike > 0 and
+                self.short_strike > 0 and
+                self.max_profit > 0
+            )
+
         return (
             self.direction in ("BULLISH", "BEARISH") and
             self.spot_price > 0 and
             self.long_strike > 0 and
             self.short_strike > 0 and
-            self.confidence >= 0.48 and  # 48% confidence minimum (vs ATHENA's 55%)
-            self.rr_ratio >= 1.2 and  # 1.2:1 R:R minimum (vs ATHENA's 1.5)
+            self.confidence >= 0.48 and
+            self.rr_ratio >= 1.2 and
             self.max_profit > 0
         )
 

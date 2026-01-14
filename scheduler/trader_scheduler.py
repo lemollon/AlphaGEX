@@ -2221,9 +2221,10 @@ class AutonomousTraderScheduler:
 
         # Only run during market hours
         if not self.is_market_open():
+            logger.info(f"EQUITY_SNAPSHOTS: Market closed, skipping snapshot at {now.strftime('%H:%M:%S')}")
             return
 
-        logger.debug(f"EQUITY_SNAPSHOTS: Taking snapshots at {now.strftime('%H:%M:%S')}")
+        logger.info(f"EQUITY_SNAPSHOTS: Taking snapshots at {now.strftime('%H:%M:%S')}")
 
         conn = None
         try:
@@ -2235,7 +2236,7 @@ class AutonomousTraderScheduler:
                 'ares': ('ares_positions', 'ares_equity_snapshots', 'ares_starting_capital', 100000),
                 'athena': ('athena_positions', 'athena_equity_snapshots', 'athena_starting_capital', 100000),
                 'titan': ('titan_positions', 'titan_equity_snapshots', 'titan_starting_capital', 200000),
-                'pegasus': ('pegasus_positions', 'pegasus_equity_snapshots', 'pegasus_starting_capital', 100000),
+                'pegasus': ('pegasus_positions', 'pegasus_equity_snapshots', 'pegasus_starting_capital', 200000),
                 'icarus': ('icarus_positions', 'icarus_equity_snapshots', 'icarus_starting_capital', 100000),
             }
 
@@ -2320,16 +2321,21 @@ class AutonomousTraderScheduler:
                         f"Auto snapshot at {now.strftime('%H:%M:%S')}"
                     ))
 
-                    logger.debug(f"EQUITY_SNAPSHOTS: {bot_name.upper()} snapshot saved - equity=${current_equity:.2f}, realized=${realized_pnl:.2f}")
+                    logger.info(f"EQUITY_SNAPSHOTS: {bot_name.upper()} snapshot saved - equity=${current_equity:.2f}, realized=${realized_pnl:.2f}, open={open_count}")
 
                 except Exception as e:
-                    logger.debug(f"EQUITY_SNAPSHOTS: {bot_name.upper()} error: {e}")
+                    logger.warning(f"EQUITY_SNAPSHOTS: {bot_name.upper()} error: {e}")
+                    import traceback
+                    traceback.print_exc()
                     continue
 
             conn.commit()
+            logger.info(f"EQUITY_SNAPSHOTS: All bot snapshots committed successfully")
 
         except Exception as e:
-            logger.debug(f"EQUITY_SNAPSHOTS: Error taking snapshots: {e}")
+            logger.warning(f"EQUITY_SNAPSHOTS: Error taking snapshots: {e}")
+            import traceback
+            traceback.print_exc()
             if conn:
                 try:
                     conn.rollback()
@@ -2737,9 +2743,10 @@ class AutonomousTraderScheduler:
             ),
             id='equity_snapshots',
             name='EQUITY_SNAPSHOTS - Intraday Chart Data',
-            replace_existing=True
+            replace_existing=True,
+            next_run_time=datetime.now(CENTRAL_TZ)  # Run immediately on startup
         )
-        logger.info("✅ EQUITY_SNAPSHOTS job scheduled (every 5 min, checks market hours internally)")
+        logger.info("✅ EQUITY_SNAPSHOTS job scheduled (runs NOW, then every 5 min)")
 
         # =================================================================
         # TRADE_SYNC JOB: Data Integrity Sync - runs every 30 minutes

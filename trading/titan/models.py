@@ -346,6 +346,17 @@ class IronCondorSignal:
 
     @property
     def is_valid(self) -> bool:
+        # ORACLE IS GOD: When Oracle says TRADE, nothing blocks it
+        oracle_approved = self.oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
+
+        if oracle_approved:
+            # Only check basic strike validity when Oracle approves
+            return (
+                self.put_short > self.put_long > 0 and
+                self.call_short < self.call_long and
+                self.call_short > self.put_short
+            )
+
         return (
             self.confidence >= 0.4 and  # Lower threshold for TITAN (PEGASUS: 0.5)
             self.total_credit >= 0.50 and  # Lower min credit (PEGASUS: 0.75)

@@ -364,8 +364,11 @@ class IronCondorSignal:
     @property
     def is_valid(self) -> bool:
         """Check if signal passes basic validation"""
+        # ORACLE IS GOD: When Oracle says TRADE, nothing blocks it
+        oracle_approved = self.oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
+
         return (
-            self.confidence >= 0.5 and
+            (oracle_approved or self.confidence >= 0.5) and
             self.total_credit > 0 and
             self.put_short > self.put_long > 0 and
             self.call_short < self.call_long and
