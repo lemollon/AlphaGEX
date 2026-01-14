@@ -2168,6 +2168,42 @@ class AutonomousTraderScheduler:
             except Exception:
                 pass
 
+    def scheduled_trade_sync_logic(self):
+        """
+        TRADE SYNC - runs every 30 minutes during market hours
+
+        Performs critical data synchronization:
+        1. Cleanup stale positions (expired but still 'open')
+        2. Fix missing P&L values on closed positions
+        3. Sync bot tables to unified tracking tables
+
+        This ensures data integrity across all trading bots.
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        # Only run during market hours
+        if not self.is_market_open():
+            return
+
+        logger.info(f"TRADE_SYNC: Starting sync at {now.strftime('%H:%M:%S')}")
+
+        try:
+            from trading.trade_sync_service import run_full_sync
+            results = run_full_sync()
+
+            stale_cleaned = results.get('stale_cleanup', {}).get('total_cleaned', 0)
+            pnl_fixed = results.get('pnl_fix', {}).get('total_fixed', 0)
+            errors = results.get('total_errors', [])
+
+            if stale_cleaned > 0 or pnl_fixed > 0:
+                logger.info(f"TRADE_SYNC: Cleaned {stale_cleaned} stale, fixed {pnl_fixed} P&L")
+            if errors:
+                for err in errors:
+                    logger.warning(f"TRADE_SYNC: Error - {err}")
+
+        except Exception as e:
+            logger.error(f"TRADE_SYNC: Failed - {e}")
+
     def scheduled_equity_snapshots_logic(self):
         """
         EQUITY SNAPSHOTS - runs every 5 minutes during market hours
@@ -2704,6 +2740,25 @@ class AutonomousTraderScheduler:
             replace_existing=True
         )
         logger.info("✅ EQUITY_SNAPSHOTS job scheduled (every 5 min, checks market hours internally)")
+
+        # =================================================================
+        # TRADE_SYNC JOB: Data Integrity Sync - runs every 30 minutes
+        # Performs critical data synchronization:
+        # - Cleanup stale positions (expired but still 'open')
+        # - Fix missing P&L values on closed positions
+        # - Sync bot tables to unified tracking tables
+        # =================================================================
+        self.scheduler.add_job(
+            self.scheduled_trade_sync_logic,
+            trigger=IntervalTrigger(
+                minutes=30,
+                timezone='America/Chicago'
+            ),
+            id='trade_sync',
+            name='TRADE_SYNC - Data Integrity Sync',
+            replace_existing=True
+        )
+        logger.info("✅ TRADE_SYNC job scheduled (every 30 min, checks market hours internally)")
 
         # =================================================================
         # CRITICAL: Verify at least one trading bot is available

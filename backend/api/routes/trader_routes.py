@@ -2507,3 +2507,198 @@ async def debug_no_trades():
         if conn:
             conn.close()
         raise HTTPException(status_code=500, detail=f"Debug failed: {str(e)}")
+
+
+# =============================================================================
+# TRADE SYNC ENDPOINTS
+# =============================================================================
+
+@router.post("/sync/full")
+async def run_full_trade_sync():
+    """
+    Run full trade synchronization across all bots.
+
+    Operations performed:
+    1. Cleanup stale positions (expired but still 'open')
+    2. Fix missing P&L values on closed positions
+    3. Sync bot tables to unified tables
+
+    This endpoint should be called:
+    - On system startup
+    - Periodically during market hours
+    - After suspected data inconsistencies
+
+    Returns:
+        Complete sync results with counts and errors
+    """
+    try:
+        from trading.trade_sync_service import run_full_sync
+        results = run_full_sync()
+        return {
+            "success": len(results.get('total_errors', [])) == 0,
+            "data": results,
+            "message": f"Sync completed: {results.get('stale_cleanup', {}).get('total_cleaned', 0)} stale cleaned, "
+                      f"{results.get('pnl_fix', {}).get('total_fixed', 0)} P&L fixed, "
+                      f"{results.get('unified_sync', {}).get('open_synced', 0)} open synced"
+        }
+    except Exception as e:
+        logger.error(f"Full trade sync failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/sync/stale-cleanup")
+async def cleanup_stale_positions():
+    """
+    Cleanup stale positions across all bots.
+
+    Finds positions that:
+    - Have status='open'
+    - Have expiration date in the past
+
+    These are marked as 'expired' with calculated P&L.
+
+    Returns:
+        Cleanup results by bot
+    """
+    try:
+        from trading.trade_sync_service import cleanup_stale_positions as do_cleanup
+        results = do_cleanup()
+        return {
+            "success": len(results.get('errors', [])) == 0,
+            "data": results,
+            "message": f"Cleaned {results.get('total_cleaned', 0)} stale positions"
+        }
+    except Exception as e:
+        logger.error(f"Stale cleanup failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/sync/fix-pnl")
+async def fix_missing_pnl():
+    """
+    Fix missing P&L values on closed/expired positions.
+
+    Calculates and updates realized_pnl for positions where it's NULL.
+
+    Returns:
+        Fix results by bot
+    """
+    try:
+        from trading.trade_sync_service import fix_missing_pnl as do_fix
+        results = do_fix()
+        return {
+            "success": len(results.get('errors', [])) == 0,
+            "data": results,
+            "message": f"Fixed {results.get('total_fixed', 0)} positions with missing P&L"
+        }
+    except Exception as e:
+        logger.error(f"P&L fix failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/sync/unified")
+async def sync_to_unified_tables():
+    """
+    Sync bot-specific tables to unified tracking tables.
+
+    Ensures:
+    - autonomous_open_positions has all open positions
+    - autonomous_closed_trades has all closed positions
+
+    Returns:
+        Sync results by bot
+    """
+    try:
+        from trading.trade_sync_service import sync_to_unified as do_sync
+        results = do_sync()
+        return {
+            "success": len(results.get('errors', [])) == 0,
+            "data": results,
+            "message": f"Synced {results.get('open_synced', 0)} open, {results.get('closed_synced', 0)} closed positions"
+        }
+    except Exception as e:
+        logger.error(f"Unified sync failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/sync/status")
+async def get_sync_status():
+    """
+    Get current sync status and data integrity metrics.
+
+    Checks:
+    - Stale positions count
+    - Positions with missing P&L
+    - Unified table sync status
+
+    Returns:
+        Sync status and recommendations
+    """
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        status = {
+            "timestamp": datetime.now().isoformat(),
+            "stale_positions": {},
+            "missing_pnl": {},
+            "unified_sync": {},
+            "recommendations": []
+        }
+
+        bot_tables = [
+            ('ares', 'ares_positions'),
+            ('athena', 'athena_positions'),
+            ('titan', 'titan_positions'),
+            ('pegasus', 'pegasus_positions'),
+            ('icarus', 'icarus_positions')
+        ]
+
+        today = datetime.now().date()
+
+        for bot_name, table in bot_tables:
+            try:
+                # Check for stale positions
+                cursor.execute(f"""
+                    SELECT COUNT(*) FROM {table}
+                    WHERE status = 'open' AND expiration < %s
+                """, (today,))
+                stale_count = cursor.fetchone()[0]
+                status["stale_positions"][bot_name] = stale_count
+
+                # Check for missing P&L
+                cursor.execute(f"""
+                    SELECT COUNT(*) FROM {table}
+                    WHERE status IN ('closed', 'expired') AND realized_pnl IS NULL
+                """, ())
+                missing_pnl_count = cursor.fetchone()[0]
+                status["missing_pnl"][bot_name] = missing_pnl_count
+
+                if stale_count > 0:
+                    status["recommendations"].append(f"Run /sync/stale-cleanup - {bot_name} has {stale_count} stale positions")
+                if missing_pnl_count > 0:
+                    status["recommendations"].append(f"Run /sync/fix-pnl - {bot_name} has {missing_pnl_count} positions with missing P&L")
+
+            except Exception as e:
+                logger.debug(f"Error checking {bot_name}: {e}")
+
+        # Check unified table status
+        try:
+            cursor.execute("SELECT COUNT(*) FROM autonomous_open_positions WHERE status = 'open'")
+            status["unified_sync"]["open_positions"] = cursor.fetchone()[0]
+
+            cursor.execute("SELECT COUNT(*) FROM autonomous_closed_trades WHERE exit_time >= NOW() - INTERVAL '7 days'")
+            status["unified_sync"]["recent_closed"] = cursor.fetchone()[0]
+        except Exception as e:
+            status["unified_sync"]["error"] = str(e)
+
+        conn.close()
+
+        if not status["recommendations"]:
+            status["recommendations"].append("✅ No sync issues detected")
+
+        return {"success": True, "data": status}
+
+    except Exception as e:
+        logger.error(f"Sync status check failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
