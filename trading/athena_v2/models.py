@@ -171,12 +171,13 @@ class ATHENAConfig:
     # Strategy params (aligned with Apache GEX backtest optimal settings)
     ticker: str = "SPY"
     spread_width: int = 2  # $2 spreads
-    wall_filter_pct: float = 3.0  # Trade within 3% of GEX wall (relaxed from 1%)
+    wall_filter_pct: float = 5.0  # Trade within 5% of GEX wall (relaxed from 3% for more trades)
     min_rr_ratio: float = 1.5  # Min risk:reward (need edge to be profitable)
 
-    # Win probability thresholds - 51% = better than coin flip
-    min_win_probability: float = 0.51  # Minimum win probability to trade (51%)
-    min_confidence: float = 0.51  # Minimum signal confidence (51%)
+    # Win probability thresholds - aligned with Oracle's low_confidence_threshold (0.45)
+    # Using 0.50 as minimum to ensure positive expectancy while allowing more trades
+    min_win_probability: float = 0.50  # Minimum win probability to trade (50%)
+    min_confidence: float = 0.50  # Minimum signal confidence (50%)
 
     # VIX filter (relaxed to allow more trading)
     min_vix: float = 12.0  # Skip if VIX too low (was 15.0)

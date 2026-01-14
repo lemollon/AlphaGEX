@@ -780,11 +780,11 @@ class SignalGenerator:
                 expected_move = market_data['expected_move']
 
         # ============================================================
-        # Step 2: GET ML/ORACLE PREDICTIONS FIRST (SUPERSEDES OTHER FILTERS)
+        # Step 2: GET ORACLE PREDICTION (ORACLE IS THE GOD OF ALL DECISIONS)
         #
-        # CRITICAL: Oracle and ML predictions take precedence over VIX, wall,
-        # and other traditional filters. If ML/Oracle provides a good prediction
-        # (above min_win_probability threshold), we TRADE regardless of VIX.
+        # CRITICAL: When Oracle says TRADE, we TRADE. Period.
+        # Oracle already analyzed VIX, GEX, walls, regime, day of week.
+        # Bot's min_win_probability threshold does NOT override Oracle.
         # ============================================================
 
         # Step 2a: Try ML prediction first (PRIMARY SOURCE)
@@ -796,6 +796,7 @@ class SignalGenerator:
         oracle = self.get_oracle_advice(market_data)
         oracle_win_prob = oracle.get('win_probability', 0) if oracle else 0
         oracle_confidence = oracle.get('confidence', 0.7) if oracle else 0.7
+        oracle_advice = oracle.get('advice', 'SKIP_TODAY') if oracle else 'SKIP_TODAY'
 
         # Determine which source to use
         use_ml_prediction = ml_prediction is not None and ml_win_prob > 0
@@ -803,59 +804,42 @@ class SignalGenerator:
         confidence = ml_confidence if use_ml_prediction else oracle_confidence
         prediction_source = "ARES_ML_ADVISOR" if use_ml_prediction else "ORACLE"
 
-        # Check if ML/Oracle gives us a tradeable signal
-        min_win_prob = self.config.min_win_probability
-        ml_oracle_says_trade = effective_win_prob >= min_win_prob
+        # ============================================================
+        # ORACLE IS THE GOD: If Oracle says TRADE, we TRADE
+        # No min_win_probability threshold check - Oracle's word is final
+        # ============================================================
+        oracle_says_trade = oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
+        ml_oracle_says_trade = oracle_says_trade
 
-        # Log ML/Oracle decision
+        # Log Oracle decision
         if ml_oracle_says_trade:
-            logger.info(f"[ARES] ML/Oracle SUPERSEDES other filters: {prediction_source} predicts {effective_win_prob:.0%} win prob (>={min_win_prob:.0%} threshold)")
+            logger.info(f"[ARES] ORACLE SAYS TRADE: {oracle_advice} - {prediction_source} = {effective_win_prob:.0%} win prob")
         else:
-            logger.info(f"[ARES] ML/Oracle win prob {effective_win_prob:.0%} below threshold {min_win_prob:.0%}")
+            logger.info(f"[ARES] Oracle advice: {oracle_advice}, win prob: {effective_win_prob:.0%}")
 
-        # Step 3: ONLY check VIX filter if ML/Oracle doesn't give a tradeable signal
-        # ML/Oracle predictions SUPERSEDE VIX and other traditional filters
+        # ============================================================
+        # Step 3: ORACLE SAYS NO TRADE - RESPECT ORACLE'S DECISION
+        # ============================================================
         if not ml_oracle_says_trade:
-            can_trade, vix_reason = self.check_vix_filter(vix)
-            if not can_trade:
-                logger.info(f"VIX filter blocked (ML/Oracle also didn't help): {vix_reason}")
-                return IronCondorSignal(
-                    spot_price=spot,
-                    vix=vix,
-                    expected_move=expected_move,
-                    call_wall=market_data.get('call_wall', 0),
-                    put_wall=market_data.get('put_wall', 0),
-                    gex_regime=market_data.get('gex_regime', 'UNKNOWN'),
-                    confidence=0,
-                    reasoning=f"BLOCKED: VIX={vix_reason}, ML/Oracle={effective_win_prob:.0%} (both insufficient)",
-                    source="BLOCKED_NO_SIGNAL",
-                    oracle_win_probability=oracle_win_prob,
-                    oracle_advice=oracle.get('advice', '') if oracle else '',
-                )
-
-            # REMOVED: Market conditions fallback baseline
-            # If Oracle returns 0 win probability, trust that decision.
-            # Don't manufacture a baseline - Oracle already analyzed VIX, GEX, etc.
-            if effective_win_prob <= 0:
-                logger.info(f"[ARES BLOCKED] ML/Oracle returned 0 win probability - no trade signal")
-                return IronCondorSignal(
-                    spot_price=spot,
-                    vix=vix,
-                    expected_move=expected_move,
-                    call_wall=market_data.get('call_wall', 0),
-                    put_wall=market_data.get('put_wall', 0),
-                    gex_regime=market_data.get('gex_regime', 'NEUTRAL'),
-                    confidence=0,
-                    reasoning=f"BLOCKED: ML/Oracle returned no prediction (win_prob=0)",
-                    source="BLOCKED_NO_ORACLE_SIGNAL",
-                    oracle_win_probability=oracle_win_prob,
-                    oracle_advice=oracle.get('advice', '') if oracle else '',
-                )
+            logger.info(f"[ARES SKIP] Oracle says {oracle_advice} - respecting Oracle's decision")
+            return IronCondorSignal(
+                spot_price=spot,
+                vix=vix,
+                expected_move=expected_move,
+                call_wall=market_data.get('call_wall', 0),
+                put_wall=market_data.get('put_wall', 0),
+                gex_regime=market_data.get('gex_regime', 'UNKNOWN'),
+                confidence=0,
+                reasoning=f"BLOCKED: Oracle advice={oracle_advice}, win_prob={effective_win_prob:.0%}",
+                source="BLOCKED_ORACLE_NO_TRADE",
+                oracle_win_probability=oracle_win_prob,
+                oracle_advice=oracle_advice,
+            )
         else:
-            # ML/Oracle says trade - log that we're bypassing VIX filter
+            # Oracle says trade - log that we're bypassing VIX filter if needed
             can_trade, vix_reason = self.check_vix_filter(vix)
             if not can_trade:
-                logger.info(f"[ARES] VIX would have blocked ({vix_reason}) but ML/Oracle SUPERSEDES with {effective_win_prob:.0%} win prob")
+                logger.info(f"[ARES] VIX would have blocked ({vix_reason}) but ORACLE SAYS TRADE - proceeding")
 
         # Log ML analysis FIRST (PRIMARY source)
         if ml_prediction:
@@ -906,34 +890,12 @@ class SignalGenerator:
                     logger.info(f"[ARES ORACLE INFO] Oracle advises SKIP_TODAY (informational only)")
                     logger.info(f"  Bot will use its own threshold: {self.config.min_win_probability:.1%}")
 
-        # Win probability threshold check - enforce minimum win probability
-        min_win_prob = getattr(self.config, 'min_win_probability', 0.42)
-        logger.info(f"[ARES DECISION] Using {prediction_source} win probability: {effective_win_prob:.1%}")
-        logger.info(f"[ARES THRESHOLD] Minimum required: {min_win_prob:.1%}")
-
-        if effective_win_prob < min_win_prob:
-            logger.info(f"[ARES BLOCKED] Win probability {effective_win_prob:.1%} < threshold {min_win_prob:.1%}")
-            # Return an invalid signal with the reason
-            return IronCondorSignal(
-                spot_price=spot,
-                vix=vix,
-                expected_move=expected_move,
-                call_wall=market_data.get('call_wall', 0),
-                put_wall=market_data.get('put_wall', 0),
-                gex_regime=market_data.get('gex_regime', 'NEUTRAL'),
-                put_short=0,
-                put_long=0,
-                call_short=0,
-                call_long=0,
-                expiration="",
-                total_credit=0,
-                max_loss=0,
-                max_profit=0,
-                confidence=effective_win_prob,
-                reasoning=f"Win probability {effective_win_prob:.1%} below threshold {min_win_prob:.1%}",
-                source="THRESHOLD_BLOCKED",
-                is_valid=False,
-            )
+        # ============================================================
+        # ORACLE IS THE GOD - No threshold check needed
+        # If we reached here, Oracle said TRADE. We proceed.
+        # ============================================================
+        logger.info(f"[ARES DECISION] Oracle says {oracle_advice} - proceeding with trade")
+        logger.info(f"[ARES] Using {prediction_source} win probability: {effective_win_prob:.1%}")
 
         # Use ML's suggested SD multiplier if available
         win_probability = effective_win_prob if effective_win_prob > 0 else 0.50  # Default to 50% if no prediction

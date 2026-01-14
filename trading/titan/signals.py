@@ -618,10 +618,11 @@ class SignalGenerator:
         vix = market['vix']
 
         # ============================================================
-        # ML/ORACLE PREDICTIONS FIRST (SUPERSEDES VIX FILTER)
+        # ORACLE IS THE GOD OF ALL DECISIONS
         #
-        # CRITICAL: Oracle and ML already account for VIX in their predictions.
-        # TITAN is aggressive - if ML/Oracle provides good win prob, we TRADE.
+        # CRITICAL: When Oracle says TRADE, we TRADE. Period.
+        # Oracle already analyzed VIX, GEX, walls, regime, day of week.
+        # Bot's min_win_probability threshold does NOT override Oracle.
         # ============================================================
 
         # Get ML prediction first (PRIMARY SOURCE)
@@ -633,6 +634,7 @@ class SignalGenerator:
         oracle = self.get_oracle_advice(market)
         oracle_win_prob = oracle.get('win_probability', 0) if oracle else 0
         oracle_confidence = oracle.get('confidence', 0.7) if oracle else 0.7
+        oracle_advice = oracle.get('advice', 'SKIP_TODAY') if oracle else 'SKIP_TODAY'
 
         # Determine which source to use
         use_ml_prediction = ml_prediction is not None and ml_win_prob > 0
@@ -640,31 +642,23 @@ class SignalGenerator:
         confidence = ml_confidence if use_ml_prediction else oracle_confidence
         prediction_source = "ARES_ML_ADVISOR" if use_ml_prediction else "ORACLE"
 
-        # Check if ML/Oracle gives us a tradeable signal (TITAN uses aggressive threshold)
-        min_win_prob = self.config.min_win_probability
-        ml_oracle_says_trade = effective_win_prob >= min_win_prob
+        # ============================================================
+        # ORACLE IS THE GOD: If Oracle says TRADE, we TRADE
+        # No min_win_probability threshold check - Oracle's word is final
+        # ============================================================
+        oracle_says_trade = oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
+        ml_oracle_says_trade = oracle_says_trade
 
-        # Log ML/Oracle decision
+        # Log Oracle decision
         if ml_oracle_says_trade:
-            logger.info(f"[TITAN] ML/Oracle SUPERSEDES VIX filter: {prediction_source} = {effective_win_prob:.0%} (>={min_win_prob:.0%})")
+            logger.info(f"[TITAN] ORACLE SAYS TRADE: {oracle_advice} - {prediction_source} = {effective_win_prob:.0%} win prob")
             # Check what VIX would have done (for logging only)
             can_trade, vix_reason = self.check_vix_filter(vix)
             if not can_trade:
-                logger.info(f"[TITAN] VIX would have blocked ({vix_reason}) but ML/Oracle supersedes")
+                logger.info(f"[TITAN] VIX would have blocked ({vix_reason}) but ORACLE SAYS TRADE - proceeding")
         else:
-            logger.info(f"[TITAN] ML/Oracle: {effective_win_prob:.0%} (threshold: {min_win_prob:.0%})")
-            # Only apply VIX filter if ML/Oracle doesn't give tradeable signal
-            can_trade, vix_reason = self.check_vix_filter(vix)
-            if not can_trade:
-                logger.info(f"[TITAN SKIP] VIX filter: {vix_reason}, ML/Oracle also insufficient")
-                return None
-
-            # REMOVED: Market conditions fallback baseline
-            # If Oracle returns 0 win probability, trust that decision.
-            # Don't manufacture a baseline - Oracle already analyzed VIX, GEX, etc.
-            if effective_win_prob <= 0:
-                logger.info(f"[TITAN BLOCKED] ML/Oracle returned 0 win probability - no trade signal")
-                return None
+            logger.info(f"[TITAN SKIP] Oracle says {oracle_advice} - respecting Oracle's decision")
+            return None
 
         # Log ML analysis FIRST (PRIMARY source)
         if ml_prediction:
