@@ -484,6 +484,7 @@ export default function IcarusPage() {
                 <EquityCurveChart
                   title="ICARUS Equity Curve"
                   botFilter="ICARUS"
+                  showIntradayOption={true}
                 />
               </>
             )}

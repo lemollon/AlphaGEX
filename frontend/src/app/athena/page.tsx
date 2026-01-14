@@ -436,6 +436,7 @@ export default function AthenaPage() {
                 <EquityCurveChart
                   title="ATHENA Equity Curve"
                   botFilter="ATHENA"
+                  showIntradayOption={true}
                 />
               </>
             )}

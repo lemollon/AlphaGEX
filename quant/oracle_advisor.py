@@ -2750,10 +2750,11 @@ class OracleAdvisor:
         context: MarketContext,
         use_gex_walls: bool = True,
         use_claude_validation: bool = True,
-        wall_filter_pct: float = 1.0  # Default 1.0%, backtest showed 0.5% = 98% WR
+        wall_filter_pct: float = 1.0,  # Default 1.0%, backtest showed 0.5% = 98% WR
+        bot_name: str = "ATHENA"  # Allow ICARUS to pass its own name for proper logging
     ) -> OraclePrediction:
         """
-        Get directional spread advice for ATHENA.
+        Get directional spread advice for ATHENA (or ICARUS).
 
         ATHENA trades Bull Call Spreads (bullish) and Bear Call Spreads (bearish).
         Uses GEX walls for entry timing and direction confirmation.
@@ -2765,12 +2766,15 @@ class OracleAdvisor:
         GEX Wall Logic:
         - Near Put Wall (support) + BULLISH signal = Strong entry for Bull Call Spread
         - Near Call Wall (resistance) + BEARISH signal = Strong entry for Bear Call Spread
+
+        Args:
+            bot_name: Bot identifier for logging (ATHENA or ICARUS)
         """
         # Log prediction request
         # Check for newer model version in DB and reload if available (Issue #1 fix)
         self._check_and_reload_model_if_stale()
 
-        self.live_log.log("PREDICT", "ATHENA advice requested", {
+        self.live_log.log("PREDICT", f"{bot_name} advice requested", {
             "vix": context.vix,
             "gex_regime": context.gex_regime.value,
             "spot_price": context.spot_price,
@@ -2798,12 +2802,12 @@ class OracleAdvisor:
             "day_of_week": context.day_of_week,
             "days_to_opex": context.days_to_opex
         }
-        self.live_log.log_data_flow("ATHENA", "INPUT", input_data)
+        self.live_log.log_data_flow(bot_name, "INPUT", input_data)
 
         base_pred = self._get_base_prediction(context)
 
         # === FULL DATA FLOW LOGGING: ML_OUTPUT ===
-        self.live_log.log_data_flow("ATHENA", "ML_OUTPUT", {
+        self.live_log.log_data_flow(bot_name, "ML_OUTPUT", {
             "win_probability": base_pred.get('win_probability'),
             "top_factors": base_pred.get('top_factors', []),
             "probabilities": base_pred.get('probabilities', {}),
@@ -3022,8 +3026,14 @@ class OracleAdvisor:
             spread_direction = "BEAR_PUT_SPREAD"
             reasoning_parts.append(f"Recommend: {spread_direction}")
 
+        # Map bot_name string to BotName enum
+        try:
+            prediction_bot_name = BotName[bot_name.upper()] if bot_name else BotName.ATHENA
+        except (KeyError, AttributeError):
+            prediction_bot_name = BotName.ATHENA
+
         prediction = OraclePrediction(
-            bot_name=BotName.ATHENA,
+            bot_name=prediction_bot_name,
             advice=advice,
             win_probability=base_pred['win_probability'],
             confidence=min(100, direction_confidence * 100),
@@ -3051,7 +3061,7 @@ class OracleAdvisor:
         )
 
         # Log prediction result
-        self.live_log.log("PREDICT_DONE", f"ATHENA: {advice.value} ({base_pred['win_probability']:.1%})", {
+        self.live_log.log("PREDICT_DONE", f"{bot_name}: {advice.value} ({base_pred['win_probability']:.1%})", {
             "advice": advice.value,
             "win_probability": base_pred['win_probability'],
             "direction": direction,
@@ -3079,7 +3089,7 @@ class OracleAdvisor:
             "model_version": self.model_version,
             "hours_since_training": self._get_hours_since_training()
         }
-        self.live_log.log_data_flow("ATHENA", "DECISION", decision_data)
+        self.live_log.log_data_flow(bot_name, "DECISION", decision_data)
 
         return self._add_staleness_to_prediction(prediction)
 

@@ -735,6 +735,7 @@ export default function TitanPage() {
                 <EquityCurveChart
                   title="TITAN Equity Curve"
                   botFilter="TITAN"
+                  showIntradayOption={true}
                 />
               </>
             )}

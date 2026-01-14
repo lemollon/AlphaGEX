@@ -749,6 +749,11 @@ class SignalGenerator:
             gex_direction_map = {'BULLISH': 'BULLISH', 'BEARISH': 'BEARISH', 'FLAT': None}
             mapped_gex_dir = gex_direction_map.get(gex_dir)
 
+            # CRITICAL FIX: When Oracle says TRADE_FULL, maintain minimum 0.55 confidence
+            # to ensure signal passes is_valid check. Oracle's word is law.
+            oracle_adv = oracle.get('advice', '') if oracle else ''
+            min_confidence_floor = 0.55 if oracle_adv in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER') else 0.45
+
             if mapped_gex_dir == direction and gex_dir_conf > 0.6:
                 # GEX Directional ML confirms direction - boost confidence
                 boost = gex_dir_conf * 0.15  # Up to 15% boost
@@ -757,7 +762,7 @@ class SignalGenerator:
             elif mapped_gex_dir and mapped_gex_dir != direction and gex_dir_conf > 0.7:
                 # GEX Directional ML disagrees strongly - reduce confidence
                 penalty = (gex_dir_conf - 0.7) * 0.20  # Up to 6% penalty
-                confidence -= penalty
+                confidence = max(min_confidence_floor, confidence - penalty)
                 logger.info(f"[GEX DIR ML DISAGREES] {gex_dir} vs {direction} (-{penalty:.1%} confidence)")
 
         # REMOVED: ML Regime Classifier and Ensemble Strategy calls - dead code

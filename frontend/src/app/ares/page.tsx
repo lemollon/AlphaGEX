@@ -685,6 +685,7 @@ export default function AresPage() {
                 <EquityCurveChart
                   title="ARES Equity Curve"
                   botFilter="ARES"
+                  showIntradayOption={true}
                 />
               </>
             )}

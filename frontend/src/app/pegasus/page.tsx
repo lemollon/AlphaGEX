@@ -695,6 +695,7 @@ export default function PegasusPage() {
                 <EquityCurveChart
                   title="PEGASUS Equity Curve"
                   botFilter="PEGASUS"
+                  showIntradayOption={true}
                 />
               </>
             )}
