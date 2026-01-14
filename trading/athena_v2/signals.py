@@ -544,11 +544,11 @@ class SignalGenerator:
         vix = gex_data['vix']
 
         # ============================================================
-        # STEP 2: GET ML/ORACLE PREDICTIONS FIRST (SUPERSEDES OTHER FILTERS)
+        # STEP 2: GET ORACLE PREDICTION (ORACLE IS THE GOD OF ALL DECISIONS)
         #
-        # CRITICAL: Oracle and ML predictions take precedence over VIX, wall,
-        # and GEX filters. If ML/Oracle provides a good prediction (above
-        # min_win_probability threshold), we TRADE regardless of other conditions.
+        # CRITICAL: When Oracle says TRADE, we TRADE. Period.
+        # Oracle already analyzed VIX, GEX, walls, regime, day of week.
+        # Bot's min_win_probability threshold does NOT override Oracle.
         # ============================================================
 
         # Step 2a: Get ML signal from 5 GEX probability models (PRIMARY SOURCE)
@@ -562,6 +562,7 @@ class SignalGenerator:
         oracle_direction = oracle.get('direction', 'FLAT') if oracle else 'FLAT'
         oracle_confidence = oracle.get('confidence', 0) if oracle else 0
         oracle_win_prob = oracle.get('win_probability', 0) if oracle else 0
+        oracle_advice = oracle.get('advice', 'SKIP_TODAY') if oracle else 'SKIP_TODAY'
 
         # Determine which source to use
         use_ml_prediction = ml_signal is not None and ml_win_prob > 0
@@ -569,15 +570,18 @@ class SignalGenerator:
         effective_direction = ml_direction if use_ml_prediction else oracle_direction
         prediction_source = "ML_5_MODEL_ENSEMBLE" if use_ml_prediction else "ORACLE"
 
-        # Check if ML/Oracle gives us a tradeable signal
-        min_win_prob = self.config.min_win_probability
-        ml_oracle_says_trade = effective_win_prob >= min_win_prob and effective_direction in ('BULLISH', 'BEARISH')
+        # ============================================================
+        # ORACLE IS THE GOD: If Oracle says TRADE, we TRADE
+        # No min_win_probability threshold check - Oracle's word is final
+        # ============================================================
+        oracle_says_trade = oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
+        ml_oracle_says_trade = oracle_says_trade and effective_direction in ('BULLISH', 'BEARISH')
 
-        # Log ML/Oracle decision
+        # Log Oracle decision
         if ml_oracle_says_trade:
-            logger.info(f"[ATHENA] ML/Oracle SUPERSEDES other filters: {prediction_source} predicts {effective_direction} @ {effective_win_prob:.0%} (>={min_win_prob:.0%})")
+            logger.info(f"[ATHENA] ORACLE SAYS TRADE: {oracle_advice} - {prediction_source} = {effective_direction} @ {effective_win_prob:.0%}")
         else:
-            logger.info(f"[ATHENA] ML/Oracle: {effective_direction} @ {effective_win_prob:.0%} (threshold: {min_win_prob:.0%})")
+            logger.info(f"[ATHENA] Oracle advice: {oracle_advice}, direction: {effective_direction} @ {effective_win_prob:.0%}")
 
         # ============================================================
         # STEP 3: IF ML/ORACLE SAYS TRADE, BYPASS TRADITIONAL FILTERS
@@ -612,12 +616,11 @@ class SignalGenerator:
 
         else:
             # ============================================================
-            # STEP 4: ORACLE SAYS NO - TRUST ORACLE'S DECISION
+            # STEP 4: ORACLE SAYS NO TRADE - RESPECT ORACLE'S DECISION
             # ============================================================
-            # Oracle already analyzed VIX, GEX, walls, regime, day of week.
-            # If Oracle's win probability is below threshold, don't trade.
-            # No fallback to "traditional filters" - Oracle is the authority.
-            logger.info(f"[ATHENA SKIP] Oracle/ML win prob {effective_win_prob:.0%} < threshold {min_win_prob:.0%}")
+            # Oracle is the god of all trade decisions.
+            # If Oracle says SKIP_TODAY, we don't trade. Period.
+            logger.info(f"[ATHENA SKIP] Oracle says {oracle_advice} - respecting Oracle's decision")
             return TradeSignal(
                 direction=effective_direction if effective_direction in ('BULLISH', 'BEARISH') else "UNKNOWN",
                 spread_type=SpreadType.CALL_DEBIT if effective_direction == "BULLISH" else SpreadType.PUT_DEBIT,
@@ -628,7 +631,7 @@ class SignalGenerator:
                 gex_regime=gex_data.get('gex_regime', 'UNKNOWN'),
                 vix=vix,
                 source="BLOCKED_ORACLE_NO_TRADE",
-                reasoning=f"BLOCKED: Oracle/ML win prob {effective_win_prob:.0%} below {min_win_prob:.0%} threshold",
+                reasoning=f"BLOCKED: Oracle advice={oracle_advice}, direction={effective_direction}, win_prob={effective_win_prob:.0%}",
                 ml_win_probability=effective_win_prob,
             )
 
