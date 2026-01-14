@@ -322,6 +322,13 @@ class TradeSignal:
     @property
     def is_valid(self) -> bool:
         """Check if signal passes basic validation (Apache backtest thresholds)"""
+        # ORACLE IS GOD: When Oracle says TRADE, nothing blocks it
+        oracle_approved = self.oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
+
+        if oracle_approved:
+            # Only check basic strike validity when Oracle approves
+            return self.max_profit > 0 and self.long_strike > 0 and self.short_strike > 0
+
         return (
             self.confidence >= 0.55 and  # 55% confidence minimum
             self.rr_ratio >= 1.5 and  # 1.5:1 R:R minimum for edge

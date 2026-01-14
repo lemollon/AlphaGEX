@@ -592,15 +592,6 @@ class SignalGenerator:
         min_win_prob = self.config.min_win_probability
         ml_oracle_says_trade = effective_win_prob >= min_win_prob
 
-        # ============================================================
-        # CRITICAL: Confidence floor when ML/Oracle says TRADE
-        # The is_valid property requires confidence >= 0.5
-        # When ML/Oracle says TRADE, we MUST trade - can't let low confidence block it
-        # ============================================================
-        if ml_oracle_says_trade and confidence < 0.55:
-            logger.info(f"[PEGASUS] Boosting confidence from {confidence:.0%} to 55% (ML/Oracle says TRADE)")
-            confidence = 0.55
-
         # Log ML/Oracle decision
         if ml_oracle_says_trade:
             logger.info(f"[PEGASUS] ML/Oracle SUPERSEDES VIX filter: {prediction_source} = {effective_win_prob:.0%} (>={min_win_prob:.0%})")

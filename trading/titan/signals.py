@@ -581,15 +581,6 @@ class SignalGenerator:
         oracle_says_trade = oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
         ml_oracle_says_trade = oracle_says_trade
 
-        # ============================================================
-        # CRITICAL: Confidence floor when Oracle says TRADE
-        # The is_valid property requires confidence >= 0.5
-        # When Oracle says TRADE, we MUST trade - can't let low confidence block it
-        # ============================================================
-        if oracle_says_trade and confidence < 0.55:
-            logger.info(f"[TITAN] Boosting confidence from {confidence:.0%} to 55% (Oracle says TRADE)")
-            confidence = 0.55
-
         # Log Oracle decision
         if ml_oracle_says_trade:
             logger.info(f"[TITAN] ORACLE SAYS TRADE: {oracle_advice} - {prediction_source} = {effective_win_prob:.0%} win prob")
