@@ -2177,6 +2177,9 @@ class AutonomousTraderScheduler:
 
         These snapshots power the /equity-curve/intraday endpoints
         showing real-time equity changes throughout the trading day.
+
+        NOTE: Writes directly to database (not via HTTP) since scheduler
+        runs as separate worker from API on Render.
         """
         now = datetime.now(CENTRAL_TZ)
 
@@ -2186,24 +2189,122 @@ class AutonomousTraderScheduler:
 
         logger.debug(f"EQUITY_SNAPSHOTS: Taking snapshots at {now.strftime('%H:%M:%S')}")
 
+        conn = None
         try:
-            import requests
-            base_url = "http://localhost:8000"
+            conn = get_connection()
+            cursor = conn.cursor()
 
-            # Take snapshots for all bots
-            bots = ['ares', 'athena', 'titan', 'pegasus', 'icarus']
-            for bot in bots:
+            # Bot configurations: (positions_table, snapshot_table, starting_capital_key, default_capital)
+            bots_config = {
+                'ares': ('ares_positions', 'ares_equity_snapshots', 'ares_starting_capital', 100000),
+                'athena': ('athena_positions', 'athena_equity_snapshots', 'athena_starting_capital', 100000),
+                'titan': ('titan_positions', 'titan_equity_snapshots', 'titan_starting_capital', 200000),
+                'pegasus': ('pegasus_positions', 'pegasus_equity_snapshots', 'pegasus_starting_capital', 100000),
+                'icarus': ('icarus_positions', 'icarus_equity_snapshots', 'icarus_starting_capital', 100000),
+            }
+
+            for bot_name, (pos_table, snap_table, cap_key, default_cap) in bots_config.items():
                 try:
-                    response = requests.post(f"{base_url}/api/{bot}/equity-snapshot", timeout=10)
-                    if response.status_code == 200:
-                        logger.debug(f"EQUITY_SNAPSHOTS: {bot.upper()} snapshot saved")
-                    else:
-                        logger.debug(f"EQUITY_SNAPSHOTS: {bot.upper()} snapshot failed: {response.status_code}")
+                    # Get starting capital from config
+                    cursor.execute(f"SELECT value FROM autonomous_config WHERE key = %s", (cap_key,))
+                    row = cursor.fetchone()
+                    starting_capital = float(row[0]) if row and row[0] else default_cap
+
+                    # Get realized P&L from closed positions
+                    cursor.execute(f"""
+                        SELECT COALESCE(SUM(realized_pnl), 0)
+                        FROM {pos_table}
+                        WHERE status IN ('closed', 'expired')
+                    """)
+                    realized_row = cursor.fetchone()
+                    realized_pnl = float(realized_row[0]) if realized_row and realized_row[0] else 0
+
+                    # Count open positions
+                    cursor.execute(f"""
+                        SELECT COUNT(*) FROM {pos_table} WHERE status = 'open'
+                    """)
+                    open_count = cursor.fetchone()[0] or 0
+
+                    # Estimate unrealized P&L (simplified - assume 50% of max profit for open ICs)
+                    unrealized_pnl = 0
+                    try:
+                        cursor.execute(f"""
+                            SELECT COALESCE(SUM(
+                                CASE
+                                    WHEN total_credit IS NOT NULL THEN total_credit * contracts * 100 * 0.5
+                                    WHEN entry_credit IS NOT NULL THEN entry_credit * contracts * 100 * 0.5
+                                    ELSE 0
+                                END
+                            ), 0)
+                            FROM {pos_table}
+                            WHERE status = 'open'
+                        """)
+                        unrealized_row = cursor.fetchone()
+                        unrealized_pnl = float(unrealized_row[0]) if unrealized_row and unrealized_row[0] else 0
+                    except Exception:
+                        pass  # Some tables may not have all columns
+
+                    # Calculate current equity
+                    current_equity = starting_capital + realized_pnl + unrealized_pnl
+
+                    # Ensure snapshot table exists with all required columns
+                    cursor.execute(f"""
+                        CREATE TABLE IF NOT EXISTS {snap_table} (
+                            id SERIAL PRIMARY KEY,
+                            timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+                            balance DECIMAL(12, 2) NOT NULL,
+                            unrealized_pnl DECIMAL(12, 2),
+                            realized_pnl DECIMAL(12, 2),
+                            open_positions INTEGER,
+                            note TEXT,
+                            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                        )
+                    """)
+
+                    # Add missing columns if they don't exist (for older tables)
+                    for col in ['unrealized_pnl', 'realized_pnl']:
+                        try:
+                            cursor.execute(f"""
+                                ALTER TABLE {snap_table} ADD COLUMN IF NOT EXISTS {col} DECIMAL(12, 2)
+                            """)
+                        except Exception:
+                            pass
+
+                    # Insert snapshot
+                    cursor.execute(f"""
+                        INSERT INTO {snap_table}
+                        (timestamp, balance, unrealized_pnl, realized_pnl, open_positions, note)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """, (
+                        now,
+                        round(current_equity, 2),
+                        round(unrealized_pnl, 2),
+                        round(realized_pnl, 2),
+                        open_count,
+                        f"Auto snapshot at {now.strftime('%H:%M:%S')}"
+                    ))
+
+                    logger.debug(f"EQUITY_SNAPSHOTS: {bot_name.upper()} snapshot saved - equity=${current_equity:.2f}, realized=${realized_pnl:.2f}")
+
                 except Exception as e:
-                    logger.debug(f"EQUITY_SNAPSHOTS: {bot.upper()} error: {e}")
+                    logger.debug(f"EQUITY_SNAPSHOTS: {bot_name.upper()} error: {e}")
+                    continue
+
+            conn.commit()
 
         except Exception as e:
             logger.debug(f"EQUITY_SNAPSHOTS: Error taking snapshots: {e}")
+            if conn:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     def start(self):
         """Start the autonomous trading scheduler"""

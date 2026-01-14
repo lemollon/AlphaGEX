@@ -1637,6 +1637,203 @@ async def get_ares_equity_curve(days: int = 30):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/equity-curve/intraday")
+async def get_ares_intraday_equity(date: str = None):
+    """
+    Get ARES intraday equity curve with 5-minute interval snapshots.
+
+    Returns equity data points throughout the trading day showing:
+    - Realized P&L from closed positions
+    - Unrealized P&L from open positions (mark-to-market)
+
+    Args:
+        date: Date to get intraday data for (default: today)
+    """
+    CENTRAL_TZ = ZoneInfo("America/Chicago")
+    now = datetime.now(CENTRAL_TZ)
+    today = date or now.strftime('%Y-%m-%d')
+    current_time = now.strftime('%H:%M:%S')
+
+    # Get starting capital from Tradier balance when available
+    tradier_balance = _get_tradier_account_balance()
+    if tradier_balance.get('connected') and tradier_balance.get('total_equity', 0) > 0:
+        starting_capital = round(tradier_balance['total_equity'], 2)
+    else:
+        starting_capital = 100000  # Default fallback
+
+    try:
+        from database_adapter import get_connection
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Get starting capital from config (if stored)
+        cursor.execute("""
+            SELECT value FROM autonomous_config WHERE key = 'ares_starting_capital'
+        """)
+        row = cursor.fetchone()
+        if row and row[0]:
+            try:
+                starting_capital = float(row[0])
+            except (ValueError, TypeError):
+                pass
+
+        # Get intraday snapshots for the requested date
+        # Check if new columns exist, use them if available
+        cursor.execute("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'ares_equity_snapshots' AND column_name = 'unrealized_pnl'
+        """)
+        has_new_columns = cursor.fetchone() is not None
+
+        if has_new_columns:
+            cursor.execute("""
+                SELECT timestamp, balance, unrealized_pnl, realized_pnl, open_positions, note
+                FROM ares_equity_snapshots
+                WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+                ORDER BY timestamp ASC
+            """, (today,))
+        else:
+            # Fallback for old schema
+            cursor.execute("""
+                SELECT timestamp, balance, NULL as unrealized_pnl, NULL as realized_pnl, open_positions, note
+                FROM ares_equity_snapshots
+                WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+                ORDER BY timestamp ASC
+            """, (today,))
+        snapshots = cursor.fetchall()
+
+        # Get total realized P&L from closed positions up to today
+        cursor.execute("""
+            SELECT COALESCE(SUM(realized_pnl), 0)
+            FROM ares_positions
+            WHERE status IN ('closed', 'expired')
+            AND DATE(close_time AT TIME ZONE 'America/Chicago') <= %s
+        """, (today,))
+        total_realized_row = cursor.fetchone()
+        total_realized = float(total_realized_row[0]) if total_realized_row and total_realized_row[0] else 0
+
+        # Get today's closed positions P&L
+        cursor.execute("""
+            SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
+            FROM ares_positions
+            WHERE status IN ('closed', 'expired')
+            AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
+        """, (today,))
+        today_row = cursor.fetchone()
+        today_realized = float(today_row[0]) if today_row and today_row[0] else 0
+        today_closed_count = int(today_row[1]) if today_row and today_row[1] else 0
+
+        # Calculate unrealized P&L from open positions
+        unrealized_pnl = 0
+        open_positions = []
+        try:
+            live_pnl_data = _calculate_live_unrealized_pnl()
+            if live_pnl_data.get('success'):
+                unrealized_pnl = live_pnl_data.get('total_unrealized_pnl', 0)
+                open_positions = live_pnl_data.get('positions', [])
+        except Exception as e:
+            logger.debug(f"Error calculating unrealized P&L: {e}")
+
+        conn.close()
+
+        # Build intraday data points (frontend expects data_points with cumulative_pnl)
+        data_points = []
+
+        # Add market open point
+        prev_day_realized = total_realized - today_realized
+        market_open_equity = round(starting_capital + prev_day_realized, 2)
+        data_points.append({
+            "timestamp": f"{today}T08:30:00",
+            "time": "08:30:00",
+            "equity": market_open_equity,
+            "cumulative_pnl": round(prev_day_realized, 2),
+            "open_positions": 0,
+            "unrealized_pnl": 0
+        })
+
+        # Track high/low for summary
+        all_equities = [market_open_equity]
+
+        # Add snapshots
+        for snapshot in snapshots:
+            ts, balance, snap_unrealized, snap_realized, open_count, note = snapshot
+            snap_time = ts.astimezone(CENTRAL_TZ) if ts.tzinfo else ts
+
+            # Use snapshot values if available, otherwise estimate
+            snap_unrealized_val = float(snap_unrealized) if snap_unrealized else 0
+            snap_realized_val = float(snap_realized) if snap_realized else total_realized
+            snap_equity = round(float(balance) if balance else starting_capital, 2)
+            all_equities.append(snap_equity)
+
+            data_points.append({
+                "timestamp": snap_time.isoformat(),
+                "time": snap_time.strftime('%H:%M:%S'),
+                "equity": snap_equity,
+                "cumulative_pnl": round(snap_realized_val + snap_unrealized_val, 2),
+                "open_positions": open_count or 0,
+                "unrealized_pnl": round(snap_unrealized_val, 2)
+            })
+
+        # Add current live point if viewing today
+        current_equity = starting_capital + total_realized + unrealized_pnl
+        if today == now.strftime('%Y-%m-%d'):
+            total_pnl = total_realized + unrealized_pnl
+            current_equity = starting_capital + total_pnl
+            all_equities.append(round(current_equity, 2))
+
+            data_points.append({
+                "timestamp": now.isoformat(),
+                "time": current_time,
+                "equity": round(current_equity, 2),
+                "cumulative_pnl": round(total_pnl, 2),
+                "open_positions": len(open_positions),
+                "unrealized_pnl": round(unrealized_pnl, 2)
+            })
+
+        # Calculate high/low of day
+        high_of_day = max(all_equities) if all_equities else starting_capital
+        low_of_day = min(all_equities) if all_equities else starting_capital
+        day_pnl = today_realized + unrealized_pnl
+
+        return {
+            "success": True,
+            "date": today,
+            "bot": "ARES",
+            "data_points": data_points,
+            "current_equity": round(current_equity, 2),
+            "day_pnl": round(day_pnl, 2),
+            "starting_equity": round(starting_capital, 2),
+            "high_of_day": round(high_of_day, 2),
+            "low_of_day": round(low_of_day, 2),
+            "snapshots_count": len(snapshots)
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting ARES intraday equity: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e),
+            "date": today,
+            "bot": "ARES",
+            "data_points": [{
+                "timestamp": now.isoformat(),
+                "time": current_time,
+                "equity": starting_capital,
+                "cumulative_pnl": 0,
+                "open_positions": 0,
+                "unrealized_pnl": 0
+            }],
+            "current_equity": starting_capital,
+            "day_pnl": 0,
+            "starting_equity": starting_capital,
+            "high_of_day": starting_capital,
+            "low_of_day": starting_capital,
+            "snapshots_count": 0
+        }
+
+
 @router.get("/equity-curve/live")
 async def get_ares_live_equity_curve():
     """
@@ -1878,6 +2075,8 @@ async def save_equity_snapshot():
 
     Call this periodically (e.g., every 5-15 minutes) during market hours
     to build detailed intraday equity curve.
+
+    Saves: balance, unrealized_pnl, realized_pnl, open_positions
     """
     now = datetime.now(ZoneInfo("America/Chicago"))
 
@@ -1898,12 +2097,14 @@ async def save_equity_snapshot():
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Create table if not exists
+        # Create table if not exists with all required columns
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS ares_equity_snapshots (
                 id SERIAL PRIMARY KEY,
                 timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
                 balance DECIMAL(12, 2) NOT NULL,
+                unrealized_pnl DECIMAL(12, 2),
+                realized_pnl DECIMAL(12, 2),
                 option_buying_power DECIMAL(12, 2),
                 open_positions INTEGER,
                 note TEXT,
@@ -1911,18 +2112,45 @@ async def save_equity_snapshot():
             )
         ''')
 
+        # Add missing columns if they don't exist (for older tables)
+        for col in ['unrealized_pnl', 'realized_pnl']:
+            try:
+                cursor.execute(f"ALTER TABLE ares_equity_snapshots ADD COLUMN IF NOT EXISTS {col} DECIMAL(12, 2)")
+            except Exception:
+                pass
+
         # Get open position count from Tradier
         tradier_positions = _get_tradier_positions()
         open_count = len(tradier_positions.get('positions', []))
 
-        # Insert snapshot
+        # Calculate realized P&L from closed positions
+        cursor.execute('''
+            SELECT COALESCE(SUM(realized_pnl), 0)
+            FROM ares_positions
+            WHERE status IN ('closed', 'expired')
+        ''')
+        realized_row = cursor.fetchone()
+        realized_pnl = float(realized_row[0]) if realized_row and realized_row[0] else 0
+
+        # Calculate unrealized P&L from open positions
+        unrealized_pnl = 0
+        try:
+            live_pnl_data = _calculate_live_unrealized_pnl()
+            if live_pnl_data.get('success'):
+                unrealized_pnl = live_pnl_data.get('total_unrealized_pnl', 0)
+        except Exception:
+            pass
+
+        # Insert snapshot with all fields
         cursor.execute('''
             INSERT INTO ares_equity_snapshots
-            (timestamp, balance, option_buying_power, open_positions, note)
-            VALUES (%s, %s, %s, %s, %s)
+            (timestamp, balance, unrealized_pnl, realized_pnl, option_buying_power, open_positions, note)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
         ''', (
             now,
             current_equity,
+            round(unrealized_pnl, 2),
+            round(realized_pnl, 2),
             tradier_balance.get('option_buying_power', 0),
             open_count,
             f"Auto snapshot at {now.strftime('%H:%M:%S')}"
@@ -1936,6 +2164,8 @@ async def save_equity_snapshot():
             "data": {
                 "timestamp": now.isoformat(),
                 "equity": round(current_equity, 2),
+                "unrealized_pnl": round(unrealized_pnl, 2),
+                "realized_pnl": round(realized_pnl, 2),
                 "option_buying_power": round(tradier_balance.get('option_buying_power', 0), 2),
                 "open_positions": open_count
             }
