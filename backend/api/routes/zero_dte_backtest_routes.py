@@ -2838,7 +2838,12 @@ async def get_oracle_predictions_full(
                 use_gex_walls, suggested_put_strike, suggested_call_strike,
                 reasoning, top_factors, model_version,
                 claude_analysis,
-                prediction_used, actual_outcome, actual_pnl, outcome_date
+                prediction_used, actual_outcome, actual_pnl, outcome_date,
+                -- NEUTRAL Regime Analysis Fields
+                neutral_derived_direction, neutral_confidence, neutral_reasoning,
+                ic_suitability, bullish_suitability, bearish_suitability,
+                recommended_strategy, trend_direction, trend_strength,
+                position_in_range_pct, is_contained, wall_filter_passed
             FROM oracle_predictions
             WHERE trade_date >= CURRENT_DATE - INTERVAL '%s days'
         """
@@ -2957,7 +2962,20 @@ async def get_oracle_bot_interactions(
                 op.claude_analysis,
                 op.actual_outcome,
                 op.actual_pnl,
-                op.outcome_date
+                op.outcome_date,
+                -- NEUTRAL Regime Analysis Fields
+                op.neutral_derived_direction,
+                op.neutral_confidence,
+                op.neutral_reasoning,
+                op.ic_suitability,
+                op.bullish_suitability,
+                op.bearish_suitability,
+                op.recommended_strategy,
+                op.trend_direction,
+                op.trend_strength,
+                op.position_in_range_pct,
+                op.is_contained,
+                op.wall_filter_passed
             FROM oracle_predictions op
             WHERE op.trade_date >= CURRENT_DATE - INTERVAL '%s days'
         """

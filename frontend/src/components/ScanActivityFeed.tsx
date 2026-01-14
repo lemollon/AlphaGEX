@@ -278,6 +278,20 @@ interface ScanActivity {
   daily_pnl?: number
   weekly_pnl?: number
 
+  // === NEUTRAL Regime Analysis Fields ===
+  neutral_derived_direction?: string  // BULLISH, BEARISH, NEUTRAL
+  neutral_confidence?: number  // 0-1
+  neutral_reasoning?: string
+  ic_suitability?: number  // 0-100
+  bullish_suitability?: number  // 0-100
+  bearish_suitability?: number  // 0-100
+  recommended_strategy?: string
+  trend_direction?: string  // UPTREND, DOWNTREND, SIDEWAYS
+  trend_strength?: number  // 0-1
+  position_in_range_pct?: number  // 0-100
+  is_contained?: boolean
+  wall_filter_passed?: boolean
+
   // === NEW: ML Consensus & Conflict Detection ===
   ml_consensus?: string  // STRONG_BULLISH, BULLISH, MIXED, BEARISH, STRONG_BEARISH
   ml_consensus_score?: number  // -1 to +1
@@ -760,6 +774,131 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
                         </span>
                       )}
                     </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* NEUTRAL Regime Analysis Section - Enhanced display with trend, wall position, strategy suitability */}
+            {(scan.trend_direction || scan.ic_suitability != null || scan.neutral_derived_direction) && (
+              <div className="mt-2 p-2 bg-yellow-900/20 border border-yellow-500/30 rounded">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-medium text-yellow-400 flex items-center gap-1">
+                    <Brain className="w-3 h-3" />
+                    NEUTRAL Regime Analysis
+                  </span>
+                  {scan.wall_filter_passed != null && (
+                    <span className={`text-xs px-1.5 py-0.5 rounded ${
+                      scan.wall_filter_passed ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                    }`}>
+                      Wall Filter: {scan.wall_filter_passed ? '✓ PASSED' : '✗ FAILED'}
+                    </span>
+                  )}
+                </div>
+
+                {/* Trend Direction */}
+                {scan.trend_direction && (
+                  <div className="flex items-center gap-3 text-xs mb-2">
+                    <span className="text-gray-400">Trend:</span>
+                    <span className={`font-bold ${
+                      scan.trend_direction === 'UPTREND' ? 'text-green-400' :
+                      scan.trend_direction === 'DOWNTREND' ? 'text-red-400' : 'text-yellow-400'
+                    }`}>
+                      {scan.trend_direction === 'UPTREND' ? '↑ ' : scan.trend_direction === 'DOWNTREND' ? '↓ ' : '→ '}
+                      {scan.trend_direction}
+                    </span>
+                    {scan.trend_strength != null && (
+                      <span className="text-gray-400">(strength: {(scan.trend_strength * 100).toFixed(0)}%)</span>
+                    )}
+                    {scan.neutral_derived_direction && (
+                      <>
+                        <span className="text-gray-500">→</span>
+                        <span className="text-gray-400">Direction:</span>
+                        <span className={`font-bold ${
+                          scan.neutral_derived_direction === 'BULLISH' ? 'text-green-400' :
+                          scan.neutral_derived_direction === 'BEARISH' ? 'text-red-400' : 'text-yellow-400'
+                        }`}>
+                          {scan.neutral_derived_direction}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* Position & Containment */}
+                {(scan.position_in_range_pct != null || scan.is_contained != null) && (
+                  <div className="flex items-center gap-3 text-xs mb-2">
+                    {scan.position_in_range_pct != null && (
+                      <>
+                        <span className="text-gray-400">Wall Position:</span>
+                        <span className={`font-bold ${
+                          scan.position_in_range_pct > 60 ? 'text-green-400' :
+                          scan.position_in_range_pct < 40 ? 'text-red-400' : 'text-yellow-400'
+                        }`}>
+                          {scan.position_in_range_pct.toFixed(0)}%
+                        </span>
+                        <span className="text-gray-500">
+                          ({scan.is_contained ? 'contained' : 'outside'})
+                        </span>
+                      </>
+                    )}
+                    {scan.is_contained != null && (
+                      <span className={`text-xs ${scan.is_contained ? 'text-green-400' : 'text-red-400'}`}>
+                        → {scan.is_contained ? 'IC suitable' : 'Not ideal for IC'}
+                      </span>
+                    )}
+                  </div>
+                )}
+
+                {/* Strategy Suitability Progress Bars */}
+                {(scan.ic_suitability != null || scan.bullish_suitability != null || scan.bearish_suitability != null) && (
+                  <div className="space-y-1.5 mt-2 pt-2 border-t border-yellow-500/20">
+                    <span className="text-xs text-gray-400">Strategy Suitability:</span>
+                    {scan.ic_suitability != null && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-400 w-20">Iron Condor</span>
+                        <div className="flex-1 h-3 bg-gray-800 rounded overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-cyan-600 to-cyan-400"
+                            style={{ width: `${Math.min(scan.ic_suitability, 100)}%` }}
+                          />
+                        </div>
+                        <span className="text-xs font-mono text-cyan-400 w-8 text-right">{scan.ic_suitability.toFixed(0)}%</span>
+                      </div>
+                    )}
+                    {scan.bullish_suitability != null && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-400 w-20">Bull Spread</span>
+                        <div className="flex-1 h-3 bg-gray-800 rounded overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-green-600 to-green-400"
+                            style={{ width: `${Math.min(scan.bullish_suitability, 100)}%` }}
+                          />
+                        </div>
+                        <span className="text-xs font-mono text-green-400 w-8 text-right">{scan.bullish_suitability.toFixed(0)}%</span>
+                      </div>
+                    )}
+                    {scan.bearish_suitability != null && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-400 w-20">Bear Spread</span>
+                        <div className="flex-1 h-3 bg-gray-800 rounded overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-red-600 to-red-400"
+                            style={{ width: `${Math.min(scan.bearish_suitability, 100)}%` }}
+                          />
+                        </div>
+                        <span className="text-xs font-mono text-red-400 w-8 text-right">{scan.bearish_suitability.toFixed(0)}%</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* NEUTRAL Reasoning */}
+                {scan.neutral_reasoning && (
+                  <div className="mt-2 pt-2 border-t border-yellow-500/20">
+                    <p className="text-xs text-gray-300">
+                      <span className="text-yellow-400">Reasoning:</span> "{scan.neutral_reasoning}"
+                    </p>
                   </div>
                 )}
               </div>

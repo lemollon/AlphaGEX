@@ -993,104 +993,237 @@ export default function OraclePage() {
                         </div>
                       )}
 
-                      {/* NEUTRAL Regime Analysis Row - Shows trend-based direction and strategy suitability */}
-                      {interaction.gex_regime === 'NEUTRAL' && (interaction.neutral_derived_direction || interaction.ic_suitability != null || interaction.trend_direction) && (
-                        <div className="mb-3 p-3 bg-yellow-500/5 border border-yellow-500/20 rounded-lg">
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-yellow-400 text-xs font-medium">NEUTRAL Regime Analysis</span>
-                            {interaction.wall_filter_passed != null && (
-                              <span className={`text-xs px-2 py-0.5 rounded ${
-                                interaction.wall_filter_passed ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
-                              }`}>
-                                Wall Filter: {interaction.wall_filter_passed ? 'PASSED' : 'FAILED'}
-                              </span>
-                            )}
-                          </div>
-                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                            {interaction.neutral_derived_direction && (
-                              <div className="text-xs">
-                                <span className="text-text-muted">Derived Direction:</span>
-                                <span className={`ml-1 font-medium ${
-                                  interaction.neutral_derived_direction === 'BULLISH' ? 'text-green-400' :
-                                  interaction.neutral_derived_direction === 'BEARISH' ? 'text-red-400' : 'text-yellow-400'
-                                }`}>{interaction.neutral_derived_direction}</span>
-                              </div>
-                            )}
-                            {interaction.neutral_confidence != null && (
-                              <div className="text-xs">
-                                <span className="text-text-muted">Confidence:</span>
-                                <span className="text-text-primary ml-1 font-medium">{(interaction.neutral_confidence * 100).toFixed(0)}%</span>
-                              </div>
-                            )}
-                            {interaction.trend_direction && (
-                              <div className="text-xs">
-                                <span className="text-text-muted">Trend:</span>
-                                <span className={`ml-1 font-medium ${
-                                  interaction.trend_direction === 'UPTREND' ? 'text-green-400' :
-                                  interaction.trend_direction === 'DOWNTREND' ? 'text-red-400' : 'text-yellow-400'
-                                }`}>{interaction.trend_direction}</span>
-                              </div>
-                            )}
-                            {interaction.trend_strength != null && (
-                              <div className="text-xs">
-                                <span className="text-text-muted">Trend Strength:</span>
-                                <span className="text-text-primary ml-1 font-medium">{(interaction.trend_strength * 100).toFixed(0)}%</span>
-                              </div>
-                            )}
-                            {interaction.position_in_range_pct != null && (
-                              <div className="text-xs">
-                                <span className="text-text-muted">Position in Range:</span>
-                                <span className={`ml-1 font-medium ${
-                                  interaction.position_in_range_pct > 70 ? 'text-green-400' :
-                                  interaction.position_in_range_pct < 30 ? 'text-red-400' : 'text-yellow-400'
-                                }`}>{interaction.position_in_range_pct.toFixed(0)}%</span>
-                              </div>
-                            )}
-                            {interaction.is_contained != null && (
-                              <div className="text-xs">
-                                <span className="text-text-muted">Contained:</span>
-                                <span className={`ml-1 font-medium ${interaction.is_contained ? 'text-green-400' : 'text-red-400'}`}>
-                                  {interaction.is_contained ? 'Yes' : 'No'}
+                      {/* Enhanced Oracle Analysis Display - Shows for any regime when data available */}
+                      {(interaction.trend_direction || interaction.ic_suitability != null || interaction.position_in_range_pct != null || interaction.neutral_derived_direction) && (
+                        <div className="mb-3 space-y-3">
+                          {/* TREND ANALYSIS Section */}
+                          {interaction.trend_direction && (
+                            <div className="p-3 bg-blue-500/5 border border-blue-500/20 rounded-lg">
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-blue-400 text-xs font-medium flex items-center gap-1">
+                                  <TrendingUp className="w-3 h-3" />
+                                  TREND ANALYSIS
                                 </span>
                               </div>
-                            )}
-                          </div>
-                          {/* Strategy Suitability Scores */}
-                          {(interaction.ic_suitability != null || interaction.bullish_suitability != null || interaction.bearish_suitability != null) && (
-                            <div className="mt-2 pt-2 border-t border-yellow-500/20">
-                              <div className="text-xs text-text-muted mb-1">Strategy Suitability:</div>
-                              <div className="flex gap-4">
-                                {interaction.ic_suitability != null && (
-                                  <div className="text-xs">
-                                    <span className="text-cyan-400">IC:</span>
-                                    <span className="text-text-primary ml-1 font-medium">{interaction.ic_suitability.toFixed(0)}</span>
-                                  </div>
-                                )}
-                                {interaction.bullish_suitability != null && (
-                                  <div className="text-xs">
-                                    <span className="text-green-400">Bullish:</span>
-                                    <span className="text-text-primary ml-1 font-medium">{interaction.bullish_suitability.toFixed(0)}</span>
-                                  </div>
-                                )}
-                                {interaction.bearish_suitability != null && (
-                                  <div className="text-xs">
-                                    <span className="text-red-400">Bearish:</span>
-                                    <span className="text-text-primary ml-1 font-medium">{interaction.bearish_suitability.toFixed(0)}</span>
-                                  </div>
-                                )}
-                                {interaction.recommended_strategy && (
-                                  <div className="text-xs">
-                                    <span className="text-purple-400">Recommended:</span>
-                                    <span className="text-text-primary ml-1 font-medium">{interaction.recommended_strategy}</span>
+                              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                                <div className="text-xs">
+                                  <span className="text-text-muted">Direction:</span>
+                                  <span className={`ml-1 font-bold ${
+                                    interaction.trend_direction === 'UPTREND' ? 'text-green-400' :
+                                    interaction.trend_direction === 'DOWNTREND' ? 'text-red-400' : 'text-yellow-400'
+                                  }`}>
+                                    {interaction.trend_direction === 'UPTREND' ? '↑ ' : interaction.trend_direction === 'DOWNTREND' ? '↓ ' : '→ '}
+                                    {interaction.trend_direction}
+                                  </span>
+                                  {interaction.trend_strength != null && (
+                                    <span className="text-text-muted ml-1">(strength: {(interaction.trend_strength * 100).toFixed(1)}%)</span>
+                                  )}
+                                </div>
+                                {interaction.spot_price != null && interaction.gex_put_wall != null && interaction.gex_call_wall != null && (
+                                  <div className="text-xs col-span-2">
+                                    <span className="text-text-muted">Price Range:</span>
+                                    <span className="text-text-primary ml-1">
+                                      ${interaction.gex_put_wall?.toFixed(0)} → ${interaction.spot_price?.toFixed(2)} → ${interaction.gex_call_wall?.toFixed(0)}
+                                    </span>
                                   </div>
                                 )}
                               </div>
                             </div>
                           )}
-                          {/* NEUTRAL Reasoning */}
-                          {interaction.neutral_reasoning && (
-                            <div className="mt-2 pt-2 border-t border-yellow-500/20">
-                              <p className="text-xs text-text-secondary">{interaction.neutral_reasoning}</p>
+
+                          {/* WALL POSITION Section - Visual Bar */}
+                          {interaction.gex_put_wall != null && interaction.gex_call_wall != null && interaction.spot_price != null && (
+                            <div className="p-3 bg-purple-500/5 border border-purple-500/20 rounded-lg">
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-purple-400 text-xs font-medium flex items-center gap-1">
+                                  <Crosshair className="w-3 h-3" />
+                                  WALL POSITION
+                                </span>
+                                {interaction.is_contained != null && (
+                                  <span className={`text-xs px-2 py-0.5 rounded ${
+                                    interaction.is_contained ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                                  }`}>
+                                    Status: {interaction.is_contained ? 'CONTAINED ✓' : 'OUTSIDE RANGE'}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="space-y-2">
+                                {/* Visual Wall Bar */}
+                                <div className="flex items-center gap-2 text-xs">
+                                  <span className="text-red-400 font-mono w-16">Put ${interaction.gex_put_wall?.toFixed(0)}</span>
+                                  <div className="flex-1 relative h-6 bg-gray-800 rounded overflow-hidden">
+                                    {/* Put side gradient */}
+                                    <div className="absolute left-0 top-0 bottom-0 w-1/3 bg-gradient-to-r from-red-500/30 to-transparent" />
+                                    {/* Call side gradient */}
+                                    <div className="absolute right-0 top-0 bottom-0 w-1/3 bg-gradient-to-l from-green-500/30 to-transparent" />
+                                    {/* Current price marker */}
+                                    {(() => {
+                                      const putWall = interaction.gex_put_wall || 0
+                                      const callWall = interaction.gex_call_wall || 0
+                                      const spotPrice = interaction.spot_price || 0
+                                      const range = callWall - putWall
+                                      const position = range > 0 ? ((spotPrice - putWall) / range) * 100 : 50
+                                      return (
+                                        <div
+                                          className="absolute top-0 bottom-0 w-0.5 bg-cyan-400"
+                                          style={{ left: `${Math.min(Math.max(position, 5), 95)}%` }}
+                                        >
+                                          <div className="absolute -top-0.5 left-1/2 -translate-x-1/2 w-2 h-2 bg-cyan-400 rounded-full" />
+                                          <div className="absolute top-6 left-1/2 -translate-x-1/2 whitespace-nowrap text-[10px] text-cyan-400">
+                                            ${spotPrice.toFixed(0)}
+                                          </div>
+                                        </div>
+                                      )
+                                    })()}
+                                  </div>
+                                  <span className="text-green-400 font-mono w-16 text-right">Call ${interaction.gex_call_wall?.toFixed(0)}</span>
+                                </div>
+                                {/* Position percentage */}
+                                {interaction.position_in_range_pct != null && (
+                                  <div className="text-center text-xs text-text-muted">
+                                    <span className={`font-medium ${
+                                      interaction.position_in_range_pct > 60 ? 'text-green-400' :
+                                      interaction.position_in_range_pct < 40 ? 'text-red-400' : 'text-yellow-400'
+                                    }`}>
+                                      {interaction.position_in_range_pct.toFixed(0)}% of range
+                                    </span>
+                                    {interaction.position_in_range_pct > 50 ? ' (closer to call wall)' : ' (closer to put wall)'}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* STRATEGY SUITABILITY Section - Progress Bars */}
+                          {(interaction.ic_suitability != null || interaction.bullish_suitability != null || interaction.bearish_suitability != null) && (
+                            <div className="p-3 bg-cyan-500/5 border border-cyan-500/20 rounded-lg">
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-cyan-400 text-xs font-medium">STRATEGY SUITABILITY</span>
+                                {interaction.recommended_strategy && (
+                                  <span className="text-xs px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-400">
+                                    Recommended: {interaction.recommended_strategy}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="space-y-2">
+                                {interaction.ic_suitability != null && (
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs text-text-muted w-24">Iron Condor</span>
+                                    <div className="flex-1 h-4 bg-gray-800 rounded overflow-hidden">
+                                      <div
+                                        className="h-full bg-gradient-to-r from-cyan-600 to-cyan-400 transition-all"
+                                        style={{ width: `${Math.min(interaction.ic_suitability, 100)}%` }}
+                                      />
+                                    </div>
+                                    <span className="text-xs font-mono text-cyan-400 w-10 text-right">{interaction.ic_suitability.toFixed(0)}%</span>
+                                  </div>
+                                )}
+                                {interaction.bullish_suitability != null && (
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs text-text-muted w-24">Bull Spread</span>
+                                    <div className="flex-1 h-4 bg-gray-800 rounded overflow-hidden">
+                                      <div
+                                        className="h-full bg-gradient-to-r from-green-600 to-green-400 transition-all"
+                                        style={{ width: `${Math.min(interaction.bullish_suitability, 100)}%` }}
+                                      />
+                                    </div>
+                                    <span className="text-xs font-mono text-green-400 w-10 text-right">{interaction.bullish_suitability.toFixed(0)}%</span>
+                                  </div>
+                                )}
+                                {interaction.bearish_suitability != null && (
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs text-text-muted w-24">Bear Spread</span>
+                                    <div className="flex-1 h-4 bg-gray-800 rounded overflow-hidden">
+                                      <div
+                                        className="h-full bg-gradient-to-r from-red-600 to-red-400 transition-all"
+                                        style={{ width: `${Math.min(interaction.bearish_suitability, 100)}%` }}
+                                      />
+                                    </div>
+                                    <span className="text-xs font-mono text-red-400 w-10 text-right">{interaction.bearish_suitability.toFixed(0)}%</span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* NEUTRAL REGIME DECISION Section */}
+                          {interaction.gex_regime === 'NEUTRAL' && (interaction.neutral_derived_direction || interaction.neutral_reasoning) && (
+                            <div className="p-3 bg-yellow-500/5 border border-yellow-500/20 rounded-lg">
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-yellow-400 text-xs font-medium">NEUTRAL REGIME DECISION</span>
+                                {interaction.wall_filter_passed != null && (
+                                  <span className={`text-xs px-2 py-0.5 rounded ${
+                                    interaction.wall_filter_passed ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                                  }`}>
+                                    Wall Filter: {interaction.wall_filter_passed ? 'PASSED ✓' : 'FAILED ✗'}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="space-y-2">
+                                {interaction.neutral_derived_direction && (
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-text-muted text-xs">Derived Direction:</span>
+                                    <span className={`text-sm font-bold ${
+                                      interaction.neutral_derived_direction === 'BULLISH' ? 'text-green-400' :
+                                      interaction.neutral_derived_direction === 'BEARISH' ? 'text-red-400' : 'text-yellow-400'
+                                    }`}>
+                                      {interaction.neutral_derived_direction}
+                                    </span>
+                                    {interaction.neutral_confidence != null && (
+                                      <span className="text-text-muted text-xs">({(interaction.neutral_confidence * 100).toFixed(0)}% confidence)</span>
+                                    )}
+                                  </div>
+                                )}
+                                {interaction.neutral_reasoning && (
+                                  <div className="text-xs text-text-secondary bg-yellow-500/10 rounded p-2">
+                                    <span className="text-yellow-400">Reasoning:</span> "{interaction.neutral_reasoning}"
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* ML REASONING Section */}
+                          {(interaction.win_probability != null || interaction.wall_filter_passed != null) && interaction.reasoning && (
+                            <div className="p-3 bg-indigo-500/5 border border-indigo-500/20 rounded-lg">
+                              <span className="text-indigo-400 text-xs font-medium">ML REASONING</span>
+                              <div className="mt-2 space-y-1 text-xs">
+                                {interaction.wall_filter_passed != null && (
+                                  <div className="flex items-center gap-2">
+                                    {interaction.wall_filter_passed ? (
+                                      <CheckCircle className="w-3 h-3 text-green-400" />
+                                    ) : (
+                                      <XCircle className="w-3 h-3 text-red-400" />
+                                    )}
+                                    <span className="text-text-muted">Wall filter</span>
+                                    <span className={interaction.wall_filter_passed ? 'text-green-400' : 'text-red-400'}>
+                                      {interaction.wall_filter_passed ? 'PASSED' : 'FAILED'}
+                                    </span>
+                                  </div>
+                                )}
+                                {interaction.neutral_derived_direction && (
+                                  <div className="flex items-center gap-2">
+                                    <CheckCircle className="w-3 h-3 text-green-400" />
+                                    <span className="text-text-muted">Direction:</span>
+                                    <span className={`${
+                                      interaction.neutral_derived_direction === 'BULLISH' ? 'text-green-400' :
+                                      interaction.neutral_derived_direction === 'BEARISH' ? 'text-red-400' : 'text-yellow-400'
+                                    }`}>
+                                      {interaction.neutral_derived_direction} (from trend analysis)
+                                    </span>
+                                  </div>
+                                )}
+                                {interaction.win_probability != null && (
+                                  <div className="flex items-center gap-2">
+                                    <CheckCircle className="w-3 h-3 text-green-400" />
+                                    <span className="text-text-muted">Win Prob:</span>
+                                    <span className="text-text-primary">
+                                      {(interaction.win_probability * 100).toFixed(0)}%
+                                      {interaction.confidence != null && ` (base ${(interaction.win_probability * 100 - 10).toFixed(0)}% + trend ${interaction.trend_strength ? (interaction.trend_strength * 10).toFixed(0) : '0'}%)`}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           )}
                         </div>
