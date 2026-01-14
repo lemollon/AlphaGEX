@@ -862,8 +862,9 @@ async def get_pegasus_intraday_equity(date: str = None):
         unrealized_pnl = 0
         open_positions = []
         try:
+            # NOTE: PEGASUS uses total_credit, not entry_credit
             cursor.execute("""
-                SELECT position_id, entry_credit, contracts,
+                SELECT position_id, total_credit, contracts, spread_width,
                        call_short_strike, call_long_strike, put_short_strike, put_long_strike
                 FROM pegasus_positions
                 WHERE status = 'open'
@@ -871,13 +872,14 @@ async def get_pegasus_intraday_equity(date: str = None):
             open_rows = cursor.fetchall()
 
             for row in open_rows:
-                pos_id, entry_credit, contracts, cs_strike, cl_strike, ps_strike, pl_strike = row
-                entry_val = float(entry_credit) if entry_credit else 0
+                pos_id, total_credit, contracts, spread_width, cs_strike, cl_strike, ps_strike, pl_strike = row
+                credit_val = float(total_credit) if total_credit else 0
                 num_contracts = int(contracts) if contracts else 1
+                spread_w = float(spread_width) if spread_width else 10
 
-                # Estimate current value (simplified - assume 50% decay)
-                max_profit = entry_val * 100 * num_contracts
-                current_unrealized = max_profit * 0.5
+                # Without live pricing, assume conservative 0 unrealized
+                # The actual P&L comes from the PEGASUS trader's live-pnl endpoint
+                current_unrealized = 0
 
                 open_positions.append({
                     "position_id": pos_id,
@@ -885,7 +887,7 @@ async def get_pegasus_intraday_equity(date: str = None):
                 })
                 unrealized_pnl += current_unrealized
         except Exception as e:
-            logger.debug(f"Error calculating unrealized P&L: {e}")
+            logger.warning(f"Error calculating unrealized P&L: {e}")
 
         conn.close()
 
@@ -1026,19 +1028,16 @@ async def save_pegasus_equity_snapshot():
         realized_pnl = float(row[0]) if row and row[0] else 0
 
         # Get open positions and calculate unrealized P&L
+        # NOTE: PEGASUS uses total_credit, not entry_credit
+        # For proper unrealized, we'd need live SPX pricing - using 0 for conservative snapshot
         cursor.execute("""
-            SELECT position_id, entry_credit, contracts
-            FROM pegasus_positions
-            WHERE status = 'open'
+            SELECT COUNT(*) FROM pegasus_positions WHERE status = 'open'
         """)
-        open_rows = cursor.fetchall()
-        open_count = len(open_rows)
+        open_count = cursor.fetchone()[0] or 0
 
-        for row in open_rows:
-            pos_id, entry_credit, contracts = row
-            entry_val = float(entry_credit) if entry_credit else 0
-            num_contracts = int(contracts) if contracts else 1
-            unrealized_pnl += entry_val * 100 * num_contracts * 0.5
+        # NOTE: Unrealized P&L requires live pricing which API endpoint doesn't have
+        # The scheduler's equity_snapshots job uses bot instances to get actual unrealized
+        unrealized_pnl = 0
 
         current_equity = starting_capital + realized_pnl + unrealized_pnl
 

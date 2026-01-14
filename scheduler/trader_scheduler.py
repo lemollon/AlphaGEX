@@ -2231,16 +2231,17 @@ class AutonomousTraderScheduler:
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Bot configurations: (positions_table, snapshot_table, starting_capital_key, default_capital)
+            # Bot configurations: (positions_table, snapshot_table, starting_capital_key, default_capital, trader_attr)
+            # trader_attr is the scheduler attribute name for the bot's trader instance (for live unrealized P&L)
             bots_config = {
-                'ares': ('ares_positions', 'ares_equity_snapshots', 'ares_starting_capital', 100000),
-                'athena': ('athena_positions', 'athena_equity_snapshots', 'athena_starting_capital', 100000),
-                'titan': ('titan_positions', 'titan_equity_snapshots', 'titan_starting_capital', 200000),
-                'pegasus': ('pegasus_positions', 'pegasus_equity_snapshots', 'pegasus_starting_capital', 200000),
-                'icarus': ('icarus_positions', 'icarus_equity_snapshots', 'icarus_starting_capital', 100000),
+                'ares': ('ares_positions', 'ares_equity_snapshots', 'ares_starting_capital', 100000, 'ares_trader'),
+                'athena': ('athena_positions', 'athena_equity_snapshots', 'athena_starting_capital', 100000, 'athena_trader'),
+                'titan': ('titan_positions', 'titan_equity_snapshots', 'titan_starting_capital', 200000, 'titan_trader'),
+                'pegasus': ('pegasus_positions', 'pegasus_equity_snapshots', 'pegasus_starting_capital', 200000, 'pegasus_trader'),
+                'icarus': ('icarus_positions', 'icarus_equity_snapshots', 'icarus_starting_capital', 100000, 'icarus_trader'),
             }
 
-            for bot_name, (pos_table, snap_table, cap_key, default_cap) in bots_config.items():
+            for bot_name, (pos_table, snap_table, cap_key, default_cap, trader_attr) in bots_config.items():
                 try:
                     # Get starting capital from config
                     cursor.execute(f"SELECT value FROM autonomous_config WHERE key = %s", (cap_key,))
@@ -2262,26 +2263,20 @@ class AutonomousTraderScheduler:
                     """)
                     open_count = cursor.fetchone()[0] or 0
 
-                    # Estimate unrealized P&L (simplified - assume 50% of max profit for open ICs)
+                    # Get unrealized P&L from bot's trader instance if available
+                    # Each bot's get_status() method calculates actual unrealized from live pricing
                     unrealized_pnl = 0
-                    try:
-                        cursor.execute(f"""
-                            SELECT COALESCE(SUM(
-                                CASE
-                                    WHEN total_credit IS NOT NULL THEN total_credit * contracts * 100 * 0.5
-                                    WHEN entry_credit IS NOT NULL THEN entry_credit * contracts * 100 * 0.5
-                                    ELSE 0
-                                END
-                            ), 0)
-                            FROM {pos_table}
-                            WHERE status = 'open'
-                        """)
-                        unrealized_row = cursor.fetchone()
-                        unrealized_pnl = float(unrealized_row[0]) if unrealized_row and unrealized_row[0] else 0
-                    except Exception:
-                        pass  # Some tables may not have all columns
+                    trader_instance = getattr(self, trader_attr, None)
+                    if trader_instance and open_count > 0:
+                        try:
+                            status = trader_instance.get_status()
+                            unrealized_pnl = status.get('unrealized_pnl', 0) or 0
+                            logger.info(f"EQUITY_SNAPSHOTS: {bot_name.upper()} got live unrealized=${unrealized_pnl:.2f} from trader instance")
+                        except Exception as e:
+                            logger.warning(f"EQUITY_SNAPSHOTS: {bot_name.upper()} failed to get live unrealized: {e}")
+                            unrealized_pnl = 0
 
-                    # Calculate current equity
+                    # Calculate current equity (realized + unrealized for intraday tracking)
                     current_equity = starting_capital + realized_pnl + unrealized_pnl
 
                     # Ensure snapshot table exists with all required columns
