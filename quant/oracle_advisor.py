@@ -3457,6 +3457,93 @@ class OracleAdvisor:
         return self._add_staleness_to_prediction(prediction)
 
     # =========================================================================
+    # TITAN ADVICE (AGGRESSIVE SPX IRON CONDOR - DAILY)
+    # =========================================================================
+
+    def get_titan_advice(
+        self,
+        context: MarketContext,
+        use_gex_walls: bool = True,
+        use_claude_validation: bool = True,
+        vix_hard_skip: float = 0.0,
+        vix_monday_friday_skip: float = 0.0,
+        vix_streak_skip: float = 0.0,
+        recent_losses: int = 0,
+        spread_width: float = 12.0  # TITAN uses $12 spread width (more aggressive)
+    ) -> OraclePrediction:
+        """
+        Get Iron Condor advice for TITAN (Aggressive SPX Daily Iron Condors).
+
+        TITAN is similar to PEGASUS but more aggressive:
+        - Trades daily vs weekly
+        - Uses $12 spreads vs $10 spreads
+        - Lower win probability threshold (more trades)
+        - Higher risk tolerance
+
+        Args:
+            context: Current market conditions
+            use_gex_walls: Whether to suggest strikes based on GEX walls
+            use_claude_validation: Whether to use Claude AI to validate prediction
+            vix_hard_skip: Skip if VIX > this threshold (0 = disabled)
+            vix_monday_friday_skip: Skip on Mon/Fri if VIX > this (0 = disabled)
+            vix_streak_skip: Skip after recent losses if VIX > this (0 = disabled)
+            recent_losses: Number of recent consecutive losses
+            spread_width: Width of IC spreads (default $12 for TITAN)
+
+        Returns:
+            OraclePrediction with TITAN-specific advice
+        """
+        # Check for newer model version in DB and reload if available (Issue #1 fix)
+        self._check_and_reload_model_if_stale()
+
+        # Log prediction request
+        self.live_log.log("PREDICT", "TITAN advice requested", {
+            "vix": context.vix,
+            "gex_regime": context.gex_regime.value,
+            "spot_price": context.spot_price,
+            "use_gex_walls": use_gex_walls,
+            "use_claude": use_claude_validation,
+            "vix_hard_skip": vix_hard_skip,
+            "spread_width": spread_width,
+            "model_version": self.model_version,
+            "hours_since_training": self._get_hours_since_training()
+        })
+
+        # TITAN uses the same logic as PEGASUS but with more aggressive parameters
+        # Delegate to PEGASUS with TITAN-specific adjustments
+        prediction = self.get_pegasus_advice(
+            context=context,
+            use_gex_walls=use_gex_walls,
+            use_claude_validation=use_claude_validation,
+            vix_hard_skip=vix_hard_skip,
+            vix_monday_friday_skip=vix_monday_friday_skip,
+            vix_streak_skip=vix_streak_skip,
+            recent_losses=recent_losses,
+            spread_width=spread_width
+        )
+
+        # Override bot name to TITAN for proper tracking
+        prediction.bot_name = BotName.TITAN
+
+        # TITAN is more aggressive - boost win probability slightly for valid signals
+        if prediction.advice != TradingAdvice.SKIP_TODAY:
+            # TITAN accepts lower win probability (42% vs 45% for PEGASUS)
+            if prediction.win_probability >= 0.42:
+                prediction.reasoning = f"[TITAN Aggressive] {prediction.reasoning}"
+
+        # Log TITAN-specific decision
+        self.live_log.log_data_flow("TITAN", "DECISION", {
+            "advice": prediction.advice.value,
+            "win_probability": prediction.win_probability,
+            "confidence": prediction.confidence,
+            "spread_width": spread_width,
+            "model_version": self.model_version,
+            "hours_since_training": self._get_hours_since_training()
+        })
+
+        return prediction
+
+    # =========================================================================
     # BASE PREDICTION
     # =========================================================================
 

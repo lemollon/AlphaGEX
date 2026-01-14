@@ -575,6 +575,7 @@ export default function OraclePage() {
       case 'ATHENA': return 'text-purple-400 bg-purple-500/20 border-purple-500/30'
       case 'PEGASUS': return 'text-blue-400 bg-blue-500/20 border-blue-500/30'
       case 'ICARUS': return 'text-orange-400 bg-orange-500/20 border-orange-500/30'
+      case 'TITAN': return 'text-teal-400 bg-teal-500/20 border-teal-500/30'
       case 'ORACLE': return 'text-cyan-400 bg-cyan-500/20 border-cyan-500/30'
       default: return 'text-gray-400 bg-gray-500/20 border-gray-500/30'
     }
@@ -606,7 +607,7 @@ export default function OraclePage() {
               <h1 className="text-3xl font-bold text-text-primary">Oracle Knowledge Base</h1>
             </div>
             <p className="text-text-secondary">
-              Centralized intelligence hub for all trading bots (ARES, ATHENA, PEGASUS, PHOENIX, ATLAS, ICARUS) - All bot interactions, Claude AI reasoning, and ML predictions
+              Centralized intelligence hub for all trading bots (ARES, ATHENA, PEGASUS, PHOENIX, ATLAS, ICARUS, TITAN) - All bot interactions, Claude AI reasoning, and ML predictions
             </p>
           </div>
 
@@ -687,7 +688,7 @@ export default function OraclePage() {
               <span className="text-xs text-gray-500">(5-min scan intervals)</span>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {['ARES', 'ATHENA', 'PEGASUS', 'PHOENIX', 'ATLAS', 'ICARUS'].map((botName) => {
+              {['ARES', 'ATHENA', 'PEGASUS', 'PHOENIX', 'ATLAS', 'ICARUS', 'TITAN'].map((botName) => {
                 const hb = botHeartbeats[botName]
                 const statusColor = hb?.status === 'TRADED' ? 'bg-green-500' :
                                    hb?.status === 'SCAN_COMPLETE' ? 'bg-blue-500' :
@@ -818,6 +819,7 @@ export default function OraclePage() {
                     <option value="PHOENIX">PHOENIX</option>
                     <option value="ATLAS">ATLAS</option>
                     <option value="ICARUS">ICARUS</option>
+                    <option value="TITAN">TITAN</option>
                   </select>
                 </div>
                 <div className="flex items-center gap-2">
@@ -2319,6 +2321,16 @@ export default function OraclePage() {
                 <div>
                   <h3 className="font-semibold text-text-primary mb-1">ICARUS</h3>
                   <p className="text-text-secondary text-sm">Aggressive GEX-based directional spreads</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="card bg-teal-500/5 border border-teal-500/20">
+              <div className="flex items-start gap-3">
+                <Bot className="w-5 h-5 text-teal-400 flex-shrink-0 mt-1" />
+                <div>
+                  <h3 className="font-semibold text-text-primary mb-1">TITAN</h3>
+                  <p className="text-text-secondary text-sm">Aggressive SPX Iron Condors with $12 spreads</p>
                 </div>
               </div>
             </div>
