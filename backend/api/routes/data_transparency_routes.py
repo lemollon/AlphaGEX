@@ -160,14 +160,13 @@ async def get_transparency_summary():
         summary = {}
         for key, info in categories.items():
             try:
-                cur.execute(f"SELECT COUNT(*) FROM {info['table']}")
-                count = cur.fetchone()[0]
-
+                # PERFORMANCE FIX: Single query for COUNT and MAX (was 2 queries per category)
                 cur.execute(f"""
-                    SELECT MAX(created_at) FROM {info['table']}
-                    WHERE created_at IS NOT NULL
+                    SELECT COUNT(*), MAX(created_at)
+                    FROM {info['table']}
                 """)
-                latest = cur.fetchone()[0]
+                row = cur.fetchone()
+                count, latest = row[0], row[1]
 
                 summary[key] = {
                     "display_name": info["display_name"],

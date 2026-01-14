@@ -69,15 +69,16 @@ class PositionManagerMixin:
 
         actions_taken = []
 
+        # PERFORMANCE FIX: Fetch GEX data once before the loop (was O(n) API calls)
+        gex_data = api_client.get_net_gamma('SPY')
+        if not gex_data or gex_data.get('error'):
+            logger.warning("Failed to get GEX data, skipping position management")
+            return []
+        current_spot = gex_data.get('spot_price', 0)
+
         for _, pos in positions.iterrows():
             try:
-                # Get current SPY price
-                gex_data = api_client.get_net_gamma('SPY')
-                if not gex_data or gex_data.get('error'):
-                    logger.warning(f"Failed to get GEX data for position {pos['id']}, skipping")
-                    continue
-
-                current_spot = gex_data.get('spot_price', 0)
+                # PERFORMANCE FIX: Reuse cached gex_data instead of calling API per position
 
                 # Get current option price
                 option_data = get_real_option_price(

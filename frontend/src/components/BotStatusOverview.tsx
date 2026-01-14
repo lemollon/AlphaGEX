@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo, useCallback, memo } from 'react'
 import Link from 'next/link'
 import {
   Bot,
@@ -33,6 +33,15 @@ import {
   useTITANLivePnL
 } from '@/lib/hooks/useMarketData'
 
+// PERFORMANCE FIX: Move colorClasses outside component (was recreated every render)
+const COLOR_CLASSES: Record<string, { bg: string; border: string; text: string }> = {
+  blue: { bg: 'bg-blue-500/10', border: 'border-blue-500/30', text: 'text-blue-500' },
+  purple: { bg: 'bg-purple-500/10', border: 'border-purple-500/30', text: 'text-purple-500' },
+  amber: { bg: 'bg-amber-500/10', border: 'border-amber-500/30', text: 'text-amber-500' },
+  cyan: { bg: 'bg-cyan-500/10', border: 'border-cyan-500/30', text: 'text-cyan-500' },
+  rose: { bg: 'bg-rose-500/10', border: 'border-rose-500/30', text: 'text-rose-500' },
+}
+
 // Helper to format timestamp in Central Time
 function formatCentralTime(timestamp: string): string {
   try {
@@ -58,7 +67,8 @@ interface BotStatusCardProps {
   isLoading: boolean
 }
 
-function BotStatusCard({ name, icon, href, status, livePnL, color, isLoading }: BotStatusCardProps) {
+// PERFORMANCE FIX: Wrap BotStatusCard with React.memo to prevent unnecessary re-renders
+const BotStatusCard = memo(function BotStatusCard({ name, icon, href, status, livePnL, color, isLoading }: BotStatusCardProps) {
   const isActive = status?.is_active || status?.bot_status === 'ACTIVE' || status?.status === 'active'
   // API returns 'open_positions' as a count, not 'open_positions_count'
   const openPositionsCount = status?.open_positions || status?.open_positions_count || status?.positions?.open?.length || 0
@@ -68,15 +78,8 @@ function BotStatusCard({ name, icon, href, status, livePnL, color, isLoading }: 
   const totalPnL = livePnL?.total_unrealized_pnl || livePnL?.unrealized_pnl || status?.unrealized_pnl || status?.total_pnl || 0
   const todayPnL = livePnL?.today_pnl || status?.today_pnl || 0
 
-  const colorClasses: Record<string, { bg: string; border: string; text: string }> = {
-    blue: { bg: 'bg-blue-500/10', border: 'border-blue-500/30', text: 'text-blue-500' },
-    purple: { bg: 'bg-purple-500/10', border: 'border-purple-500/30', text: 'text-purple-500' },
-    amber: { bg: 'bg-amber-500/10', border: 'border-amber-500/30', text: 'text-amber-500' },
-    cyan: { bg: 'bg-cyan-500/10', border: 'border-cyan-500/30', text: 'text-cyan-500' },
-    rose: { bg: 'bg-rose-500/10', border: 'border-rose-500/30', text: 'text-rose-500' },
-  }
-
-  const colors = colorClasses[color] || colorClasses.blue
+  // PERFORMANCE FIX: Use moved constant instead of creating new object every render
+  const colors = COLOR_CLASSES[color] || COLOR_CLASSES.blue
 
   if (isLoading) {
     return (
@@ -140,7 +143,7 @@ function BotStatusCard({ name, icon, href, status, livePnL, color, isLoading }: 
       </div>
     </Link>
   )
-}
+})  // End of React.memo wrapped BotStatusCard
 
 export default function BotStatusOverview() {
   const [expanded, setExpanded] = useState(true)
@@ -160,40 +163,42 @@ export default function BotStatusOverview() {
   const { data: icarusLivePnL } = useICARUSLivePnL()
   const { data: titanLivePnL } = useTITANLivePnL()
 
-  const refreshAll = () => {
+  // PERFORMANCE FIX: useCallback for refreshAll to prevent child re-renders
+  const refreshAll = useCallback(() => {
     refreshAres()
     refreshAthena()
     refreshPegasus()
     refreshIcarus()
     refreshTitan()
-  }
+  }, [refreshAres, refreshAthena, refreshPegasus, refreshIcarus, refreshTitan])
 
-  // Calculate total P&L across all bots (live bots only for main display)
-  const totalTodayPnL = (aresLivePnL?.data?.today_pnl || 0) +
-                        (athenaLivePnL?.data?.today_pnl || 0) +
-                        (pegasusLivePnL?.data?.today_pnl || 0)
+  // PERFORMANCE FIX: useMemo for calculated P&L values (was recalculating every render)
+  const { totalTodayPnL, totalUnrealizedPnL, paperTodayPnL } = useMemo(() => ({
+    totalTodayPnL: (aresLivePnL?.data?.today_pnl || 0) +
+                   (athenaLivePnL?.data?.today_pnl || 0) +
+                   (pegasusLivePnL?.data?.today_pnl || 0),
+    totalUnrealizedPnL: (aresLivePnL?.data?.total_unrealized_pnl || 0) +
+                        (athenaLivePnL?.data?.total_unrealized_pnl || 0) +
+                        (pegasusLivePnL?.data?.total_unrealized_pnl || 0),
+    paperTodayPnL: (icarusLivePnL?.data?.today_pnl || 0) +
+                   (titanLivePnL?.data?.today_pnl || 0)
+  }), [aresLivePnL, athenaLivePnL, pegasusLivePnL, icarusLivePnL, titanLivePnL])
 
-  const totalUnrealizedPnL = (aresLivePnL?.data?.total_unrealized_pnl || 0) +
-                             (athenaLivePnL?.data?.total_unrealized_pnl || 0) +
-                             (pegasusLivePnL?.data?.total_unrealized_pnl || 0)
+  // PERFORMANCE FIX: useMemo for active bot counts (was filtering on every render)
+  const { activeLiveBots, activePaperBots, totalActiveBots } = useMemo(() => {
+    const live = [
+      aresStatus?.data?.is_active || aresStatus?.data?.bot_status === 'ACTIVE',
+      athenaStatus?.data?.is_active || athenaStatus?.data?.bot_status === 'ACTIVE',
+      pegasusStatus?.data?.is_active || pegasusStatus?.data?.status === 'active'
+    ].filter(Boolean).length
 
-  // Paper bot P&L (separate tracking)
-  const paperTodayPnL = (icarusLivePnL?.data?.today_pnl || 0) +
-                        (titanLivePnL?.data?.today_pnl || 0)
+    const paper = [
+      icarusStatus?.data?.is_active || icarusStatus?.data?.bot_status === 'ACTIVE',
+      titanStatus?.data?.is_active || titanStatus?.data?.bot_status === 'ACTIVE'
+    ].filter(Boolean).length
 
-  // Count active bots
-  const activeLiveBots = [
-    aresStatus?.data?.is_active || aresStatus?.data?.bot_status === 'ACTIVE',
-    athenaStatus?.data?.is_active || athenaStatus?.data?.bot_status === 'ACTIVE',
-    pegasusStatus?.data?.is_active || pegasusStatus?.data?.status === 'active'
-  ].filter(Boolean).length
-
-  const activePaperBots = [
-    icarusStatus?.data?.is_active || icarusStatus?.data?.bot_status === 'ACTIVE',
-    titanStatus?.data?.is_active || titanStatus?.data?.bot_status === 'ACTIVE'
-  ].filter(Boolean).length
-
-  const totalActiveBots = activeLiveBots + activePaperBots
+    return { activeLiveBots: live, activePaperBots: paper, totalActiveBots: live + paper }
+  }, [aresStatus, athenaStatus, pegasusStatus, icarusStatus, titanStatus])
 
   return (
     <div className="card bg-gradient-to-r from-primary/5 to-transparent border border-primary/20">

@@ -2,7 +2,7 @@
 
 import { logger } from '@/lib/logger'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
@@ -148,14 +148,16 @@ export default function Navigation() {
     return () => clearInterval(interval)
   }, [])
 
-  // Group nav items by category
-  const groupedItems = navItems.reduce((acc, item) => {
-    if (!acc[item.category]) {
-      acc[item.category] = []
-    }
-    acc[item.category].push(item)
-    return acc
-  }, {} as Record<string, typeof navItems>)
+  // PERFORMANCE FIX: Memoize grouped nav items (navItems is static, no need to recalculate)
+  const groupedItems = useMemo(() => {
+    return navItems.reduce((acc, item) => {
+      if (!acc[item.category]) {
+        acc[item.category] = []
+      }
+      acc[item.category].push(item)
+      return acc
+    }, {} as Record<string, typeof navItems>)
+  }, [])  // Empty deps since navItems is static
 
   return (
     <>
