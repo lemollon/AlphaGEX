@@ -2186,6 +2186,13 @@ class OracleAdvisor:
         position_in_range_pct = 50.0
         trend_direction_str = "SIDEWAYS"
         trend_strength = 0.0
+        # NEUTRAL regime fields for consistency with ATHENA
+        neutral_derived_direction = ""
+        neutral_confidence = 0.0
+        neutral_reasoning = ""
+        bullish_suitability = 0.0
+        bearish_suitability = 0.0
+        wall_filter_passed = False  # IC doesn't use wall filter, but track for consistency
 
         # Calculate position in wall range
         wall_range = context.gex_call_wall - context.gex_put_wall
@@ -2246,7 +2253,21 @@ class OracleAdvisor:
                         context.gex_regime.value
                     )
                     ic_suitability = suitability.ic_suitability
+                    bullish_suitability = suitability.bullish_suitability
+                    bearish_suitability = suitability.bearish_suitability
                     position_in_range_pct = wall_position.position_in_range_pct
+
+                    # For IC, derive direction based on position in range (for transparency)
+                    if position_in_range_pct < 35:
+                        neutral_derived_direction = "BULLISH"  # Near put wall
+                        neutral_confidence = 0.6
+                    elif position_in_range_pct > 65:
+                        neutral_derived_direction = "BEARISH"  # Near call wall
+                        neutral_confidence = 0.6
+                    else:
+                        neutral_derived_direction = "NEUTRAL"  # Centered = ideal for IC
+                        neutral_confidence = 0.7
+                    neutral_reasoning = f"IC: Position {position_in_range_pct:.0f}% in wall range, trend {trend_direction_str}"
 
                     logger.info(f"[ARES NEUTRAL] IC suitability: {ic_suitability:.0%}, trend: {trend_direction_str}")
 
@@ -2329,11 +2350,17 @@ class OracleAdvisor:
             model_version=self.model_version,
             probabilities=base_pred['probabilities'],
             claude_analysis=claude_analysis,
-            # New NEUTRAL regime fields for IC
+            # NEUTRAL regime fields (all 10 for consistency)
+            neutral_derived_direction=neutral_derived_direction,
+            neutral_confidence=neutral_confidence,
+            neutral_reasoning=neutral_reasoning,
             ic_suitability=ic_suitability,
+            bullish_suitability=bullish_suitability,
+            bearish_suitability=bearish_suitability,
             trend_direction=trend_direction_str,
             trend_strength=trend_strength,
-            position_in_range_pct=position_in_range_pct
+            position_in_range_pct=position_in_range_pct,
+            wall_filter_passed=wall_filter_passed
         )
 
         # Log prediction result
@@ -3071,6 +3098,13 @@ class OracleAdvisor:
         position_in_range_pct = 50.0
         trend_direction_str = "SIDEWAYS"
         trend_strength = 0.0
+        # NEUTRAL regime fields for consistency
+        neutral_derived_direction = ""
+        neutral_confidence = 0.0
+        neutral_reasoning = ""
+        bullish_suitability = 0.0
+        bearish_suitability = 0.0
+        wall_filter_passed = False
 
         # Calculate position in wall range
         wall_range = context.gex_call_wall - context.gex_put_wall
@@ -3123,6 +3157,21 @@ class OracleAdvisor:
                         trend_analysis, wall_position, context.vix, "NEUTRAL"
                     )
                     ic_suitability = suitability.ic_suitability
+                    bullish_suitability = suitability.bullish_suitability
+                    bearish_suitability = suitability.bearish_suitability
+                    position_in_range_pct = wall_position.position_in_range_pct
+
+                    # For IC, derive direction based on position in range (for transparency)
+                    if position_in_range_pct < 35:
+                        neutral_derived_direction = "BULLISH"
+                        neutral_confidence = 0.6
+                    elif position_in_range_pct > 65:
+                        neutral_derived_direction = "BEARISH"
+                        neutral_confidence = 0.6
+                    else:
+                        neutral_derived_direction = "NEUTRAL"
+                        neutral_confidence = 0.7
+                    neutral_reasoning = f"SPX IC: Position {position_in_range_pct:.0f}% in wall range, trend {trend_direction_str}"
 
                 except Exception as e:
                     logger.warning(f"[PEGASUS] Trend tracker error: {e}")
@@ -3220,11 +3269,17 @@ class OracleAdvisor:
             suggested_put_strike=suggested_put,
             suggested_call_strike=suggested_call,
             claude_analysis=claude_analysis,
-            # New NEUTRAL regime fields for IC
+            # NEUTRAL regime fields (all 10 for consistency)
+            neutral_derived_direction=neutral_derived_direction,
+            neutral_confidence=neutral_confidence,
+            neutral_reasoning=neutral_reasoning,
             ic_suitability=ic_suitability,
+            bullish_suitability=bullish_suitability,
+            bearish_suitability=bearish_suitability,
             trend_direction=trend_direction_str,
             trend_strength=trend_strength,
-            position_in_range_pct=position_in_range_pct
+            position_in_range_pct=position_in_range_pct,
+            wall_filter_passed=wall_filter_passed
         )
 
         # Log prediction result
