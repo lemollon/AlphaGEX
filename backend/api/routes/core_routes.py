@@ -338,6 +338,45 @@ async def comprehensive_system_health():
     except Exception as e:
         health["components"]["market"] = {"status": "error", "message": str(e)}
 
+    # 8. ORACLE ML SYSTEM (Model staleness and training status)
+    try:
+        from quant.oracle_advisor import get_oracle, get_pending_outcomes_count
+        oracle = get_oracle()
+
+        hours_since_training = oracle._get_hours_since_training() if hasattr(oracle, '_get_hours_since_training') else 0.0
+        is_model_fresh = oracle._is_model_fresh() if hasattr(oracle, '_is_model_fresh') else True
+        pending_outcomes = get_pending_outcomes_count()
+
+        oracle_status = "healthy"
+        if not oracle.is_trained:
+            oracle_status = "untrained"
+        elif not is_model_fresh:
+            oracle_status = "stale"
+
+        health["components"]["oracle"] = {
+            "status": oracle_status,
+            "is_trained": oracle.is_trained,
+            "model_version": oracle.model_version,
+            "hours_since_training": round(hours_since_training, 2),
+            "is_model_fresh": is_model_fresh,
+            "pending_outcomes": pending_outcomes,
+            "training_threshold": 20,
+            "needs_retraining": pending_outcomes >= 20 or not is_model_fresh
+        }
+
+        if not oracle.is_trained:
+            health["issues"].append("Oracle ML model is NOT trained - predictions will use default values")
+        elif not is_model_fresh:
+            health["warnings"].append(f"Oracle model is {hours_since_training:.1f} hours old - retraining recommended")
+
+        if pending_outcomes >= 20:
+            health["warnings"].append(f"Oracle has {pending_outcomes} pending outcomes - auto-training should trigger")
+
+    except ImportError:
+        health["components"]["oracle"] = {"status": "not_available", "message": "Oracle module not loaded"}
+    except Exception as e:
+        health["components"]["oracle"] = {"status": "error", "message": str(e)}
+
     # OVERALL STATUS CALCULATION
     if len(health["issues"]) > 0:
         health["overall_status"] = "critical" if any("EMPTY" in i or "failed" in i.lower() for i in health["issues"]) else "degraded"

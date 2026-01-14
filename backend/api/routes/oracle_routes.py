@@ -84,6 +84,11 @@ async def oracle_health():
         oracle = get_oracle()
         pending = get_pending_outcomes_count()
 
+        # Calculate model freshness metrics
+        hours_since_training = oracle._get_hours_since_training() if hasattr(oracle, '_get_hours_since_training') else 0.0
+        is_model_fresh = oracle._is_model_fresh() if hasattr(oracle, '_is_model_fresh') else True
+        model_trained_at = oracle._model_trained_at.isoformat() if hasattr(oracle, '_model_trained_at') and oracle._model_trained_at else None
+
         return {
             "status": "healthy",
             "is_trained": oracle.is_trained,
@@ -91,6 +96,11 @@ async def oracle_health():
             "pending_outcomes": pending,
             "training_threshold": 20,
             "has_gex_features": oracle._has_gex_features if hasattr(oracle, '_has_gex_features') else False,
+            # Model freshness metrics (Issue #4 - staleness visibility)
+            "hours_since_training": round(hours_since_training, 2),
+            "is_model_fresh": is_model_fresh,
+            "model_trained_at": model_trained_at,
+            "freshness_warning": f"Model is {hours_since_training:.1f}h old - retraining recommended" if not is_model_fresh else None,
             "timestamp": datetime.now(CENTRAL_TZ).isoformat()
         }
     except Exception as e:
@@ -113,12 +123,22 @@ async def oracle_status():
         oracle = get_oracle()
         pending = get_pending_outcomes_count()
 
+        # Calculate model freshness metrics
+        hours_since_training = oracle._get_hours_since_training() if hasattr(oracle, '_get_hours_since_training') else 0.0
+        is_model_fresh = oracle._is_model_fresh() if hasattr(oracle, '_is_model_fresh') else True
+        model_trained_at = oracle._model_trained_at.isoformat() if hasattr(oracle, '_model_trained_at') and oracle._model_trained_at else None
+
         result = {
             "is_trained": oracle.is_trained,
             "model_version": oracle.model_version,
             "pending_outcomes": pending,
             "training_threshold": 20,
             "training_frequency": "daily",
+            # Model freshness metrics (Issue #4 - staleness visibility)
+            "hours_since_training": round(hours_since_training, 2),
+            "is_model_fresh": is_model_fresh,
+            "model_trained_at": model_trained_at,
+            "freshness_warning": f"Model is {hours_since_training:.1f}h old - retraining recommended" if not is_model_fresh else None,
             "timestamp": datetime.now(CENTRAL_TZ).isoformat()
         }
 
