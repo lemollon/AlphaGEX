@@ -416,8 +416,8 @@ export default function SagePage() {
                       Bot Integration Status
                     </h3>
                     <p className="text-gray-400 text-sm mb-4">
-                      SAGE provides ML predictions as the PRIMARY decision source for these trading bots.
-                      Oracle serves as BACKUP when ML is unavailable.
+                      Oracle is the PRIMARY decision maker for all trading bots.
+                      SAGE ML predictions feed INTO Oracle as one of its signal sources for enhanced accuracy.
                     </p>
                     <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                       {['ARES', 'ATHENA', 'ICARUS', 'PEGASUS', 'TITAN'].map(bot => {
