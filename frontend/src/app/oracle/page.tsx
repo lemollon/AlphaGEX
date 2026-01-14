@@ -148,6 +148,10 @@ interface TrainingStatus {
   model_source: 'database' | 'local_file' | 'none'
   db_persistence: boolean
   persistence_status: string
+  // Model staleness metrics (Issue #4 - end-to-end visibility)
+  hours_since_training?: number
+  is_model_fresh?: boolean
+  freshness_warning?: string | null
 }
 
 interface LogEntry {
@@ -1438,6 +1442,19 @@ export default function OraclePage() {
                           {trainingStatus.last_trained ? formatTexasCentralDateTime(trainingStatus.last_trained) : 'Never'}
                         </span>
                       </div>
+                      {/* Model Age with freshness indicator (Issue #4) */}
+                      <div className="flex items-center justify-between p-3 bg-background-hover rounded-lg">
+                        <span className="text-text-secondary">Model Age</span>
+                        <span className={`font-bold ${
+                          trainingStatus.is_model_fresh === false ? 'text-red-400' :
+                          (trainingStatus.hours_since_training ?? 0) > 12 ? 'text-yellow-400' : 'text-green-400'
+                        }`}>
+                          {trainingStatus.hours_since_training != null
+                            ? `${trainingStatus.hours_since_training.toFixed(1)}h`
+                            : 'Unknown'}
+                          {trainingStatus.is_model_fresh === false && ' (STALE)'}
+                        </span>
+                      </div>
                       <div className="flex items-center justify-between p-3 bg-background-hover rounded-lg">
                         <span className="text-text-secondary">Pending Outcomes</span>
                         <span className={`font-bold ${trainingStatus.pending_outcomes >= trainingStatus.threshold_for_retrain ? 'text-yellow-400' : 'text-text-primary'}`}>
@@ -1467,6 +1484,15 @@ export default function OraclePage() {
                       {trainingStatus.needs_training && (
                         <div className="p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg text-yellow-400 text-sm">
                           Model needs retraining - threshold reached or model not trained
+                        </div>
+                      )}
+                      {/* Staleness warning (Issue #4 - end-to-end visibility) */}
+                      {trainingStatus.is_model_fresh === false && (
+                        <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm flex items-center gap-2">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                          </svg>
+                          MODEL IS STALE ({trainingStatus.hours_since_training?.toFixed(1)}h old) - Predictions may be outdated. Retraining recommended.
                         </div>
                       )}
                     </div>
