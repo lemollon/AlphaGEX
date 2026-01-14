@@ -329,7 +329,8 @@ class SignalGenerator:
                 context=context,
                 use_gex_walls=True,
                 use_claude_validation=True,  # Enable Claude for transparency logging
-                wall_filter_pct=self.config.wall_filter_pct,  # Uses ICARUS's 10%
+                wall_filter_pct=self.config.wall_filter_pct,  # Uses ICARUS's 6%
+                bot_name="ICARUS",  # Log as ICARUS in Oracle Data Flow
             )
 
             if not prediction:
@@ -719,6 +720,10 @@ class SignalGenerator:
 
             logger.info(f"[ICARUS GEX DIRECTIONAL ML] Direction: {gex_dir}, Confidence: {gex_dir_conf:.1%}")
 
+            # CRITICAL FIX: When Oracle says TRADE_FULL/TRADE_REDUCED/ENTER, maintain minimum 0.48 confidence
+            # to ensure signal passes is_valid check. Oracle's word is law.
+            min_confidence_floor = 0.48 if oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER') else 0.35
+
             # Map GEX direction to ICARUS direction
             gex_direction_map = {'BULLISH': 'BULLISH', 'BEARISH': 'BEARISH', 'FLAT': None}
             mapped_gex_dir = gex_direction_map.get(gex_dir)
@@ -731,19 +736,23 @@ class SignalGenerator:
             elif mapped_gex_dir and mapped_gex_dir != direction and gex_dir_conf > 0.7:
                 # GEX Directional ML disagrees strongly - reduce confidence (smaller for aggressive ICARUS)
                 penalty = (gex_dir_conf - 0.7) * 0.15
-                confidence -= penalty
-                logger.info(f"[GEX DIR ML DISAGREES] {gex_dir} vs {direction} (-{penalty:.1%} confidence)")
+                confidence = max(min_confidence_floor, confidence - penalty)
+                logger.info(f"[GEX DIR ML DISAGREES] {gex_dir} vs {direction} (-{penalty:.1%} confidence, floor={min_confidence_floor:.0%})")
 
         # REMOVED: ML Regime Classifier and Ensemble Strategy calls - dead code
 
         # Oracle adjustments (when not overriding)
         if oracle and direction_source != "ORACLE_OVERRIDE":
+            # CRITICAL FIX: When Oracle says TRADE_FULL/TRADE_REDUCED/ENTER, maintain minimum 0.48 confidence
+            # to ensure signal passes is_valid check. Oracle's word is law.
+            min_conf_floor = 0.48 if oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER') else 0.35
+
             if oracle_direction == direction and oracle_confidence > 0.6:
                 boost = oracle_confidence * 0.20
                 confidence = min(0.95, confidence + boost)
             elif oracle_direction != direction and oracle_direction != 'FLAT' and oracle_confidence > 0.6:
                 penalty = (oracle_confidence - 0.6) * 0.20  # Smaller penalty
-                confidence -= penalty
+                confidence = max(min_conf_floor, confidence - penalty)
             # NOTE: SKIP_TODAY does NOT block here - bot uses its own min_win_probability threshold
 
             if oracle.get('top_factors'):

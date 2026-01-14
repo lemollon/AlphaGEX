@@ -924,6 +924,10 @@ class SignalGenerator:
 
             logger.info(f"[ARES GEX DIRECTIONAL ML] Direction: {gex_dir}, Confidence: {gex_dir_conf:.1%}")
 
+            # CRITICAL FIX: When Oracle says TRADE_FULL, maintain minimum 0.5 confidence
+            # to ensure signal passes is_valid check. Oracle's word is law.
+            min_confidence_floor = 0.50 if oracle_advice == 'TRADE_FULL' else 0.40
+
             if gex_dir == 'FLAT':
                 # FLAT is ideal for Iron Condors - boost confidence
                 confidence = min(0.95, confidence + 0.05)
@@ -931,12 +935,12 @@ class SignalGenerator:
             elif gex_dir_conf > 0.80:
                 # Strong directional signal - reduce confidence for IC
                 penalty = (gex_dir_conf - 0.80) * 0.30  # Max 6% penalty at 100% confidence
-                confidence = max(0.40, confidence - penalty)
+                confidence = max(min_confidence_floor, confidence - penalty)
                 logger.info(f"  Strong {gex_dir} signal ({gex_dir_conf:.0%}) - IC confidence reduced to {confidence:.1%}")
             elif gex_dir_conf > 0.65:
                 # Moderate directional signal - small penalty
                 penalty = (gex_dir_conf - 0.65) * 0.15  # Max 2.25% penalty
-                confidence = max(0.45, confidence - penalty)
+                confidence = max(min_confidence_floor, confidence - penalty)
                 logger.info(f"  Moderate {gex_dir} signal - IC confidence adjusted to {confidence:.1%}")
 
         # REMOVED: ML Regime Classifier - dead code
