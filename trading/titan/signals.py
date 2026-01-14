@@ -128,9 +128,20 @@ class SignalGenerator:
     def get_market_data(self) -> Optional[Dict[str, Any]]:
         """Get SPX market data"""
         try:
-            # SPX price - try to get from SPX or derive from SPY
+            # GEX data (fetch first - it has spot_price from production API)
+            gex_data = self._get_gex_data()
+
+            # CRITICAL: Use spot_price from GEX calculator FIRST (uses production API for SPX)
+            # The global get_price() uses sandbox which doesn't support SPX
             spot = None
-            if DATA_AVAILABLE:
+            if gex_data:
+                spot = gex_data.get('spot_price', 0)
+                # Scale if from SPY
+                if gex_data.get('from_spy', False) and spot > 0 and spot < 1000:
+                    spot = spot * 10
+
+            # Fallback to get_price() only if GEX calc didn't return spot
+            if not spot and DATA_AVAILABLE:
                 spot = get_price("SPX")
                 if not spot:
                     # Fallback: SPY * 10 approximation
@@ -139,6 +150,7 @@ class SignalGenerator:
                         spot = spy * 10
 
             if not spot:
+                logger.warning("TITAN: No spot price available from GEX calc or price API")
                 return None
 
             vix = 20.0
@@ -147,9 +159,6 @@ class SignalGenerator:
                     vix = get_vix() or 20.0
                 except Exception as e:
                     logger.debug(f"VIX fetch failed, using default: {e}")
-
-            # GEX data (scale from SPY if needed)
-            gex_data = self._get_gex_data()
 
             expected_move = self._calculate_expected_move(spot, vix)
 
