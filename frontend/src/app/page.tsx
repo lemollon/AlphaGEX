@@ -11,6 +11,7 @@ import DashboardScanFeed from '@/components/DashboardScanFeed'
 import SAGEStatusWidget from '@/components/SAGEStatusWidget'
 import QuantStatusWidget from '@/components/QuantStatusWidget'
 import MathOptimizerWidget from '@/components/MathOptimizerWidget'
+import SyncStatusWidget from '@/components/SyncStatusWidget'
 
 export default function Dashboard() {
   return (
@@ -42,11 +43,12 @@ export default function Dashboard() {
             <GammaExpirationWidget />
           </div>
 
-          {/* Row 3: AI/ML Systems - SAGE, QUANT, Math Optimizer */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+          {/* Row 3: AI/ML Systems - SAGE, QUANT, Math Optimizer, Sync Status */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
             <SAGEStatusWidget />
             <QuantStatusWidget />
             <MathOptimizerWidget />
+            <SyncStatusWidget />
           </div>
 
           {/* Row 4: ARGUS Alerts & Scan Feed - Activity monitoring */}
