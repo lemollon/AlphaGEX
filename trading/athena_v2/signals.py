@@ -58,17 +58,7 @@ try:
 except ImportError:
     DATA_PROVIDER_AVAILABLE = False
 
-# GEX Directional ML - predicts BULLISH/BEARISH/FLAT from GEX structure
-GEX_DIRECTIONAL_ML_AVAILABLE = False
-try:
-    from quant.gex_directional_ml import GEXDirectionalPredictor, Direction, DirectionalPrediction
-    GEX_DIRECTIONAL_ML_AVAILABLE = True
-except ImportError:
-    GEXDirectionalPredictor = None
-    Direction = None
-    DirectionalPrediction = None
-
-# REMOVED: Ensemble Strategy and ML Regime Classifier - dead code
+# REMOVED: GEX Directional ML, Ensemble Strategy, ML Regime Classifier - redundant with Oracle
 
 # IV Solver - accurate implied volatility calculation
 IV_SOLVER_AVAILABLE = False
@@ -141,65 +131,6 @@ class SignalGenerator:
             except Exception as e:
                 logger.warning(f"Oracle init failed: {e}")
 
-        # GEX Directional ML - predicts BULLISH/BEARISH/FLAT from GEX structure
-        self.gex_directional_ml = None
-        if GEX_DIRECTIONAL_ML_AVAILABLE:
-            try:
-                self.gex_directional_ml = GEXDirectionalPredictor()
-                # Try to load from database first (persists across Render deploys)
-                loaded = False
-                if hasattr(self.gex_directional_ml, 'load_from_db'):
-                    loaded = self.gex_directional_ml.load_from_db()
-                    if loaded:
-                        logger.info("SignalGenerator: GEX Directional ML loaded from database")
-                # Fall back to file if DB load failed
-                if not loaded and hasattr(self.gex_directional_ml, 'load_model'):
-                    self.gex_directional_ml.load_model()
-                    logger.info("SignalGenerator: GEX Directional ML loaded from file")
-            except Exception as e:
-                logger.warning(f"GEX Directional ML init failed: {e}")
-
-        # REMOVED: ML Regime Classifier initialization - dead code
-
-    def get_gex_directional_prediction(self, gex_data: Dict, vix: float = 20.0) -> Optional[Dict]:
-        """
-        Get GEX Directional ML prediction (BULLISH/BEARISH/FLAT).
-
-        Uses trained XGBoost model to predict market direction from GEX structure.
-        This is ADDITIONAL signal confidence for directional bots.
-        """
-        if not self.gex_directional_ml:
-            return None
-
-        try:
-            prediction = self.gex_directional_ml.predict(gex_data, vix)
-
-            if prediction:
-                # Safe attribute access - prediction.direction might be enum or string
-                direction_val = prediction.direction.value if hasattr(prediction.direction, 'value') else str(prediction.direction)
-                confidence_val = getattr(prediction, 'confidence', 0.0)
-                probabilities_val = getattr(prediction, 'probabilities', {})
-
-                result = {
-                    'direction': direction_val,
-                    'confidence': confidence_val,
-                    'probabilities': probabilities_val,
-                    'model_name': 'GEX_DIRECTIONAL_ML',
-                }
-
-                logger.info(f"[ATHENA GEX DIRECTIONAL ML] Direction: {direction_val}, "
-                           f"Confidence: {confidence_val:.1%}")
-
-                return result
-
-        except Exception as e:
-            logger.debug(f"GEX Directional ML prediction error: {e}")
-
-        return None
-
-    # REMOVED: get_ml_regime_prediction method - dead code
-
-    # REMOVED: get_ensemble_boost method - dead code
 
     def get_gex_data(self) -> Optional[Dict[str, Any]]:
         """
@@ -733,39 +664,6 @@ class SignalGenerator:
             elif ml_direction and ml_direction != direction and ml_confidence > 0.7:
                 # Penalty when ML disagrees
                 confidence -= 0.10
-
-        # ============================================================
-        # GEX DIRECTIONAL ML - Additional direction confirmation layer
-        # Trained XGBoost model predicts BULLISH/BEARISH/FLAT from GEX structure
-        # ============================================================
-        gex_dir_prediction = self.get_gex_directional_prediction(gex_data, vix)
-        if gex_dir_prediction:
-            gex_dir = gex_dir_prediction.get('direction', 'FLAT')
-            gex_dir_conf = gex_dir_prediction.get('confidence', 0)
-
-            logger.info(f"[ATHENA GEX DIRECTIONAL ML] Direction: {gex_dir}, Confidence: {gex_dir_conf:.1%}")
-
-            # Map GEX direction to ATHENA direction
-            gex_direction_map = {'BULLISH': 'BULLISH', 'BEARISH': 'BEARISH', 'FLAT': None}
-            mapped_gex_dir = gex_direction_map.get(gex_dir)
-
-            # CRITICAL FIX: When Oracle says TRADE_FULL, maintain minimum 0.55 confidence
-            # to ensure signal passes is_valid check. Oracle's word is law.
-            oracle_adv = oracle.get('advice', '') if oracle else ''
-            min_confidence_floor = 0.55 if oracle_adv in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER') else 0.45
-
-            if mapped_gex_dir == direction and gex_dir_conf > 0.6:
-                # GEX Directional ML confirms direction - boost confidence
-                boost = gex_dir_conf * 0.15  # Up to 15% boost
-                confidence = min(0.95, confidence + boost)
-                logger.info(f"[GEX DIR ML CONFIRMS] {gex_dir} matches {direction} (+{boost:.1%} confidence)")
-            elif mapped_gex_dir and mapped_gex_dir != direction and gex_dir_conf > 0.7:
-                # GEX Directional ML disagrees strongly - reduce confidence
-                penalty = (gex_dir_conf - 0.7) * 0.20  # Up to 6% penalty
-                confidence = max(min_confidence_floor, confidence - penalty)
-                logger.info(f"[GEX DIR ML DISAGREES] {gex_dir} vs {direction} (-{penalty:.1%} confidence)")
-
-        # REMOVED: ML Regime Classifier and Ensemble Strategy calls - dead code
 
         # Oracle adjustments (when not overriding)
         if oracle and direction_source != "ORACLE_OVERRIDE":
