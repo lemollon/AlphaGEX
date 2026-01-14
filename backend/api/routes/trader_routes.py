@@ -120,53 +120,60 @@ async def get_trader_performance():
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Get latest equity snapshot - handle missing columns gracefully
-        max_drawdown = 0
-        sharpe_ratio = 0
-        try:
-            cursor.execute("""
-                SELECT equity, cumulative_pnl
-                FROM autonomous_equity_snapshots
-                ORDER BY timestamp DESC
-                LIMIT 1
-            """)
-            snapshot = cursor.fetchone()
-            # Calculate drawdown from equity if available
-            if snapshot and snapshot[0]:
-                # Get starting capital for drawdown calculation
-                cursor.execute("SELECT value FROM autonomous_config WHERE key = 'capital'")
-                cap_row = cursor.fetchone()
-                starting_capital = float(cap_row[0]) if cap_row else 1000000
-                current_equity = float(snapshot[0])
-                if current_equity < starting_capital:
-                    max_drawdown = ((starting_capital - current_equity) / starting_capital * 100)
-        except Exception as e:
-            # Rollback on error to clear aborted transaction state
-            logger.warning(f"Could not fetch equity snapshot: {e}")
-            conn.rollback()
-
-        # Get today's P&L
+        # PERFORMANCE FIX: Single CTE query for all metrics (was 4 sequential queries)
         from zoneinfo import ZoneInfo
         today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
 
+        max_drawdown = 0
+        sharpe_ratio = 0
         today_pnl = 0
+        starting_capital = 1000000
+
         try:
             cursor.execute("""
-                SELECT COALESCE(SUM(realized_pnl), 0)
-                FROM autonomous_closed_trades
-                WHERE exit_date = %s
+                WITH capital_config AS (
+                    SELECT COALESCE(value::numeric, 1000000) as capital
+                    FROM autonomous_config WHERE key = 'capital'
+                    LIMIT 1
+                ),
+                latest_equity AS (
+                    SELECT equity, cumulative_pnl
+                    FROM autonomous_equity_snapshots
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                ),
+                today_realized AS (
+                    SELECT COALESCE(SUM(realized_pnl), 0) as total
+                    FROM autonomous_closed_trades
+                    WHERE exit_date = %s
+                ),
+                today_unrealized AS (
+                    SELECT COALESCE(SUM(unrealized_pnl), 0) as total
+                    FROM autonomous_open_positions
+                )
+                SELECT
+                    COALESCE((SELECT capital FROM capital_config), 1000000) as starting_capital,
+                    (SELECT equity FROM latest_equity) as current_equity,
+                    (SELECT cumulative_pnl FROM latest_equity) as cumulative_pnl,
+                    (SELECT total FROM today_realized) as today_realized,
+                    (SELECT total FROM today_unrealized) as today_unrealized
             """, (today,))
-            today_realized = cursor.fetchone()[0] or 0
+            row = cursor.fetchone()
 
-            cursor.execute("""
-                SELECT COALESCE(SUM(unrealized_pnl), 0)
-                FROM autonomous_open_positions
-            """)
-            today_unrealized = cursor.fetchone()[0] or 0
+            if row:
+                starting_capital = float(row[0]) if row[0] else 1000000
+                current_equity = float(row[1]) if row[1] else starting_capital
+                today_realized = float(row[3]) if row[3] else 0
+                today_unrealized = float(row[4]) if row[4] else 0
 
-            today_pnl = float(today_realized) + float(today_unrealized)
+                today_pnl = today_realized + today_unrealized
+
+                # Calculate drawdown from equity if available
+                if current_equity < starting_capital:
+                    max_drawdown = ((starting_capital - current_equity) / starting_capital * 100)
+
         except Exception as e:
-            logger.warning(f"Could not fetch today's P&L: {e}")
+            logger.warning(f"Could not fetch performance metrics: {e}")
             conn.rollback()
 
         conn.close()

@@ -152,7 +152,10 @@ def retry_with_backoff(
     operation_name: str = "operation"
 ) -> Optional[T]:
     """
-    Execute function with exponential backoff retry.
+    Execute function with exponential backoff retry (synchronous version).
+
+    PERFORMANCE NOTE: This is the sync version for non-async contexts.
+    Use retry_with_backoff_async for async handlers.
 
     Args:
         func: Function to execute
@@ -177,7 +180,60 @@ def retry_with_backoff(
                     f"{operation_name} failed (attempt {attempt + 1}/{max_retries + 1}), retrying in {delay:.1f}s",
                     error=str(e)
                 )
-                time.sleep(delay)
+                # PERFORMANCE FIX: Use shorter sleep for sync context
+                # For async context, use retry_with_backoff_async instead
+                time.sleep(min(delay, 1.0))  # Cap at 1 second for sync
+            else:
+                log_with_context(
+                    'error',
+                    f"{operation_name} failed after {max_retries + 1} attempts",
+                    error=str(e)
+                )
+
+    return None
+
+
+import asyncio
+
+async def retry_with_backoff_async(
+    func: Callable[[], T],
+    max_retries: int = VIXConfig.MAX_RETRIES,
+    base_delay: float = VIXConfig.RETRY_BASE_DELAY,
+    operation_name: str = "operation"
+) -> Optional[T]:
+    """
+    PERFORMANCE FIX: Async version of retry_with_backoff that doesn't block.
+
+    Execute function with exponential backoff retry using asyncio.sleep.
+    This is the preferred version for async FastAPI handlers.
+
+    Args:
+        func: Function to execute (can be sync or async)
+        max_retries: Maximum number of retry attempts
+        base_delay: Base delay in seconds (doubles each retry)
+        operation_name: Name for logging
+
+    Returns:
+        Function result or None if all retries failed
+    """
+    import asyncio
+
+    for attempt in range(max_retries + 1):
+        try:
+            # Support both sync and async functions
+            result = func()
+            if asyncio.iscoroutine(result):
+                return await result
+            return result
+        except Exception as e:
+            if attempt < max_retries:
+                delay = base_delay * (2 ** attempt)
+                log_with_context(
+                    'warning',
+                    f"{operation_name} failed (attempt {attempt + 1}/{max_retries + 1}), retrying in {delay:.1f}s",
+                    error=str(e)
+                )
+                await asyncio.sleep(delay)  # Non-blocking sleep
             else:
                 log_with_context(
                     'error',

@@ -201,6 +201,8 @@ app = FastAPI(
 
 # Custom CORS Middleware - Handles ALL CORS including wildcard origins
 # This replaces the built-in CORSMiddleware which doesn't support wildcards
+import re as regex_module  # PERFORMANCE FIX: Import once at module level
+
 class CORSHeaderMiddleware(BaseHTTPMiddleware):
     def __init__(self, app):
         super().__init__(app)
@@ -210,23 +212,27 @@ class CORSHeaderMiddleware(BaseHTTPMiddleware):
         # Check if we should allow all origins (for development)
         self.allow_all = "*" in self.allowed_origins or os.getenv("ENVIRONMENT") == "development"
 
+        # PERFORMANCE FIX: Pre-compile wildcard patterns at startup (not per-request)
+        self._compiled_patterns = []
+        for allowed in self.allowed_origins:
+            if "*" in allowed:
+                # Convert https://*.vercel.app to regex pattern
+                pattern = allowed.replace(".", r"\.").replace("*", ".*")
+                self._compiled_patterns.append(regex_module.compile(f"^{pattern}$"))
+
     def _is_origin_allowed(self, origin: str) -> bool:
         """Check if origin is allowed, supporting wildcard patterns"""
         if not origin:
             return True  # Allow requests without Origin header
         if self.allow_all:
             return True
-        for allowed in self.allowed_origins:
-            if allowed == origin:
+        # Check exact matches first (fast path)
+        if origin in self.allowed_origins:
+            return True
+        # PERFORMANCE FIX: Use pre-compiled patterns (was compiling on every request)
+        for pattern in self._compiled_patterns:
+            if pattern.match(origin):
                 return True
-            # Handle wildcard patterns like https://*.vercel.app
-            if "*" in allowed:
-                import fnmatch
-                # Convert https://*.vercel.app to https://*.vercel.app pattern
-                pattern = allowed.replace(".", r"\.").replace("*", ".*")
-                import re
-                if re.match(f"^{pattern}$", origin):
-                    return True
         return True  # Default to allowing for API accessibility
 
     async def dispatch(self, request: Request, call_next):
