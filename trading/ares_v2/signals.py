@@ -902,7 +902,7 @@ class SignalGenerator:
         if use_ml_prediction and ml_prediction.get('suggested_sd_multiplier'):
             self._ml_suggested_sd = ml_prediction.get('suggested_sd_multiplier', 1.0)
 
-        logger.info(f"[ARES PASSED] {prediction_source} Win Prob {win_probability:.1%} >= threshold {min_win_prob:.1%}")
+        logger.info(f"[ARES PASSED] {prediction_source} Win Prob {win_probability:.1%} >= threshold {self.config.min_win_probability:.1%}")
 
         # ============================================================
         # GEX DIRECTIONAL ML - Check if market is too directional for IC

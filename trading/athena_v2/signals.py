@@ -175,15 +175,20 @@ class SignalGenerator:
             prediction = self.gex_directional_ml.predict(gex_data, vix)
 
             if prediction:
+                # Safe attribute access - prediction.direction might be enum or string
+                direction_val = prediction.direction.value if hasattr(prediction.direction, 'value') else str(prediction.direction)
+                confidence_val = getattr(prediction, 'confidence', 0.0)
+                probabilities_val = getattr(prediction, 'probabilities', {})
+
                 result = {
-                    'direction': prediction.direction.value,  # BULLISH/BEARISH/FLAT
-                    'confidence': prediction.confidence,
-                    'probabilities': prediction.probabilities,
+                    'direction': direction_val,
+                    'confidence': confidence_val,
+                    'probabilities': probabilities_val,
                     'model_name': 'GEX_DIRECTIONAL_ML',
                 }
 
-                logger.info(f"[ATHENA GEX DIRECTIONAL ML] Direction: {prediction.direction.value}, "
-                           f"Confidence: {prediction.confidence:.1%}")
+                logger.info(f"[ATHENA GEX DIRECTIONAL ML] Direction: {direction_val}, "
+                           f"Confidence: {confidence_val:.1%}")
 
                 return result
 
