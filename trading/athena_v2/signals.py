@@ -511,6 +511,33 @@ class SignalGenerator:
         # No min_win_probability threshold check - Oracle's word is final
         # ============================================================
         oracle_says_trade = oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
+
+        # FLAT/NEUTRAL is NOT an excuse for blocking trades when Oracle says TRADE
+        # Use Oracle's suitability scores to derive direction, fallback to GEX walls
+        if oracle_says_trade and effective_direction not in ('BULLISH', 'BEARISH'):
+            # First try Oracle's suitability scores (Oracle already analyzed the market)
+            bullish_suit = oracle.get('bullish_suitability', 0) if oracle else 0
+            bearish_suit = oracle.get('bearish_suitability', 0) if oracle else 0
+
+            if bullish_suit > bearish_suit:
+                effective_direction = "BULLISH"
+                logger.info(f"[ATHENA] Direction from Oracle suitability: BULLISH ({bullish_suit:.0%} > {bearish_suit:.0%})")
+            elif bearish_suit > bullish_suit:
+                effective_direction = "BEARISH"
+                logger.info(f"[ATHENA] Direction from Oracle suitability: BEARISH ({bearish_suit:.0%} > {bullish_suit:.0%})")
+            else:
+                # Tie-breaker: use GEX wall proximity
+                call_wall = gex_data.get('call_wall', 0)
+                put_wall = gex_data.get('put_wall', 0)
+                if call_wall > 0 and put_wall > 0:
+                    call_dist = abs(spot_price - call_wall) / spot_price if spot_price > 0 else 1
+                    put_dist = abs(spot_price - put_wall) / spot_price if spot_price > 0 else 1
+                    effective_direction = "BULLISH" if put_dist < call_dist else "BEARISH"
+                    logger.info(f"[ATHENA] Direction from GEX walls (tie-breaker): {effective_direction}")
+                else:
+                    effective_direction = "BULLISH"  # Default
+                    logger.info(f"[ATHENA] Direction defaulted to BULLISH")
+
         ml_oracle_says_trade = oracle_says_trade and effective_direction in ('BULLISH', 'BEARISH')
 
         # Log Oracle decision
@@ -557,6 +584,13 @@ class SignalGenerator:
             # Oracle is the god of all trade decisions.
             # If Oracle says SKIP_TODAY, we don't trade. Period.
             logger.info(f"[ATHENA SKIP] Oracle says {oracle_advice} - respecting Oracle's decision")
+
+            # Convert Oracle top_factors to JSON string for blocked signal audit trail
+            import json
+            oracle_top_factors_json = ""
+            if oracle and oracle.get('top_factors'):
+                oracle_top_factors_json = json.dumps(oracle['top_factors'])
+
             return TradeSignal(
                 direction=effective_direction if effective_direction in ('BULLISH', 'BEARISH') else "UNKNOWN",
                 spread_type=SpreadType.BULL_CALL if effective_direction == "BULLISH" else SpreadType.BEAR_PUT,
@@ -569,6 +603,12 @@ class SignalGenerator:
                 source="BLOCKED_ORACLE_NO_TRADE",
                 reasoning=f"BLOCKED: Oracle advice={oracle_advice}, direction={effective_direction}, win_prob={effective_win_prob:.0%}",
                 ml_win_probability=effective_win_prob,
+                # BUG FIX: Include Oracle fields for audit trail
+                oracle_advice=oracle_advice,
+                oracle_win_probability=oracle_win_prob,
+                oracle_direction=oracle_direction,
+                oracle_confidence=oracle_confidence,
+                oracle_top_factors=oracle_top_factors_json,
             )
 
         # Get wall info for logging only (Oracle already provided direction above)

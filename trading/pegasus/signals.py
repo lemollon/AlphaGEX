@@ -677,7 +677,11 @@ class SignalGenerator:
 
         if effective_win_prob < min_win_prob:
             logger.info(f"[PEGASUS BLOCKED] Win probability {effective_win_prob:.1%} < threshold {min_win_prob:.1%}")
-            # Return an invalid signal with the reason
+
+            # Convert Oracle top_factors to list for blocked signal audit trail
+            oracle_top_factors = oracle.get('top_factors', []) if oracle else []
+
+            # Return an invalid signal with the reason - include Oracle fields for audit trail
             return IronCondorSignal(
                 spot_price=market['spot_price'],
                 vix=market['vix'],
@@ -697,6 +701,13 @@ class SignalGenerator:
                 reasoning=f"Win probability {effective_win_prob:.1%} below threshold {min_win_prob:.1%}",
                 source="THRESHOLD_BLOCKED",
                 is_valid=False,
+                # BUG FIX: Include Oracle fields for audit trail
+                oracle_win_probability=oracle_win_prob,
+                oracle_advice=oracle.get('advice', '') if oracle else '',
+                oracle_top_factors=oracle_top_factors,
+                oracle_suggested_sd=oracle.get('suggested_sd_multiplier', 1.0) if oracle else 1.0,
+                oracle_use_gex_walls=oracle.get('use_gex_walls', False) if oracle else False,
+                oracle_probabilities=oracle.get('probabilities', {}) if oracle else {},
             )
 
         if effective_win_prob <= 0:

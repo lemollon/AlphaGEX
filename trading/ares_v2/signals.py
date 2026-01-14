@@ -905,8 +905,9 @@ class SignalGenerator:
             source=strikes.get('source', 'SD'),
 
             # Oracle context (FULL for audit)
+            # BUG FIX: Use the oracle_advice variable from line 714 for consistency
             oracle_win_probability=win_probability,
-            oracle_advice=oracle.get('advice', '') if oracle else '',
+            oracle_advice=oracle_advice,  # Use local var, not re-fetch with different default
             oracle_top_factors=oracle.get('top_factors', []) if oracle else [],
             oracle_suggested_sd=oracle.get('suggested_sd_multiplier', 1.0) if oracle else 1.0,
             oracle_use_gex_walls=oracle.get('use_gex_walls', False) if oracle else False,
@@ -914,5 +915,5 @@ class SignalGenerator:
         )
 
         logger.info(f"Signal: IC {strikes['put_long']}/{strikes['put_short']}-{strikes['call_short']}/{strikes['call_long']} @ ${pricing['total_credit']:.2f}")
-        logger.info(f"Oracle: Win Prob={win_probability:.0%}, Advice={oracle.get('advice', 'N/A') if oracle else 'N/A'}")
+        logger.info(f"Oracle: Win Prob={win_probability:.0%}, Advice={oracle_advice}")
         return signal

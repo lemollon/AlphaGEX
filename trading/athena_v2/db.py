@@ -180,6 +180,8 @@ class ATHENADatabase:
             ("wall_distance_pct", "DECIMAL(6, 4)"),
             # Full trade reasoning
             ("trade_reasoning", "TEXT"),
+            # Oracle advice (CRITICAL for audit trail - BUG FIX)
+            ("oracle_advice", "VARCHAR(50)"),
         ]
 
         for col_name, col_type in columns_to_add:
@@ -288,14 +290,15 @@ class ATHENADatabase:
                         underlying_at_entry, call_wall, put_wall,
                         gex_regime, vix_at_entry,
                         flip_point, net_gex,
-                        oracle_confidence, ml_direction, ml_confidence,
+                        oracle_confidence, oracle_advice,
+                        ml_direction, ml_confidence,
                         ml_model_name, ml_win_probability, ml_top_features,
                         wall_type, wall_distance_pct, trade_reasoning,
                         order_id, status, open_time
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                 """, (
                     pos.position_id,
@@ -318,6 +321,7 @@ class ATHENADatabase:
                     _to_python(pos.net_gex) if pos.net_gex else None,
                     # ML context (FULL audit trail)
                     _to_python(pos.oracle_confidence) if pos.oracle_confidence else None,
+                    pos.oracle_advice or None,  # BUG FIX: Now storing Oracle's trade decision
                     pos.ml_direction or None,
                     _to_python(pos.ml_confidence) if pos.ml_confidence else None,
                     pos.ml_model_name or None,
