@@ -394,6 +394,22 @@ def get_connection():
     return adapter.connect()
 
 
+def close_pool():
+    """
+    Close the database connection pool.
+
+    Call this during graceful shutdown to release all connections.
+
+    Usage:
+        from database_adapter import close_pool
+        close_pool()  # Called in shutdown handler
+    """
+    global _adapter
+    if _adapter is not None:
+        _adapter.close_pool()
+        _adapter = None  # Allow re-initialization if needed
+
+
 if __name__ == "__main__":
     # Test the adapter
     print("\n" + "="*70)

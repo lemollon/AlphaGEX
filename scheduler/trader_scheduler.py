@@ -2987,12 +2987,54 @@ def run_standalone():
         logger.error(f"CRITICAL ERROR in main loop: {e}")
         logger.error(traceback.format_exc())
     finally:
+        logger.info("=" * 60)
+        logger.info("GRACEFUL SHUTDOWN SEQUENCE")
+        logger.info("=" * 60)
+
+        # Step 1: Stop the scheduler
         try:
             if scheduler and scheduler.is_running:
+                logger.info("[SHUTDOWN] Stopping APScheduler...")
                 scheduler.stop()
+                logger.info("[SHUTDOWN] APScheduler stopped")
         except Exception as e:
-            logger.error(f"Error stopping scheduler during shutdown: {e}")
+            logger.error(f"[SHUTDOWN] Error stopping scheduler: {e}")
+
+        # Step 2: Log open positions for safeguarding awareness
+        try:
+            logger.info("[SHUTDOWN] Checking open positions...")
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT bot_name, COUNT(*) as count
+                FROM autonomous_open_positions
+                WHERE status = 'OPEN'
+                GROUP BY bot_name
+            """)
+            rows = cursor.fetchall()
+            if rows:
+                logger.warning("[SHUTDOWN] OPEN POSITIONS AT WORKER SHUTDOWN:")
+                for row in rows:
+                    logger.warning(f"  {row[0]}: {row[1]} positions")
+            else:
+                logger.info("[SHUTDOWN] No open positions")
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            logger.error(f"[SHUTDOWN] Position check failed: {e}")
+
+        # Step 3: Close database connection pool
+        try:
+            from database_adapter import close_pool
+            logger.info("[SHUTDOWN] Closing database connection pool...")
+            close_pool()
+            logger.info("[SHUTDOWN] Database pool closed")
+        except Exception as e:
+            logger.error(f"[SHUTDOWN] Database pool close failed: {e}")
+
+        logger.info("=" * 60)
         logger.info("Autonomous trader shutdown complete")
+        logger.info("=" * 60)
 
 
 if __name__ == "__main__":

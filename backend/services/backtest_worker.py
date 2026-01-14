@@ -546,7 +546,23 @@ def run_worker():
             logger.error(f"Worker error: {e}", exc_info=True)
             time.sleep(POLL_INTERVAL)
 
-    logger.info(f"Worker {WORKER_ID} shutting down gracefully")
+    # Graceful shutdown sequence
+    logger.info("=" * 60)
+    logger.info("GRACEFUL SHUTDOWN SEQUENCE")
+    logger.info("=" * 60)
+
+    # Close database connection pool
+    try:
+        from database_adapter import close_pool
+        logger.info("[SHUTDOWN] Closing database connection pool...")
+        close_pool()
+        logger.info("[SHUTDOWN] Database pool closed")
+    except Exception as e:
+        logger.error(f"[SHUTDOWN] Database pool close failed: {e}")
+
+    logger.info("=" * 60)
+    logger.info(f"Worker {WORKER_ID} shutdown complete")
+    logger.info("=" * 60)
 
 
 if __name__ == "__main__":
