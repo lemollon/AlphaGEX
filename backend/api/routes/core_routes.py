@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 
 import requests
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 
 # Import dependencies with fallback handling
 try:
@@ -88,6 +89,49 @@ async def health_check():
             "database": "operational"
         }
     }
+
+
+@router.get("/ready")
+async def readiness_check():
+    """
+    Readiness probe endpoint for zero-downtime deployments.
+
+    Returns 200 if the service is ready to accept traffic.
+    Returns 503 if the service is shutting down or not yet ready.
+
+    Used by load balancers to determine whether to route traffic here.
+    During graceful shutdown, this returns 503 BEFORE /health goes unhealthy,
+    giving time to drain in-flight requests.
+    """
+    try:
+        from backend.services.graceful_shutdown import get_shutdown_manager
+        manager = get_shutdown_manager()
+
+        if not manager.is_ready:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "not_ready",
+                    "phase": manager.phase.value,
+                    "reason": "Service is shutting down" if manager.is_shutting_down else "Service is starting up",
+                    "in_flight_requests": manager.in_flight_count
+                }
+            )
+
+        return {
+            "status": "ready",
+            "phase": manager.phase.value,
+            "in_flight_requests": manager.in_flight_count,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except ImportError:
+        # Graceful shutdown manager not available - assume ready
+        return {
+            "status": "ready",
+            "phase": "RUNNING",
+            "timestamp": datetime.now().isoformat()
+        }
 
 
 @router.get("/api/system-health")

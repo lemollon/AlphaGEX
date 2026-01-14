@@ -1928,10 +1928,70 @@ async def startup_event():
     print("   • Max 10 restarts per hour per bot (rate limited)")
     print("   • State persisted to database (survives full restarts)")
     print("=" * 80 + "\n")
+
+    # =========================================================================
+    # MARK SERVICE AS READY (for zero-downtime deployments)
+    # =========================================================================
+    try:
+        from backend.services.graceful_shutdown import get_shutdown_manager, setup_signal_handlers
+        manager = get_shutdown_manager()
+
+        # Register watchdog for graceful shutdown
+        if thread_watchdog:
+            manager.register_component('watchdog', thread_watchdog)
+
+        # Setup signal handlers for SIGTERM/SIGINT
+        setup_signal_handlers()
+
+        # Mark service as ready to accept traffic
+        manager.set_ready(True)
+        print("✅ Service marked as READY (graceful shutdown enabled)")
+    except ImportError as e:
+        print(f"ℹ️  Graceful shutdown manager not available: {e}")
+    except Exception as e:
+        print(f"⚠️  Could not initialize graceful shutdown: {e}")
+
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Run on application shutdown"""
+    """
+    Run on application shutdown - Graceful shutdown for zero-downtime deployments.
+
+    Shutdown sequence:
+    1. Mark service as not ready (load balancer stops sending traffic)
+    2. Drain in-flight requests (wait up to 30s)
+    3. Close database connections
+    4. Stop background threads
+    5. Log open positions state
+    """
     print("🛑 AlphaGEX API Shutting down...")
+    print("   Initiating graceful shutdown sequence...")
+
+    try:
+        from backend.services.graceful_shutdown import get_shutdown_manager
+        manager = get_shutdown_manager()
+
+        # Register thread watchdog for cleanup
+        if thread_watchdog:
+            manager.register_component('watchdog', thread_watchdog)
+
+        # Execute graceful shutdown
+        await manager.shutdown()
+
+        print("✅ Graceful shutdown complete")
+
+    except ImportError as e:
+        print(f"⚠️  Graceful shutdown manager not available: {e}")
+        # Fallback: close database pool directly
+        try:
+            from database_adapter import close_pool
+            close_pool()
+            print("✅ Database pool closed (fallback)")
+        except Exception as db_err:
+            print(f"⚠️  Database pool close failed: {db_err}")
+    except Exception as e:
+        print(f"❌ Graceful shutdown error: {e}")
+        import traceback
+        traceback.print_exc()
 
 # ============================================================================
 # Run Server (for local development)

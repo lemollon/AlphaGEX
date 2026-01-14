@@ -42,12 +42,25 @@ Market Hours: 9:30 AM - 4:00 PM ET (Mon-Fri)
 """
 
 import schedule
+import signal
 import time
 import traceback
 from datetime import datetime, time as dt_time
 from zoneinfo import ZoneInfo
 import sys
 import os
+
+# Graceful shutdown support for zero-downtime deployments
+shutdown_requested = False
+
+def signal_handler(signum, frame):
+    """Handle SIGTERM/SIGINT for graceful shutdown"""
+    global shutdown_requested
+    print(f"\n⚠️  Received signal {signum}, requesting graceful shutdown...")
+    shutdown_requested = True
+
+signal.signal(signal.SIGTERM, signal_handler)
+signal.signal(signal.SIGINT, signal_handler)
 from pathlib import Path
 
 # CRITICAL: Add project root to path for module imports
@@ -1346,18 +1359,35 @@ def run_scheduler():
 
     # Main loop
     try:
-        while True:
+        while not shutdown_requested:
             schedule.run_pending()
             time.sleep(30)  # Check every 30 seconds for more responsive scheduling
 
     except KeyboardInterrupt:
         print("\n\n⚠️  Scheduler stopped by user")
-        sys.exit(0)
     except Exception as e:
         print(f"\n\n❌ Fatal error in scheduler: {e}")
         traceback.print_exc()
         # Don't exit - let watchdog restart us
         raise
+    finally:
+        # Graceful shutdown sequence
+        print("\n" + "=" * 60)
+        print("GRACEFUL SHUTDOWN SEQUENCE")
+        print("=" * 60)
+
+        # Close database connection pool
+        try:
+            from database_adapter import close_pool
+            print("[SHUTDOWN] Closing database connection pool...")
+            close_pool()
+            print("[SHUTDOWN] Database pool closed")
+        except Exception as e:
+            print(f"[SHUTDOWN] Database pool close failed: {e}")
+
+        print("=" * 60)
+        print("Data collector shutdown complete")
+        print("=" * 60)
 
 
 if __name__ == '__main__':
