@@ -249,6 +249,7 @@ async def get_athena_status():
     if not athena:
         # ATHENA not running - read stats from database
         total_pnl = 0
+        unrealized_pnl = 0
         trade_count = 0
         win_count = 0
         open_count = 0
@@ -260,7 +261,7 @@ async def get_athena_status():
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Get summary stats from athena_positions or apache_positions
+            # Get summary stats from athena_positions or apache_positions including unrealized P&L
             try:
                 cursor.execute('''
                     SELECT
@@ -269,7 +270,8 @@ async def get_athena_status():
                         SUM(CASE WHEN status IN ('closed', 'expired') THEN 1 ELSE 0 END) as closed_count,
                         SUM(CASE WHEN status IN ('closed', 'expired') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
                         COALESCE(SUM(CASE WHEN status IN ('closed', 'expired') THEN realized_pnl ELSE 0 END), 0) as total_pnl,
-                        SUM(CASE WHEN DATE(created_at) = %s THEN 1 ELSE 0 END) as traded_today
+                        SUM(CASE WHEN DATE(created_at) = %s THEN 1 ELSE 0 END) as traded_today,
+                        COALESCE(SUM(CASE WHEN status = 'open' THEN unrealized_pnl ELSE 0 END), 0) as unrealized_pnl
                     FROM athena_positions
                 ''', (today,))
                 row = cursor.fetchone()
@@ -282,7 +284,8 @@ async def get_athena_status():
                         SUM(CASE WHEN status IN ('closed', 'expired') THEN 1 ELSE 0 END) as closed_count,
                         SUM(CASE WHEN status IN ('closed', 'expired') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
                         COALESCE(SUM(CASE WHEN status IN ('closed', 'expired') THEN realized_pnl ELSE 0 END), 0) as total_pnl,
-                        SUM(CASE WHEN DATE(created_at) = %s THEN 1 ELSE 0 END) as traded_today
+                        SUM(CASE WHEN DATE(created_at) = %s THEN 1 ELSE 0 END) as traded_today,
+                        COALESCE(SUM(CASE WHEN status = 'open' THEN unrealized_pnl ELSE 0 END), 0) as unrealized_pnl
                     FROM apache_positions
                 ''', (today,))
                 row = cursor.fetchone()
@@ -294,6 +297,7 @@ async def get_athena_status():
                 win_count = row[3] or 0
                 total_pnl = float(row[4] or 0)
                 traded_today = (row[5] or 0) > 0
+                unrealized_pnl = float(row[6] or 0)
 
             conn.close()
         except Exception as db_err:
@@ -305,9 +309,9 @@ async def get_athena_status():
         scan_interval = 5
         is_active, active_reason = _is_bot_actually_active(heartbeat, scan_interval)
 
-        # Calculate current_equity = starting_capital + total_pnl (matches equity curve)
+        # Calculate current_equity = starting_capital + realized + unrealized (matches equity curve)
         starting_capital = 100000
-        current_equity = starting_capital + total_pnl
+        current_equity = starting_capital + total_pnl + unrealized_pnl
 
         return {
             "success": True,
@@ -318,6 +322,7 @@ async def get_athena_status():
                 "starting_capital": starting_capital,
                 "current_equity": round(current_equity, 2),
                 "total_pnl": round(total_pnl, 2),
+                "unrealized_pnl": round(unrealized_pnl, 2),
                 "trade_count": trade_count,
                 "win_rate": win_rate,
                 "open_positions": open_count,
@@ -369,10 +374,12 @@ async def get_athena_status():
         if 'win_rate' not in status:
             status['win_rate'] = 0
 
-        # Calculate current_equity = starting_capital + total_pnl (matches equity curve)
+        # Calculate current_equity = starting_capital + realized + unrealized (matches equity curve)
         starting_capital = 100000
+        total_pnl = status.get('total_pnl', 0)
+        unrealized_pnl = status.get('unrealized_pnl', 0)
         status['starting_capital'] = starting_capital
-        status['current_equity'] = round(starting_capital + status.get('total_pnl', 0), 2)
+        status['current_equity'] = round(starting_capital + total_pnl + unrealized_pnl, 2)
 
         return {
             "success": True,
