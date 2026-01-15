@@ -489,7 +489,7 @@ export default function AresPage() {
   const { data: positionsData, error: positionsError, isLoading: positionsLoading } = useARESPositions()
   const { data: equityData, error: equityError, isLoading: equityLoading } = useARESEquityCurve(30)
   const { data: configData } = useARESConfig()
-  const { data: livePnLData } = useARESLivePnL()
+  const { data: livePnLData, isLoading: livePnLLoading, isValidating: livePnLValidating } = useARESLivePnL()
   const { data: scanData, isLoading: scansLoading } = useScanActivityAres(50)
 
   // Extract data
@@ -670,7 +670,8 @@ export default function AresPage() {
                 <UnrealizedPnLCard
                   botName="ARES"
                   data={livePnLData?.data || livePnLData}
-                  isLoading={!livePnLData}
+                  isLoading={livePnLLoading}
+                  isValidating={livePnLValidating}
                 />
 
                 {/* Performance Drift - Backtest vs Live */}

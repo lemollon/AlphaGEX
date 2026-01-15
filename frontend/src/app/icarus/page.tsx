@@ -276,7 +276,7 @@ export default function IcarusPage() {
   const { data: positionsData, error: positionsError, isLoading: positionsLoading } = useICARUSPositions()
   const { data: performanceData } = useICARUSPerformance(30)
   const { data: configData } = useICARUSConfig()
-  const { data: livePnLData } = useICARUSLivePnL()
+  const { data: livePnLData, isLoading: livePnLLoading, isValidating: livePnLValidating } = useICARUSLivePnL()
   const { data: scanData, isLoading: scansLoading } = useICARUSScanActivity(50)
 
   // Extract data
@@ -469,7 +469,8 @@ export default function IcarusPage() {
                 <UnrealizedPnLCard
                   botName="ICARUS"
                   data={livePnLData?.data || livePnLData}
-                  isLoading={!livePnLData}
+                  isLoading={livePnLLoading}
+                  isValidating={livePnLValidating}
                 />
 
                 {/* Performance Drift - Backtest vs Live */}

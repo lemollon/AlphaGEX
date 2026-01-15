@@ -27,6 +27,7 @@ import {
   StatCard,
   BOT_BRANDS,
   BotStatusBanner,
+  UnrealizedPnLCard,
 } from '@/components/trader'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
 import DriftStatusCard from '@/components/DriftStatusCard'
@@ -273,7 +274,7 @@ export default function AthenaPage() {
   const { data: positionsData, error: positionsError, isLoading: positionsLoading } = useATHENAPositions()
   const { data: performanceData } = useATHENAPerformance(30)
   const { data: configData } = useATHENAConfig()
-  const { data: livePnLData } = useATHENALivePnL()
+  const { data: livePnLData, isLoading: livePnLLoading, isValidating: livePnLValidating } = useATHENALivePnL()
   const { data: scanData, isLoading: scansLoading } = useScanActivityAthena(50)
 
   // Extract data
@@ -414,6 +415,14 @@ export default function AthenaPage() {
                   openPositions={openPositions.length}
                   todayPnl={status?.daily_pnl || 0}
                   todayTrades={status?.daily_trades || 0}
+                />
+
+                {/* Live Unrealized P&L Card */}
+                <UnrealizedPnLCard
+                  botName="ATHENA"
+                  data={livePnLData?.data || livePnLData}
+                  isLoading={livePnLLoading}
+                  isValidating={livePnLValidating}
                 />
 
                 {/* Performance Drift - Backtest vs Live */}

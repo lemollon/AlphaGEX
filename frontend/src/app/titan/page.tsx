@@ -510,7 +510,7 @@ export default function TitanPage() {
   const { data: positionsData, error: positionsError, isLoading: positionsLoading } = useTITANPositions()
   // Equity curve data is now fetched by the shared EquityCurveChart component
   const { data: configData } = useTITANConfig()
-  const { data: livePnLData } = useTITANLivePnL()
+  const { data: livePnLData, isLoading: livePnLLoading, isValidating: livePnLValidating } = useTITANLivePnL()
   const { data: scanData, isLoading: scansLoading } = useScanActivityTitan(50)
 
   // Extract data
@@ -720,7 +720,8 @@ export default function TitanPage() {
                 <UnrealizedPnLCard
                   botName="TITAN"
                   data={livePnLData?.data || livePnLData}
-                  isLoading={!livePnLData}
+                  isLoading={livePnLLoading}
+                  isValidating={livePnLValidating}
                 />
 
                 {/* Performance Drift - Backtest vs Live */}
