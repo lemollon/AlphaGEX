@@ -296,13 +296,13 @@ class AutonomousTraderScheduler:
 
         # ARES V2 - SPY Iron Condors (10% monthly target)
         # Capital: Uses AlphaGEX internal capital allocation
-        # PAPER mode: Simulated trades with AlphaGEX internal capital, production Tradier for quotes
+        # LIVE mode: Sends orders to Tradier SANDBOX account for testing
         self.ares_trader = None
         if ARES_AVAILABLE:
             try:
-                config = ARESConfig(mode=ARESTradingMode.PAPER)
+                config = ARESConfig(mode=ARESTradingMode.LIVE)
                 self.ares_trader = ARESTrader(config=config)
-                logger.info(f"✅ ARES V2 initialized (SPY Iron Condors, PAPER mode - AlphaGEX internal)")
+                logger.info(f"✅ ARES V2 initialized (SPY Iron Condors, LIVE mode - Tradier SANDBOX)")
             except Exception as e:
                 logger.warning(f"ARES V2 initialization failed: {e}")
                 self.ares_trader = None
