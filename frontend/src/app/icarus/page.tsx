@@ -27,6 +27,7 @@ import {
   StatCard,
   BOT_BRANDS,
   BotStatusBanner,
+  UnrealizedPnLCard,
 } from '@/components/trader'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
 import DriftStatusCard from '@/components/DriftStatusCard'
@@ -462,6 +463,13 @@ export default function IcarusPage() {
                   openPositions={openPositions.length}
                   todayPnl={status?.daily_pnl || 0}
                   todayTrades={status?.daily_trades || 0}
+                />
+
+                {/* Live Unrealized P&L Card */}
+                <UnrealizedPnLCard
+                  botName="ICARUS"
+                  data={livePnLData?.data || livePnLData}
+                  isLoading={!livePnLData}
                 />
 
                 {/* Performance Drift - Backtest vs Live */}
