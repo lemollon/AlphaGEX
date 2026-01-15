@@ -93,9 +93,23 @@ class ICARUSDatabase:
                         put_wall DECIMAL(10, 2),
                         gex_regime VARCHAR(30),
                         vix_at_entry DECIMAL(6, 2),
+                        -- Kronos GEX context
+                        flip_point DECIMAL(10, 2),
+                        net_gex DECIMAL(15, 2),
+                        -- Oracle/ML context (FULL audit trail)
                         oracle_confidence DECIMAL(5, 4),
+                        oracle_advice VARCHAR(50),
                         ml_direction VARCHAR(20),
                         ml_confidence DECIMAL(5, 4),
+                        ml_model_name VARCHAR(100),
+                        ml_win_probability DECIMAL(8, 4),
+                        ml_top_features TEXT,
+                        -- Wall proximity context
+                        wall_type VARCHAR(20),
+                        wall_distance_pct DECIMAL(6, 4),
+                        -- Trade reasoning
+                        trade_reasoning TEXT,
+                        -- Order tracking
                         order_id VARCHAR(50),
                         status VARCHAR(20) NOT NULL DEFAULT 'open',
                         open_time TIMESTAMP WITH TIME ZONE NOT NULL,
@@ -190,8 +204,9 @@ class ICARUSDatabase:
                     ALTER TABLE icarus_positions
                     ADD COLUMN IF NOT EXISTS {col_name} {col_type}
                 """)
-            except Exception:
-                pass  # Column might already exist
+            except Exception as e:
+                # Log but don't fail - column might already exist
+                logger.debug(f"{self.bot_name}: Column migration {col_name}: {e}")
 
     # =========================================================================
     # POSITION OPERATIONS
@@ -340,6 +355,8 @@ class ICARUSDatabase:
                 return True
         except Exception as e:
             logger.error(f"{self.bot_name}: Failed to save position: {e}")
+            import traceback
+            logger.error(f"{self.bot_name}: Save position traceback: {traceback.format_exc()}")
             return False
 
     def close_position(
