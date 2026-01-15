@@ -714,7 +714,10 @@ class PEGASUSTrader(MathOptimizerMixin):
         Get the effective force exit time, accounting for early close days.
 
         On early close days (Christmas Eve, day after Thanksgiving), market closes at 12:00 PM CT.
-        We should force exit 5 minutes before market close instead of using the normal config.
+        We should force exit 10 minutes before market close instead of using the normal config.
+
+        Normal market close: 3:00 PM CT (4:00 PM ET)
+        Force exit: 10 minutes before close
         """
         # Default force exit from config
         force = self.config.force_exit.split(':')
@@ -723,8 +726,8 @@ class PEGASUSTrader(MathOptimizerMixin):
         # Check if today is an early close day
         if MARKET_CALENDAR_AVAILABLE and MARKET_CALENDAR:
             close_hour, close_minute = MARKET_CALENDAR.get_market_close_time(today)
-            # Early close: 12:00 PM CT - force exit at 11:55 AM CT
-            early_close_force = now.replace(hour=close_hour, minute=close_minute, second=0) - timedelta(minutes=5)
+            # Early close: 12:00 PM CT - force exit 10 min before (11:50 AM CT)
+            early_close_force = now.replace(hour=close_hour, minute=close_minute, second=0) - timedelta(minutes=10)
 
             # Use the earlier of config time and early close time
             if early_close_force < config_force_time:
@@ -734,8 +737,19 @@ class PEGASUSTrader(MathOptimizerMixin):
         return config_force_time
 
     def _check_exit(self, pos: IronCondorPosition, now: datetime, today: str) -> tuple[bool, str]:
+        """
+        Check if position should be closed.
+
+        Exit conditions (in priority order):
+        1. FORCE_EXIT: Current time >= force exit time on expiration day
+        2. EXPIRED: Position's expiration date is BEFORE today (past expiration - should have been closed)
+        3. PROFIT_TARGET: 50% profit achieved
+        4. STOP_LOSS: Max loss hit (if enabled)
+
+        NOTE: On expiration day, we use FORCE_EXIT (not EXPIRED) to ensure positions are
+        closed at the proper time (10 min before market close), not at market open.
+        """
         # Convert string dates to date objects for reliable comparison
-        # This handles edge cases like different date formats or timezone issues
         try:
             today_date = datetime.strptime(today, "%Y-%m-%d").date()
             # Handle both string and date object for expiration
@@ -746,24 +760,29 @@ class PEGASUSTrader(MathOptimizerMixin):
         except ValueError as e:
             logger.error(f"Date parsing error in _check_exit: {e}")
             # Fall back to string comparison if parsing fails
-            if pos.expiration <= today:
-                return True, "EXPIRED"
             expiration_date = None
             today_date = None
 
         if expiration_date and today_date:
-            if expiration_date <= today_date:
-                return True, "EXPIRED"
-
             # Get force exit time (handles early close days)
             force_time = self._get_force_exit_time(now, today)
-            if now >= force_time and expiration_date == today_date:
+
+            # FORCE_EXIT: On expiration day, close at force exit time (10 min before market close)
+            if expiration_date == today_date and now >= force_time:
                 return True, "FORCE_EXIT"
+
+            # EXPIRED: Position is PAST expiration (should have been closed yesterday)
+            # This catches any positions that weren't properly closed
+            if expiration_date < today_date:
+                logger.warning(f"Position {pos.position_id} is PAST expiration ({pos.expiration}) - closing immediately")
+                return True, "EXPIRED"
         else:
             # Fallback for string comparison
             force_time = self._get_force_exit_time(now, today)
-            if now >= force_time and pos.expiration == today:
+            if pos.expiration == today and now >= force_time:
                 return True, "FORCE_EXIT"
+            if pos.expiration < today:
+                return True, "EXPIRED"
 
         current = self.executor.get_position_current_value(pos)
         if current is None:

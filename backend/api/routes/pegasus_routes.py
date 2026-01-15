@@ -315,13 +315,13 @@ async def get_pegasus_status():
         now = datetime.now(ZoneInfo("America/Chicago"))
         current_time_str = now.strftime('%Y-%m-%d %H:%M:%S CT')
 
-        # PEGASUS trading window: 8:30 AM - 3:30 PM CT
+        # PEGASUS trading window: 8:30 AM - 2:45 PM CT (market closes at 3:00 PM CT)
         entry_start = "08:30"
-        entry_end = "15:30"
+        entry_end = "14:45"
 
         # Check for early close days (Christmas Eve - Dec 31 is normal)
         if now.month == 12 and now.day == 24:
-            entry_end = "12:00"  # Christmas Eve early close
+            entry_end = "11:50"  # Christmas Eve early close (10 min before 12:00 PM)
 
         start_parts = entry_start.split(':')
         end_parts = entry_end.split(':')
@@ -375,9 +375,9 @@ async def get_pegasus_status():
     now = datetime.now(ZoneInfo("America/Chicago"))
     current_time_str = now.strftime('%Y-%m-%d %H:%M:%S CT')
     entry_start = "08:30"
-    entry_end = "15:30"
+    entry_end = "14:45"  # Market closes at 3:00 PM CT, stop entries 15 min before
     if now.month == 12 and now.day == 24:
-        entry_end = "12:00"  # Christmas Eve early close
+        entry_end = "11:50"  # Christmas Eve early close (10 min before 12:00 PM)
     start_parts = entry_start.split(':')
     end_parts = entry_end.split(':')
     start_time = now.replace(hour=int(start_parts[0]), minute=int(start_parts[1]), second=0, microsecond=0)
@@ -1136,10 +1136,11 @@ async def get_pegasus_config():
         "spread_width": 10.0,
         "risk_per_trade_pct": 10.0,
         "sd_multiplier": 1.0,
-        "min_credit": 1.50,
+        "min_credit": 0.75,
         "profit_target_pct": 50,
         "use_stop_loss": False,
-        "entry_window": "08:30 - 15:55 CT",
+        "entry_window": "08:30 - 14:45 CT",
+        "force_exit": "14:50 CT (10 min before market close)",
         "description": "PEGASUS trades SPX Iron Condors with $10 spread widths using SPXW weekly options."
     }
 
