@@ -126,8 +126,14 @@ AlphaGEX/
 │   ├── circuit_breaker.py      # DEPRECATED - use solomon_enhancements
 │   └── mixins/                 # Trading behavior mixins
 │
-├── ai/                         # AI/ML integration
-│   ├── gexis_personality.py    # GEXIS AI personality
+├── ai/                         # AI/ML integration (~5.2K lines GEXIS)
+│   ├── gexis_*.py              # GEXIS AI assistant (9 modules)
+│   │   ├── gexis_personality.py    # Core identity, J.A.R.V.I.S. persona
+│   │   ├── gexis_tools.py          # 17 agentic tools
+│   │   ├── gexis_knowledge.py      # System knowledge base
+│   │   ├── gexis_commands.py       # Slash commands
+│   │   ├── gexis_learning_memory.py # Prediction tracking
+│   │   └── gexis_*.py              # Cache, rate limiter, tracing
 │   ├── langchain_*.py          # LangChain integrations
 │   ├── ai_strategy_optimizer.py    # Strategy optimization
 │   └── ai_trade_advisor.py     # Trade recommendations
@@ -377,6 +383,30 @@ XGBoost-based ML system that feeds probability predictions into Oracle.
 - **Files**: `backend/api/routes/ml_routes.py` (SAGE endpoints)
 - **Dashboard**: `/sage` page with 6 tabs (Overview, Predictions, Features, Performance, Decision Logs, Training)
 
+### GEXIS - AI Trading Assistant
+J.A.R.V.I.S.-style AI chatbot providing decision support throughout the platform (~5.2K lines).
+
+- **Personality**: Time-aware greetings, Central Time, professional demeanor, "Optionist Prime" user
+- **Files** (9 core modules in `ai/`):
+  - `gexis_personality.py` - Core identity and prompts
+  - `gexis_tools.py` - 17 agentic tools (database, market data, bot control)
+  - `gexis_knowledge.py` - Knowledge base (127 database tables documented)
+  - `gexis_commands.py` - Slash commands (`/market-hours`, `/suggestion`, `/risk`)
+  - `gexis_learning_memory.py` - Self-improving prediction accuracy tracking
+  - `gexis_extended_thinking.py` - Claude Extended Thinking for complex analysis
+  - `gexis_cache.py` - TTL-based caching (60s market, 30s positions)
+  - `gexis_rate_limiter.py` - Token bucket rate limiting
+  - `gexis_tracing.py` - Request tracing and telemetry
+- **Frontend**: `FloatingChatbot.tsx` (1.1K lines) - Streaming chat widget
+- **API Routes**: `backend/api/routes/ai_routes.py` - 35+ endpoints
+- **Capabilities**:
+  - Real-time market data and bot status queries
+  - Bot control with 2-minute confirmation windows
+  - Trade opportunity analysis with extended thinking
+  - Economic calendar integration (NFP, CPI, FOMC)
+  - Learning from prediction outcomes by market regime
+  - Conversation export (markdown/JSON)
+
 ---
 
 ## Deprecated Systems (January 2025)
@@ -498,9 +528,16 @@ POST /api/ml/sage/predict       # Run prediction
 POST /api/ml/sage/train         # Trigger training
 GET  /api/ml/sage/feature-importance  # Feature importance rankings
 
-# AI
+# AI & GEXIS (35+ endpoints)
 POST /api/ai/analyze            # AI market analysis
-GET  /api/gexis/chat            # GEXIS AI chat
+GET  /api/ai/gexis/info         # GEXIS system info
+GET  /api/ai/gexis/welcome      # Welcome message
+GET  /api/ai/gexis/daily-briefing  # Market briefing
+POST /api/ai/gexis/command      # Execute slash commands
+POST /api/ai/gexis/agentic-chat # Full agentic chat with tools
+POST /api/ai/gexis/agentic-chat/stream  # Streaming responses
+POST /api/ai/gexis/extended-thinking    # Deep analysis mode
+GET  /api/ai/gexis/learning-memory/stats  # Prediction accuracy
 
 # Transparency & Logging
 GET  /api/logs/summary          # Summary of all 22+ log tables
