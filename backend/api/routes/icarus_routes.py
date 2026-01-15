@@ -372,12 +372,18 @@ async def get_icarus_status():
         scan_interval = 5
         is_active, active_reason = _is_bot_actually_active(heartbeat, scan_interval)
 
+        # Calculate current_equity = starting_capital + total_pnl (matches equity curve)
+        starting_capital = 100000
+        current_equity = starting_capital + total_pnl
+
         return {
             "success": True,
             "data": {
                 "mode": "paper",
                 "ticker": "SPY",
                 "capital": 100000,
+                "starting_capital": starting_capital,
+                "current_equity": round(current_equity, 2),
                 "total_pnl": round(total_pnl, 2),
                 "trade_count": trade_count,
                 "win_rate": win_rate,
@@ -434,6 +440,11 @@ async def get_icarus_status():
             status['capital'] = 100000
         if 'total_pnl' not in status:
             status['total_pnl'] = 0
+
+        # Calculate current_equity = starting_capital + total_pnl (matches equity curve)
+        starting_capital = 100000
+        status['starting_capital'] = starting_capital
+        status['current_equity'] = round(starting_capital + status.get('total_pnl', 0), 2)
 
         return {
             "success": True,

@@ -1031,6 +1031,10 @@ async def get_ares_status():
         scan_interval = 5
         is_active, active_reason = _is_ares_actually_active(heartbeat, scan_interval)
 
+        # Calculate current_equity = starting_capital + total_pnl (matches equity curve)
+        starting_capital = 100000  # Default starting capital
+        current_equity = starting_capital + total_pnl
+
         return {
             "success": True,
             "data": {
@@ -1038,6 +1042,8 @@ async def get_ares_status():
                 "ticker": stored_ticker,
                 "is_spy_sandbox": stored_ticker == "SPY",
                 "capital": capital,
+                "starting_capital": starting_capital,
+                "current_equity": round(current_equity, 2),
                 "capital_source": "tradier" if sandbox_connected else "paper_fallback",
                 "total_pnl": round(total_pnl, 2),
                 "trade_count": trade_count,
@@ -1127,6 +1133,11 @@ async def get_ares_status():
             status['capital_source'] = 'paper_fallback'
             status['message'] = f"ERROR: Not connected to Tradier - {status['tradier_error']}"
             logger.warning(f"ARES Tradier connection failed: {status['tradier_error']}")
+
+        # Calculate current_equity = starting_capital + total_pnl (matches equity curve)
+        starting_capital = 100000  # Default starting capital
+        status['starting_capital'] = starting_capital
+        status['current_equity'] = round(starting_capital + status.get('total_pnl', 0), 2)
 
         return {
             "success": True,
