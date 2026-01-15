@@ -649,6 +649,20 @@ async def get_gamma_data(
                 # Periodically clean up old history entries
                 cleanup_old_gamma_history()
 
+            # Persist ARGUS snapshot for prior day market structure comparisons
+            await persist_argus_snapshot_to_db(
+                symbol=symbol,
+                expiration_date=expiration,
+                spot_price=snapshot.spot_price,
+                expected_move=snapshot.expected_move,
+                vix=raw_data.get('vix', 0),
+                total_net_gamma=snapshot.total_net_gamma,
+                gamma_regime=snapshot.gamma_regime,
+                previous_regime=getattr(snapshot, 'previous_regime', None),
+                regime_flipped=snapshot.regime_flipped,
+                market_status=snapshot.market_status
+            )
+
         # Build response
         return {
             "success": True,
@@ -1751,6 +1765,84 @@ async def persist_danger_zones_to_db(danger_zones: list, spot_price: float, expi
         logger.debug(f"Danger zone sync: {count} active, resolved inactive ones")
     except Exception as e:
         logger.warning(f"Failed to persist danger zones: {e}")
+
+
+async def persist_argus_snapshot_to_db(
+    symbol: str,
+    expiration_date: str,
+    spot_price: float,
+    expected_move: float,
+    vix: float,
+    total_net_gamma: float,
+    gamma_regime: str,
+    previous_regime: str = None,
+    regime_flipped: bool = False,
+    market_status: str = "open"
+):
+    """
+    Persist ARGUS snapshot to database for prior day comparisons.
+
+    This enables the market structure signals to compare today vs prior day:
+    - Flip point movement
+    - Expected move bounds shift
+    - Range width changes
+    - GEX momentum
+    """
+    try:
+        conn = get_connection()
+        if not conn:
+            logger.warning("No database connection for ARGUS snapshot persistence")
+            return
+
+        cursor = conn.cursor()
+
+        # Check if we already have a snapshot for this minute (prevent duplicates)
+        cursor.execute("""
+            SELECT id FROM argus_snapshots
+            WHERE symbol = %s
+            AND snapshot_time > NOW() - INTERVAL '1 minute'
+            LIMIT 1
+        """, (symbol,))
+
+        if cursor.fetchone():
+            cursor.close()
+            conn.close()
+            return  # Already have a recent snapshot
+
+        # Insert new snapshot
+        cursor.execute("""
+            INSERT INTO argus_snapshots (
+                symbol, expiration_date, snapshot_time,
+                spot_price, expected_move, vix,
+                total_net_gamma, gamma_regime, previous_regime,
+                regime_flipped, market_status
+            ) VALUES (
+                %s, %s, NOW(),
+                %s, %s, %s,
+                %s, %s, %s,
+                %s, %s
+            )
+        """, (
+            symbol,
+            expiration_date,
+            spot_price,
+            expected_move,
+            vix,
+            total_net_gamma,
+            gamma_regime,
+            previous_regime,
+            regime_flipped,
+            market_status
+        ))
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        logger.debug(f"ARGUS snapshot persisted: {symbol} spot=${spot_price:.2f} EM=${expected_move:.2f}")
+
+    except Exception as e:
+        logger.warning(f"Failed to persist ARGUS snapshot: {e}")
 
 
 @router.get("/alerts")
