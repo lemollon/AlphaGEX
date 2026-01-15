@@ -652,8 +652,18 @@ export default function VIXDashboard() {
                   ) : (
                     <div className="text-center py-8 text-text-secondary">
                       <Clock className="w-10 h-10 text-text-muted mx-auto mb-2" />
-                      <p>No signal history yet</p>
-                      <p className="text-xs text-text-muted mt-1">Signals will appear as they are generated</p>
+                      <p>No signal history available</p>
+                      {historyResponse?.diagnostics ? (
+                        <div className="mt-2 text-xs text-text-muted space-y-1">
+                          <p>Latest signal: {historyResponse.diagnostics.latest_signal_date || 'None'}</p>
+                          <p>Total signals: {historyResponse.diagnostics.total_signals_in_db || 0}</p>
+                          <p className="text-warning mt-2">{historyResponse.diagnostics.message}</p>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-text-muted mt-1">
+                          Signals are generated hourly during market hours (9 AM - 3 PM CT)
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>
