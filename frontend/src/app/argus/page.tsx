@@ -171,6 +171,53 @@ interface CombinedSignal {
   profit_zone: string
   breakout_risk: string
   spot_position: 'ABOVE_FLIP' | 'BELOW_FLIP' | ''
+  warnings: string[]
+  gamma_regime_context: string | null
+  vix_regime_context: string | null
+}
+
+// New signals
+interface IntradaySignal {
+  open_em: number | null
+  current_em: number
+  change: number | null
+  change_pct: number | null
+  direction: 'EXPANDING' | 'CONTRACTING' | 'STABLE' | 'UNKNOWN'
+  implication: string
+}
+
+interface VixRegimeSignal {
+  vix: number
+  regime: 'LOW' | 'NORMAL' | 'ELEVATED' | 'HIGH' | 'EXTREME' | 'UNKNOWN'
+  implication: string
+  strategy_modifier?: string
+}
+
+interface GammaRegimeSignal {
+  current_regime: 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL' | 'UNKNOWN'
+  alignment: 'MEAN_REVERSION' | 'MOMENTUM' | 'NEUTRAL' | 'UNKNOWN'
+  implication: string
+  ic_safety?: 'HIGH' | 'MEDIUM' | 'LOW'
+  breakout_reliability?: 'HIGH' | 'MEDIUM' | 'LOW'
+}
+
+interface GexMomentumSignal {
+  current_gex: number | null
+  prior_gex: number | null
+  change: number | null
+  change_pct: number | null
+  direction: string
+  conviction: string
+  implication: string
+}
+
+interface WallBreakSignal {
+  call_wall_risk: 'HIGH' | 'ELEVATED' | 'MODERATE' | 'LOW' | 'UNKNOWN'
+  put_wall_risk: 'HIGH' | 'ELEVATED' | 'MODERATE' | 'LOW' | 'UNKNOWN'
+  call_distance_pct?: number
+  put_distance_pct?: number
+  primary_risk: string
+  implication: string
 }
 
 interface MarketStructure {
@@ -178,6 +225,11 @@ interface MarketStructure {
   bounds: BoundsSignal
   width: WidthSignal
   walls: WallsSignal
+  intraday: IntradaySignal
+  vix_regime: VixRegimeSignal
+  gamma_regime: GammaRegimeSignal
+  gex_momentum: GexMomentumSignal
+  wall_break: WallBreakSignal
   combined: CombinedSignal
   spot_price: number
   vix: number
@@ -1800,6 +1852,200 @@ export default function ArgusPage() {
                 </p>
               </div>
             </div>
+
+            {/* Second Row: Context Signals */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+              {/* Intraday Vol Signal */}
+              <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700/50">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs text-gray-400 uppercase tracking-wide">Intraday Vol</span>
+                  <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                    gammaData.market_structure.intraday?.direction === 'EXPANDING'
+                      ? 'bg-orange-500/20 text-orange-400'
+                      : gammaData.market_structure.intraday?.direction === 'CONTRACTING'
+                      ? 'bg-blue-500/20 text-blue-400'
+                      : 'bg-gray-600/20 text-gray-400'
+                  }`}>
+                    {gammaData.market_structure.intraday?.direction || 'UNKNOWN'}
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-2 mb-2">
+                  <span className="text-lg font-bold text-white">
+                    {gammaData.market_structure.intraday?.change_pct !== null
+                      ? `${gammaData.market_structure.intraday.change_pct > 0 ? '+' : ''}${gammaData.market_structure.intraday.change_pct}%`
+                      : '-'}
+                  </span>
+                  <span className="text-xs text-gray-500">from open</span>
+                </div>
+                <p className="text-xs text-gray-400 leading-relaxed">
+                  {gammaData.market_structure.intraday?.implication || 'No intraday data'}
+                </p>
+              </div>
+
+              {/* VIX Regime Signal */}
+              <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700/50">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs text-gray-400 uppercase tracking-wide">VIX Regime</span>
+                  <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                    gammaData.market_structure.vix_regime?.regime === 'LOW'
+                      ? 'bg-blue-500/20 text-blue-400'
+                      : gammaData.market_structure.vix_regime?.regime === 'NORMAL'
+                      ? 'bg-emerald-500/20 text-emerald-400'
+                      : gammaData.market_structure.vix_regime?.regime === 'ELEVATED'
+                      ? 'bg-yellow-500/20 text-yellow-400'
+                      : gammaData.market_structure.vix_regime?.regime === 'HIGH'
+                      ? 'bg-orange-500/20 text-orange-400'
+                      : gammaData.market_structure.vix_regime?.regime === 'EXTREME'
+                      ? 'bg-rose-500/20 text-rose-400'
+                      : 'bg-gray-600/20 text-gray-400'
+                  }`}>
+                    {gammaData.market_structure.vix_regime?.regime || 'UNKNOWN'}
+                  </span>
+                </div>
+                <div className="text-lg font-bold text-white mb-2">
+                  VIX {gammaData.market_structure.vix_regime?.vix?.toFixed(1) || '-'}
+                </div>
+                <p className="text-xs text-gray-400 leading-relaxed">
+                  {gammaData.market_structure.vix_regime?.strategy_modifier || gammaData.market_structure.vix_regime?.implication || 'No VIX data'}
+                </p>
+              </div>
+
+              {/* Gamma Regime Signal */}
+              <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700/50">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs text-gray-400 uppercase tracking-wide">Gamma Regime</span>
+                  <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                    gammaData.market_structure.gamma_regime?.current_regime === 'POSITIVE'
+                      ? 'bg-emerald-500/20 text-emerald-400'
+                      : gammaData.market_structure.gamma_regime?.current_regime === 'NEGATIVE'
+                      ? 'bg-rose-500/20 text-rose-400'
+                      : 'bg-gray-600/20 text-gray-400'
+                  }`}>
+                    {gammaData.market_structure.gamma_regime?.alignment || 'UNKNOWN'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="text-center">
+                    <div className="text-xs text-gray-500">IC Safety</div>
+                    <div className={`text-sm font-bold ${
+                      gammaData.market_structure.gamma_regime?.ic_safety === 'HIGH' ? 'text-emerald-400' :
+                      gammaData.market_structure.gamma_regime?.ic_safety === 'LOW' ? 'text-rose-400' : 'text-yellow-400'
+                    }`}>
+                      {gammaData.market_structure.gamma_regime?.ic_safety || '-'}
+                    </div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xs text-gray-500">Breakout</div>
+                    <div className={`text-sm font-bold ${
+                      gammaData.market_structure.gamma_regime?.breakout_reliability === 'HIGH' ? 'text-emerald-400' :
+                      gammaData.market_structure.gamma_regime?.breakout_reliability === 'LOW' ? 'text-rose-400' : 'text-yellow-400'
+                    }`}>
+                      {gammaData.market_structure.gamma_regime?.breakout_reliability || '-'}
+                    </div>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-400 leading-relaxed">
+                  {gammaData.market_structure.gamma_regime?.implication || 'No regime data'}
+                </p>
+              </div>
+
+              {/* GEX Momentum Signal */}
+              <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700/50">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs text-gray-400 uppercase tracking-wide">GEX Momentum</span>
+                  <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                    gammaData.market_structure.gex_momentum?.conviction?.includes('BULLISH')
+                      ? 'bg-emerald-500/20 text-emerald-400'
+                      : gammaData.market_structure.gex_momentum?.conviction?.includes('BEARISH')
+                      ? 'bg-rose-500/20 text-rose-400'
+                      : 'bg-gray-600/20 text-gray-400'
+                  }`}>
+                    {gammaData.market_structure.gex_momentum?.conviction?.replace('_', ' ') || 'UNKNOWN'}
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-2 mb-2">
+                  <span className={`text-lg font-bold ${
+                    (gammaData.market_structure.gex_momentum?.change_pct || 0) > 0 ? 'text-emerald-400' :
+                    (gammaData.market_structure.gex_momentum?.change_pct || 0) < 0 ? 'text-rose-400' : 'text-gray-400'
+                  }`}>
+                    {gammaData.market_structure.gex_momentum?.change_pct !== null
+                      ? `${gammaData.market_structure.gex_momentum.change_pct > 0 ? '+' : ''}${gammaData.market_structure.gex_momentum.change_pct}%`
+                      : '-'}
+                  </span>
+                  <span className="text-xs text-gray-500">vs prior day</span>
+                </div>
+                <p className="text-xs text-gray-400 leading-relaxed">
+                  {gammaData.market_structure.gex_momentum?.implication || 'No GEX momentum data'}
+                </p>
+              </div>
+
+              {/* Wall Break Risk Signal */}
+              <div className={`rounded-xl p-4 border ${
+                gammaData.market_structure.wall_break?.primary_risk === 'CALL_BREAK' ||
+                gammaData.market_structure.wall_break?.primary_risk === 'PUT_BREAK'
+                  ? 'bg-rose-500/10 border-rose-500/50'
+                  : gammaData.market_structure.wall_break?.primary_risk?.includes('APPROACHING')
+                  ? 'bg-yellow-500/10 border-yellow-500/50'
+                  : 'bg-gray-800/50 border-gray-700/50'
+              }`}>
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs text-gray-400 uppercase tracking-wide">Wall Break Risk</span>
+                  <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                    gammaData.market_structure.wall_break?.primary_risk === 'CALL_BREAK' ||
+                    gammaData.market_structure.wall_break?.primary_risk === 'PUT_BREAK'
+                      ? 'bg-rose-500 text-white'
+                      : gammaData.market_structure.wall_break?.primary_risk?.includes('APPROACHING')
+                      ? 'bg-yellow-500 text-black'
+                      : 'bg-gray-600/20 text-gray-400'
+                  }`}>
+                    {gammaData.market_structure.wall_break?.primary_risk === 'NONE' ? 'SAFE' :
+                     gammaData.market_structure.wall_break?.primary_risk?.replace('_', ' ') || 'UNKNOWN'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="text-center">
+                    <div className="text-xs text-gray-500">Call</div>
+                    <div className={`text-sm font-bold ${
+                      gammaData.market_structure.wall_break?.call_wall_risk === 'HIGH' ? 'text-rose-400' :
+                      gammaData.market_structure.wall_break?.call_wall_risk === 'ELEVATED' ? 'text-yellow-400' :
+                      'text-emerald-400'
+                    }`}>
+                      {gammaData.market_structure.wall_break?.call_distance_pct?.toFixed(1) || '-'}%
+                    </div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xs text-gray-500">Put</div>
+                    <div className={`text-sm font-bold ${
+                      gammaData.market_structure.wall_break?.put_wall_risk === 'HIGH' ? 'text-rose-400' :
+                      gammaData.market_structure.wall_break?.put_wall_risk === 'ELEVATED' ? 'text-yellow-400' :
+                      'text-emerald-400'
+                    }`}>
+                      {gammaData.market_structure.wall_break?.put_distance_pct?.toFixed(1) || '-'}%
+                    </div>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-400 leading-relaxed">
+                  {gammaData.market_structure.wall_break?.implication || 'No wall break data'}
+                </p>
+              </div>
+            </div>
+
+            {/* Warnings Banner (if any) */}
+            {gammaData.market_structure.combined.warnings && gammaData.market_structure.combined.warnings.length > 0 && (
+              <div className="bg-yellow-500/10 border border-yellow-500/50 rounded-lg p-3">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-5 h-5 text-yellow-400 flex-shrink-0" />
+                  <div>
+                    <div className="text-sm font-bold text-yellow-400 mb-1">Active Warnings</div>
+                    <ul className="text-xs text-yellow-300/80 space-y-1">
+                      {gammaData.market_structure.combined.warnings.map((warning, idx) => (
+                        <li key={idx}>• {warning}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Trading Context Footer */}
             <div className="bg-gray-900/30 rounded-lg p-3 border border-gray-800/50">

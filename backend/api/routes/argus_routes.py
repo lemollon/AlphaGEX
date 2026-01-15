@@ -608,14 +608,34 @@ async def get_gamma_data(
                 put_wall_strike = max(below_spot, key=lambda s: abs(getattr(s, 'net_gamma', 0)))
                 current_put_wall = put_wall_strike.strike
 
-        # Get comprehensive market structure changes (flip point, bounds, width, walls)
+        # Get call/put wall gamma for wall strength analysis
+        call_wall_gamma = None
+        put_wall_gamma = None
+        if snapshot.strikes:
+            for strike in snapshot.strikes:
+                if hasattr(strike, 'strike') and hasattr(strike, 'net_gamma'):
+                    if current_call_wall and abs(strike.strike - current_call_wall) < 0.5:
+                        call_wall_gamma = strike.net_gamma
+                    if current_put_wall and abs(strike.strike - current_put_wall) < 0.5:
+                        put_wall_gamma = strike.net_gamma
+
+        # Get open EM from the expected_move_change data
+        open_em_value = em_change.get('at_open') if em_change else None
+
+        # Get comprehensive market structure changes (flip point, bounds, width, walls, + new signals)
         market_structure = await get_market_structure_changes(
             current_spot=snapshot.spot_price,
             current_em=snapshot.expected_move,
             current_vix=raw_data['vix'],
             current_flip_point=current_flip_point,
             current_call_wall=current_call_wall,
-            current_put_wall=current_put_wall
+            current_put_wall=current_put_wall,
+            current_net_gex=snapshot.total_net_gamma,
+            gamma_regime=snapshot.gamma_regime,
+            open_em=open_em_value,
+            danger_zones=snapshot.danger_zones,
+            call_wall_gamma=call_wall_gamma,
+            put_wall_gamma=put_wall_gamma
         )
 
         # Only persist danger zones and alerts when we process FRESH data
@@ -819,7 +839,13 @@ async def get_market_structure_changes(
     current_vix: float,
     current_flip_point: float = None,
     current_call_wall: float = None,
-    current_put_wall: float = None
+    current_put_wall: float = None,
+    current_net_gex: float = None,
+    gamma_regime: str = None,
+    open_em: float = None,
+    danger_zones: list = None,
+    call_wall_gamma: float = None,
+    put_wall_gamma: float = None
 ) -> dict:
     """
     Comprehensive market structure analysis comparing today vs prior day.
@@ -1037,6 +1063,239 @@ async def get_market_structure_changes(
                 walls_signal["implication"] = "Walls roughly symmetric. Balanced risk profile for Iron Condors."
 
     # =========================================================================
+    # SIGNAL 5: INTRADAY EM CHANGE (Open → Now)
+    # =========================================================================
+    intraday_signal = {
+        "open_em": round(open_em, 2) if open_em else None,
+        "current_em": round(current_em, 2),
+        "change": None,
+        "change_pct": None,
+        "direction": "UNKNOWN",
+        "implication": "Today's open EM not available"
+    }
+
+    if open_em and open_em > 0:
+        intraday_change = current_em - open_em
+        intraday_change_pct = (intraday_change / open_em) * 100
+        intraday_signal["change"] = round(intraday_change, 2)
+        intraday_signal["change_pct"] = round(intraday_change_pct, 1)
+
+        # Threshold: 3% intraday change is significant
+        if intraday_change_pct > 3:
+            intraday_signal["direction"] = "EXPANDING"
+            intraday_signal["implication"] = f"Intraday vol EXPANDING +{intraday_change_pct:.1f}%. Breakout developing NOW. Existing ICs at risk, directional plays gaining edge."
+        elif intraday_change_pct < -3:
+            intraday_signal["direction"] = "CONTRACTING"
+            intraday_signal["implication"] = f"Intraday vol CONTRACTING {intraday_change_pct:.1f}%. Morning spike fading. Premium selling window opening, consider new ICs."
+        else:
+            intraday_signal["direction"] = "STABLE"
+            intraday_signal["implication"] = "Intraday vol stable. No significant change from open. Current positions sizing still appropriate."
+
+    # =========================================================================
+    # SIGNAL 6: VIX REGIME CONTEXT
+    # =========================================================================
+    vix_regime_signal = {
+        "vix": round(current_vix, 2),
+        "regime": "UNKNOWN",
+        "implication": "VIX data not available"
+    }
+
+    if current_vix:
+        if current_vix < 15:
+            vix_regime_signal["regime"] = "LOW"
+            vix_regime_signal["implication"] = "LOW VIX (<15): Cheap options, small premiums. Directional plays affordable. IC profits will be modest."
+            vix_regime_signal["strategy_modifier"] = "Size up on directional, reduce IC allocation"
+        elif current_vix < 22:
+            vix_regime_signal["regime"] = "NORMAL"
+            vix_regime_signal["implication"] = "NORMAL VIX (15-22): Ideal for Iron Condors. Good premium, manageable risk. Standard position sizing."
+            vix_regime_signal["strategy_modifier"] = "Standard allocation to both ICs and directional"
+        elif current_vix < 28:
+            vix_regime_signal["regime"] = "ELEVATED"
+            vix_regime_signal["implication"] = "ELEVATED VIX (22-28): Fat premiums but bigger swings. Wider strikes on ICs, directional has edge."
+            vix_regime_signal["strategy_modifier"] = "Wider IC strikes, favor directional plays"
+        elif current_vix < 35:
+            vix_regime_signal["regime"] = "HIGH"
+            vix_regime_signal["implication"] = "HIGH VIX (28-35): Crisis conditions. Huge premiums but extreme risk. Reduce size, go directional with trend."
+            vix_regime_signal["strategy_modifier"] = "Reduce size 50%, favor directional with trend"
+        else:
+            vix_regime_signal["regime"] = "EXTREME"
+            vix_regime_signal["implication"] = "EXTREME VIX (>35): Panic mode. Skip ICs entirely. Small directional with strict stops only."
+            vix_regime_signal["strategy_modifier"] = "Skip ICs, small directional only"
+
+    # =========================================================================
+    # SIGNAL 7: GAMMA REGIME ALIGNMENT
+    # =========================================================================
+    regime_signal = {
+        "current_regime": gamma_regime or "UNKNOWN",
+        "alignment": "UNKNOWN",
+        "implication": "Gamma regime data not available"
+    }
+
+    if gamma_regime:
+        regime_signal["current_regime"] = gamma_regime
+
+        # Determine alignment with other signals
+        if gamma_regime == "POSITIVE":
+            regime_signal["alignment"] = "MEAN_REVERSION"
+            regime_signal["implication"] = "POSITIVE GAMMA: MMs absorb moves (mean reversion). Breakouts will face resistance. ICs safer, directional breakouts may fail."
+            regime_signal["ic_safety"] = "HIGH"
+            regime_signal["breakout_reliability"] = "LOW"
+        elif gamma_regime == "NEGATIVE":
+            regime_signal["alignment"] = "MOMENTUM"
+            regime_signal["implication"] = "NEGATIVE GAMMA: MMs amplify moves (momentum). Breakouts accelerate. ICs riskier, directional has strong edge."
+            regime_signal["ic_safety"] = "LOW"
+            regime_signal["breakout_reliability"] = "HIGH"
+        else:
+            regime_signal["alignment"] = "NEUTRAL"
+            regime_signal["implication"] = "NEUTRAL GAMMA: Balanced market. Standard trading rules apply."
+            regime_signal["ic_safety"] = "MEDIUM"
+            regime_signal["breakout_reliability"] = "MEDIUM"
+
+    # =========================================================================
+    # SIGNAL 8: NET GEX MOMENTUM
+    # =========================================================================
+    gex_momentum_signal = {
+        "current_gex": round(current_net_gex, 2) if current_net_gex else None,
+        "prior_gex": None,
+        "change": None,
+        "change_pct": None,
+        "direction": "UNKNOWN",
+        "conviction": "UNKNOWN",
+        "implication": "Net GEX data not available"
+    }
+
+    # Get prior day's net GEX from database
+    prior_net_gex = None
+    try:
+        conn = get_connection()
+        if conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT net_gex
+                FROM gex_history
+                WHERE symbol = 'SPY'
+                AND DATE(timestamp) < CURRENT_DATE
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """)
+            row = cursor.fetchone()
+            if row and row[0]:
+                prior_net_gex = float(row[0])
+            cursor.close()
+            conn.close()
+    except Exception as e:
+        logger.warning(f"Could not fetch prior net GEX: {e}")
+
+    if current_net_gex is not None and prior_net_gex is not None:
+        gex_momentum_signal["prior_gex"] = round(prior_net_gex, 2)
+        gex_change = current_net_gex - prior_net_gex
+
+        # Calculate percentage change relative to magnitude
+        if abs(prior_net_gex) > 0:
+            gex_change_pct = (gex_change / abs(prior_net_gex)) * 100
+        else:
+            gex_change_pct = 0
+
+        gex_momentum_signal["change"] = round(gex_change, 2)
+        gex_momentum_signal["change_pct"] = round(gex_change_pct, 1)
+
+        # Determine direction and conviction
+        if gex_change > 0 and current_net_gex > 0:
+            gex_momentum_signal["direction"] = "STRENGTHENING_POSITIVE"
+            gex_momentum_signal["conviction"] = "STRONG_BULLISH"
+            gex_momentum_signal["implication"] = f"Net GEX increasing (+{gex_change_pct:.1f}%) and POSITIVE. Strong bullish conviction. Dealers adding upside hedges."
+        elif gex_change < 0 and current_net_gex < 0:
+            gex_momentum_signal["direction"] = "STRENGTHENING_NEGATIVE"
+            gex_momentum_signal["conviction"] = "STRONG_BEARISH"
+            gex_momentum_signal["implication"] = f"Net GEX decreasing ({gex_change_pct:.1f}%) and NEGATIVE. Strong bearish conviction. Dealers adding downside hedges."
+        elif gex_change > 0 and current_net_gex < 0:
+            gex_momentum_signal["direction"] = "WEAKENING_NEGATIVE"
+            gex_momentum_signal["conviction"] = "BEARISH_FADING"
+            gex_momentum_signal["implication"] = f"Net GEX rising (+{gex_change_pct:.1f}%) but still NEGATIVE. Bearish conviction weakening. Possible reversal brewing."
+        elif gex_change < 0 and current_net_gex > 0:
+            gex_momentum_signal["direction"] = "WEAKENING_POSITIVE"
+            gex_momentum_signal["conviction"] = "BULLISH_FADING"
+            gex_momentum_signal["implication"] = f"Net GEX falling ({gex_change_pct:.1f}%) but still POSITIVE. Bullish conviction weakening. Watch for breakdown."
+        else:
+            gex_momentum_signal["direction"] = "STABLE"
+            gex_momentum_signal["conviction"] = "NEUTRAL"
+            gex_momentum_signal["implication"] = "Net GEX stable. No significant change in dealer positioning conviction."
+
+    # =========================================================================
+    # SIGNAL 9: WALL BREAK RISK
+    # =========================================================================
+    wall_break_signal = {
+        "call_wall_risk": "UNKNOWN",
+        "put_wall_risk": "UNKNOWN",
+        "primary_risk": "NONE",
+        "implication": "Wall break risk data not available"
+    }
+
+    if current_call_wall and current_put_wall and current_spot:
+        call_dist_pct = ((current_call_wall - current_spot) / current_spot) * 100
+        put_dist_pct = ((current_spot - current_put_wall) / current_spot) * 100
+
+        wall_break_signal["call_distance_pct"] = round(call_dist_pct, 2)
+        wall_break_signal["put_distance_pct"] = round(put_dist_pct, 2)
+
+        # Check for danger zones at walls
+        call_wall_danger = None
+        put_wall_danger = None
+        if danger_zones:
+            for dz in danger_zones:
+                dz_strike = dz.get('strike', 0)
+                # Check if danger zone is at or near a wall
+                if abs(dz_strike - current_call_wall) < 1:  # Within $1
+                    call_wall_danger = dz.get('danger_type')
+                if abs(dz_strike - current_put_wall) < 1:
+                    put_wall_danger = dz.get('danger_type')
+
+        # Assess call wall break risk
+        if call_dist_pct < 0.3:  # Within 0.3%
+            if call_wall_danger == "COLLAPSING" or gamma_regime == "NEGATIVE":
+                wall_break_signal["call_wall_risk"] = "HIGH"
+            else:
+                wall_break_signal["call_wall_risk"] = "ELEVATED"
+        elif call_dist_pct < 0.7:  # Within 0.7%
+            if call_wall_danger == "COLLAPSING":
+                wall_break_signal["call_wall_risk"] = "ELEVATED"
+            else:
+                wall_break_signal["call_wall_risk"] = "MODERATE"
+        else:
+            wall_break_signal["call_wall_risk"] = "LOW"
+
+        # Assess put wall break risk
+        if put_dist_pct < 0.3:  # Within 0.3%
+            if put_wall_danger == "COLLAPSING" or gamma_regime == "NEGATIVE":
+                wall_break_signal["put_wall_risk"] = "HIGH"
+            else:
+                wall_break_signal["put_wall_risk"] = "ELEVATED"
+        elif put_dist_pct < 0.7:  # Within 0.7%
+            if put_wall_danger == "COLLAPSING":
+                wall_break_signal["put_wall_risk"] = "ELEVATED"
+            else:
+                wall_break_signal["put_wall_risk"] = "MODERATE"
+        else:
+            wall_break_signal["put_wall_risk"] = "LOW"
+
+        # Determine primary risk
+        if wall_break_signal["call_wall_risk"] == "HIGH":
+            wall_break_signal["primary_risk"] = "CALL_BREAK"
+            wall_break_signal["implication"] = f"HIGH call wall break risk! Price {call_dist_pct:.2f}% from call wall. {'Gamma COLLAPSING at wall - weakening resistance.' if call_wall_danger == 'COLLAPSING' else 'Negative gamma regime amplifies breakouts.'}"
+        elif wall_break_signal["put_wall_risk"] == "HIGH":
+            wall_break_signal["primary_risk"] = "PUT_BREAK"
+            wall_break_signal["implication"] = f"HIGH put wall break risk! Price {put_dist_pct:.2f}% from put wall. {'Gamma COLLAPSING at wall - weakening support.' if put_wall_danger == 'COLLAPSING' else 'Negative gamma regime amplifies breakdowns.'}"
+        elif wall_break_signal["call_wall_risk"] == "ELEVATED":
+            wall_break_signal["primary_risk"] = "CALL_APPROACHING"
+            wall_break_signal["implication"] = f"Call wall under pressure. Price {call_dist_pct:.2f}% away. Watch for breakout."
+        elif wall_break_signal["put_wall_risk"] == "ELEVATED":
+            wall_break_signal["primary_risk"] = "PUT_APPROACHING"
+            wall_break_signal["implication"] = f"Put wall under pressure. Price {put_dist_pct:.2f}% away. Watch for breakdown."
+        else:
+            wall_break_signal["primary_risk"] = "NONE"
+            wall_break_signal["implication"] = f"Walls intact. Call {call_dist_pct:.1f}% away, Put {put_dist_pct:.1f}% away. Safe for premium selling within range."
+
+    # =========================================================================
     # COMBINED SIGNAL & TRADING RECOMMENDATION
     # =========================================================================
     combined = _generate_combined_signal(
@@ -1046,7 +1305,12 @@ async def get_market_structure_changes(
         current_spot,
         current_flip_point,
         current_call_wall,
-        current_put_wall
+        current_put_wall,
+        gamma_regime=gamma_regime,
+        vix_regime=vix_regime_signal.get("regime"),
+        intraday_direction=intraday_signal.get("direction"),
+        wall_break_risk=wall_break_signal.get("primary_risk"),
+        gex_conviction=gex_momentum_signal.get("conviction")
     )
 
     result = {
@@ -1054,6 +1318,11 @@ async def get_market_structure_changes(
         "bounds": bounds_signal,
         "width": width_signal,
         "walls": walls_signal,
+        "intraday": intraday_signal,
+        "vix_regime": vix_regime_signal,
+        "gamma_regime": regime_signal,
+        "gex_momentum": gex_momentum_signal,
+        "wall_break": wall_break_signal,
         "combined": combined,
         "spot_price": round(current_spot, 2),
         "vix": round(current_vix, 2),
@@ -1074,10 +1343,22 @@ def _generate_combined_signal(
     spot: float,
     flip_point: float = None,
     call_wall: float = None,
-    put_wall: float = None
+    put_wall: float = None,
+    gamma_regime: str = None,
+    vix_regime: str = None,
+    intraday_direction: str = None,
+    wall_break_risk: str = None,
+    gex_conviction: str = None
 ) -> dict:
     """
     Generate combined trading signal from individual signals.
+
+    Now considers:
+    - Gamma regime (POSITIVE/NEGATIVE) for IC safety
+    - VIX regime for sizing
+    - Intraday vol direction for timing
+    - Wall break risk for warnings
+    - GEX conviction for confidence
 
     Returns actionable recommendation with profit zone and breakout risks.
     """
@@ -1087,6 +1368,7 @@ def _generate_combined_signal(
     strategy = ""
     profit_zone = ""
     breakout_risk = ""
+    warnings = []
 
     # Build profit zone description
     if call_wall and put_wall:
@@ -1104,7 +1386,48 @@ def _generate_combined_signal(
             spot_vs_flip = "BELOW_FLIP"
 
     # =========================================================================
-    # SIGNAL LOGIC MATRIX
+    # CONTEXT MODIFIERS - Add warnings based on new signals
+    # =========================================================================
+
+    # Gamma regime warnings
+    ic_warning = ""
+    breakout_warning = ""
+    if gamma_regime == "NEGATIVE":
+        ic_warning = " WARNING: Negative gamma - ICs riskier, breakouts will accelerate!"
+        breakout_warning = " Negative gamma amplifies moves."
+    elif gamma_regime == "POSITIVE":
+        breakout_warning = " Positive gamma may resist breakout."
+
+    # VIX regime modifiers
+    vix_modifier = ""
+    if vix_regime == "HIGH" or vix_regime == "EXTREME":
+        vix_modifier = f" VIX {vix_regime}: Reduce size 50%!"
+        warnings.append(f"VIX {vix_regime} - reduce position size")
+    elif vix_regime == "ELEVATED":
+        vix_modifier = " VIX ELEVATED: Use wider strikes."
+        warnings.append("VIX elevated - widen IC strikes")
+    elif vix_regime == "LOW":
+        vix_modifier = " VIX LOW: Premiums are thin."
+
+    # Intraday vol modifier
+    intraday_modifier = ""
+    if intraday_direction == "EXPANDING":
+        intraday_modifier = " Vol expanding intraday - breakout in progress!"
+        warnings.append("Intraday vol expanding")
+    elif intraday_direction == "CONTRACTING":
+        intraday_modifier = " Vol contracting intraday - premium selling window."
+
+    # Wall break risk warnings
+    if wall_break_risk in ["CALL_BREAK", "PUT_BREAK"]:
+        warnings.append(f"HIGH {wall_break_risk.replace('_', ' ')} RISK!")
+
+    # GEX conviction boost
+    conviction_boost = False
+    if gex_conviction in ["STRONG_BULLISH", "STRONG_BEARISH"]:
+        conviction_boost = True
+
+    # =========================================================================
+    # SIGNAL LOGIC MATRIX (Enhanced with context)
     # =========================================================================
 
     # BULLISH SCENARIOS
@@ -1112,71 +1435,90 @@ def _generate_combined_signal(
         if width_direction == "WIDENING":
             signal = "BULLISH_BREAKOUT"
             bias = "BULLISH"
-            confidence = "HIGH"
-            strategy = "BUY CALL SPREADS or GO LONG. Dealers and options market both bullish. Vol expanding = big move expected upward."
+            confidence = "HIGH" if (gamma_regime == "NEGATIVE" or conviction_boost) else "MEDIUM"
+            strategy = f"BUY CALL SPREADS or GO LONG. Dealers and options market both bullish.{breakout_warning}{vix_modifier}"
         else:
             signal = "BULLISH_GRIND"
             bias = "BULLISH"
-            confidence = "MEDIUM"
-            strategy = "SELL PUT SPREADS. Bullish bias with contained volatility. Collect premium on downside protection."
+            confidence = "HIGH" if conviction_boost else "MEDIUM"
+            strategy = f"SELL PUT SPREADS. Bullish bias with contained volatility.{vix_modifier}"
 
     # BEARISH SCENARIOS
     elif flip_direction == "FALLING" and bounds_direction == "SHIFTED_DOWN":
         if width_direction == "WIDENING":
             signal = "BEARISH_BREAKOUT"
             bias = "BEARISH"
-            confidence = "HIGH"
-            strategy = "BUY PUT SPREADS or GO SHORT. Dealers and options market both bearish. Vol expanding = big move expected downward."
+            confidence = "HIGH" if (gamma_regime == "NEGATIVE" or conviction_boost) else "MEDIUM"
+            strategy = f"BUY PUT SPREADS or GO SHORT. Dealers and options market both bearish.{breakout_warning}{vix_modifier}"
         else:
             signal = "BEARISH_GRIND"
             bias = "BEARISH"
-            confidence = "MEDIUM"
-            strategy = "SELL CALL SPREADS. Bearish bias with contained volatility. Collect premium on upside resistance."
+            confidence = "HIGH" if conviction_boost else "MEDIUM"
+            strategy = f"SELL CALL SPREADS. Bearish bias with contained volatility.{vix_modifier}"
 
     # PREMIUM SELLING SCENARIOS
     elif width_direction == "NARROWING":
-        if flip_direction == "STABLE" and bounds_direction in ["STABLE", "MIXED"]:
+        if gamma_regime == "NEGATIVE":
+            # Downgrade IC recommendations in negative gamma
+            signal = "SELL_PREMIUM_CAUTION"
+            bias = "NEUTRAL"
+            confidence = "LOW"
+            strategy = f"CAUTION: Vol narrowing but NEGATIVE gamma makes ICs risky. {profit_zone}. Consider smaller size or skip.{ic_warning}"
+        elif flip_direction == "STABLE" and bounds_direction in ["STABLE", "MIXED"]:
             signal = "SELL_PREMIUM"
             bias = "NEUTRAL"
-            confidence = "MEDIUM"
-            strategy = f"IRON CONDORS favored. Volatility contracting with no directional conviction. {profit_zone}. Collect theta decay."
+            confidence = "HIGH" if gamma_regime == "POSITIVE" else "MEDIUM"
+            strategy = f"IRON CONDORS favored. Volatility contracting, no directional conviction. {profit_zone}.{' Positive gamma = safer ICs.' if gamma_regime == 'POSITIVE' else ''}{vix_modifier}"
         elif flip_direction == "RISING":
             signal = "SELL_PREMIUM_BULLISH_TILT"
             bias = "SLIGHT_BULLISH"
             confidence = "MEDIUM"
-            strategy = f"IRON CONDORS with PUT SPREAD wider. Dealers slightly bullish but vol low. {profit_zone}. Skew your IC to give more room on the downside."
+            strategy = f"IRON CONDORS with PUT SPREAD wider. Dealers slightly bullish. {profit_zone}.{vix_modifier}"
         elif flip_direction == "FALLING":
             signal = "SELL_PREMIUM_BEARISH_TILT"
             bias = "SLIGHT_BEARISH"
             confidence = "MEDIUM"
-            strategy = f"IRON CONDORS with CALL SPREAD wider. Dealers slightly bearish but vol low. {profit_zone}. Skew your IC to give more room on the upside."
+            strategy = f"IRON CONDORS with CALL SPREAD wider. Dealers slightly bearish. {profit_zone}.{vix_modifier}"
 
     # VOL EXPANSION WITHOUT DIRECTION
     elif width_direction == "WIDENING" and flip_direction == "STABLE":
         signal = "VOL_EXPANSION_NO_DIRECTION"
         bias = "NONE"
         confidence = "LOW"
-        strategy = "CAUTION - volatility expanding but no clear direction. Straddles expensive. Wait for clearer signal or use wider Iron Condors with reduced size."
+        strategy = f"CAUTION - vol expanding but no direction. Wait for clearer signal.{intraday_modifier}{vix_modifier}"
 
     # DIVERGENCE SCENARIOS (conflicting signals)
     elif flip_direction == "RISING" and bounds_direction == "SHIFTED_DOWN":
         signal = "DIVERGENCE_BULLISH_DEALERS"
         bias = "UNCERTAIN"
         confidence = "LOW"
-        strategy = "MIXED SIGNALS - Dealers repositioning bullish but options pricing lower. Possible reversal setup. Watch for confirmation before entering."
+        strategy = f"MIXED SIGNALS - Dealers bullish but options pricing lower. Possible reversal. Watch for confirmation."
 
     elif flip_direction == "FALLING" and bounds_direction == "SHIFTED_UP":
         signal = "DIVERGENCE_BEARISH_DEALERS"
         bias = "UNCERTAIN"
         confidence = "LOW"
-        strategy = "MIXED SIGNALS - Dealers repositioning bearish but options pricing higher. Possible exhaustion. Watch for confirmation before entering."
+        strategy = f"MIXED SIGNALS - Dealers bearish but options pricing higher. Possible exhaustion. Watch for confirmation."
+
+    # WALL BREAK IMMINENT - Override other signals
+    elif wall_break_risk in ["CALL_BREAK", "PUT_BREAK"]:
+        if wall_break_risk == "CALL_BREAK":
+            signal = "CALL_WALL_BREAK_IMMINENT"
+            bias = "BULLISH"
+            confidence = "HIGH" if gamma_regime == "NEGATIVE" else "MEDIUM"
+            strategy = f"UPSIDE BREAKOUT IMMINENT! Consider buying calls or closing short call spreads.{breakout_warning}"
+        else:
+            signal = "PUT_WALL_BREAK_IMMINENT"
+            bias = "BEARISH"
+            confidence = "HIGH" if gamma_regime == "NEGATIVE" else "MEDIUM"
+            strategy = f"DOWNSIDE BREAKDOWN IMMINENT! Consider buying puts or closing short put spreads.{breakout_warning}"
 
     # DEFAULT: NEUTRAL
     else:
         signal = "NEUTRAL"
         bias = "NONE"
         confidence = "LOW"
-        strategy = f"No clear edge detected. Consider Iron Condors within {profit_zone} if volatility is reasonable. {breakout_risk}"
+        strategy = f"No clear edge. Consider ICs within {profit_zone}.{ic_warning if gamma_regime == 'NEGATIVE' else ''}{vix_modifier}"
 
     return {
         "signal": signal,
@@ -1185,7 +1527,10 @@ def _generate_combined_signal(
         "strategy": strategy,
         "profit_zone": profit_zone,
         "breakout_risk": breakout_risk,
-        "spot_position": spot_vs_flip
+        "spot_position": spot_vs_flip,
+        "warnings": warnings,
+        "gamma_regime_context": gamma_regime,
+        "vix_regime_context": vix_regime
     }
 
 
