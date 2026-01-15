@@ -843,7 +843,38 @@ async def get_vix_signal_history(
             history = manager.get_signal_history(days)
 
             if history.empty:
-                response = {"success": True, "data": [], "fallback_mode": False}
+                # Get diagnostic info about the table
+                try:
+                    from database_adapter import get_connection
+                    conn = get_connection()
+                    cursor = conn.cursor()
+                    # Get the latest signal date and total count
+                    cursor.execute("""
+                        SELECT
+                            MAX(signal_date) as latest_date,
+                            COUNT(*) as total_signals
+                        FROM vix_hedge_signals
+                    """)
+                    result = cursor.fetchone()
+                    latest_date = str(result[0]) if result and result[0] else None
+                    total_signals = result[1] if result else 0
+                    conn.close()
+                except Exception as db_err:
+                    latest_date = None
+                    total_signals = 0
+                    log_with_context('warning', f"Could not get signal stats: {db_err}")
+
+                response = {
+                    "success": True,
+                    "data": [],
+                    "fallback_mode": False,
+                    "diagnostics": {
+                        "latest_signal_date": latest_date,
+                        "total_signals_in_db": total_signals,
+                        "requested_days": days,
+                        "message": f"No signals found in the last {days} days. Latest signal: {latest_date or 'None'}. Check if alphagex-trader worker is running."
+                    }
+                }
                 _cache.set(cache_key, response, VIXConfig.CACHE_TTL_HISTORY)
                 return response
 
@@ -1066,6 +1097,105 @@ async def get_vix_current():
         )
     finally:
         RequestContext.clear()
+
+
+@router.get("/signal-status")
+async def get_vix_signal_status():
+    """
+    Get VIX signal collection status for debugging.
+
+    Returns information about:
+    - Latest signal date and time
+    - Total signals in database
+    - Signal collection health status
+    - Scheduler job status (if available)
+    """
+    try:
+        from database_adapter import get_connection
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Get signal statistics
+        cursor.execute("""
+            SELECT
+                MAX(signal_date) as latest_date,
+                MAX(signal_time) as latest_time,
+                MIN(signal_date) as earliest_date,
+                COUNT(*) as total_signals,
+                COUNT(DISTINCT signal_date) as days_with_signals
+            FROM vix_hedge_signals
+        """)
+        stats = cursor.fetchone()
+
+        # Get recent signals (last 5)
+        cursor.execute("""
+            SELECT signal_date, signal_time, signal_type, vix_spot
+            FROM vix_hedge_signals
+            ORDER BY signal_date DESC, signal_time DESC
+            LIMIT 5
+        """)
+        recent = cursor.fetchall()
+        conn.close()
+
+        latest_date = str(stats[0]) if stats and stats[0] else None
+        latest_time = str(stats[1]) if stats and stats[1] else None
+
+        # Calculate days since last signal
+        days_since_last = None
+        if latest_date:
+            try:
+                from datetime import datetime
+                last_signal = datetime.strptime(latest_date, '%Y-%m-%d')
+                days_since_last = (datetime.now() - last_signal).days
+            except Exception:
+                pass
+
+        # Determine health status
+        if days_since_last is None:
+            health_status = "NO_DATA"
+            health_message = "No signals have ever been recorded"
+        elif days_since_last == 0:
+            health_status = "HEALTHY"
+            health_message = "Signals are being collected today"
+        elif days_since_last <= 3:
+            health_status = "WARNING"
+            health_message = f"Last signal was {days_since_last} day(s) ago - check if scheduler is running"
+        else:
+            health_status = "STALE"
+            health_message = f"Last signal was {days_since_last} days ago - scheduler likely not running"
+
+        return {
+            "success": True,
+            "data": {
+                "health_status": health_status,
+                "health_message": health_message,
+                "latest_signal_date": latest_date,
+                "latest_signal_time": latest_time,
+                "earliest_signal_date": str(stats[2]) if stats and stats[2] else None,
+                "total_signals": stats[3] if stats else 0,
+                "days_with_signals": stats[4] if stats else 0,
+                "days_since_last_signal": days_since_last,
+                "recent_signals": [
+                    {
+                        "date": str(r[0]),
+                        "time": str(r[1]),
+                        "type": r[2],
+                        "vix": float(r[3]) if r[3] else None
+                    }
+                    for r in (recent or [])
+                ]
+            }
+        }
+    except Exception as e:
+        log_with_context('error', f"Signal status check failed: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "data": {
+                "health_status": "ERROR",
+                "health_message": f"Could not check signal status: {str(e)}"
+            }
+        }
 
 
 @router.get("/metrics")

@@ -322,10 +322,19 @@ PENDING_CONFIRMATIONS: Dict[str, Dict] = {}
 
 
 def get_bot_status(bot_name: str = "ares") -> Dict:
-    """Get status of a trading bot"""
+    """Get status of a trading bot
+
+    Supports all 8 bots: ARES, ATHENA, TITAN, PEGASUS, ICARUS, PHOENIX, ATLAS, HERMES
+    """
+    valid_bots = ["ares", "athena", "titan", "pegasus", "icarus", "phoenix", "atlas", "hermes"]
+    bot_lower = bot_name.lower()
+
+    if bot_lower not in valid_bots:
+        return {"error": f"Invalid bot '{bot_name}'. Valid bots: {', '.join(valid_bots)}"}
+
     try:
         api_base = os.getenv("API_URL", "https://alphagex-api.onrender.com")
-        response = requests.get(f"{api_base}/api/ares/status", timeout=10)
+        response = requests.get(f"{api_base}/api/{bot_lower}/status", timeout=10)
 
         if response.status_code == 200:
             return response.json().get("data", {})
@@ -358,7 +367,7 @@ def request_bot_action(action: str, bot_name: str = "ares", session_id: str = "d
     if action.lower() not in valid_actions:
         return {"error": f"Invalid action. Valid actions: {', '.join(valid_actions)}"}
 
-    valid_bots = ["ares", "athena", "atlas"]
+    valid_bots = ["ares", "athena", "titan", "pegasus", "icarus", "phoenix", "atlas", "hermes"]
     if bot_name.lower() not in valid_bots:
         return {"error": f"Invalid bot. Valid bots: {', '.join(valid_bots)}"}
 
