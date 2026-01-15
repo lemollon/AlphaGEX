@@ -523,8 +523,11 @@ class SignalGenerator:
 
         # Priority 3: SD-based fallback
         if not use_oracle and not use_gex:
-            put_short = round_to_5(spot - sd * expected_move)
-            call_short = round_to_5(spot + sd * expected_move)
+            # Ensure minimum expected move of 0.5% of spot to prevent overlapping strikes
+            min_expected_move = spot * 0.005
+            effective_em = max(expected_move, min_expected_move)
+            put_short = round_to_5(spot - sd * effective_em)
+            call_short = round_to_5(spot + sd * effective_em)
 
         put_long = put_short - width
         call_long = call_short + width

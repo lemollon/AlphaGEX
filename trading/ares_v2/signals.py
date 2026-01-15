@@ -373,8 +373,13 @@ class SignalGenerator:
 
         # Priority 3: SD-based fallback (only if neither Oracle nor GEX)
         if not use_oracle and not use_gex:
-            put_short = round_strike(spot_price - sd * expected_move)
-            call_short = round_strike(spot_price + sd * expected_move)
+            # Ensure minimum expected move of 0.5% of spot to prevent overlapping strikes
+            min_expected_move = spot_price * 0.005  # 0.5% minimum
+            effective_em = max(expected_move, min_expected_move)
+            put_short = round_strike(spot_price - sd * effective_em)
+            call_short = round_strike(spot_price + sd * effective_em)
+            if expected_move < min_expected_move:
+                logger.warning(f"Expected move ${expected_move:.2f} too small, using minimum ${effective_em:.2f}")
             logger.info(f"Using SD-based: Put short ${put_short}, Call short ${call_short}")
 
         # Long strikes are spread_width away from shorts
