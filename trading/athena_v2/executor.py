@@ -285,6 +285,7 @@ class OrderExecutor:
                 # ML context (FULL audit trail)
                 # BUG FIX: Use signal.oracle_confidence not signal.confidence
                 oracle_confidence=signal.oracle_confidence,
+                oracle_advice=signal.oracle_advice,
                 ml_direction=signal.direction,
                 ml_confidence=signal.confidence,
                 ml_model_name=signal.ml_model_name,
@@ -402,6 +403,7 @@ class OrderExecutor:
                 # ML context (FULL audit trail)
                 # BUG FIX: Use signal.oracle_confidence not signal.confidence
                 oracle_confidence=signal.oracle_confidence,
+                oracle_advice=signal.oracle_advice,
                 ml_direction=signal.direction,
                 ml_confidence=signal.confidence,
                 ml_model_name=signal.ml_model_name,
