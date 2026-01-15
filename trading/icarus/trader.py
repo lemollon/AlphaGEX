@@ -159,17 +159,10 @@ class ICARUSTrader(MathOptimizerMixin):
         # Skip date functionality
         self.skip_date: Optional[datetime] = None
 
-        # Initialize Math Optimizers
+        # Math Optimizers DISABLED - Oracle is the sole decision maker
         if MATH_OPTIMIZER_AVAILABLE:
-            self._init_math_optimizers("ICARUS", enabled=True)
-            # ICARUS is aggressive - allow trading in most regimes
-            self.math_set_config('favorable_regimes', [
-                'TRENDING_BULLISH', 'TRENDING_BEARISH', 'MEAN_REVERTING',
-                'LOW_VOLATILITY', 'HIGH_VOLATILITY'
-            ])
-            self.math_set_config('avoid_regimes', ['GAMMA_SQUEEZE'])
-            self.math_set_config('min_regime_confidence', 0.35)  # Even lower for aggressive
-            logger.info("ICARUS: Math optimizers enabled - aggressive regime gate")
+            self._init_math_optimizers("ICARUS", enabled=False)
+            logger.info("ICARUS: Math optimizers DISABLED - Oracle controls all trading decisions")
 
         logger.info(
             f"ICARUS initialized: mode={self.config.mode.value}, "
