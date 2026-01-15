@@ -221,10 +221,11 @@ class TITANConfig:
     stop_loss_multiple: float = 2.0
     profit_target_pct: float = 30.0  # Earlier exit (PEGASUS: 50%)
 
-    # Trading window - EXTENDED
+    # Trading window (Central Time)
+    # Market closes at 3:00 PM CT (4:00 PM ET)
     entry_start: str = "08:30"
-    entry_end: str = "15:00"  # Slightly earlier end
-    force_exit: str = "15:55"
+    entry_end: str = "14:45"  # Stop new entries 15 min before close
+    force_exit: str = "14:50"  # Force close 10 min before market close
 
     # Cooldown between trades (minutes) - for daily trading
     trade_cooldown_minutes: int = 30  # Wait 30 min between trades

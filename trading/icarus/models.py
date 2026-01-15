@@ -99,9 +99,10 @@ class ICARUSConfig:
     stop_loss_pct: float = 60.0  # 60% vs ATHENA's 50% - slightly wider stops
 
     # Trading hours (Central Time)
+    # Market closes at 3:00 PM CT (4:00 PM ET)
     entry_start: str = "08:35"
     entry_end: str = "14:30"
-    force_exit: str = "15:55"
+    force_exit: str = "14:50"  # Force close 10 min before market close
 
     def validate(self) -> Tuple[bool, str]:
         """Validate configuration"""

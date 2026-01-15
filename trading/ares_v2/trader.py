@@ -1192,8 +1192,8 @@ class ARESTrader(MathOptimizerMixin):
         # Check if today is an early close day
         if MARKET_CALENDAR_AVAILABLE and MARKET_CALENDAR:
             close_hour, close_minute = MARKET_CALENDAR.get_market_close_time(today)
-            # Early close: 12:00 PM CT - force exit at 11:55 AM CT
-            early_close_force = now.replace(hour=close_hour, minute=close_minute, second=0) - timedelta(minutes=5)
+            # Early close: force exit 10 min before market close
+            early_close_force = now.replace(hour=close_hour, minute=close_minute, second=0) - timedelta(minutes=10)
 
             # Use the earlier of config time and early close time
             if early_close_force < config_force_time:
@@ -1208,15 +1208,28 @@ class ARESTrader(MathOptimizerMixin):
         now: datetime,
         today: str
     ) -> tuple[bool, str]:
-        """Check if IC should be closed"""
-        # Expiration check
-        if pos.expiration <= today:
-            return True, "EXPIRED"
+        """
+        Check if IC should be closed.
 
-        # Force exit time (handles early close days)
+        Exit conditions (in priority order):
+        1. FORCE_EXIT: Current time >= force exit time on expiration day
+        2. EXPIRED: Position's expiration date is BEFORE today (past expiration)
+        3. PROFIT_TARGET / STOP_LOSS: P&L targets
+
+        NOTE: On expiration day, we use FORCE_EXIT (not EXPIRED) to ensure positions are
+        closed at the proper time (10 min before market close), not at market open.
+        """
+        # Get force exit time (handles early close days)
         force_time = self._get_force_exit_time(now, today)
-        if now >= force_time and pos.expiration == today:
+
+        # FORCE_EXIT: On expiration day, close at force exit time (10 min before market close)
+        if pos.expiration == today and now >= force_time:
             return True, "FORCE_EXIT_TIME"
+
+        # EXPIRED: Position is PAST expiration (should have been closed yesterday)
+        if pos.expiration < today:
+            logger.warning(f"Position {pos.position_id} is PAST expiration ({pos.expiration}) - closing immediately")
+            return True, "EXPIRED"
 
         # Get current value with fallback handling
         current_value = self.executor.get_position_current_value(pos)

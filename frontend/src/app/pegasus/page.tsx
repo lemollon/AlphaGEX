@@ -826,7 +826,7 @@ export default function PegasusPage() {
                   </div>
                   <div className="bg-gray-800/50 rounded-lg p-4 col-span-2">
                     <span className="text-gray-500 text-sm block">Trading Window</span>
-                    <span className="text-xl font-bold text-white">{config?.entry_window || '08:30 - 15:55 CT'}</span>
+                    <span className="text-xl font-bold text-white">{config?.entry_window || '08:30 - 14:45 CT'}</span>
                   </div>
                 </div>
 
