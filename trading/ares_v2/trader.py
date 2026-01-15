@@ -146,18 +146,11 @@ class ARESTrader(MathOptimizerMixin):
         # Learning Memory prediction tracking (position_id -> prediction_id)
         self._prediction_ids: Dict[str, str] = {}
 
-        # Initialize Math Optimizers (HMM, Kalman, Thompson, Convex, HJB, MDP)
+        # Math Optimizers DISABLED - Oracle is the sole decision maker
+        # The regime gate was blocking trades even when Oracle said TRADE_FULL
         if MATH_OPTIMIZER_AVAILABLE:
-            self._init_math_optimizers("ARES", enabled=True)
-            # Relax regime gate - ARES Iron Condors profit in most regimes
-            # Only avoid extreme gamma squeeze conditions
-            self.math_set_config('favorable_regimes', [
-                'LOW_VOLATILITY', 'MEAN_REVERTING', 'TRENDING_BULLISH',
-                'TRENDING_BEARISH', 'HIGH_VOLATILITY'
-            ])
-            self.math_set_config('avoid_regimes', ['GAMMA_SQUEEZE'])
-            self.math_set_config('min_regime_confidence', 0.40)
-            logger.info("ARES: Math optimizers enabled with relaxed regime gate")
+            self._init_math_optimizers("ARES", enabled=False)
+            logger.info("ARES: Math optimizers DISABLED - Oracle controls all trading decisions")
 
         logger.info(
             f"ARES V2 initialized: mode={self.config.mode.value}, "

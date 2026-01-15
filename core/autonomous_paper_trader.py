@@ -479,11 +479,11 @@ class AutonomousPaperTrader(
             self.regime_classifier = None
             self.iv_history = []
 
-        # Initialize Math Optimizers (HMM, Thompson Sampling, HJB Exit, Kalman)
+        # Math Optimizers DISABLED - Oracle is the sole decision maker
         if MATH_OPTIMIZER_AVAILABLE:
             try:
-                self._init_math_optimizers("PHOENIX", enabled=True)
-                print("✅ Math optimizers initialized (HMM, Thompson, HJB, Kalman)")
+                self._init_math_optimizers("PHOENIX", enabled=False)
+                print("✅ PHOENIX: Math optimizers DISABLED - Oracle controls all trading decisions")
             except Exception as e:
                 print(f"⚠️ Math optimizer init failed: {e}")
 

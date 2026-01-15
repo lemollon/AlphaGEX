@@ -151,20 +151,11 @@ class PEGASUSTrader(MathOptimizerMixin):
         # Learning Memory prediction tracking (position_id -> prediction_id)
         self._prediction_ids: Dict[str, str] = {}
 
-        # Initialize Math Optimizers (HMM, Thompson Sampling, HJB Exit)
+        # Math Optimizers DISABLED - Oracle is the sole decision maker
         if MATH_OPTIMIZER_AVAILABLE:
             try:
-                self._init_math_optimizers("PEGASUS", enabled=True)
-                # PEGASUS positions strikes OUTSIDE the expected move, so trending regimes
-                # should NOT block trades - the market can trend and still stay in profit zone
-                # Allow ALL regimes - only avoid extreme gamma squeeze conditions
-                self.math_set_config('favorable_regimes', [
-                    'LOW_VOLATILITY', 'MEAN_REVERTING', 'TRENDING_BULLISH',
-                    'TRENDING_BEARISH', 'HIGH_VOLATILITY'
-                ])
-                self.math_set_config('avoid_regimes', ['GAMMA_SQUEEZE'])  # Only avoid extreme squeeze
-                self.math_set_config('min_regime_confidence', 0.40)  # Lower threshold
-                logger.info("PEGASUS: Math optimizers initialized - regime gate relaxed for outside-EM positioning")
+                self._init_math_optimizers("PEGASUS", enabled=False)
+                logger.info("PEGASUS: Math optimizers DISABLED - Oracle controls all trading decisions")
             except Exception as e:
                 logger.warning(f"PEGASUS: Math optimizer init failed: {e}")
 

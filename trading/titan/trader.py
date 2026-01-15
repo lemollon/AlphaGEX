@@ -154,18 +154,11 @@ class TITANTrader(MathOptimizerMixin):
         # Learning Memory prediction tracking (position_id -> prediction_id)
         self._prediction_ids: Dict[str, str] = {}
 
-        # Initialize Math Optimizers (HMM, Thompson Sampling, HJB Exit)
+        # Math Optimizers DISABLED - Oracle is the sole decision maker
         if MATH_OPTIMIZER_AVAILABLE:
             try:
-                self._init_math_optimizers("TITAN", enabled=True)
-                # TITAN is aggressive - allow ALL regimes except extreme gamma squeeze
-                self.math_set_config('favorable_regimes', [
-                    'LOW_VOLATILITY', 'MEAN_REVERTING', 'TRENDING_BULLISH',
-                    'TRENDING_BEARISH', 'HIGH_VOLATILITY'
-                ])
-                self.math_set_config('avoid_regimes', ['GAMMA_SQUEEZE'])
-                self.math_set_config('min_regime_confidence', 0.30)  # Very low threshold
-                logger.info("TITAN: Math optimizers initialized - regime gate very relaxed for aggressive trading")
+                self._init_math_optimizers("TITAN", enabled=False)
+                logger.info("TITAN: Math optimizers DISABLED - Oracle controls all trading decisions")
             except Exception as e:
                 logger.warning(f"TITAN: Math optimizer init failed: {e}")
 

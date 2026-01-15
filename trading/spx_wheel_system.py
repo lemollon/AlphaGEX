@@ -627,11 +627,11 @@ class SPXWheelTrader(MathOptimizerMixin):
             except Exception as e:
                 logger.warning(f"ATLAS: Failed to initialize Oracle AI: {e}")
 
-        # Initialize Math Optimizers (HMM, Thompson Sampling, HJB Exit, etc.)
+        # Math Optimizers DISABLED - Oracle is the sole decision maker
         if MATH_OPTIMIZER_AVAILABLE:
             try:
-                self._init_math_optimizers("ATLAS", enabled=True)
-                logger.info("ATLAS: Math optimizers initialized (HMM, Thompson, HJB)")
+                self._init_math_optimizers("ATLAS", enabled=False)
+                logger.info("ATLAS: Math optimizers DISABLED - Oracle controls all trading decisions")
             except Exception as e:
                 logger.warning(f"ATLAS: Math optimizer init failed: {e}")
 
