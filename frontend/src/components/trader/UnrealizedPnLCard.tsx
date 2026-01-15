@@ -31,7 +31,8 @@ interface LivePnLData {
 interface UnrealizedPnLCardProps {
   botName: BotName
   data: LivePnLData | null
-  isLoading: boolean
+  isLoading?: boolean
+  isValidating?: boolean
   error?: any
   onRefresh?: () => void
 }
@@ -57,18 +58,19 @@ function formatCurrencyDecimal(value: number): string {
 export default function UnrealizedPnLCard({
   botName,
   data,
-  isLoading,
+  isLoading = false,
+  isValidating = false,
   error,
   onRefresh
 }: UnrealizedPnLCardProps) {
   const brand = BOT_BRANDS[botName]
 
-  // No open positions
+  // No open positions - hide the card entirely
   if (!isLoading && data && data.position_count === 0) {
-    return null // Don't show card when no positions
+    return null
   }
 
-  // Loading state
+  // Only show loading skeleton on initial load (no data yet)
   if (isLoading && !data) {
     return (
       <div className={`bg-[#0a0a0a] border rounded-lg p-4 ${brand.primaryBorder}`}>
@@ -113,6 +115,10 @@ export default function UnrealizedPnLCard({
               {data.position_count} open position{data.position_count > 1 ? 's' : ''}
             </span>
           )}
+          {/* Subtle refresh indicator during background revalidation */}
+          {isValidating && !isLoading && (
+            <RefreshCw className="w-3 h-3 text-gray-500 animate-spin" />
+          )}
         </div>
         {onRefresh && (
           <button
@@ -120,7 +126,7 @@ export default function UnrealizedPnLCard({
             className="text-gray-400 hover:text-white transition-colors p-1 rounded hover:bg-gray-800"
             title="Refresh"
           >
-            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-4 h-4 ${isLoading || isValidating ? 'animate-spin' : ''}`} />
           </button>
         )}
       </div>

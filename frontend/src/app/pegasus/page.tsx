@@ -31,6 +31,7 @@ import {
   BOT_BRANDS,
   BotName,
   BotStatusBanner,
+  UnrealizedPnLCard,
 } from '@/components/trader'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
 import DriftStatusCard from '@/components/DriftStatusCard'
@@ -507,7 +508,7 @@ export default function PegasusPage() {
   const { data: positionsData, error: positionsError, isLoading: positionsLoading } = usePEGASUSPositions()
   // Equity curve data is now fetched by the shared EquityCurveChart component
   const { data: configData } = usePEGASUSConfig()
-  const { data: livePnLData } = usePEGASUSLivePnL()
+  const { data: livePnLData, isLoading: livePnLLoading, isValidating: livePnLValidating } = usePEGASUSLivePnL()
   const { data: scanData, isLoading: scansLoading } = useScanActivityPegasus(50)
 
   // Extract data
@@ -673,6 +674,14 @@ export default function PegasusPage() {
                     const today = new Date().toISOString().split('T')[0]
                     return closeTime.startsWith(today)
                   }).length}
+                />
+
+                {/* Live Unrealized P&L Card */}
+                <UnrealizedPnLCard
+                  botName="PEGASUS"
+                  data={livePnLData?.data || livePnLData}
+                  isLoading={livePnLLoading}
+                  isValidating={livePnLValidating}
                 />
 
                 {/* Performance Drift - Backtest vs Live */}
