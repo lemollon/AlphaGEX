@@ -390,7 +390,7 @@ J.A.R.V.I.S.-style AI chatbot providing decision support throughout the platform
 - **Files** (9 core modules in `ai/`):
   - `gexis_personality.py` - Core identity and prompts
   - `gexis_tools.py` - 17 agentic tools (database, market data, bot control)
-  - `gexis_knowledge.py` - Knowledge base (127 database tables documented)
+  - `gexis_knowledge.py` - Knowledge base (49 database tables documented)
   - `gexis_commands.py` - Slash commands (`/market-hours`, `/suggestion`, `/risk`)
   - `gexis_learning_memory.py` - Self-improving prediction accuracy tracking
   - `gexis_extended_thinking.py` - Claude Extended Thinking for complex analysis

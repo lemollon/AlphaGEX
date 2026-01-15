@@ -2,7 +2,7 @@
 GEXIS Comprehensive Knowledge Base
 
 This module contains ALL knowledge GEXIS needs about:
-- Database tables (127 tables)
+- Database tables (49 tables)
 - System architecture
 - Trading strategies
 - Bot configurations
@@ -11,7 +11,7 @@ This module contains ALL knowledge GEXIS needs about:
 """
 
 # =============================================================================
-# DATABASE SCHEMA - ALL 127 TABLES
+# DATABASE SCHEMA - ALL 49 TABLES
 # =============================================================================
 
 DATABASE_TABLES = """
