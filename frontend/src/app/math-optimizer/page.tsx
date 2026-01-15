@@ -8,7 +8,7 @@ import {
   CheckCircle, Info, BookOpen, Code, Play, PauseCircle
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
-import { apiClient } from '@/lib/api'
+import { api } from '@/lib/api'
 
 // =============================================================================
 // ALGORITHM CARD COMPONENT
@@ -164,8 +164,8 @@ const LiveOptimizerStatus = () => {
     const fetchData = async () => {
       try {
         const [dashRes, decisionsRes] = await Promise.all([
-          apiClient.getMathOptimizerLiveDashboard(),
-          apiClient.getMathOptimizerDecisions(10)
+          api.get('/api/math-optimizer/live-dashboard'),
+          api.get('/api/math-optimizer/decisions?limit=10')
         ])
         setDashboard(dashRes.data)
         setDecisions(decisionsRes.data?.decisions || [])
