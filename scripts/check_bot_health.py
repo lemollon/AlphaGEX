@@ -235,15 +235,16 @@ def check_trading_window():
 
     now = datetime.now(CENTRAL_TZ)
 
-    # Define trading windows
+    # Define trading windows (market closes at 3:00 PM CT)
+    # Entry windows end 15 min before market close
     windows = {
-        'ARES': ('08:30', '15:30'),
+        'ARES': ('08:30', '14:45'),
         'ATHENA': ('08:35', '14:30'),
         'ICARUS': ('08:35', '14:30'),
-        'PEGASUS': ('08:30', '15:00'),
-        'TITAN': ('08:30', '15:00'),
+        'PEGASUS': ('08:30', '14:45'),
+        'TITAN': ('08:30', '14:45'),
         'ATLAS': ('09:05', '09:10'),  # Daily run
-        'ARGUS': ('08:30', '15:00'),
+        'ARGUS': ('08:30', '14:45'),
     }
 
     print(f"\nCurrent time: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")

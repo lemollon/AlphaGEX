@@ -1099,7 +1099,7 @@ async def get_titan_config():
         "min_credit": 0.50,
         "profit_target_pct": 30,
         "use_stop_loss": True,
-        "entry_window": "08:30 - 15:00 CT",
+        "entry_window": "08:30 - 14:45 CT",
         "trade_cooldown_minutes": 30,
         "max_open_positions": 10,
         "min_win_probability": 0.40,
