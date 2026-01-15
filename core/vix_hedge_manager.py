@@ -99,14 +99,11 @@ class VIXHedgeManager:
         self.rv_window = 20  # 20-day realized vol
         self._db_available = False
         self._tables_initialized = False
+        self._db_retry_count = 0
+        self._max_db_retries = 3  # Retry DB init up to 3 times per save attempt
 
         # Try to initialize database tables (but don't fail if unavailable)
-        try:
-            self._ensure_tables()
-            self._db_available = True
-            self._tables_initialized = True
-        except Exception as e:
-            logger.warning(f"VIX Hedge Manager: Database not available ({type(e).__name__}), running without persistence")
+        self._try_init_db()
 
         # VIX thresholds
         self.vol_thresholds = {
@@ -122,6 +119,27 @@ class VIXHedgeManager:
         self.term_structure_threshold = 3.0  # Contango/backwardation threshold
 
         logger.info("VIX Hedge Manager initialized (SIGNAL GENERATOR ONLY)")
+
+    def _try_init_db(self) -> bool:
+        """
+        Try to initialize database connection.
+        Returns True if successful, False otherwise.
+        Called during init and retried on save if init failed.
+        """
+        if self._db_available:
+            return True
+
+        try:
+            self._ensure_tables()
+            self._db_available = True
+            self._tables_initialized = True
+            self._db_retry_count = 0
+            logger.info("VIX Hedge Manager: Database connection established")
+            return True
+        except Exception as e:
+            self._db_retry_count += 1
+            logger.warning(f"VIX Hedge Manager: Database not available ({type(e).__name__}: {e}), attempt {self._db_retry_count}")
+            return False
 
     def _ensure_tables(self):
         """
@@ -568,8 +586,16 @@ class VIXHedgeManager:
 
     def _save_signal(self, signal: HedgeSignal):
         """Save signal to database for tracking"""
+        # Retry database connection if not available (fixes cold start issues)
         if not self._db_available:
-            return  # Skip saving if database not available
+            if self._db_retry_count < self._max_db_retries:
+                logger.info("VIX Hedge Manager: Retrying database connection...")
+                if not self._try_init_db():
+                    logger.error(f"VIX Hedge Manager: Database still unavailable after retry {self._db_retry_count}/{self._max_db_retries}. Signal NOT saved!")
+                    return
+            else:
+                logger.error("VIX Hedge Manager: Max DB retries exceeded. Signal NOT saved! Check DATABASE_URL.")
+                return
 
         try:
             conn = get_connection()
@@ -630,8 +656,12 @@ class VIXHedgeManager:
 
     def get_signal_history(self, days: int = 30) -> pd.DataFrame:
         """Get historical signals"""
+        # Retry database connection if not available
         if not self._db_available:
-            return pd.DataFrame()  # Return empty DataFrame if no database
+            self._try_init_db()
+            if not self._db_available:
+                logger.warning("VIX Hedge Manager: Cannot get signal history - database unavailable")
+                return pd.DataFrame()
 
         try:
             conn = get_connection()
