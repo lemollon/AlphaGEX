@@ -76,13 +76,17 @@ class SolomonAIAnalyst:
 
     def __init__(self):
         self.client = None
+        logger.info("[SOLOMON AI] Initializing Solomon AI Analyst...")
         if CLAUDE_AVAILABLE:
             api_key = os.getenv('ANTHROPIC_API_KEY') or os.getenv('CLAUDE_API_KEY')
             if api_key:
                 self.client = anthropic.Anthropic(api_key=api_key)
-                logger.info("Solomon AI Analyst initialized with Claude")
+                logger.info("[SOLOMON AI] Claude API client initialized successfully")
+                logger.info("[SOLOMON AI] Model: claude-sonnet-4-20250514")
             else:
-                logger.warning("No Anthropic API key found for Solomon AI")
+                logger.warning("[SOLOMON AI] No Anthropic API key found - AI analysis will use fallback mode")
+        else:
+            logger.warning("[SOLOMON AI] Anthropic SDK not available - AI analysis disabled")
 
     def is_available(self) -> bool:
         """Check if AI analysis is available"""
@@ -91,18 +95,28 @@ class SolomonAIAnalyst:
     def _call_claude(self, system_prompt: str, user_prompt: str, max_tokens: int = 2000) -> Optional[str]:
         """Make a Claude API call"""
         if not self.client:
+            logger.debug("[SOLOMON AI] Claude client not available, skipping API call")
             return None
 
         try:
+            logger.info("[SOLOMON AI] Making Claude API call...")
+            logger.debug(f"[SOLOMON AI]   System prompt length: {len(system_prompt)} chars")
+            logger.debug(f"[SOLOMON AI]   User prompt length: {len(user_prompt)} chars")
+            logger.debug(f"[SOLOMON AI]   Max tokens: {max_tokens}")
+
             response = self.client.messages.create(
                 model="claude-sonnet-4-20250514",
                 max_tokens=max_tokens,
                 system=system_prompt,
                 messages=[{"role": "user", "content": user_prompt}]
             )
-            return response.content[0].text
+
+            response_text = response.content[0].text
+            logger.info(f"[SOLOMON AI] Claude API call successful - response: {len(response_text)} chars")
+            return response_text
         except Exception as e:
-            logger.error(f"Claude API error: {e}")
+            logger.error(f"[SOLOMON AI] Claude API error: {e}")
+            logger.error(f"[SOLOMON AI]   Request details - max_tokens: {max_tokens}, system_prompt_len: {len(system_prompt)}")
             return None
 
     def analyze_performance_drop(
@@ -124,7 +138,16 @@ class SolomonAIAnalyst:
         Returns:
             AnalysisResult with findings and recommendations
         """
+        logger.info(f"[SOLOMON AI] Analyzing performance drop for {bot_name}")
+        logger.info(f"[SOLOMON AI]   Recent trades: {len(recent_trades)}")
+        logger.info(f"[SOLOMON AI]   Previous win rate: {historical_stats.get('prev_win_rate', 'N/A')}%")
+        logger.info(f"[SOLOMON AI]   Current win rate: {historical_stats.get('recent_win_rate', 'N/A')}%")
+        logger.info(f"[SOLOMON AI]   Degradation: {historical_stats.get('degradation_pct', 'N/A')}%")
+        logger.info(f"[SOLOMON AI]   VIX: {market_conditions.get('vix', 'N/A')}")
+        logger.info(f"[SOLOMON AI]   GEX Regime: {market_conditions.get('gex_regime', 'N/A')}")
+
         if not self.client:
+            logger.info(f"[SOLOMON AI] Using fallback analysis (Claude not available)")
             return self._fallback_analysis(bot_name, recent_trades, historical_stats)
 
         system_prompt = """You are Solomon, an expert trading system analyst for the AlphaGEX platform.
@@ -177,6 +200,7 @@ Focus on actionable recommendations specific to this bot's strategy."""
         response = self._call_claude(system_prompt, user_prompt)
 
         if not response:
+            logger.info(f"[SOLOMON AI] No response from Claude, using fallback analysis for {bot_name}")
             return self._fallback_analysis(bot_name, recent_trades, historical_stats)
 
         try:
@@ -189,7 +213,7 @@ Focus on actionable recommendations specific to this bot's strategy."""
             else:
                 data = json.loads(response)
 
-            return AnalysisResult(
+            result = AnalysisResult(
                 analysis_type="PERFORMANCE_DROP",
                 bot_name=bot_name,
                 summary=data.get('summary', 'Analysis complete'),
@@ -201,8 +225,24 @@ Focus on actionable recommendations specific to this bot's strategy."""
                 raw_response=response,
                 timestamp=datetime.now(CENTRAL_TZ)
             )
+
+            # Enhanced logging of analysis results
+            logger.info(f"[SOLOMON AI] Analysis complete for {bot_name}")
+            logger.info(f"[SOLOMON AI]   Summary: {result.summary}")
+            logger.info(f"[SOLOMON AI]   Confidence: {result.confidence:.0%}")
+            logger.info(f"[SOLOMON AI]   Findings: {len(result.findings)}")
+            for i, finding in enumerate(result.findings[:3], 1):
+                logger.info(f"[SOLOMON AI]     {i}. {finding}")
+            logger.info(f"[SOLOMON AI]   Recommendations: {len(result.recommendations)}")
+            for i, rec in enumerate(result.recommendations[:3], 1):
+                logger.info(f"[SOLOMON AI]     {i}. {rec}")
+            logger.info(f"[SOLOMON AI]   Suggested actions: {len(result.suggested_actions)}")
+            for action in result.suggested_actions:
+                logger.info(f"[SOLOMON AI]     - {action.get('action', 'UNKNOWN')}: {action.get('reason', 'No reason')}")
+
+            return result
         except json.JSONDecodeError:
-            logger.warning("Could not parse Claude response as JSON")
+            logger.warning(f"[SOLOMON AI] Could not parse Claude response as JSON for {bot_name}")
             return AnalysisResult(
                 analysis_type="PERFORMANCE_DROP",
                 bot_name=bot_name,
@@ -237,6 +277,7 @@ Focus on actionable recommendations specific to this bot's strategy."""
         historical_stats: Dict
     ) -> AnalysisResult:
         """Provide basic analysis when Claude is not available"""
+        logger.info(f"[SOLOMON AI FALLBACK] Running fallback analysis for {bot_name}")
         findings = []
         recommendations = []
         suggested_actions = []
@@ -244,6 +285,7 @@ Focus on actionable recommendations specific to this bot's strategy."""
         # Basic pattern detection
         losses = [t for t in recent_trades if t.get('realized_pnl', t.get('net_pnl', 0)) < 0]
         wins = [t for t in recent_trades if t.get('realized_pnl', t.get('net_pnl', 0)) > 0]
+        logger.info(f"[SOLOMON AI FALLBACK]   Trade analysis: {len(wins)} wins, {len(losses)} losses")
 
         if len(losses) > len(wins):
             findings.append(f"More losses ({len(losses)}) than wins ({len(wins)}) in recent period")
@@ -274,7 +316,7 @@ Focus on actionable recommendations specific to this bot's strategy."""
                 "reason": f"Performance degraded by {degradation:.1f}%"
             })
 
-        return AnalysisResult(
+        result = AnalysisResult(
             analysis_type="PERFORMANCE_DROP",
             bot_name=bot_name,
             summary=f"Basic analysis for {bot_name}: {len(findings)} issues found",
@@ -286,6 +328,17 @@ Focus on actionable recommendations specific to this bot's strategy."""
             raw_response="",
             timestamp=datetime.now(CENTRAL_TZ)
         )
+
+        logger.info(f"[SOLOMON AI FALLBACK] Fallback analysis complete for {bot_name}")
+        logger.info(f"[SOLOMON AI FALLBACK]   Issues found: {len(findings)}")
+        for finding in findings:
+            logger.info(f"[SOLOMON AI FALLBACK]     - {finding}")
+        logger.info(f"[SOLOMON AI FALLBACK]   Recommendations: {len(recommendations)}")
+        logger.info(f"[SOLOMON AI FALLBACK]   Suggested actions: {len(suggested_actions)}")
+        for action in suggested_actions:
+            logger.warning(f"[SOLOMON AI FALLBACK]     - {action.get('action')}: {action.get('reason')}")
+
+        return result
 
     def generate_proposal_reasoning(
         self,
@@ -359,7 +412,14 @@ Review the supporting metrics and approve if the changes align with risk toleran
         - Each bot's recent performance
         - Recommendations for Monday
         """
+        logger.info(f"[SOLOMON AI] Performing weekend market analysis...")
+        logger.info(f"[SOLOMON AI]   Target date: Monday {datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')}")
+        logger.info(f"[SOLOMON AI]   VIX: {market_data.get('vix', 'N/A')}")
+        logger.info(f"[SOLOMON AI]   VIX Futures: {market_data.get('vix_futures', 'N/A')}")
+        logger.info(f"[SOLOMON AI]   Bots to analyze: {list(bot_performance.keys())}")
+
         if not self.client:
+            logger.warning("[SOLOMON AI] Claude not available for weekend analysis")
             return None
 
         system_prompt = """You are Solomon, providing weekend market analysis for the AlphaGEX trading system.
@@ -529,8 +589,9 @@ Provide analysis in JSON format:
                     else:
                         hourly_stats[hour]['losses'] += 1
                     hourly_stats[hour]['total_pnl'] += pnl
-                except:
-                    pass
+                except (ValueError, TypeError, AttributeError) as e:
+                    logger.debug(f"Could not parse entry_time for trade: {e}")
+                    continue
 
         user_prompt = f"""Analyze time-of-day performance for {bot_name}:
 
@@ -546,8 +607,8 @@ Identify optimal trading windows."""
                 json_start = response.find('{')
                 json_end = response.rfind('}') + 1
                 return json.loads(response[json_start:json_end])
-            except:
-                pass
+            except (json.JSONDecodeError, ValueError, IndexError) as e:
+                logger.debug(f"Could not parse time analysis response as JSON: {e}")
 
         return self._fallback_time_analysis(trades)
 

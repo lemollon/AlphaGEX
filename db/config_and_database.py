@@ -984,20 +984,65 @@ def init_database():
         except:
             pass  # Column may already exist
 
-    # Autonomous Equity Snapshots (used by autonomous_routes.py, trader_routes.py)
+    # Autonomous Equity Snapshots (used by autonomous_routes.py, trader_routes.py, performance_tracker.py)
+    # Extended schema to support performance tracking metrics
     c.execute('''
         CREATE TABLE IF NOT EXISTS autonomous_equity_snapshots (
             id SERIAL PRIMARY KEY,
             timestamp TIMESTAMPTZ DEFAULT NOW(),
+            snapshot_date TEXT,
+            snapshot_time TEXT,
+            snapshot_timestamp TEXT,
             equity REAL,
             cash REAL,
             positions_value REAL,
+            starting_capital REAL,
+            total_realized_pnl REAL,
+            total_unrealized_pnl REAL,
+            account_value REAL,
             daily_pnl REAL,
+            daily_return_pct REAL,
+            total_return_pct REAL,
             cumulative_pnl REAL,
             drawdown_pct REAL,
-            high_water_mark REAL
+            max_drawdown_pct REAL,
+            high_water_mark REAL,
+            sharpe_ratio REAL,
+            open_positions_count INTEGER,
+            total_trades INTEGER,
+            winning_trades INTEGER,
+            losing_trades INTEGER,
+            win_rate REAL
         )
     ''')
+
+    # Add missing columns to autonomous_equity_snapshots for existing production tables
+    equity_snapshot_columns = [
+        ('snapshot_date', 'TEXT'),
+        ('snapshot_time', 'TEXT'),
+        ('snapshot_timestamp', 'TEXT'),
+        ('starting_capital', 'REAL'),
+        ('total_realized_pnl', 'REAL'),
+        ('total_unrealized_pnl', 'REAL'),
+        ('account_value', 'REAL'),
+        ('daily_return_pct', 'REAL'),
+        ('total_return_pct', 'REAL'),
+        ('max_drawdown_pct', 'REAL'),
+        ('sharpe_ratio', 'REAL'),
+        ('open_positions_count', 'INTEGER'),
+        ('total_trades', 'INTEGER'),
+        ('winning_trades', 'INTEGER'),
+        ('losing_trades', 'INTEGER'),
+        ('win_rate', 'REAL'),
+    ]
+    for col_name, col_type in equity_snapshot_columns:
+        try:
+            c.execute(f'''
+                ALTER TABLE autonomous_equity_snapshots
+                ADD COLUMN IF NOT EXISTS {col_name} {col_type}
+            ''')
+        except:
+            pass  # Column may already exist
 
     # Autonomous Live Status (used by trader_routes.py)
     c.execute('''
@@ -1013,21 +1058,43 @@ def init_database():
         )
     ''')
 
-    # Autonomous Trade Activity (used by trader_routes.py)
+    # Autonomous Trade Activity (used by trader_routes.py and performance_tracker.py)
+    # Schema matches production database
     c.execute('''
         CREATE TABLE IF NOT EXISTS autonomous_trade_activity (
             id SERIAL PRIMARY KEY,
-            timestamp TIMESTAMPTZ DEFAULT NOW(),
-            action TEXT,
+            activity_date TEXT,
+            activity_time TEXT,
+            activity_timestamp TEXT,
+            action_type TEXT,
             symbol TEXT,
-            strike REAL,
-            option_type TEXT,
-            contracts INTEGER,
-            price REAL,
-            reason TEXT,
-            success BOOLEAN DEFAULT TRUE
+            details TEXT,
+            position_id INTEGER,
+            pnl_impact REAL,
+            success BOOLEAN DEFAULT TRUE,
+            error_message TEXT
         )
     ''')
+
+    # Add missing columns to autonomous_trade_activity for existing production tables
+    trade_activity_columns = [
+        ('activity_date', 'TEXT'),
+        ('activity_time', 'TEXT'),
+        ('activity_timestamp', 'TEXT'),
+        ('action_type', 'TEXT'),
+        ('details', 'TEXT'),
+        ('position_id', 'INTEGER'),
+        ('pnl_impact', 'REAL'),
+        ('error_message', 'TEXT'),
+    ]
+    for col_name, col_type in trade_activity_columns:
+        try:
+            c.execute(f'''
+                ALTER TABLE autonomous_trade_activity
+                ADD COLUMN IF NOT EXISTS {col_name} {col_type}
+            ''')
+        except:
+            pass  # Column may already exist
 
     # Scanner History (used by scanner_routes.py)
     c.execute('''
@@ -1995,9 +2062,10 @@ def init_database():
     # Autonomous live status indexes
     safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_live_status_timestamp ON autonomous_live_status(timestamp)")
 
-    # Autonomous trade activity indexes
-    safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_activity_timestamp ON autonomous_trade_activity(timestamp)")
+    # Autonomous trade activity indexes (uses activity_timestamp, not timestamp)
+    safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_activity_timestamp ON autonomous_trade_activity(activity_timestamp)")
     safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_activity_symbol ON autonomous_trade_activity(symbol)")
+    safe_index("CREATE INDEX IF NOT EXISTS idx_autonomous_trade_activity_date ON autonomous_trade_activity(activity_date)")
 
     # Scanner history indexes
     safe_index("CREATE INDEX IF NOT EXISTS idx_scanner_history_timestamp ON scanner_history(timestamp)")
@@ -2967,11 +3035,131 @@ def init_database():
             spx_5d_return DECIMAL(6,2),
             spx_distance_from_high DECIMAL(6,2),
             premium_to_strike_pct DECIMAL(6,4),
+            annualized_return DECIMAL(8,2),
             outcome VARCHAR(10),
             pnl DECIMAL(12,2),
             settlement_price DECIMAL(10,2),
             max_drawdown DECIMAL(12,2),
             created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # =========================================================================
+    # PROMETHEUS ML TABLES
+    # =========================================================================
+
+    # Prometheus predictions - stores ML predictions for trades
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS prometheus_predictions (
+            id SERIAL PRIMARY KEY,
+            trade_id VARCHAR(50) UNIQUE NOT NULL,
+            trade_date VARCHAR(20),
+            strike DECIMAL(10,2),
+            underlying_price DECIMAL(10,2),
+            dte INTEGER,
+            delta DECIMAL(6,4),
+            premium DECIMAL(10,4),
+            win_probability DECIMAL(5,4),
+            recommendation VARCHAR(20),
+            confidence DECIMAL(5,4),
+            reasoning TEXT,
+            key_factors JSONB,
+            feature_values JSONB,
+            vix DECIMAL(6,2),
+            iv_rank DECIMAL(5,2),
+            model_version VARCHAR(50),
+            session_id VARCHAR(50),
+            actual_outcome VARCHAR(10),
+            actual_pnl DECIMAL(12,2),
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # Prometheus live model - stores the active ML model binary
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS prometheus_live_model (
+            id SERIAL PRIMARY KEY,
+            model_version VARCHAR(50) NOT NULL,
+            model_binary BYTEA,
+            scaler_binary BYTEA,
+            model_type VARCHAR(50),
+            feature_names JSONB,
+            accuracy DECIMAL(5,4),
+            calibration_error DECIMAL(5,4),
+            is_active BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # Prometheus training history
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS prometheus_training_history (
+            id SERIAL PRIMARY KEY,
+            training_id VARCHAR(50) UNIQUE NOT NULL,
+            total_samples INTEGER,
+            train_samples INTEGER,
+            test_samples INTEGER,
+            win_count INTEGER,
+            loss_count INTEGER,
+            baseline_win_rate DECIMAL(5,4),
+            accuracy DECIMAL(5,4),
+            precision_score DECIMAL(5,4),
+            recall DECIMAL(5,4),
+            f1_score DECIMAL(5,4),
+            auc_roc DECIMAL(5,4),
+            brier_score DECIMAL(5,4),
+            cv_accuracy_mean DECIMAL(5,4),
+            cv_accuracy_std DECIMAL(5,4),
+            cv_scores JSONB,
+            calibration_error DECIMAL(5,4),
+            is_calibrated BOOLEAN DEFAULT FALSE,
+            feature_importance JSONB,
+            model_type VARCHAR(50),
+            model_version VARCHAR(50),
+            interpretation TEXT,
+            honest_assessment TEXT,
+            recommendation TEXT,
+            model_path VARCHAR(255),
+            model_saved_to_db BOOLEAN DEFAULT FALSE,
+            model_binary BYTEA,
+            scaler_binary BYTEA,
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # Prometheus logs
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS prometheus_logs (
+            id SERIAL PRIMARY KEY,
+            log_type VARCHAR(30) NOT NULL,
+            action VARCHAR(100),
+            ml_score DECIMAL(5,4),
+            recommendation VARCHAR(20),
+            trade_id VARCHAR(50),
+            reasoning TEXT,
+            details JSONB,
+            features JSONB,
+            execution_time_ms INTEGER,
+            session_id VARCHAR(50),
+            trace_id VARCHAR(50),
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # Prometheus models (for versioning/backup)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS prometheus_models (
+            id SERIAL PRIMARY KEY,
+            model_version VARCHAR(50) NOT NULL,
+            model_name VARCHAR(100),
+            model_binary BYTEA,
+            scaler_binary BYTEA,
+            config JSONB,
+            metrics JSONB,
+            is_production BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
         )
     ''')
 
@@ -3714,11 +3902,13 @@ def backfill_ai_intelligence_tables():
             print("\n  9. autonomous_trade_activity FROM autonomous_trade_log...")
             try:
                 c.execute("""
-                    INSERT INTO autonomous_trade_activity (timestamp, action, reason, success)
+                    INSERT INTO autonomous_trade_activity (activity_date, activity_time, activity_timestamp, action_type, details, success)
                     SELECT
+                        date,
+                        COALESCE(time, '00:00:00'),
                         CASE
-                            WHEN date ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN (date || ' ' || COALESCE(time, '00:00:00'))::timestamp
-                            ELSE NOW()
+                            WHEN date ~ '^\\d{4}-\\d{2}-\\d{2}$' THEN date || ' ' || COALESCE(time, '00:00:00')
+                            ELSE TO_CHAR(NOW(), 'YYYY-MM-DD HH24:MI:SS')
                         END,
                         action,
                         details,
@@ -3727,8 +3917,8 @@ def backfill_ai_intelligence_tables():
                     WHERE date IS NOT NULL
                     AND NOT EXISTS (
                         SELECT 1 FROM autonomous_trade_activity ata
-                        WHERE ata.action = autonomous_trade_log.action
-                        AND DATE(ata.timestamp)::text = autonomous_trade_log.date
+                        WHERE ata.action_type = autonomous_trade_log.action
+                        AND ata.activity_date = autonomous_trade_log.date
                     )
                     ORDER BY date DESC, time DESC
                     LIMIT 500

@@ -160,7 +160,7 @@ async def get_bot_dashboard(bot_name: str):
         raise HTTPException(status_code=503, detail="Solomon system not available")
 
     bot_name = bot_name.upper()
-    if bot_name not in ['ARES', 'ATHENA', 'PEGASUS', 'PHOENIX']:
+    if bot_name not in ['ARES', 'ATHENA', 'ICARUS', 'PEGASUS', 'TITAN', 'PHOENIX']:
         raise HTTPException(status_code=400, detail=f"Invalid bot name: {bot_name}")
 
     try:
@@ -596,7 +596,7 @@ async def get_kill_switch_status():
         status = solomon.get_kill_switch_status()
 
         # Add bots not yet in the table
-        for bot in ['ARES', 'ATHENA', 'PEGASUS', 'PHOENIX']:
+        for bot in ['ARES', 'ATHENA', 'ICARUS', 'PEGASUS', 'TITAN', 'PHOENIX']:
             if bot not in status:
                 status[bot] = {
                     'bot_name': bot,
@@ -671,6 +671,35 @@ async def deactivate_kill_switch(bot_name: str, request: ResumeRequest):
         raise
     except Exception as e:
         logger.error(f"Failed to deactivate kill switch: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/killswitch/clear-all")
+async def clear_all_kill_switches():
+    """
+    Clear all kill switch records from the database.
+
+    This completely removes all killswitch entries, allowing all bots to trade.
+    """
+    try:
+        from database_adapter import get_connection
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Clear all killswitch records
+        cursor.execute("DELETE FROM solomon_kill_switch")
+        deleted_count = cursor.rowcount
+
+        conn.commit()
+        conn.close()
+
+        return {
+            "success": True,
+            "message": f"Cleared {deleted_count} kill switch records. All bots can now trade.",
+            "deleted_count": deleted_count
+        }
+    except Exception as e:
+        logger.error(f"Failed to clear kill switches: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1154,7 +1183,7 @@ async def get_rollback_status(bot_name: str):
 
 AI_ANALYST_AVAILABLE = False
 try:
-    from quant.solomon_ai_analyst import SolomonAIAnalyst, get_ai_analyst
+    from quant.solomon_ai_analyst import SolomonAIAnalyst, get_analyst
     AI_ANALYST_AVAILABLE = True
     logger.info("Solomon AI Analyst loaded")
 except ImportError as e:
@@ -1172,13 +1201,14 @@ async def ai_analyze_performance(bot_name: str):
         raise HTTPException(status_code=503, detail="AI Analyst not available")
 
     try:
-        analyst = get_ai_analyst()
-        analysis = await analyst.analyze_performance_drop(bot_name.upper())
+        analyst = get_analyst()
+        # Note: analyze_performance_drop is synchronous (calls Claude API internally)
+        analysis = analyst.analyze_performance_drop(bot_name.upper(), [], {}, {})
 
         return {
             "success": True,
             "bot_name": bot_name.upper(),
-            "analysis": analysis
+            "analysis": analysis.to_dict() if analysis else None
         }
     except Exception as e:
         logger.error(f"Failed to get AI analysis: {e}")
@@ -1193,6 +1223,7 @@ async def ai_proposal_reasoning(proposal_id: str):
     if not AI_ANALYST_AVAILABLE:
         raise HTTPException(status_code=503, detail="AI Analyst not available")
 
+    conn = None
     try:
         # Get proposal data
         from database_adapter import get_connection
@@ -1202,15 +1233,21 @@ async def ai_proposal_reasoning(proposal_id: str):
         cursor.execute("SELECT * FROM solomon_proposals WHERE proposal_id = %s", (proposal_id,))
         columns = [desc[0] for desc in cursor.description]
         row = cursor.fetchone()
-        conn.close()
 
         if not row:
             raise HTTPException(status_code=404, detail="Proposal not found")
 
         proposal = dict(zip(columns, row))
 
-        analyst = get_ai_analyst()
-        reasoning = await analyst.generate_proposal_reasoning(proposal)
+        analyst = get_analyst()
+        # Note: generate_proposal_reasoning is synchronous
+        reasoning = analyst.generate_proposal_reasoning(
+            bot_name=proposal.get('bot_name', 'UNKNOWN'),
+            proposal_type=proposal.get('proposal_type', 'UNKNOWN'),
+            current_value=proposal.get('current_value', {}),
+            proposed_value=proposal.get('proposed_value', {}),
+            supporting_metrics=proposal.get('supporting_metrics', {})
+        )
 
         return {
             "success": True,
@@ -1222,6 +1259,9 @@ async def ai_proposal_reasoning(proposal_id: str):
     except Exception as e:
         logger.error(f"Failed to get AI reasoning: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
 
 
 @router.get("/ai/weekend-analysis")
@@ -1233,12 +1273,13 @@ async def ai_weekend_analysis():
         raise HTTPException(status_code=503, detail="AI Analyst not available")
 
     try:
-        analyst = get_ai_analyst()
-        analysis = await analyst.weekend_market_analysis()
+        analyst = get_analyst()
+        # Note: weekend_market_analysis is synchronous
+        analysis = analyst.weekend_market_analysis({}, {})
 
         return {
             "success": True,
-            "analysis": analysis
+            "analysis": analysis.to_dict() if analysis else None
         }
     except Exception as e:
         logger.error(f"Failed to get weekend analysis: {e}")

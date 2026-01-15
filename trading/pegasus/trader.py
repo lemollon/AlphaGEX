@@ -7,7 +7,7 @@ One trade per day with $10 spreads.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 
 from .models import (
@@ -31,11 +31,23 @@ except ImportError:
 try:
     from trading.scan_activity_logger import log_pegasus_scan, ScanOutcome, CheckResult
     SCAN_LOGGER_AVAILABLE = True
-except ImportError:
+    print("✅ PEGASUS: Scan activity logger loaded")
+except ImportError as e:
     SCAN_LOGGER_AVAILABLE = False
     log_pegasus_scan = None
     ScanOutcome = None
     CheckResult = None
+    print(f"❌ PEGASUS: Scan activity logger FAILED: {e}")
+
+# ML Data Gatherer for comprehensive ML analysis logging
+try:
+    from trading.ml_data_gatherer import gather_ml_data
+    ML_GATHERER_AVAILABLE = True
+    print("✅ PEGASUS: ML Data Gatherer loaded")
+except ImportError as e:
+    ML_GATHERER_AVAILABLE = False
+    gather_ml_data = None
+    print(f"⚠️ PEGASUS: ML Data Gatherer not available: {e}")
 
 # Bot decision logging (for bot_decision_logs table)
 try:
@@ -82,6 +94,32 @@ except ImportError:
     MATH_OPTIMIZER_AVAILABLE = False
     MathOptimizerMixin = object
 
+# Solomon Enhanced for feedback loop recording
+try:
+    from quant.solomon_enhancements import get_solomon_enhanced
+    SOLOMON_ENHANCED_AVAILABLE = True
+except ImportError:
+    SOLOMON_ENHANCED_AVAILABLE = False
+    get_solomon_enhanced = None
+
+# Auto-Validation System for Thompson Sampling capital allocation
+try:
+    from quant.auto_validation_system import get_auto_validation_system, record_bot_outcome
+    AUTO_VALIDATION_AVAILABLE = True
+except ImportError:
+    AUTO_VALIDATION_AVAILABLE = False
+    get_auto_validation_system = None
+    record_bot_outcome = None
+
+# Market calendar for holiday checking
+try:
+    from trading.market_calendar import MarketCalendar
+    MARKET_CALENDAR = MarketCalendar()
+    MARKET_CALENDAR_AVAILABLE = True
+except ImportError:
+    MARKET_CALENDAR = None
+    MARKET_CALENDAR_AVAILABLE = False
+
 
 class PEGASUSTrader(MathOptimizerMixin):
     """
@@ -100,17 +138,24 @@ class PEGASUSTrader(MathOptimizerMixin):
     def __init__(self, config: Optional[PEGASUSConfig] = None):
         self.db = PEGASUSDatabase(bot_name="PEGASUS")
         self.config = config or self.db.load_config()
+
+        # Validate configuration at startup
+        is_valid, error = self.config.validate()
+        if not is_valid:
+            logger.error(f"PEGASUS config validation failed: {error}")
+            raise ValueError(f"Invalid PEGASUS configuration: {error}")
+
         self.signals = SignalGenerator(self.config)
-        self.executor = OrderExecutor(self.config)
+        self.executor = OrderExecutor(self.config, db=self.db)
 
         # Learning Memory prediction tracking (position_id -> prediction_id)
         self._prediction_ids: Dict[str, str] = {}
 
-        # Initialize Math Optimizers (HMM, Thompson Sampling, HJB Exit)
+        # Math Optimizers DISABLED - Oracle is the sole decision maker
         if MATH_OPTIMIZER_AVAILABLE:
             try:
-                self._init_math_optimizers("PEGASUS", enabled=True)
-                logger.info("PEGASUS: Math optimizers initialized (HMM, Thompson, HJB)")
+                self._init_math_optimizers("PEGASUS", enabled=False)
+                logger.info("PEGASUS: Math optimizers DISABLED - Oracle controls all trading decisions")
             except Exception as e:
                 logger.warning(f"PEGASUS: Math optimizer init failed: {e}")
 
@@ -137,11 +182,43 @@ class PEGASUSTrader(MathOptimizerMixin):
             'gex_data': None,
             'signal': None,
             'checks': [],
+            'oracle_data': None,
             'position': None
         }
 
         try:
             self.db.update_heartbeat("SCANNING", f"Cycle at {now.strftime('%I:%M %p')}")
+
+            # CRITICAL: Fetch market data FIRST for ALL scans
+            # This ensures we log comprehensive data even for skipped scans
+            try:
+                gex_data = self.signals.get_gex_data() if hasattr(self, 'signals') else None
+                if not gex_data and hasattr(self, 'gex_calculator'):
+                    gex_data = self.gex_calculator.calculate_gex(self.config.ticker)
+                if gex_data:
+                    scan_context['market_data'] = {
+                        'underlying_price': gex_data.get('spot_price', gex_data.get('underlying_price', 0)),
+                        'symbol': self.config.ticker,
+                        'vix': gex_data.get('vix', 0),
+                        'expected_move': gex_data.get('expected_move', 0),
+                    }
+                    scan_context['gex_data'] = {
+                        'regime': gex_data.get('gex_regime', gex_data.get('regime', 'UNKNOWN')),
+                        'net_gex': gex_data.get('net_gex', 0),
+                        'call_wall': gex_data.get('call_wall', gex_data.get('major_call_wall', 0)),
+                        'put_wall': gex_data.get('put_wall', gex_data.get('major_put_wall', 0)),
+                        'flip_point': gex_data.get('flip_point', gex_data.get('gamma_flip', 0)),
+                    }
+                    # Also fetch Oracle advice for visibility
+                    try:
+                        if hasattr(self, 'signals') and hasattr(self.signals, 'get_oracle_advice'):
+                            oracle_advice = self.signals.get_oracle_advice(gex_data)
+                            if oracle_advice:
+                                scan_context['oracle_data'] = oracle_advice
+                    except Exception as e:
+                        logger.debug(f"Oracle fetch skipped: {e}")
+            except Exception as e:
+                logger.warning(f"Market data fetch failed: {e}")
 
             can_trade, reason = self._check_conditions(now, today)
             if not can_trade:
@@ -166,51 +243,43 @@ class PEGASUSTrader(MathOptimizerMixin):
                     'reasoning': strategy_rec.reasoning if hasattr(strategy_rec, 'reasoning') else ''
                 }
 
-                # If Oracle recommends SKIP or DIRECTIONAL, log and potentially skip
+                # NOTE: Strategy recommendation is INFORMATIONAL ONLY
+                # Oracle's final trade advice in signals.py is the ONLY decision maker
                 if hasattr(strategy_rec, 'recommended_strategy'):
                     if strategy_rec.recommended_strategy == StrategyType.SKIP:
-                        result['action'] = 'skip'
-                        result['details']['skip_reason'] = f"Oracle recommends SKIP: {strategy_rec.reasoning}"
-                        self.db.log("INFO", f"Oracle SKIP recommendation: {strategy_rec.reasoning}")
-                        self._log_scan_activity(result, scan_context, skip_reason=f"Oracle SKIP: {strategy_rec.reasoning}")
-                        return result
+                        # Log but DON'T block - let signals.py Oracle check decide
+                        self.db.log("INFO", f"Oracle strategy suggests SKIP: {strategy_rec.reasoning} (proceeding to trade check)")
+                        result['details']['strategy_suggestion'] = f"SKIP: {strategy_rec.reasoning}"
                     elif strategy_rec.recommended_strategy == StrategyType.DIRECTIONAL:
-                        # Log that ATHENA would be better, but continue with reduced confidence
-                        self.db.log("INFO", f"Oracle suggests ATHENA (directional): {strategy_rec.reasoning}")
+                        self.db.log("INFO", f"Oracle suggests ATHENA: {strategy_rec.reasoning} (PEGASUS will still check)")
                         result['details']['oracle_suggests_athena'] = True
-                        # Apply size reduction based on IC suitability
-                        if strategy_rec.ic_suitability < 0.4:
-                            result['action'] = 'skip'
-                            result['details']['skip_reason'] = f"IC suitability too low ({strategy_rec.ic_suitability:.0%}), consider ATHENA"
-                            self._log_scan_activity(result, scan_context, skip_reason=f"Low IC suitability, consider ATHENA")
-                            return result
+                        result['details']['ic_suitability'] = strategy_rec.ic_suitability
 
             # Manage positions
             closed, pnl = self._manage_positions()
             result['positions_closed'] = closed
             result['realized_pnl'] = pnl
 
-            # Try new entry
-            if not self.db.has_traded_today(today):
-                position, signal = self._try_entry_with_context()
-                if position:
-                    result['trade_opened'] = True
-                    result['action'] = 'opened'
-                    result['details']['position'] = position.to_dict()
-                    scan_context['position'] = position
-                if signal:
-                    scan_context['signal'] = signal
-                    scan_context['market_data'] = {
-                        'underlying_price': signal.spot_price,
-                        'symbol': 'SPX',
-                        'vix': signal.vix,
-                        'expected_move': signal.expected_move,
-                    }
-                    scan_context['gex_data'] = {
-                        'regime': signal.gex_regime,
-                        'call_wall': signal.call_wall,
-                        'put_wall': signal.put_wall,
-                    }
+            # Try new entry (position limits already checked in _check_conditions)
+            position, signal = self._try_entry_with_context()
+            if position:
+                result['trade_opened'] = True
+                result['action'] = 'opened'
+                result['details']['position'] = position.to_dict()
+                scan_context['position'] = position
+            if signal:
+                scan_context['signal'] = signal
+                scan_context['market_data'] = {
+                    'underlying_price': signal.spot_price,
+                    'symbol': 'SPX',
+                    'vix': signal.vix,
+                    'expected_move': signal.expected_move,
+                }
+                scan_context['gex_data'] = {
+                    'regime': signal.gex_regime,
+                    'call_wall': signal.call_wall,
+                    'put_wall': signal.put_wall,
+                }
 
             if closed > 0:
                 result['action'] = 'closed' if result['action'] == 'none' else 'both'
@@ -229,15 +298,28 @@ class PEGASUSTrader(MathOptimizerMixin):
             result['errors'].append(str(e))
             result['action'] = 'error'
 
-            # Log error to scan activity
-            self._log_scan_activity(result, scan_context, error_msg=str(e))
-            self._log_bot_decision(result, scan_context, error_msg=str(e))
+            # CRITICAL: Log scan activity with try/except to ensure we always have visibility
+            # even if subsequent operations fail (preventing silent scan stoppage)
+            try:
+                self._log_scan_activity(result, scan_context, error_msg=str(e))
+            except Exception as log_err:
+                logger.error(f"CRITICAL: Failed to log scan activity: {log_err}")
+
+            try:
+                self._log_bot_decision(result, scan_context, error_msg=str(e))
+            except Exception as log_err:
+                logger.error(f"Failed to log bot decision: {log_err}")
 
         return result
 
     def _check_conditions(self, now: datetime, today: str) -> tuple[bool, str]:
         if now.weekday() >= 5:
             return False, "Weekend"
+
+        # Market holiday check
+        if MARKET_CALENDAR_AVAILABLE and MARKET_CALENDAR:
+            if not MARKET_CALENDAR.is_trading_day(today):
+                return False, "Market holiday"
 
         start = self.config.entry_start.split(':')
         end = self.config.entry_end.split(':')
@@ -249,16 +331,18 @@ class PEGASUSTrader(MathOptimizerMixin):
         if now > end_time:
             return False, f"After {self.config.entry_end}"
 
-        if self.db.has_traded_today(today):
-            return False, "Already traded today"
+        # Check position limits instead of once-per-day restriction
+        open_count = self.db.get_position_count()
+        if open_count >= self.config.max_open_positions:
+            return False, f"Max open positions ({self.config.max_open_positions}) reached"
 
         if CIRCUIT_BREAKER_AVAILABLE and is_trading_enabled:
             try:
                 can, cb_reason = is_trading_enabled(self.db.get_position_count(), 0)
                 if not can:
                     return False, f"Circuit breaker: {cb_reason}"
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"[PEGASUS] Circuit breaker check failed: {e}")
 
         return True, "Ready"
 
@@ -280,23 +364,19 @@ class PEGASUSTrader(MathOptimizerMixin):
         try:
             oracle = get_oracle()
 
-            # Get current market data - use SPX for PEGASUS
-            try:
-                from core_classes_and_engines import TradingVolatilityAPI
-                api = TradingVolatilityAPI()
-                gex_data = api.get_gex_levels('SPX')
-
-                spot_price = gex_data.get('spot_price', 5900)
-                vix = gex_data.get('vix', 20)
-                gex_regime_str = gex_data.get('gex_regime', 'NEUTRAL')
-                call_wall = gex_data.get('call_wall', 0)
-                put_wall = gex_data.get('put_wall', 0)
-                flip_point = gex_data.get('flip_point', 0)
-                net_gex = gex_data.get('net_gex', 0)
-            except Exception as e:
-                logger.warning(f"Could not fetch market data for strategy check: {e}")
-                # Use defaults - let PEGASUS proceed
+            # Get current market data using SignalGenerator's method (proper SPX data)
+            market_data = self.signals.get_market_data()
+            if not market_data:
+                logger.warning("Could not fetch market data for strategy check")
                 return None
+
+            spot_price = market_data.get('spot_price', 5900)
+            vix = market_data.get('vix', 20)
+            gex_regime_str = market_data.get('gex_regime', 'NEUTRAL')
+            call_wall = market_data.get('call_wall', 0)
+            put_wall = market_data.get('put_wall', 0)
+            flip_point = market_data.get('flip_point', 0)
+            net_gex = market_data.get('net_gex', 0)
 
             # Convert GEX regime string to enum
             try:
@@ -343,19 +423,46 @@ class PEGASUSTrader(MathOptimizerMixin):
             should_close, reason = self._check_exit(pos, now, today)
             if should_close:
                 success, price, pnl = self.executor.close_position(pos, reason)
+
+                # Handle partial close (put closed but call failed)
+                if success == 'partial_put':
+                    self.db.partial_close_position(
+                        position_id=pos.position_id,
+                        close_price=price,
+                        realized_pnl=pnl,
+                        close_reason=reason,
+                        closed_leg='put'
+                    )
+                    logger.error(
+                        f"PARTIAL CLOSE: {pos.position_id} put leg closed but call failed. "
+                        f"Manual intervention required to close call spread."
+                    )
+                    # Don't count as fully closed, but track the partial P&L
+                    total_pnl += pnl
+                    continue
+
                 if success:
-                    self.db.close_position(pos.position_id, price, pnl, reason)
+                    db_success = self.db.close_position(pos.position_id, price, pnl, reason)
+                    if not db_success:
+                        logger.error(f"CRITICAL: Position {pos.position_id} closed but DB update failed!")
                     closed += 1
                     total_pnl += pnl
 
                     if CIRCUIT_BREAKER_AVAILABLE and record_trade_pnl:
                         try:
                             record_trade_pnl(pnl)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.warning(f"[PEGASUS] Failed to record P&L to circuit breaker: {e}")
 
                     # Record outcome to Oracle for ML feedback loop
                     self._record_oracle_outcome(pos, reason, pnl)
+
+                    # Record outcome to Solomon Enhanced for feedback loops
+                    trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+                    self._record_solomon_outcome(pnl, trade_date)
+
+                    # Record outcome to Thompson Sampling for capital allocation
+                    self._record_thompson_outcome(pnl)
 
                     # Record outcome to Learning Memory for self-improvement
                     if pos.position_id in self._prediction_ids:
@@ -365,12 +472,12 @@ class PEGASUSTrader(MathOptimizerMixin):
                             reason
                         )
 
-                    # MATH OPTIMIZER: Record outcome for Thompson Sampling
+                    # MATH OPTIMIZER: Record outcome for Thompson Sampling (via mixin)
                     if MATH_OPTIMIZER_AVAILABLE and hasattr(self, 'math_record_outcome'):
                         try:
                             self.math_record_outcome(win=(pnl > 0), pnl=pnl)
                         except Exception as e:
-                            logger.debug(f"Thompson outcome recording skipped: {e}")
+                            logger.debug(f"Math optimizer outcome recording skipped: {e}")
 
         return closed, total_pnl
 
@@ -407,8 +514,8 @@ class PEGASUSTrader(MathOptimizerMixin):
                 bot_name=OracleBotName.PEGASUS,
                 outcome=outcome,
                 actual_pnl=pnl,
-                put_strike=pos.put_short if hasattr(pos, 'put_short') else None,
-                call_strike=pos.call_short if hasattr(pos, 'call_short') else None,
+                put_strike=pos.put_short_strike if hasattr(pos, 'put_short_strike') else None,
+                call_strike=pos.call_short_strike if hasattr(pos, 'call_short_strike') else None,
             )
 
             if success:
@@ -418,6 +525,48 @@ class PEGASUSTrader(MathOptimizerMixin):
 
         except Exception as e:
             logger.warning(f"PEGASUS: Oracle outcome recording failed: {e}")
+
+    def _record_solomon_outcome(self, pnl: float, trade_date: str):
+        """
+        Record trade outcome to Solomon Enhanced for feedback loop tracking.
+
+        This updates:
+        - Consecutive loss tracking (triggers kill if threshold reached)
+        - Bot performance metrics
+        - Performance tracking for version comparison
+        """
+        if not SOLOMON_ENHANCED_AVAILABLE or not get_solomon_enhanced:
+            return
+
+        try:
+            enhanced = get_solomon_enhanced()
+            alerts = enhanced.record_trade_outcome(
+                bot_name='PEGASUS',
+                pnl=pnl,
+                trade_date=trade_date,
+                capital_base=getattr(self.config, 'capital', 200000.0)
+            )
+            if alerts:
+                for alert in alerts:
+                    logger.warning(f"PEGASUS Solomon alert: {alert}")
+        except Exception as e:
+            logger.warning(f"PEGASUS: Solomon outcome recording failed: {e}")
+
+    def _record_thompson_outcome(self, pnl: float):
+        """
+        Record trade outcome to Thompson Sampling for capital allocation.
+
+        This updates the Beta distribution parameters for PEGASUS,
+        which affects future capital allocation across bots.
+        """
+        if not AUTO_VALIDATION_AVAILABLE or not record_bot_outcome:
+            return
+
+        try:
+            record_bot_outcome('PEGASUS', win=(pnl > 0), pnl=pnl)
+            logger.debug(f"PEGASUS: Recorded outcome to Thompson Sampling - P&L=${pnl:.2f}")
+        except Exception as e:
+            logger.warning(f"PEGASUS: Thompson outcome recording failed: {e}")
 
     def _record_learning_memory_prediction(self, pos: IronCondorPosition, signal) -> Optional[str]:
         """Record trade prediction to Learning Memory for self-improvement tracking."""
@@ -438,10 +587,11 @@ class PEGASUSTrader(MathOptimizerMixin):
                 "day_of_week": datetime.now(CENTRAL_TZ).weekday()
             }
 
+            # Note: signal.confidence is already 0-1 from Oracle, not 0-100
             prediction_id = memory.record_prediction(
                 prediction_type="spx_iron_condor_outcome",
                 prediction=f"SPX IC profitable: {pos.put_short_strike}/{pos.call_short_strike}",
-                confidence=signal.confidence / 100 if hasattr(signal, 'confidence') else 0.7,
+                confidence=signal.confidence if hasattr(signal, 'confidence') else 0.7,
                 context=context
             )
 
@@ -473,14 +623,157 @@ class PEGASUSTrader(MathOptimizerMixin):
         except Exception as e:
             logger.warning(f"PEGASUS: Learning Memory outcome recording failed: {e}")
 
-    def _check_exit(self, pos: IronCondorPosition, now: datetime, today: str) -> tuple[bool, str]:
-        if pos.expiration <= today:
-            return True, "EXPIRED"
+    def _store_oracle_prediction(self, signal, position: IronCondorPosition):
+        """
+        Store Oracle prediction to database BEFORE trade execution.
 
+        This is CRITICAL for the ML feedback loop:
+        1. store_prediction() creates the record in oracle_predictions table
+        2. After trade closes, update_outcome() updates that record with actual results
+        3. Oracle uses this data for continuous model improvement
+
+        Without this call, update_outcome() has no record to update!
+        """
+        if not ORACLE_AVAILABLE:
+            return
+
+        try:
+            oracle = OracleAdvisor()
+
+            # Build MarketContext from signal
+            from quant.oracle_advisor import MarketContext as OracleMarketContext, GEXRegime
+
+            gex_regime_str = signal.gex_regime.upper() if signal.gex_regime else 'NEUTRAL'
+            try:
+                gex_regime = GEXRegime[gex_regime_str]
+            except (KeyError, AttributeError):
+                gex_regime = GEXRegime.NEUTRAL
+
+            context = OracleMarketContext(
+                spot_price=signal.spot_price,
+                vix=signal.vix,
+                gex_regime=gex_regime,
+                gex_call_wall=signal.call_wall,
+                gex_put_wall=signal.put_wall,
+                gex_flip_point=getattr(signal, 'flip_point', 0),
+                gex_net=getattr(signal, 'net_gex', 0),
+                day_of_week=datetime.now(CENTRAL_TZ).weekday(),
+                expected_move_pct=(signal.expected_move / signal.spot_price * 100) if signal.spot_price else 0,
+            )
+
+            # Build OraclePrediction from signal's Oracle context
+            from quant.oracle_advisor import OraclePrediction, TradingAdvice, BotName
+
+            # Determine advice from signal
+            advice_str = getattr(signal, 'oracle_advice', 'TRADE_FULL')
+            try:
+                advice = TradingAdvice[advice_str] if advice_str else TradingAdvice.TRADE_FULL
+            except (KeyError, ValueError):
+                advice = TradingAdvice.TRADE_FULL
+
+            prediction = OraclePrediction(
+                bot_name=BotName.PEGASUS,
+                advice=advice,
+                win_probability=getattr(signal, 'oracle_win_probability', 0.7),
+                confidence=signal.confidence,
+                suggested_risk_pct=10.0,
+                suggested_sd_multiplier=getattr(signal, 'oracle_suggested_sd', 1.0),
+                use_gex_walls=getattr(signal, 'oracle_use_gex_walls', False),
+                suggested_put_strike=signal.put_short,
+                suggested_call_strike=signal.call_short,
+                top_factors=[(f['factor'], f['impact']) for f in getattr(signal, 'oracle_top_factors', [])],
+                reasoning=signal.reasoning,
+                probabilities=getattr(signal, 'oracle_probabilities', {}),
+            )
+
+            # Store to database
+            trade_date = position.expiration if hasattr(position, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+            success = oracle.store_prediction(prediction, context, trade_date)
+
+            if success:
+                logger.info(f"PEGASUS: Oracle prediction stored for {trade_date} (Win Prob: {prediction.win_probability:.0%})")
+            else:
+                logger.warning(f"PEGASUS: Failed to store Oracle prediction for {trade_date}")
+
+        except Exception as e:
+            logger.warning(f"PEGASUS: Oracle prediction storage failed: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _get_force_exit_time(self, now: datetime, today: str) -> datetime:
+        """
+        Get the effective force exit time, accounting for early close days.
+
+        On early close days (Christmas Eve, day after Thanksgiving), market closes at 12:00 PM CT.
+        We should force exit 10 minutes before market close instead of using the normal config.
+
+        Normal market close: 3:00 PM CT (4:00 PM ET)
+        Force exit: 10 minutes before close
+        """
+        # Default force exit from config
         force = self.config.force_exit.split(':')
-        force_time = now.replace(hour=int(force[0]), minute=int(force[1]), second=0)
-        if now >= force_time and pos.expiration == today:
-            return True, "FORCE_EXIT"
+        config_force_time = now.replace(hour=int(force[0]), minute=int(force[1]), second=0)
+
+        # Check if today is an early close day
+        if MARKET_CALENDAR_AVAILABLE and MARKET_CALENDAR:
+            close_hour, close_minute = MARKET_CALENDAR.get_market_close_time(today)
+            # Early close: 12:00 PM CT - force exit 10 min before (11:50 AM CT)
+            early_close_force = now.replace(hour=close_hour, minute=close_minute, second=0) - timedelta(minutes=10)
+
+            # Use the earlier of config time and early close time
+            if early_close_force < config_force_time:
+                logger.info(f"PEGASUS: Early close day - adjusting force exit from {self.config.force_exit} to {early_close_force.strftime('%H:%M')}")
+                return early_close_force
+
+        return config_force_time
+
+    def _check_exit(self, pos: IronCondorPosition, now: datetime, today: str) -> tuple[bool, str]:
+        """
+        Check if position should be closed.
+
+        Exit conditions (in priority order):
+        1. FORCE_EXIT: Current time >= force exit time on expiration day
+        2. EXPIRED: Position's expiration date is BEFORE today (past expiration - should have been closed)
+        3. PROFIT_TARGET: 50% profit achieved
+        4. STOP_LOSS: Max loss hit (if enabled)
+
+        NOTE: On expiration day, we use FORCE_EXIT (not EXPIRED) to ensure positions are
+        closed at the proper time (10 min before market close), not at market open.
+        """
+        # Convert string dates to date objects for reliable comparison
+        try:
+            today_date = datetime.strptime(today, "%Y-%m-%d").date()
+            # Handle both string and date object for expiration
+            if isinstance(pos.expiration, str):
+                expiration_date = datetime.strptime(pos.expiration, "%Y-%m-%d").date()
+            else:
+                expiration_date = pos.expiration if hasattr(pos.expiration, 'year') else datetime.strptime(str(pos.expiration), "%Y-%m-%d").date()
+        except ValueError as e:
+            logger.error(f"Date parsing error in _check_exit: {e}")
+            # Fall back to string comparison if parsing fails
+            expiration_date = None
+            today_date = None
+
+        if expiration_date and today_date:
+            # Get force exit time (handles early close days)
+            force_time = self._get_force_exit_time(now, today)
+
+            # FORCE_EXIT: On expiration day, close at force exit time (10 min before market close)
+            if expiration_date == today_date and now >= force_time:
+                return True, "FORCE_EXIT"
+
+            # EXPIRED: Position is PAST expiration (should have been closed yesterday)
+            # This catches any positions that weren't properly closed
+            if expiration_date < today_date:
+                logger.warning(f"Position {pos.position_id} is PAST expiration ({pos.expiration}) - closing immediately")
+                return True, "EXPIRED"
+        else:
+            # Fallback for string comparison
+            force_time = self._get_force_exit_time(now, today)
+            if pos.expiration == today and now >= force_time:
+                return True, "FORCE_EXIT"
+            if pos.expiration < today:
+                return True, "EXPIRED"
 
         current = self.executor.get_position_current_value(pos)
         if current is None:
@@ -499,11 +792,6 @@ class PEGASUSTrader(MathOptimizerMixin):
 
         return False, ""
 
-    def _try_entry(self) -> Optional[IronCondorPosition]:
-        """Try to open a new Iron Condor"""
-        position, _ = self._try_entry_with_context()
-        return position
-
     def _try_entry_with_context(self) -> tuple[Optional[IronCondorPosition], Optional[Any]]:
         """Try to open a new Iron Condor, returning both position and signal for logging"""
         from typing import Any
@@ -511,7 +799,8 @@ class PEGASUSTrader(MathOptimizerMixin):
         # MATH OPTIMIZER: Check regime before generating signal
         if MATH_OPTIMIZER_AVAILABLE and hasattr(self, '_math_enabled') and self._math_enabled:
             try:
-                market_data = self.signals.get_market_snapshot() if hasattr(self.signals, 'get_market_snapshot') else {}
+                # Use get_market_data() - the correct method name in SignalGenerator
+                market_data = self.signals.get_market_data()
                 if market_data:
                     should_trade, regime_reason = self.math_should_trade_regime(market_data)
                     if not should_trade:
@@ -547,7 +836,18 @@ class PEGASUSTrader(MathOptimizerMixin):
             reasoning=signal.reasoning,
         )
 
-        position = self.executor.execute_iron_condor(signal)
+        # Get Thompson Sampling allocation weight for position sizing
+        thompson_weight = 1.0  # Default neutral weight
+        if MATH_OPTIMIZER_AVAILABLE and hasattr(self, 'math_get_allocation'):
+            try:
+                allocation = self.math_get_allocation()
+                pegasus_alloc = allocation.get('allocations', {}).get('PEGASUS', 0.2)
+                thompson_weight = pegasus_alloc / 0.2  # Normalize to 20% baseline
+                logger.info(f"PEGASUS Thompson weight: {thompson_weight:.2f} (allocation: {pegasus_alloc:.1%})")
+            except Exception as e:
+                logger.debug(f"Thompson allocation not available: {e}")
+
+        position = self.executor.execute_iron_condor(signal, thompson_weight=thompson_weight)
         if not position:
             self.db.log("ERROR", "Execution failed", {'signal': signal.reasoning})
             return None, signal
@@ -557,6 +857,10 @@ class PEGASUSTrader(MathOptimizerMixin):
             logger.error(f"Position {position.position_id} executed but not saved!")
 
         self.db.log("INFO", f"Opened: {position.position_id}", position.to_dict())
+
+        # CRITICAL: Store Oracle prediction for ML feedback loop
+        # This enables update_outcome to find and update the prediction record
+        self._store_oracle_prediction(signal, position)
 
         # Record prediction to Learning Memory for self-improvement tracking
         prediction_id = self._record_learning_memory_prediction(position, signal)
@@ -573,8 +877,13 @@ class PEGASUSTrader(MathOptimizerMixin):
         error_msg: str = ""
     ):
         """Log scan activity for visibility"""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        print(f"[PEGASUS DEBUG] _log_scan_activity called at {datetime.now(ZoneInfo('America/Chicago')).strftime('%I:%M:%S %p CT')}")
         if not SCAN_LOGGER_AVAILABLE or not log_pegasus_scan:
+            print(f"[PEGASUS DEBUG] Scan logging SKIPPED: SCAN_LOGGER_AVAILABLE={SCAN_LOGGER_AVAILABLE}, log_pegasus_scan={log_pegasus_scan is not None}")
             return
+        print(f"[PEGASUS DEBUG] Proceeding with scan logging...")
 
         try:
             # Determine outcome
@@ -591,7 +900,7 @@ class PEGASUSTrader(MathOptimizerMixin):
                     outcome = ScanOutcome.BEFORE_WINDOW
                 elif 'After' in skip_reason:
                     outcome = ScanOutcome.AFTER_WINDOW
-                elif 'Already traded' in skip_reason:
+                elif 'Max open positions' in skip_reason:
                     outcome = ScanOutcome.SKIP
                 else:
                     outcome = ScanOutcome.NO_TRADE
@@ -600,18 +909,107 @@ class PEGASUSTrader(MathOptimizerMixin):
                 outcome = ScanOutcome.NO_TRADE
                 decision = "No valid signal"
 
-            # Build signal context
+            # Build signal context with FULL Oracle data for frontend visibility
             signal = context.get('signal')
+            oracle_data = context.get('oracle_data', {})
             signal_source = ""
             signal_confidence = 0
             oracle_advice = ""
             oracle_reasoning = ""
+            oracle_win_probability = 0
+            oracle_confidence = 0
+            oracle_top_factors = None
+            oracle_probabilities = None
+            oracle_suggested_strikes = None
+            oracle_thresholds = None
+            min_win_prob_threshold = self.config.min_win_probability
 
+            # ALWAYS set thresholds - this should never be 0
+            oracle_thresholds = {
+                'min_win_probability': min_win_prob_threshold,
+                'vix_skip': getattr(self.config, 'vix_skip', 35.0),
+                'vix_monday_friday_skip': getattr(self.config, 'vix_monday_friday_skip', 30.0),
+            }
+
+            # Extract Oracle data from context FIRST (fetched early for all scans)
+            # Initialize NEUTRAL regime analysis fields
+            neutral_derived_direction = ""
+            neutral_confidence = 0
+            neutral_reasoning = ""
+            ic_suitability = 0
+            bullish_suitability = 0
+            bearish_suitability = 0
+            trend_direction = ""
+            trend_strength = 0
+            position_in_range_pct = 50.0
+            wall_filter_passed = False
+
+            if oracle_data:
+                oracle_advice = oracle_data.get('advice', oracle_data.get('recommendation', ''))
+                oracle_reasoning = oracle_data.get('reasoning', oracle_data.get('full_reasoning', ''))
+                oracle_win_probability = oracle_data.get('win_probability', 0)
+                oracle_confidence = oracle_data.get('confidence', 0)
+                oracle_top_factors = oracle_data.get('top_factors', oracle_data.get('factors', []))
+                # Extract NEUTRAL regime analysis fields
+                neutral_derived_direction = oracle_data.get('neutral_derived_direction', '')
+                neutral_confidence = oracle_data.get('neutral_confidence', 0)
+                neutral_reasoning = oracle_data.get('neutral_reasoning', '')
+                ic_suitability = oracle_data.get('ic_suitability', 0)
+                bullish_suitability = oracle_data.get('bullish_suitability', 0)
+                bearish_suitability = oracle_data.get('bearish_suitability', 0)
+                trend_direction = oracle_data.get('trend_direction', '')
+                trend_strength = oracle_data.get('trend_strength', 0)
+                position_in_range_pct = oracle_data.get('position_in_range_pct', 50.0)
+                wall_filter_passed = oracle_data.get('wall_filter_passed', False)
+
+            # If we have a signal, use signal data (but don't override Oracle data with zeros)
             if signal:
                 signal_source = signal.source
                 signal_confidence = signal.confidence
-                oracle_advice = "ENTER" if signal.is_valid else "SKIP"
-                oracle_reasoning = signal.reasoning
+
+                # Only override Oracle data if signal has it
+                signal_oracle_advice = getattr(signal, 'oracle_advice', '')
+                if signal_oracle_advice:
+                    oracle_advice = signal_oracle_advice
+                elif not oracle_advice:
+                    oracle_advice = "ENTER" if signal.is_valid else "SKIP"
+
+                if signal.reasoning:
+                    oracle_reasoning = signal.reasoning
+
+                signal_oracle_wp = getattr(signal, 'oracle_win_probability', 0)
+                if signal_oracle_wp > 0:
+                    oracle_win_probability = signal_oracle_wp
+
+                signal_oracle_conf = getattr(signal, 'oracle_confidence', 0)
+                if signal_oracle_conf > 0:
+                    oracle_confidence = signal_oracle_conf
+                elif oracle_confidence == 0:
+                    oracle_confidence = signal.confidence
+
+                # Get top factors - only if signal has them
+                top_factors_raw = getattr(signal, 'oracle_top_factors', None)
+                if top_factors_raw:
+                    if isinstance(top_factors_raw, str):
+                        try:
+                            import json
+                            oracle_top_factors = json.loads(top_factors_raw)
+                        except Exception:
+                            pass
+                    elif isinstance(top_factors_raw, list):
+                        oracle_top_factors = top_factors_raw
+
+                # Get probabilities - only if signal has them
+                signal_probs = getattr(signal, 'oracle_probabilities', None)
+                if signal_probs:
+                    oracle_probabilities = signal_probs
+
+                # Get suggested strikes
+                if hasattr(signal, 'oracle_suggested_sd'):
+                    oracle_suggested_strikes = {
+                        'sd_multiplier': getattr(signal, 'oracle_suggested_sd', 1.0),
+                        'use_gex_walls': getattr(signal, 'oracle_use_gex_walls', False)
+                    }
 
             # Build trade details if position opened
             position = context.get('position')
@@ -631,7 +1029,27 @@ class PEGASUSTrader(MathOptimizerMixin):
                 premium = position.total_credit * 100 * contracts
                 max_risk = position.max_loss
 
-            log_pegasus_scan(
+            # Gather comprehensive ML data for logging
+            ml_kwargs = {}
+            if ML_GATHERER_AVAILABLE and gather_ml_data:
+                try:
+                    market_data = context.get('market_data', {})
+                    gex_data = context.get('gex_data', {})
+                    ml_kwargs = gather_ml_data(
+                        symbol="SPX",  # PEGASUS trades SPX
+                        spot_price=market_data.get('spot_price', 0) if market_data else 0,
+                        vix=market_data.get('vix', 0) if market_data else 0,
+                        gex_data=gex_data,
+                        market_data=market_data,
+                        bot_name="PEGASUS",
+                        win_rate=0.70,  # PEGASUS historical win rate
+                        avg_win=200,
+                        avg_loss=500,
+                    )
+                except Exception as ml_err:
+                    logger.debug(f"ML data gathering failed (non-critical): {ml_err}")
+
+            scan_id = log_pegasus_scan(
                 outcome=outcome,
                 decision_summary=decision,
                 market_data=context.get('market_data'),
@@ -640,11 +1058,37 @@ class PEGASUSTrader(MathOptimizerMixin):
                 signal_confidence=signal_confidence,
                 oracle_advice=oracle_advice,
                 oracle_reasoning=oracle_reasoning,
+                oracle_win_probability=oracle_win_probability,
+                oracle_confidence=oracle_confidence,
+                oracle_top_factors=oracle_top_factors,
+                oracle_probabilities=oracle_probabilities,
+                oracle_suggested_strikes=oracle_suggested_strikes,
+                oracle_thresholds=oracle_thresholds,
+                min_win_probability_threshold=min_win_prob_threshold,
                 trade_executed=result.get('trade_opened', False),
                 error_message=error_msg,
                 generate_ai_explanation=False,
+                # NEUTRAL Regime Analysis fields
+                neutral_derived_direction=neutral_derived_direction,
+                neutral_confidence=neutral_confidence,
+                neutral_reasoning=neutral_reasoning,
+                ic_suitability=ic_suitability,
+                bullish_suitability=bullish_suitability,
+                bearish_suitability=bearish_suitability,
+                trend_direction=trend_direction,
+                trend_strength=trend_strength,
+                position_in_range_pct=position_in_range_pct,
+                wall_filter_passed=wall_filter_passed,
+                **ml_kwargs,  # Include all ML analysis data
             )
+            if scan_id:
+                print(f"[PEGASUS DEBUG] ✅ Scan logged successfully: {scan_id}")
+            else:
+                print(f"[PEGASUS DEBUG] ❌ Scan logging returned None - check database!")
         except Exception as e:
+            print(f"[PEGASUS DEBUG] ❌ EXCEPTION in _log_scan_activity: {e}")
+            import traceback
+            print(traceback.format_exc())
             logger.warning(f"Failed to log scan activity: {e}")
 
     def _log_bot_decision(

@@ -1,8 +1,85 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo, useCallback } from 'react'
 import { AlertTriangle, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react'
 import { useGammaExpiration } from '@/lib/hooks/useMarketData'
+
+// PERFORMANCE FIX: Move all pure helper functions outside component (prevents recreation on every render)
+const getRiskColor = (level: string) => {
+  switch (level.toUpperCase()) {
+    case 'EXTREME': return 'text-danger'
+    case 'HIGH': return 'text-warning'
+    case 'MODERATE': return 'text-primary'
+    default: return 'text-success'
+  }
+}
+
+const getRiskBgColor = (level: string) => {
+  switch (level.toUpperCase()) {
+    case 'EXTREME': return 'bg-danger/10 border-danger/30'
+    case 'HIGH': return 'bg-warning/10 border-warning/30'
+    case 'MODERATE': return 'bg-primary/10 border-primary/30'
+    default: return 'bg-success/10 border-success/30'
+  }
+}
+
+const formatGamma = (value: number) => {
+  return `$${(value / 1e9).toFixed(2)}B`
+}
+
+const getDayIcon = (risk: number) => {
+  if (risk >= 70) return '🚨'
+  if (risk >= 50) return '🔶'
+  return '⚠️'
+}
+
+const getDayRiskLevel = (risk: number) => {
+  if (risk >= 70) return 'EXTREME'
+  if (risk >= 50) return 'HIGH'
+  return 'MODERATE'
+}
+
+const formatDate = (date: Date) => {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+const getCurrentWeekDates = () => {
+  const today = new Date()
+  const dayOfWeek = today.getDay()
+
+  const monday = new Date(today)
+  monday.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1))
+
+  const weekDates: { [key: string]: string } = {}
+  const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
+
+  days.forEach((day, idx) => {
+    const date = new Date(monday)
+    date.setDate(monday.getDate() + idx)
+    weekDates[day] = formatDate(date)
+  })
+
+  return weekDates
+}
+
+const getCurrentWeekRange = () => {
+  const today = new Date()
+  const dayOfWeek = today.getDay()
+
+  const monday = new Date(today)
+  monday.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1))
+
+  const friday = new Date(monday)
+  friday.setDate(monday.getDate() + 4)
+
+  return `${formatDate(monday)} to ${formatDate(friday)}`
+}
+
+// PERFORMANCE FIX: Static array moved outside component
+const POPULAR_SYMBOLS = ['SPY', 'QQQ', 'IWM'] as const
 
 interface DirectionalPrediction {
   direction: string
@@ -62,90 +139,21 @@ export default function GammaExpirationWidget() {
   const refreshing = isValidating
   const lastUpdated = data ? new Date() : null
 
-  const popularSymbols = ['SPY', 'QQQ', 'IWM']
-
-  // Manual refresh handler
-  const handleRefresh = () => {
+  // PERFORMANCE FIX: Use useCallback for handleRefresh
+  const handleRefresh = useCallback(() => {
     mutate()
-  }
+  }, [mutate])
 
-  const getRiskColor = (level: string) => {
-    switch (level.toUpperCase()) {
-      case 'EXTREME': return 'text-danger'
-      case 'HIGH': return 'text-warning'
-      case 'MODERATE': return 'text-primary'
-      default: return 'text-success'
-    }
-  }
+  // PERFORMANCE FIX: Memoize week dates (was calculating on every render)
+  const weekDates = useMemo(() => getCurrentWeekDates(), [])
 
-  const getRiskBgColor = (level: string) => {
-    switch (level.toUpperCase()) {
-      case 'EXTREME': return 'bg-danger/10 border-danger/30'
-      case 'HIGH': return 'bg-warning/10 border-warning/30'
-      case 'MODERATE': return 'bg-primary/10 border-primary/30'
-      default: return 'bg-success/10 border-success/30'
-    }
-  }
+  // PERFORMANCE FIX: Memoize week range (was calculating on every render)
+  const weekRange = useMemo(() => getCurrentWeekRange(), [])
 
-  const formatGamma = (value: number) => {
-    return `$${(value / 1e9).toFixed(2)}B`
-  }
+  // Helper functions moved outside component - see top of file
 
-  const getDayIcon = (risk: number) => {
-    if (risk >= 70) return '🚨'
-    if (risk >= 50) return '🔶'
-    return '⚠️'
-  }
-
-  const getDayRiskLevel = (risk: number) => {
-    if (risk >= 70) return 'EXTREME'
-    if (risk >= 50) return 'HIGH'
-    return 'MODERATE'
-  }
-
-  const formatDate = (date: Date) => {
-    const year = date.getFullYear()
-    const month = String(date.getMonth() + 1).padStart(2, '0')
-    const day = String(date.getDate()).padStart(2, '0')
-    return `${year}-${month}-${day}`
-  }
-
-  const getCurrentWeekDates = () => {
-    const today = new Date()
-    const dayOfWeek = today.getDay()
-
-    const monday = new Date(today)
-    monday.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1))
-
-    const weekDates: { [key: string]: string } = {}
-    const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
-
-    days.forEach((day, idx) => {
-      const date = new Date(monday)
-      date.setDate(monday.getDate() + idx)
-      weekDates[day] = formatDate(date)
-    })
-
-    return weekDates
-  }
-
-  const getCurrentWeekRange = () => {
-    const today = new Date()
-    const dayOfWeek = today.getDay()
-
-    const monday = new Date(today)
-    monday.setDate(today.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1))
-
-    const friday = new Date(monday)
-    friday.setDate(monday.getDate() + 4)
-
-    return `${formatDate(monday)} to ${formatDate(friday)}`
-  }
-
-  const weekDates = getCurrentWeekDates()
-
-  // Generate intelligent trade recommendation based on market conditions
-  const getTradeRecommendation = () => {
+  // PERFORMANCE FIX: Memoize trade recommendation (expensive calculation)
+  const recommendation = useMemo(() => {
     if (!data || !data.directional_prediction) return null
 
     const direction = data.directional_prediction.direction
@@ -297,9 +305,10 @@ export default function GammaExpirationWidget() {
     }
 
     return null
-  }
+  }, [data])  // PERFORMANCE FIX: Memoize expensive recommendation calculation
 
-  const toggleSection = (section: string) => {
+  // PERFORMANCE FIX: useCallback for toggleSection
+  const toggleSection = useCallback((section: string) => {
     setExpandedSections(prev => {
       const next = new Set(prev)
       if (next.has(section)) {
@@ -309,7 +318,7 @@ export default function GammaExpirationWidget() {
       }
       return next
     })
-  }
+  }, [])
 
   if (loading) {
     return (
@@ -349,7 +358,7 @@ export default function GammaExpirationWidget() {
           <div>
             <h2 className="text-xl font-bold text-text-primary">0DTE Gamma Expiration Tracker</h2>
             <p className="text-sm text-text-secondary">
-              Week of {getCurrentWeekRange()} | Today: <strong className="text-primary">{data.current_day}</strong>
+              Week of {weekRange} | Today: <strong className="text-primary">{data.current_day}</strong>
               {lastUpdated && (
                 <span className="ml-2 text-text-muted" suppressHydrationWarning>
                   | Updated {lastUpdated.toLocaleTimeString('en-US', {
@@ -365,7 +374,7 @@ export default function GammaExpirationWidget() {
           </div>
           <div className="flex items-center gap-2">
             <div className="flex gap-1">
-              {popularSymbols.map((sym) => (
+              {POPULAR_SYMBOLS.map((sym) => (
                 <button
                   key={sym}
                   onClick={() => setSymbol(sym)}
@@ -770,11 +779,8 @@ export default function GammaExpirationWidget() {
       </div>
 
       {/* ACTIONABLE TRADE PLAYBOOK - Dynamic based on market conditions */}
-      {(() => {
-        const recommendation = getTradeRecommendation()
-        if (!recommendation) return null
-
-        return (
+      {/* PERFORMANCE FIX: Use memoized recommendation instead of calling function inline */}
+      {recommendation && (
           <div className={`card ${recommendation.bgColor} border ${recommendation.borderColor}`}>
             <h3 className="text-lg font-bold text-text-primary mb-3">🎯 Actionable Trade Playbook - Today's Opportunity</h3>
 
@@ -803,7 +809,7 @@ export default function GammaExpirationWidget() {
                     <h5 className="font-bold text-text-primary">📋 Trade Structure:</h5>
                     <div className="space-y-0.5 mt-1">
                       {recommendation.structure.map((item, idx) => (
-                        <p key={idx}><strong>{item.label}:</strong> {item.value}</p>
+                        <p key={idx}><strong>{item.label}:</strong> {typeof item.value === 'object' ? JSON.stringify(item.value) : item.value}</p>
                       ))}
                     </div>
                   </div>
@@ -869,8 +875,7 @@ export default function GammaExpirationWidget() {
               </div>
             </div>
           </div>
-        )
-      })()}
+      )}
 
       {/* Evidence-based footer */}
       <div className="card bg-background-hover">

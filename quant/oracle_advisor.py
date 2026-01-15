@@ -51,11 +51,12 @@ import json
 import pickle
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple, Any, TYPE_CHECKING
 from dataclasses import dataclass, asdict, field
 from enum import Enum
 import warnings
+import threading
 
 # Add parent to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -95,6 +96,49 @@ try:
 except ImportError:
     DB_AVAILABLE = False
 
+# Price Trend Tracker for NEUTRAL regime handling
+try:
+    from quant.price_trend_tracker import (
+        get_trend_tracker, PriceTrendTracker, TrendDirection,
+        TrendAnalysis, WallPositionAnalysis, StrategySuitability
+    )
+    TREND_TRACKER_AVAILABLE = True
+except ImportError:
+    TREND_TRACKER_AVAILABLE = False
+    get_trend_tracker = None
+    logger.info("Price trend tracker not available - NEUTRAL regime will use legacy logic")
+
+# Context manager for safe database connections (prevents connection leaks)
+from contextlib import contextmanager
+
+@contextmanager
+def get_db_connection():
+    """
+    Context manager for database connections.
+
+    Ensures connections are always closed, even if an exception occurs.
+
+    Usage:
+        with get_db_connection() as conn:
+            if conn is None:
+                return  # DB not available
+            cursor = conn.cursor()
+            cursor.execute(...)
+    """
+    conn = None
+    try:
+        if not DB_AVAILABLE:
+            yield None
+        else:
+            conn = get_connection()
+            yield conn
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
 # Comprehensive bot logger
 try:
     from trading.bot_logger import (
@@ -121,6 +165,8 @@ class BotName(Enum):
     HERMES = "HERMES"      # Manual Wheel via UI
     ATHENA = "ATHENA"      # Directional Spreads (Bull Call / Bear Call)
     PEGASUS = "PEGASUS"    # SPX Iron Condor ($10 spreads, weekly)
+    ICARUS = "ICARUS"      # Aggressive Directional Spreads (relaxed filters)
+    TITAN = "TITAN"        # Aggressive SPX Iron Condor ($12 spreads)
 
 
 class TradeOutcome(Enum):
@@ -193,6 +239,20 @@ class MarketContext:
     win_rate_30d: float = 0.68
     expected_move_pct: float = 1.0
 
+    # =========================================================================
+    # TREND DATA (for NEUTRAL regime direction determination)
+    # These fields are populated by PriceTrendTracker on every 5-min scan
+    # =========================================================================
+    trend_direction: str = "SIDEWAYS"  # UPTREND, DOWNTREND, SIDEWAYS
+    trend_strength: float = 0.0  # 0-1
+    price_5m_ago: float = 0.0
+    price_30m_ago: float = 0.0
+    price_60m_ago: float = 0.0
+    is_higher_high: bool = False
+    is_higher_low: bool = False
+    position_in_range_pct: float = 50.0  # 0% = at put wall, 100% = at call wall
+    is_contained: bool = True  # Price between walls
+
 
 @dataclass
 class OraclePrediction:
@@ -224,6 +284,33 @@ class OraclePrediction:
     # e.g., ARES skip due to high VIX -> suggest ATHENA directional
     suggested_alternative: Optional[BotName] = None
     strategy_recommendation: Optional['StrategyRecommendation'] = None
+
+    # =========================================================================
+    # NEUTRAL REGIME ANALYSIS (new fields for trend-based direction)
+    # =========================================================================
+    neutral_derived_direction: str = ""  # Direction derived for NEUTRAL regime
+    neutral_confidence: float = 0.0  # Confidence in derived direction
+    neutral_reasoning: str = ""  # Full reasoning for the derivation
+
+    # Strategy suitability scores (0-1)
+    ic_suitability: float = 0.0  # Iron Condor suitability
+    bullish_suitability: float = 0.0  # Bull spread suitability
+    bearish_suitability: float = 0.0  # Bear spread suitability
+
+    # Trend analysis data
+    trend_direction: str = ""  # UPTREND, DOWNTREND, SIDEWAYS
+    trend_strength: float = 0.0
+    position_in_range_pct: float = 50.0  # Where price sits in wall range
+    wall_filter_passed: bool = False
+
+    # =========================================================================
+    # MODEL STALENESS TRACKING (Issue #1 & #4 fix)
+    # Allows bots to know how fresh the model is and adjust confidence
+    # =========================================================================
+    prediction_id: Optional[int] = None  # Links prediction to outcome (Issue #3)
+    hours_since_training: float = 0.0  # Hours since model was last trained
+    model_loaded_at: Optional[str] = None  # ISO timestamp when model was loaded
+    is_model_fresh: bool = True  # True if model < 24 hours old
 
 
 @dataclass
@@ -324,62 +411,73 @@ class OracleLiveLog:
     """
     Live logging system for Oracle - FULL TRANSPARENCY.
     Captures every piece of data flowing through Oracle for frontend visibility.
+    Thread-safe singleton implementation.
     """
     _instance = None
+    _instance_lock = threading.Lock()
     MAX_LOGS = 500  # Increased for more history
     MAX_DATA_FLOWS = 100  # Store detailed data flow records
 
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._logs = []
-            cls._instance._callbacks = []
-            cls._instance._data_flows = []  # Full data pipeline records
-            cls._instance._claude_exchanges = []  # Complete Claude prompt/response pairs
+            with cls._instance_lock:
+                # Double-check locking pattern for thread safety
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._logs = []
+                    cls._instance._callbacks = []
+                    cls._instance._data_flows = []  # Full data pipeline records
+                    cls._instance._claude_exchanges = []  # Complete Claude prompt/response pairs
+                    cls._instance._log_lock = threading.Lock()  # Lock for list operations
         return cls._instance
 
     def log(self, event_type: str, message: str, data: Optional[Dict] = None):
-        """Add a log entry"""
+        """Add a log entry (thread-safe)"""
         entry = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
             "type": event_type,
             "message": message,
             "data": data
         }
-        self._logs.append(entry)
 
-        # Keep only recent logs
-        if len(self._logs) > self.MAX_LOGS:
-            self._logs = self._logs[-self.MAX_LOGS:]
+        with self._log_lock:
+            self._logs.append(entry)
 
-        # Notify callbacks
+            # Keep only recent logs
+            if len(self._logs) > self.MAX_LOGS:
+                self._logs = self._logs[-self.MAX_LOGS:]
+
+        # Notify callbacks (outside lock to prevent deadlocks)
         for callback in self._callbacks:
             try:
                 callback(entry)
-            except:
-                pass
+            except Exception as e:
+                # Log callback errors but don't let them break the logging system
+                logger.debug(f"Oracle live log callback error: {e}")
 
         # Also log to standard logger
         logger.info(f"[ORACLE] {event_type}: {message}")
 
     def log_data_flow(self, bot_name: str, stage: str, data: Dict):
         """
-        Log a complete data flow step for full transparency.
+        Log a complete data flow step for full transparency (thread-safe).
 
         Stages: INPUT, ML_FEATURES, ML_OUTPUT, CLAUDE_PROMPT, CLAUDE_RESPONSE,
                 DECISION, SENT_TO_BOT, ANTI_HALLUCINATION_CHECK
         """
         entry = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
             "bot_name": bot_name,
             "stage": stage,
             "data": data
         }
-        self._data_flows.append(entry)
 
-        # Keep only recent
-        if len(self._data_flows) > self.MAX_DATA_FLOWS:
-            self._data_flows = self._data_flows[-self.MAX_DATA_FLOWS:]
+        with self._log_lock:
+            self._data_flows.append(entry)
+
+            # Keep only recent
+            if len(self._data_flows) > self.MAX_DATA_FLOWS:
+                self._data_flows = self._data_flows[-self.MAX_DATA_FLOWS:]
 
         # Also add to regular logs with summary
         self.log(f"DATA_FLOW_{stage}", f"{bot_name}: {stage}", {
@@ -395,12 +493,12 @@ class OracleLiveLog:
                            hallucination_warnings: List = None,
                            data_citations: List = None):
         """
-        Log a complete Claude AI exchange with full context.
+        Log a complete Claude AI exchange with full context (thread-safe).
         This is the key for transparency - shows exactly what AI sees and says.
         Includes anti-hallucination validation results.
         """
         exchange = {
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
             "bot_name": bot_name,
             "market_context": market_context,
             "ml_prediction": ml_prediction,
@@ -413,11 +511,13 @@ class OracleLiveLog:
             "hallucination_warnings": hallucination_warnings or [],
             "data_citations": data_citations or []
         }
-        self._claude_exchanges.append(exchange)
 
-        # Keep only recent
-        if len(self._claude_exchanges) > self.MAX_DATA_FLOWS:
-            self._claude_exchanges = self._claude_exchanges[-self.MAX_DATA_FLOWS:]
+        with self._log_lock:
+            self._claude_exchanges.append(exchange)
+
+            # Keep only recent
+            if len(self._claude_exchanges) > self.MAX_DATA_FLOWS:
+                self._claude_exchanges = self._claude_exchanges[-self.MAX_DATA_FLOWS:]
 
         # Log summary with hallucination status
         self.log("CLAUDE_EXCHANGE", f"{bot_name}: Claude AI consulted (Hallucination Risk: {hallucination_risk})", {
@@ -536,6 +636,50 @@ class OracleClaudeEnhancer:
     def is_enabled(self) -> bool:
         return self._enabled
 
+    @staticmethod
+    def _sanitize_for_prompt(value: Any) -> str:
+        """
+        Sanitize a value before including it in a Claude prompt.
+
+        Prevents prompt injection by:
+        1. Converting to string
+        2. Removing/escaping dangerous patterns
+        3. Truncating excessively long strings
+        """
+        if value is None:
+            return "N/A"
+
+        # Convert to string
+        s = str(value)
+
+        # Remove common prompt injection patterns
+        dangerous_patterns = [
+            "ignore previous",
+            "ignore above",
+            "disregard",
+            "forget everything",
+            "new instructions",
+            "system prompt",
+            "```",
+            "SYSTEM:",
+            "USER:",
+            "ASSISTANT:",
+        ]
+
+        s_lower = s.lower()
+        for pattern in dangerous_patterns:
+            if pattern.lower() in s_lower:
+                s = s.replace(pattern, "[FILTERED]")
+                s = s.replace(pattern.lower(), "[FILTERED]")
+                s = s.replace(pattern.upper(), "[FILTERED]")
+
+        # Limit length to prevent context stuffing
+        max_len = 500
+        if len(s) > max_len:
+            s = s[:max_len] + "...[truncated]"
+
+        return s
+
     # =========================================================================
     # 1. VALIDATE/ENHANCE ML PREDICTIONS
     # =========================================================================
@@ -585,6 +729,9 @@ CRITICAL ANTI-HALLUCINATION RULES:
 
 Be concise and data-driven. Focus ONLY on data provided: GEX regime, VIX levels, and day-of-week patterns."""
 
+        # Sanitize any string values that could potentially be manipulated
+        sanitized_top_factors = self._sanitize_for_prompt(ml_prediction.get('top_factors', []))
+
         user_prompt = f"""Validate this ML prediction for {bot_name.value}:
 
 MARKET CONTEXT:
@@ -598,7 +745,7 @@ MARKET CONTEXT:
 
 ML PREDICTION:
 - Win Probability: {ml_prediction.get('win_probability', 0.68):.1%}
-- Top Factors: {ml_prediction.get('top_factors', [])}
+- Top Factors: {sanitized_top_factors}
 
 Provide your analysis in this format:
 DATA_CITATIONS: [List the exact data values you're basing your analysis on, e.g., "VIX=18.5, GEX_REGIME=POSITIVE, Day=Monday"]
@@ -630,6 +777,15 @@ OVERRIDE_ADVICE: [Only if OVERRIDE, what advice to give instead]"""
             )
             response_time_ms = int((time.time() - start_time) * 1000)
 
+            # Safe access to Claude response content
+            if not message.content or len(message.content) == 0:
+                self.live_log.log("ERROR", "Claude returned empty content array")
+                return ClaudeValidation(
+                    recommendation="PROCEED",
+                    confidence_adjustment=0.0,
+                    risk_factors=[],
+                    reasoning="Claude returned empty response"
+                )
             response = message.content[0].text
 
             # Extract token counts from response
@@ -886,6 +1042,9 @@ Write a clear, concise explanation (3-5 sentences) that:
 
 Use a professional but approachable tone. Avoid jargon where possible."""
 
+        # Sanitize reasoning text which may contain external data
+        sanitized_reasoning = self._sanitize_for_prompt(prediction.reasoning)
+
         user_prompt = f"""Explain this Oracle prediction for {prediction.bot_name.value}:
 
 PREDICTION:
@@ -893,7 +1052,7 @@ PREDICTION:
 - Win Probability: {prediction.win_probability:.1%}
 - Suggested Risk %: {prediction.suggested_risk_pct:.1f}%
 - Use GEX Walls: {"Yes" if prediction.use_gex_walls else "No"}
-- Model Reasoning: {prediction.reasoning}
+- Model Reasoning: {sanitized_reasoning}
 
 MARKET CONTEXT:
 - VIX: {context.vix:.1f}
@@ -915,6 +1074,9 @@ Write a clear explanation for the trader."""
                 system=system_prompt
             )
 
+            # Safe access to Claude response content
+            if not message.content or len(message.content) == 0:
+                return f"Oracle predicts {prediction.advice.value} with {prediction.win_probability:.1%} confidence. {prediction.reasoning}"
             explanation = message.content[0].text.strip()
 
             self.live_log.log("EXPLAIN_DONE", f"Explanation generated ({len(explanation)} chars)")
@@ -999,6 +1161,11 @@ Analyze the provided statistics and identify:
 
 Be specific and data-driven. Focus on actionable insights."""
 
+        # Sanitize stats that could contain manipulated data
+        sanitized_dow_stats = self._sanitize_for_prompt(dow_stats)
+        sanitized_gex_stats = self._sanitize_for_prompt(gex_stats)
+        sanitized_recent_losses = self._sanitize_for_prompt(recent_losses or "None")
+
         user_prompt = f"""Analyze these KRONOS backtest statistics:
 
 OVERALL PERFORMANCE:
@@ -1012,13 +1179,13 @@ VIX ANALYSIS:
 - Avg VIX on Losses: {vix_loss:.1f}
 
 DAY OF WEEK STATS:
-{dow_stats}
+{sanitized_dow_stats}
 
 GEX REGIME STATS:
-{gex_stats}
+{sanitized_gex_stats}
 
 RECENT LOSSES (if any):
-{recent_losses or "None"}
+{sanitized_recent_losses}
 
 Provide analysis in this format:
 PATTERNS:
@@ -1052,6 +1219,15 @@ RECOMMENDATIONS:
                 system=system_prompt
             )
 
+            # Safe access to Claude response content
+            if not message.content or len(message.content) == 0:
+                self.live_log.log("ERROR", "Claude returned empty content for pattern analysis")
+                return {
+                    "success": False,
+                    "error": "Claude returned empty response",
+                    "patterns": [],
+                    "recommendations": []
+                }
             response = message.content[0].text
             result = self._parse_pattern_response(response)
 
@@ -1182,7 +1358,17 @@ class OracleAdvisor:
 
     MODEL_PATH = os.path.join(os.path.dirname(__file__), '.models')
 
-    def __init__(self, enable_claude: bool = True):
+    def __init__(self, enable_claude: bool = True, omega_mode: bool = False):
+        """
+        Initialize Oracle Advisor.
+
+        Args:
+            enable_claude: Whether to enable Claude AI validation
+            omega_mode: OMEGA Orchestrator mode - when True:
+                - Disables strict VIX skip rules (defers to ML Advisor)
+                - Integrates Ensemble signals for context
+                - Acts as bot-specific adapter rather than decision maker
+        """
         self.model = None
         self.calibrated_model = None
         self.scaler = None
@@ -1191,12 +1377,28 @@ class OracleAdvisor:
         self.model_version = "0.0.0"
         self._has_gex_features = False
 
+        # =========================================================================
+        # MODEL STALENESS TRACKING (Issue #1 fix)
+        # Track when model was loaded/trained to detect stale models
+        # =========================================================================
+        self._model_loaded_at: Optional[datetime] = None  # When model was loaded into memory
+        self._model_trained_at: Optional[datetime] = None  # When model was last trained
+        self._last_version_check: Optional[datetime] = None  # Throttle version checks
+        self._version_check_interval_seconds = 300  # Check for new model every 5 minutes
+
+        # OMEGA mode - trust ML Advisor, use Oracle for adaptation only
+        self.omega_mode = omega_mode
+
+        # Ensemble integration (Gap 5 / Option B)
+        self._ensemble_weighter = None
+        self._dynamic_weight_updater = None
+
         # Live log for frontend transparency
         self.live_log = oracle_live_log
 
         # Thresholds
-        self.high_confidence_threshold = 0.70
-        self.low_confidence_threshold = 0.55
+        self.high_confidence_threshold = 0.65
+        self.low_confidence_threshold = 0.45
 
         # Claude AI Enhancer
         self.claude: Optional[OracleClaudeEnhancer] = None
@@ -1214,13 +1416,154 @@ class OracleAdvisor:
         self.live_log.log("INIT", f"Oracle Advisor initialized (model v{self.model_version})", {
             "model_trained": self.is_trained,
             "claude_enabled": enable_claude,
-            "has_gex_features": self._has_gex_features
+            "has_gex_features": self._has_gex_features,
+            "omega_mode": omega_mode
         })
+
+    # =========================================================================
+    # ENSEMBLE INTEGRATION - REMOVED
+    # Oracle is the god of all trade decisions. Ensemble is dead code.
+    # GEX + VIX analysis is the fallback when Oracle is unavailable.
+    # =========================================================================
+
+    def get_ensemble_weighter(self, symbol: str = "SPY"):
+        """REMOVED: Ensemble Strategy is dead code. Oracle is god."""
+        return None
+
+    def get_dynamic_weight_updater(self, symbol: str = "SPY"):
+        """REMOVED: Ensemble Strategy is dead code. Oracle is god."""
+        return None
+
+    def get_ensemble_context(
+        self,
+        context: 'MarketContext',
+        gex_data: Optional[Dict] = None,
+        psychology_data: Optional[Dict] = None,
+        rsi_data: Optional[Dict] = None,
+        vol_surface_data: Optional[Dict] = None
+    ) -> Optional[Dict]:
+        """
+        REMOVED: Ensemble Strategy is dead code. Oracle is god.
+        Returns neutral context for any callers that haven't been updated yet.
+        """
+        return {
+            'signal': 'NEUTRAL',
+            'confidence': 50,
+            'should_trade': True,
+            'position_size_multiplier': 1.0,
+            'bullish_weight': 0.33,
+            'bearish_weight': 0.33,
+            'neutral_weight': 0.34,
+            'component_count': 0
+        }
+
+    def update_ensemble_from_outcome(
+        self,
+        strategy_name: str,
+        was_correct: bool,
+        confidence_at_prediction: float,
+        actual_pnl_pct: float,
+        current_regime: str
+    ) -> Optional[Dict[str, float]]:
+        """REMOVED: Ensemble Strategy is dead code. Oracle is god."""
+        return None
 
     @property
     def claude_available(self) -> bool:
         """Check if Claude AI is available and enabled"""
         return self.claude is not None and self.claude.is_enabled
+
+    # =========================================================================
+    # MODEL STALENESS DETECTION & AUTO-RELOAD (Issue #1 fix)
+    # Ensures bots always use the most recent model version
+    # =========================================================================
+
+    def _get_hours_since_training(self) -> float:
+        """Calculate hours since model was last trained"""
+        if self._model_trained_at is None:
+            return 0.0
+        delta = datetime.now() - self._model_trained_at
+        return delta.total_seconds() / 3600.0
+
+    def _is_model_fresh(self, max_age_hours: float = 24.0) -> bool:
+        """Check if model is considered fresh (< max_age_hours old)"""
+        return self._get_hours_since_training() < max_age_hours
+
+    def _get_db_model_version(self) -> Optional[str]:
+        """Get the current active model version from database"""
+        if not DB_AVAILABLE:
+            return None
+
+        with get_db_connection() as conn:
+            if conn is None:
+                return None
+            try:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT model_version
+                    FROM oracle_trained_models
+                    WHERE is_active = TRUE
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """)
+                row = cursor.fetchone()
+                return row[0] if row else None
+            except Exception as e:
+                logger.debug(f"Failed to check DB model version: {e}")
+                return None
+
+    def _check_and_reload_model_if_stale(self) -> bool:
+        """
+        Check if a newer model exists in DB and reload if so.
+
+        This fixes Issue #1: Model staleness after retraining.
+        Called before every prediction to ensure fresh model is used.
+
+        Returns:
+            True if model was reloaded, False otherwise
+        """
+        # Throttle version checks to avoid DB spam (every 5 minutes)
+        now = datetime.now()
+        if self._last_version_check is not None:
+            seconds_since_check = (now - self._last_version_check).total_seconds()
+            if seconds_since_check < self._version_check_interval_seconds:
+                return False
+
+        self._last_version_check = now
+
+        # Check DB for newer version
+        db_version = self._get_db_model_version()
+        if db_version is None:
+            return False
+
+        # If DB has different version, reload
+        if db_version != self.model_version:
+            logger.info(f"Oracle detected new model version in DB: {db_version} (current: {self.model_version})")
+            old_version = self.model_version
+            if self._load_model_from_db():
+                self.live_log.log("MODEL_RELOAD", f"Auto-reloaded model: {old_version} → {self.model_version}", {
+                    "old_version": old_version,
+                    "new_version": self.model_version,
+                    "hours_since_training": self._get_hours_since_training()
+                })
+                return True
+            else:
+                logger.warning(f"Failed to reload new model version {db_version}")
+
+        return False
+
+    def _add_staleness_to_prediction(self, prediction: OraclePrediction) -> OraclePrediction:
+        """
+        Add staleness tracking fields to a prediction.
+
+        This fixes Issue #4: Bots can now see how fresh the model is
+        and optionally adjust their confidence based on model age.
+        """
+        hours_since = self._get_hours_since_training()
+        prediction.hours_since_training = hours_since
+        prediction.model_loaded_at = self._model_loaded_at.isoformat() if self._model_loaded_at else None
+        prediction.is_model_fresh = hours_since < 24.0
+        return prediction
 
     # =========================================================================
     # MODEL PERSISTENCE
@@ -1265,57 +1608,70 @@ class OracleAdvisor:
         if not DB_AVAILABLE:
             return False
 
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
-
-            # Check if table exists
-            cursor.execute("""
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables
-                    WHERE table_name = 'oracle_trained_models'
-                )
-            """)
-            if not cursor.fetchone()[0]:
-                conn.close()
+        with get_db_connection() as conn:
+            if conn is None:
                 return False
+            try:
+                cursor = conn.cursor()
 
-            # Get the most recent active model
-            cursor.execute("""
-                SELECT model_version, model_data, training_metrics, has_gex_features
-                FROM oracle_trained_models
-                WHERE is_active = TRUE
-                ORDER BY created_at DESC
-                LIMIT 1
-            """)
-            row = cursor.fetchone()
-            conn.close()
+                # Check if table exists
+                cursor.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_name = 'oracle_trained_models'
+                    )
+                """)
+                if not cursor.fetchone()[0]:
+                    return False
 
-            if row:
-                model_version, model_data, metrics_json, has_gex = row
+                # Get the most recent active model (including created_at for staleness tracking)
+                cursor.execute("""
+                    SELECT model_version, model_data, training_metrics, has_gex_features, created_at
+                    FROM oracle_trained_models
+                    WHERE is_active = TRUE
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """)
+                row = cursor.fetchone()
 
-                # Deserialize model data
-                saved = pickle.loads(model_data)
-                self.model = saved.get('model')
-                self.calibrated_model = saved.get('calibrated_model')
-                self.scaler = saved.get('scaler')
-                self.model_version = model_version
-                self._has_gex_features = has_gex or False
-                self.is_trained = True
+                if row:
+                    model_version, model_data, metrics_json, has_gex, created_at = row
 
-                # Restore training metrics
-                if metrics_json:
-                    if isinstance(metrics_json, str):
-                        metrics_dict = json.loads(metrics_json)
+                    # Deserialize model data
+                    saved = pickle.loads(model_data)
+                    self.model = saved.get('model')
+                    self.calibrated_model = saved.get('calibrated_model')
+                    self.scaler = saved.get('scaler')
+                    self.model_version = model_version
+                    self._has_gex_features = has_gex or False
+                    self.is_trained = True
+
+                    # Track when model was trained and loaded (Issue #1 fix)
+                    self._model_loaded_at = datetime.now()
+                    if created_at:
+                        # Handle both timezone-aware and naive datetimes
+                        if hasattr(created_at, 'tzinfo') and created_at.tzinfo is not None:
+                            self._model_trained_at = created_at.replace(tzinfo=None)
+                        else:
+                            self._model_trained_at = created_at
                     else:
-                        metrics_dict = metrics_json
-                    self.training_metrics = TrainingMetrics(**metrics_dict)
+                        self._model_trained_at = self._model_loaded_at
 
-                logger.info(f"Loaded Oracle model v{self.model_version} from DATABASE (persistent)")
-                return True
+                    # Restore training metrics
+                    if metrics_json:
+                        if isinstance(metrics_json, str):
+                            metrics_dict = json.loads(metrics_json)
+                        else:
+                            metrics_dict = metrics_json
+                        self.training_metrics = TrainingMetrics(**metrics_dict)
 
-        except Exception as e:
-            logger.warning(f"Failed to load model from database: {e}")
+                    hours_since = self._get_hours_since_training()
+                    logger.info(f"Loaded Oracle model v{self.model_version} from DATABASE "
+                               f"(trained {hours_since:.1f}h ago)")
+                    return True
+
+            except Exception as e:
+                logger.warning(f"Failed to load model from database: {e}")
 
         return False
 
@@ -1354,59 +1710,60 @@ class OracleAdvisor:
             logger.warning("Database not available - model will not persist across restarts")
             return False
 
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
+        with get_db_connection() as conn:
+            if conn is None:
+                return False
+            try:
+                cursor = conn.cursor()
 
-            # Create table if not exists
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS oracle_trained_models (
-                    id SERIAL PRIMARY KEY,
-                    model_version VARCHAR(20) NOT NULL,
-                    model_data BYTEA NOT NULL,
-                    training_metrics JSONB,
-                    has_gex_features BOOLEAN DEFAULT FALSE,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    is_active BOOLEAN DEFAULT TRUE
-                )
-            """)
+                # Create table if not exists
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS oracle_trained_models (
+                        id SERIAL PRIMARY KEY,
+                        model_version VARCHAR(20) NOT NULL,
+                        model_data BYTEA NOT NULL,
+                        training_metrics JSONB,
+                        has_gex_features BOOLEAN DEFAULT FALSE,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        is_active BOOLEAN DEFAULT TRUE
+                    )
+                """)
 
-            # Deactivate previous models
-            cursor.execute("UPDATE oracle_trained_models SET is_active = FALSE")
+                # Deactivate previous active models (only update those that are currently active)
+                cursor.execute("UPDATE oracle_trained_models SET is_active = FALSE WHERE is_active = TRUE")
 
-            # Serialize model data
-            model_data = pickle.dumps({
-                'model': self.model,
-                'calibrated_model': self.calibrated_model,
-                'scaler': self.scaler,
-            })
+                # Serialize model data
+                model_data = pickle.dumps({
+                    'model': self.model,
+                    'calibrated_model': self.calibrated_model,
+                    'scaler': self.scaler,
+                })
 
-            # Serialize training metrics
-            metrics_json = json.dumps(self.training_metrics.__dict__) if self.training_metrics else None
+                # Serialize training metrics
+                metrics_json = json.dumps(self.training_metrics.__dict__) if self.training_metrics else None
 
-            # Insert new model
-            cursor.execute("""
-                INSERT INTO oracle_trained_models
-                (model_version, model_data, training_metrics, has_gex_features, is_active)
-                VALUES (%s, %s, %s, %s, TRUE)
-            """, (
-                self.model_version,
-                model_data,
-                metrics_json,
-                self._has_gex_features
-            ))
+                # Insert new model
+                cursor.execute("""
+                    INSERT INTO oracle_trained_models
+                    (model_version, model_data, training_metrics, has_gex_features, is_active)
+                    VALUES (%s, %s, %s, %s, TRUE)
+                """, (
+                    self.model_version,
+                    model_data,
+                    metrics_json,
+                    self._has_gex_features
+                ))
 
-            conn.commit()
-            conn.close()
+                conn.commit()
 
-            logger.info(f"Saved Oracle model v{self.model_version} to DATABASE (persists across deploys)")
-            return True
+                logger.info(f"Saved Oracle model v{self.model_version} to DATABASE (persists across deploys)")
+                return True
 
-        except Exception as e:
-            logger.error(f"Failed to save model to database: {e}")
-            import traceback
-            traceback.print_exc()
-            return False
+            except Exception as e:
+                logger.error(f"Failed to save model to database: {e}")
+                import traceback
+                traceback.print_exc()
+                return False
 
     # =========================================================================
     # STRATEGY SELECTION (IC vs DIRECTIONAL)
@@ -1768,6 +2125,9 @@ class OracleAdvisor:
         Returns:
             OraclePrediction with IC-specific advice
         """
+        # Check for newer model version in DB and reload if available (Issue #1 fix)
+        self._check_and_reload_model_if_stale()
+
         # Log prediction request
         self.live_log.log("PREDICT", "ARES advice requested", {
             "vix": context.vix,
@@ -1777,33 +2137,48 @@ class OracleAdvisor:
             "use_claude": use_claude_validation,
             "vix_hard_skip": vix_hard_skip,
             "vix_monday_friday_skip": vix_monday_friday_skip,
-            "vix_streak_skip": vix_streak_skip
+            "vix_streak_skip": vix_streak_skip,
+            "model_version": self.model_version,
+            "hours_since_training": self._get_hours_since_training()
         })
 
         # =========================================================================
         # VIX-BASED SKIP LOGIC (Configurable per Strategy Preset)
         # Based on backtest: 2022-2024 showed Sharpe 8.55 → 16.84 with VIX filtering
+        #
+        # OMEGA MODE: When omega_mode=True, VIX skip rules are DISABLED.
+        # In OMEGA mode, ML Advisor is the PRIMARY decision maker, and Oracle
+        # only provides bot-specific adaptation (strikes, risk adjustment).
         # =========================================================================
         skip_reason = None
         skip_threshold_used = 0.0
 
-        # Rule 1: Hard VIX skip (e.g., VIX > 32 for Moderate strategy)
-        if vix_hard_skip > 0 and context.vix > vix_hard_skip:
-            skip_reason = f"VIX {context.vix:.1f} > {vix_hard_skip} - volatility too high for Iron Condor"
-            skip_threshold_used = vix_hard_skip
+        # OMEGA MODE CHECK: Skip VIX rules if Oracle is in OMEGA mode
+        # In OMEGA mode, we trust ML Advisor for the trade/skip decision
+        if not self.omega_mode:
+            # Rule 1: Hard VIX skip (e.g., VIX > 32 for Moderate strategy)
+            if vix_hard_skip > 0 and context.vix > vix_hard_skip:
+                skip_reason = f"VIX {context.vix:.1f} > {vix_hard_skip} - volatility too high for Iron Condor"
+                skip_threshold_used = vix_hard_skip
 
-        # Rule 2: Monday/Friday VIX skip (e.g., VIX > 30 on Mon/Fri for Aggressive strategy)
-        elif vix_monday_friday_skip > 0 and context.day_of_week in [0, 4]:  # Monday=0, Friday=4
-            if context.vix > vix_monday_friday_skip:
-                day_name = "Monday" if context.day_of_week == 0 else "Friday"
-                skip_reason = f"VIX {context.vix:.1f} > {vix_monday_friday_skip} on {day_name} - higher risk day"
-                skip_threshold_used = vix_monday_friday_skip
+            # Rule 2: Monday/Friday VIX skip (e.g., VIX > 30 on Mon/Fri for Aggressive strategy)
+            elif vix_monday_friday_skip > 0 and context.day_of_week in [0, 4]:  # Monday=0, Friday=4
+                if context.vix > vix_monday_friday_skip:
+                    day_name = "Monday" if context.day_of_week == 0 else "Friday"
+                    skip_reason = f"VIX {context.vix:.1f} > {vix_monday_friday_skip} on {day_name} - higher risk day"
+                    skip_threshold_used = vix_monday_friday_skip
 
-        # Rule 3: Streak-based VIX skip (e.g., VIX > 28 after 2+ losses for Aggressive strategy)
-        elif vix_streak_skip > 0 and recent_losses >= 2:
-            if context.vix > vix_streak_skip:
-                skip_reason = f"VIX {context.vix:.1f} > {vix_streak_skip} with {recent_losses} recent losses - risk reduction"
-                skip_threshold_used = vix_streak_skip
+            # Rule 3: Streak-based VIX skip (e.g., VIX > 28 after 2+ losses for Aggressive strategy)
+            elif vix_streak_skip > 0 and recent_losses >= 2:
+                if context.vix > vix_streak_skip:
+                    skip_reason = f"VIX {context.vix:.1f} > {vix_streak_skip} with {recent_losses} recent losses - risk reduction"
+                    skip_threshold_used = vix_streak_skip
+        else:
+            # Log that OMEGA mode is active
+            self.live_log.log("OMEGA_MODE", "VIX skip rules DISABLED - deferring to ML Advisor", {
+                "vix": context.vix,
+                "vix_hard_skip_would_trigger": vix_hard_skip > 0 and context.vix > vix_hard_skip
+            })
 
         # If any VIX skip rule triggered, return SKIP_TODAY
         # BUT: Check if conditions favor directional trading (ATHENA)
@@ -1832,7 +2207,7 @@ class OracleAdvisor:
                 "suggest_athena": suggest_athena,
                 "strategy_rec": strategy_rec.recommended_strategy.value
             })
-            return OraclePrediction(
+            skip_prediction = OraclePrediction(
                 bot_name=BotName.ARES,
                 advice=TradingAdvice.SKIP_TODAY,
                 win_probability=0.35,
@@ -1851,6 +2226,7 @@ class OracleAdvisor:
                 suggested_alternative=BotName.ATHENA if suggest_athena else None,
                 strategy_recommendation=strategy_rec
             )
+            return self._add_staleness_to_prediction(skip_prediction)
 
         # === FULL DATA FLOW LOGGING: INPUT ===
         input_data = {
@@ -1904,10 +2280,18 @@ class OracleAdvisor:
 
             if is_spx_trading and is_spy_gex_data:
                 # Scale SPY walls to SPX (multiply by ratio)
-                scale_factor = context.spot_price / ((gex_put_wall + gex_call_wall) / 2)
-                gex_put_wall = gex_put_wall * scale_factor
-                gex_call_wall = gex_call_wall * scale_factor
-                logger.info(f"Scaled SPY GEX walls to SPX: Put ${gex_put_wall:.0f}, Call ${gex_call_wall:.0f} (scale: {scale_factor:.2f}x)")
+                avg_wall = (gex_put_wall + gex_call_wall) / 2
+                if avg_wall > 0:
+                    scale_factor = context.spot_price / avg_wall
+                    # Validate scale_factor is reasonable (should be ~10x for SPY->SPX)
+                    if scale_factor < 5 or scale_factor > 15:
+                        logger.warning(f"GEX scale factor {scale_factor:.2f}x is unusual (expected 8-12x). "
+                                      f"Spot: ${context.spot_price:.0f}, Avg Wall: ${avg_wall:.0f}")
+                    gex_put_wall = gex_put_wall * scale_factor
+                    gex_call_wall = gex_call_wall * scale_factor
+                    logger.info(f"Scaled SPY GEX walls to SPX: Put ${gex_put_wall:.0f}, Call ${gex_call_wall:.0f} (scale: {scale_factor:.2f}x)")
+                else:
+                    logger.warning(f"Invalid GEX walls (avg={avg_wall:.2f}), skipping scale conversion")
 
             # Use proportional buffer based on expected move (0.5% of price as minimum)
             # This ensures buffer scales with the underlying
@@ -1919,21 +2303,118 @@ class OracleAdvisor:
             logger.info(f"GEX-Protected strikes: Put ${suggested_put:.0f} (wall ${gex_put_wall:.0f} - ${buffer:.0f}), "
                        f"Call ${suggested_call:.0f} (wall ${gex_call_wall:.0f} + ${buffer:.0f})")
 
-        # Adjust advice based on GEX regime
+        # =====================================================================
+        # GEX REGIME HANDLING - Now properly handles NEUTRAL for IC
+        # NEUTRAL regime is actually FAVORABLE for Iron Condors:
+        # - Walls are holding (mean reversion)
+        # - Price is contained within range
+        # - Less trending behavior = less breach risk
+        # =====================================================================
         reasoning_parts = []
+        ic_suitability = 0.50  # Start neutral
+        position_in_range_pct = 50.0
+        trend_direction_str = "SIDEWAYS"
+        trend_strength = 0.0
+        # NEUTRAL regime fields for consistency with ATHENA
+        neutral_derived_direction = ""
+        neutral_confidence = 0.0
+        neutral_reasoning = ""
+        bullish_suitability = 0.0
+        bearish_suitability = 0.0
+        wall_filter_passed = False  # IC doesn't use wall filter, but track for consistency
+
+        # Calculate position in wall range
+        wall_range = context.gex_call_wall - context.gex_put_wall
+        if wall_range > 0 and context.spot_price > 0:
+            position_in_range_pct = (context.spot_price - context.gex_put_wall) / wall_range * 100
 
         if context.gex_regime == GEXRegime.POSITIVE:
             reasoning_parts.append("Positive GEX favors mean reversion (good for IC)")
             base_pred['win_probability'] = min(0.85, base_pred['win_probability'] + 0.03)
+            ic_suitability += 0.20
+
         elif context.gex_regime == GEXRegime.NEGATIVE:
-            reasoning_parts.append("Negative GEX indicates trending market (risky for IC)")
-            base_pred['win_probability'] = max(0.40, base_pred['win_probability'] - 0.05)
+            reasoning_parts.append("Negative GEX indicates trending market (slightly risky for IC)")
+            base_pred['win_probability'] = max(0.50, base_pred['win_probability'] - 0.02)
+            ic_suitability -= 0.15
+
+        elif context.gex_regime == GEXRegime.NEUTRAL:
+            # =====================================================================
+            # NEUTRAL REGIME - GOOD FOR IC! Walls are holding, price contained
+            # This is the key fix - NEUTRAL should NOT penalize IC strategies
+            # =====================================================================
+            reasoning_parts.append("NEUTRAL GEX: Balanced market, walls likely to hold (good for IC)")
+
+            # NEUTRAL with contained price = ideal IC environment
+            if context.gex_between_walls:
+                base_pred['win_probability'] = min(0.85, base_pred['win_probability'] + 0.05)
+                ic_suitability += 0.15
+                reasoning_parts.append("Price contained within walls (IC sweet spot)")
+
+            # Use trend tracker if available for additional confidence
+            if TREND_TRACKER_AVAILABLE and get_trend_tracker is not None:
+                try:
+                    tracker = get_trend_tracker()
+                    tracker.update("SPY", context.spot_price)
+
+                    trend_analysis = tracker.analyze_trend("SPY")
+                    if trend_analysis:
+                        trend_direction_str = trend_analysis.direction.value
+                        trend_strength = trend_analysis.strength
+
+                        # Sideways trend is IDEAL for IC
+                        if trend_analysis.direction.value == "SIDEWAYS":
+                            ic_suitability += 0.10
+                            reasoning_parts.append("Sideways trend (range-bound = IC paradise)")
+                        elif trend_strength > 0.6:
+                            # Strong trend in either direction is risky for IC
+                            ic_suitability -= 0.10
+                            reasoning_parts.append(f"Strong {trend_direction_str} trend ({trend_strength:.0%}) - caution")
+
+                    # Calculate full IC suitability
+                    wall_position = tracker.analyze_wall_position(
+                        "SPY", context.spot_price,
+                        context.gex_call_wall, context.gex_put_wall,
+                        trend_analysis
+                    )
+                    suitability = tracker.calculate_strategy_suitability(
+                        trend_analysis, wall_position, context.vix,
+                        context.gex_regime.value
+                    )
+                    ic_suitability = suitability.ic_suitability
+                    bullish_suitability = suitability.bullish_suitability
+                    bearish_suitability = suitability.bearish_suitability
+                    position_in_range_pct = wall_position.position_in_range_pct
+
+                    # For IC, derive direction based on position in range (for transparency)
+                    if position_in_range_pct < 35:
+                        neutral_derived_direction = "BULLISH"  # Near put wall
+                        neutral_confidence = 0.6
+                    elif position_in_range_pct > 65:
+                        neutral_derived_direction = "BEARISH"  # Near call wall
+                        neutral_confidence = 0.6
+                    else:
+                        neutral_derived_direction = "NEUTRAL"  # Centered = ideal for IC
+                        neutral_confidence = 0.7
+                    neutral_reasoning = f"IC: Position {position_in_range_pct:.0f}% in wall range, trend {trend_direction_str}"
+
+                    logger.info(f"[ARES NEUTRAL] IC suitability: {ic_suitability:.0%}, trend: {trend_direction_str}")
+
+                except Exception as e:
+                    logger.warning(f"[ARES] Trend tracker error: {e}")
+                    # Still boost IC for NEUTRAL regime even without tracker
+                    ic_suitability += 0.10
 
         if context.gex_between_walls:
             reasoning_parts.append("Price between GEX walls (stable zone)")
+            ic_suitability += 0.10
         else:
-            reasoning_parts.append("Price outside GEX walls (breakout risk)")
-            base_pred['win_probability'] = max(0.40, base_pred['win_probability'] - 0.03)
+            reasoning_parts.append("Price outside GEX walls (minor breakout risk)")
+            base_pred['win_probability'] = max(0.50, base_pred['win_probability'] - 0.01)
+            ic_suitability -= 0.10
+
+        # Normalize IC suitability
+        ic_suitability = max(0.0, min(1.0, ic_suitability))
 
         # =========================================================================
         # CLAUDE AI VALIDATION (if enabled)
@@ -1952,6 +2433,23 @@ class OracleAdvisor:
                 # Log risk factors
                 if claude_analysis.risk_factors:
                     logger.info(f"Claude risk factors: {claude_analysis.risk_factors}")
+
+            # VALIDATE hallucination_risk and reduce confidence if HIGH
+            # REDUCED penalties: original values were too aggressive and blocked trades
+            hallucination_risk = getattr(claude_analysis, 'hallucination_risk', 'LOW')
+            if hallucination_risk == 'HIGH':
+                penalty = 0.05  # REDUCED from 10% to 5%
+                base_pred['win_probability'] = max(0.50, base_pred['win_probability'] - penalty)
+                reasoning_parts.append(f"Claude hallucination risk HIGH (confidence reduced by {penalty:.0%})")
+                logger.warning(f"[ARES] Claude hallucination risk HIGH - reducing confidence by {penalty:.0%}")
+                if hasattr(claude_analysis, 'hallucination_warnings') and claude_analysis.hallucination_warnings:
+                    for warning in claude_analysis.hallucination_warnings:
+                        logger.warning(f"  - {warning}")
+            elif hallucination_risk == 'MEDIUM':
+                penalty = 0.02  # REDUCED from 5% to 2%
+                base_pred['win_probability'] = max(0.50, base_pred['win_probability'] - penalty)
+                reasoning_parts.append(f"Claude hallucination risk MEDIUM (confidence reduced by {penalty:.0%})")
+                logger.info(f"[ARES] Claude hallucination risk MEDIUM - reducing confidence by {penalty:.0%}")
 
         # Determine final advice
         advice, risk_pct = self._get_advice_from_probability(base_pred['win_probability'])
@@ -1980,7 +2478,18 @@ class OracleAdvisor:
             reasoning=" | ".join(reasoning_parts),
             model_version=self.model_version,
             probabilities=base_pred['probabilities'],
-            claude_analysis=claude_analysis  # Include real Claude data for logging
+            claude_analysis=claude_analysis,
+            # NEUTRAL regime fields (all 10 for consistency)
+            neutral_derived_direction=neutral_derived_direction,
+            neutral_confidence=neutral_confidence,
+            neutral_reasoning=neutral_reasoning,
+            ic_suitability=ic_suitability,
+            bullish_suitability=bullish_suitability,
+            bearish_suitability=bearish_suitability,
+            trend_direction=trend_direction_str,
+            trend_strength=trend_strength,
+            position_in_range_pct=position_in_range_pct,
+            wall_filter_passed=wall_filter_passed
         )
 
         # Log prediction result
@@ -2006,11 +2515,12 @@ class OracleAdvisor:
             "claude_recommendation": claude_analysis.recommendation if claude_analysis else None,
             "claude_confidence_adj": claude_analysis.confidence_adjustment if claude_analysis else None,
             "claude_risk_factors": claude_analysis.risk_factors if claude_analysis else [],
-            "model_version": self.model_version
+            "model_version": self.model_version,
+            "hours_since_training": self._get_hours_since_training()
         }
         self.live_log.log_data_flow("ARES", "DECISION", decision_data)
 
-        return prediction
+        return self._add_staleness_to_prediction(prediction)
 
     def get_atlas_advice(self, context: MarketContext) -> OraclePrediction:
         """
@@ -2102,7 +2612,7 @@ class OracleAdvisor:
         }
         self.live_log.log_data_flow("ATLAS", "DECISION", decision_data)
 
-        return prediction
+        return self._add_staleness_to_prediction(prediction)
 
     def get_phoenix_advice(
         self,
@@ -2114,12 +2624,17 @@ class OracleAdvisor:
 
         PHOENIX trades long calls, needs directional bias.
         """
+        # Check for newer model version in DB and reload if available (Issue #1 fix)
+        self._check_and_reload_model_if_stale()
+
         # Log prediction request
         self.live_log.log("PREDICT", "PHOENIX advice requested", {
             "vix": context.vix,
             "gex_regime": context.gex_regime.value,
             "spot_price": context.spot_price,
-            "claude_validation": use_claude_validation
+            "claude_validation": use_claude_validation,
+            "model_version": self.model_version,
+            "hours_since_training": self._get_hours_since_training()
         })
 
         # === FULL DATA FLOW LOGGING: INPUT ===
@@ -2157,10 +2672,10 @@ class OracleAdvisor:
         # Negative GEX + below flip = potential rally
         if context.gex_regime == GEXRegime.NEGATIVE and context.gex_distance_to_flip_pct < 0:
             reasoning_parts.append("Negative GEX below flip = gamma squeeze potential")
-            base_pred['win_probability'] = min(0.75, base_pred['win_probability'] + 0.10)
+            base_pred['win_probability'] = min(0.75, base_pred['win_probability'] + 0.05)  # REDUCED from +10%
         elif context.gex_regime == GEXRegime.POSITIVE:
             reasoning_parts.append("Positive GEX = mean reversion, less directional opportunity")
-            base_pred['win_probability'] = max(0.30, base_pred['win_probability'] - 0.10)
+            base_pred['win_probability'] = max(0.45, base_pred['win_probability'] - 0.05)  # REDUCED from -10%
 
         # =========================================================================
         # CLAUDE AI VALIDATION (if enabled)
@@ -2171,10 +2686,23 @@ class OracleAdvisor:
 
             # Apply Claude's confidence adjustment
             if claude_analysis.recommendation in ["ADJUST", "OVERRIDE"]:
-                base_pred['win_probability'] = max(0.30, min(0.80,
+                base_pred['win_probability'] = max(0.45, min(0.80,
                     base_pred['win_probability'] + claude_analysis.confidence_adjustment
                 ))
                 reasoning_parts.append(f"Claude: {claude_analysis.analysis}")
+
+            # VALIDATE hallucination_risk - REDUCED penalties
+            hallucination_risk = getattr(claude_analysis, 'hallucination_risk', 'LOW')
+            if hallucination_risk == 'HIGH':
+                penalty = 0.05  # REDUCED from 10%
+                base_pred['win_probability'] = max(0.45, base_pred['win_probability'] - penalty)
+                reasoning_parts.append(f"Claude hallucination risk HIGH (confidence reduced by {penalty:.0%})")
+                logger.warning(f"[PHOENIX] Claude hallucination risk HIGH - reducing confidence by {penalty:.0%}")
+            elif hallucination_risk == 'MEDIUM':
+                penalty = 0.02  # REDUCED from 5%
+                base_pred['win_probability'] = max(0.45, base_pred['win_probability'] - penalty)
+                reasoning_parts.append(f"Claude hallucination risk MEDIUM (confidence reduced by {penalty:.0%})")
+                logger.info(f"[PHOENIX] Claude hallucination risk MEDIUM - reducing confidence by {penalty:.0%}")
 
         advice, risk_pct = self._get_advice_from_probability(base_pred['win_probability'])
 
@@ -2210,21 +2738,23 @@ class OracleAdvisor:
             "claude_validated": claude_analysis is not None,
             "claude_recommendation": claude_analysis.recommendation if claude_analysis else None,
             "claude_confidence_adj": claude_analysis.confidence_adjustment if claude_analysis else None,
-            "model_version": self.model_version
+            "model_version": self.model_version,
+            "hours_since_training": self._get_hours_since_training()
         }
         self.live_log.log_data_flow("PHOENIX", "DECISION", decision_data)
 
-        return prediction
+        return self._add_staleness_to_prediction(prediction)
 
     def get_athena_advice(
         self,
         context: MarketContext,
         use_gex_walls: bool = True,
         use_claude_validation: bool = True,
-        wall_filter_pct: float = 1.0  # Default 1.0%, backtest showed 0.5% = 98% WR
+        wall_filter_pct: float = 1.0,  # Default 1.0%, backtest showed 0.5% = 98% WR
+        bot_name: str = "ATHENA"  # Allow ICARUS to pass its own name for proper logging
     ) -> OraclePrediction:
         """
-        Get directional spread advice for ATHENA.
+        Get directional spread advice for ATHENA (or ICARUS).
 
         ATHENA trades Bull Call Spreads (bullish) and Bear Call Spreads (bearish).
         Uses GEX walls for entry timing and direction confirmation.
@@ -2236,14 +2766,22 @@ class OracleAdvisor:
         GEX Wall Logic:
         - Near Put Wall (support) + BULLISH signal = Strong entry for Bull Call Spread
         - Near Call Wall (resistance) + BEARISH signal = Strong entry for Bear Call Spread
+
+        Args:
+            bot_name: Bot identifier for logging (ATHENA or ICARUS)
         """
         # Log prediction request
-        self.live_log.log("PREDICT", "ATHENA advice requested", {
+        # Check for newer model version in DB and reload if available (Issue #1 fix)
+        self._check_and_reload_model_if_stale()
+
+        self.live_log.log("PREDICT", f"{bot_name} advice requested", {
             "vix": context.vix,
             "gex_regime": context.gex_regime.value,
             "spot_price": context.spot_price,
             "use_gex_walls": use_gex_walls,
-            "claude_validation": use_claude_validation
+            "claude_validation": use_claude_validation,
+            "model_version": self.model_version,
+            "hours_since_training": self._get_hours_since_training()
         })
 
         # === FULL DATA FLOW LOGGING: INPUT ===
@@ -2264,12 +2802,12 @@ class OracleAdvisor:
             "day_of_week": context.day_of_week,
             "days_to_opex": context.days_to_opex
         }
-        self.live_log.log_data_flow("ATHENA", "INPUT", input_data)
+        self.live_log.log_data_flow(bot_name, "INPUT", input_data)
 
         base_pred = self._get_base_prediction(context)
 
         # === FULL DATA FLOW LOGGING: ML_OUTPUT ===
-        self.live_log.log_data_flow("ATHENA", "ML_OUTPUT", {
+        self.live_log.log_data_flow(bot_name, "ML_OUTPUT", {
             "win_probability": base_pred.get('win_probability'),
             "top_factors": base_pred.get('top_factors', []),
             "probabilities": base_pred.get('probabilities', {}),
@@ -2278,64 +2816,165 @@ class OracleAdvisor:
 
         reasoning_parts = []
 
-        # Determine directional bias from GEX structure
-        direction = "FLAT"
-        direction_confidence = 0.5
-
         # Calculate distance to walls
         dist_to_call_wall = 0
         dist_to_put_wall = 0
+        position_in_range_pct = 50.0
 
         if context.gex_call_wall > 0 and context.spot_price > 0:
             dist_to_call_wall = (context.gex_call_wall - context.spot_price) / context.spot_price * 100
         if context.gex_put_wall > 0 and context.spot_price > 0:
             dist_to_put_wall = (context.spot_price - context.gex_put_wall) / context.spot_price * 100
 
-        # GEX-based directional logic
+        # Calculate position in range
+        wall_range = context.gex_call_wall - context.gex_put_wall
+        if wall_range > 0:
+            position_in_range_pct = (context.spot_price - context.gex_put_wall) / wall_range * 100
+
+        # =====================================================================
+        # NEW NEUTRAL REGIME HANDLING - Use trend tracker for direction
+        # This replaces the broken logic that always returned FLAT for NEUTRAL
+        # =====================================================================
+        direction = "FLAT"
+        direction_confidence = 0.50
+        wall_filter_passed = False
+        neutral_derived_direction = ""
+        neutral_confidence = 0.0
+        neutral_reasoning = ""
+        trend_direction_str = "SIDEWAYS"
+        trend_strength = 0.0
+        ic_suitability = 0.50
+        bullish_suitability = 0.50
+        bearish_suitability = 0.50
+
+        # GEX-based directional logic with NEUTRAL regime handling
         if context.gex_regime == GEXRegime.NEGATIVE:
             # Negative GEX = trending market, directional opportunity
             if context.gex_distance_to_flip_pct < -1:
-                # Price well below flip point = bearish momentum
                 direction = "BEARISH"
                 direction_confidence = 0.60
                 reasoning_parts.append("Negative GEX below flip = bearish momentum")
             elif context.gex_distance_to_flip_pct > 1:
-                # Price above flip in negative GEX = potential reversal
                 direction = "BULLISH"
                 direction_confidence = 0.55
                 reasoning_parts.append("Price above flip in negative GEX = squeeze potential")
+
         elif context.gex_regime == GEXRegime.POSITIVE:
-            # Positive GEX = mean reversion
-            if dist_to_put_wall < 1.0 and dist_to_put_wall > 0:
-                # Near support
+            # Positive GEX = mean reversion, use wall proximity
+            if dist_to_put_wall < wall_filter_pct and dist_to_put_wall > 0:
                 direction = "BULLISH"
                 direction_confidence = 0.65
-                reasoning_parts.append(f"Near put wall support ({dist_to_put_wall:.1f}%)")
-            elif dist_to_call_wall < 1.0 and dist_to_call_wall > 0:
-                # Near resistance
+                reasoning_parts.append(f"POSITIVE GEX near put wall support ({dist_to_put_wall:.1f}%)")
+            elif dist_to_call_wall < wall_filter_pct and dist_to_call_wall > 0:
                 direction = "BEARISH"
                 direction_confidence = 0.65
-                reasoning_parts.append(f"Near call wall resistance ({dist_to_call_wall:.1f}%)")
+                reasoning_parts.append(f"POSITIVE GEX near call wall resistance ({dist_to_call_wall:.1f}%)")
 
-        # Wall filter check - use configurable parameter (backtest: 0.5% = 98% WR, 1.0% = 90% WR)
-        wall_filter_passed = False
-        if use_gex_walls:
-            if direction == "BULLISH" and dist_to_put_wall < wall_filter_pct:
-                wall_filter_passed = True
-                reasoning_parts.append(f"Wall filter PASSED: {dist_to_put_wall:.2f}% from put wall (threshold: {wall_filter_pct}%)")
-            elif direction == "BEARISH" and dist_to_call_wall < wall_filter_pct:
-                wall_filter_passed = True
-                reasoning_parts.append(f"Wall filter PASSED: {dist_to_call_wall:.2f}% from call wall (threshold: {wall_filter_pct}%)")
+        elif context.gex_regime == GEXRegime.NEUTRAL:
+            # =====================================================================
+            # NEUTRAL REGIME - The key fix! Use trend + wall proximity
+            # =====================================================================
+            reasoning_parts.append("NEUTRAL GEX: Using trend + wall proximity for direction")
+
+            # Try to use the trend tracker for dynamic direction
+            if TREND_TRACKER_AVAILABLE and get_trend_tracker is not None:
+                try:
+                    tracker = get_trend_tracker()
+                    # Update tracker with current price
+                    tracker.update("SPY", context.spot_price)
+
+                    # Get direction from trend tracker
+                    direction, direction_confidence, neutral_reasoning, wall_filter_passed = \
+                        tracker.get_neutral_regime_direction(
+                            symbol="SPY",
+                            spot_price=context.spot_price,
+                            call_wall=context.gex_call_wall,
+                            put_wall=context.gex_put_wall,
+                            wall_filter_pct=wall_filter_pct
+                        )
+
+                    neutral_derived_direction = direction
+                    neutral_confidence = direction_confidence
+                    reasoning_parts.append(f"Trend tracker: {neutral_reasoning}")
+
+                    # Get trend analysis for additional context
+                    trend_analysis = tracker.analyze_trend("SPY")
+                    if trend_analysis:
+                        trend_direction_str = trend_analysis.direction.value
+                        trend_strength = trend_analysis.strength
+
+                    # Get strategy suitability
+                    wall_position = tracker.analyze_wall_position(
+                        "SPY", context.spot_price,
+                        context.gex_call_wall, context.gex_put_wall,
+                        trend_analysis
+                    )
+                    suitability = tracker.calculate_strategy_suitability(
+                        trend_analysis, wall_position, context.vix,
+                        context.gex_regime.value
+                    )
+                    ic_suitability = suitability.ic_suitability
+                    bullish_suitability = suitability.bullish_suitability
+                    bearish_suitability = suitability.bearish_suitability
+
+                    logger.info(f"[ATHENA NEUTRAL] Trend tracker: {direction} ({direction_confidence:.0%})")
+
+                except Exception as e:
+                    logger.warning(f"[ATHENA] Trend tracker error: {e}, using fallback")
+                    # Fallback to wall-proximity based direction
+                    direction, direction_confidence, neutral_reasoning = \
+                        self._get_neutral_direction_fallback(
+                            context.spot_price, context.gex_call_wall, context.gex_put_wall,
+                            position_in_range_pct, wall_filter_pct
+                        )
+                    neutral_derived_direction = direction
+                    neutral_confidence = direction_confidence
+                    reasoning_parts.append(f"Fallback: {neutral_reasoning}")
             else:
-                reasoning_parts.append(f"Wall filter FAILED: Call wall {dist_to_call_wall:.1f}%, Put wall {dist_to_put_wall:.1f}% (need < {wall_filter_pct}%)")
+                # Fallback when trend tracker not available
+                direction, direction_confidence, neutral_reasoning = \
+                    self._get_neutral_direction_fallback(
+                        context.spot_price, context.gex_call_wall, context.gex_put_wall,
+                        position_in_range_pct, wall_filter_pct
+                    )
+                neutral_derived_direction = direction
+                neutral_confidence = direction_confidence
+                reasoning_parts.append(f"Fallback: {neutral_reasoning}")
 
-        # Adjust win probability based on direction confidence
+        # =====================================================================
+        # Wall filter check (now properly handles all directions)
+        # =====================================================================
+        if not wall_filter_passed and use_gex_walls:
+            if direction == "BULLISH":
+                if dist_to_put_wall <= wall_filter_pct:
+                    wall_filter_passed = True
+                    reasoning_parts.append(f"Wall filter PASSED: {dist_to_put_wall:.2f}% from put wall (threshold: {wall_filter_pct}%)")
+                else:
+                    reasoning_parts.append(f"Wall filter: {dist_to_put_wall:.2f}% from put wall (threshold: {wall_filter_pct}%)")
+            elif direction == "BEARISH":
+                if dist_to_call_wall <= wall_filter_pct:
+                    wall_filter_passed = True
+                    reasoning_parts.append(f"Wall filter PASSED: {dist_to_call_wall:.2f}% from call wall (threshold: {wall_filter_pct}%)")
+                else:
+                    reasoning_parts.append(f"Wall filter: {dist_to_call_wall:.2f}% from call wall (threshold: {wall_filter_pct}%)")
+
+        # =====================================================================
+        # Win probability calculation (NO MORE HARDCODED 0.45!)
+        # =====================================================================
         if direction != "FLAT":
-            base_pred['win_probability'] = max(0.40, min(0.85, direction_confidence))
+            # Base probability from direction confidence
+            base_pred['win_probability'] = max(0.50, min(0.85, direction_confidence))
+
+            # Boost if wall filter passed
             if wall_filter_passed:
                 base_pred['win_probability'] = min(0.90, base_pred['win_probability'] + 0.10)
+
+            # Boost for strong trends
+            if trend_strength > 0.6:
+                base_pred['win_probability'] = min(0.90, base_pred['win_probability'] + 0.05)
         else:
-            base_pred['win_probability'] = 0.45  # No directional bias
+            # FLAT direction - still give reasonable probability, not 0.45!
+            base_pred['win_probability'] = 0.50  # Neutral, not negative expectancy
 
         # VIX impact
         if context.vix > 25:
@@ -2351,10 +2990,23 @@ class OracleAdvisor:
             claude_analysis = self.claude.validate_prediction(context, base_pred, BotName.ATHENA)
 
             if claude_analysis.recommendation in ["ADJUST", "OVERRIDE"]:
-                base_pred['win_probability'] = max(0.30, min(0.85,
+                base_pred['win_probability'] = max(0.45, min(0.85,
                     base_pred['win_probability'] + claude_analysis.confidence_adjustment
                 ))
                 reasoning_parts.append(f"Claude: {claude_analysis.analysis}")
+
+            # VALIDATE hallucination_risk - REDUCED penalties
+            hallucination_risk = getattr(claude_analysis, 'hallucination_risk', 'LOW')
+            if hallucination_risk == 'HIGH':
+                penalty = 0.05  # REDUCED from 10%
+                base_pred['win_probability'] = max(0.45, base_pred['win_probability'] - penalty)
+                reasoning_parts.append(f"Claude hallucination risk HIGH (confidence reduced by {penalty:.0%})")
+                logger.warning(f"[ATHENA] Claude hallucination risk HIGH - reducing confidence by {penalty:.0%}")
+            elif hallucination_risk == 'MEDIUM':
+                penalty = 0.02  # REDUCED from 5%
+                base_pred['win_probability'] = max(0.45, base_pred['win_probability'] - penalty)
+                reasoning_parts.append(f"Claude hallucination risk MEDIUM (confidence reduced by {penalty:.0%})")
+                logger.info(f"[ATHENA] Claude hallucination risk MEDIUM - reducing confidence by {penalty:.0%}")
 
         advice, risk_pct = self._get_advice_from_probability(base_pred['win_probability'])
 
@@ -2374,8 +3026,14 @@ class OracleAdvisor:
             spread_direction = "BEAR_PUT_SPREAD"
             reasoning_parts.append(f"Recommend: {spread_direction}")
 
+        # Map bot_name string to BotName enum
+        try:
+            prediction_bot_name = BotName[bot_name.upper()] if bot_name else BotName.ATHENA
+        except (KeyError, AttributeError):
+            prediction_bot_name = BotName.ATHENA
+
         prediction = OraclePrediction(
-            bot_name=BotName.ATHENA,
+            bot_name=prediction_bot_name,
             advice=advice,
             win_probability=base_pred['win_probability'],
             confidence=min(100, direction_confidence * 100),
@@ -2388,11 +3046,22 @@ class OracleAdvisor:
             reasoning=" | ".join(reasoning_parts) + f" | Direction: {direction}",
             model_version=self.model_version,
             probabilities=base_pred.get('probabilities', {}),
-            claude_analysis=claude_analysis
+            claude_analysis=claude_analysis,
+            # New NEUTRAL regime fields
+            neutral_derived_direction=neutral_derived_direction,
+            neutral_confidence=neutral_confidence,
+            neutral_reasoning=neutral_reasoning,
+            ic_suitability=ic_suitability,
+            bullish_suitability=bullish_suitability,
+            bearish_suitability=bearish_suitability,
+            trend_direction=trend_direction_str,
+            trend_strength=trend_strength,
+            position_in_range_pct=position_in_range_pct,
+            wall_filter_passed=wall_filter_passed
         )
 
         # Log prediction result
-        self.live_log.log("PREDICT_DONE", f"ATHENA: {advice.value} ({base_pred['win_probability']:.1%})", {
+        self.live_log.log("PREDICT_DONE", f"{bot_name}: {advice.value} ({base_pred['win_probability']:.1%})", {
             "advice": advice.value,
             "win_probability": base_pred['win_probability'],
             "direction": direction,
@@ -2417,11 +3086,12 @@ class OracleAdvisor:
             "claude_validated": claude_analysis is not None,
             "claude_recommendation": claude_analysis.recommendation if claude_analysis else None,
             "claude_confidence_adj": claude_analysis.confidence_adjustment if claude_analysis else None,
-            "model_version": self.model_version
+            "model_version": self.model_version,
+            "hours_since_training": self._get_hours_since_training()
         }
-        self.live_log.log_data_flow("ATHENA", "DECISION", decision_data)
+        self.live_log.log_data_flow(bot_name, "DECISION", decision_data)
 
-        return prediction
+        return self._add_staleness_to_prediction(prediction)
 
     # =========================================================================
     # PEGASUS ADVICE (SPX IRON CONDOR - WEEKLY)
@@ -2461,6 +3131,9 @@ class OracleAdvisor:
         Returns:
             OraclePrediction with SPX IC-specific advice
         """
+        # Check for newer model version in DB and reload if available (Issue #1 fix)
+        self._check_and_reload_model_if_stale()
+
         # Log prediction request
         self.live_log.log("PREDICT", "PEGASUS advice requested", {
             "vix": context.vix,
@@ -2469,7 +3142,9 @@ class OracleAdvisor:
             "use_gex_walls": use_gex_walls,
             "use_claude": use_claude_validation,
             "vix_hard_skip": vix_hard_skip,
-            "spread_width": spread_width
+            "spread_width": spread_width,
+            "model_version": self.model_version,
+            "hours_since_training": self._get_hours_since_training()
         })
 
         # =========================================================================
@@ -2523,7 +3198,7 @@ class OracleAdvisor:
                 "suggest_athena": suggest_athena,
                 "strategy_rec": strategy_rec.recommended_strategy.value
             })
-            return OraclePrediction(
+            skip_prediction = OraclePrediction(
                 bot_name=BotName.PEGASUS,
                 advice=TradingAdvice.SKIP_TODAY,
                 win_probability=0.35,
@@ -2542,6 +3217,7 @@ class OracleAdvisor:
                 suggested_alternative=BotName.ATHENA if suggest_athena else None,
                 strategy_recommendation=strategy_rec
             )
+            return self._add_staleness_to_prediction(skip_prediction)
 
         # === FULL DATA FLOW LOGGING: INPUT ===
         input_data = {
@@ -2576,15 +3252,96 @@ class OracleAdvisor:
         })
 
         reasoning_parts = []
+        ic_suitability = 0.50  # Start neutral
+        position_in_range_pct = 50.0
+        trend_direction_str = "SIDEWAYS"
+        trend_strength = 0.0
+        # NEUTRAL regime fields for consistency
+        neutral_derived_direction = ""
+        neutral_confidence = 0.0
+        neutral_reasoning = ""
+        bullish_suitability = 0.0
+        bearish_suitability = 0.0
+        wall_filter_passed = False
 
-        # SPX-specific GEX analysis (use SPX values from context)
-        # SPX typically has ~10x the notional of SPY
-        gex_context = f"GEX Regime: {context.gex_regime.value}"
+        # Calculate position in wall range
+        wall_range = context.gex_call_wall - context.gex_put_wall
+        if wall_range > 0 and context.spot_price > 0:
+            position_in_range_pct = (context.spot_price - context.gex_put_wall) / wall_range * 100
+
+        # =====================================================================
+        # GEX REGIME HANDLING - NEUTRAL is GOOD for SPX IC
+        # =====================================================================
+        if context.gex_regime == GEXRegime.POSITIVE:
+            reasoning_parts.append("Positive GEX favors pinning (ideal for SPX IC)")
+            base_pred['win_probability'] = min(0.85, base_pred['win_probability'] + 0.03)
+            ic_suitability += 0.20
+
+        elif context.gex_regime == GEXRegime.NEGATIVE:
+            reasoning_parts.append("Negative GEX = trending (risky for SPX IC)")
+            base_pred['win_probability'] = max(0.45, base_pred['win_probability'] - 0.03)
+            ic_suitability -= 0.15
+
+        elif context.gex_regime == GEXRegime.NEUTRAL:
+            # NEUTRAL is good for IC - walls holding, balanced market
+            reasoning_parts.append("NEUTRAL GEX: Balanced market, walls likely to hold (good for SPX IC)")
+            ic_suitability += 0.10
+
+            # Use trend tracker if available
+            if TREND_TRACKER_AVAILABLE and get_trend_tracker is not None:
+                try:
+                    tracker = get_trend_tracker()
+                    tracker.update("SPY", context.spot_price / 10)  # Scale SPX to SPY for GEX
+
+                    trend_analysis = tracker.analyze_trend("SPY")
+                    if trend_analysis:
+                        trend_direction_str = trend_analysis.direction.value
+                        trend_strength = trend_analysis.strength
+
+                        if trend_analysis.direction.value == "SIDEWAYS":
+                            ic_suitability += 0.15
+                            reasoning_parts.append("Sideways trend (IC paradise)")
+                        elif trend_strength > 0.6:
+                            ic_suitability -= 0.10
+                            reasoning_parts.append(f"Strong {trend_direction_str} ({trend_strength:.0%})")
+
+                    # Get full suitability
+                    wall_position = tracker.analyze_wall_position(
+                        "SPY", context.spot_price / 10,
+                        context.gex_call_wall / 10, context.gex_put_wall / 10,
+                        trend_analysis
+                    )
+                    suitability = tracker.calculate_strategy_suitability(
+                        trend_analysis, wall_position, context.vix, "NEUTRAL"
+                    )
+                    ic_suitability = suitability.ic_suitability
+                    bullish_suitability = suitability.bullish_suitability
+                    bearish_suitability = suitability.bearish_suitability
+                    position_in_range_pct = wall_position.position_in_range_pct
+
+                    # For IC, derive direction based on position in range (for transparency)
+                    if position_in_range_pct < 35:
+                        neutral_derived_direction = "BULLISH"
+                        neutral_confidence = 0.6
+                    elif position_in_range_pct > 65:
+                        neutral_derived_direction = "BEARISH"
+                        neutral_confidence = 0.6
+                    else:
+                        neutral_derived_direction = "NEUTRAL"
+                        neutral_confidence = 0.7
+                    neutral_reasoning = f"SPX IC: Position {position_in_range_pct:.0f}% in wall range, trend {trend_direction_str}"
+
+                except Exception as e:
+                    logger.warning(f"[PEGASUS] Trend tracker error: {e}")
+
         if context.gex_between_walls:
-            gex_context += " - Price between walls (pinning expected)"
             reasoning_parts.append("SPX between GEX walls - favorable for Iron Condor")
+            ic_suitability += 0.10
         else:
             reasoning_parts.append(f"SPX GEX regime: {context.gex_regime.value}")
+            ic_suitability -= 0.05
+
+        ic_suitability = max(0.0, min(1.0, ic_suitability))
 
         # Weekly expiration considerations
         if context.days_to_opex <= 2:
@@ -2594,16 +3351,17 @@ class OracleAdvisor:
         win_prob = base_pred['win_probability']
 
         # SPX IC thresholds (slightly more conservative than SPY 0DTE)
+        # Note: TradingAdvice only has TRADE_FULL, TRADE_REDUCED, SKIP_TODAY
         if win_prob >= 0.58:
             advice = TradingAdvice.TRADE_FULL
             risk_pct = 0.03  # 3% risk for full position
             reasoning_parts.append(f"Strong setup: {win_prob:.1%} win probability")
         elif win_prob >= 0.52:
-            advice = TradingAdvice.TRADE_HALF
-            risk_pct = 0.015  # 1.5% risk for half position
+            advice = TradingAdvice.TRADE_REDUCED  # Was TRADE_HALF (undefined)
+            risk_pct = 0.015  # 1.5% risk for reduced position
             reasoning_parts.append(f"Moderate setup: {win_prob:.1%} win probability")
         elif win_prob >= 0.48:
-            advice = TradingAdvice.TRADE_CAUTIOUS
+            advice = TradingAdvice.TRADE_REDUCED  # Was TRADE_CAUTIOUS (undefined)
             risk_pct = 0.01  # 1% risk for cautious position
             reasoning_parts.append(f"Marginal setup: {win_prob:.1%} win probability")
         else:
@@ -2623,33 +3381,63 @@ class OracleAdvisor:
             reasoning_parts.append(f"GEX walls: Put wall {context.gex_put_wall:.0f}, Call wall {context.gex_call_wall:.0f}")
 
         # Claude AI validation (optional)
+        # Fixed: Was incorrectly referencing self.claude_analyzer (doesn't exist)
         claude_analysis = None
-        if use_claude_validation and self.claude_analyzer:
+        if use_claude_validation and self.claude_available and self.claude:
             try:
-                claude_analysis = self.claude_analyzer.analyze_setup(
-                    context, "PEGASUS_IC", win_prob, reasoning_parts
+                claude_analysis = self.claude.validate_prediction(
+                    context, base_pred, BotName.PEGASUS
                 )
                 if claude_analysis:
                     reasoning_parts.append(f"Claude: {claude_analysis.recommendation}")
                     # Adjust confidence based on Claude
                     if claude_analysis.confidence_adjustment:
                         win_prob = min(0.95, max(0.05, win_prob + claude_analysis.confidence_adjustment))
+
+                    # VALIDATE hallucination_risk and reduce confidence if HIGH
+                    hallucination_risk = getattr(claude_analysis, 'hallucination_risk', 'LOW')
+                    if hallucination_risk == 'HIGH':
+                        penalty = 0.10
+                        win_prob = max(0.05, win_prob - penalty)
+                        reasoning_parts.append(f"Claude hallucination risk HIGH (confidence reduced by {penalty:.0%})")
+                        logger.warning(f"[PEGASUS] Claude hallucination risk HIGH - reducing confidence by {penalty:.0%}")
+                    elif hallucination_risk == 'MEDIUM':
+                        penalty = 0.05
+                        win_prob = max(0.05, win_prob - penalty)
+                        reasoning_parts.append(f"Claude hallucination risk MEDIUM (confidence reduced by {penalty:.0%})")
+                        logger.info(f"[PEGASUS] Claude hallucination risk MEDIUM - reducing confidence by {penalty:.0%}")
             except Exception as e:
+                logger.warning(f"PEGASUS Claude validation failed: {e}")
                 self.live_log.log("CLAUDE_ERROR", f"PEGASUS Claude validation failed: {e}")
 
         # Build final prediction
+        # Fixed: confidence should be derived from win_prob, not base_pred (which doesn't have 'confidence' key)
+        # Confidence represents certainty in the prediction itself, scaled from win_probability
+        model_confidence = min(0.95, 0.5 + abs(win_prob - 0.5) * 2)  # Higher when win_prob is far from 50%
         prediction = OraclePrediction(
             bot_name=BotName.PEGASUS,
             advice=advice,
             win_probability=win_prob,
-            confidence=base_pred.get('confidence', 0.6),
+            confidence=model_confidence,
             suggested_risk_pct=risk_pct,
             suggested_sd_multiplier=1.0,  # SPX uses fixed spread widths
             reasoning=" | ".join(reasoning_parts),
             top_factors=base_pred.get('top_factors', []),
             model_version=self.model_version,
             suggested_put_strike=suggested_put,
-            suggested_call_strike=suggested_call
+            suggested_call_strike=suggested_call,
+            claude_analysis=claude_analysis,
+            # NEUTRAL regime fields (all 10 for consistency)
+            neutral_derived_direction=neutral_derived_direction,
+            neutral_confidence=neutral_confidence,
+            neutral_reasoning=neutral_reasoning,
+            ic_suitability=ic_suitability,
+            bullish_suitability=bullish_suitability,
+            bearish_suitability=bearish_suitability,
+            trend_direction=trend_direction_str,
+            trend_strength=trend_strength,
+            position_in_range_pct=position_in_range_pct,
+            wall_filter_passed=wall_filter_passed
         )
 
         # Log prediction result
@@ -2671,9 +3459,97 @@ class OracleAdvisor:
             "suggested_call_strike": suggested_call,
             "reasoning": prediction.reasoning,
             "claude_validated": claude_analysis is not None,
-            "model_version": self.model_version
+            "model_version": self.model_version,
+            "hours_since_training": self._get_hours_since_training()
         }
         self.live_log.log_data_flow("PEGASUS", "DECISION", decision_data)
+
+        return self._add_staleness_to_prediction(prediction)
+
+    # =========================================================================
+    # TITAN ADVICE (AGGRESSIVE SPX IRON CONDOR - DAILY)
+    # =========================================================================
+
+    def get_titan_advice(
+        self,
+        context: MarketContext,
+        use_gex_walls: bool = True,
+        use_claude_validation: bool = True,
+        vix_hard_skip: float = 0.0,
+        vix_monday_friday_skip: float = 0.0,
+        vix_streak_skip: float = 0.0,
+        recent_losses: int = 0,
+        spread_width: float = 12.0  # TITAN uses $12 spread width (more aggressive)
+    ) -> OraclePrediction:
+        """
+        Get Iron Condor advice for TITAN (Aggressive SPX Daily Iron Condors).
+
+        TITAN is similar to PEGASUS but more aggressive:
+        - Trades daily vs weekly
+        - Uses $12 spreads vs $10 spreads
+        - Lower win probability threshold (more trades)
+        - Higher risk tolerance
+
+        Args:
+            context: Current market conditions
+            use_gex_walls: Whether to suggest strikes based on GEX walls
+            use_claude_validation: Whether to use Claude AI to validate prediction
+            vix_hard_skip: Skip if VIX > this threshold (0 = disabled)
+            vix_monday_friday_skip: Skip on Mon/Fri if VIX > this (0 = disabled)
+            vix_streak_skip: Skip after recent losses if VIX > this (0 = disabled)
+            recent_losses: Number of recent consecutive losses
+            spread_width: Width of IC spreads (default $12 for TITAN)
+
+        Returns:
+            OraclePrediction with TITAN-specific advice
+        """
+        # Check for newer model version in DB and reload if available (Issue #1 fix)
+        self._check_and_reload_model_if_stale()
+
+        # Log prediction request
+        self.live_log.log("PREDICT", "TITAN advice requested", {
+            "vix": context.vix,
+            "gex_regime": context.gex_regime.value,
+            "spot_price": context.spot_price,
+            "use_gex_walls": use_gex_walls,
+            "use_claude": use_claude_validation,
+            "vix_hard_skip": vix_hard_skip,
+            "spread_width": spread_width,
+            "model_version": self.model_version,
+            "hours_since_training": self._get_hours_since_training()
+        })
+
+        # TITAN uses the same logic as PEGASUS but with more aggressive parameters
+        # Delegate to PEGASUS with TITAN-specific adjustments
+        prediction = self.get_pegasus_advice(
+            context=context,
+            use_gex_walls=use_gex_walls,
+            use_claude_validation=use_claude_validation,
+            vix_hard_skip=vix_hard_skip,
+            vix_monday_friday_skip=vix_monday_friday_skip,
+            vix_streak_skip=vix_streak_skip,
+            recent_losses=recent_losses,
+            spread_width=spread_width
+        )
+
+        # Override bot name to TITAN for proper tracking
+        prediction.bot_name = BotName.TITAN
+
+        # TITAN is more aggressive - boost win probability slightly for valid signals
+        if prediction.advice != TradingAdvice.SKIP_TODAY:
+            # TITAN accepts lower win probability (42% vs 45% for PEGASUS)
+            if prediction.win_probability >= 0.42:
+                prediction.reasoning = f"[TITAN Aggressive] {prediction.reasoning}"
+
+        # Log TITAN-specific decision
+        self.live_log.log_data_flow("TITAN", "DECISION", {
+            "advice": prediction.advice.value,
+            "win_probability": prediction.win_probability,
+            "confidence": prediction.confidence,
+            "spread_width": spread_width,
+            "model_version": self.model_version,
+            "hours_since_training": self._get_hours_since_training()
+        })
 
         return prediction
 
@@ -2719,9 +3595,16 @@ class OracleAdvisor:
         features_scaled = self.scaler.transform(features)
 
         if self.calibrated_model:
-            proba = self.calibrated_model.predict_proba(features_scaled)[0]
+            proba_result = self.calibrated_model.predict_proba(features_scaled)
         else:
-            proba = self.model.predict_proba(features_scaled)[0]
+            proba_result = self.model.predict_proba(features_scaled)
+
+        # Safe access to predict_proba results (expected shape: (1, 2) for binary classifier)
+        if proba_result is None or len(proba_result) == 0:
+            return self._fallback_prediction(context)
+        proba = proba_result[0]
+        if len(proba) < 2:
+            return self._fallback_prediction(context)
 
         win_probability = proba[1]
 
@@ -2755,8 +3638,9 @@ class OracleAdvisor:
         elif 14 <= context.vix <= 18:
             base_prob += 0.08  # Sweet spot for premium selling
 
-        # Day of week (Monday/Friday are historically worse)
-        dow_adj = {0: -0.08, 1: 0.02, 2: 0.03, 3: 0.02, 4: -0.05}
+        # Day of week - all days are tradable (removed penalties to allow daily trading)
+        # Previously: Monday -8%, Friday -5% - now neutral to enable consistent daily trading
+        dow_adj = {0: 0.0, 1: 0.02, 2: 0.03, 3: 0.02, 4: 0.0}
         base_prob += dow_adj.get(context.day_of_week, 0)
 
         # GEX regime (major factor for mean reversion)
@@ -2806,6 +3690,72 @@ class OracleAdvisor:
             return TradingAdvice.TRADE_REDUCED, risk
         else:
             return TradingAdvice.SKIP_TODAY, 0.0
+
+    def _get_neutral_direction_fallback(
+        self,
+        spot_price: float,
+        call_wall: float,
+        put_wall: float,
+        position_in_range_pct: float,
+        wall_filter_pct: float
+    ) -> Tuple[str, float, str]:
+        """
+        Fallback direction determination for NEUTRAL regime when trend tracker unavailable.
+
+        Uses wall proximity to determine direction instead of defaulting to FLAT.
+
+        Args:
+            spot_price: Current spot price
+            call_wall: Call wall level
+            put_wall: Put wall level
+            position_in_range_pct: Where price sits in range (0-100)
+            wall_filter_pct: Wall filter threshold
+
+        Returns:
+            Tuple of (direction, confidence, reasoning)
+        """
+        # Calculate distances
+        dist_to_call = 0
+        dist_to_put = 0
+
+        if call_wall > 0 and spot_price > 0:
+            dist_to_call = (call_wall - spot_price) / spot_price * 100
+        if put_wall > 0 and spot_price > 0:
+            dist_to_put = (spot_price - put_wall) / spot_price * 100
+
+        # Determine direction based on wall proximity
+        if position_in_range_pct < 35:
+            # Lower third = near put wall = expect bounce = BULLISH
+            direction = "BULLISH"
+            confidence = 0.60
+            reasoning = f"Near put wall support ({position_in_range_pct:.0f}% of range)"
+        elif position_in_range_pct > 65:
+            # Upper third = near call wall = expect pullback = BEARISH
+            direction = "BEARISH"
+            confidence = 0.60
+            reasoning = f"Near call wall resistance ({position_in_range_pct:.0f}% of range)"
+        else:
+            # Middle of range - use nearest wall
+            if dist_to_put < dist_to_call:
+                direction = "BULLISH"
+                confidence = 0.55
+                reasoning = f"Mid-range, closer to put wall ({dist_to_put:.1f}%)"
+            else:
+                direction = "BEARISH"
+                confidence = 0.55
+                reasoning = f"Mid-range, closer to call wall ({dist_to_call:.1f}%)"
+
+        # Adjust confidence if within wall filter threshold
+        if direction == "BULLISH" and dist_to_put <= wall_filter_pct:
+            confidence = min(0.75, confidence + 0.10)
+            reasoning += f" | Within {wall_filter_pct}% of support"
+        elif direction == "BEARISH" and dist_to_call <= wall_filter_pct:
+            confidence = min(0.75, confidence + 0.10)
+            reasoning += f" | Within {wall_filter_pct}% of resistance"
+
+        logger.info(f"[NEUTRAL Fallback] {direction} ({confidence:.0%}): {reasoning}")
+
+        return direction, confidence, reasoning
 
     # =========================================================================
     # CLAUDE AI METHODS
@@ -2947,8 +3897,9 @@ class OracleAdvisor:
             try:
                 dt = datetime.strptime(trade_date, '%Y-%m-%d')
                 day_of_week = dt.weekday()
-            except:
-                day_of_week = 2
+            except (ValueError, TypeError) as e:
+                logger.debug(f"Date parsing failed for {trade_date}: {e}, defaulting to Wednesday")
+                day_of_week = 2  # Default to Wednesday
 
             vix = trade.get('vix', 20.0)
             open_price = trade.get('open_price', 5000)
@@ -3238,17 +4189,44 @@ class OracleAdvisor:
         trade_date: str
     ) -> bool:
         """Store prediction to database for feedback loop - FULL data persistence"""
+        # Helper to convert numpy types to Python native types
+        def _convert_numpy(val):
+            try:
+                import numpy as np
+                if isinstance(val, (np.integer, np.int64, np.int32)):
+                    return int(val)
+                elif isinstance(val, (np.floating, np.float64, np.float32)):
+                    return float(val)
+                elif isinstance(val, np.bool_):
+                    return bool(val)
+                elif isinstance(val, np.ndarray):
+                    return val.tolist()
+            except ImportError:
+                pass
+            return val
+
+        def _convert_dict_numpy(d):
+            if d is None:
+                return None
+            if isinstance(d, dict):
+                return {k: _convert_dict_numpy(v) for k, v in d.items()}
+            elif isinstance(d, list):
+                return [_convert_dict_numpy(item) for item in d]
+            return _convert_numpy(d)
+
         if not DB_AVAILABLE:
             logger.warning("Database not available")
             return False
 
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
+        with get_db_connection() as conn:
+            if conn is None:
+                return False
+            try:
+                cursor = conn.cursor()
 
-            # Ensure table has all required columns (migration-safe)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS oracle_predictions (
+                # Ensure table has all required columns (migration-safe)
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS oracle_predictions (
                     id SERIAL PRIMARY KEY,
                     timestamp TIMESTAMPTZ DEFAULT NOW(),
                     trade_date DATE NOT NULL,
@@ -3294,144 +4272,155 @@ class OracleAdvisor:
                     outcome_date DATE,
 
                     UNIQUE(trade_date, bot_name)
-                )
-            """)
-
-            # Migration: Add missing columns to existing tables
-            migration_columns = [
-                ("claude_analysis", "JSONB"),
-                ("prediction_used", "BOOLEAN DEFAULT FALSE"),
-                ("actual_outcome", "TEXT"),
-                ("actual_pnl", "REAL"),
-                ("outcome_date", "DATE"),
-                ("prediction_time", "TIMESTAMPTZ DEFAULT NOW()"),
-            ]
-            for col_name, col_type in migration_columns:
-                try:
-                    cursor.execute(f"ALTER TABLE oracle_predictions ADD COLUMN IF NOT EXISTS {col_name} {col_type}")
-                except Exception:
-                    pass  # Column already exists or other error
-
-            conn.commit()
-
-            # Serialize top_factors as JSON
-            top_factors_json = json.dumps([
-                {"feature": f[0], "importance": f[1]}
-                for f in (prediction.top_factors or [])
-            ]) if prediction.top_factors else None
-
-            # Serialize probabilities as JSON
-            probabilities_json = json.dumps(prediction.probabilities) if prediction.probabilities else None
-
-            # Serialize Claude analysis as JSON (full transparency)
-            claude_json = None
-            if prediction.claude_analysis:
-                ca = prediction.claude_analysis
-                claude_json = json.dumps({
-                    "analysis": ca.analysis,
-                    "confidence_adjustment": ca.confidence_adjustment,
-                    "risk_factors": ca.risk_factors,
-                    "opportunities": ca.opportunities,
-                    "recommendation": ca.recommendation,
-                    "override_advice": ca.override_advice,
-                    "tokens_used": ca.tokens_used,
-                    "input_tokens": ca.input_tokens,
-                    "output_tokens": ca.output_tokens,
-                    "response_time_ms": ca.response_time_ms,
-                    "model_used": ca.model_used,
-                    # Store raw prompt/response for full transparency
-                    "raw_prompt": ca.raw_prompt[:2000] if ca.raw_prompt else None,
-                    "raw_response": ca.raw_response[:5000] if ca.raw_response else None,
-                })
-
-            cursor.execute("""
-                INSERT INTO oracle_predictions (
-                    trade_date, bot_name, spot_price, vix, gex_net, gex_normalized, gex_regime,
-                    gex_flip_point, gex_call_wall, gex_put_wall, day_of_week,
-                    advice, win_probability, confidence, suggested_risk_pct,
-                    suggested_sd_multiplier, model_version,
-                    use_gex_walls, suggested_put_strike, suggested_call_strike,
-                    reasoning, top_factors, probabilities, claude_analysis
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (trade_date, bot_name) DO UPDATE SET
-                    advice = EXCLUDED.advice,
-                    win_probability = EXCLUDED.win_probability,
-                    confidence = EXCLUDED.confidence,
-                    reasoning = EXCLUDED.reasoning,
-                    top_factors = EXCLUDED.top_factors,
-                    probabilities = EXCLUDED.probabilities,
-                    claude_analysis = EXCLUDED.claude_analysis,
-                    timestamp = NOW()
-            """, (
-                trade_date,
-                prediction.bot_name.value,
-                context.spot_price,
-                context.vix,
-                context.gex_net,
-                context.gex_normalized,
-                context.gex_regime.value,
-                context.gex_flip_point,
-                context.gex_call_wall,
-                context.gex_put_wall,
-                context.day_of_week,
-                prediction.advice.value,
-                prediction.win_probability,
-                prediction.confidence,
-                prediction.suggested_risk_pct,
-                prediction.suggested_sd_multiplier,
-                prediction.model_version,
-                prediction.use_gex_walls,
-                prediction.suggested_put_strike,
-                prediction.suggested_call_strike,
-                prediction.reasoning,
-                top_factors_json,
-                probabilities_json,
-                claude_json
-            ))
-
-            conn.commit()
-            conn.close()
-            logger.info(f"Stored Oracle prediction for {prediction.bot_name.value}")
-
-            # === COMPREHENSIVE BOT LOGGER ===
-            if BOT_LOGGER_AVAILABLE and log_bot_decision:
-                try:
-                    comprehensive = BotDecision(
-                        bot_name="ORACLE",
-                        decision_type="ANALYSIS",
-                        action=prediction.advice.value,
-                        symbol="SPY",
-                        strategy="oracle_ml_prediction",
-                        session_id=generate_session_id(),
-                        market_context=BotLogMarketContext(
-                            spot_price=context.spot_price,
-                            vix=context.vix,
-                            net_gex=context.gex_net,
-                            gex_regime=context.gex_regime.value if hasattr(context.gex_regime, 'value') else str(context.gex_regime),
-                            flip_point=context.gex_flip_point,
-                            call_wall=context.gex_call_wall,
-                            put_wall=context.gex_put_wall,
-                        ),
-                        claude_context=ClaudeContext(
-                            response=prediction.reasoning or "",
-                            confidence=f"{prediction.win_probability:.1%}",
-                        ),
-                        entry_reasoning=f"Oracle {prediction.advice.value}: Win prob {prediction.win_probability:.1%}, Risk {prediction.suggested_risk_pct:.1%}",
-                        backtest_win_rate=prediction.win_probability * 100,
-                        kelly_pct=prediction.suggested_risk_pct,
-                        passed_all_checks=prediction.advice.value != "SKIP_TODAY",
-                        blocked_reason="" if prediction.advice.value != "SKIP_TODAY" else prediction.reasoning or "Low win probability",
                     )
-                    comp_id = log_bot_decision(comprehensive)
-                    logger.info(f"Oracle logged to bot_decision_logs: {comp_id}")
-                except Exception as comp_e:
-                    logger.warning(f"Could not log Oracle to comprehensive table: {comp_e}")
+                """)
 
-            return True
+                # Migration: Add missing columns to existing tables
+                migration_columns = [
+                    ("claude_analysis", "JSONB"),
+                    ("prediction_used", "BOOLEAN DEFAULT FALSE"),
+                    ("actual_outcome", "TEXT"),
+                    ("actual_pnl", "REAL"),
+                    ("outcome_date", "DATE"),
+                    ("prediction_time", "TIMESTAMPTZ DEFAULT NOW()"),
+                ]
+                for col_name, col_type in migration_columns:
+                    try:
+                        cursor.execute(f"ALTER TABLE oracle_predictions ADD COLUMN IF NOT EXISTS {col_name} {col_type}")
+                    except Exception as e:
+                        # Column already exists or other migration error - log but continue
+                        logger.debug(f"Migration column {col_name}: {e}")
 
-        except Exception as e:
-            logger.error(f"Failed to store prediction: {e}")
-            return False
+                conn.commit()
+
+                # Serialize top_factors as JSON (convert numpy types)
+                top_factors_json = json.dumps([
+                    {"feature": f[0], "importance": _convert_numpy(f[1])}
+                    for f in (prediction.top_factors or [])
+                ]) if prediction.top_factors else None
+
+                # Serialize probabilities as JSON (convert numpy types)
+                probabilities_json = json.dumps(_convert_dict_numpy(prediction.probabilities)) if prediction.probabilities else None
+
+                # Serialize Claude analysis as JSON (full transparency)
+                claude_json = None
+                if prediction.claude_analysis:
+                    ca = prediction.claude_analysis
+                    claude_json = json.dumps(_convert_dict_numpy({
+                        "analysis": ca.analysis,
+                        "confidence_adjustment": ca.confidence_adjustment,
+                        "risk_factors": ca.risk_factors,
+                        "opportunities": ca.opportunities,
+                        "recommendation": ca.recommendation,
+                        "override_advice": ca.override_advice,
+                        "tokens_used": ca.tokens_used,
+                        "input_tokens": ca.input_tokens,
+                        "output_tokens": ca.output_tokens,
+                        "response_time_ms": ca.response_time_ms,
+                        "model_used": ca.model_used,
+                        # Store raw prompt/response for full transparency
+                        "raw_prompt": ca.raw_prompt[:2000] if ca.raw_prompt else None,
+                        "raw_response": ca.raw_response[:5000] if ca.raw_response else None,
+                    }))
+
+                # Issue #3 fix: Use RETURNING to get prediction_id for outcome linking
+                cursor.execute("""
+                    INSERT INTO oracle_predictions (
+                        trade_date, bot_name, spot_price, vix, gex_net, gex_normalized, gex_regime,
+                        gex_flip_point, gex_call_wall, gex_put_wall, day_of_week,
+                        advice, win_probability, confidence, suggested_risk_pct,
+                        suggested_sd_multiplier, model_version,
+                        use_gex_walls, suggested_put_strike, suggested_call_strike,
+                        reasoning, top_factors, probabilities, claude_analysis
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (trade_date, bot_name) DO UPDATE SET
+                        advice = EXCLUDED.advice,
+                        win_probability = EXCLUDED.win_probability,
+                        confidence = EXCLUDED.confidence,
+                        reasoning = EXCLUDED.reasoning,
+                        top_factors = EXCLUDED.top_factors,
+                        probabilities = EXCLUDED.probabilities,
+                        claude_analysis = EXCLUDED.claude_analysis,
+                        timestamp = NOW()
+                    RETURNING id
+                """, (
+                    trade_date,
+                    prediction.bot_name.value,
+                    _convert_numpy(context.spot_price),
+                    _convert_numpy(context.vix),
+                    _convert_numpy(context.gex_net),
+                    _convert_numpy(context.gex_normalized),
+                    context.gex_regime.value,
+                    _convert_numpy(context.gex_flip_point),
+                    _convert_numpy(context.gex_call_wall),
+                    _convert_numpy(context.gex_put_wall),
+                    _convert_numpy(context.day_of_week),
+                    prediction.advice.value,
+                    _convert_numpy(prediction.win_probability),
+                    _convert_numpy(prediction.confidence),
+                    _convert_numpy(prediction.suggested_risk_pct),
+                    _convert_numpy(prediction.suggested_sd_multiplier),
+                    prediction.model_version,
+                    prediction.use_gex_walls,
+                    _convert_numpy(prediction.suggested_put_strike),
+                    _convert_numpy(prediction.suggested_call_strike),
+                    prediction.reasoning,
+                    top_factors_json,
+                    probabilities_json,
+                    claude_json
+                ))
+
+                # Issue #3 fix: Fetch the returned prediction_id for linking
+                row = cursor.fetchone()
+                prediction_id = row[0] if row else None
+
+                conn.commit()
+                logger.info(f"Stored Oracle prediction for {prediction.bot_name.value} (id={prediction_id})")
+
+                # Update prediction object with the stored ID
+                if prediction_id:
+                    prediction.prediction_id = prediction_id
+
+                # === COMPREHENSIVE BOT LOGGER ===
+                if BOT_LOGGER_AVAILABLE and log_bot_decision:
+                    try:
+                        comprehensive = BotDecision(
+                            bot_name="ORACLE",
+                            decision_type="ANALYSIS",
+                            action=prediction.advice.value,
+                            symbol="SPY",
+                            strategy="oracle_ml_prediction",
+                            session_id=generate_session_id(),
+                            market_context=BotLogMarketContext(
+                                spot_price=context.spot_price,
+                                vix=context.vix,
+                                net_gex=context.gex_net,
+                                gex_regime=context.gex_regime.value if hasattr(context.gex_regime, 'value') else str(context.gex_regime),
+                                flip_point=context.gex_flip_point,
+                                call_wall=context.gex_call_wall,
+                                put_wall=context.gex_put_wall,
+                            ),
+                            claude_context=ClaudeContext(
+                                response=prediction.reasoning or "",
+                                confidence=f"{prediction.win_probability:.1%}",
+                            ),
+                            entry_reasoning=f"Oracle {prediction.advice.value}: Win prob {prediction.win_probability:.1%}, Risk {prediction.suggested_risk_pct:.1%}",
+                            backtest_win_rate=prediction.win_probability * 100,
+                            kelly_pct=prediction.suggested_risk_pct,
+                            passed_all_checks=prediction.advice.value != "SKIP_TODAY",
+                            blocked_reason="" if prediction.advice.value != "SKIP_TODAY" else prediction.reasoning or "Low win probability",
+                        )
+                        comp_id = log_bot_decision(comprehensive)
+                        logger.info(f"Oracle logged to bot_decision_logs: {comp_id}")
+                    except Exception as comp_e:
+                        logger.warning(f"Could not log Oracle to comprehensive table: {comp_e}")
+
+                # Issue #3 fix: Return prediction_id for linking, or True for backward compatibility
+                return prediction_id if prediction_id else True
+
+            except Exception as e:
+                logger.error(f"Failed to store prediction: {e}")
+                return False
 
     def update_outcome(
         self,
@@ -3441,9 +4430,15 @@ class OracleAdvisor:
         actual_pnl: float,
         spot_at_exit: float = None,
         put_strike: float = None,
-        call_strike: float = None
+        call_strike: float = None,
+        prediction_id: int = None  # Issue #3: Optional direct linking by ID
     ) -> bool:
-        """Update prediction with actual outcome and store training data for ML feedback loop"""
+        """
+        Update prediction with actual outcome and store training data for ML feedback loop.
+
+        Issue #3 fix: Supports both (trade_date, bot_name) linking and direct prediction_id linking.
+        The prediction_id provides a more robust link when available.
+        """
         if not DB_AVAILABLE:
             return False
 
@@ -3451,26 +4446,51 @@ class OracleAdvisor:
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Update the prediction with outcome
-            cursor.execute("""
-                UPDATE oracle_predictions
-                SET prediction_used = TRUE,
-                    actual_outcome = %s,
-                    actual_pnl = %s,
-                    outcome_date = CURRENT_DATE
-                WHERE trade_date = %s AND bot_name = %s
-            """, (outcome.value, actual_pnl, trade_date, bot_name.value))
+            # Issue #3: Support both linking methods
+            # If prediction_id is provided, use it for direct linking (more robust)
+            # Otherwise, fall back to (trade_date, bot_name) composite key
+            if prediction_id:
+                # Direct linking by prediction_id
+                cursor.execute("""
+                    UPDATE oracle_predictions
+                    SET prediction_used = TRUE,
+                        actual_outcome = %s,
+                        actual_pnl = %s,
+                        outcome_date = CURRENT_DATE
+                    WHERE id = %s
+                """, (outcome.value, actual_pnl, prediction_id))
+                logger.info(f"Updated outcome for prediction_id={prediction_id}")
+            else:
+                # Fall back to composite key linking
+                cursor.execute("""
+                    UPDATE oracle_predictions
+                    SET prediction_used = TRUE,
+                        actual_outcome = %s,
+                        actual_pnl = %s,
+                        outcome_date = CURRENT_DATE
+                    WHERE trade_date = %s AND bot_name = %s
+                """, (outcome.value, actual_pnl, trade_date, bot_name.value))
 
             # Also store in oracle_training_outcomes for ML feedback loop
             # First, get the original prediction features
-            cursor.execute("""
-                SELECT spot_price, vix, gex_net, gex_normalized, gex_regime,
-                       gex_flip_point, gex_call_wall, gex_put_wall, day_of_week,
-                       win_probability, suggested_put_strike, suggested_call_strike,
-                       model_version
-                FROM oracle_predictions
-                WHERE trade_date = %s AND bot_name = %s
-            """, (trade_date, bot_name.value))
+            if prediction_id:
+                cursor.execute("""
+                    SELECT spot_price, vix, gex_net, gex_normalized, gex_regime,
+                           gex_flip_point, gex_call_wall, gex_put_wall, day_of_week,
+                           win_probability, suggested_put_strike, suggested_call_strike,
+                           model_version
+                    FROM oracle_predictions
+                    WHERE id = %s
+                """, (prediction_id,))
+            else:
+                cursor.execute("""
+                    SELECT spot_price, vix, gex_net, gex_normalized, gex_regime,
+                           gex_flip_point, gex_call_wall, gex_put_wall, day_of_week,
+                           win_probability, suggested_put_strike, suggested_call_strike,
+                           model_version
+                    FROM oracle_predictions
+                    WHERE trade_date = %s AND bot_name = %s
+                """, (trade_date, bot_name.value))
 
             row = cursor.fetchone()
             if row:
@@ -3558,13 +4578,17 @@ class OracleAdvisor:
 # =============================================================================
 
 _oracle: Optional[OracleAdvisor] = None
+_oracle_lock = threading.Lock()
 
 
 def get_oracle() -> OracleAdvisor:
-    """Get or create Oracle singleton"""
+    """Get or create Oracle singleton (thread-safe)"""
     global _oracle
     if _oracle is None:
-        _oracle = OracleAdvisor()
+        with _oracle_lock:
+            # Double-check locking pattern
+            if _oracle is None:
+                _oracle = OracleAdvisor()
     return _oracle
 
 
@@ -3581,7 +4605,14 @@ def get_ares_advice(
     if day_of_week is None:
         day_of_week = datetime.now().weekday()
 
-    regime = GEXRegime[gex_regime] if isinstance(gex_regime, str) else gex_regime
+    # Safe enum access with fallback to NEUTRAL
+    if isinstance(gex_regime, str):
+        try:
+            regime = GEXRegime[gex_regime]
+        except (KeyError, TypeError):
+            regime = GEXRegime.NEUTRAL
+    else:
+        regime = gex_regime if isinstance(gex_regime, GEXRegime) else GEXRegime.NEUTRAL
 
     context = MarketContext(
         spot_price=kwargs.get('price', 5000),
@@ -3641,8 +4672,9 @@ def get_pending_outcomes_count() -> int:
         try:
             cursor.execute("SELECT COUNT(*) FROM oracle_training_outcomes")
             count = cursor.fetchone()[0]
-        except Exception:
+        except Exception as e:
             # Table might not exist yet
+            logger.debug(f"oracle_training_outcomes table query failed: {e}")
             count = 0
 
         conn.close()
@@ -3673,7 +4705,8 @@ def get_training_status() -> Dict[str, Any]:
             try:
                 cursor.execute("SELECT COUNT(*) FROM oracle_training_outcomes")
                 total_outcomes = cursor.fetchone()[0]
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Failed to get total outcomes: {e}")
                 conn.rollback()  # Reset transaction state
                 total_outcomes = 0
 
@@ -3686,7 +4719,8 @@ def get_training_status() -> Dict[str, Any]:
                 row = cursor.fetchone()
                 if row and row[0]:
                     last_trained = row[0].isoformat()
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Failed to get last training date: {e}")
                 conn.rollback()  # Reset transaction state
 
             # Check if model exists in database
@@ -3709,7 +4743,8 @@ def get_training_status() -> Dict[str, Any]:
                         model_source = "database"
                         if not last_trained:
                             last_trained = db_row[1].isoformat() if db_row[1] else None
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Failed to check model in database: {e}")
                 conn.rollback()
 
         except Exception as e:
@@ -3718,8 +4753,8 @@ def get_training_status() -> Dict[str, Any]:
             if conn:
                 try:
                     conn.close()
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Failed to close connection: {e}")
 
     # Determine model source
     if oracle.is_trained and not db_model_exists:

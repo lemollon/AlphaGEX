@@ -343,6 +343,8 @@ export const apiClient = {
   getARESPageStatus: () => api.get('/api/ares/status'),
   getARESPerformance: () => api.get('/api/ares/performance'),
   getARESEquityCurve: (days: number = 30) => api.get('/api/ares/equity-curve', { params: { days } }),
+  getARESIntradayEquity: (date?: string) => api.get('/api/ares/equity-curve/intraday', { params: date ? { date } : {} }),
+  getARESLiveEquity: () => api.get('/api/ares/equity-curve/live'),
   getARESPositions: () => api.get('/api/ares/positions'),
   getARESMarketData: () => api.get('/api/ares/market-data'),
   getARESTradierStatus: () => api.get('/api/ares/tradier-status'),
@@ -357,6 +359,8 @@ export const apiClient = {
   getATHENASignals: (limit: number = 50) => api.get('/api/athena/signals', { params: { limit } }),
   getATHENALogs: (level?: string, limit: number = 100) => api.get('/api/athena/logs', { params: { level, limit } }),
   getATHENAPerformance: (days: number = 30) => api.get('/api/athena/performance', { params: { days } }),
+  getATHENAEquityCurve: (days: number = 30) => api.get('/api/athena/equity-curve', { params: { days } }),
+  getATHENAIntradayEquity: (date?: string) => api.get('/api/athena/equity-curve/intraday', { params: date ? { date } : {} }),
   getATHENAConfig: () => api.get('/api/athena/config'),
   updateATHENAConfig: (name: string, value: string) => api.post(`/api/athena/config/${name}`, null, { params: { value } }),
   runATHENACycle: () => api.post('/api/athena/run'),
@@ -367,11 +371,29 @@ export const apiClient = {
   skipATHENAToday: () => api.post('/api/athena/skip-today'),
   resetATHENAData: (confirm: boolean = false) => api.post('/api/athena/reset', null, { params: { confirm } }),
 
+  // ICARUS - Aggressive Directional Spread Bot
+  getICARUSStatus: () => api.get('/api/icarus/status'),
+  getICARUSPositions: (status?: string) => api.get('/api/icarus/positions', { params: status ? { status_filter: status } : {} }),
+  getICARUSSignals: (limit: number = 50) => api.get('/api/icarus/signals', { params: { limit } }),
+  getICARUSLogs: (level?: string, limit: number = 100) => api.get('/api/icarus/logs', { params: { level, limit } }),
+  getICARUSPerformance: (days: number = 30) => api.get('/api/icarus/performance', { params: { days } }),
+  getICARUSEquityCurve: (days: number = 30) => api.get('/api/icarus/equity-curve', { params: { days } }),
+  getICARUSIntradayEquity: (date?: string) => api.get('/api/icarus/equity-curve/intraday', { params: date ? { date } : {} }),
+  getICARUSConfig: () => api.get('/api/icarus/config'),
+  runICARUSCycle: () => api.post('/api/icarus/run'),
+  getICARUSOracleAdvice: () => api.get('/api/icarus/oracle-advice'),
+  getICARUSLivePnL: () => api.get('/api/icarus/live-pnl'),
+  getICARUSScanActivity: (limit: number = 50) => api.get('/api/icarus/scan-activity', { params: { limit } }),
+  skipICARUSToday: () => api.post('/api/icarus/skip-today'),
+  resetICARUSData: (confirm: boolean = false) => api.post('/api/icarus/reset', null, { params: { confirm } }),
+
   // PEGASUS - SPX Iron Condor Bot
   getPEGASUSStatus: () => api.get('/api/pegasus/status'),
   getPEGASUSPositions: (status?: string) => api.get('/api/pegasus/positions', { params: status ? { status_filter: status } : {} }),
   getPEGASUSLogs: (level?: string, limit: number = 100) => api.get('/api/pegasus/logs', { params: { level, limit } }),
   getPEGASUSPerformance: (days: number = 30) => api.get('/api/pegasus/performance', { params: { days } }),
+  getPEGASUSEquityCurve: (days: number = 30) => api.get('/api/pegasus/equity-curve', { params: { days } }),
+  getPEGASUSIntradayEquity: (date?: string) => api.get('/api/pegasus/equity-curve/intraday', { params: date ? { date } : {} }),
   getPEGASUSConfig: () => api.get('/api/pegasus/config'),
   updatePEGASUSConfig: (name: string, value: string) => api.post(`/api/pegasus/config/${name}`, null, { params: { value } }),
   runPEGASUSCycle: () => api.post('/api/pegasus/run'),
@@ -379,6 +401,21 @@ export const apiClient = {
   processPEGASUSExpired: () => api.post('/api/pegasus/process-expired'),
   skipPEGASUSToday: () => api.post('/api/pegasus/skip-today'),
   resetPEGASUSData: (confirm: boolean = false) => api.post('/api/pegasus/reset', null, { params: { confirm } }),
+
+  // TITAN - Aggressive SPX Iron Condor Bot (Daily Trading)
+  getTITANStatus: () => api.get('/api/titan/status'),
+  getTITANPositions: (status?: string) => api.get('/api/titan/positions', { params: status ? { status_filter: status } : {} }),
+  getTITANLogs: (level?: string, limit: number = 100) => api.get('/api/titan/logs', { params: { level, limit } }),
+  getTITANPerformance: (days: number = 30) => api.get('/api/titan/performance', { params: { days } }),
+  getTITANEquityCurve: (days: number = 30) => api.get('/api/titan/equity-curve', { params: { days } }),
+  getTITANIntradayEquity: (date?: string) => api.get('/api/titan/equity-curve/intraday', { params: date ? { date } : {} }),
+  getTITANConfig: () => api.get('/api/titan/config'),
+  updateTITANConfig: (name: string, value: string) => api.post(`/api/titan/config/${name}`, null, { params: { value } }),
+  runTITANCycle: () => api.post('/api/titan/run'),
+  getTITANLivePnL: () => api.get('/api/titan/live-pnl'),
+  processTITANExpired: () => api.post('/api/titan/process-expired'),
+  skipTITANToday: () => api.post('/api/titan/skip-today'),
+  resetTITANData: (confirm: boolean = false) => api.post('/api/titan/reset', null, { params: { confirm } }),
 
   // ARES - Live P&L
   getARESLivePnL: () => api.get('/api/ares/live-pnl'),
@@ -513,6 +550,72 @@ export const apiClient = {
     vix?: number
     trade_id?: string
   }) => api.post('/api/ml/score-and-log', null, { params: data }),
+
+  // PROMETHEUS - Standalone ML System for SPX Wheel
+  getPrometheusStatus: () => api.get('/api/prometheus/status'),
+  trainPrometheus: (minSamples: number = 30, calibrate: boolean = true) =>
+    api.post('/api/prometheus/train', { min_samples: minSamples, calibrate }),
+  getPrometheusPrediction: (data: {
+    trade_date: string
+    strike: number
+    underlying_price: number
+    dte: number
+    delta: number
+    premium: number
+    iv: number
+    iv_rank: number
+    vix: number
+    vix_percentile: number
+    vix_term_structure: number
+    put_wall_distance_pct: number
+    call_wall_distance_pct: number
+    net_gex: number
+    spx_20d_return: number
+    spx_5d_return: number
+    spx_distance_from_high: number
+    premium_to_strike_pct: number
+    annualized_return: number
+    trade_id?: string
+  }) => api.post('/api/prometheus/predict', data),
+  // Simplified prediction - auto-fetches market data
+  prometheusQuickPredict: (data: {
+    strike: number
+    underlying_price: number
+    dte: number
+    delta: number
+    premium: number
+    trade_id?: string
+    record_entry?: boolean
+  }) => api.post('/api/prometheus/quick-predict', data),
+  // Record trade entry for outcome tracking
+  prometheusRecordEntry: (data: {
+    trade_id: string
+    strike: number
+    underlying_price: number
+    dte: number
+    delta: number
+    premium: number
+    iv?: number
+    iv_rank?: number
+    vix?: number
+  }) => api.post('/api/prometheus/record-entry', data),
+  // Record trade outcome for ML feedback loop
+  prometheusRecordOutcome: (data: {
+    trade_id: string
+    outcome: 'WIN' | 'LOSS'
+    pnl: number
+    was_traded?: boolean
+  }) => api.post('/api/prometheus/record-outcome', data),
+  getPrometheusFeatureImportance: () => api.get('/api/prometheus/feature-importance'),
+  getPrometheusLogs: (limit: number = 100, logType?: string) =>
+    api.get('/api/prometheus/logs', { params: { limit, log_type: logType } }),
+  getPrometheusTrainingHistory: (limit: number = 20) =>
+    api.get('/api/prometheus/training-history', { params: { limit } }),
+  getPrometheusPerformance: (periodDays: number = 30) =>
+    api.get('/api/prometheus/performance', { params: { period_days: periodDays } }),
+  getPrometheusMarketData: () => api.get('/api/prometheus/market-data'),
+  getPrometheusPendingTrades: () => api.get('/api/prometheus/pending-trades'),
+  getPrometheusHealth: () => api.get('/api/prometheus/health'),
 
   // Conversation History
   getConversations: (limit?: number) => api.get('/api/ai/conversations', { params: { limit: limit || 50 } }),
@@ -861,6 +964,11 @@ export const apiClient = {
     api.get(`/api/apollo/options-chain/${symbol}`, { params: { expiration } }),
   getApolloFeatures: (symbol: string) => api.get(`/api/apollo/features/${symbol}`),
   triggerApolloTraining: () => api.post('/api/apollo/train'),
+  getApolloPinRisk: (symbol: string) => api.get(`/api/apollo/pin-risk/${symbol}`),
+  getApolloPinRiskBatch: (symbols: string[]) =>
+    api.get('/api/apollo/pin-risk-batch', { params: { symbols: symbols.join(',') } }),
+  getApolloPinRiskHistory: (symbol: string, limit: number = 30) =>
+    api.get(`/api/apollo/pin-risk-history/${symbol}`, { params: { limit } }),
 
   // Daily Manna - Economic news with faith-based devotionals
   getDailyManna: (forceRefresh: boolean = false) =>
@@ -967,6 +1075,73 @@ export const apiClient = {
   getSolomonValidationStatus: () => api.get('/api/solomon/validation/status'),
   getSolomonProposalReasoning: (proposalId: string) => api.get(`/api/solomon/validation/reasoning/${proposalId}`),
   getSolomonValidationCanApply: (proposalId: string) => api.get(`/api/solomon/validation/can-apply/${proposalId}`),
+
+  // QUANT - ML Models Dashboard
+  getQuantHealth: () => api.get('/api/quant/health'),
+  getQuantStatus: () => api.get('/api/quant/status'),
+  getQuantLogs: (limit: number = 50) => api.get('/api/quant/logs', { params: { limit } }),
+  getQuantLogsStats: (days: number = 7) => api.get('/api/quant/logs/stats', { params: { days } }),
+  predictRegime: (data: {
+    spot_price: number
+    vix: number
+    net_gex: number
+    flip_point: number
+    iv_rank?: number
+  }) => api.post('/api/quant/predict/regime', data),
+  predictDirection: (data: {
+    net_gex: number
+    call_wall: number
+    put_wall: number
+    flip_point: number
+    spot_price: number
+    vix: number
+  }) => api.post('/api/quant/predict/direction', data),
+  predictEnsemble: (data: {
+    spot_price: number
+    vix: number
+    net_gex: number
+    flip_point: number
+    call_wall: number
+    put_wall: number
+    iv_rank?: number
+  }) => api.post('/api/quant/predict/ensemble', data),
+  getQuantPendingOutcomes: (limit: number = 20) =>
+    api.get('/api/quant/outcomes/pending', { params: { limit } }),
+  recordQuantOutcome: (data: {
+    prediction_id: number
+    correct: boolean
+    pnl?: number
+    notes?: string
+  }) => api.post('/api/quant/outcomes/record', data),
+  logQuantBotUsage: (data: {
+    prediction_id: number
+    bot_name: string
+    trade_id?: string
+    session_id?: string
+  }) => api.post('/api/quant/bot/log-usage', data),
+  getQuantBotUsage: (days: number = 7) =>
+    api.get('/api/quant/bot/usage', { params: { days } }),
+  getQuantAlerts: (limit: number = 50, unacknowledgedOnly: boolean = false) =>
+    api.get('/api/quant/alerts', { params: { limit, unacknowledged_only: unacknowledgedOnly } }),
+  acknowledgeQuantAlert: (alertId: number) =>
+    api.post(`/api/quant/alerts/${alertId}/acknowledge`),
+  getQuantPerformance: (days: number = 7) =>
+    api.get('/api/quant/performance', { params: { days } }),
+  getQuantPerformanceSummary: (days: number = 7) =>
+    api.get('/api/quant/performance/summary', { params: { days } }),
+  getQuantTrainingHistory: (limit: number = 20) =>
+    api.get('/api/quant/training/history', { params: { limit } }),
+  getQuantTrainingSchedule: () => api.get('/api/quant/training/schedule'),
+  getQuantComparison: () => api.get('/api/quant/compare'),
+
+  // Math Optimizer
+  getMathOptimizerStatus: () => api.get('/api/math-optimizer/status'),
+  getMathOptimizerHealth: () => api.get('/api/math-optimizer/health'),
+  getMathOptimizerDiagnose: () => api.get('/api/math-optimizer/diagnose'),
+  getMathOptimizerLiveDashboard: () => api.get('/api/math-optimizer/live-dashboard'),
+  getMathOptimizerDecisions: (limit: number = 20) => api.get(`/api/math-optimizer/decisions?limit=${limit}`),
+  getMathOptimizerBotStats: (botName: string) => api.get(`/api/math-optimizer/bot/${botName}`),
+  getMathOptimizerDocumentation: () => api.get('/api/math-optimizer/documentation'),
 }
 
 // WebSocket connection

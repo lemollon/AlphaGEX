@@ -56,7 +56,9 @@ from backend.api.routes import (
     zero_dte_backtest_routes,  # 0DTE Iron Condor hybrid scaling backtest
     ares_routes,  # ARES Aggressive Iron Condor bot endpoints
     athena_routes,  # ATHENA Directional Spread bot endpoints
+    icarus_routes,  # ICARUS Aggressive Directional Spread bot endpoints
     pegasus_routes,  # PEGASUS SPX Iron Condor bot endpoints
+    titan_routes,  # TITAN Aggressive SPX Iron Condor bot endpoints
     logs_routes,  # Comprehensive logs API for ALL 22 logging tables
     scan_activity_routes,  # Scan Activity - EVERY scan with full reasoning for ARES/ATHENA
     apollo_routes,  # APOLLO ML-powered scanner
@@ -69,7 +71,10 @@ from backend.api.routes import (
     solomon_routes,  # SOLOMON - Feedback Loop Intelligence System for bot learning
     events_routes,  # Trading Events - auto-detected events for equity curves
     oracle_routes,  # ORACLE - ML Advisory System for strategy recommendations
+    quant_routes,  # QUANT - ML Models Dashboard (Regime Classifier, Directional ML, Ensemble)
     math_optimizer_routes,  # Mathematical Optimization - HMM, Kalman, Thompson, Convex, HJB, MDP algorithms
+    validation_routes,  # AutoValidation - ML model health monitoring, Thompson allocation, auto-retrain
+    drift_routes,  # Drift Detection - Backtest vs Live performance comparison
 )
 
 # ============================================================================
@@ -196,6 +201,8 @@ app = FastAPI(
 
 # Custom CORS Middleware - Handles ALL CORS including wildcard origins
 # This replaces the built-in CORSMiddleware which doesn't support wildcards
+import re as regex_module  # PERFORMANCE FIX: Import once at module level
+
 class CORSHeaderMiddleware(BaseHTTPMiddleware):
     def __init__(self, app):
         super().__init__(app)
@@ -205,23 +212,27 @@ class CORSHeaderMiddleware(BaseHTTPMiddleware):
         # Check if we should allow all origins (for development)
         self.allow_all = "*" in self.allowed_origins or os.getenv("ENVIRONMENT") == "development"
 
+        # PERFORMANCE FIX: Pre-compile wildcard patterns at startup (not per-request)
+        self._compiled_patterns = []
+        for allowed in self.allowed_origins:
+            if "*" in allowed:
+                # Convert https://*.vercel.app to regex pattern
+                pattern = allowed.replace(".", r"\.").replace("*", ".*")
+                self._compiled_patterns.append(regex_module.compile(f"^{pattern}$"))
+
     def _is_origin_allowed(self, origin: str) -> bool:
         """Check if origin is allowed, supporting wildcard patterns"""
         if not origin:
             return True  # Allow requests without Origin header
         if self.allow_all:
             return True
-        for allowed in self.allowed_origins:
-            if allowed == origin:
+        # Check exact matches first (fast path)
+        if origin in self.allowed_origins:
+            return True
+        # PERFORMANCE FIX: Use pre-compiled patterns (was compiling on every request)
+        for pattern in self._compiled_patterns:
+            if pattern.match(origin):
                 return True
-            # Handle wildcard patterns like https://*.vercel.app
-            if "*" in allowed:
-                import fnmatch
-                # Convert https://*.vercel.app to https://*.vercel.app pattern
-                pattern = allowed.replace(".", r"\.").replace("*", ".*")
-                import re
-                if re.match(f"^{pattern}$", origin):
-                    return True
         return True  # Default to allowing for API accessibility
 
     async def dispatch(self, request: Request, call_next):
@@ -292,7 +303,9 @@ app.include_router(volatility_surface_routes.router)
 app.include_router(zero_dte_backtest_routes.router)
 app.include_router(ares_routes.router)
 app.include_router(athena_routes.router)
+app.include_router(icarus_routes.router)
 app.include_router(pegasus_routes.router)
+app.include_router(titan_routes.router)
 app.include_router(logs_routes.router)
 app.include_router(scan_activity_routes.router)
 app.include_router(apollo_routes.router)
@@ -305,8 +318,11 @@ app.include_router(docs_routes.router)
 app.include_router(solomon_routes.router)
 app.include_router(events_routes.router)
 app.include_router(oracle_routes.router)
+app.include_router(quant_routes.router)
 app.include_router(math_optimizer_routes.router)
-print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, ares, daily-manna, prometheus, argus, docs, solomon, events, oracle, math-optimizer")
+app.include_router(validation_routes.router)
+app.include_router(drift_routes.router)
+print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, ares, daily-manna, prometheus, argus, docs, solomon, events, oracle, math-optimizer, validation, drift")
 
 # Initialize existing AlphaGEX components (singleton pattern)
 # Only instantiate if import succeeded
@@ -1669,6 +1685,21 @@ async def startup_event():
         print(f"⚠️  ARGUS initialization warning: {e}")
         print("   ARGUS will lazy-load on first request")
 
+    # Pre-check Math Optimizer availability (lazy initialization, but check dependencies)
+    print("\n🧮 Checking Math Optimizer dependencies...")
+    try:
+        import numpy as np
+        print(f"✅ NumPy version: {np.__version__}")
+        # Try to import the module (doesn't initialize singleton yet)
+        from core.math_optimizers import MathOptimizerOrchestrator
+        print("✅ Math Optimizer module loaded - will initialize on first request")
+    except ImportError as e:
+        print(f"⚠️  Math Optimizer import warning: {e}")
+        print("   Math Optimizer page will show degraded mode")
+    except Exception as e:
+        print(f"⚠️  Math Optimizer check warning: {e}")
+        print("   Math Optimizer page will show degraded mode")
+
     # Auto-run AUTONOMOUS backtests on startup IF database is empty
     print("\n🔄 Checking backtest results...")
     try:
@@ -1765,6 +1796,11 @@ async def startup_event():
                 """
                 Run ARES and ATLAS trading bots via APScheduler.
                 This function runs continuously and manages both bots.
+
+                CRITICAL: Includes health monitoring to detect zombie scheduler states.
+                If the APScheduler internal thread crashes but is_running stays True,
+                this function will detect the unhealthy state and raise an exception
+                so the watchdog can restart the thread.
                 """
                 import time
                 from scheduler.trader_scheduler import get_scheduler
@@ -1778,14 +1814,51 @@ async def startup_event():
                 else:
                     print("ℹ️  ARES + ATLAS Scheduler already running")
 
+                # Health monitoring variables
+                consecutive_unhealthy = 0
+                max_unhealthy_before_restart = 3  # Restart after 3 consecutive failures (3 min)
+
                 # Keep thread alive - APScheduler runs in background
                 while True:
                     time.sleep(60)
-                    # Periodic status check
+
+                    # CRITICAL: Health check to detect zombie scheduler state
+                    # The APScheduler internal thread can crash while is_running stays True.
+                    # is_scheduler_healthy() checks:
+                    # 1. If APScheduler's _thread is alive
+                    # 2. If jobs are actually executing (not stale >15 min)
                     if scheduler.is_running:
+                        is_healthy = scheduler.is_scheduler_healthy()
                         status = scheduler.get_status()
-                        if status.get('market_open'):
-                            print(f"📊 ARES/ATLAS Status: Market OPEN | PHOENIX={scheduler.execution_count}, ATLAS={scheduler.atlas_execution_count}, ARES={scheduler.ares_execution_count}")
+
+                        if is_healthy:
+                            consecutive_unhealthy = 0  # Reset counter on healthy check
+                            if status.get('market_open'):
+                                print(f"📊 ARES/ATLAS Status: Market OPEN | ARES={scheduler.ares_execution_count}, ATHENA={getattr(scheduler, 'athena_execution_count', 0)}, PEGASUS={getattr(scheduler, 'pegasus_execution_count', 0)}")
+                        else:
+                            consecutive_unhealthy += 1
+                            print(f"⚠️ SCHEDULER UNHEALTHY ({consecutive_unhealthy}/{max_unhealthy_before_restart})")
+                            print(f"   is_running={scheduler.is_running}, scheduler_healthy={status.get('scheduler_healthy')}")
+
+                            if consecutive_unhealthy >= max_unhealthy_before_restart:
+                                # CRITICAL: Raise exception so watchdog can restart this thread
+                                # This is the FIX for the 6:05 AM issue - scheduler was in zombie state
+                                raise RuntimeError(
+                                    f"Scheduler unhealthy for {consecutive_unhealthy} consecutive checks. "
+                                    f"APScheduler internal thread may have crashed. Forcing restart via watchdog."
+                                )
+                    else:
+                        # scheduler.is_running is False - try to restart
+                        print("⚠️ Scheduler not running - attempting restart...")
+                        try:
+                            scheduler.start()
+                            print("✅ Scheduler restarted")
+                            consecutive_unhealthy = 0
+                        except Exception as e:
+                            print(f"❌ Failed to restart scheduler: {e}")
+                            consecutive_unhealthy += 1
+                            if consecutive_unhealthy >= max_unhealthy_before_restart:
+                                raise RuntimeError(f"Failed to restart scheduler after {consecutive_unhealthy} attempts: {e}")
 
             watchdog.register(
                 name="ARES_ATLAS_Scheduler",
@@ -1861,10 +1934,70 @@ async def startup_event():
     print("   • Max 10 restarts per hour per bot (rate limited)")
     print("   • State persisted to database (survives full restarts)")
     print("=" * 80 + "\n")
+
+    # =========================================================================
+    # MARK SERVICE AS READY (for zero-downtime deployments)
+    # =========================================================================
+    try:
+        from backend.services.graceful_shutdown import get_shutdown_manager, setup_signal_handlers
+        manager = get_shutdown_manager()
+
+        # Register watchdog for graceful shutdown
+        if thread_watchdog:
+            manager.register_component('watchdog', thread_watchdog)
+
+        # Setup signal handlers for SIGTERM/SIGINT
+        setup_signal_handlers()
+
+        # Mark service as ready to accept traffic
+        manager.set_ready(True)
+        print("✅ Service marked as READY (graceful shutdown enabled)")
+    except ImportError as e:
+        print(f"ℹ️  Graceful shutdown manager not available: {e}")
+    except Exception as e:
+        print(f"⚠️  Could not initialize graceful shutdown: {e}")
+
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Run on application shutdown"""
+    """
+    Run on application shutdown - Graceful shutdown for zero-downtime deployments.
+
+    Shutdown sequence:
+    1. Mark service as not ready (load balancer stops sending traffic)
+    2. Drain in-flight requests (wait up to 30s)
+    3. Close database connections
+    4. Stop background threads
+    5. Log open positions state
+    """
     print("🛑 AlphaGEX API Shutting down...")
+    print("   Initiating graceful shutdown sequence...")
+
+    try:
+        from backend.services.graceful_shutdown import get_shutdown_manager
+        manager = get_shutdown_manager()
+
+        # Register thread watchdog for cleanup
+        if thread_watchdog:
+            manager.register_component('watchdog', thread_watchdog)
+
+        # Execute graceful shutdown
+        await manager.shutdown()
+
+        print("✅ Graceful shutdown complete")
+
+    except ImportError as e:
+        print(f"⚠️  Graceful shutdown manager not available: {e}")
+        # Fallback: close database pool directly
+        try:
+            from database_adapter import close_pool
+            close_pool()
+            print("✅ Database pool closed (fallback)")
+        except Exception as db_err:
+            print(f"⚠️  Database pool close failed: {db_err}")
+    except Exception as e:
+        print(f"❌ Graceful shutdown error: {e}")
+        import traceback
+        traceback.print_exc()
 
 # ============================================================================
 # Run Server (for local development)

@@ -25,6 +25,22 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 
+def _to_python(val):
+    """Convert numpy types to native Python types for database insertion"""
+    if val is None:
+        return None
+    type_name = type(val).__name__
+    if 'float' in type_name or 'Float' in type_name:
+        return float(val)
+    if 'int' in type_name or 'Int' in type_name:
+        return int(val)
+    if 'bool' in type_name:
+        return bool(val)
+    if hasattr(val, 'item'):
+        return val.item()
+    return val
+
+
 @contextmanager
 def db_connection():
     """Context manager for database connections"""
@@ -157,13 +173,15 @@ class ATHENADatabase:
             ("net_gex", "DECIMAL(15, 2)"),
             # ML model context
             ("ml_model_name", "VARCHAR(100)"),
-            ("ml_win_probability", "DECIMAL(5, 4)"),
+            ("ml_win_probability", "DECIMAL(8, 4)"),  # DECIMAL(8,4) for proper precision
             ("ml_top_features", "TEXT"),
             # Wall proximity context
             ("wall_type", "VARCHAR(20)"),
             ("wall_distance_pct", "DECIMAL(6, 4)"),
             # Full trade reasoning
             ("trade_reasoning", "TEXT"),
+            # Oracle advice (CRITICAL for audit trail - BUG FIX)
+            ("oracle_advice", "VARCHAR(50)"),
         ]
 
         for col_name, col_type in columns_to_add:
@@ -272,44 +290,46 @@ class ATHENADatabase:
                         underlying_at_entry, call_wall, put_wall,
                         gex_regime, vix_at_entry,
                         flip_point, net_gex,
-                        oracle_confidence, ml_direction, ml_confidence,
+                        oracle_confidence, oracle_advice,
+                        ml_direction, ml_confidence,
                         ml_model_name, ml_win_probability, ml_top_features,
                         wall_type, wall_distance_pct, trade_reasoning,
                         order_id, status, open_time
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
                     )
                 """, (
                     pos.position_id,
                     pos.spread_type.value,
                     pos.ticker,
-                    pos.long_strike,
-                    pos.short_strike,
+                    _to_python(pos.long_strike),
+                    _to_python(pos.short_strike),
                     pos.expiration,
-                    pos.entry_debit,
-                    pos.contracts,
-                    pos.max_profit,
-                    pos.max_loss,
-                    pos.underlying_at_entry,
-                    pos.call_wall if pos.call_wall else None,
-                    pos.put_wall if pos.put_wall else None,
+                    _to_python(pos.entry_debit),
+                    _to_python(pos.contracts),
+                    _to_python(pos.max_profit),
+                    _to_python(pos.max_loss),
+                    _to_python(pos.underlying_at_entry),
+                    _to_python(pos.call_wall) if pos.call_wall else None,
+                    _to_python(pos.put_wall) if pos.put_wall else None,
                     pos.gex_regime or None,
-                    pos.vix_at_entry if pos.vix_at_entry else None,
+                    _to_python(pos.vix_at_entry) if pos.vix_at_entry else None,
                     # Kronos context
-                    pos.flip_point if pos.flip_point else None,
-                    pos.net_gex if pos.net_gex else None,
+                    _to_python(pos.flip_point) if pos.flip_point else None,
+                    _to_python(pos.net_gex) if pos.net_gex else None,
                     # ML context (FULL audit trail)
-                    pos.oracle_confidence if pos.oracle_confidence else None,
+                    _to_python(pos.oracle_confidence) if pos.oracle_confidence else None,
+                    pos.oracle_advice or None,  # BUG FIX: Now storing Oracle's trade decision
                     pos.ml_direction or None,
-                    pos.ml_confidence if pos.ml_confidence else None,
+                    _to_python(pos.ml_confidence) if pos.ml_confidence else None,
                     pos.ml_model_name or None,
-                    pos.ml_win_probability if pos.ml_win_probability else None,
+                    _to_python(pos.ml_win_probability) if pos.ml_win_probability else None,
                     pos.ml_top_features or None,
                     # Wall proximity context
                     pos.wall_type or None,
-                    pos.wall_distance_pct if pos.wall_distance_pct else None,
+                    _to_python(pos.wall_distance_pct) if pos.wall_distance_pct else None,
                     pos.trade_reasoning or None,
                     pos.order_id or None,
                     pos.status.value,
@@ -362,8 +382,8 @@ class ATHENADatabase:
             logger.error(f"{self.bot_name}: Failed to close position: {e}")
             return False
 
-    def expire_position(self, position_id: str, realized_pnl: float) -> bool:
-        """Mark a position as expired with final P&L"""
+    def expire_position(self, position_id: str, realized_pnl: float, close_price: float = None) -> bool:
+        """Mark a position as expired with final P&L and close price"""
         try:
             with db_connection() as conn:
                 c = conn.cursor()
@@ -372,11 +392,12 @@ class ATHENADatabase:
                     SET status = 'expired',
                         close_time = NOW(),
                         close_reason = 'EXPIRED',
+                        close_price = %s,
                         realized_pnl = %s,
                         updated_at = NOW()
                     WHERE position_id = %s AND status = 'open'
                     RETURNING id
-                """, (realized_pnl, position_id))
+                """, (_to_python(close_price), _to_python(realized_pnl), position_id))
 
                 result = c.fetchone()
                 conn.commit()
@@ -470,8 +491,8 @@ class ATHENADatabase:
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                 """, (
-                    direction, spread_type, confidence, spot_price,
-                    call_wall, put_wall, gex_regime, vix, rr_ratio,
+                    direction, spread_type, _to_python(confidence), _to_python(spot_price),
+                    _to_python(call_wall), _to_python(put_wall), gex_regime, _to_python(vix), _to_python(rr_ratio),
                     was_executed, skip_reason, reasoning
                 ))
                 signal_id = c.fetchone()[0]
@@ -535,16 +556,236 @@ class ATHENADatabase:
     def update_heartbeat(self, status: str, action: str) -> None:
         """Update bot heartbeat for monitoring"""
         try:
+            import json
             with db_connection() as conn:
                 c = conn.cursor()
                 c.execute("""
-                    INSERT INTO bot_heartbeat (bot_name, status, last_action, last_scan_time)
-                    VALUES (%s, %s, %s, NOW())
+                    INSERT INTO bot_heartbeats (bot_name, last_heartbeat, status, scan_count, details)
+                    VALUES (%s, NOW(), %s, 1, %s)
                     ON CONFLICT (bot_name) DO UPDATE SET
+                        last_heartbeat = NOW(),
                         status = EXCLUDED.status,
-                        last_action = EXCLUDED.last_action,
-                        last_scan_time = NOW()
-                """, (self.bot_name, status, action))
+                        scan_count = bot_heartbeats.scan_count + 1,
+                        details = EXCLUDED.details
+                """, (self.bot_name, status, json.dumps({"last_action": action})))
                 conn.commit()
         except Exception:
             pass
+
+    # =========================================================================
+    # PARTIAL CLOSE AND ORPHANED ORDER TRACKING
+    # =========================================================================
+
+    def partial_close_position(
+        self,
+        position_id: str,
+        close_price: float,
+        realized_pnl: float,
+        close_reason: str,
+        closed_leg: str
+    ) -> bool:
+        """
+        Mark a position as partially closed when one leg closes but other fails.
+
+        This prevents orphaned positions where Tradier has one leg closed
+        but DB shows position as fully open.
+        """
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    UPDATE athena_positions
+                    SET status = 'partial_close',
+                        close_time = NOW(),
+                        close_price = %s,
+                        realized_pnl = %s,
+                        close_reason = %s,
+                        updated_at = NOW()
+                    WHERE position_id = %s AND status = 'open'
+                    RETURNING id
+                """, (
+                    _to_python(close_price),
+                    _to_python(realized_pnl),
+                    f"{close_reason} [PARTIAL: {closed_leg} leg closed]",
+                    position_id
+                ))
+                result = c.fetchone()
+                conn.commit()
+
+                if result:
+                    logger.warning(
+                        f"{self.bot_name}: PARTIAL CLOSE - Position {position_id}, "
+                        f"only {closed_leg} leg closed. Needs manual intervention."
+                    )
+                    return True
+                return False
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to partial_close position: {e}")
+            return False
+
+    def get_partial_close_positions(self) -> List[SpreadPosition]:
+        """
+        Get positions in partial_close state that need manual intervention.
+        """
+        positions = []
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    SELECT
+                        position_id, spread_type, ticker,
+                        long_strike, short_strike, expiration,
+                        entry_debit, contracts, max_profit, max_loss,
+                        underlying_at_entry, call_wall, put_wall,
+                        gex_regime, vix_at_entry,
+                        flip_point, net_gex,
+                        oracle_confidence, ml_direction, ml_confidence,
+                        ml_model_name, ml_win_probability, ml_top_features,
+                        wall_type, wall_distance_pct, trade_reasoning,
+                        order_id, status, open_time, close_time,
+                        close_price, close_reason, realized_pnl
+                    FROM athena_positions
+                    WHERE status = 'partial_close'
+                    ORDER BY close_time DESC
+                """)
+
+                for row in c.fetchall():
+                    pos = SpreadPosition(
+                        position_id=row[0],
+                        spread_type=SpreadType(row[1]),
+                        ticker=row[2],
+                        long_strike=float(row[3]),
+                        short_strike=float(row[4]),
+                        expiration=row[5].strftime("%Y-%m-%d") if row[5] else "",
+                        entry_debit=float(row[6]),
+                        contracts=int(row[7]),
+                        max_profit=float(row[8]),
+                        max_loss=float(row[9]),
+                        underlying_at_entry=float(row[10]),
+                        call_wall=float(row[11]) if row[11] else None,
+                        put_wall=float(row[12]) if row[12] else None,
+                        gex_regime=row[13] or "",
+                        vix_at_entry=float(row[14]) if row[14] else None,
+                        flip_point=float(row[15]) if row[15] else None,
+                        net_gex=float(row[16]) if row[16] else None,
+                        oracle_confidence=float(row[17]) if row[17] else None,
+                        ml_direction=row[18] or "",
+                        ml_confidence=float(row[19]) if row[19] else None,
+                        ml_model_name=row[20] or "",
+                        ml_win_probability=float(row[21]) if row[21] else None,
+                        ml_top_features=row[22] or "",
+                        wall_type=row[23] or "",
+                        wall_distance_pct=float(row[24]) if row[24] else None,
+                        trade_reasoning=row[25] or "",
+                        order_id=row[26] or "",
+                        status=PositionStatus(row[27]),
+                        open_time=row[28],
+                        close_time=row[29],
+                        close_price=float(row[30]) if row[30] else None,
+                        close_reason=row[31] or "",
+                        realized_pnl=float(row[32]) if row[32] else None,
+                    )
+                    positions.append(pos)
+
+                logger.info(f"{self.bot_name}: Found {len(positions)} partial_close positions")
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to get partial_close positions: {e}")
+
+        return positions
+
+    def log_orphaned_order(
+        self,
+        order_id: str,
+        position_id: str,
+        order_type: str,
+        details: str,
+        action_required: str
+    ) -> bool:
+        """
+        Log an orphaned order that requires manual intervention.
+
+        Called when:
+        - Order fills but DB update fails
+        - Rollback of orphaned spread fails
+        """
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                # Ensure table exists
+                c.execute("""
+                    CREATE TABLE IF NOT EXISTS orphaned_orders (
+                        id SERIAL PRIMARY KEY,
+                        bot_name VARCHAR(20) NOT NULL,
+                        order_id VARCHAR(50) NOT NULL,
+                        position_id VARCHAR(50),
+                        order_type VARCHAR(50) NOT NULL,
+                        details TEXT,
+                        action_required TEXT,
+                        resolved BOOLEAN DEFAULT FALSE,
+                        resolved_at TIMESTAMP,
+                        resolved_by VARCHAR(100),
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                """)
+                c.execute("""
+                    INSERT INTO orphaned_orders (
+                        bot_name, order_id, position_id, order_type, details, action_required
+                    ) VALUES (%s, %s, %s, %s, %s, %s)
+                """, (
+                    self.bot_name,
+                    order_id,
+                    position_id,
+                    order_type,
+                    details,
+                    action_required
+                ))
+                conn.commit()
+                logger.critical(
+                    f"{self.bot_name}: ORPHANED ORDER LOGGED - Order {order_id}, "
+                    f"Position {position_id}. ACTION: {action_required}"
+                )
+                return True
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to log orphaned order: {e}")
+            return False
+
+    def get_orphaned_orders(self, include_resolved: bool = False) -> List[Dict]:
+        """Get orphaned orders that need manual intervention."""
+        orders = []
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                if include_resolved:
+                    c.execute("""
+                        SELECT id, bot_name, order_id, position_id, order_type,
+                               details, action_required, resolved, resolved_at, created_at
+                        FROM orphaned_orders
+                        WHERE bot_name = %s
+                        ORDER BY created_at DESC
+                    """, (self.bot_name,))
+                else:
+                    c.execute("""
+                        SELECT id, bot_name, order_id, position_id, order_type,
+                               details, action_required, resolved, resolved_at, created_at
+                        FROM orphaned_orders
+                        WHERE bot_name = %s AND resolved = FALSE
+                        ORDER BY created_at DESC
+                    """, (self.bot_name,))
+
+                for row in c.fetchall():
+                    orders.append({
+                        'id': row[0],
+                        'bot_name': row[1],
+                        'order_id': row[2],
+                        'position_id': row[3],
+                        'order_type': row[4],
+                        'details': row[5],
+                        'action_required': row[6],
+                        'resolved': row[7],
+                        'resolved_at': row[8],
+                        'created_at': row[9]
+                    })
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to get orphaned orders: {e}")
+
+        return orders

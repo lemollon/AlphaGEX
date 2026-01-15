@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback, Component, ErrorInfo, ReactNode } from 'react'
-import { Eye, Brain, Activity, RefreshCw, Trash2, CheckCircle, XCircle, AlertCircle, AlertTriangle, ShieldAlert, Sparkles, FileText, History, TrendingUp, BarChart3, Download, Zap, Bot, MessageSquare, Settings, Play, Clock, Target, ChevronDown, ChevronUp } from 'lucide-react'
+import { Eye, Brain, Activity, RefreshCw, Trash2, CheckCircle, XCircle, AlertCircle, AlertTriangle, ShieldAlert, Sparkles, FileText, History, TrendingUp, BarChart3, Download, Zap, Bot, MessageSquare, Settings, Play, Clock, Target, ChevronDown, ChevronUp, Crosshair } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import DecisionLogViewer from '@/components/trader/DecisionLogViewer'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
@@ -148,6 +148,10 @@ interface TrainingStatus {
   model_source: 'database' | 'local_file' | 'none'
   db_persistence: boolean
   persistence_status: string
+  // Model staleness metrics (Issue #4 - end-to-end visibility)
+  hours_since_training?: number
+  is_model_fresh?: boolean
+  freshness_warning?: string | null
 }
 
 interface LogEntry {
@@ -175,6 +179,19 @@ interface BotInteraction {
   gex_put_wall?: number
   gex_flip_point?: number
   day_of_week?: number
+  // NEUTRAL Regime Analysis fields
+  neutral_derived_direction?: string
+  neutral_confidence?: number
+  neutral_reasoning?: string
+  ic_suitability?: number
+  bullish_suitability?: number
+  bearish_suitability?: number
+  recommended_strategy?: string
+  trend_direction?: string
+  trend_strength?: number
+  position_in_range_pct?: number
+  is_contained?: boolean
+  wall_filter_passed?: boolean
   suggested_risk_pct?: number
   suggested_sd_multiplier?: number
   use_gex_walls?: boolean
@@ -383,7 +400,7 @@ export default function OraclePage() {
   const isRefreshing = statusValidating || logsValidating || transparencyValidating
 
   // Local state
-  const [activeTab, setActiveTab] = useState<'interactions' | 'performance' | 'training' | 'logs' | 'decisions' | 'dataflow'>('interactions')
+  const [activeTab, setActiveTab] = useState<'interactions' | 'performance' | 'training' | 'logs' | 'decisions' | 'dataflow' | 'formulas'>('interactions')
   const [botInteractions, setBotInteractions] = useState<BotInteraction[]>([])
   const [trainingStatus, setTrainingStatus] = useState<TrainingStatus | null>(null)
   const [performance, setPerformance] = useState<PerformanceData | null>(null)
@@ -553,10 +570,13 @@ export default function OraclePage() {
   const getBotColor = (bot: string) => {
     switch (bot) {
       case 'ARES': return 'text-red-400 bg-red-500/20 border-red-500/30'
-      case 'ATLAS': return 'text-blue-400 bg-blue-500/20 border-blue-500/30'
-      case 'PHOENIX': return 'text-orange-400 bg-orange-500/20 border-orange-500/30'
+      case 'ATLAS': return 'text-indigo-400 bg-indigo-500/20 border-indigo-500/30'
+      case 'PHOENIX': return 'text-rose-400 bg-rose-500/20 border-rose-500/30'
       case 'ATHENA': return 'text-purple-400 bg-purple-500/20 border-purple-500/30'
-      case 'ORACLE': return 'text-indigo-400 bg-indigo-500/20 border-indigo-500/30'
+      case 'PEGASUS': return 'text-blue-400 bg-blue-500/20 border-blue-500/30'
+      case 'ICARUS': return 'text-orange-400 bg-orange-500/20 border-orange-500/30'
+      case 'TITAN': return 'text-teal-400 bg-teal-500/20 border-teal-500/30'
+      case 'ORACLE': return 'text-cyan-400 bg-cyan-500/20 border-cyan-500/30'
       default: return 'text-gray-400 bg-gray-500/20 border-gray-500/30'
     }
   }
@@ -587,7 +607,7 @@ export default function OraclePage() {
               <h1 className="text-3xl font-bold text-text-primary">Oracle Knowledge Base</h1>
             </div>
             <p className="text-text-secondary">
-              Centralized intelligence hub for ARES, ATHENA, PEGASUS, and PHOENIX - All bot interactions, Claude AI reasoning, and ML predictions
+              Centralized intelligence hub for all trading bots (ARES, ATHENA, PEGASUS, PHOENIX, ATLAS, ICARUS, TITAN) - All bot interactions, Claude AI reasoning, and ML predictions
             </p>
           </div>
 
@@ -668,7 +688,7 @@ export default function OraclePage() {
               <span className="text-xs text-gray-500">(5-min scan intervals)</span>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {['ARES', 'ATHENA', 'PEGASUS', 'PHOENIX'].map((botName) => {
+              {['ARES', 'ATHENA', 'PEGASUS', 'PHOENIX', 'ATLAS', 'ICARUS', 'TITAN'].map((botName) => {
                 const hb = botHeartbeats[botName]
                 const statusColor = hb?.status === 'TRADED' ? 'bg-green-500' :
                                    hb?.status === 'SCAN_COMPLETE' ? 'bg-blue-500' :
@@ -768,6 +788,15 @@ export default function OraclePage() {
                 </span>
               )}
             </button>
+            <button
+              onClick={() => setActiveTab('formulas')}
+              className={`px-4 py-2 rounded-lg font-medium flex items-center gap-2 ${
+                activeTab === 'formulas' ? 'bg-purple-600 text-white' : 'bg-background-card text-text-secondary hover:bg-background-hover'
+              }`}
+            >
+              <Sparkles className="w-4 h-4" />
+              Decision Formulas
+            </button>
           </div>
 
           {/* Bot Interactions Tab */}
@@ -788,6 +817,9 @@ export default function OraclePage() {
                     <option value="ATHENA">ATHENA</option>
                     <option value="PEGASUS">PEGASUS</option>
                     <option value="PHOENIX">PHOENIX</option>
+                    <option value="ATLAS">ATLAS</option>
+                    <option value="ICARUS">ICARUS</option>
+                    <option value="TITAN">TITAN</option>
                   </select>
                 </div>
                 <div className="flex items-center gap-2">
@@ -962,6 +994,242 @@ export default function OraclePage() {
                             <div className="text-xs">
                               <span className="text-text-muted">Flip Point:</span>
                               <span className="text-text-primary ml-1 font-medium">${interaction.gex_flip_point.toFixed(0)}</span>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Enhanced Oracle Analysis Display - Shows for any regime when data available */}
+                      {(interaction.trend_direction || interaction.ic_suitability != null || interaction.position_in_range_pct != null || interaction.neutral_derived_direction) && (
+                        <div className="mb-3 space-y-3">
+                          {/* TREND ANALYSIS Section */}
+                          {interaction.trend_direction && (
+                            <div className="p-3 bg-blue-500/5 border border-blue-500/20 rounded-lg">
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-blue-400 text-xs font-medium flex items-center gap-1">
+                                  <TrendingUp className="w-3 h-3" />
+                                  TREND ANALYSIS
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                                <div className="text-xs">
+                                  <span className="text-text-muted">Direction:</span>
+                                  <span className={`ml-1 font-bold ${
+                                    interaction.trend_direction === 'UPTREND' ? 'text-green-400' :
+                                    interaction.trend_direction === 'DOWNTREND' ? 'text-red-400' : 'text-yellow-400'
+                                  }`}>
+                                    {interaction.trend_direction === 'UPTREND' ? '↑ ' : interaction.trend_direction === 'DOWNTREND' ? '↓ ' : '→ '}
+                                    {interaction.trend_direction}
+                                  </span>
+                                  {interaction.trend_strength != null && (
+                                    <span className="text-text-muted ml-1">(strength: {(interaction.trend_strength * 100).toFixed(1)}%)</span>
+                                  )}
+                                </div>
+                                {interaction.spot_price != null && interaction.gex_put_wall != null && interaction.gex_call_wall != null && (
+                                  <div className="text-xs col-span-2">
+                                    <span className="text-text-muted">Price Range:</span>
+                                    <span className="text-text-primary ml-1">
+                                      ${interaction.gex_put_wall?.toFixed(0)} → ${interaction.spot_price?.toFixed(2)} → ${interaction.gex_call_wall?.toFixed(0)}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* WALL POSITION Section - Visual Bar */}
+                          {interaction.gex_put_wall != null && interaction.gex_call_wall != null && interaction.spot_price != null && (
+                            <div className="p-3 bg-purple-500/5 border border-purple-500/20 rounded-lg">
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-purple-400 text-xs font-medium flex items-center gap-1">
+                                  <Crosshair className="w-3 h-3" />
+                                  WALL POSITION
+                                </span>
+                                {interaction.is_contained != null && (
+                                  <span className={`text-xs px-2 py-0.5 rounded ${
+                                    interaction.is_contained ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                                  }`}>
+                                    Status: {interaction.is_contained ? 'CONTAINED ✓' : 'OUTSIDE RANGE'}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="space-y-2">
+                                {/* Visual Wall Bar */}
+                                <div className="flex items-center gap-2 text-xs">
+                                  <span className="text-red-400 font-mono w-16">Put ${interaction.gex_put_wall?.toFixed(0)}</span>
+                                  <div className="flex-1 relative h-6 bg-gray-800 rounded overflow-hidden">
+                                    {/* Put side gradient */}
+                                    <div className="absolute left-0 top-0 bottom-0 w-1/3 bg-gradient-to-r from-red-500/30 to-transparent" />
+                                    {/* Call side gradient */}
+                                    <div className="absolute right-0 top-0 bottom-0 w-1/3 bg-gradient-to-l from-green-500/30 to-transparent" />
+                                    {/* Current price marker */}
+                                    {(() => {
+                                      const putWall = interaction.gex_put_wall || 0
+                                      const callWall = interaction.gex_call_wall || 0
+                                      const spotPrice = interaction.spot_price || 0
+                                      const range = callWall - putWall
+                                      const position = range > 0 ? ((spotPrice - putWall) / range) * 100 : 50
+                                      return (
+                                        <div
+                                          className="absolute top-0 bottom-0 w-0.5 bg-cyan-400"
+                                          style={{ left: `${Math.min(Math.max(position, 5), 95)}%` }}
+                                        >
+                                          <div className="absolute -top-0.5 left-1/2 -translate-x-1/2 w-2 h-2 bg-cyan-400 rounded-full" />
+                                          <div className="absolute top-6 left-1/2 -translate-x-1/2 whitespace-nowrap text-[10px] text-cyan-400">
+                                            ${spotPrice.toFixed(0)}
+                                          </div>
+                                        </div>
+                                      )
+                                    })()}
+                                  </div>
+                                  <span className="text-green-400 font-mono w-16 text-right">Call ${interaction.gex_call_wall?.toFixed(0)}</span>
+                                </div>
+                                {/* Position percentage */}
+                                {interaction.position_in_range_pct != null && (
+                                  <div className="text-center text-xs text-text-muted">
+                                    <span className={`font-medium ${
+                                      interaction.position_in_range_pct > 60 ? 'text-green-400' :
+                                      interaction.position_in_range_pct < 40 ? 'text-red-400' : 'text-yellow-400'
+                                    }`}>
+                                      {interaction.position_in_range_pct.toFixed(0)}% of range
+                                    </span>
+                                    {interaction.position_in_range_pct > 50 ? ' (closer to call wall)' : ' (closer to put wall)'}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* STRATEGY SUITABILITY Section - Progress Bars */}
+                          {(interaction.ic_suitability != null || interaction.bullish_suitability != null || interaction.bearish_suitability != null) && (
+                            <div className="p-3 bg-cyan-500/5 border border-cyan-500/20 rounded-lg">
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-cyan-400 text-xs font-medium">STRATEGY SUITABILITY</span>
+                                {interaction.recommended_strategy && (
+                                  <span className="text-xs px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-400">
+                                    Recommended: {interaction.recommended_strategy}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="space-y-2">
+                                {interaction.ic_suitability != null && (
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs text-text-muted w-24">Iron Condor</span>
+                                    <div className="flex-1 h-4 bg-gray-800 rounded overflow-hidden">
+                                      <div
+                                        className="h-full bg-gradient-to-r from-cyan-600 to-cyan-400 transition-all"
+                                        style={{ width: `${Math.min(interaction.ic_suitability, 100)}%` }}
+                                      />
+                                    </div>
+                                    <span className="text-xs font-mono text-cyan-400 w-10 text-right">{interaction.ic_suitability.toFixed(0)}%</span>
+                                  </div>
+                                )}
+                                {interaction.bullish_suitability != null && (
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs text-text-muted w-24">Bull Spread</span>
+                                    <div className="flex-1 h-4 bg-gray-800 rounded overflow-hidden">
+                                      <div
+                                        className="h-full bg-gradient-to-r from-green-600 to-green-400 transition-all"
+                                        style={{ width: `${Math.min(interaction.bullish_suitability, 100)}%` }}
+                                      />
+                                    </div>
+                                    <span className="text-xs font-mono text-green-400 w-10 text-right">{interaction.bullish_suitability.toFixed(0)}%</span>
+                                  </div>
+                                )}
+                                {interaction.bearish_suitability != null && (
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs text-text-muted w-24">Bear Spread</span>
+                                    <div className="flex-1 h-4 bg-gray-800 rounded overflow-hidden">
+                                      <div
+                                        className="h-full bg-gradient-to-r from-red-600 to-red-400 transition-all"
+                                        style={{ width: `${Math.min(interaction.bearish_suitability, 100)}%` }}
+                                      />
+                                    </div>
+                                    <span className="text-xs font-mono text-red-400 w-10 text-right">{interaction.bearish_suitability.toFixed(0)}%</span>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* NEUTRAL REGIME DECISION Section */}
+                          {interaction.gex_regime === 'NEUTRAL' && (interaction.neutral_derived_direction || interaction.neutral_reasoning) && (
+                            <div className="p-3 bg-yellow-500/5 border border-yellow-500/20 rounded-lg">
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-yellow-400 text-xs font-medium">NEUTRAL REGIME DECISION</span>
+                                {interaction.wall_filter_passed != null && (
+                                  <span className={`text-xs px-2 py-0.5 rounded ${
+                                    interaction.wall_filter_passed ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                                  }`}>
+                                    Wall Filter: {interaction.wall_filter_passed ? 'PASSED ✓' : 'FAILED ✗'}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="space-y-2">
+                                {interaction.neutral_derived_direction && (
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-text-muted text-xs">Derived Direction:</span>
+                                    <span className={`text-sm font-bold ${
+                                      interaction.neutral_derived_direction === 'BULLISH' ? 'text-green-400' :
+                                      interaction.neutral_derived_direction === 'BEARISH' ? 'text-red-400' : 'text-yellow-400'
+                                    }`}>
+                                      {interaction.neutral_derived_direction}
+                                    </span>
+                                    {interaction.neutral_confidence != null && (
+                                      <span className="text-text-muted text-xs">({(interaction.neutral_confidence * 100).toFixed(0)}% confidence)</span>
+                                    )}
+                                  </div>
+                                )}
+                                {interaction.neutral_reasoning && (
+                                  <div className="text-xs text-text-secondary bg-yellow-500/10 rounded p-2">
+                                    <span className="text-yellow-400">Reasoning:</span> "{interaction.neutral_reasoning}"
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+
+                          {/* ML REASONING Section */}
+                          {(interaction.win_probability != null || interaction.wall_filter_passed != null) && interaction.reasoning && (
+                            <div className="p-3 bg-indigo-500/5 border border-indigo-500/20 rounded-lg">
+                              <span className="text-indigo-400 text-xs font-medium">ML REASONING</span>
+                              <div className="mt-2 space-y-1 text-xs">
+                                {interaction.wall_filter_passed != null && (
+                                  <div className="flex items-center gap-2">
+                                    {interaction.wall_filter_passed ? (
+                                      <CheckCircle className="w-3 h-3 text-green-400" />
+                                    ) : (
+                                      <XCircle className="w-3 h-3 text-red-400" />
+                                    )}
+                                    <span className="text-text-muted">Wall filter</span>
+                                    <span className={interaction.wall_filter_passed ? 'text-green-400' : 'text-red-400'}>
+                                      {interaction.wall_filter_passed ? 'PASSED' : 'FAILED'}
+                                    </span>
+                                  </div>
+                                )}
+                                {interaction.neutral_derived_direction && (
+                                  <div className="flex items-center gap-2">
+                                    <CheckCircle className="w-3 h-3 text-green-400" />
+                                    <span className="text-text-muted">Direction:</span>
+                                    <span className={`${
+                                      interaction.neutral_derived_direction === 'BULLISH' ? 'text-green-400' :
+                                      interaction.neutral_derived_direction === 'BEARISH' ? 'text-red-400' : 'text-yellow-400'
+                                    }`}>
+                                      {interaction.neutral_derived_direction} (from trend analysis)
+                                    </span>
+                                  </div>
+                                )}
+                                {interaction.win_probability != null && (
+                                  <div className="flex items-center gap-2">
+                                    <CheckCircle className="w-3 h-3 text-green-400" />
+                                    <span className="text-text-muted">Win Prob:</span>
+                                    <span className="text-text-primary">
+                                      {(interaction.win_probability * 100).toFixed(0)}%
+                                      {interaction.confidence != null && ` (base ${(interaction.win_probability * 100 - 10).toFixed(0)}% + trend ${interaction.trend_strength ? (interaction.trend_strength * 10).toFixed(0) : '0'}%)`}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           )}
                         </div>
@@ -1176,6 +1444,19 @@ export default function OraclePage() {
                           {trainingStatus.last_trained ? formatTexasCentralDateTime(trainingStatus.last_trained) : 'Never'}
                         </span>
                       </div>
+                      {/* Model Age with freshness indicator (Issue #4) */}
+                      <div className="flex items-center justify-between p-3 bg-background-hover rounded-lg">
+                        <span className="text-text-secondary">Model Age</span>
+                        <span className={`font-bold ${
+                          trainingStatus.is_model_fresh === false ? 'text-red-400' :
+                          (trainingStatus.hours_since_training ?? 0) > 12 ? 'text-yellow-400' : 'text-green-400'
+                        }`}>
+                          {trainingStatus.hours_since_training != null
+                            ? `${trainingStatus.hours_since_training.toFixed(1)}h`
+                            : 'Unknown'}
+                          {trainingStatus.is_model_fresh === false && ' (STALE)'}
+                        </span>
+                      </div>
                       <div className="flex items-center justify-between p-3 bg-background-hover rounded-lg">
                         <span className="text-text-secondary">Pending Outcomes</span>
                         <span className={`font-bold ${trainingStatus.pending_outcomes >= trainingStatus.threshold_for_retrain ? 'text-yellow-400' : 'text-text-primary'}`}>
@@ -1205,6 +1486,15 @@ export default function OraclePage() {
                       {trainingStatus.needs_training && (
                         <div className="p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg text-yellow-400 text-sm">
                           Model needs retraining - threshold reached or model not trained
+                        </div>
+                      )}
+                      {/* Staleness warning (Issue #4 - end-to-end visibility) */}
+                      {trainingStatus.is_model_fresh === false && (
+                        <div className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm flex items-center gap-2">
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                          </svg>
+                          MODEL IS STALE ({trainingStatus.hours_since_training?.toFixed(1)}h old) - Predictions may be outdated. Retraining recommended.
                         </div>
                       )}
                     </div>
@@ -1693,14 +1983,304 @@ export default function OraclePage() {
             </OracleErrorBoundary>
           )}
 
-          {/* Info Section */}
-          <div className="mt-8 grid grid-cols-1 md:grid-cols-4 gap-4">
+          {/* Decision Formulas Tab */}
+          {activeTab === 'formulas' && (
+            <div className="space-y-6">
+              <div className="card">
+                <h3 className="text-lg font-semibold text-purple-400 mb-4 flex items-center gap-2">
+                  <Sparkles className="w-5 h-5" />
+                  Oracle Decision Formulas
+                </h3>
+                <p className="text-text-secondary mb-6">
+                  Complete reference of all formulas and thresholds Oracle uses to make trading decisions.
+                </p>
+
+                {/* Win Probability Thresholds */}
+                <div className="mb-8">
+                  <h4 className="text-md font-semibold text-green-400 mb-3 flex items-center gap-2">
+                    <Target className="w-4 h-4" />
+                    Win Probability → Trading Decision
+                  </h4>
+                  <div className="bg-gray-900/50 rounded-lg p-4 space-y-3">
+                    <div className="flex items-center justify-between border-b border-gray-700 pb-2">
+                      <div>
+                        <span className="text-green-400 font-bold">TRADE_FULL</span>
+                        <span className="text-gray-400 ml-2">Full position size</span>
+                      </div>
+                      <code className="bg-green-900/30 text-green-300 px-3 py-1 rounded font-mono text-sm">
+                        win_probability ≥ 70%
+                      </code>
+                    </div>
+                    <div className="flex items-center justify-between border-b border-gray-700 pb-2">
+                      <div>
+                        <span className="text-yellow-400 font-bold">TRADE_REDUCED</span>
+                        <span className="text-gray-400 ml-2">Scaled position</span>
+                      </div>
+                      <code className="bg-yellow-900/30 text-yellow-300 px-3 py-1 rounded font-mono text-sm">
+                        55% ≤ win_probability &lt; 70%
+                      </code>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-red-400 font-bold">SKIP_TODAY</span>
+                        <span className="text-gray-400 ml-2">No trade</span>
+                      </div>
+                      <code className="bg-red-900/30 text-red-300 px-3 py-1 rounded font-mono text-sm">
+                        win_probability &lt; 55%
+                      </code>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Risk Percentage Formula */}
+                <div className="mb-8">
+                  <h4 className="text-md font-semibold text-blue-400 mb-3 flex items-center gap-2">
+                    <BarChart3 className="w-4 h-4" />
+                    Risk Percentage Formula (for TRADE_REDUCED)
+                  </h4>
+                  <div className="bg-gray-900/50 rounded-lg p-4">
+                    <code className="block bg-blue-900/30 text-blue-300 p-4 rounded font-mono text-sm mb-3">
+                      risk% = 3.0 + ((win_prob - 0.55) / 0.15) × 5.0
+                    </code>
+                    <div className="text-sm text-gray-400 space-y-1">
+                      <p>• At 55% win probability → <span className="text-white">3% risk</span></p>
+                      <p>• At 62.5% win probability → <span className="text-white">5.5% risk</span></p>
+                      <p>• At 70% win probability → <span className="text-white">8% risk</span></p>
+                      <p>• Above 70% (TRADE_FULL) → <span className="text-white">10% risk</span></p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* VIX Skip Rules */}
+                <div className="mb-8">
+                  <h4 className="text-md font-semibold text-red-400 mb-3 flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4" />
+                    VIX Skip Rules (Automatic SKIP_TODAY)
+                  </h4>
+                  <div className="bg-gray-900/50 rounded-lg p-4 space-y-3">
+                    <div className="flex items-center justify-between border-b border-gray-700 pb-2">
+                      <div>
+                        <span className="text-red-400 font-bold">Hard VIX Skip</span>
+                        <span className="text-gray-400 ml-2">Any day</span>
+                      </div>
+                      <code className="bg-red-900/30 text-red-300 px-3 py-1 rounded font-mono text-sm">
+                        VIX &gt; 32 → SKIP
+                      </code>
+                    </div>
+                    <div className="flex items-center justify-between border-b border-gray-700 pb-2">
+                      <div>
+                        <span className="text-orange-400 font-bold">Monday/Friday Skip</span>
+                        <span className="text-gray-400 ml-2">Higher risk days</span>
+                      </div>
+                      <code className="bg-orange-900/30 text-orange-300 px-3 py-1 rounded font-mono text-sm">
+                        VIX &gt; 30 on Mon/Fri → SKIP
+                      </code>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-yellow-400 font-bold">Streak Skip</span>
+                        <span className="text-gray-400 ml-2">After 2+ losses</span>
+                      </div>
+                      <code className="bg-yellow-900/30 text-yellow-300 px-3 py-1 rounded font-mono text-sm">
+                        VIX &gt; 28 + recent_losses ≥ 2 → SKIP
+                      </code>
+                    </div>
+                  </div>
+                </div>
+
+                {/* GEX Adjustments */}
+                <div className="mb-8">
+                  <h4 className="text-md font-semibold text-cyan-400 mb-3 flex items-center gap-2">
+                    <TrendingUp className="w-4 h-4" />
+                    GEX-Based Win Probability Adjustments
+                  </h4>
+                  <div className="bg-gray-900/50 rounded-lg p-4 space-y-3">
+                    <div className="flex items-center justify-between border-b border-gray-700 pb-2">
+                      <div>
+                        <span className="text-green-400 font-bold">Inside GEX Walls</span>
+                        <span className="text-gray-400 ml-2">Protected zone</span>
+                      </div>
+                      <code className="bg-green-900/30 text-green-300 px-3 py-1 rounded font-mono text-sm">
+                        win_probability += 3%
+                      </code>
+                    </div>
+                    <div className="flex items-center justify-between border-b border-gray-700 pb-2">
+                      <div>
+                        <span className="text-yellow-400 font-bold">Near Wall (&lt;0.5%)</span>
+                        <span className="text-gray-400 ml-2">Breakout risk</span>
+                      </div>
+                      <code className="bg-yellow-900/30 text-yellow-300 px-3 py-1 rounded font-mono text-sm">
+                        win_probability -= 5%
+                      </code>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-red-400 font-bold">Outside Walls</span>
+                        <span className="text-gray-400 ml-2">Unprotected</span>
+                      </div>
+                      <code className="bg-red-900/30 text-red-300 px-3 py-1 rounded font-mono text-sm">
+                        win_probability -= 3%
+                      </code>
+                    </div>
+                  </div>
+                </div>
+
+                {/* SD Multiplier Logic */}
+                <div className="mb-8">
+                  <h4 className="text-md font-semibold text-purple-400 mb-3 flex items-center gap-2">
+                    <Crosshair className="w-4 h-4" />
+                    Strike Distance (SD Multiplier)
+                  </h4>
+                  <div className="bg-gray-900/50 rounded-lg p-4 space-y-3">
+                    <div className="flex items-center justify-between border-b border-gray-700 pb-2">
+                      <div>
+                        <span className="text-green-400 font-bold">High Confidence</span>
+                        <span className="text-gray-400 ml-2">win_prob ≥ 70%</span>
+                      </div>
+                      <code className="bg-green-900/30 text-green-300 px-3 py-1 rounded font-mono text-sm">
+                        SD = 1.0 (at expected move)
+                      </code>
+                    </div>
+                    <div className="flex items-center justify-between border-b border-gray-700 pb-2">
+                      <div>
+                        <span className="text-yellow-400 font-bold">Medium Confidence</span>
+                        <span className="text-gray-400 ml-2">60% ≤ win_prob &lt; 70%</span>
+                      </div>
+                      <code className="bg-yellow-900/30 text-yellow-300 px-3 py-1 rounded font-mono text-sm">
+                        SD = 1.1 (wider strikes)
+                      </code>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-red-400 font-bold">Low Confidence</span>
+                        <span className="text-gray-400 ml-2">win_prob &lt; 60%</span>
+                      </div>
+                      <code className="bg-red-900/30 text-red-300 px-3 py-1 rounded font-mono text-sm">
+                        SD = 1.2 (widest strikes)
+                      </code>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Hallucination Risk Penalties */}
+                <div className="mb-8">
+                  <h4 className="text-md font-semibold text-orange-400 mb-3 flex items-center gap-2">
+                    <ShieldAlert className="w-4 h-4" />
+                    Claude Hallucination Risk Penalties
+                  </h4>
+                  <div className="bg-gray-900/50 rounded-lg p-4 space-y-3">
+                    <div className="flex items-center justify-between border-b border-gray-700 pb-2">
+                      <div>
+                        <span className="text-red-400 font-bold">HIGH Risk</span>
+                        <span className="text-gray-400 ml-2">Unreliable analysis</span>
+                      </div>
+                      <code className="bg-red-900/30 text-red-300 px-3 py-1 rounded font-mono text-sm">
+                        win_probability -= 10%
+                      </code>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <span className="text-yellow-400 font-bold">MEDIUM Risk</span>
+                        <span className="text-gray-400 ml-2">Uncertain analysis</span>
+                      </div>
+                      <code className="bg-yellow-900/30 text-yellow-300 px-3 py-1 rounded font-mono text-sm">
+                        win_probability -= 5%
+                      </code>
+                    </div>
+                  </div>
+                </div>
+
+                {/* ML Feature Columns */}
+                <div className="mb-8">
+                  <h4 className="text-md font-semibold text-indigo-400 mb-3 flex items-center gap-2">
+                    <Brain className="w-4 h-4" />
+                    ML Model Features
+                  </h4>
+                  <div className="bg-gray-900/50 rounded-lg p-4">
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+                      {[
+                        'vix', 'vix_percentile_30d', 'vix_change_1d',
+                        'day_of_week', 'hour', 'days_to_expiry',
+                        'gex_normalized', 'gex_regime_encoded', 'put_wall_distance',
+                        'call_wall_distance', 'is_between_walls'
+                      ].map((feature) => (
+                        <code key={feature} className="bg-indigo-900/30 text-indigo-300 px-2 py-1 rounded text-xs font-mono">
+                          {feature}
+                        </code>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* ATHENA Direction Override */}
+                <div className="mb-8">
+                  <h4 className="text-md font-semibold text-pink-400 mb-3 flex items-center gap-2">
+                    <Zap className="w-4 h-4" />
+                    ATHENA Oracle Direction Override
+                  </h4>
+                  <div className="bg-gray-900/50 rounded-lg p-4">
+                    <code className="block bg-pink-900/30 text-pink-300 p-4 rounded font-mono text-sm mb-3">
+                      IF oracle_confidence ≥ 85% AND oracle_win_prob ≥ 60%{'\n'}
+                      THEN use Oracle direction instead of wall direction
+                    </code>
+                    <p className="text-sm text-gray-400">
+                      Oracle can override wall-based direction when it has very high confidence in its prediction.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Top Factors Adjustments */}
+                <div>
+                  <h4 className="text-md font-semibold text-emerald-400 mb-3 flex items-center gap-2">
+                    <Activity className="w-4 h-4" />
+                    Top Factors Confidence Adjustments
+                  </h4>
+                  <div className="bg-gray-900/50 rounded-lg p-4 space-y-3">
+                    <div className="border-b border-gray-700 pb-2">
+                      <span className="text-emerald-400 font-bold">VIX Factor High Importance (&gt;20%)</span>
+                      <div className="text-sm text-gray-400 mt-1 space-y-1">
+                        <p>• VIX &gt; 25: <code className="bg-red-900/30 text-red-300 px-1 rounded">-up to 8%</code></p>
+                        <p>• VIX &lt; 14: <code className="bg-green-900/30 text-green-300 px-1 rounded">+up to 5%</code></p>
+                      </div>
+                    </div>
+                    <div className="border-b border-gray-700 pb-2">
+                      <span className="text-emerald-400 font-bold">GEX Regime Factor High Importance (&gt;15%)</span>
+                      <div className="text-sm text-gray-400 mt-1 space-y-1">
+                        <p>• NEGATIVE regime: <code className="bg-red-900/30 text-red-300 px-1 rounded">-5%</code> (for ICs)</p>
+                        <p>• POSITIVE regime: <code className="bg-green-900/30 text-green-300 px-1 rounded">+3%</code></p>
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-emerald-400 font-bold">Day of Week Factor High Importance (&gt;15%)</span>
+                      <div className="text-sm text-gray-400 mt-1 space-y-1">
+                        <p>• Monday/Tuesday: <code className="bg-green-900/30 text-green-300 px-1 rounded">+3%</code></p>
+                        <p>• Friday: <code className="bg-red-900/30 text-red-300 px-1 rounded">-3%</code></p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Info Section - All 6 Trading Bots */}
+          <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <div className="card bg-red-500/5 border border-red-500/20">
               <div className="flex items-start gap-3">
                 <Bot className="w-5 h-5 text-red-400 flex-shrink-0 mt-1" />
                 <div>
                   <h3 className="font-semibold text-text-primary mb-1">ARES</h3>
-                  <p className="text-text-secondary text-sm">0DTE Iron Condors with GEX-protected strikes</p>
+                  <p className="text-text-secondary text-sm">0DTE SPY Iron Condors with GEX-protected strikes</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="card bg-cyan-500/5 border border-cyan-500/20">
+              <div className="flex items-start gap-3">
+                <Bot className="w-5 h-5 text-cyan-400 flex-shrink-0 mt-1" />
+                <div>
+                  <h3 className="font-semibold text-text-primary mb-1">ATHENA</h3>
+                  <p className="text-text-secondary text-sm">GEX-based directional spreads trading</p>
                 </div>
               </div>
             </div>
@@ -1709,8 +2289,28 @@ export default function OraclePage() {
               <div className="flex items-start gap-3">
                 <Bot className="w-5 h-5 text-blue-400 flex-shrink-0 mt-1" />
                 <div>
+                  <h3 className="font-semibold text-text-primary mb-1">PEGASUS</h3>
+                  <p className="text-text-secondary text-sm">SPX Iron Condors with Oracle intelligence</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="card bg-rose-500/5 border border-rose-500/20">
+              <div className="flex items-start gap-3">
+                <Bot className="w-5 h-5 text-rose-400 flex-shrink-0 mt-1" />
+                <div>
+                  <h3 className="font-semibold text-text-primary mb-1">PHOENIX</h3>
+                  <p className="text-text-secondary text-sm">Momentum continuation with GEX-confirmed bias</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="card bg-indigo-500/5 border border-indigo-500/20">
+              <div className="flex items-start gap-3">
+                <Bot className="w-5 h-5 text-indigo-400 flex-shrink-0 mt-1" />
+                <div>
                   <h3 className="font-semibold text-text-primary mb-1">ATLAS</h3>
-                  <p className="text-text-secondary text-sm">Wheel strategy for consistent premium</p>
+                  <p className="text-text-secondary text-sm">Mean-reversion trading at key GEX levels</p>
                 </div>
               </div>
             </div>
@@ -1719,18 +2319,18 @@ export default function OraclePage() {
               <div className="flex items-start gap-3">
                 <Bot className="w-5 h-5 text-orange-400 flex-shrink-0 mt-1" />
                 <div>
-                  <h3 className="font-semibold text-text-primary mb-1">PHOENIX</h3>
-                  <p className="text-text-secondary text-sm">Directional calls for momentum plays</p>
+                  <h3 className="font-semibold text-text-primary mb-1">ICARUS</h3>
+                  <p className="text-text-secondary text-sm">Aggressive GEX-based directional spreads</p>
                 </div>
               </div>
             </div>
 
-            <div className="card bg-purple-500/5 border border-purple-500/20">
+            <div className="card bg-teal-500/5 border border-teal-500/20">
               <div className="flex items-start gap-3">
-                <Bot className="w-5 h-5 text-purple-400 flex-shrink-0 mt-1" />
+                <Bot className="w-5 h-5 text-teal-400 flex-shrink-0 mt-1" />
                 <div>
-                  <h3 className="font-semibold text-text-primary mb-1">ATHENA</h3>
-                  <p className="text-text-secondary text-sm">Pattern recognition and signals</p>
+                  <h3 className="font-semibold text-text-primary mb-1">TITAN</h3>
+                  <p className="text-text-secondary text-sm">Aggressive SPX Iron Condors with $12 spreads</p>
                 </div>
               </div>
             </div>

@@ -32,6 +32,7 @@ class PositionStatus(Enum):
     OPEN = "open"
     CLOSED = "closed"
     EXPIRED = "expired"
+    PARTIAL_CLOSE = "partial_close"  # One leg closed, other failed - needs manual intervention
 
 
 @dataclass
@@ -73,6 +74,7 @@ class SpreadPosition:
 
     # Oracle/ML context (FULL for audit)
     oracle_confidence: float = 0.0
+    oracle_advice: str = ""  # TRADE_FULL, TRADE_REDUCED, SKIP_TODAY
     ml_direction: str = ""
     ml_confidence: float = 0.0
     ml_model_name: str = ""
@@ -162,24 +164,39 @@ class ATHENAConfig:
     Loaded from database, with sensible defaults.
     """
     # Risk limits
+    capital: float = 100000.0  # Paper trading capital
     risk_per_trade_pct: float = 2.0
     max_daily_trades: int = 5
     max_open_positions: int = 3
 
-    # Strategy params
+    # Strategy params (aligned with Apache GEX backtest optimal settings)
     ticker: str = "SPY"
     spread_width: int = 2  # $2 spreads
-    wall_filter_pct: float = 3.0  # Trade within 3% of GEX wall (was 0.5% - too restrictive)
-    min_rr_ratio: float = 1.5  # Min risk:reward
+    wall_filter_pct: float = 5.0  # Trade within 5% of GEX wall (relaxed from 3% for more trades)
+    min_rr_ratio: float = 1.5  # Min risk:reward (need edge to be profitable)
+
+    # Win probability thresholds - aligned with Oracle's low_confidence_threshold (0.45)
+    # Using 0.50 as minimum to ensure positive expectancy while allowing more trades
+    min_win_probability: float = 0.50  # Minimum win probability to trade (50%)
+    min_confidence: float = 0.50  # Minimum signal confidence (50%)
+
+    # VIX filter (relaxed to allow more trading)
+    min_vix: float = 12.0  # Skip if VIX too low (was 15.0)
+    max_vix: float = 35.0  # Skip if VIX too high (was 25.0)
+
+    # GEX ratio asymmetry requirement (relaxed for more opportunities)
+    min_gex_ratio_bearish: float = 1.2  # GEX ratio > 1.2 for bearish (was 1.5)
+    max_gex_ratio_bullish: float = 0.85  # GEX ratio < 0.85 for bullish (was 0.67)
 
     # Exit rules
     profit_target_pct: float = 50.0  # Take profit at 50% of max
     stop_loss_pct: float = 50.0  # Stop at 50% of max loss
 
     # Trading window (Central Time)
+    # Market closes at 3:00 PM CT (4:00 PM ET)
     entry_start: str = "08:35"
     entry_end: str = "14:30"
-    force_exit: str = "15:55"
+    force_exit: str = "14:50"  # Force close 10 min before market close
 
     # Mode
     mode: TradingMode = TradingMode.PAPER
@@ -194,6 +211,61 @@ class ATHENAConfig:
                     value = TradingMode(value)
                 setattr(config, key, value)
         return config
+
+    def validate(self) -> tuple[bool, str]:
+        """
+        Validate configuration values.
+
+        Returns: (is_valid, error_message)
+        """
+        errors = []
+
+        # Capital validation
+        if self.capital <= 0:
+            errors.append(f"capital must be > 0, got {self.capital}")
+
+        # Risk validation
+        if self.risk_per_trade_pct <= 0 or self.risk_per_trade_pct > 100:
+            errors.append(f"risk_per_trade_pct must be 0-100, got {self.risk_per_trade_pct}")
+
+        # Trade limits
+        if self.max_daily_trades <= 0:
+            errors.append(f"max_daily_trades must be > 0, got {self.max_daily_trades}")
+        if self.max_open_positions <= 0:
+            errors.append(f"max_open_positions must be > 0, got {self.max_open_positions}")
+
+        # Spread width
+        if self.spread_width <= 0:
+            errors.append(f"spread_width must be > 0, got {self.spread_width}")
+
+        # Exit rules
+        if self.profit_target_pct <= 0 or self.profit_target_pct > 100:
+            errors.append(f"profit_target_pct must be 0-100, got {self.profit_target_pct}")
+        if self.stop_loss_pct <= 0 or self.stop_loss_pct > 100:
+            errors.append(f"stop_loss_pct must be 0-100, got {self.stop_loss_pct}")
+
+        # Time format validation
+        def validate_time(time_str: str, field_name: str):
+            try:
+                parts = time_str.split(':')
+                if len(parts) != 2:
+                    return f"{field_name} must be HH:MM format, got {time_str}"
+                hour, minute = int(parts[0]), int(parts[1])
+                if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                    return f"{field_name} has invalid time values: {time_str}"
+            except (ValueError, AttributeError):
+                return f"{field_name} must be HH:MM format, got {time_str}"
+            return None
+
+        for field, value in [('entry_start', self.entry_start),
+                             ('entry_end', self.entry_end),
+                             ('force_exit', self.force_exit)]:
+            if err := validate_time(value, field):
+                errors.append(err)
+
+        if errors:
+            return False, "; ".join(errors)
+        return True, ""
 
 
 @dataclass
@@ -251,10 +323,17 @@ class TradeSignal:
 
     @property
     def is_valid(self) -> bool:
-        """Check if signal passes basic validation"""
+        """Check if signal passes basic validation (Apache backtest thresholds)"""
+        # ORACLE IS GOD: When Oracle says TRADE, nothing blocks it
+        oracle_approved = self.oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
+
+        if oracle_approved:
+            # Only check basic strike validity when Oracle approves
+            return self.max_profit > 0 and self.long_strike > 0 and self.short_strike > 0
+
         return (
-            self.confidence > 0.5 and
-            self.rr_ratio >= 1.5 and
+            self.confidence >= 0.55 and  # 55% confidence minimum
+            self.rr_ratio >= 1.5 and  # 1.5:1 R:R minimum for edge
             self.max_profit > 0 and
             self.long_strike > 0 and
             self.short_strike > 0

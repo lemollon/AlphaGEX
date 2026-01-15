@@ -116,41 +116,46 @@ class OptionsDataFetcher:
         """
         if spot is None:
             spot = self.spot_price
-            
+
         option_data = option_data.copy()
-        
+
         # Calculate moneyness
         option_data['moneyness'] = option_data['strike'] / spot
-        
-        # Simplified gamma calculation based on moneyness and DTE
-        # Gamma is highest ATM and decreases as we move away
-        for idx, row in option_data.iterrows():
-            strike = row['strike']
-            dte = row.get('dte', 5)
-            iv = row.get('impliedVolatility', 0.20)
-            
-            # Distance from ATM
-            atm_distance = abs(1 - row['moneyness'])
-            
-            # Simplified gamma: highest at ATM, decreases with distance
-            # Also decreases with time (gamma is highest near expiration)
-            base_gamma = 0.05 * np.exp(-atm_distance * 10)  # Peak at ATM
-            time_factor = 1 / np.sqrt(max(dte, 0.5))  # Increases as expiration approaches
-            vol_factor = 1 / max(iv, 0.1)  # Higher vol = lower gamma
-            
-            gamma = base_gamma * time_factor * vol_factor * 0.01  # Scale down
-            option_data.at[idx, 'gamma'] = gamma
-            
-            # Calculate other Greeks (simplified)
-            if row.get('optionType') == 'call':
-                delta = 0.5 + 0.5 * stats.norm.cdf((np.log(spot/strike) + 0.5*iv**2*dte/365) / (iv*np.sqrt(dte/365)))
-            else:
-                delta = -0.5 + 0.5 * stats.norm.cdf((np.log(spot/strike) + 0.5*iv**2*dte/365) / (iv*np.sqrt(dte/365)))
-            
-            option_data.at[idx, 'delta'] = delta
-            option_data.at[idx, 'theta'] = -0.01 * gamma * spot * iv  # Simplified theta
-            option_data.at[idx, 'vega'] = 0.01 * gamma * spot * np.sqrt(dte/365)  # Simplified vega
-        
+
+        # PERFORMANCE FIX: Vectorized Greeks calculation (was using iterrows)
+        # Get arrays for vectorized computation
+        strikes = option_data['strike'].values
+        dte_values = option_data.get('dte', pd.Series([5] * len(option_data))).fillna(5).values
+        iv_values = option_data.get('impliedVolatility', pd.Series([0.20] * len(option_data))).fillna(0.20).values
+        moneyness = option_data['moneyness'].values
+        option_types = option_data.get('optionType', pd.Series(['call'] * len(option_data))).values
+
+        # Distance from ATM (vectorized)
+        atm_distance = np.abs(1 - moneyness)
+
+        # Simplified gamma: highest at ATM, decreases with distance (vectorized)
+        base_gamma = 0.05 * np.exp(-atm_distance * 10)  # Peak at ATM
+        time_factor = 1 / np.sqrt(np.maximum(dte_values, 0.5))  # Increases as expiration approaches
+        vol_factor = 1 / np.maximum(iv_values, 0.1)  # Higher vol = lower gamma
+
+        gamma_values = base_gamma * time_factor * vol_factor * 0.01  # Scale down
+        option_data['gamma'] = gamma_values
+
+        # Delta calculation (vectorized)
+        # d1 = (ln(S/K) + 0.5*σ²*T) / (σ*√T)
+        sqrt_dte = np.sqrt(np.maximum(dte_values, 0.5) / 365)
+        d1 = (np.log(spot / strikes) + 0.5 * iv_values**2 * dte_values / 365) / (iv_values * sqrt_dte)
+
+        # Delta depends on option type (vectorized)
+        is_call = np.array([ot == 'call' for ot in option_types])
+        delta_call = 0.5 + 0.5 * stats.norm.cdf(d1)
+        delta_put = -0.5 + 0.5 * stats.norm.cdf(d1)
+        delta_values = np.where(is_call, delta_call, delta_put)
+
+        option_data['delta'] = delta_values
+        option_data['theta'] = -0.01 * gamma_values * spot * iv_values  # Simplified theta (vectorized)
+        option_data['vega'] = 0.01 * gamma_values * spot * sqrt_dte  # Simplified vega (vectorized)
+
         return option_data
     
     def get_options_chain(self, days_to_expiry: int = 30, max_retries: int = 3) -> pd.DataFrame:

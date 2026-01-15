@@ -87,6 +87,10 @@ class StrikeData:
     gamma_change_pct: float = 0.0
     roc_1min: float = 0.0
     roc_5min: float = 0.0
+    roc_30min: float = 0.0
+    roc_1hr: float = 0.0
+    roc_4hr: float = 0.0
+    roc_trading_day: float = 0.0  # ROC since market open (8:30 AM CT)
     volume: int = 0
     call_iv: float = 0.0
     put_iv: float = 0.0
@@ -469,7 +473,7 @@ class ArgusEngine:
             strike: Strike price
             current_gamma: Current gamma value
             history: List of (timestamp, gamma) tuples
-            minutes: Number of minutes to look back (1 or 5)
+            minutes: Number of minutes to look back (1, 5, 30, 60, 240)
 
         Returns:
             Rate of change as percentage
@@ -477,11 +481,17 @@ class ArgusEngine:
         if not history or len(history) < 2:
             return 0.0
 
-        # Find value from X minutes ago
-        target_time = datetime.now() - timedelta(minutes=minutes)
+        from zoneinfo import ZoneInfo
+        CENTRAL_TZ = ZoneInfo("America/Chicago")
+
+        # Find value from X minutes ago - use timezone-aware datetime
+        target_time = datetime.now(CENTRAL_TZ) - timedelta(minutes=minutes)
         old_gamma = None
 
         for timestamp, gamma in reversed(history):
+            # Handle timezone-aware comparison
+            if timestamp.tzinfo is None:
+                timestamp = timestamp.replace(tzinfo=CENTRAL_TZ)
             if timestamp <= target_time:
                 old_gamma = gamma
                 break
@@ -492,20 +502,70 @@ class ArgusEngine:
         roc = ((current_gamma - old_gamma) / abs(old_gamma)) * 100
         return round(roc, 2)
 
+    def calculate_roc_since_open(self, current_gamma: float,
+                                  history: List[Tuple[datetime, float]]) -> float:
+        """
+        Calculate rate of change since market open (8:30 AM CT).
+
+        Args:
+            current_gamma: Current gamma value
+            history: List of (timestamp, gamma) tuples
+
+        Returns:
+            Rate of change as percentage since market open
+        """
+        if not history or len(history) < 1:
+            return 0.0
+
+        from zoneinfo import ZoneInfo
+        CENTRAL_TZ = ZoneInfo("America/Chicago")
+        now = datetime.now(CENTRAL_TZ)
+
+        # Market open is 8:30 AM CT
+        market_open = now.replace(hour=8, minute=30, second=0, microsecond=0)
+
+        # If it's before market open today, no trading day ROC available
+        if now < market_open:
+            return 0.0
+
+        # Find the first gamma value after market open
+        open_gamma = None
+        for timestamp, gamma in history:
+            # Handle timezone-aware comparison
+            if timestamp.tzinfo is None:
+                timestamp = timestamp.replace(tzinfo=CENTRAL_TZ)
+            if timestamp >= market_open:
+                open_gamma = gamma
+                break
+
+        if open_gamma is None or open_gamma == 0:
+            return 0.0
+
+        roc = ((current_gamma - open_gamma) / abs(open_gamma)) * 100
+        return round(roc, 2)
+
     def update_history(self, strike: float, gamma: float, timestamp: datetime = None):
         """Update gamma history for a strike"""
+        from zoneinfo import ZoneInfo
+        CENTRAL_TZ = ZoneInfo("America/Chicago")
+
         if timestamp is None:
-            timestamp = datetime.now()
+            timestamp = datetime.now(CENTRAL_TZ)
+
+        # Ensure timestamp is timezone-aware
+        if timestamp.tzinfo is None:
+            timestamp = timestamp.replace(tzinfo=CENTRAL_TZ)
 
         if strike not in self.history:
             self.history[strike] = []
 
         self.history[strike].append((timestamp, gamma))
 
-        # Keep only last 30 minutes of history
-        cutoff = timestamp - timedelta(minutes=30)
+        # Keep history for full trading day (7 hours = 420 minutes to cover pre-market to close)
+        cutoff = timestamp - timedelta(minutes=420)
         self.history[strike] = [
-            (t, g) for t, g in self.history[strike] if t >= cutoff
+            (t, g) for t, g in self.history[strike]
+            if (t.replace(tzinfo=CENTRAL_TZ) if t.tzinfo is None else t) >= cutoff
         ]
 
     def identify_magnets(self, strikes: List[StrikeData], top_n: int = 3) -> List[Dict]:
@@ -779,7 +839,9 @@ class ArgusEngine:
         Returns:
             GammaSnapshot with all calculated metrics
         """
-        timestamp = datetime.now()
+        from zoneinfo import ZoneInfo
+        CENTRAL_TZ = ZoneInfo("America/Chicago")
+        timestamp = datetime.now(CENTRAL_TZ)
         market_status = self.get_market_status()
 
         # Extract strikes and calculate metrics
@@ -827,10 +889,14 @@ class ArgusEngine:
             # Update history for ROC calculation
             self.update_history(strike, net_gamma, timestamp)
 
-            # Calculate ROC
+            # Calculate ROC at multiple timeframes
             history = self.history.get(strike, [])
             roc_1min = self.calculate_roc(strike, net_gamma, history, minutes=1)
             roc_5min = self.calculate_roc(strike, net_gamma, history, minutes=5)
+            roc_30min = self.calculate_roc(strike, net_gamma, history, minutes=30)
+            roc_1hr = self.calculate_roc(strike, net_gamma, history, minutes=60)
+            roc_4hr = self.calculate_roc(strike, net_gamma, history, minutes=240)
+            roc_trading_day = self.calculate_roc_since_open(net_gamma, history)
 
             # Calculate gamma change percentage
             gamma_change_pct = 0
@@ -845,6 +911,10 @@ class ArgusEngine:
                 gamma_change_pct=round(gamma_change_pct, 2),
                 roc_1min=roc_1min,
                 roc_5min=roc_5min,
+                roc_30min=roc_30min,
+                roc_1hr=roc_1hr,
+                roc_4hr=roc_4hr,
+                roc_trading_day=roc_trading_day,
                 volume=strike_info.get('volume', 0),
                 call_iv=strike_info.get('call_iv', 0),
                 put_iv=strike_info.get('put_iv', 0),

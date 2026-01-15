@@ -32,6 +32,7 @@ import {
   LastScanSummary,
 } from '@/components/trader'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
+import DriftStatusCard from '@/components/DriftStatusCard'
 
 // ==============================================================================
 // INTERFACES
@@ -664,6 +665,9 @@ export default function AresPage() {
                   }).length}
                 />
 
+                {/* Performance Drift - Backtest vs Live */}
+                <DriftStatusCard botName="ARES" />
+
                 {/* Open Positions */}
                 <BotCard title="Open Positions" icon={<Crosshair className="h-5 w-5" />}>
                   {openPositions.length === 0 ? (
@@ -681,6 +685,7 @@ export default function AresPage() {
                 <EquityCurveChart
                   title="ARES Equity Curve"
                   botFilter="ARES"
+                  showIntradayOption={true}
                 />
               </>
             )}
@@ -826,7 +831,7 @@ export default function AresPage() {
                   </div>
                   <div className="bg-gray-800/50 rounded-lg p-4 col-span-2">
                     <span className="text-gray-500 text-sm block">Trading Window</span>
-                    <span className="text-xl font-bold text-white">{config?.entry_window || '08:30 - 15:30 CT'}</span>
+                    <span className="text-xl font-bold text-white">{config?.entry_window || '08:30 - 14:45 CT'}</span>
                   </div>
                 </div>
 

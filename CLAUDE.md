@@ -10,13 +10,13 @@ This document provides comprehensive context for AI assistants working with the 
 - Profitable Monday/Tuesday directional plays
 - Iron Condor timing optimization
 - Market regime classification (MOVE vs. DO NOTHING)
-- Automated trading via ARES, ATHENA, PHOENIX, and ATLAS bots
+- Automated trading via 8 specialized bots: ARES, ATHENA, TITAN, PEGASUS, ICARUS, PHOENIX, ATLAS, HERMES
 
 ### Key Metrics
-- ~183 Python files across multiple modules
-- 38+ API route modules with 100+ endpoints
-- 63 database tables for persistence
-- ~120,000 lines of Python code
+- ~590 Python files across multiple modules
+- 50 API route modules with 635+ endpoints
+- 49 database tables for persistence
+- ~300,000 lines of Python code
 
 ---
 
@@ -32,13 +32,17 @@ This document provides comprehensive context for AI assistants working with the 
                                   ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                      BACKEND (FastAPI)                           │
-│  Python 3.11 + PostgreSQL + 38 Route Modules                    │
+│  Python 3.11 + PostgreSQL + 50 Route Modules                    │
 │  Deployed: Render                                                │
 ├─────────────────────────────────────────────────────────────────┤
 │  BACKGROUND WORKERS (Render)                                     │
-│  - alphagex-trader: ARES, ATHENA, PHOENIX, ATLAS bots           │
+│  - alphagex-trader: All 8 trading bots                          │
 │  - alphagex-collector: Automated data collection                 │
 │  - alphagex-backtester: Long-running backtest jobs              │
+├─────────────────────────────────────────────────────────────────┤
+│  ML ADVISORY LAYER                                               │
+│  - SAGE: XGBoost ML probability predictions                     │
+│  - Oracle: Primary decision maker for all bots                  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -49,16 +53,21 @@ This document provides comprehensive context for AI assistants working with the 
 ```
 AlphaGEX/
 ├── backend/                    # FastAPI backend API
-│   ├── main.py                 # Entry point (74K lines)
+│   ├── main.py                 # Entry point (~2K lines)
 │   ├── api/
-│   │   ├── routes/             # 38 route modules
+│   │   ├── routes/             # 50 route modules
 │   │   │   ├── core_routes.py      # Health, time endpoints
 │   │   │   ├── gex_routes.py       # GEX data endpoints
 │   │   │   ├── gamma_routes.py     # Gamma analysis
-│   │   │   ├── ares_routes.py      # Iron Condor bot
-│   │   │   ├── athena_routes.py    # Directional spreads bot
+│   │   │   ├── ares_routes.py      # ARES Iron Condor bot
+│   │   │   ├── athena_routes.py    # ATHENA Directional spreads
+│   │   │   ├── titan_routes.py     # TITAN Aggressive IC bot
+│   │   │   ├── oracle_routes.py    # Oracle ML advisory
+│   │   │   ├── ml_routes.py        # SAGE ML endpoints
+│   │   │   ├── logs_routes.py      # Unified logging (22+ tables)
+│   │   │   ├── data_transparency_routes.py  # Hidden data exposure
 │   │   │   ├── trader_routes.py    # Trading operations
-│   │   │   └── ...                 # 32 more route files
+│   │   │   └── ...                 # 37 more route files
 │   │   ├── dependencies.py     # Shared API dependencies
 │   │   └── utils.py            # API utilities
 │   ├── services/               # Background services
@@ -67,14 +76,19 @@ AlphaGEX/
 │
 ├── frontend/                   # Next.js React frontend
 │   ├── src/
-│   │   ├── app/                # Next.js App Router (40+ pages)
+│   │   ├── app/                # Next.js App Router (50+ pages)
 │   │   │   ├── page.tsx            # Dashboard home
 │   │   │   ├── ares/               # ARES Iron Condor page
 │   │   │   ├── athena/             # ATHENA spreads page
+│   │   │   ├── titan/              # TITAN Aggressive IC page
+│   │   │   ├── pegasus/            # PEGASUS Weekly IC page
+│   │   │   ├── icarus/             # ICARUS Aggressive Directional
+│   │   │   ├── sage/               # SAGE ML Advisor dashboard
 │   │   │   ├── oracle/             # Oracle predictions
+│   │   │   ├── gamma/0dte/         # 0DTE Gamma Expiration Tracker
 │   │   │   ├── argus/              # Real-time gamma viz
 │   │   │   ├── gex/                # GEX analysis
-│   │   │   └── ...                 # 35+ more pages
+│   │   │   └── ...                 # 32+ more pages
 │   │   ├── components/         # Reusable React components
 │   │   ├── hooks/              # Custom React hooks
 │   │   └── lib/
@@ -83,33 +97,54 @@ AlphaGEX/
 │   ├── package.json            # npm dependencies
 │   └── tailwind.config.ts      # Tailwind CSS config
 │
-├── core/                       # Core trading logic (670K lines total)
-│   ├── autonomous_paper_trader.py  # Main trader (125K)
-│   ├── intelligence_and_strategies.py  # AI strategies (142K)
-│   ├── psychology_trap_detector.py    # Psychology system (109K)
-│   ├── market_regime_classifier.py    # Regime detection (46K)
-│   ├── probability_calculator.py      # Probability engine (30K)
+├── core/                       # Core trading logic (~21K lines total)
+│   ├── autonomous_paper_trader.py  # Main trader (~2.8K)
+│   ├── intelligence_and_strategies.py  # AI strategies (~3.4K)
+│   ├── psychology_trap_detector.py    # Psychology system (~2.6K)
+│   ├── market_regime_classifier.py    # Regime detection (~1.2K)
+│   ├── probability_calculator.py      # Probability engine (~800)
 │   └── ...
 │
 ├── trading/                    # Trading execution
-│   ├── ares_iron_condor.py     # ARES bot (181K)
-│   ├── athena_directional_spreads.py  # ATHENA bot (187K)
-│   ├── wheel_strategy.py       # SPX Wheel strategy
+│   ├── ares_v2/                # ARES Iron Condor bot (~5K lines)
+│   │   ├── trader.py               # ARESTrader class
+│   │   ├── models.py               # ARESConfig
+│   │   ├── db.py                   # ARESDatabase
+│   │   ├── executor.py             # Order execution
+│   │   └── signals.py              # Signal generation
+│   ├── athena_v2/              # ATHENA Directional Spreads bot (~4.4K lines)
+│   │   └── (same structure as ares_v2)
+│   ├── titan/                  # TITAN Aggressive IC bot
+│   │   └── (same structure as ares_v2)
+│   ├── pegasus/                # PEGASUS Weekly IC bot
+│   │   └── (same structure as ares_v2)
+│   ├── icarus/                 # ICARUS Aggressive Directional bot
+│   │   └── (same structure as ares_v2)
+│   ├── spx_wheel_system.py     # SPX Wheel strategy (ATLAS)
+│   ├── wheel_strategy.py       # Wheel strategy base
 │   ├── risk_management.py      # Risk controls
-│   ├── circuit_breaker.py      # Trading circuit breaker
+│   ├── circuit_breaker.py      # DEPRECATED - use solomon_enhancements
 │   └── mixins/                 # Trading behavior mixins
 │
-├── ai/                         # AI/ML integration
-│   ├── gexis_personality.py    # GEXIS AI personality
+├── ai/                         # AI/ML integration (~5.2K lines GEXIS)
+│   ├── gexis_*.py              # GEXIS AI assistant (9 modules)
+│   │   ├── gexis_personality.py    # Core identity, J.A.R.V.I.S. persona
+│   │   ├── gexis_tools.py          # 17 agentic tools
+│   │   ├── gexis_knowledge.py      # System knowledge base
+│   │   ├── gexis_commands.py       # Slash commands
+│   │   ├── gexis_learning_memory.py # Prediction tracking
+│   │   └── gexis_*.py              # Cache, rate limiter, tracing
 │   ├── langchain_*.py          # LangChain integrations
 │   ├── ai_strategy_optimizer.py    # Strategy optimization
 │   └── ai_trade_advisor.py     # Trade recommendations
 │
 ├── quant/                      # Quantitative analysis
-│   ├── oracle_advisor.py       # Oracle predictions (132K)
+│   ├── oracle_advisor.py       # Oracle predictions (~5.2K lines)
+│   ├── solomon_enhancements.py # Circuit breaker replacement
 │   ├── gex_probability_models.py   # GEX ML models
 │   ├── monte_carlo_kelly.py    # Kelly criterion
-│   └── ml_regime_classifier.py # ML regime detection
+│   ├── ml_regime_classifier.py # DEPRECATED - Oracle handles regime
+│   └── ensemble_strategy.py    # DEPRECATED - Oracle is sole authority
 │
 ├── data/                       # Data providers
 │   ├── unified_data_provider.py    # Tradier/Polygon unified
@@ -135,7 +170,7 @@ AlphaGEX/
 ├── scheduler/                  # Background job schedulers
 │   └── trader_scheduler.py     # Bot scheduling
 │
-├── scripts/                    # Utility scripts (130+ files)
+├── scripts/                    # Utility scripts (170+ files)
 │   ├── test_*.py               # Test scripts
 │   ├── train_*.py              # ML training scripts
 │   └── verify_*.py             # Verification scripts
@@ -159,16 +194,16 @@ AlphaGEX/
 ## Tech Stack
 
 ### Backend
-- **Framework**: FastAPI 0.104+
+- **Framework**: FastAPI 0.115+
 - **Python**: 3.11
 - **Database**: PostgreSQL (via psycopg2)
-- **AI/ML**: LangChain, Anthropic Claude, scikit-learn, XGBoost
+- **AI/ML**: LangChain 0.3+, Anthropic Claude, scikit-learn, XGBoost 2.x
 - **Data Sources**: Tradier (primary), Polygon.io (fallback), TradingVolatility API
 
 ### Frontend
-- **Framework**: Next.js 14 (App Router)
+- **Framework**: Next.js 14.2 (App Router)
 - **React**: 18.2
-- **Language**: TypeScript 5.3
+- **Language**: TypeScript 5.7
 - **Styling**: Tailwind CSS 3.4
 - **State Management**: SWR for data fetching
 - **Charts**: Recharts, Plotly.js, Lightweight Charts
@@ -274,25 +309,254 @@ CORS_ORIGINS=https://your-frontend.vercel.app
 
 ## Key Trading Bots
 
-### ARES - Aggressive Iron Condor
-- **Schedule**: 8:30 AM - 3:30 PM CT, every 5 min, once daily
-- **Strategy**: Iron Condor with dynamic strike selection
-- **Files**: `trading/ares_iron_condor.py`, `backend/api/routes/ares_routes.py`
+AlphaGEX operates 8 specialized trading bots, all advised by the Oracle ML system:
 
-### ATHENA - Directional Spreads
-- **Schedule**: 8:35 AM - 2:30 PM CT, every 5 min, max 5/day
-- **Strategy**: GEX-based directional spreads
-- **Files**: `trading/athena_directional_spreads.py`, `backend/api/routes/athena_routes.py`
+### ARES - Aggressive Iron Condor (SPY 0DTE) ✓ LIVE
+- **Schedule**: 8:30 AM - 3:30 PM CT, every 5 min
+- **Strategy**: Iron Condor with dynamic strike selection on SPY
+- **Files**: `trading/ares_v2/`, `backend/api/routes/ares_routes.py`
+- **29 API endpoints** - Most mature bot
 
-### PHOENIX - 0DTE Options
-- **Schedule**: Hourly during market hours
-- **Strategy**: 0DTE SPY/SPX options
-- **Files**: Various in `trading/` and `backtest/`
+### ATHENA - Directional Spreads ✓ LIVE
+- **Schedule**: 8:35 AM - 2:30 PM CT, every 5 min
+- **Strategy**: GEX-based directional spreads on SPY
+- **Files**: `trading/athena_v2/`, `backend/api/routes/athena_routes.py`
+- **21 API endpoints**
 
-### ATLAS - SPX Wheel
+### TITAN - Aggressive SPX Iron Condor ✓ LIVE
+- **Schedule**: Multiple trades daily with 30-min cooldown
+- **Strategy**: Aggressive Iron Condor on SPX with tighter parameters
+- **Parameters**: 15% risk/trade (vs 10%), 40% min win prob (vs 50%), 0.8 SD strikes
+- **Files**: `trading/titan/`, `backend/api/routes/titan_routes.py`
+
+### PEGASUS - SPX Weekly Iron Condor ✓ LIVE
+- **Schedule**: Every 5 min during market hours
+- **Strategy**: Standard SPX Iron Condor, more conservative than TITAN
+- **Files**: `trading/pegasus/`, `backend/api/routes/pegasus_routes.py`
+
+### ICARUS - Aggressive Directional ✓ LIVE
+- **Schedule**: Every 5 min during market hours
+- **Strategy**: Aggressive directional variant of ATHENA on SPY
+- **Files**: `trading/icarus/`, `backend/api/routes/icarus_routes.py`
+
+### PHOENIX - 0DTE Options ⚠️ PAPER (Partial Implementation)
+- **Schedule**: Every 5 min during market hours
+- **Strategy**: 0DTE SPY/SPX options via AutonomousPaperTrader
+- **Files**: `core/autonomous_paper_trader.py`
+- **Note**: No dedicated API routes - uses internal trading logic only
+
+### ATLAS - SPX Wheel ⚠️ LIVE (Partial Implementation)
 - **Schedule**: Daily at 9:05 AM CT
 - **Strategy**: SPX Wheel premium collection
 - **Files**: `trading/spx_wheel_system.py`, `trading/wheel_strategy.py`
+- **Note**: No dedicated API routes - scheduled but lacks full API integration
+
+### HERMES - Manual Wheel Manager (Not Automated)
+- **Type**: Manual UI-driven bot, not scheduled
+- **Strategy**: Manual wheel strategy management via frontend
+- **Note**: No routes file - this is by design as a UI-only tool
+
+---
+
+## ML Advisory Systems
+
+### Oracle - Primary Decision Maker
+The Oracle is the central ML advisory system that all trading bots consult before taking positions.
+
+- **Role**: Strategy recommendation (IC vs Directional), win probability estimation
+- **Inputs**: SAGE predictions, market regime, VIX levels, GEX data
+- **Staleness Monitoring**: Tracks `hours_since_training`, `is_model_fresh`, `model_trained_at`
+- **Training Sources**: Live outcomes → Database backtests → KRONOS data
+- **Files**: `quant/oracle_advisor.py`, `backend/api/routes/oracle_routes.py`
+
+### SAGE - Strategic Algorithmic Guidance Engine
+XGBoost-based ML system that feeds probability predictions into Oracle.
+
+- **Model**: XGBoost classifier for trade outcome prediction
+- **Training Data**: KRONOS backtests, live trade outcomes
+- **Features Used**:
+  - Volatility: VIX, VIX percentile, VIX change, expected move
+  - GEX: Regime, normalized value, distance to flip point
+  - Timing: Day of week, price change, 30-day win rate
+- **Capabilities**: Favorable condition identification, position sizing adjustment, calibrated probabilities
+- **Limitations**: Cannot predict black swans, does not replace risk management
+- **Files**: `backend/api/routes/ml_routes.py` (SAGE endpoints)
+- **Dashboard**: `/sage` page with 6 tabs (Overview, Predictions, Features, Performance, Decision Logs, Training)
+
+### GEXIS - AI Trading Assistant
+J.A.R.V.I.S.-style AI chatbot providing decision support throughout the platform (~5.2K lines).
+
+- **Personality**: Time-aware greetings, Central Time, professional demeanor, "Optionist Prime" user
+- **Files** (9 core modules in `ai/`):
+  - `gexis_personality.py` - Core identity and prompts
+  - `gexis_tools.py` - 17 agentic tools (database, market data, bot control)
+  - `gexis_knowledge.py` - Knowledge base (49 database tables documented)
+  - `gexis_commands.py` - Slash commands (`/market-hours`, `/suggestion`, `/risk`)
+  - `gexis_learning_memory.py` - Self-improving prediction accuracy tracking
+  - `gexis_extended_thinking.py` - Claude Extended Thinking for complex analysis
+  - `gexis_cache.py` - TTL-based caching (60s market, 30s positions)
+  - `gexis_rate_limiter.py` - Token bucket rate limiting
+  - `gexis_tracing.py` - Request tracing and telemetry
+- **Frontend**: `FloatingChatbot.tsx` (1.1K lines) - Streaming chat widget
+- **API Routes**: `backend/api/routes/ai_routes.py` - 35+ endpoints
+- **Capabilities**:
+  - Real-time market data and bot status queries
+  - Bot control with 2-minute confirmation windows
+  - Trade opportunity analysis with extended thinking
+  - Economic calendar integration (NFP, CPI, FOMC)
+  - Learning from prediction outcomes by market regime
+  - Conversation export (markdown/JSON)
+
+---
+
+## Deprecated Systems (January 2025)
+
+The following systems have been deprecated in favor of **Oracle as the sole decision authority**:
+
+### Circuit Breaker → Solomon Enhancements
+- **Old**: `trading/circuit_breaker.py`
+- **New**: `quant/solomon_enhancements.py`
+- **Reason**: Solomon provides all CircuitBreaker functionality PLUS consecutive loss monitoring, daily loss monitoring, cross-bot correlation tracking, and A/B testing
+
+### Ensemble Strategy (DEAD CODE)
+- **File**: `quant/ensemble_strategy.py`
+- **Status**: All methods return None/neutral values
+- **Reason**: "Oracle is god" - weighted voting replaced by Oracle sole authority
+- **API stubs still exist**: `/api/quant/ensemble` endpoints return stub data
+
+### ML Regime Classifier (DISABLED)
+- **File**: `quant/ml_regime_classifier.py`
+- **Status**: File exists but training disabled in scheduler
+- **Reason**: "Only blocked trades unnecessarily" - Oracle handles regime decisions
+
+### GEX Directional ML (REMOVED)
+- **Status**: Removed from all bot signal files
+- **Reason**: Redundant with Oracle predictions
+
+### Kill Switch (REMOVED)
+- **Status**: Functionality removed from Solomon integration
+- **Note**: "Always allow trading" - Oracle controls trade frequency instead
+
+### Daily Trade Limits (REMOVED)
+- **Status**: Removed from ARES, ICARUS traders
+- **Note**: Oracle now decides trade frequency
+
+---
+
+## Dashboard Features
+
+### 0DTE Gamma Expiration Tracker (`/gamma/0dte`)
+Real-time 0DTE gamma analysis with actionable trading strategies.
+
+**Analysis Views**:
+1. **TODAY'S IMPACT** - Intraday trading opportunities
+   - Directional prediction (UPWARD/DOWNWARD/SIDEWAYS with probabilities)
+   - Current day gamma impact
+   - Fade the Close strategy (3:45pm entries)
+   - ATM Straddle into expiration
+
+2. **WEEKLY EVOLUTION** - Positional trading
+   - Weekly gamma structure with decay patterns
+   - Daily risk levels for entire week
+   - Aggressive Theta Farming (Mon-Wed)
+   - Delta Buying (Thu-Fri)
+
+3. **VOLATILITY CLIFFS** - Risk management by day
+   - Flip point calculations
+   - Call/put wall identification
+   - Pre-Expiration Volatility Scalp (Friday)
+   - Post-Expiration Directional Positioning
+
+**0DTE Straddle Playbook**:
+- Entry timing: 9:30-10:30 AM ET
+- Strike selection methodology
+- Exit rules with profit targets
+- Risk/reward calculations
+
+**Files**: `frontend/src/app/gamma/0dte/page.tsx` (715 lines)
+
+### ARGUS - Real-Time 0DTE Gamma Visualization (`/argus`)
+Named after the "all-seeing" giant with 100 eyes from Greek mythology. ARGUS provides real-time gamma analysis with comprehensive market structure signals.
+
+**Core Features**:
+- Real-time gamma visualization with per-strike data
+- Danger zone detection (BUILDING/COLLAPSING/SPIKE gamma)
+- Pin strike prediction with probability
+- Magnet identification (high gamma attractors)
+- Gamma regime tracking (POSITIVE/NEGATIVE/NEUTRAL)
+
+**Market Structure Panel** (9 signals comparing today vs prior day):
+
+| Signal | What It Shows | Trading Use |
+|--------|--------------|-------------|
+| **Flip Point** | RISING/FALLING/STABLE | Dealer repositioning - where support/resistance moved |
+| **±1 Std Bounds** | SHIFTED_UP/DOWN/STABLE/MIXED | Options market's price expectations |
+| **Range Width** | WIDENING/NARROWING/STABLE | Volatility expansion/contraction |
+| **Gamma Walls** | PUT CLOSER/CALL CLOSER/BALANCED | Asymmetric risk profile |
+| **Intraday Vol** | EXPANDING/CONTRACTING/STABLE | Real-time vol vs open |
+| **VIX Regime** | LOW/NORMAL/ELEVATED/HIGH/EXTREME | Sizing and strategy context |
+| **Gamma Regime** | MEAN_REVERSION/MOMENTUM | IC safety vs breakout reliability |
+| **GEX Momentum** | STRONG_BULLISH/FADING/etc | Dealer conviction direction |
+| **Wall Break Risk** | HIGH/ELEVATED/MODERATE/LOW | Imminent breakout warning |
+
+**Combined Signal Logic Matrix**:
+
+| Flip Point | Bounds | Width | Gamma Regime | Combined Signal |
+|------------|--------|-------|--------------|-----------------|
+| RISING | SHIFTED_UP | WIDENING | NEGATIVE | BULLISH_BREAKOUT (HIGH confidence) |
+| RISING | SHIFTED_UP | * | POSITIVE | BULLISH_GRIND (MEDIUM confidence) |
+| FALLING | SHIFTED_DOWN | WIDENING | NEGATIVE | BEARISH_BREAKOUT (HIGH confidence) |
+| FALLING | SHIFTED_DOWN | * | POSITIVE | BEARISH_GRIND (MEDIUM confidence) |
+| STABLE | STABLE | NARROWING | POSITIVE | SELL_PREMIUM (HIGH confidence) |
+| STABLE | STABLE | NARROWING | NEGATIVE | SELL_PREMIUM_CAUTION (LOW confidence) |
+| * | * | WIDENING | STABLE | VOL_EXPANSION_NO_DIRECTION |
+| RISING | SHIFTED_DOWN | * | * | DIVERGENCE_BULLISH_DEALERS |
+| FALLING | SHIFTED_UP | * | * | DIVERGENCE_BEARISH_DEALERS |
+
+**Wall Break Risk Logic**:
+```
+HIGH RISK = Distance <0.3% AND (gamma COLLAPSING at wall OR NEGATIVE regime)
+ELEVATED = Distance <0.3% OR (Distance <0.7% AND COLLAPSING)
+MODERATE = Distance 0.3-0.7%
+LOW = Distance >0.7%
+```
+
+When wall break is HIGH, it overrides other signals with `CALL_WALL_BREAK_IMMINENT` or `PUT_WALL_BREAK_IMMINENT`.
+
+**VIX Regime Thresholds**:
+- LOW: VIX < 15 (thin premiums, favor directional)
+- NORMAL: 15-22 (ideal for Iron Condors)
+- ELEVATED: 22-28 (widen IC strikes)
+- HIGH: 28-35 (reduce size 50%)
+- EXTREME: >35 (skip ICs, small directional only)
+
+**Key Thresholds**:
+- Flip point change: ±$2 or ±0.3% = significant
+- Bounds shift: ±$0.50 = significant
+- Width change: ±5% = significant
+- Intraday EM change: ±3% = significant
+
+**Files**:
+- Backend: `backend/api/routes/argus_routes.py` (~2K lines)
+- Frontend: `frontend/src/app/argus/page.tsx` (~2.5K lines)
+- Engine: `core/argus_engine.py` (~1K lines)
+
+**API Endpoints**:
+```
+GET  /api/argus/snapshot           # Full gamma snapshot with market structure
+GET  /api/argus/history            # Historical gamma for sparklines
+GET  /api/argus/danger-zones       # Active danger zone alerts
+GET  /api/argus/pattern-matching   # Historical pattern analysis
+POST /api/argus/commentary         # Generate AI commentary
+```
+
+### Key Dashboard Components
+- `SAGEStatusWidget.tsx` - ML Advisor status and bot integration
+- `DriftStatusCard.tsx` - Backtest vs Live performance comparison
+- `EquityCurveChart.tsx` - Shared equity curve visualization
+- `DashboardScanFeed.tsx` - Real-time scan activity feed
+- `OracleRecommendationWidget.tsx` - Oracle prediction display
+- `BotStatusOverview.tsx` - All bots status (ARES, ATHENA, ICARUS, PEGASUS, TITAN)
 
 ---
 
@@ -306,26 +570,63 @@ All routes are in `backend/api/routes/`. Each file follows the pattern:
 ### Key API Endpoints
 
 ```
-# Health
+# Health & System
 GET  /health                    # System health check
-GET  /api/system-health         # Comprehensive health
+GET  /api/system-health         # Comprehensive health (includes Oracle staleness)
+GET  /ready                     # Kubernetes readiness probe
 
 # GEX Data
 GET  /api/gex/{symbol}          # GEX data for symbol
 GET  /api/gex/{symbol}/levels   # Support/resistance levels
+GET  /api/gamma/0dte            # 0DTE gamma expiration data
 
-# Trading Bots
+# ARGUS (Real-time 0DTE Gamma)
+GET  /api/argus/snapshot        # Full gamma snapshot with market structure (9 signals)
+GET  /api/argus/history         # Historical gamma for sparklines
+GET  /api/argus/danger-zones    # Active danger zone alerts (BUILDING/COLLAPSING/SPIKE)
+GET  /api/argus/pattern-matching # Historical pattern analysis
+GET  /api/argus/gamma-flip-history # Regime flip history
+POST /api/argus/commentary      # Generate AI commentary
+
+# Trading Bots (8 bots, 100+ endpoints total)
 GET  /api/ares/status           # ARES bot status
 POST /api/ares/analyze          # Analyze IC opportunity
 GET  /api/athena/status         # ATHENA bot status
-GET  /api/trader/performance    # Trading performance
+GET  /api/titan/status          # TITAN bot status
+GET  /api/titan/positions       # TITAN open positions
+GET  /api/titan/equity-curve    # TITAN equity curve
+GET  /api/pegasus/status        # PEGASUS bot status
+GET  /api/icarus/status         # ICARUS bot status
+GET  /api/trader/performance    # Unified trading performance
 
-# AI
+# Oracle (ML Advisory)
+GET  /api/oracle/health         # Oracle health with staleness metrics
+GET  /api/oracle/status         # Detailed Oracle status
+POST /api/oracle/strategy-recommendation  # IC vs Directional recommendation
+GET  /api/oracle/vix-regimes    # VIX regime definitions
+
+# SAGE (ML Predictions)
+GET  /api/ml/sage/status        # SAGE model status
+POST /api/ml/sage/predict       # Run prediction
+POST /api/ml/sage/train         # Trigger training
+GET  /api/ml/sage/feature-importance  # Feature importance rankings
+
+# AI & GEXIS (35+ endpoints)
 POST /api/ai/analyze            # AI market analysis
-GET  /api/gexis/chat            # GEXIS AI chat
+GET  /api/ai/gexis/info         # GEXIS system info
+GET  /api/ai/gexis/welcome      # Welcome message
+GET  /api/ai/gexis/daily-briefing  # Market briefing
+POST /api/ai/gexis/command      # Execute slash commands
+POST /api/ai/gexis/agentic-chat # Full agentic chat with tools
+POST /api/ai/gexis/agentic-chat/stream  # Streaming responses
+POST /api/ai/gexis/extended-thinking    # Deep analysis mode
+GET  /api/ai/gexis/learning-memory/stats  # Prediction accuracy
 
-# Oracle (ML Predictions)
-GET  /api/oracle/prediction     # Direction prediction
+# Transparency & Logging
+GET  /api/logs/summary          # Summary of all 22+ log tables
+GET  /api/logs/bot-decisions    # All bot trading decisions
+GET  /api/data-transparency/summary  # Hidden data categories
+GET  /api/data-transparency/regime-signals  # All 80+ regime signals
 ```
 
 ---
@@ -337,12 +638,33 @@ GET  /api/oracle/prediction     # Direction prediction
 - `autonomous_closed_trades` - Completed trades
 - `autonomous_trade_log` - Trade history
 - `unified_trades` - Unified trade records
+- `trading_decisions` - Bot trading decisions with full audit trail
+
+### Bot-Specific Tables
+- `titan_positions` - TITAN open positions
+- `titan_closed_trades` - TITAN completed trades
+- `titan_equity_snapshots` - TITAN equity curve data
+- `titan_scan_activity` - TITAN scan logs
+
+### ML & Oracle Tables
+- `oracle_predictions` - Oracle prediction history
+- `ml_decision_logs` - SAGE decision audit trail
+- `sage_training_history` - SAGE model training records
+- `ml_model_metadata` - Model versioning and metrics
 
 ### Analytics Tables
 - `gex_history` - Historical GEX data
 - `gamma_history` - Gamma exposure history
-- `regime_classifications` - Market regime data
+- `regime_classifications` - Market regime data (80+ columns)
 - `backtest_results` - Backtest outcomes
+- `drift_analysis` - Backtest vs live drift metrics
+
+### Logging Tables (22+ tables)
+- `ai_analysis_history` - AI analysis with confidence scores
+- `psychology_analysis` - Psychology trap detection logs
+- `wheel_activity_log` - SPX Wheel activity
+- `gex_change_log` - GEX change events
+- `ares_ml_outcomes` - ARES ML prediction outcomes
 
 ### Configuration Tables
 - `autonomous_config` - Bot configuration
@@ -511,6 +833,31 @@ git push origin main
 
 ---
 
+## Development Standards
+
+### Production-Ready Implementation
+When implementing features, **always deliver production-ready, end-to-end implementations**:
+
+1. **Don't just write scaffolding** - Wire it up to actually run in production
+2. **Complete the full loop**: Database schema → Backend logic → API endpoint → Frontend display
+3. **If adding data fields**, integrate them into the code that populates them
+4. **If adding UI components**, ensure the backend sends the data they need
+5. **If adding new analysis systems**, integrate them into the bots that use them
+
+**Example**: If asked to "add ML analysis to scan activity":
+- BAD: Add database columns and UI components, but leave bots unchanged
+- GOOD: Add columns, update bots to call ML systems, pass data to logger, display in UI
+
+### Trigger Phrases
+When the user says any of these, ensure full end-to-end implementation:
+- "make it production-ready"
+- "implement end-to-end"
+- "wire it up"
+- "make it actually work"
+- "activate it"
+
+---
+
 ## Important Notes for AI Assistants
 
 ### When Modifying Code
@@ -524,14 +871,25 @@ git push origin main
 - Bare except clauses (89 instances) - Could be more specific
 - Some incomplete function implementations
 - Test coverage gaps in AI modules and route handlers
+- **Deprecated code still in codebase**: `circuit_breaker.py`, `ensemble_strategy.py`, `ml_regime_classifier.py`
+- **PHOENIX/ATLAS lack full API integration**: No dedicated route files
+- **LangChain deprecated import**: `ai/langchain_intelligence.py` uses deprecated `LLMChain`
+- **Legacy Flask dashboard**: `dashboard/app.py` still exists but unused
 
 ### Critical Files (Handle with Care)
 - `backend/main.py` - Main application entry point
-- `core/autonomous_paper_trader.py` - Core trading logic
+- `core/autonomous_paper_trader.py` - Core trading logic (PHOENIX)
 - `config.py` - System-wide configuration
 - `database_adapter.py` - Database connections
-- `trading/ares_iron_condor.py` - Live trading execution
-- `trading/athena_directional_spreads.py` - Live trading execution
+- `trading/ares_v2/trader.py` - ARES live trading execution
+- `trading/athena_v2/trader.py` - ATHENA live trading execution
+- `trading/titan/trader.py` - TITAN trading execution
+- `trading/pegasus/trader.py` - PEGASUS trading execution
+- `trading/icarus/trader.py` - ICARUS trading execution
+- `quant/oracle_advisor.py` - Oracle ML advisory system (sole trade authority)
+- `quant/solomon_enhancements.py` - Risk management (replaced circuit_breaker)
+- `scheduler/trader_scheduler.py` - Central bot orchestration
+- `backend/api/routes/oracle_routes.py` - Oracle API endpoints
 
 ### Market Hours (Central Time)
 - Market Open: 8:30 AM CT
@@ -541,5 +899,5 @@ git push origin main
 
 ---
 
-*Last Updated: December 2024*
-*Generated from codebase analysis*
+*Last Updated: January 15, 2025*
+*Updated metrics, deprecated systems documented, file paths corrected for v2 bot architecture*

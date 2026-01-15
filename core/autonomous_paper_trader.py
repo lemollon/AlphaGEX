@@ -479,11 +479,11 @@ class AutonomousPaperTrader(
             self.regime_classifier = None
             self.iv_history = []
 
-        # Initialize Math Optimizers (HMM, Thompson Sampling, HJB Exit, Kalman)
+        # Math Optimizers DISABLED - Oracle is the sole decision maker
         if MATH_OPTIMIZER_AVAILABLE:
             try:
-                self._init_math_optimizers("PHOENIX", enabled=True)
-                print("✅ Math optimizers initialized (HMM, Thompson, HJB, Kalman)")
+                self._init_math_optimizers("PHOENIX", enabled=False)
+                print("✅ PHOENIX: Math optimizers DISABLED - Oracle controls all trading decisions")
             except Exception as e:
                 print(f"⚠️ Math optimizer init failed: {e}")
 
@@ -677,16 +677,20 @@ class AutonomousPaperTrader(
             ))
 
             # Also write to autonomous_trade_activity (consolidated table)
+            # Uses schema: activity_date, activity_time, activity_timestamp, action_type, symbol, details, success
             c.execute("""
                 INSERT INTO autonomous_trade_activity (
-                    timestamp, action, reason, success, symbol
-                ) VALUES (%s, %s, %s, %s, %s)
+                    activity_date, activity_time, activity_timestamp,
+                    action_type, symbol, details, success
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s)
             """, (
-                now,
+                now.strftime('%Y-%m-%d'),
+                now.strftime('%H:%M:%S'),
+                now.strftime('%Y-%m-%d %H:%M:%S'),
                 action,
+                'SPY',
                 details,
-                success,
-                'SPY'
+                success
             ))
 
             conn.commit()
@@ -829,7 +833,7 @@ class AutonomousPaperTrader(
             # Step 2: Find trade setup
             trade = self._analyze_and_find_trade(gex_data, skew_data, spot_price, vix, momentum, time_context, put_call_ratio)
 
-            if not trade or trade.get('confidence', 0) < 70:
+            if not trade or trade.get('confidence', 0) < 51:
                 return {
                     'signal': None,
                     'reason': 'No high-confidence setup found',
@@ -1159,7 +1163,7 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
                     f"• Action: {trade.get('action', 'Unknown')}\n"
                     f"• Strike: ${trade.get('strike', 0):.0f}\n"
                     f"• Confidence: {confidence}%\n\n"
-                    f"DECISION: {'✅ EXECUTING (meets 70%+ threshold)' if confidence >= 70 else '❌ SKIPPING (below 70% threshold)'}"
+                    f"DECISION: {'✅ EXECUTING (meets 51%+ threshold)' if confidence >= 51 else '❌ SKIPPING (below 51% threshold)'}"
                 )
                 self.log_action(
                     'ANALYSIS',
@@ -1168,7 +1172,7 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
                 )
 
             # GUARANTEED TRADE - MINIMUM ONE PER DAY: Multi-level fallback system
-            if not trade or trade.get('confidence', 0) < 70:
+            if not trade or trade.get('confidence', 0) < 51:
                 # CRITICAL LOGGING: Explain EXACTLY why we're falling back
                 if not trade:
                     reason = "❌ NO STRATEGY FOUND - _analyze_and_find_trade() returned None"
@@ -1185,7 +1189,7 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
                         success=False
                     )
                 else:
-                    reason = f"⚠️ CONFIDENCE TOO LOW: {trade.get('confidence', 0)}% < 70% threshold"
+                    reason = f"⚠️ CONFIDENCE TOO LOW: {trade.get('confidence', 0)}% < 51% threshold"
                     self.log_action(
                         'FALLBACK_REASON',
                         f"{reason}\n"
@@ -1875,59 +1879,10 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
                 # Failed to calculate, use fallback
                 logger.warning(f"Error getting price history for HV/MA: {e}")
 
-            # ============================================================
-            # GET ML REGIME PREDICTION (NEW - Quant Enhancement)
-            # ============================================================
-            ml_prediction_data = None
-            ensemble_signal = None
-
-            try:
-                from quant.ml_regime_classifier import get_ml_regime_prediction
-                from quant.ensemble_strategy import get_ensemble_signal
-
-                # Calculate GEX percentile (where current GEX sits in recent history)
-                gex_percentile = 50  # Default to middle
-                if hasattr(self, 'gex_history'):
-                    self.gex_history.append(net_gex)
-                    if len(self.gex_history) > 60:
-                        self.gex_history = self.gex_history[-60:]
-                    if len(self.gex_history) > 5:
-                        sorted_gex = sorted(self.gex_history)
-                        gex_percentile = (sorted_gex.index(net_gex) / len(sorted_gex)) * 100 if net_gex in sorted_gex else 50
-                else:
-                    self.gex_history = [net_gex]
-
-                # Get ML prediction
-                ml_pred = get_ml_regime_prediction(
-                    symbol=self.symbol,
-                    gex_normalized=net_gex / 1e9,
-                    gex_percentile=gex_percentile,
-                    vix=vix,
-                    iv_rank=50,  # Will be calculated by classifier
-                    distance_to_flip=(spot_price - flip_point) / flip_point * 100 if flip_point > 0 else 0,
-                    momentum_1h=momentum.get('1h', 0),
-                    momentum_4h=momentum.get('4h', 0),
-                    above_20ma=above_20ma,
-                    above_50ma=above_50ma
-                )
-
-                ml_prediction_data = {
-                    'predicted_action': ml_pred.predicted_action.value,
-                    'win_probability': ml_pred.confidence / 100,
-                    'recommendation': ml_pred.predicted_action.value,
-                    'model_trained': ml_pred.is_trained,
-                    'confidence': ml_pred.confidence
-                }
-
-                logger.info(f"ML Prediction: {ml_pred.predicted_action.value} ({ml_pred.confidence:.0f}% confidence)")
-
-            except ImportError:
-                logger.debug("Quant ML module not available - using rule-based only")
-            except Exception as e:
-                logger.warning(f"ML prediction failed: {e} - using rule-based only")
+            # REMOVED: Ensemble and ML Regime Classifier - Oracle is god
 
             # ============================================================
-            # RUN THE UNIFIED CLASSIFIER (with ML enhancement)
+            # RUN THE UNIFIED CLASSIFIER
             # ============================================================
             regime = self.regime_classifier.classify(
                 spot_price=spot_price,
@@ -1941,53 +1896,8 @@ Market: SPY ${spot_price:.2f} | GEX ${net_gex/1e9:.2f}B | VIX {vix:.1f}
                 momentum_1h=momentum.get('1h', 0),
                 momentum_4h=momentum.get('4h', 0),
                 above_20ma=above_20ma,
-                above_50ma=above_50ma,
-                ml_prediction_data=ml_prediction_data  # Pass ML prediction
+                above_50ma=above_50ma
             )
-
-            # ============================================================
-            # GET ENSEMBLE SIGNAL (combines GEX + ML + others)
-            # ============================================================
-            try:
-                from quant.ensemble_strategy import get_ensemble_signal
-
-                ensemble_signal = get_ensemble_signal(
-                    symbol=self.symbol,
-                    gex_data={
-                        'recommended_action': regime.recommended_action.value,
-                        'confidence': regime.confidence,
-                        'reasoning': regime.reasoning[:200] if regime.reasoning else ''
-                    },
-                    ml_prediction={
-                        'predicted_action': ml_prediction_data.get('predicted_action') if ml_prediction_data else None,
-                        'confidence': ml_prediction_data.get('confidence', 50) if ml_prediction_data else 50,
-                        'is_trained': ml_prediction_data.get('model_trained', False) if ml_prediction_data else False
-                    } if ml_prediction_data else None,
-                    current_regime=regime.gamma_regime.value
-                )
-
-                # Log ensemble signal
-                logger.info(f"Ensemble Signal: {ensemble_signal.final_signal.value} "
-                           f"(confidence={ensemble_signal.confidence:.0f}%, "
-                           f"should_trade={ensemble_signal.should_trade})")
-
-                # Adjust regime confidence based on ensemble
-                if ensemble_signal.should_trade:
-                    # Boost confidence if ensemble agrees
-                    if ensemble_signal.confidence > regime.confidence:
-                        boost = min(10, (ensemble_signal.confidence - regime.confidence) * 0.5)
-                        regime.confidence = min(95, regime.confidence + boost)
-                        regime.reasoning += f"\n\nENSEMBLE BOOST: +{boost:.0f}% (signals aligned)"
-                else:
-                    # Reduce confidence if ensemble disagrees
-                    if regime.confidence > 60:
-                        regime.confidence = max(40, regime.confidence - 15)
-                        regime.reasoning += f"\n\nENSEMBLE WARNING: Signals not aligned - reduced confidence"
-
-            except ImportError:
-                logger.debug("Quant ensemble module not available")
-            except Exception as e:
-                logger.warning(f"Ensemble signal failed: {e}")
 
             # Log the regime classification
             self.log_action(
@@ -2622,7 +2532,7 @@ Downside target: {forward_magnet_below:.0f} (monthly OPEX magnet)"""
                 return None  # Skip this trade
 
         # ====== PRIORITY 3: USE PATTERN + FORWARD MAGNETS ======
-        if confidence >= 70:
+        if confidence >= 51:
             # High-conviction patterns with psychology confirmation
             if trade_direction == 'BULLISH':
                 # Target forward magnet above

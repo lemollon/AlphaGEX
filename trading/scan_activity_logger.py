@@ -99,9 +99,142 @@ class ScanActivity:
     signal_confidence: float = 0
     signal_win_probability: float = 0
 
-    # Oracle
+    # Oracle - FULL context for frontend visibility
     oracle_advice: str = ""
     oracle_reasoning: str = ""
+    oracle_win_probability: float = 0
+    oracle_confidence: float = 0
+    oracle_top_factors: List[Dict] = field(default_factory=list)
+    oracle_probabilities: Dict = field(default_factory=dict)
+    oracle_suggested_strikes: Dict = field(default_factory=dict)
+    oracle_thresholds: Dict = field(default_factory=dict)  # What thresholds were evaluated
+    min_win_probability_threshold: float = 0  # What the bot required
+
+    # === NEUTRAL REGIME ANALYSIS (new fields for trend-based direction) ===
+    neutral_derived_direction: str = ""  # Direction derived for NEUTRAL regime
+    neutral_confidence: float = 0  # Confidence in derived direction
+    neutral_reasoning: str = ""  # Full reasoning for NEUTRAL direction
+
+    # Strategy suitability scores (0-1)
+    ic_suitability: float = 0  # Iron Condor suitability
+    bullish_suitability: float = 0  # Bull spread suitability
+    bearish_suitability: float = 0  # Bear spread suitability
+    recommended_strategy: str = ""  # IRON_CONDOR, BULL_SPREAD, BEAR_SPREAD, SKIP
+
+    # Trend analysis data
+    trend_direction: str = ""  # UPTREND, DOWNTREND, SIDEWAYS
+    trend_strength: float = 0  # 0-1
+    position_in_range_pct: float = 50.0  # 0% = at put wall, 100% = at call wall
+    is_contained: bool = True  # Price between walls
+    wall_filter_passed: bool = False  # Whether wall filter check passed
+
+    # Price history for trend
+    price_5m_ago: float = 0
+    price_30m_ago: float = 0
+    price_60m_ago: float = 0
+    high_of_day: float = 0
+    low_of_day: float = 0
+
+    # Quant ML Advisor - ARES ML feedback loop (from quant/ares_ml_advisor.py)
+    quant_ml_advice: str = ""  # TRADE_FULL, TRADE_REDUCED, SKIP_TODAY
+    quant_ml_win_probability: float = 0
+    quant_ml_confidence: float = 0
+    quant_ml_suggested_risk_pct: float = 0
+    quant_ml_suggested_sd_multiplier: float = 0
+    quant_ml_top_factors: List[Dict] = field(default_factory=list)
+    quant_ml_model_version: str = ""
+
+    # ML Regime Classifier (from quant/ml_regime_classifier.py)
+    regime_predicted_action: str = ""  # SELL_PREMIUM, BUY_CALLS, BUY_PUTS, STAY_FLAT
+    regime_confidence: float = 0
+    regime_probabilities: Dict = field(default_factory=dict)
+    regime_feature_importance: Dict = field(default_factory=dict)
+    regime_model_version: str = ""
+
+    # GEX Directional ML (from quant/gex_directional_ml.py)
+    gex_ml_direction: str = ""  # BULLISH, BEARISH, FLAT
+    gex_ml_confidence: float = 0
+    gex_ml_probabilities: Dict = field(default_factory=dict)
+    gex_ml_features_used: Dict = field(default_factory=dict)
+
+    # Ensemble Strategy (from quant/ensemble_strategy.py)
+    ensemble_signal: str = ""  # STRONG_BUY, BUY, NEUTRAL, SELL, STRONG_SELL
+    ensemble_confidence: float = 0
+    ensemble_bullish_weight: float = 0
+    ensemble_bearish_weight: float = 0
+    ensemble_neutral_weight: float = 0
+    ensemble_should_trade: bool = False
+    ensemble_position_size_multiplier: float = 0
+    ensemble_component_signals: List[Dict] = field(default_factory=list)
+    ensemble_reasoning: str = ""
+
+    # Volatility Regime (from core/psychology_trap_detector.py)
+    volatility_regime: str = ""  # EXPLOSIVE_VOLATILITY, NEGATIVE_GAMMA_RISK, etc.
+    volatility_risk_level: str = ""  # extreme, high, medium, low
+    volatility_description: str = ""
+    at_flip_point: bool = False
+    flip_point: float = 0
+    flip_point_distance_pct: float = 0
+
+    # Psychology Patterns (Liberation, False Floor, Forward Magnets)
+    psychology_pattern: str = ""
+    liberation_setup: bool = False
+    false_floor_detected: bool = False
+    forward_magnets: List[Dict] = field(default_factory=list)
+
+    # Monte Carlo Kelly (from quant/monte_carlo_kelly.py)
+    kelly_optimal: float = 0
+    kelly_safe: float = 0
+    kelly_conservative: float = 0
+    kelly_prob_ruin: float = 0
+    kelly_recommendation: str = ""
+
+    # ARGUS Pattern Similarity / ROC Analysis
+    argus_pattern_match: str = ""
+    argus_similarity_score: float = 0
+    argus_historical_outcome: str = ""
+    argus_roc_value: float = 0
+    argus_roc_signal: str = ""
+
+    # === NEW: IV Context ===
+    iv_rank: float = 0  # 0-100 percentile
+    iv_percentile: float = 0  # IV percentile vs 52-week range
+    iv_hv_ratio: float = 0  # Implied vol / Historical vol ratio
+    iv_30d: float = 0  # 30-day implied volatility
+    hv_30d: float = 0  # 30-day historical volatility
+
+    # === NEW: Time Context ===
+    day_of_week: str = ""  # Monday, Tuesday, etc.
+    day_of_week_num: int = 0  # 0=Monday, 4=Friday
+    time_of_day: str = ""  # morning, midday, afternoon
+    hour_ct: int = 0  # Hour in Central Time
+    minute_ct: int = 0  # Minute in Central Time
+    days_to_monthly_opex: int = 0  # Days until monthly options expiration
+    days_to_weekly_opex: int = 0  # Days until weekly expiration
+    is_opex_week: bool = False  # True if within OPEX week
+    is_fomc_day: bool = False  # True if FOMC announcement day
+    is_cpi_day: bool = False  # True if CPI release day
+
+    # === NEW: Recent Performance Context ===
+    similar_setup_win_rate: float = 0  # Win rate in similar conditions (last 30 days)
+    similar_setup_count: int = 0  # Number of similar setups found
+    similar_setup_avg_pnl: float = 0  # Average P&L in similar conditions
+    current_streak: int = 0  # Positive = win streak, Negative = loss streak
+    streak_type: str = ""  # "WIN" or "LOSS"
+    last_5_trades_win_rate: float = 0  # Win rate of last 5 trades
+    last_10_trades_win_rate: float = 0  # Win rate of last 10 trades
+    daily_pnl: float = 0  # Today's P&L so far
+    weekly_pnl: float = 0  # This week's P&L
+
+    # === NEW: ML Consensus & Conflict Detection ===
+    ml_consensus: str = ""  # STRONG_BULLISH, BULLISH, MIXED, BEARISH, STRONG_BEARISH, NO_DATA
+    ml_consensus_score: float = 0  # -1 (all bearish) to +1 (all bullish)
+    ml_systems_agree: int = 0  # Number of systems that agree with consensus
+    ml_systems_total: int = 0  # Total number of active ML systems
+    ml_conflicts: List[Dict] = field(default_factory=list)  # List of conflicting signals
+    ml_conflict_severity: str = ""  # none, low, medium, high
+    ml_highest_confidence_system: str = ""  # Which ML system has highest confidence
+    ml_highest_confidence_value: float = 0  # The confidence value
 
     # Checks
     checks_performed: List[CheckResult] = field(default_factory=list)
@@ -139,7 +272,13 @@ def _generate_scan_id(bot_name: str) -> str:
 
 
 def _get_scan_number_today(bot_name: str) -> int:
-    """Get the scan number for today from database"""
+    """Get the scan number for today from database.
+
+    CRITICAL: Uses finally block to prevent connection leaks.
+    This function is called on EVERY scan, so leaks here cause
+    pool exhaustion over time (the 6:05 AM stoppage root cause).
+    """
+    conn = None
     try:
         from database_adapter import get_connection
         conn = get_connection()
@@ -153,11 +292,17 @@ def _get_scan_number_today(bot_name: str) -> int:
         """, (bot_name, today))
 
         result = c.fetchone()
-        conn.close()
         return result[0] if result else 1
     except Exception as e:
         logger.debug(f"Could not get scan number: {e}")
         return _scan_counters.get(bot_name, 0) + 1
+    finally:
+        # CRITICAL: Always close connection to prevent pool exhaustion
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
 
 
 def log_scan_activity(
@@ -175,9 +320,16 @@ def log_scan_activity(
     signal_direction: str = "",
     signal_confidence: float = 0,
     signal_win_probability: float = 0,
-    # Oracle data
+    # Oracle data - FULL context for frontend visibility
     oracle_advice: str = "",
     oracle_reasoning: str = "",
+    oracle_win_probability: float = 0,
+    oracle_confidence: float = 0,
+    oracle_top_factors: Optional[List[Dict]] = None,
+    oracle_probabilities: Optional[Dict] = None,
+    oracle_suggested_strikes: Optional[Dict] = None,
+    oracle_thresholds: Optional[Dict] = None,
+    min_win_probability_threshold: float = 0,
     # Risk/Reward
     risk_reward_ratio: float = 0,
     # Checks
@@ -198,7 +350,114 @@ def log_scan_activity(
     # Additional context
     full_context: Optional[Dict] = None,
     # Generate AI explanation
-    generate_ai_explanation: bool = True
+    generate_ai_explanation: bool = True,
+    # === NEW: Quant ML Advisor ===
+    quant_ml_advice: str = "",
+    quant_ml_win_probability: float = 0,
+    quant_ml_confidence: float = 0,
+    quant_ml_suggested_risk_pct: float = 0,
+    quant_ml_suggested_sd_multiplier: float = 0,
+    quant_ml_top_factors: Optional[List[Dict]] = None,
+    quant_ml_model_version: str = "",
+    # === NEW: ML Regime Classifier ===
+    regime_predicted_action: str = "",
+    regime_confidence: float = 0,
+    regime_probabilities: Optional[Dict] = None,
+    regime_feature_importance: Optional[Dict] = None,
+    regime_model_version: str = "",
+    # === NEW: GEX Directional ML ===
+    gex_ml_direction: str = "",
+    gex_ml_confidence: float = 0,
+    gex_ml_probabilities: Optional[Dict] = None,
+    gex_ml_features_used: Optional[Dict] = None,
+    # === NEW: Ensemble Strategy ===
+    ensemble_signal: str = "",
+    ensemble_confidence: float = 0,
+    ensemble_bullish_weight: float = 0,
+    ensemble_bearish_weight: float = 0,
+    ensemble_neutral_weight: float = 0,
+    ensemble_should_trade: bool = False,
+    ensemble_position_size_multiplier: float = 0,
+    ensemble_component_signals: Optional[List[Dict]] = None,
+    ensemble_reasoning: str = "",
+    # === NEW: Volatility Regime ===
+    volatility_regime: str = "",
+    volatility_risk_level: str = "",
+    volatility_description: str = "",
+    at_flip_point: bool = False,
+    flip_point: float = 0,
+    flip_point_distance_pct: float = 0,
+    # === NEW: Psychology Patterns ===
+    psychology_pattern: str = "",
+    liberation_setup: bool = False,
+    false_floor_detected: bool = False,
+    forward_magnets: Optional[List[Dict]] = None,
+    # === NEW: Monte Carlo Kelly ===
+    kelly_optimal: float = 0,
+    kelly_safe: float = 0,
+    kelly_conservative: float = 0,
+    kelly_prob_ruin: float = 0,
+    kelly_recommendation: str = "",
+    # === NEW: ARGUS Pattern Analysis ===
+    argus_pattern_match: str = "",
+    argus_similarity_score: float = 0,
+    argus_historical_outcome: str = "",
+    argus_roc_value: float = 0,
+    argus_roc_signal: str = "",
+    # === NEW: IV Context ===
+    iv_rank: float = 0,
+    iv_percentile: float = 0,
+    iv_hv_ratio: float = 0,
+    iv_30d: float = 0,
+    hv_30d: float = 0,
+    # === NEW: Time Context ===
+    day_of_week: str = "",
+    day_of_week_num: int = 0,
+    time_of_day: str = "",
+    hour_ct: int = 0,
+    minute_ct: int = 0,
+    days_to_monthly_opex: int = 0,
+    days_to_weekly_opex: int = 0,
+    is_opex_week: bool = False,
+    is_fomc_day: bool = False,
+    is_cpi_day: bool = False,
+    # === NEW: Recent Performance Context ===
+    similar_setup_win_rate: float = 0,
+    similar_setup_count: int = 0,
+    similar_setup_avg_pnl: float = 0,
+    current_streak: int = 0,
+    streak_type: str = "",
+    last_5_trades_win_rate: float = 0,
+    last_10_trades_win_rate: float = 0,
+    daily_pnl: float = 0,
+    weekly_pnl: float = 0,
+    # === NEW: ML Consensus & Conflict Detection ===
+    ml_consensus: str = "",
+    ml_consensus_score: float = 0,
+    ml_systems_agree: int = 0,
+    ml_systems_total: int = 0,
+    ml_conflicts: Optional[List[Dict]] = None,
+    ml_conflict_severity: str = "",
+    ml_highest_confidence_system: str = "",
+    ml_highest_confidence_value: float = 0,
+    # === NEW: NEUTRAL Regime Analysis (trend-based direction) ===
+    neutral_derived_direction: str = "",
+    neutral_confidence: float = 0,
+    neutral_reasoning: str = "",
+    ic_suitability: float = 0,
+    bullish_suitability: float = 0,
+    bearish_suitability: float = 0,
+    recommended_strategy: str = "",
+    trend_direction: str = "",
+    trend_strength: float = 0,
+    position_in_range_pct: float = 50.0,
+    is_contained: bool = True,
+    wall_filter_passed: bool = False,
+    price_5m_ago: float = 0,
+    price_30m_ago: float = 0,
+    price_60m_ago: float = 0,
+    high_of_day: float = 0,
+    low_of_day: float = 0
 ) -> Optional[str]:
     """
     Log a scan activity to the database.
@@ -233,6 +492,51 @@ def log_scan_activity(
     Returns:
         scan_id if logged successfully, None otherwise
     """
+    # Helper to convert numpy types to Python native types
+    def _convert_numpy(val):
+        """Convert numpy types to Python native types for database compatibility"""
+        try:
+            import numpy as np
+            if isinstance(val, (np.integer, np.int64, np.int32)):
+                return int(val)
+            elif isinstance(val, (np.floating, np.float64, np.float32)):
+                return float(val)
+            elif isinstance(val, np.bool_):
+                return bool(val)
+            elif isinstance(val, np.ndarray):
+                return val.tolist()
+        except ImportError:
+            pass
+        return val
+
+    def _convert_dict_numpy(d):
+        """Recursively convert numpy types in a dict"""
+        if d is None:
+            return None
+        if isinstance(d, dict):
+            return {k: _convert_dict_numpy(v) for k, v in d.items()}
+        elif isinstance(d, list):
+            return [_convert_dict_numpy(item) for item in d]
+        return _convert_numpy(d)
+
+    def _clamp_decimal(val, max_val=9.9999):
+        """Clamp numeric values to fit DECIMAL(5,4) constraints.
+
+        DECIMAL(5,4) can hold values from -9.9999 to 9.9999.
+        Values > 1 are assumed to be percentages and divided by 100.
+        """
+        if val is None:
+            return None
+        val = _convert_numpy(val)
+        if not isinstance(val, (int, float)):
+            return val
+        # If value > 1, assume it's a percentage (e.g., 95.5% instead of 0.955)
+        if val > 1:
+            val = val / 100.0
+        # Clamp to valid range
+        return max(-max_val, min(max_val, val))
+
+    conn = None  # Initialize to prevent NameError in finally block
     try:
         from database_adapter import get_connection
 
@@ -325,6 +629,13 @@ def log_scan_activity(
                 signal_win_probability DECIMAL(5, 4),
                 oracle_advice VARCHAR(50),
                 oracle_reasoning TEXT,
+                oracle_win_probability DECIMAL(5, 4),
+                oracle_confidence DECIMAL(5, 4),
+                oracle_top_factors JSONB,
+                oracle_probabilities JSONB,
+                oracle_suggested_strikes JSONB,
+                oracle_thresholds JSONB,
+                min_win_probability_threshold DECIMAL(5, 4),
                 risk_reward_ratio DECIMAL(10, 4),
                 checks_performed JSONB,
                 all_checks_passed BOOLEAN DEFAULT TRUE,
@@ -344,12 +655,116 @@ def log_scan_activity(
         """)
 
         # Add new columns if they don't exist (for existing tables)
+        # Note: These are safe migrations - ADD COLUMN IF NOT EXISTS won't error
         try:
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS risk_reward_ratio DECIMAL(10, 4)")
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS what_would_trigger TEXT")
             c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS market_insight TEXT")
-        except Exception:
-            pass  # Columns may already exist
+            # Oracle context columns
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS oracle_win_probability DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS oracle_confidence DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS oracle_top_factors JSONB")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS oracle_probabilities JSONB")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS oracle_suggested_strikes JSONB")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS oracle_thresholds JSONB")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS min_win_probability_threshold DECIMAL(5, 4)")
+            # === NEW: Quant ML Advisor columns ===
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS quant_ml_advice VARCHAR(50)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS quant_ml_win_probability DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS quant_ml_confidence DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS quant_ml_suggested_risk_pct DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS quant_ml_suggested_sd_multiplier DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS quant_ml_top_factors JSONB")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS quant_ml_model_version VARCHAR(50)")
+            # === NEW: ML Regime Classifier columns ===
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS regime_predicted_action VARCHAR(50)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS regime_confidence DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS regime_probabilities JSONB")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS regime_feature_importance JSONB")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS regime_model_version VARCHAR(50)")
+            # === NEW: GEX Directional ML columns ===
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS gex_ml_direction VARCHAR(20)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS gex_ml_confidence DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS gex_ml_probabilities JSONB")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS gex_ml_features_used JSONB")
+            # === NEW: Ensemble Strategy columns ===
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ensemble_signal VARCHAR(50)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ensemble_confidence DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ensemble_bullish_weight DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ensemble_bearish_weight DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ensemble_neutral_weight DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ensemble_should_trade BOOLEAN")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ensemble_position_size_multiplier DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ensemble_component_signals JSONB")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ensemble_reasoning TEXT")
+            # === NEW: Volatility Regime columns ===
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS volatility_regime VARCHAR(50)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS volatility_risk_level VARCHAR(20)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS volatility_description TEXT")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS at_flip_point BOOLEAN")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS flip_point DECIMAL(15, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS flip_point_distance_pct DECIMAL(10, 4)")
+            # === NEW: Psychology Patterns columns ===
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS psychology_pattern VARCHAR(100)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS liberation_setup BOOLEAN")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS false_floor_detected BOOLEAN")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS forward_magnets JSONB")
+            # === NEW: Monte Carlo Kelly columns ===
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS kelly_optimal DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS kelly_safe DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS kelly_conservative DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS kelly_prob_ruin DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS kelly_recommendation TEXT")
+            # === NEW: ARGUS Pattern Analysis columns ===
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS argus_pattern_match VARCHAR(100)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS argus_similarity_score DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS argus_historical_outcome VARCHAR(50)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS argus_roc_value DECIMAL(10, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS argus_roc_signal VARCHAR(50)")
+            # === NEW: IV Context columns ===
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS iv_rank DECIMAL(5, 2)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS iv_percentile DECIMAL(5, 2)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS iv_hv_ratio DECIMAL(5, 2)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS iv_30d DECIMAL(5, 2)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS hv_30d DECIMAL(5, 2)")
+            # === NEW: Time Context columns ===
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS day_of_week VARCHAR(20)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS day_of_week_num INTEGER")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS time_of_day VARCHAR(20)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS hour_ct INTEGER")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS minute_ct INTEGER")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS days_to_monthly_opex INTEGER")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS days_to_weekly_opex INTEGER")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS is_opex_week BOOLEAN")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS is_fomc_day BOOLEAN")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS is_cpi_day BOOLEAN")
+            # === NEW: Recent Performance Context columns ===
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS similar_setup_win_rate DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS similar_setup_count INTEGER")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS similar_setup_avg_pnl DECIMAL(15, 2)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS current_streak INTEGER")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS streak_type VARCHAR(10)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS last_5_trades_win_rate DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS last_10_trades_win_rate DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS daily_pnl DECIMAL(15, 2)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS weekly_pnl DECIMAL(15, 2)")
+            # === NEW: ML Consensus & Conflict Detection columns ===
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ml_consensus VARCHAR(50)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ml_consensus_score DECIMAL(5, 4)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ml_systems_agree INTEGER")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ml_systems_total INTEGER")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ml_conflicts JSONB")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ml_conflict_severity VARCHAR(20)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ml_highest_confidence_system VARCHAR(50)")
+            c.execute("ALTER TABLE scan_activity ADD COLUMN IF NOT EXISTS ml_highest_confidence_value DECIMAL(5, 4)")
+            conn.commit()  # Commit schema changes before INSERT
+        except Exception as e:
+            # Log the error but continue - columns likely already exist
+            logger.debug(f"ALTER TABLE scan_activity (non-critical): {e}")
+            try:
+                conn.rollback()  # Rollback any failed transaction to clean state
+            except Exception:
+                pass
 
         # Generate Claude AI explanation if enabled and market data available
         ai_what_trigger = what_would_trigger
@@ -422,57 +837,167 @@ def log_scan_activity(
                 distance_to_call_wall_pct, distance_to_put_wall_pct,
                 signal_source, signal_direction, signal_confidence, signal_win_probability,
                 oracle_advice, oracle_reasoning,
+                oracle_win_probability, oracle_confidence,
+                oracle_top_factors, oracle_probabilities,
+                oracle_suggested_strikes, oracle_thresholds,
+                min_win_probability_threshold,
                 risk_reward_ratio,
                 checks_performed, all_checks_passed,
                 trade_executed, position_id, strike_selection, contracts,
                 premium_collected, max_risk,
                 error_message, error_type,
                 what_would_trigger, market_insight,
-                full_context
+                full_context,
+                -- NEW: Quant ML Advisor
+                quant_ml_advice, quant_ml_win_probability, quant_ml_confidence,
+                quant_ml_suggested_risk_pct, quant_ml_suggested_sd_multiplier,
+                quant_ml_top_factors, quant_ml_model_version,
+                -- NEW: ML Regime Classifier
+                regime_predicted_action, regime_confidence,
+                regime_probabilities, regime_feature_importance, regime_model_version,
+                -- NEW: GEX Directional ML
+                gex_ml_direction, gex_ml_confidence, gex_ml_probabilities, gex_ml_features_used,
+                -- NEW: Ensemble Strategy
+                ensemble_signal, ensemble_confidence, ensemble_bullish_weight,
+                ensemble_bearish_weight, ensemble_neutral_weight, ensemble_should_trade,
+                ensemble_position_size_multiplier, ensemble_component_signals, ensemble_reasoning,
+                -- NEW: Volatility Regime
+                volatility_regime, volatility_risk_level, volatility_description,
+                at_flip_point, flip_point, flip_point_distance_pct,
+                -- NEW: Psychology Patterns
+                psychology_pattern, liberation_setup, false_floor_detected, forward_magnets,
+                -- NEW: Monte Carlo Kelly
+                kelly_optimal, kelly_safe, kelly_conservative, kelly_prob_ruin, kelly_recommendation,
+                -- NEW: ARGUS Pattern Analysis
+                argus_pattern_match, argus_similarity_score, argus_historical_outcome,
+                argus_roc_value, argus_roc_signal,
+                -- NEW: IV Context
+                iv_rank, iv_percentile, iv_hv_ratio, iv_30d, hv_30d,
+                -- NEW: Time Context
+                day_of_week, day_of_week_num, time_of_day, hour_ct, minute_ct,
+                days_to_monthly_opex, days_to_weekly_opex, is_opex_week, is_fomc_day, is_cpi_day,
+                -- NEW: Recent Performance Context
+                similar_setup_win_rate, similar_setup_count, similar_setup_avg_pnl,
+                current_streak, streak_type, last_5_trades_win_rate, last_10_trades_win_rate,
+                daily_pnl, weekly_pnl,
+                -- NEW: ML Consensus & Conflict Detection
+                ml_consensus, ml_consensus_score, ml_systems_agree, ml_systems_total,
+                ml_conflicts, ml_conflict_severity, ml_highest_confidence_system, ml_highest_confidence_value,
+                -- NEW: NEUTRAL Regime Analysis
+                neutral_derived_direction, neutral_confidence, neutral_reasoning,
+                ic_suitability, bullish_suitability, bearish_suitability, recommended_strategy,
+                trend_direction, trend_strength, position_in_range_pct,
+                is_contained, wall_filter_passed,
+                price_5m_ago, price_30m_ago, price_60m_ago, high_of_day, low_of_day
             ) VALUES (
-                %s, %s, %s,
-                %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s,
                 %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s,
                 %s, %s, %s, %s,
-                %s, %s, %s, %s,
-                %s, %s,
-                %s, %s, %s, %s,
-                %s, %s,
-                %s,
-                %s, %s,
-                %s, %s, %s, %s,
-                %s, %s,
-                %s, %s,
-                %s, %s,
-                %s
+                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
             )
         """, (
-            bot_name, scan_id, scan_number,
+            bot_name, scan_id, _convert_numpy(scan_number),
             now, now.date(), now.strftime('%I:%M:%S %p'),
             outcome.value, action_taken, decision_summary, full_reasoning,
-            underlying_price, underlying_symbol, vix, expected_move,
-            gex_regime, net_gex, call_wall, put_wall,
-            distance_to_call_wall_pct, distance_to_put_wall_pct,
-            signal_source, signal_direction, signal_confidence, signal_win_probability,
+            _convert_numpy(underlying_price), underlying_symbol, _convert_numpy(vix), _convert_numpy(expected_move),
+            gex_regime, _convert_numpy(net_gex), _convert_numpy(call_wall), _convert_numpy(put_wall),
+            _convert_numpy(distance_to_call_wall_pct), _convert_numpy(distance_to_put_wall_pct),
+            signal_source, signal_direction, _clamp_decimal(signal_confidence), _clamp_decimal(signal_win_probability),
             oracle_advice, oracle_reasoning,
-            risk_reward_ratio,
-            json.dumps(checks_json) if checks_json else None, all_checks_passed,
-            trade_executed, position_id, json.dumps(strike_selection) if strike_selection else None, contracts,
-            premium_collected, max_risk,
+            _clamp_decimal(oracle_win_probability), _clamp_decimal(oracle_confidence),
+            json.dumps(_convert_dict_numpy(oracle_top_factors)) if oracle_top_factors else None,
+            json.dumps(_convert_dict_numpy(oracle_probabilities)) if oracle_probabilities else None,
+            json.dumps(_convert_dict_numpy(oracle_suggested_strikes)) if oracle_suggested_strikes else None,
+            json.dumps(_convert_dict_numpy(oracle_thresholds)) if oracle_thresholds else None,
+            _clamp_decimal(min_win_probability_threshold),
+            _convert_numpy(risk_reward_ratio),
+            json.dumps(_convert_dict_numpy(checks_json)) if checks_json else None, all_checks_passed,
+            trade_executed, position_id, json.dumps(_convert_dict_numpy(strike_selection)) if strike_selection else None, _convert_numpy(contracts),
+            _convert_numpy(premium_collected), _convert_numpy(max_risk),
             error_message, error_type,
             ai_what_trigger, ai_market_insight,
-            json.dumps(context)
+            json.dumps(_convert_dict_numpy(context)),
+            # NEW: Quant ML Advisor
+            _convert_numpy(quant_ml_advice), _clamp_decimal(quant_ml_win_probability), _clamp_decimal(quant_ml_confidence),
+            _clamp_decimal(quant_ml_suggested_risk_pct), _clamp_decimal(quant_ml_suggested_sd_multiplier),
+            json.dumps(_convert_dict_numpy(quant_ml_top_factors)) if quant_ml_top_factors else None, quant_ml_model_version,
+            # NEW: ML Regime Classifier
+            regime_predicted_action, _clamp_decimal(regime_confidence),
+            json.dumps(_convert_dict_numpy(regime_probabilities)) if regime_probabilities else None,
+            json.dumps(_convert_dict_numpy(regime_feature_importance)) if regime_feature_importance else None, regime_model_version,
+            # NEW: GEX Directional ML
+            gex_ml_direction, _clamp_decimal(gex_ml_confidence),
+            json.dumps(_convert_dict_numpy(gex_ml_probabilities)) if gex_ml_probabilities else None,
+            json.dumps(_convert_dict_numpy(gex_ml_features_used)) if gex_ml_features_used else None,
+            # NEW: Ensemble Strategy
+            ensemble_signal, _clamp_decimal(ensemble_confidence), _clamp_decimal(ensemble_bullish_weight),
+            _clamp_decimal(ensemble_bearish_weight), _clamp_decimal(ensemble_neutral_weight), ensemble_should_trade,
+            _clamp_decimal(ensemble_position_size_multiplier),
+            json.dumps(_convert_dict_numpy(ensemble_component_signals)) if ensemble_component_signals else None, ensemble_reasoning,
+            # NEW: Volatility Regime
+            volatility_regime, volatility_risk_level, volatility_description,
+            at_flip_point, _convert_numpy(flip_point), _convert_numpy(flip_point_distance_pct),
+            # NEW: Psychology Patterns
+            psychology_pattern, liberation_setup, false_floor_detected,
+            json.dumps(_convert_dict_numpy(forward_magnets)) if forward_magnets else None,
+            # NEW: Monte Carlo Kelly
+            _clamp_decimal(kelly_optimal), _clamp_decimal(kelly_safe), _clamp_decimal(kelly_conservative), _clamp_decimal(kelly_prob_ruin), kelly_recommendation,
+            # NEW: ARGUS Pattern Analysis
+            argus_pattern_match, _clamp_decimal(argus_similarity_score), argus_historical_outcome,
+            _convert_numpy(argus_roc_value), argus_roc_signal,
+            # NEW: IV Context
+            _convert_numpy(iv_rank), _convert_numpy(iv_percentile), _convert_numpy(iv_hv_ratio), _convert_numpy(iv_30d), _convert_numpy(hv_30d),
+            # NEW: Time Context
+            day_of_week, _convert_numpy(day_of_week_num), time_of_day, _convert_numpy(hour_ct), _convert_numpy(minute_ct),
+            _convert_numpy(days_to_monthly_opex), _convert_numpy(days_to_weekly_opex), is_opex_week, is_fomc_day, is_cpi_day,
+            # NEW: Recent Performance Context
+            _clamp_decimal(similar_setup_win_rate), _convert_numpy(similar_setup_count), _convert_numpy(similar_setup_avg_pnl),
+            _convert_numpy(current_streak), streak_type, _clamp_decimal(last_5_trades_win_rate), _clamp_decimal(last_10_trades_win_rate),
+            _convert_numpy(daily_pnl), _convert_numpy(weekly_pnl),
+            # NEW: ML Consensus & Conflict Detection
+            ml_consensus, _clamp_decimal(ml_consensus_score), _convert_numpy(ml_systems_agree), _convert_numpy(ml_systems_total),
+            json.dumps(_convert_dict_numpy(ml_conflicts)) if ml_conflicts else None, ml_conflict_severity,
+            ml_highest_confidence_system, _clamp_decimal(ml_highest_confidence_value),
+            # NEW: NEUTRAL Regime Analysis
+            neutral_derived_direction, _clamp_decimal(neutral_confidence), neutral_reasoning,
+            _clamp_decimal(ic_suitability), _clamp_decimal(bullish_suitability), _clamp_decimal(bearish_suitability), recommended_strategy,
+            trend_direction, _clamp_decimal(trend_strength), _convert_numpy(position_in_range_pct),
+            is_contained, wall_filter_passed,
+            _convert_numpy(price_5m_ago), _convert_numpy(price_30m_ago), _convert_numpy(price_60m_ago),
+            _convert_numpy(high_of_day), _convert_numpy(low_of_day)
         ))
 
         conn.commit()
-        conn.close()
-
         logger.info(f"[{bot_name}] Scan #{scan_number} logged: {outcome.value} - {decision_summary}")
         return scan_id
 
     except Exception as e:
         logger.error(f"Failed to log scan activity: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return None
+
+    finally:
+        # Always close connection to prevent leaks
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
 
 
 def get_recent_scans(
@@ -509,12 +1034,56 @@ def get_recent_scans(
                 distance_to_call_wall_pct, distance_to_put_wall_pct,
                 signal_source, signal_direction, signal_confidence, signal_win_probability,
                 oracle_advice, oracle_reasoning,
+                oracle_win_probability, oracle_confidence,
+                oracle_top_factors, oracle_probabilities,
+                oracle_suggested_strikes, oracle_thresholds,
+                min_win_probability_threshold,
                 risk_reward_ratio,
                 checks_performed, all_checks_passed,
                 trade_executed, position_id, strike_selection, contracts,
                 premium_collected, max_risk,
                 error_message, error_type,
-                what_would_trigger, market_insight
+                what_would_trigger, market_insight,
+                -- NEW: Quant ML Advisor
+                quant_ml_advice, quant_ml_win_probability, quant_ml_confidence,
+                quant_ml_suggested_risk_pct, quant_ml_suggested_sd_multiplier,
+                quant_ml_top_factors, quant_ml_model_version,
+                -- NEW: ML Regime Classifier
+                regime_predicted_action, regime_confidence,
+                regime_probabilities, regime_feature_importance, regime_model_version,
+                -- NEW: GEX Directional ML
+                gex_ml_direction, gex_ml_confidence, gex_ml_probabilities, gex_ml_features_used,
+                -- NEW: Ensemble Strategy
+                ensemble_signal, ensemble_confidence, ensemble_bullish_weight,
+                ensemble_bearish_weight, ensemble_neutral_weight, ensemble_should_trade,
+                ensemble_position_size_multiplier, ensemble_component_signals, ensemble_reasoning,
+                -- NEW: Volatility Regime
+                volatility_regime, volatility_risk_level, volatility_description,
+                at_flip_point, flip_point, flip_point_distance_pct,
+                -- NEW: Psychology Patterns
+                psychology_pattern, liberation_setup, false_floor_detected, forward_magnets,
+                -- NEW: Monte Carlo Kelly
+                kelly_optimal, kelly_safe, kelly_conservative, kelly_prob_ruin, kelly_recommendation,
+                -- NEW: ARGUS Pattern Analysis
+                argus_pattern_match, argus_similarity_score, argus_historical_outcome,
+                argus_roc_value, argus_roc_signal,
+                -- NEW: IV Context
+                iv_rank, iv_percentile, iv_hv_ratio, iv_30d, hv_30d,
+                -- NEW: Time Context
+                day_of_week, day_of_week_num, time_of_day, hour_ct, minute_ct,
+                days_to_monthly_opex, days_to_weekly_opex, is_opex_week, is_fomc_day, is_cpi_day,
+                -- NEW: Recent Performance Context
+                similar_setup_win_rate, similar_setup_count, similar_setup_avg_pnl,
+                current_streak, streak_type, last_5_trades_win_rate, last_10_trades_win_rate,
+                daily_pnl, weekly_pnl,
+                -- NEW: ML Consensus & Conflict Detection
+                ml_consensus, ml_consensus_score, ml_systems_agree, ml_systems_total,
+                ml_conflicts, ml_conflict_severity, ml_highest_confidence_system, ml_highest_confidence_value,
+                -- NEW: NEUTRAL Regime Analysis
+                neutral_derived_direction, neutral_confidence, neutral_reasoning,
+                ic_suitability, bullish_suitability, bearish_suitability, recommended_strategy,
+                trend_direction, trend_strength, position_in_range_pct, is_contained, wall_filter_passed,
+                price_5m_ago, price_30m_ago, price_60m_ago, high_of_day, low_of_day
             FROM scan_activity
             WHERE 1=1
         """
@@ -546,12 +1115,56 @@ def get_recent_scans(
             'distance_to_call_wall_pct', 'distance_to_put_wall_pct',
             'signal_source', 'signal_direction', 'signal_confidence', 'signal_win_probability',
             'oracle_advice', 'oracle_reasoning',
+            'oracle_win_probability', 'oracle_confidence',
+            'oracle_top_factors', 'oracle_probabilities',
+            'oracle_suggested_strikes', 'oracle_thresholds',
+            'min_win_probability_threshold',
             'risk_reward_ratio',
             'checks_performed', 'all_checks_passed',
             'trade_executed', 'position_id', 'strike_selection', 'contracts',
             'premium_collected', 'max_risk',
             'error_message', 'error_type',
-            'what_would_trigger', 'market_insight'
+            'what_would_trigger', 'market_insight',
+            # NEW: Quant ML Advisor
+            'quant_ml_advice', 'quant_ml_win_probability', 'quant_ml_confidence',
+            'quant_ml_suggested_risk_pct', 'quant_ml_suggested_sd_multiplier',
+            'quant_ml_top_factors', 'quant_ml_model_version',
+            # NEW: ML Regime Classifier
+            'regime_predicted_action', 'regime_confidence',
+            'regime_probabilities', 'regime_feature_importance', 'regime_model_version',
+            # NEW: GEX Directional ML
+            'gex_ml_direction', 'gex_ml_confidence', 'gex_ml_probabilities', 'gex_ml_features_used',
+            # NEW: Ensemble Strategy
+            'ensemble_signal', 'ensemble_confidence', 'ensemble_bullish_weight',
+            'ensemble_bearish_weight', 'ensemble_neutral_weight', 'ensemble_should_trade',
+            'ensemble_position_size_multiplier', 'ensemble_component_signals', 'ensemble_reasoning',
+            # NEW: Volatility Regime
+            'volatility_regime', 'volatility_risk_level', 'volatility_description',
+            'at_flip_point', 'flip_point', 'flip_point_distance_pct',
+            # NEW: Psychology Patterns
+            'psychology_pattern', 'liberation_setup', 'false_floor_detected', 'forward_magnets',
+            # NEW: Monte Carlo Kelly
+            'kelly_optimal', 'kelly_safe', 'kelly_conservative', 'kelly_prob_ruin', 'kelly_recommendation',
+            # NEW: ARGUS Pattern Analysis
+            'argus_pattern_match', 'argus_similarity_score', 'argus_historical_outcome',
+            'argus_roc_value', 'argus_roc_signal',
+            # NEW: IV Context
+            'iv_rank', 'iv_percentile', 'iv_hv_ratio', 'iv_30d', 'hv_30d',
+            # NEW: Time Context
+            'day_of_week', 'day_of_week_num', 'time_of_day', 'hour_ct', 'minute_ct',
+            'days_to_monthly_opex', 'days_to_weekly_opex', 'is_opex_week', 'is_fomc_day', 'is_cpi_day',
+            # NEW: Recent Performance Context
+            'similar_setup_win_rate', 'similar_setup_count', 'similar_setup_avg_pnl',
+            'current_streak', 'streak_type', 'last_5_trades_win_rate', 'last_10_trades_win_rate',
+            'daily_pnl', 'weekly_pnl',
+            # NEW: ML Consensus & Conflict Detection
+            'ml_consensus', 'ml_consensus_score', 'ml_systems_agree', 'ml_systems_total',
+            'ml_conflicts', 'ml_conflict_severity', 'ml_highest_confidence_system', 'ml_highest_confidence_value',
+            # NEW: NEUTRAL Regime Analysis
+            'neutral_derived_direction', 'neutral_confidence', 'neutral_reasoning',
+            'ic_suitability', 'bullish_suitability', 'bearish_suitability', 'recommended_strategy',
+            'trend_direction', 'trend_strength', 'position_in_range_pct', 'is_contained', 'wall_filter_passed',
+            'price_5m_ago', 'price_30m_ago', 'price_60m_ago', 'high_of_day', 'low_of_day'
         ]
 
         results = []
@@ -563,11 +1176,37 @@ def get_recent_scans(
             if record.get('date'):
                 record['date'] = str(record['date'])
             # Convert Decimal to float for JSON serialization
-            for key in ['underlying_price', 'vix', 'expected_move', 'net_gex',
-                        'call_wall', 'put_wall', 'distance_to_call_wall_pct',
-                        'distance_to_put_wall_pct', 'signal_confidence',
-                        'signal_win_probability', 'premium_collected', 'max_risk',
-                        'risk_reward_ratio']:
+            decimal_fields = [
+                'underlying_price', 'vix', 'expected_move', 'net_gex',
+                'call_wall', 'put_wall', 'distance_to_call_wall_pct',
+                'distance_to_put_wall_pct', 'signal_confidence',
+                'signal_win_probability', 'premium_collected', 'max_risk',
+                'risk_reward_ratio', 'oracle_win_probability', 'oracle_confidence',
+                'min_win_probability_threshold',
+                # Quant ML / Regime / GEX ML / Ensemble
+                'quant_ml_win_probability', 'quant_ml_confidence',
+                'quant_ml_suggested_risk_pct', 'quant_ml_suggested_sd_multiplier',
+                'regime_confidence', 'gex_ml_confidence',
+                'ensemble_confidence', 'ensemble_bullish_weight',
+                'ensemble_bearish_weight', 'ensemble_neutral_weight',
+                'ensemble_position_size_multiplier',
+                'flip_point', 'flip_point_distance_pct',
+                'kelly_optimal', 'kelly_safe', 'kelly_conservative', 'kelly_prob_ruin',
+                'argus_similarity_score', 'argus_roc_value',
+                # IV Context
+                'iv_rank', 'iv_percentile', 'iv_hv_ratio', 'iv_30d', 'hv_30d',
+                # Recent Performance Context
+                'similar_setup_win_rate', 'similar_setup_avg_pnl',
+                'last_5_trades_win_rate', 'last_10_trades_win_rate',
+                'daily_pnl', 'weekly_pnl',
+                # ML Consensus
+                'ml_consensus_score', 'ml_highest_confidence_value',
+                # NEUTRAL Regime Analysis
+                'neutral_confidence', 'ic_suitability', 'bullish_suitability', 'bearish_suitability',
+                'trend_strength', 'position_in_range_pct',
+                'price_5m_ago', 'price_30m_ago', 'price_60m_ago', 'high_of_day', 'low_of_day'
+            ]
+            for key in decimal_fields:
                 if record.get(key) is not None:
                     record[key] = float(record[key])
             results.append(record)
@@ -650,6 +1289,13 @@ def log_ares_scan(
     signal_win_probability: float = 0,
     oracle_advice: str = "",
     oracle_reasoning: str = "",
+    oracle_win_probability: float = 0,
+    oracle_confidence: float = 0,
+    oracle_top_factors: Optional[List[Dict]] = None,
+    oracle_probabilities: Optional[Dict] = None,
+    oracle_suggested_strikes: Optional[Dict] = None,
+    oracle_thresholds: Optional[Dict] = None,
+    min_win_probability_threshold: float = 0,
     trade_executed: bool = False,
     error_message: str = "",
     generate_ai_explanation: bool = True,
@@ -754,6 +1400,13 @@ def log_ares_scan(
         signal_win_probability=signal_win_probability,
         oracle_advice=oracle_advice,
         oracle_reasoning=oracle_reasoning,
+        oracle_win_probability=oracle_win_probability,
+        oracle_confidence=oracle_confidence,
+        oracle_top_factors=oracle_top_factors,
+        oracle_probabilities=oracle_probabilities,
+        oracle_suggested_strikes=oracle_suggested_strikes,
+        oracle_thresholds=oracle_thresholds,
+        min_win_probability_threshold=min_win_probability_threshold,
         trade_executed=trade_executed,
         error_message=error_message,
         error_type=error_type,
@@ -773,6 +1426,13 @@ def log_pegasus_scan(
     signal_win_probability: float = 0,
     oracle_advice: str = "",
     oracle_reasoning: str = "",
+    oracle_win_probability: float = 0,
+    oracle_confidence: float = 0,
+    oracle_top_factors: Optional[List[Dict]] = None,
+    oracle_probabilities: Optional[Dict] = None,
+    oracle_suggested_strikes: Optional[Dict] = None,
+    oracle_thresholds: Optional[Dict] = None,
+    min_win_probability_threshold: float = 0,
     trade_executed: bool = False,
     error_message: str = "",
     generate_ai_explanation: bool = False,  # Disable by default for PEGASUS
@@ -803,6 +1463,13 @@ def log_pegasus_scan(
         signal_win_probability=signal_win_probability,
         oracle_advice=oracle_advice,
         oracle_reasoning=oracle_reasoning,
+        oracle_win_probability=oracle_win_probability,
+        oracle_confidence=oracle_confidence,
+        oracle_top_factors=oracle_top_factors,
+        oracle_probabilities=oracle_probabilities,
+        oracle_suggested_strikes=oracle_suggested_strikes,
+        oracle_thresholds=oracle_thresholds,
+        min_win_probability_threshold=min_win_probability_threshold,
         trade_executed=trade_executed,
         error_message=error_message,
         error_type=error_type,
@@ -821,6 +1488,15 @@ def log_athena_scan(
     signal_direction: str = "",
     signal_confidence: float = 0,
     signal_win_probability: float = 0,
+    oracle_advice: str = "",
+    oracle_reasoning: str = "",
+    oracle_win_probability: float = 0,
+    oracle_confidence: float = 0,
+    oracle_top_factors: Optional[List[Dict]] = None,
+    oracle_probabilities: Optional[Dict] = None,
+    oracle_suggested_strikes: Optional[Dict] = None,
+    oracle_thresholds: Optional[Dict] = None,
+    min_win_probability_threshold: float = 0,
     trade_executed: bool = False,
     error_message: str = "",
     risk_reward_ratio: float = 0,
@@ -924,8 +1600,406 @@ def log_athena_scan(
         signal_direction=signal_direction,
         signal_confidence=signal_confidence,
         signal_win_probability=signal_win_probability,
+        oracle_advice=oracle_advice,
+        oracle_reasoning=oracle_reasoning,
+        oracle_win_probability=oracle_win_probability,
+        oracle_confidence=oracle_confidence,
+        oracle_top_factors=oracle_top_factors,
+        oracle_probabilities=oracle_probabilities,
+        oracle_suggested_strikes=oracle_suggested_strikes,
+        oracle_thresholds=oracle_thresholds,
+        min_win_probability_threshold=min_win_probability_threshold,
+        risk_reward_ratio=risk_reward_ratio,
         trade_executed=trade_executed,
         error_message=error_message,
         error_type=error_type,
+        **kwargs
+    )
+
+
+def log_phoenix_scan(
+    outcome: ScanOutcome,
+    decision_summary: str,
+    market_data: Optional[Dict] = None,
+    gex_data: Optional[Dict] = None,
+    signal_source: str = "",
+    signal_direction: str = "",
+    signal_confidence: float = 0,
+    signal_win_probability: float = 0,
+    oracle_advice: str = "",
+    oracle_reasoning: str = "",
+    oracle_win_probability: float = 0,
+    oracle_confidence: float = 0,
+    oracle_top_factors: Optional[List[Dict]] = None,
+    oracle_probabilities: Optional[Dict] = None,
+    oracle_suggested_strikes: Optional[Dict] = None,
+    oracle_thresholds: Optional[Dict] = None,
+    min_win_probability_threshold: float = 0,
+    trade_executed: bool = False,
+    error_message: str = "",
+    error_type: str = "",
+    **kwargs
+):
+    """
+    Convenience function to log PHOENIX (0DTE SPY/SPX directional) scan activity.
+
+    PHOENIX is the 0DTE options trader that uses GEX-based directional plays.
+    Logs every scan attempt with full Oracle context for frontend visibility.
+    """
+    action_taken = ""
+    full_reasoning = ""
+
+    if trade_executed:
+        action_taken = "EXECUTED: 0DTE directional trade opened"
+        full_reasoning = f"PHOENIX opened position: {kwargs.get('strategy', 'Call/Put')} | {oracle_reasoning}"
+    elif outcome == ScanOutcome.NO_TRADE:
+        action_taken = "NO_TRADE: Conditions not met"
+        full_reasoning = f"PHOENIX scan - no trade: {decision_summary}"
+    elif outcome == ScanOutcome.MARKET_CLOSED:
+        action_taken = "MARKET_CLOSED"
+        full_reasoning = "Market is closed"
+    elif outcome == ScanOutcome.ERROR:
+        action_taken = f"ERROR: {error_message}"
+        full_reasoning = f"PHOENIX error: {error_message}"
+    else:
+        action_taken = f"{outcome.value}: {decision_summary}"
+        full_reasoning = decision_summary
+
+    return log_scan_activity(
+        bot_name="PHOENIX",
+        outcome=outcome,
+        decision_summary=decision_summary,
+        action_taken=action_taken,
+        full_reasoning=full_reasoning,
+        market_data=market_data,
+        gex_data=gex_data,
+        signal_source=signal_source,
+        signal_direction=signal_direction,
+        signal_confidence=signal_confidence,
+        signal_win_probability=signal_win_probability,
+        oracle_advice=oracle_advice,
+        oracle_reasoning=oracle_reasoning,
+        oracle_win_probability=oracle_win_probability,
+        oracle_confidence=oracle_confidence,
+        oracle_top_factors=oracle_top_factors,
+        oracle_probabilities=oracle_probabilities,
+        oracle_suggested_strikes=oracle_suggested_strikes,
+        oracle_thresholds=oracle_thresholds,
+        min_win_probability_threshold=min_win_probability_threshold,
+        trade_executed=trade_executed,
+        error_message=error_message,
+        error_type=error_type,
+        **kwargs
+    )
+
+
+def log_atlas_scan(
+    outcome: ScanOutcome,
+    decision_summary: str,
+    market_data: Optional[Dict] = None,
+    gex_data: Optional[Dict] = None,
+    signal_source: str = "",
+    signal_confidence: float = 0,
+    signal_win_probability: float = 0,
+    oracle_advice: str = "",
+    oracle_reasoning: str = "",
+    oracle_win_probability: float = 0,
+    oracle_confidence: float = 0,
+    oracle_top_factors: Optional[List[Dict]] = None,
+    oracle_probabilities: Optional[Dict] = None,
+    oracle_suggested_strikes: Optional[Dict] = None,
+    oracle_thresholds: Optional[Dict] = None,
+    min_win_probability_threshold: float = 0,
+    trade_executed: bool = False,
+    error_message: str = "",
+    error_type: str = "",
+    **kwargs
+):
+    """
+    Convenience function to log ATLAS (SPX Wheel) scan activity.
+
+    ATLAS is the SPX cash-secured put wheel strategy.
+    Logs every scan attempt with full Oracle context for frontend visibility.
+    """
+    action_taken = ""
+    full_reasoning = ""
+
+    if trade_executed:
+        action_taken = "EXECUTED: SPX wheel position opened/managed"
+        full_reasoning = f"ATLAS wheel action: {kwargs.get('action_type', 'CSP')} | {oracle_reasoning}"
+    elif outcome == ScanOutcome.NO_TRADE:
+        action_taken = "NO_TRADE: No wheel action needed"
+        full_reasoning = f"ATLAS scan - no action: {decision_summary}"
+    elif outcome == ScanOutcome.MARKET_CLOSED:
+        action_taken = "MARKET_CLOSED"
+        full_reasoning = "Market is closed"
+    elif outcome == ScanOutcome.ERROR:
+        action_taken = f"ERROR: {error_message}"
+        full_reasoning = f"ATLAS error: {error_message}"
+    else:
+        action_taken = f"{outcome.value}: {decision_summary}"
+        full_reasoning = decision_summary
+
+    return log_scan_activity(
+        bot_name="ATLAS",
+        outcome=outcome,
+        decision_summary=decision_summary,
+        action_taken=action_taken,
+        full_reasoning=full_reasoning,
+        market_data=market_data,
+        gex_data=gex_data,
+        signal_source=signal_source,
+        signal_confidence=signal_confidence,
+        signal_win_probability=signal_win_probability,
+        oracle_advice=oracle_advice,
+        oracle_reasoning=oracle_reasoning,
+        oracle_win_probability=oracle_win_probability,
+        oracle_confidence=oracle_confidence,
+        oracle_top_factors=oracle_top_factors,
+        oracle_probabilities=oracle_probabilities,
+        oracle_suggested_strikes=oracle_suggested_strikes,
+        oracle_thresholds=oracle_thresholds,
+        min_win_probability_threshold=min_win_probability_threshold,
+        trade_executed=trade_executed,
+        error_message=error_message,
+        error_type=error_type,
+        **kwargs
+    )
+
+
+def log_icarus_scan(
+    outcome: ScanOutcome,
+    decision_summary: str,
+    market_data: Optional[Dict] = None,
+    gex_data: Optional[Dict] = None,
+    checks: Optional[List[CheckResult]] = None,
+    signal_source: str = "",
+    signal_direction: str = "",
+    signal_confidence: float = 0,
+    signal_win_probability: float = 0,
+    oracle_advice: str = "",
+    oracle_reasoning: str = "",
+    oracle_win_probability: float = 0,
+    oracle_confidence: float = 0,
+    oracle_top_factors: Optional[List[Dict]] = None,
+    oracle_probabilities: Optional[Dict] = None,
+    oracle_suggested_strikes: Optional[Dict] = None,
+    oracle_thresholds: Optional[Dict] = None,
+    min_win_probability_threshold: float = 0,
+    trade_executed: bool = False,
+    error_message: str = "",
+    risk_reward_ratio: float = 0,
+    generate_ai_explanation: bool = True,
+    **kwargs
+) -> Optional[str]:
+    """
+    Log ICARUS scan activity with optional Claude AI explanation.
+
+    ICARUS is an aggressive directional spreads bot with relaxed GEX filters:
+    - 10% wall filter (vs ATHENA's 3%)
+    - 40% min win probability (vs ATHENA's 48%)
+    - 4% risk per trade (vs ATHENA's 2%)
+
+    If generate_ai_explanation is True, uses Claude to create a detailed
+    human-readable explanation of WHY this decision was made.
+    """
+    # Pop parameters from kwargs to avoid "multiple values" error when passing **kwargs
+    full_reasoning = kwargs.pop('full_reasoning', '')
+    action_taken = kwargs.pop('action_taken', '')
+    error_type = kwargs.pop('error_type', '')
+
+    # Generate AI explanation if requested and we have enough context
+    # Use ATHENA's explain function since ICARUS is similar
+    if generate_ai_explanation and market_data:
+        try:
+            from trading.scan_explainer import explain_athena_decision
+
+            # Convert checks to dict format
+            checks_list = []
+            if checks:
+                for check in checks:
+                    if isinstance(check, CheckResult):
+                        checks_list.append({
+                            'check_name': check.check_name,
+                            'passed': check.passed,
+                            'value': check.value,
+                            'threshold': check.threshold,
+                            'reason': check.reason
+                        })
+                    elif isinstance(check, dict):
+                        checks_list.append(check)
+
+            # Get scan number
+            scan_number = _get_scan_number_today("ICARUS")
+
+            # Get values from market/gex data
+            underlying_price = market_data.get('underlying_price', 0) or market_data.get('spot_price', 0)
+            vix = market_data.get('vix', 0)
+
+            net_gex = gex_data.get('net_gex', 0) if gex_data else 0
+            gex_regime = gex_data.get('regime', '') if gex_data else ''
+            call_wall = gex_data.get('call_wall', 0) if gex_data else 0
+            put_wall = gex_data.get('put_wall', 0) if gex_data else 0
+
+            # Build trade details if traded
+            trade_details = None
+            if trade_executed:
+                trade_details = {
+                    'strategy': kwargs.get('strategy', 'Aggressive Directional Spread'),
+                    'contracts': kwargs.get('contracts', 0),
+                    'premium_collected': kwargs.get('premium_collected', 0),
+                    'max_risk': kwargs.get('max_risk', 0)
+                }
+
+            # Generate explanation (reuse ATHENA's explainer)
+            explanation = explain_athena_decision(
+                scan_number=scan_number,
+                outcome=outcome.value,
+                underlying_price=underlying_price,
+                vix=vix,
+                checks=checks_list,
+                signal_source=signal_source or None,
+                signal_direction=signal_direction or None,
+                signal_confidence=signal_confidence or None,
+                signal_win_prob=signal_win_probability or None,
+                net_gex=net_gex or None,
+                gex_regime=gex_regime or None,
+                call_wall=call_wall or None,
+                put_wall=put_wall or None,
+                risk_reward_ratio=risk_reward_ratio or None,
+                trade_details=trade_details,
+                error_message=error_message or None
+            )
+
+            # Use AI-generated summary and reasoning
+            decision_summary = explanation.get('summary', decision_summary)
+            full_reasoning = explanation.get('full_explanation', full_reasoning)
+
+            logger.info(f"[ICARUS] AI explanation generated: {decision_summary}")
+
+        except Exception as e:
+            logger.warning(f"Failed to generate AI explanation for ICARUS: {e}")
+            # Fall back to provided summary
+
+    return log_scan_activity(
+        bot_name="ICARUS",
+        outcome=outcome,
+        decision_summary=decision_summary,
+        action_taken=action_taken,
+        full_reasoning=full_reasoning,
+        market_data=market_data,
+        gex_data=gex_data,
+        checks=checks,
+        signal_source=signal_source,
+        signal_direction=signal_direction,
+        signal_confidence=signal_confidence,
+        signal_win_probability=signal_win_probability,
+        oracle_advice=oracle_advice,
+        oracle_reasoning=oracle_reasoning,
+        oracle_win_probability=oracle_win_probability,
+        oracle_confidence=oracle_confidence,
+        oracle_top_factors=oracle_top_factors,
+        oracle_probabilities=oracle_probabilities,
+        oracle_suggested_strikes=oracle_suggested_strikes,
+        oracle_thresholds=oracle_thresholds,
+        min_win_probability_threshold=min_win_probability_threshold,
+        risk_reward_ratio=risk_reward_ratio,
+        trade_executed=trade_executed,
+        error_message=error_message,
+        error_type=error_type,
+        **kwargs
+    )
+
+
+def log_titan_scan(
+    outcome: ScanOutcome,
+    decision_summary: str,
+    market_data: Optional[Dict] = None,
+    gex_data: Optional[Dict] = None,
+    checks: Optional[List[CheckResult]] = None,
+    signal_source: str = "",
+    signal_direction: str = "",
+    signal_confidence: float = 0,
+    signal_win_probability: float = 0,
+    oracle_advice: str = "",
+    oracle_reasoning: str = "",
+    oracle_win_probability: float = 0,
+    oracle_confidence: float = 0,
+    oracle_top_factors: Optional[List[Dict]] = None,
+    oracle_probabilities: Optional[Dict] = None,
+    oracle_suggested_strikes: Optional[Dict] = None,
+    oracle_thresholds: Optional[Dict] = None,
+    min_win_probability_threshold: float = 0,
+    trade_executed: bool = False,
+    error_message: str = "",
+    risk_reward_ratio: float = 0,
+    generate_ai_explanation: bool = False,  # Disable by default for TITAN (similar to PEGASUS)
+    **kwargs
+) -> Optional[str]:
+    """
+    Log TITAN scan activity.
+
+    TITAN is an aggressive SPX Iron Condor bot with relaxed filters vs PEGASUS:
+    - 40% VIX skip (vs PEGASUS's 32%)
+    - 40% min win probability (vs PEGASUS's 50%)
+    - 15% risk per trade (vs PEGASUS's 10%)
+    - 10 max positions (vs PEGASUS's 5)
+    - 0.8 SD multiplier for closer strikes (vs PEGASUS's 1.0)
+    - $12 spread widths (vs PEGASUS's $10)
+    - 30-minute cooldown for multiple trades per day
+
+    Similar to PEGASUS but more aggressive, trading daily with higher frequency.
+    """
+    full_reasoning = kwargs.pop('full_reasoning', '')
+    action_taken = kwargs.pop('action_taken', '')
+    error_type = kwargs.pop('error_type', '')
+
+    # Generate action description based on outcome
+    if trade_executed:
+        action_taken = action_taken or "EXECUTED: SPX Iron Condor position opened"
+        full_reasoning = full_reasoning or f"TITAN opened IC position | {oracle_reasoning}"
+    elif outcome == ScanOutcome.NO_TRADE:
+        action_taken = action_taken or "NO_TRADE: Conditions not met"
+        full_reasoning = full_reasoning or f"TITAN scan - no trade: {decision_summary}"
+    elif outcome == ScanOutcome.SKIP:
+        action_taken = action_taken or f"SKIP: {decision_summary}"
+        full_reasoning = full_reasoning or f"TITAN skipped: {decision_summary}"
+    elif outcome == ScanOutcome.MARKET_CLOSED:
+        action_taken = "MARKET_CLOSED"
+        full_reasoning = "Market is closed"
+    elif outcome == ScanOutcome.ERROR:
+        action_taken = f"ERROR: {error_message}"
+        full_reasoning = f"TITAN error: {error_message}"
+    else:
+        action_taken = action_taken or f"{outcome.value}: {decision_summary}"
+        full_reasoning = full_reasoning or decision_summary
+
+    return log_scan_activity(
+        bot_name="TITAN",
+        outcome=outcome,
+        decision_summary=decision_summary,
+        action_taken=action_taken,
+        full_reasoning=full_reasoning,
+        market_data=market_data,
+        gex_data=gex_data,
+        checks=checks,
+        signal_source=signal_source,
+        signal_direction=signal_direction,
+        signal_confidence=signal_confidence,
+        signal_win_probability=signal_win_probability,
+        oracle_advice=oracle_advice,
+        oracle_reasoning=oracle_reasoning,
+        oracle_win_probability=oracle_win_probability,
+        oracle_confidence=oracle_confidence,
+        oracle_top_factors=oracle_top_factors,
+        oracle_probabilities=oracle_probabilities,
+        oracle_suggested_strikes=oracle_suggested_strikes,
+        oracle_thresholds=oracle_thresholds,
+        min_win_probability_threshold=min_win_probability_threshold,
+        risk_reward_ratio=risk_reward_ratio,
+        trade_executed=trade_executed,
+        error_message=error_message,
+        error_type=error_type,
+        generate_ai_explanation=generate_ai_explanation,
         **kwargs
     )

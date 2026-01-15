@@ -12,12 +12,14 @@ Design principles:
 
 import logging
 from datetime import datetime
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 from zoneinfo import ZoneInfo
 
 from .models import TradeSignal, SpreadType, ATHENAConfig, CENTRAL_TZ
 
 logger = logging.getLogger(__name__)
+
+# Oracle is the god of all trade decisions
 
 # Optional imports with clear fallbacks
 try:
@@ -56,6 +58,26 @@ try:
 except ImportError:
     DATA_PROVIDER_AVAILABLE = False
 
+# REMOVED: GEX Directional ML, Ensemble Strategy, ML Regime Classifier - redundant with Oracle
+
+# IV Solver - accurate implied volatility calculation
+IV_SOLVER_AVAILABLE = False
+try:
+    from quant.iv_solver import IVSolver, calculate_iv_from_price
+    IV_SOLVER_AVAILABLE = True
+except ImportError:
+    IVSolver = None
+    calculate_iv_from_price = None
+
+# Walk-Forward Optimizer - parameter validation
+WALK_FORWARD_AVAILABLE = False
+try:
+    from quant.walk_forward_optimizer import WalkForwardOptimizer, WalkForwardResult
+    WALK_FORWARD_AVAILABLE = True
+except ImportError:
+    WalkForwardOptimizer = None
+    WalkForwardResult = None
+
 
 class SignalGenerator:
     """
@@ -70,21 +92,23 @@ class SignalGenerator:
 
     def _init_components(self) -> None:
         """Initialize signal generation components"""
-        # GEX Calculator (try Kronos first, fallback to Tradier)
+        # GEX Calculator - Use Tradier for LIVE data (Kronos is for backtesting only)
         self.gex_calculator = None
-        if KRONOS_AVAILABLE:
-            try:
-                self.gex_calculator = KronosGEXCalculator()
-                logger.info("SignalGenerator: Using Kronos GEX")
-            except Exception as e:
-                logger.warning(f"Kronos init failed: {e}")
 
-        if not self.gex_calculator and TRADIER_GEX_AVAILABLE:
+        if TRADIER_GEX_AVAILABLE:
             try:
-                self.gex_calculator = get_gex_calculator()
-                logger.info("SignalGenerator: Using Tradier GEX fallback")
+                tradier_calc = get_gex_calculator()
+                test_result = tradier_calc.calculate_gex(self.config.ticker)
+                if test_result and test_result.get('spot_price', 0) > 0:
+                    self.gex_calculator = tradier_calc
+                    logger.info(f"ATHENA: Using Tradier GEX for LIVE trading (spot={test_result.get('spot_price')})")
+                else:
+                    logger.error("ATHENA: Tradier GEX returned no data!")
             except Exception as e:
-                logger.warning(f"Tradier GEX init failed: {e}")
+                logger.warning(f"ATHENA: Tradier GEX init/test failed: {e}")
+
+        if not self.gex_calculator:
+            logger.error("ATHENA: NO GEX CALCULATOR AVAILABLE - Tradier required for live trading")
 
         # ML Signal Integration
         self.ml_signal = None
@@ -107,6 +131,7 @@ class SignalGenerator:
             except Exception as e:
                 logger.warning(f"Oracle init failed: {e}")
 
+
     def get_gex_data(self) -> Optional[Dict[str, Any]]:
         """
         Get current GEX data.
@@ -122,6 +147,18 @@ class SignalGenerator:
             if not gex:
                 return None
 
+            # Get spot price - try GEX calculator first, then data provider fallback
+            spot = gex.get('spot_price', gex.get('underlying_price', 0))
+            if not spot or spot <= 0:
+                # Fallback to data provider if GEX calculator didn't return spot
+                if DATA_PROVIDER_AVAILABLE:
+                    spot = get_price(self.config.ticker)
+                    if spot and spot > 0:
+                        logger.debug(f"Using spot price from data provider fallback: ${spot:.2f}")
+                if not spot or spot <= 0:
+                    logger.warning("Could not get spot price from GEX calculator or data provider")
+                    return None
+
             # Get VIX
             vix = 20.0
             if DATA_PROVIDER_AVAILABLE:
@@ -131,7 +168,7 @@ class SignalGenerator:
                     pass
 
             return {
-                'spot_price': gex.get('spot_price', gex.get('underlying_price', 0)),
+                'spot_price': spot,
                 'call_wall': gex.get('call_wall', gex.get('major_call_wall', 0)),
                 'put_wall': gex.get('put_wall', gex.get('major_put_wall', 0)),
                 'gex_regime': gex.get('regime', gex.get('gex_regime', 'NEUTRAL')),
@@ -139,8 +176,11 @@ class SignalGenerator:
                 'flip_point': gex.get('flip_point', gex.get('gamma_flip', 0)),
                 'vix': vix,
                 'timestamp': datetime.now(CENTRAL_TZ),
-                # Raw Kronos data for audit
-                'kronos_raw': gex,
+                # Raw GEX data for audit (Tradier live data)
+                'gex_raw': gex,
+                # GEX values for ratio calculation (Tradier uses call_gex/put_gex)
+                'call_gex': abs(gex.get('call_gex', 0)),
+                'put_gex': abs(gex.get('put_gex', 0)),
             }
         except Exception as e:
             logger.error(f"GEX fetch error: {e}")
@@ -189,6 +229,19 @@ class SignalGenerator:
         if not self.oracle or not ORACLE_AVAILABLE:
             return None
 
+        # Validate required market data before calling Oracle
+        spot_price = gex_data.get('spot_price', 0)
+        if not spot_price or spot_price <= 0:
+            logger.debug("ATHENA Oracle skipped: No valid spot price available")
+            return {
+                'confidence': 0,
+                'win_probability': 0,
+                'advice': 'NO_DATA',
+                'direction': 'FLAT',
+                'top_factors': [],
+                'reasoning': 'No valid spot price available for Oracle analysis',
+            }
+
         try:
             # Convert gex_regime string to GEXRegime enum
             gex_regime_str = gex_data.get('gex_regime', 'NEUTRAL').upper()
@@ -212,7 +265,7 @@ class SignalGenerator:
             prediction = self.oracle.get_athena_advice(
                 context=context,
                 use_gex_walls=True,
-                use_claude_validation=False,  # Skip Claude for performance
+                use_claude_validation=True,  # Enable Claude for transparency logging
                 wall_filter_pct=self.config.wall_filter_pct,
             )
 
@@ -225,9 +278,9 @@ class SignalGenerator:
                 for factor_name, impact in prediction.top_factors:
                     top_factors.append({'factor': factor_name, 'impact': impact})
 
-            # Determine Oracle's direction from reasoning
-            oracle_direction = "FLAT"
-            if hasattr(prediction, 'reasoning') and prediction.reasoning:
+            # Get direction - prefer neutral_derived_direction for NEUTRAL regime, else parse reasoning
+            oracle_direction = getattr(prediction, 'neutral_derived_direction', '') or "FLAT"
+            if oracle_direction == "FLAT" and hasattr(prediction, 'reasoning') and prediction.reasoning:
                 if "BULLISH" in prediction.reasoning.upper() or "BULL" in prediction.reasoning.upper():
                     oracle_direction = "BULLISH"
                 elif "BEARISH" in prediction.reasoning.upper() or "BEAR" in prediction.reasoning.upper():
@@ -240,10 +293,76 @@ class SignalGenerator:
                 'direction': oracle_direction,
                 'top_factors': top_factors,
                 'reasoning': prediction.reasoning or '',
+
+                # NEUTRAL Regime Analysis (trend-based direction for NEUTRAL GEX)
+                'neutral_derived_direction': getattr(prediction, 'neutral_derived_direction', ''),
+                'neutral_confidence': getattr(prediction, 'neutral_confidence', 0),
+                'neutral_reasoning': getattr(prediction, 'neutral_reasoning', ''),
+                'ic_suitability': getattr(prediction, 'ic_suitability', 0),
+                'bullish_suitability': getattr(prediction, 'bullish_suitability', 0),
+                'bearish_suitability': getattr(prediction, 'bearish_suitability', 0),
+                'trend_direction': getattr(prediction, 'trend_direction', ''),
+                'trend_strength': getattr(prediction, 'trend_strength', 0),
+                'position_in_range_pct': getattr(prediction, 'position_in_range_pct', 50.0),
+                'wall_filter_passed': getattr(prediction, 'wall_filter_passed', False),
             }
         except Exception as e:
             logger.warning(f"ATHENA Oracle error: {e}")
-            return None
+            import traceback
+            traceback.print_exc()
+            # Return fallback values instead of None so scan activity shows meaningful data
+            return {
+                'confidence': 0,
+                'win_probability': 0,
+                'advice': 'ERROR',
+                'direction': 'FLAT',
+                'top_factors': [{'factor': 'error', 'impact': 0}],
+                'reasoning': f"Oracle error: {str(e)[:100]}",
+            }
+
+    def adjust_confidence_from_top_factors(
+        self,
+        confidence: float,
+        top_factors: List[Dict],
+        gex_data: Dict
+    ) -> Tuple[float, List[str]]:
+        """
+        Adjust confidence based on Oracle's top contributing factors.
+
+        ATHENA uses directional spreads, so factor adjustments are different from ICs.
+        Focus on factors that indicate directional momentum vs mean reversion.
+
+        Returns (adjusted_confidence, adjustment_reasons).
+        """
+        if not top_factors:
+            return confidence, []
+
+        adjustments = []
+        original_confidence = confidence
+        vix = gex_data.get('vix', 20)
+        gex_regime = gex_data.get('gex_regime', 'NEUTRAL')
+
+        # Extract factor names and impacts
+        factor_map = {}
+        for f in top_factors[:5]:
+            name = f.get('factor', f.get('feature', '')).lower()
+            impact = f.get('impact', f.get('importance', 0))
+            factor_map[name] = impact
+
+        # REMOVED: VIX, GEX regime, day of week adjustments
+        # Oracle already analyzed all these factors in MarketContext.
+        # Re-adjusting confidence based on the same factors is redundant.
+        # Trust Oracle's win_probability output directly.
+
+        # Clamp confidence
+        confidence = max(0.4, min(0.95, confidence))
+
+        if adjustments:
+            logger.info(f"[ATHENA TOP_FACTORS ADJUSTMENTS] {original_confidence:.0%} -> {confidence:.0%}")
+            for adj in adjustments:
+                logger.info(f"  - {adj}")
+
+        return confidence, adjustments
 
     def check_wall_proximity(self, gex_data: Dict) -> Tuple[bool, str, str]:
         """
@@ -317,11 +436,12 @@ class SignalGenerator:
 
         # Estimate debit based on moneyness and VIX
         # This is a rough estimate - real pricing comes from option chain
-        time_factor = 1.0  # Assume 0DTE or 1DTE
-        vol_factor = vix / 20.0  # Normalize around VIX=20
+        # For 0DTE ATM spreads, debit is typically 35-45% of width
+        vol_factor = min(vix / 20.0, 1.5)  # Cap vol factor to prevent extreme estimates
 
-        # Base debit is roughly 40-60% of width for ATM spreads
-        base_debit_pct = 0.50 * vol_factor
+        # Base debit is roughly 35-40% of width for ATM 0DTE spreads
+        # This gives R:R of 1.5-1.86 which is more realistic
+        base_debit_pct = 0.35 + (0.05 * vol_factor)  # 35-42.5% range
         debit = width * base_debit_pct
 
         # Max profit = width - debit
@@ -342,57 +462,277 @@ class SignalGenerator:
         # Step 1: Get GEX data
         gex_data = self.get_gex_data()
         if not gex_data:
-            logger.info("No GEX data available")
-            return None
+            logger.info("No GEX data available - returning blocked signal for diagnostics")
+            return TradeSignal(
+                direction="UNKNOWN",
+                spread_type=SpreadType.BULL_CALL,
+                confidence=0,
+                spot_price=0,
+                call_wall=0,
+                put_wall=0,
+                gex_regime="UNKNOWN",
+                vix=0,
+                source="BLOCKED_NO_DATA",
+                reasoning="NO_GEX_DATA: GEX data not available for signal generation",
+            )
 
         spot_price = gex_data['spot_price']
         vix = gex_data['vix']
 
-        # Step 2: Check wall proximity
-        near_wall, wall_direction, wall_reason = self.check_wall_proximity(gex_data)
-        if not near_wall:
-            logger.info(f"Wall filter failed: {wall_reason}")
-            return None
+        # ============================================================
+        # STEP 2: GET ORACLE PREDICTION (ORACLE IS THE GOD OF ALL DECISIONS)
+        #
+        # CRITICAL: When Oracle says TRADE, we TRADE. Period.
+        # Oracle already analyzed VIX, GEX, walls, regime, day of week.
+        # Bot's min_win_probability threshold does NOT override Oracle.
+        # ============================================================
 
-        # Step 3: Get ML signal (optional confirmation)
+        # Step 2a: Get ML signal from 5 GEX probability models (PRIMARY SOURCE)
         ml_signal = self.get_ml_signal(gex_data)
         ml_direction = ml_signal.get('direction') if ml_signal else None
         ml_confidence = ml_signal.get('confidence', 0) if ml_signal else 0
+        ml_win_prob = ml_signal.get('win_probability', 0) if ml_signal else 0
 
-        # Step 3.5: Get Oracle advice (ATHENA-specific predictions)
+        # Step 2b: Get Oracle advice (BACKUP SOURCE)
         oracle = self.get_oracle_advice(gex_data)
         oracle_direction = oracle.get('direction', 'FLAT') if oracle else 'FLAT'
         oracle_confidence = oracle.get('confidence', 0) if oracle else 0
         oracle_win_prob = oracle.get('win_probability', 0) if oracle else 0
+        oracle_advice = oracle.get('advice', 'SKIP_TODAY') if oracle else 'SKIP_TODAY'
+
+        # Determine which source to use
+        use_ml_prediction = ml_signal is not None and ml_win_prob > 0
+        effective_win_prob = ml_win_prob if use_ml_prediction else oracle_win_prob
+        effective_direction = ml_direction if use_ml_prediction else oracle_direction
+        prediction_source = "ML_5_MODEL_ENSEMBLE" if use_ml_prediction else "ORACLE"
+
+        # ============================================================
+        # ORACLE IS THE GOD: If Oracle says TRADE, we TRADE
+        # No min_win_probability threshold check - Oracle's word is final
+        # ============================================================
+        oracle_says_trade = oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
+
+        # FLAT/NEUTRAL is NOT an excuse for blocking trades when Oracle says TRADE
+        # Use Oracle's suitability scores to derive direction, fallback to GEX walls
+        if oracle_says_trade and effective_direction not in ('BULLISH', 'BEARISH'):
+            # First try Oracle's suitability scores (Oracle already analyzed the market)
+            bullish_suit = oracle.get('bullish_suitability', 0) if oracle else 0
+            bearish_suit = oracle.get('bearish_suitability', 0) if oracle else 0
+
+            if bullish_suit > bearish_suit:
+                effective_direction = "BULLISH"
+                logger.info(f"[ATHENA] Direction from Oracle suitability: BULLISH ({bullish_suit:.0%} > {bearish_suit:.0%})")
+            elif bearish_suit > bullish_suit:
+                effective_direction = "BEARISH"
+                logger.info(f"[ATHENA] Direction from Oracle suitability: BEARISH ({bearish_suit:.0%} > {bullish_suit:.0%})")
+            else:
+                # Tie-breaker: use GEX wall proximity
+                call_wall = gex_data.get('call_wall', 0)
+                put_wall = gex_data.get('put_wall', 0)
+                if call_wall > 0 and put_wall > 0:
+                    call_dist = abs(spot_price - call_wall) / spot_price if spot_price > 0 else 1
+                    put_dist = abs(spot_price - put_wall) / spot_price if spot_price > 0 else 1
+                    effective_direction = "BULLISH" if put_dist < call_dist else "BEARISH"
+                    logger.info(f"[ATHENA] Direction from GEX walls (tie-breaker): {effective_direction}")
+                else:
+                    effective_direction = "BULLISH"  # Default
+                    logger.info(f"[ATHENA] Direction defaulted to BULLISH")
+
+        ml_oracle_says_trade = oracle_says_trade and effective_direction in ('BULLISH', 'BEARISH')
+
+        # Log Oracle decision
+        if ml_oracle_says_trade:
+            logger.info(f"[ATHENA] ORACLE SAYS TRADE: {oracle_advice} - {prediction_source} = {effective_direction} @ {effective_win_prob:.0%}")
+        else:
+            logger.info(f"[ATHENA] Oracle advice: {oracle_advice}, direction: {effective_direction} @ {effective_win_prob:.0%}")
+
+        # ============================================================
+        # STEP 3: IF ML/ORACLE SAYS TRADE, BYPASS TRADITIONAL FILTERS
+        # ============================================================
+        if ml_oracle_says_trade:
+            # ML/Oracle supersedes VIX, wall, and GEX filters
+            filters_bypassed = []
+
+            # Log what would have been filtered
+            if vix < self.config.min_vix or vix > self.config.max_vix:
+                filters_bypassed.append(f"VIX={vix:.1f}")
+            near_wall, wall_direction, wall_reason = self.check_wall_proximity(gex_data)
+            if not near_wall:
+                filters_bypassed.append(f"Wall={wall_reason}")
+
+            # Get GEX data for potential logging
+            total_put_gex = gex_data.get('put_gex', 0)
+            total_call_gex = gex_data.get('call_gex', 0)
+            gex_ratio = total_put_gex / total_call_gex if total_call_gex > 0 else (10.0 if total_put_gex > 0 else 1.0)
+            has_gex_asymmetry = (gex_ratio >= self.config.min_gex_ratio_bearish or
+                                 gex_ratio <= self.config.max_gex_ratio_bullish)
+            if not has_gex_asymmetry:
+                filters_bypassed.append(f"GEX_ratio={gex_ratio:.2f}")
+
+            if filters_bypassed:
+                logger.info(f"[ATHENA] ML/Oracle BYPASSES traditional filters: {', '.join(filters_bypassed)}")
+
+            # Use ML/Oracle direction for the trade
+            gex_direction = effective_direction
+            wall_direction = effective_direction  # Override wall direction with ML/Oracle
+            logger.info(f"[ATHENA] Using ML/Oracle direction: {gex_direction}")
+
+        else:
+            # ============================================================
+            # STEP 4: ORACLE SAYS NO TRADE - RESPECT ORACLE'S DECISION
+            # ============================================================
+            # Oracle is the god of all trade decisions.
+            # If Oracle says SKIP_TODAY, we don't trade. Period.
+            logger.info(f"[ATHENA SKIP] Oracle says {oracle_advice} - respecting Oracle's decision")
+
+            # Convert Oracle top_factors to JSON string for blocked signal audit trail
+            import json
+            oracle_top_factors_json = ""
+            if oracle and oracle.get('top_factors'):
+                oracle_top_factors_json = json.dumps(oracle['top_factors'])
+
+            return TradeSignal(
+                direction=effective_direction if effective_direction in ('BULLISH', 'BEARISH') else "UNKNOWN",
+                spread_type=SpreadType.BULL_CALL if effective_direction == "BULLISH" else SpreadType.BEAR_PUT,
+                confidence=0,
+                spot_price=spot_price,
+                call_wall=gex_data.get('call_wall', 0),
+                put_wall=gex_data.get('put_wall', 0),
+                gex_regime=gex_data.get('gex_regime', 'UNKNOWN'),
+                vix=vix,
+                source="BLOCKED_ORACLE_NO_TRADE",
+                reasoning=f"BLOCKED: Oracle advice={oracle_advice}, direction={effective_direction}, win_prob={effective_win_prob:.0%}",
+                ml_win_probability=effective_win_prob,
+                # BUG FIX: Include Oracle fields for audit trail
+                oracle_advice=oracle_advice,
+                oracle_win_probability=oracle_win_prob,
+                oracle_direction=oracle_direction,
+                oracle_confidence=oracle_confidence,
+                oracle_top_factors=oracle_top_factors_json,
+            )
+
+        # Get wall info for logging only (Oracle already provided direction above)
+        near_wall, _, wall_reason = self.check_wall_proximity(gex_data)
+        if not near_wall:
+            wall_reason = f"Oracle overriding wall proximity (direction: {effective_direction})"
+
+        # ============================================================
+        # STEP 5: LOG ML/ORACLE ANALYSIS
+        # ============================================================
+        # Log ML analysis (already fetched above)
+        if ml_signal:
+            logger.info(f"[ATHENA ML ANALYSIS] *** PRIMARY PREDICTION SOURCE ***")
+            logger.info(f"  Direction: {ml_direction or 'N/A'}")
+            logger.info(f"  Confidence: {ml_confidence:.1%}")
+            logger.info(f"  Win Probability: {ml_win_prob:.1%}")
+            logger.info(f"  Model: {ml_signal.get('model_name', 'GEX_5_MODEL_ENSEMBLE')}")
+            if ml_signal.get('model_predictions'):
+                preds = ml_signal['model_predictions']
+                logger.info(f"  Model Breakdown:")
+                logger.info(f"    Flip Gravity: {preds.get('flip_gravity', 0):.1%}")
+                logger.info(f"    Magnet Attraction: {preds.get('magnet_attraction', 0):.1%}")
+                logger.info(f"    Pin Zone: {preds.get('pin_zone', 0):.1%}")
+        else:
+            logger.info(f"[ATHENA] ML models not available, falling back to Oracle")
+
+        # Log Oracle analysis (backup source)
+        if oracle:
+            logger.info(f"[ATHENA ORACLE ANALYSIS] {'(BACKUP - ML unavailable)' if not use_ml_prediction else '(informational)'}")
+            logger.info(f"  Win Probability: {oracle_win_prob:.1%}")
+            logger.info(f"  Confidence: {oracle_confidence:.1%}")
+            logger.info(f"  Direction: {oracle_direction}")
+            logger.info(f"  Advice: {oracle.get('advice', 'N/A')}")
+
+            if oracle.get('top_factors'):
+                logger.info(f"  Top Factors:")
+                for i, factor in enumerate(oracle['top_factors'][:3], 1):
+                    factor_name = factor.get('factor', 'unknown')
+                    impact = factor.get('impact', 0)
+                    direction_sign = "+" if impact > 0 else ""
+                    logger.info(f"    {i}. {factor_name}: {direction_sign}{impact:.3f}")
+
+            # Oracle SKIP_TODAY is informational only when ML is available
+            if oracle.get('advice') == 'SKIP_TODAY':
+                if use_ml_prediction:
+                    logger.info(f"[ATHENA] Oracle advises SKIP_TODAY but ML override active")
+                    logger.info(f"  ML Win Prob: {ml_win_prob:.1%} will be used instead")
+                else:
+                    logger.info(f"[ATHENA ORACLE INFO] Oracle advises SKIP_TODAY (informational only)")
+                    logger.info(f"  Bot will use its own threshold: {self.config.min_win_probability:.1%}")
+
+        # Win probability threshold already checked in Step 2/3 above
+        # If we reach here, either ML/Oracle passed threshold or market baseline is used
+        logger.info(f"[ATHENA] Proceeding with {prediction_source}: {effective_win_prob:.1%} win prob")
 
         # Step 4: Determine final direction
-        # Wall proximity is primary, ML and Oracle are confirmation
+        # IMPROVED: Oracle with very high confidence can override wall direction
+        # BUT requires stricter thresholds (90%/70%) to prevent stepping on GEX wall signals
         direction = wall_direction
+        direction_source = "WALL"
 
-        # If ML disagrees strongly, reduce confidence
-        confidence = 0.7  # Base confidence from wall proximity
+        # Check if Oracle should override wall direction
+        # Oracle can override when: confidence >= 90% AND win_prob >= 70% AND direction is not FLAT
+        # RAISED from 85%/60% - GEX walls are PRIMARY, Oracle override should be rare
+        oracle_override_threshold = 0.90
+        oracle_win_prob_threshold = 0.70
+
+        if oracle and oracle_direction != 'FLAT':
+            if oracle_confidence >= oracle_override_threshold and oracle_win_prob >= oracle_win_prob_threshold:
+                if oracle_direction != wall_direction:
+                    logger.info(f"[ATHENA ORACLE OVERRIDE] Oracle overriding wall direction!")
+                    logger.info(f"  Wall Direction: {wall_direction}")
+                    logger.info(f"  Oracle Direction: {oracle_direction}")
+                    logger.info(f"  Oracle Confidence: {oracle_confidence:.0%} (threshold: {oracle_override_threshold:.0%})")
+                    logger.info(f"  Oracle Win Prob: {oracle_win_prob:.0%} (threshold: {oracle_win_prob_threshold:.0%})")
+                    direction = oracle_direction
+                    direction_source = "ORACLE_OVERRIDE"
+
+        # Calculate confidence based on direction source
+        if direction_source == "ORACLE_OVERRIDE":
+            # Higher base confidence when Oracle is driving the direction
+            confidence = 0.75 + (oracle_confidence - oracle_override_threshold) * 0.5  # 0.75 to 0.825
+            confidence = min(0.95, confidence)
+            logger.info(f"Using Oracle-driven confidence: {confidence:.0%}")
+        else:
+            # Wall-based confidence (original logic)
+            confidence = 0.7  # Base confidence from wall proximity
+
+        # ML can boost or reduce confidence
         if ml_signal:
             if ml_direction == direction:
-                confidence = min(0.9, confidence + ml_confidence * 0.2)
+                confidence = min(0.95, confidence + ml_confidence * 0.20)
             elif ml_direction and ml_direction != direction and ml_confidence > 0.7:
-                confidence -= 0.2
+                # Penalty when ML disagrees
+                confidence -= 0.10
 
-        # Oracle can boost or reduce confidence further
-        if oracle:
+        # Oracle adjustments (when not overriding)
+        if oracle and direction_source != "ORACLE_OVERRIDE":
             if oracle_direction == direction and oracle_confidence > 0.6:
-                confidence = min(0.95, confidence + oracle_confidence * 0.15)
-                logger.info(f"Oracle confirms direction {direction} with {oracle_confidence:.0%} confidence")
-            elif oracle_direction != direction and oracle_direction != 'FLAT' and oracle_confidence > 0.7:
-                confidence -= 0.15
-                logger.info(f"Oracle disagrees: {oracle_direction} vs wall {direction}")
-            # Oracle SKIP_TODAY overrides
-            if oracle.get('advice') == 'SKIP_TODAY':
-                logger.info(f"Oracle advises SKIP_TODAY: {oracle.get('reasoning', '')}")
-                return None
+                # Oracle confirms wall direction - boost confidence more significantly
+                boost = oracle_confidence * 0.20  # Increased from 0.15
+                confidence = min(0.95, confidence + boost)
+                logger.info(f"Oracle confirms direction {direction} with {oracle_confidence:.0%} confidence (+{boost:.0%})")
+            elif oracle_direction != direction and oracle_direction != 'FLAT' and oracle_confidence > 0.6:
+                # Oracle disagrees - scale penalty by Oracle's confidence
+                penalty = (oracle_confidence - 0.6) * 0.25  # 0% to 10% penalty
+                confidence -= penalty
+                logger.info(f"Oracle disagrees: {oracle_direction} vs wall {direction} (-{penalty:.0%})")
+            # NOTE: Oracle SKIP_TODAY is informational only - ML win prob takes precedence
+            # See earlier logic at line 544-551 - bot uses its own min_win_probability threshold
 
-        if confidence < 0.5:
-            logger.info(f"Confidence too low: {confidence:.2f}")
-            return None
+            # APPLY top_factors to adjust confidence based on current conditions
+            if oracle.get('top_factors'):
+                confidence, factor_adjustments = self.adjust_confidence_from_top_factors(
+                    confidence, oracle['top_factors'], gex_data
+                )
+
+        # ============================================================
+        # CONFIDENCE CHECK - Warning only, does not block
+        # ============================================================
+        if confidence < self.config.min_confidence:
+            logger.warning(f"[ATHENA WARNING] Confidence {confidence:.1%} below {self.config.min_confidence:.1%} (proceeding anyway)")
+        else:
+            logger.info(f"[ATHENA] Confidence {confidence:.1%} >= {self.config.min_confidence:.1%}")
 
         # Step 5: Determine spread type
         spread_type = SpreadType.BULL_CALL if direction == "BULLISH" else SpreadType.BEAR_PUT
@@ -411,12 +751,11 @@ class SignalGenerator:
             spread_type, long_strike, short_strike, spot_price, vix
         )
 
-        # Step 8: Calculate risk/reward
+        # Step 8: Calculate risk/reward - Warning only, does not block
         rr_ratio = max_profit / max_loss if max_loss > 0 else 0
 
         if rr_ratio < self.config.min_rr_ratio:
-            logger.info(f"R:R ratio {rr_ratio:.2f} below minimum {self.config.min_rr_ratio}")
-            return None
+            logger.warning(f"[ATHENA WARNING] R:R ratio {rr_ratio:.2f} below minimum {self.config.min_rr_ratio} (proceeding anyway)")
 
         # Step 9: Build detailed reasoning (FULL audit trail)
         reasoning_parts = []

@@ -408,7 +408,7 @@ function ChecksPerformedPanel({ checks, botName }: { checks?: ScanCheck[]; botNa
                 </div>
               </div>
               {check.reason && (
-                <p className="text-xs text-gray-400 mt-0.5">{check.reason}</p>
+                <p className="text-xs text-gray-400 mt-0.5">{typeof check.reason === 'object' ? JSON.stringify(check.reason) : check.reason}</p>
               )}
             </div>
           </div>

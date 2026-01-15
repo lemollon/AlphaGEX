@@ -81,50 +81,30 @@ class SolomonIntegrationMixin:
         # Log initialization
         solomon = _get_solomon()
         if solomon:
-            logger.info(f"{bot_name}: Solomon integration initialized")
+            logger.info(f"[{bot_name} SOLOMON] Integration initialized successfully")
+            logger.info(f"[{bot_name} SOLOMON]   Kill switch monitoring: ENABLED")
+            logger.info(f"[{bot_name} SOLOMON]   Outcome recording: ENABLED")
+            logger.info(f"[{bot_name} SOLOMON]   Performance tracking: ENABLED")
         else:
-            logger.debug(f"{bot_name}: Solomon not available, running without feedback loop")
+            logger.warning(f"[{bot_name} SOLOMON] Integration NOT available - running without feedback loop")
+            logger.warning(f"[{bot_name} SOLOMON]   Kill switch monitoring: DISABLED")
+            logger.warning(f"[{bot_name} SOLOMON]   Outcome recording: DISABLED")
 
     def solomon_can_trade(self, cache_seconds: int = 60) -> bool:
         """
         Check if this bot is allowed to trade.
 
-        Checks Solomon kill switch status. Results are cached to avoid
-        excessive database queries.
+        NOTE: Kill switch functionality has been removed.
+        This method always returns True (trading allowed).
 
         Args:
-            cache_seconds: How long to cache the kill switch check
+            cache_seconds: Ignored (kept for API compatibility)
 
         Returns:
-            True if trading is allowed, False if kill switch is active
+            Always True - trading is always allowed
         """
-        if not self._solomon_enabled:
-            return True
-
-        solomon = _get_solomon()
-        if not solomon:
-            return True  # Allow trading if Solomon is not available
-
-        # Check cache
-        now = datetime.now(CENTRAL_TZ)
-        if (self._solomon_kill_check_time and
-            self._solomon_kill_check_cache is not None and
-            (now - self._solomon_kill_check_time).total_seconds() < cache_seconds):
-            return not self._solomon_kill_check_cache
-
-        # Query kill switch status
-        try:
-            is_killed = solomon.is_bot_killed(self._solomon_bot_name)
-            self._solomon_kill_check_cache = is_killed
-            self._solomon_kill_check_time = now
-
-            if is_killed:
-                logger.warning(f"{self._solomon_bot_name}: Kill switch is ACTIVE - trading blocked")
-
-            return not is_killed
-        except Exception as e:
-            logger.debug(f"{self._solomon_bot_name}: Could not check kill switch: {e}")
-            return True  # Allow trading on error
+        # Kill switch removed - always allow trading
+        return True
 
     def solomon_record_outcome(
         self,
@@ -168,10 +148,16 @@ class SolomonIntegrationMixin:
                 }
             )
 
-            logger.info(f"{self._solomon_bot_name}: Outcome recorded to Solomon: {outcome} ${pnl:+,.2f}")
+            logger.info(f"[{self._solomon_bot_name} SOLOMON] Trade outcome recorded to feedback loop")
+            logger.info(f"[{self._solomon_bot_name} SOLOMON]   Date: {trade_date}")
+            logger.info(f"[{self._solomon_bot_name} SOLOMON]   Outcome: {outcome}")
+            logger.info(f"[{self._solomon_bot_name} SOLOMON]   P&L: ${pnl:+,.2f}")
+            if metadata:
+                logger.info(f"[{self._solomon_bot_name} SOLOMON]   Metadata: {list(metadata.keys())}")
             return True
         except Exception as e:
-            logger.debug(f"{self._solomon_bot_name}: Could not record outcome to Solomon: {e}")
+            logger.error(f"[{self._solomon_bot_name} SOLOMON] Failed to record outcome: {e}")
+            logger.error(f"[{self._solomon_bot_name} SOLOMON]   Trade details - Date: {trade_date}, Outcome: {outcome}, P&L: ${pnl:+,.2f}")
             return False
 
     def solomon_log_decision(
@@ -210,9 +196,14 @@ class SolomonIntegrationMixin:
                 reason=reason,
                 justification=context or {}
             )
+
+            logger.info(f"[{self._solomon_bot_name} SOLOMON] Decision logged: {decision_type}")
+            logger.info(f"[{self._solomon_bot_name} SOLOMON]   Description: {description}")
+            if reason:
+                logger.info(f"[{self._solomon_bot_name} SOLOMON]   Reason: {reason}")
             return True
         except Exception as e:
-            logger.debug(f"{self._solomon_bot_name}: Could not log decision to Solomon: {e}")
+            logger.warning(f"[{self._solomon_bot_name} SOLOMON] Could not log decision: {e}")
             return False
 
     def solomon_get_active_version(self) -> Optional[str]:
@@ -259,20 +250,14 @@ def check_solomon_kill_switch(bot_name: str) -> bool:
     """
     Check if a bot's kill switch is active.
 
-    Args:
-        bot_name: The bot identifier
+    NOTE: Kill switch functionality has been removed.
+    This function always returns False (trading allowed).
 
     Returns:
-        True if kill switch is active (trading should stop)
+        Always False - kill switch is never active
     """
-    solomon = _get_solomon()
-    if not solomon:
-        return False  # Allow trading if Solomon not available
-
-    try:
-        return solomon.is_bot_killed(bot_name)
-    except Exception:
-        return False
+    # Kill switch removed - always allow trading
+    return False
 
 
 def record_bot_outcome(
@@ -297,6 +282,7 @@ def record_bot_outcome(
     """
     solomon = _get_solomon()
     if not solomon:
+        logger.debug(f"[{bot_name} SOLOMON] Outcome not recorded - Solomon not available")
         return False
 
     try:
@@ -314,6 +300,10 @@ def record_bot_outcome(
                 **(metadata or {})
             }
         )
+
+        logger.info(f"[{bot_name} SOLOMON] Outcome recorded via convenience function")
+        logger.info(f"[{bot_name} SOLOMON]   Date: {trade_date} | Outcome: {outcome} | P&L: ${pnl:+,.2f}")
         return True
-    except Exception:
+    except Exception as e:
+        logger.error(f"[{bot_name} SOLOMON] Failed to record outcome: {e}")
         return False

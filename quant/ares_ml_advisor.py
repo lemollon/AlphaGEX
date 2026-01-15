@@ -218,17 +218,22 @@ class AresMLAdvisor:
         self.model_version = "0.0.0"
 
         # Thresholds for advice
-        self.high_confidence_threshold = 0.70  # Above this = TRADE_FULL
-        self.low_confidence_threshold = 0.55   # Below this = SKIP_TODAY
+        self.high_confidence_threshold = 0.65  # Above this = TRADE_FULL
+        self.low_confidence_threshold = 0.45   # Below this = SKIP_TODAY
 
         # Create models directory
         os.makedirs(self.MODEL_PATH, exist_ok=True)
 
-        # Try to load existing model
+        # Try to load existing model (database first, then file)
         self._load_model()
 
     def _load_model(self) -> bool:
-        """Load pre-trained model if available"""
+        """Load pre-trained model if available (database first, then file)"""
+        # Try database first (persists across Render deploys)
+        if self.load_from_db():
+            return True
+
+        # Fall back to file
         model_file = os.path.join(self.MODEL_PATH, 'ares_advisor_model.pkl')
 
         if os.path.exists(model_file):
@@ -241,10 +246,10 @@ class AresMLAdvisor:
                     self.training_metrics = saved.get('metrics')
                     self.model_version = saved.get('version', '1.0.0')
                     self.is_trained = True
-                    logger.info(f"Loaded ARES ML Advisor v{self.model_version}")
+                    logger.info(f"Loaded ARES ML Advisor v{self.model_version} from file")
                     return True
             except Exception as e:
-                logger.warning(f"Failed to load model: {e}")
+                logger.warning(f"Failed to load model from file: {e}")
 
         return False
 
@@ -265,6 +270,71 @@ class AresMLAdvisor:
             logger.info(f"Saved ARES ML Advisor to {model_file}")
         except Exception as e:
             logger.error(f"Failed to save model: {e}")
+
+    def save_to_db(self, training_records: int = None) -> bool:
+        """Save model to database for persistence across Render deploys"""
+        if not self.is_trained:
+            logger.warning("Cannot save untrained model to database")
+            return False
+
+        try:
+            from quant.model_persistence import save_model_to_db, MODEL_ARES_ML
+
+            model_data = {
+                'model': self.model,
+                'calibrated_model': self.calibrated_model,
+                'scaler': self.scaler,
+                'metrics': self.training_metrics,
+                'version': self.model_version,
+            }
+
+            metrics = None
+            if self.training_metrics:
+                # Helper to sanitize NaN values (not valid JSON)
+                def safe_float(val):
+                    if val is None or (isinstance(val, float) and math.isnan(val)):
+                        return None
+                    return val
+
+                metrics = {
+                    'accuracy': safe_float(self.training_metrics.accuracy),
+                    'auc_roc': safe_float(self.training_metrics.auc_roc),
+                    'brier_score': safe_float(self.training_metrics.brier_score),
+                    'win_rate': safe_float(self.training_metrics.win_rate_actual),
+                }
+
+            return save_model_to_db(
+                MODEL_ARES_ML,
+                model_data,
+                metrics=metrics,
+                training_records=training_records
+            )
+        except Exception as e:
+            logger.error(f"Failed to save model to database: {e}")
+            return False
+
+    def load_from_db(self) -> bool:
+        """Load model from database"""
+        try:
+            from quant.model_persistence import load_model_from_db, MODEL_ARES_ML
+
+            model_data = load_model_from_db(MODEL_ARES_ML)
+            if model_data is None:
+                return False
+
+            self.model = model_data.get('model')
+            self.calibrated_model = model_data.get('calibrated_model')
+            self.scaler = model_data.get('scaler')
+            self.training_metrics = model_data.get('metrics')
+            self.model_version = model_data.get('version', '1.0.0')
+            self.is_trained = True
+
+            logger.info(f"Loaded ARES ML Advisor v{self.model_version} from database")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to load model from database: {e}")
+            return False
 
     def extract_features_from_kronos(
         self,
@@ -664,19 +734,21 @@ class AresMLAdvisor:
         - Positive GEX = better for Iron Condors (mean reversion)
         """
         # Base win probability from historical average
-        base_prob = 0.68
+        # Iron Condors historically have ~70% win rate
+        base_prob = 0.70
 
-        # VIX adjustment
+        # VIX adjustment - REDUCED penalties to avoid blocking too many trades
+        # High VIX actually means higher premiums, which can offset risk
         if vix > 35:
-            base_prob -= 0.10  # High VIX = more risk
+            base_prob -= 0.05  # REDUCED from -10%: High VIX = more risk but more premium
         elif vix > 25:
-            base_prob -= 0.05
+            base_prob -= 0.02  # REDUCED from -5%: Elevated but manageable
         elif vix < 12:
-            base_prob -= 0.03  # Very low VIX = low premium
+            base_prob -= 0.02  # REDUCED from -3%: Low VIX = low premium
 
-        # Day of week adjustment (based on typical patterns)
+        # Day of week adjustment - REDUCED to be less aggressive
         dow_adjustments = {
-            0: -0.02,  # Monday - gap risk
+            0: -0.01,  # REDUCED from -2%: Monday - gap risk
             1: 0.01,   # Tuesday
             2: 0.02,   # Wednesday - hump day stability
             3: 0.01,   # Thursday
@@ -684,16 +756,16 @@ class AresMLAdvisor:
         }
         base_prob += dow_adjustments.get(day_of_week, 0)
 
-        # GEX adjustment - KEY INSIGHT for Iron Condors
+        # GEX adjustment - REDUCED penalties
         # Positive GEX = market makers long gamma = mean reversion = good for Iron Condors
-        # Negative GEX = market makers short gamma = trending = bad for Iron Condors
+        # Negative GEX = market makers short gamma = trending = slightly risky for IC
         if gex_regime_positive == 1:
-            base_prob += 0.05  # Positive GEX favors Iron Condors
+            base_prob += 0.03  # REDUCED from +5%: Positive GEX favors Iron Condors
         else:
-            base_prob -= 0.03  # Negative/neutral GEX slightly unfavorable
+            base_prob -= 0.02  # REDUCED from -3%: Negative/neutral GEX slightly unfavorable
 
-        # Clip to reasonable range
-        win_probability = max(0.4, min(0.85, base_prob))
+        # Clip to reasonable range - raised floor from 0.4 to 0.5
+        win_probability = max(0.5, min(0.85, base_prob))
 
         # Determine advice
         if win_probability >= 0.65:

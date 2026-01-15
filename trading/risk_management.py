@@ -338,7 +338,8 @@ def get_broker_margin_requirement() -> Optional[Dict]:
     try:
         from data.tradier_data_fetcher import TradierDataFetcher
 
-        broker = TradierDataFetcher()
+        # Use production Tradier for actual margin data
+        broker = TradierDataFetcher(sandbox=False)
         balance = broker.get_account_balance()
 
         if balance:
@@ -403,7 +404,8 @@ def get_broker_positions() -> List[Dict]:
     try:
         from data.tradier_data_fetcher import TradierDataFetcher
 
-        broker = TradierDataFetcher()
+        # Use production Tradier for actual position data
+        broker = TradierDataFetcher(sandbox=False)
         positions = broker.get_positions()
 
         spx_positions = []

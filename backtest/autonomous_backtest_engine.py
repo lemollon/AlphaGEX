@@ -274,6 +274,7 @@ class PatternBacktester:
 
         try:
             # Use PostgreSQL %s placeholders and ON CONFLICT to update existing
+            # Convert numpy types to Python native types for PostgreSQL
             c.execute("""
                 INSERT INTO backtest_results (
                     timestamp, strategy_name, symbol, start_date, end_date,
@@ -288,19 +289,19 @@ class PatternBacktester:
                 'SPY',
                 results.get('start_date', ''),
                 results.get('end_date', ''),
-                results['total_signals'],
-                results['winning_signals'],
-                results['losing_signals'],
-                results['win_rate'],
-                results['avg_profit_pct'],
-                results['avg_loss_pct'],
-                results['max_win_pct'],
-                results['max_loss_pct'],
-                results['expectancy'],
+                int(results['total_signals']),
+                int(results['winning_signals']),
+                int(results['losing_signals']),
+                float(results['win_rate']),
+                float(results['avg_profit_pct']),
+                float(results['avg_loss_pct']),
+                float(results['max_win_pct']),
+                float(results['max_loss_pct']),
+                float(results['expectancy']),
                 0,  # total_return_pct (calculate if needed)
                 0,  # max_drawdown_pct (calculate if needed)
-                results['sharpe_ratio'],
-                results.get('avg_duration', 5)
+                float(results['sharpe_ratio']),
+                float(results.get('avg_duration', 5))
             ))
 
             conn.commit()
@@ -471,3 +472,12 @@ def get_backtester() -> PatternBacktester:
     if _backtester is None:
         _backtester = PatternBacktester()
     return _backtester
+
+
+if __name__ == "__main__":
+    print("Running pattern backtests...")
+    backtester = get_backtester()
+    results = backtester.backtest_all_patterns_and_save(lookback_days=90, save_to_db=True)
+    print(f"\nCompleted {len(results)} pattern backtests")
+    for r in results:
+        print(f"  {r['pattern']}: {r['total_signals']} signals, {r['win_rate']:.1f}% win rate")

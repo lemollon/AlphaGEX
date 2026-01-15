@@ -17,6 +17,8 @@ from database_adapter import get_connection
 
 logger = logging.getLogger('autonomous_paper_trader.position_sizer')
 
+# Oracle is the god of all trade decisions - validation is informational only
+
 # Import strategy stats if available
 try:
     from core.strategy_stats import get_strategy_stats
@@ -91,14 +93,15 @@ class PositionSizerMixin:
 
                 if result['total_trades'] >= min_trades:
                     result['is_validated'] = True
+                    result['should_trade'] = True  # Oracle decides, always allow
 
-                    # Check if pattern has positive expectancy
-                    if result['expectancy'] < 0.0:  # MUST have non-negative expectancy
-                        result['should_trade'] = False
-                        result['reason'] = f"BLOCKED: Negative expectancy ({result['expectancy']:.1f}%)"
-                    elif result['win_rate'] < 40.0:  # Win rate threshold
-                        result['should_trade'] = False
-                        result['reason'] = f"BLOCKED: Win rate too low ({result['win_rate']:.0f}% < 40%)"
+                    # Backtest validation - informational only, does not block
+                    if result['expectancy'] < 0.0:
+                        result['reason'] = f"INFO: Negative expectancy ({result['expectancy']:.1f}%) - proceeding (Oracle decides)"
+                        logger.info(f"Position sizer: negative expectancy ({result['expectancy']:.1f}%) - proceeding")
+                    elif result['win_rate'] < 40.0:
+                        result['reason'] = f"INFO: Win rate low ({result['win_rate']:.0f}% < 40%) - proceeding (Oracle decides)"
+                        logger.info(f"Position sizer: low win rate ({result['win_rate']:.0f}%) - proceeding")
                     else:
                         result['reason'] = f"Validated: {result['total_trades']} trades, {result['win_rate']:.0f}% win rate, {result['expectancy']:.1f}% expectancy"
                 else:
@@ -127,13 +130,15 @@ class PositionSizerMixin:
 
                 if result['total_trades'] >= min_trades:
                     result['is_validated'] = True
+                    result['should_trade'] = True  # Oracle decides, always allow
 
+                    # Live trade validation - informational only, does not block
                     if result['expectancy'] < 0.0:
-                        result['should_trade'] = False
-                        result['reason'] = f"BLOCKED: Live trades show negative expectancy ({result['expectancy']:.1f}%)"
+                        result['reason'] = f"INFO: Live negative expectancy ({result['expectancy']:.1f}%) - proceeding (Oracle decides)"
+                        logger.info(f"Position sizer: live negative expectancy ({result['expectancy']:.1f}%) - proceeding")
                     elif result['win_rate'] < 40.0:
-                        result['should_trade'] = False
-                        result['reason'] = f"BLOCKED: Live win rate too low ({result['win_rate']:.0f}% < 40%)"
+                        result['reason'] = f"INFO: Live win rate low ({result['win_rate']:.0f}% < 40%) - proceeding (Oracle decides)"
+                        logger.info(f"Position sizer: live low win rate ({result['win_rate']:.0f}%) - proceeding")
                     else:
                         result['reason'] = f"Live validated: {result['total_trades']} trades, {result['win_rate']:.0f}% win rate, {result['expectancy']:.1f}% expectancy"
                 else:

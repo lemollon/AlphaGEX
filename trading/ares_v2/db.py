@@ -25,6 +25,26 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 
+def _to_python(val):
+    """Convert numpy types to native Python types for database insertion"""
+    if val is None:
+        return None
+    # Handle numpy types
+    type_name = type(val).__name__
+    if 'float' in type_name or 'Float' in type_name:
+        return float(val)
+    if 'int' in type_name or 'Int' in type_name:
+        return int(val)
+    if 'bool' in type_name:
+        return bool(val)
+    if 'str' in type_name:
+        return str(val)
+    # Check for numpy array scalar
+    if hasattr(val, 'item'):
+        return val.item()
+    return val
+
+
 @contextmanager
 def db_connection():
     """Context manager for database connections"""
@@ -178,7 +198,9 @@ class ARESDatabase:
                         contracts, spread_width, total_credit, max_loss, max_profit,
                         underlying_at_entry, vix_at_entry, expected_move,
                         call_wall, put_wall, gex_regime,
-                        oracle_confidence, oracle_reasoning,
+                        flip_point, net_gex,
+                        oracle_confidence, oracle_win_probability, oracle_advice,
+                        oracle_reasoning, oracle_top_factors, oracle_use_gex_walls,
                         put_order_id, call_order_id,
                         status, open_time, close_time, close_price, close_reason, realized_pnl
                     FROM ares_positions
@@ -208,16 +230,24 @@ class ARESDatabase:
                         call_wall=float(row[17] or 0),
                         put_wall=float(row[18] or 0),
                         gex_regime=row[19] or "",
-                        oracle_confidence=float(row[20] or 0),
-                        oracle_reasoning=row[21] or "",
-                        put_order_id=row[22] or "",
-                        call_order_id=row[23] or "",
-                        status=PositionStatus(row[24]),
-                        open_time=row[25],
-                        close_time=row[26],
-                        close_price=float(row[27] or 0),
-                        close_reason=row[28] or "",
-                        realized_pnl=float(row[29] or 0),
+                        # Kronos context
+                        flip_point=float(row[20] or 0),
+                        net_gex=float(row[21] or 0),
+                        # Oracle context (FULL audit trail)
+                        oracle_confidence=float(row[22] or 0),
+                        oracle_win_probability=float(row[23] or 0),
+                        oracle_advice=row[24] or "",
+                        oracle_reasoning=row[25] or "",
+                        oracle_top_factors=row[26] or "",
+                        oracle_use_gex_walls=bool(row[27]),
+                        put_order_id=row[28] or "",
+                        call_order_id=row[29] or "",
+                        status=PositionStatus(row[30]),
+                        open_time=row[31],
+                        close_time=row[32],
+                        close_price=float(row[33] or 0),
+                        close_reason=row[34] or "",
+                        realized_pnl=float(row[35] or 0),
                     )
                     positions.append(pos)
 
@@ -248,25 +278,26 @@ class ARESDatabase:
                         oracle_confidence, oracle_win_probability, oracle_advice,
                         oracle_reasoning, oracle_top_factors, oracle_use_gex_walls,
                         put_order_id, call_order_id,
-                        status, open_time
+                        status, open_time, open_date
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s
+                        %s, %s, %s
                     )
                 """, (
                     pos.position_id, pos.ticker, pos.expiration,
-                    pos.put_short_strike, pos.put_long_strike, pos.put_credit,
-                    pos.call_short_strike, pos.call_long_strike, pos.call_credit,
-                    pos.contracts, pos.spread_width, pos.total_credit, pos.max_loss, pos.max_profit,
-                    pos.underlying_at_entry, pos.vix_at_entry or None, pos.expected_move or None,
-                    pos.call_wall or None, pos.put_wall or None, pos.gex_regime or None,
-                    pos.flip_point or None, pos.net_gex or None,
-                    pos.oracle_confidence or None, pos.oracle_win_probability or None, pos.oracle_advice or None,
-                    pos.oracle_reasoning or None, pos.oracle_top_factors or None, pos.oracle_use_gex_walls,
+                    _to_python(pos.put_short_strike), _to_python(pos.put_long_strike), _to_python(pos.put_credit),
+                    _to_python(pos.call_short_strike), _to_python(pos.call_long_strike), _to_python(pos.call_credit),
+                    _to_python(pos.contracts), _to_python(pos.spread_width), _to_python(pos.total_credit),
+                    _to_python(pos.max_loss), _to_python(pos.max_profit),
+                    _to_python(pos.underlying_at_entry), _to_python(pos.vix_at_entry), _to_python(pos.expected_move),
+                    _to_python(pos.call_wall), _to_python(pos.put_wall), pos.gex_regime or None,
+                    _to_python(pos.flip_point), _to_python(pos.net_gex),
+                    _to_python(pos.oracle_confidence), _to_python(pos.oracle_win_probability), pos.oracle_advice or None,
+                    pos.oracle_reasoning or None, pos.oracle_top_factors or None, bool(pos.oracle_use_gex_walls),
                     pos.put_order_id or None, pos.call_order_id or None,
-                    pos.status.value, pos.open_time,
+                    pos.status.value, pos.open_time, pos.open_time.date() if pos.open_time else datetime.now(CENTRAL_TZ).date(),
                 ))
                 conn.commit()
                 logger.info(f"{self.bot_name}: Saved position {pos.position_id}")
@@ -282,10 +313,11 @@ class ARESDatabase:
         columns_to_add = [
             ("flip_point", "DECIMAL(10, 2)"),
             ("net_gex", "DECIMAL(15, 2)"),
-            ("oracle_win_probability", "DECIMAL(5, 4)"),
+            ("oracle_win_probability", "DECIMAL(8, 4)"),  # DECIMAL(8,4) for proper precision
             ("oracle_advice", "VARCHAR(20)"),
             ("oracle_top_factors", "TEXT"),
             ("oracle_use_gex_walls", "BOOLEAN DEFAULT FALSE"),
+            ("open_date", "DATE"),  # Extracted date from open_time for easier queries
         ]
 
         for col_name, col_type in columns_to_add:
@@ -331,8 +363,8 @@ class ARESDatabase:
             logger.error(f"{self.bot_name}: Failed to close position: {e}")
             return False
 
-    def expire_position(self, position_id: str, realized_pnl: float) -> bool:
-        """Mark position as expired with final P&L"""
+    def expire_position(self, position_id: str, realized_pnl: float, close_price: float = None) -> bool:
+        """Mark position as expired with final P&L and close price"""
         try:
             with db_connection() as conn:
                 c = conn.cursor()
@@ -341,16 +373,64 @@ class ARESDatabase:
                     SET status = 'expired',
                         close_time = NOW(),
                         close_reason = 'EXPIRED',
+                        close_price = %s,
                         realized_pnl = %s,
                         updated_at = NOW()
                     WHERE position_id = %s AND status = 'open'
                     RETURNING id
-                """, (realized_pnl, position_id))
+                """, (_to_python(close_price), _to_python(realized_pnl), position_id))
                 result = c.fetchone()
                 conn.commit()
                 return result is not None
         except Exception as e:
             logger.error(f"{self.bot_name}: Failed to expire position: {e}")
+            return False
+
+    def partial_close_position(
+        self,
+        position_id: str,
+        close_price: float,
+        realized_pnl: float,
+        close_reason: str,
+        closed_leg: str  # 'put' or 'call'
+    ) -> bool:
+        """
+        Mark position as partially closed when one leg closes but the other fails.
+
+        This prevents orphaned positions where Tradier has one leg closed
+        but the database still shows position as fully open.
+        """
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    UPDATE ares_positions
+                    SET status = 'partial_close',
+                        close_time = NOW(),
+                        close_price = %s,
+                        realized_pnl = %s,
+                        close_reason = %s,
+                        updated_at = NOW()
+                    WHERE position_id = %s AND status = 'open'
+                    RETURNING id
+                """, (
+                    _to_python(close_price),
+                    _to_python(realized_pnl),
+                    f"{close_reason}_{closed_leg.upper()}_ONLY",
+                    position_id
+                ))
+                result = c.fetchone()
+                conn.commit()
+
+                if result:
+                    logger.warning(
+                        f"{self.bot_name}: PARTIAL CLOSE {position_id} - "
+                        f"Only {closed_leg} leg closed, P&L=${realized_pnl:.2f}"
+                    )
+                    return True
+                return False
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to partial close position: {e}")
             return False
 
     def get_position_count(self) -> int:
@@ -391,6 +471,91 @@ class ARESDatabase:
         except Exception:
             return 0
 
+    def get_daily_realized_pnl(self, date: str) -> float:
+        """
+        Get total realized P&L for positions closed today.
+
+        Used for daily loss limit enforcement to prevent unlimited losses.
+        """
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    SELECT COALESCE(SUM(realized_pnl), 0)
+                    FROM ares_positions
+                    WHERE status IN ('closed', 'expired', 'partial_close')
+                    AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
+                """, (date,))
+                result = c.fetchone()[0]
+                return float(result) if result else 0.0
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to get daily P&L: {e}")
+            return 0.0
+
+    def get_partial_close_positions(self) -> List[IronCondorPosition]:
+        """
+        Get positions in partial_close state that need manual intervention.
+
+        These are positions where one leg closed but the other failed.
+        """
+        positions = []
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    SELECT
+                        position_id, ticker, expiration,
+                        put_short_strike, put_long_strike, put_credit,
+                        call_short_strike, call_long_strike, call_credit,
+                        contracts, spread_width, total_credit, max_loss, max_profit,
+                        underlying_at_entry, vix_at_entry, expected_move,
+                        call_wall, put_wall, gex_regime,
+                        put_order_id, call_order_id,
+                        status, open_time, close_time, close_price, close_reason, realized_pnl
+                    FROM ares_positions
+                    WHERE status = 'partial_close'
+                    ORDER BY close_time DESC
+                """)
+
+                for row in c.fetchall():
+                    pos = IronCondorPosition(
+                        position_id=row[0],
+                        ticker=row[1],
+                        expiration=str(row[2]),
+                        put_short_strike=float(row[3]),
+                        put_long_strike=float(row[4]),
+                        put_credit=float(row[5]),
+                        call_short_strike=float(row[6]),
+                        call_long_strike=float(row[7]),
+                        call_credit=float(row[8]),
+                        contracts=int(row[9]),
+                        spread_width=float(row[10]),
+                        total_credit=float(row[11]),
+                        max_loss=float(row[12]),
+                        max_profit=float(row[13]),
+                        underlying_at_entry=float(row[14]),
+                        vix_at_entry=float(row[15] or 0),
+                        expected_move=float(row[16] or 0),
+                        call_wall=float(row[17] or 0),
+                        put_wall=float(row[18] or 0),
+                        gex_regime=row[19] or "",
+                        put_order_id=row[20] or "",
+                        call_order_id=row[21] or "",
+                        status=PositionStatus(row[22]),
+                        open_time=row[23],
+                        close_time=row[24],
+                        close_price=float(row[25] or 0),
+                        close_reason=row[26] or "",
+                        realized_pnl=float(row[27] or 0),
+                    )
+                    positions.append(pos)
+
+                logger.info(f"{self.bot_name}: Found {len(positions)} partial_close positions")
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to get partial_close positions: {e}")
+
+        return positions
+
     # =========================================================================
     # SIGNAL LOGGING
     # =========================================================================
@@ -425,9 +590,12 @@ class ARESDatabase:
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                 """, (
-                    spot_price, vix, expected_move, call_wall, put_wall,
-                    gex_regime, put_short, put_long, call_short, call_long,
-                    total_credit, confidence, was_executed, skip_reason, reasoning
+                    _to_python(spot_price), _to_python(vix), _to_python(expected_move),
+                    _to_python(call_wall), _to_python(put_wall),
+                    gex_regime, _to_python(put_short), _to_python(put_long),
+                    _to_python(call_short), _to_python(call_long),
+                    _to_python(total_credit), _to_python(confidence),
+                    was_executed, skip_reason, reasoning
                 ))
                 signal_id = c.fetchone()[0]
                 conn.commit()
@@ -484,25 +652,102 @@ class ARESDatabase:
                     VALUES (%s, %s, %s)
                 """, (level, message, json.dumps(details) if details else None))
                 conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            # Log silently but don't crash - logging failures shouldn't stop trading
+            logger.debug(f"Failed to log to database: {e}")
+
+    def log_orphaned_order(
+        self,
+        order_id: str,
+        order_type: str,  # 'put_spread', 'call_spread', 'position'
+        ticker: str,
+        expiration: str,
+        strikes: Dict[str, float],
+        contracts: int,
+        reason: str,
+        error_details: str = None
+    ) -> bool:
+        """
+        Log an orphaned order that requires manual intervention.
+
+        Called when:
+        - Put spread executes but call spread fails during IC open
+        - Rollback of orphaned spread fails
+        - Partial close leaves one leg in broker
+        """
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+
+                # Ensure table exists
+                c.execute("""
+                    CREATE TABLE IF NOT EXISTS orphaned_orders (
+                        id SERIAL PRIMARY KEY,
+                        bot_name VARCHAR(20) NOT NULL,
+                        order_id VARCHAR(50),
+                        order_type VARCHAR(30) NOT NULL,
+                        ticker VARCHAR(10) NOT NULL,
+                        expiration DATE,
+                        strikes JSONB,
+                        contracts INTEGER,
+                        reason VARCHAR(200) NOT NULL,
+                        error_details TEXT,
+                        resolved BOOLEAN DEFAULT FALSE,
+                        resolved_at TIMESTAMP WITH TIME ZONE,
+                        resolved_by VARCHAR(50),
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                    )
+                """)
+
+                import json
+                c.execute("""
+                    INSERT INTO orphaned_orders (
+                        bot_name, order_id, order_type, ticker, expiration,
+                        strikes, contracts, reason, error_details
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                """, (
+                    self.bot_name,
+                    order_id,
+                    order_type,
+                    ticker,
+                    expiration,
+                    json.dumps(strikes),
+                    contracts,
+                    reason,
+                    error_details
+                ))
+                orphan_id = c.fetchone()[0]
+                conn.commit()
+
+                logger.error(
+                    f"{self.bot_name}: ORPHANED ORDER #{orphan_id} logged - "
+                    f"{order_type} {order_id} ({reason}). REQUIRES MANUAL REVIEW."
+                )
+                return True
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to log orphaned order: {e}")
+            return False
 
     def update_heartbeat(self, status: str, action: str) -> None:
         """Update bot heartbeat"""
         try:
+            import json
             with db_connection() as conn:
                 c = conn.cursor()
                 c.execute("""
-                    INSERT INTO bot_heartbeat (bot_name, status, last_action, last_scan_time)
-                    VALUES (%s, %s, %s, NOW())
+                    INSERT INTO bot_heartbeats (bot_name, last_heartbeat, status, scan_count, details)
+                    VALUES (%s, NOW(), %s, 1, %s)
                     ON CONFLICT (bot_name) DO UPDATE SET
+                        last_heartbeat = NOW(),
                         status = EXCLUDED.status,
-                        last_action = EXCLUDED.last_action,
-                        last_scan_time = NOW()
-                """, (self.bot_name, status, action))
+                        scan_count = bot_heartbeats.scan_count + 1,
+                        details = EXCLUDED.details
+                """, (self.bot_name, status, json.dumps({"last_action": action})))
                 conn.commit()
-        except Exception:
-            pass
+        except Exception as e:
+            # Heartbeat failures are non-critical
+            logger.debug(f"Failed to update heartbeat: {e}")
 
     def update_daily_performance(self, summary: DailySummary) -> bool:
         """Update daily performance record"""
@@ -529,3 +774,46 @@ class ARESDatabase:
         except Exception as e:
             logger.error(f"{self.bot_name}: Failed to update daily perf: {e}")
             return False
+
+    def get_orphaned_orders(self, include_resolved: bool = False) -> List[Dict[str, Any]]:
+        """Get orphaned orders that need manual intervention."""
+        orders = []
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                if include_resolved:
+                    c.execute("""
+                        SELECT id, bot_name, order_id, ticker, expiration, strikes,
+                               contracts, reason, error_details, resolved, resolved_at, created_at
+                        FROM orphaned_orders
+                        WHERE bot_name = %s
+                        ORDER BY created_at DESC
+                    """, (self.bot_name,))
+                else:
+                    c.execute("""
+                        SELECT id, bot_name, order_id, ticker, expiration, strikes,
+                               contracts, reason, error_details, resolved, resolved_at, created_at
+                        FROM orphaned_orders
+                        WHERE bot_name = %s AND resolved = FALSE
+                        ORDER BY created_at DESC
+                    """, (self.bot_name,))
+
+                for row in c.fetchall():
+                    orders.append({
+                        'id': row[0],
+                        'bot_name': row[1],
+                        'order_id': row[2],
+                        'ticker': row[3],
+                        'expiration': str(row[4]) if row[4] else None,
+                        'strikes': row[5],
+                        'contracts': row[6],
+                        'reason': row[7],
+                        'error_details': row[8],
+                        'resolved': row[9],
+                        'resolved_at': row[10],
+                        'created_at': row[11]
+                    })
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to get orphaned orders: {e}")
+
+        return orders

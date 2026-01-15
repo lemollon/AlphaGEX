@@ -62,6 +62,10 @@ interface StrikeData {
   gamma_change_pct: number
   roc_1min: number
   roc_5min: number
+  roc_30min: number
+  roc_1hr: number
+  roc_4hr: number
+  roc_trading_day: number  // ROC since market open (8:30 AM CT)
   is_magnet: boolean
   magnet_rank: number | null
   is_pin: boolean
@@ -118,6 +122,120 @@ interface ExpectedMoveChange {
   interpretation: string
 }
 
+// Market Structure Changes - Multi-signal analysis
+interface FlipPointSignal {
+  current: number | null
+  prior: number | null
+  change: number | null
+  change_pct: number | null
+  direction: 'RISING' | 'FALLING' | 'STABLE' | 'UNKNOWN'
+  implication: string
+}
+
+interface BoundsSignal {
+  current_upper: number
+  current_lower: number
+  prior_upper: number | null
+  prior_lower: number | null
+  upper_change: number | null
+  lower_change: number | null
+  direction: 'SHIFTED_UP' | 'SHIFTED_DOWN' | 'STABLE' | 'MIXED' | 'UNKNOWN'
+  implication: string
+}
+
+interface WidthSignal {
+  current_width: number
+  prior_width: number | null
+  change: number | null
+  change_pct: number | null
+  direction: 'WIDENING' | 'NARROWING' | 'STABLE' | 'UNKNOWN'
+  implication: string
+}
+
+interface WallsSignal {
+  current_call_wall: number | null
+  current_put_wall: number | null
+  prior_call_wall: number | null
+  prior_put_wall: number | null
+  call_wall_change: number | null
+  put_wall_change: number | null
+  asymmetry: number | null
+  implication: string
+}
+
+interface CombinedSignal {
+  signal: string
+  bias: string
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW'
+  strategy: string
+  profit_zone: string
+  breakout_risk: string
+  spot_position: 'ABOVE_FLIP' | 'BELOW_FLIP' | ''
+  warnings: string[]
+  gamma_regime_context: string | null
+  vix_regime_context: string | null
+}
+
+// New signals
+interface IntradaySignal {
+  open_em: number | null
+  current_em: number
+  change: number | null
+  change_pct: number | null
+  direction: 'EXPANDING' | 'CONTRACTING' | 'STABLE' | 'UNKNOWN'
+  implication: string
+}
+
+interface VixRegimeSignal {
+  vix: number
+  regime: 'LOW' | 'NORMAL' | 'ELEVATED' | 'HIGH' | 'EXTREME' | 'UNKNOWN'
+  implication: string
+  strategy_modifier?: string
+}
+
+interface GammaRegimeSignal {
+  current_regime: 'POSITIVE' | 'NEGATIVE' | 'NEUTRAL' | 'UNKNOWN'
+  alignment: 'MEAN_REVERSION' | 'MOMENTUM' | 'NEUTRAL' | 'UNKNOWN'
+  implication: string
+  ic_safety?: 'HIGH' | 'MEDIUM' | 'LOW'
+  breakout_reliability?: 'HIGH' | 'MEDIUM' | 'LOW'
+}
+
+interface GexMomentumSignal {
+  current_gex: number | null
+  prior_gex: number | null
+  change: number | null
+  change_pct: number | null
+  direction: string
+  conviction: string
+  implication: string
+}
+
+interface WallBreakSignal {
+  call_wall_risk: 'HIGH' | 'ELEVATED' | 'MODERATE' | 'LOW' | 'UNKNOWN'
+  put_wall_risk: 'HIGH' | 'ELEVATED' | 'MODERATE' | 'LOW' | 'UNKNOWN'
+  call_distance_pct?: number
+  put_distance_pct?: number
+  primary_risk: string
+  implication: string
+}
+
+interface MarketStructure {
+  flip_point: FlipPointSignal
+  bounds: BoundsSignal
+  width: WidthSignal
+  walls: WallsSignal
+  intraday: IntradaySignal
+  vix_regime: VixRegimeSignal
+  gamma_regime: GammaRegimeSignal
+  gex_momentum: GexMomentumSignal
+  wall_break: WallBreakSignal
+  combined: CombinedSignal
+  spot_price: number
+  vix: number
+  timestamp: string
+}
+
 interface GammaData {
   symbol: string
   expiration_date: string
@@ -125,6 +243,7 @@ interface GammaData {
   spot_price: number
   expected_move: number
   expected_move_change: ExpectedMoveChange
+  market_structure?: MarketStructure
   vix: number
   total_net_gamma: number
   gamma_regime: string
@@ -278,7 +397,21 @@ interface PatternMatch {
   similarity_score: number
   outcome_direction: 'UP' | 'DOWN' | 'FLAT'
   outcome_pct: number
+  price_change: number
   gamma_regime_then: string
+  mm_state: string
+  // Price details
+  open_price: number | null
+  close_price: number | null
+  day_high: number | null
+  day_low: number | null
+  day_range: number | null
+  // Key levels
+  flip_point: number | null
+  call_wall: number | null
+  put_wall: number | null
+  // Summary
+  summary: string
 }
 
 interface PatternData {
@@ -353,6 +486,25 @@ export default function ArgusPage() {
 
   // EOD Strike Statistics
   const [eodStats, setEodStats] = useState<EODStrikeStat[]>([])
+
+  // ROC timeframe selector - for extra long timeframes only (4hr, day)
+  // 1m, 5m, 30m, 1hr ROC are always visible in the table
+  type RocTimeframe = '4hr' | 'day'
+  const [selectedRocTimeframe, setSelectedRocTimeframe] = useState<RocTimeframe>('4hr')
+
+  const rocTimeframeOptions: { value: RocTimeframe; label: string; shortLabel: string }[] = [
+    { value: '4hr', label: '4 Hours', shortLabel: '4h' },
+    { value: 'day', label: 'Trading Day', shortLabel: 'Day' },
+  ]
+
+  // Helper to get ROC value for selected longer timeframe (4hr or Day)
+  const getLongRocValue = (strike: StrikeData): number => {
+    switch (selectedRocTimeframe) {
+      case '4hr': return strike.roc_4hr ?? 0
+      case 'day': return strike.roc_trading_day ?? 0
+      default: return strike.roc_4hr ?? 0
+    }
+  }
 
   // EMA smoothed maxGamma state
   const [smoothedMaxGamma, setSmoothedMaxGamma] = useState<number>(1)
@@ -1447,182 +1599,483 @@ export default function ArgusPage() {
           </div>
         )}
 
-        {/* Expected Move Change Banner - TOP PRIORITY */}
-        {gammaData?.expected_move_change && (
+        {/* Market Structure Changes Panel - Multi-Signal Analysis */}
+        {gammaData?.market_structure && (
+          <div className="mb-6 space-y-4">
+            {/* Combined Signal Banner */}
+            <div className={`rounded-xl p-5 border-2 ${
+              gammaData.market_structure.combined.bias === 'BULLISH'
+                ? 'bg-emerald-500/10 border-emerald-500/50'
+                : gammaData.market_structure.combined.bias === 'BEARISH'
+                ? 'bg-rose-500/10 border-rose-500/50'
+                : gammaData.market_structure.combined.bias === 'SLIGHT_BULLISH'
+                ? 'bg-emerald-500/5 border-emerald-500/30'
+                : gammaData.market_structure.combined.bias === 'SLIGHT_BEARISH'
+                ? 'bg-rose-500/5 border-rose-500/30'
+                : gammaData.market_structure.combined.confidence === 'LOW'
+                ? 'bg-yellow-500/10 border-yellow-500/50'
+                : 'bg-gray-800/50 border-gray-600/50'
+            }`}>
+              <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+                <div className="flex items-start gap-4">
+                  <div className={`w-14 h-14 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                    gammaData.market_structure.combined.bias === 'BULLISH' || gammaData.market_structure.combined.bias === 'SLIGHT_BULLISH'
+                      ? 'bg-emerald-500/20'
+                      : gammaData.market_structure.combined.bias === 'BEARISH' || gammaData.market_structure.combined.bias === 'SLIGHT_BEARISH'
+                      ? 'bg-rose-500/20'
+                      : gammaData.market_structure.combined.confidence === 'LOW'
+                      ? 'bg-yellow-500/20'
+                      : 'bg-gray-700/50'
+                  }`}>
+                    {(gammaData.market_structure.combined.bias === 'BULLISH' || gammaData.market_structure.combined.bias === 'SLIGHT_BULLISH') &&
+                      <TrendingUp className="w-7 h-7 text-emerald-400" />}
+                    {(gammaData.market_structure.combined.bias === 'BEARISH' || gammaData.market_structure.combined.bias === 'SLIGHT_BEARISH') &&
+                      <TrendingDown className="w-7 h-7 text-rose-400" />}
+                    {gammaData.market_structure.combined.bias === 'NONE' && gammaData.market_structure.combined.confidence === 'LOW' &&
+                      <AlertTriangle className="w-7 h-7 text-yellow-400" />}
+                    {gammaData.market_structure.combined.bias === 'NONE' && gammaData.market_structure.combined.confidence !== 'LOW' &&
+                      <Minus className="w-7 h-7 text-gray-400" />}
+                    {gammaData.market_structure.combined.bias === 'UNCERTAIN' &&
+                      <AlertTriangle className="w-7 h-7 text-yellow-400" />}
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-2 flex-wrap">
+                      <span className="text-xs text-gray-400 uppercase tracking-wide">Market Structure vs Prior Day</span>
+                      <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                        gammaData.market_structure.combined.confidence === 'HIGH'
+                          ? gammaData.market_structure.combined.bias === 'BULLISH' ? 'bg-emerald-500 text-white' : 'bg-rose-500 text-white'
+                          : gammaData.market_structure.combined.confidence === 'MEDIUM'
+                          ? 'bg-blue-500 text-white'
+                          : 'bg-yellow-500 text-black'
+                      }`}>
+                        {gammaData.market_structure.combined.confidence} CONFIDENCE
+                      </span>
+                      <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                        gammaData.market_structure.combined.bias === 'BULLISH' || gammaData.market_structure.combined.bias === 'SLIGHT_BULLISH'
+                          ? 'bg-emerald-600/50 text-emerald-200'
+                          : gammaData.market_structure.combined.bias === 'BEARISH' || gammaData.market_structure.combined.bias === 'SLIGHT_BEARISH'
+                          ? 'bg-rose-600/50 text-rose-200'
+                          : 'bg-gray-600/50 text-gray-200'
+                      }`}>
+                        {gammaData.market_structure.combined.signal.replace(/_/g, ' ')}
+                      </span>
+                    </div>
+                    <p className={`text-base font-semibold mb-2 ${
+                      gammaData.market_structure.combined.bias === 'BULLISH' || gammaData.market_structure.combined.bias === 'SLIGHT_BULLISH'
+                        ? 'text-emerald-400'
+                        : gammaData.market_structure.combined.bias === 'BEARISH' || gammaData.market_structure.combined.bias === 'SLIGHT_BEARISH'
+                        ? 'text-rose-400'
+                        : gammaData.market_structure.combined.confidence === 'LOW'
+                        ? 'text-yellow-400'
+                        : 'text-gray-300'
+                    }`}>
+                      {gammaData.market_structure.combined.strategy}
+                    </p>
+                    {gammaData.market_structure.combined.profit_zone && (
+                      <div className="flex flex-wrap gap-4 text-sm">
+                        <span className="text-blue-400">{gammaData.market_structure.combined.profit_zone}</span>
+                        {gammaData.market_structure.combined.breakout_risk && (
+                          <span className="text-gray-500">{gammaData.market_structure.combined.breakout_risk}</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {/* Spot Position Indicator */}
+                {gammaData.market_structure.combined.spot_position && (
+                  <div className={`px-3 py-2 rounded-lg text-center ${
+                    gammaData.market_structure.combined.spot_position === 'ABOVE_FLIP'
+                      ? 'bg-emerald-500/20 border border-emerald-500/30'
+                      : 'bg-rose-500/20 border border-rose-500/30'
+                  }`}>
+                    <div className="text-xs text-gray-400 mb-1">Spot vs Flip</div>
+                    <div className={`text-sm font-bold ${
+                      gammaData.market_structure.combined.spot_position === 'ABOVE_FLIP'
+                        ? 'text-emerald-400'
+                        : 'text-rose-400'
+                    }`}>
+                      {gammaData.market_structure.combined.spot_position === 'ABOVE_FLIP' ? 'ABOVE' : 'BELOW'}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Four Signal Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Flip Point Signal */}
+              <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700/50">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs text-gray-400 uppercase tracking-wide">Flip Point</span>
+                  <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                    gammaData.market_structure.flip_point.direction === 'RISING'
+                      ? 'bg-emerald-500/20 text-emerald-400'
+                      : gammaData.market_structure.flip_point.direction === 'FALLING'
+                      ? 'bg-rose-500/20 text-rose-400'
+                      : 'bg-gray-600/20 text-gray-400'
+                  }`}>
+                    {gammaData.market_structure.flip_point.direction === 'RISING' && '↑'}
+                    {gammaData.market_structure.flip_point.direction === 'FALLING' && '↓'}
+                    {gammaData.market_structure.flip_point.direction === 'STABLE' && '→'}
+                    {' '}{gammaData.market_structure.flip_point.direction}
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-2 mb-2">
+                  <span className="text-xl font-bold text-white">
+                    ${gammaData.market_structure.flip_point.current?.toFixed(2) || '-'}
+                  </span>
+                  {gammaData.market_structure.flip_point.change !== null && (
+                    <span className={`text-sm font-medium ${
+                      gammaData.market_structure.flip_point.change > 0 ? 'text-emerald-400' :
+                      gammaData.market_structure.flip_point.change < 0 ? 'text-rose-400' : 'text-gray-400'
+                    }`}>
+                      {gammaData.market_structure.flip_point.change > 0 ? '+' : ''}
+                      ${gammaData.market_structure.flip_point.change?.toFixed(2)}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-gray-400 leading-relaxed">
+                  {gammaData.market_structure.flip_point.implication}
+                </p>
+              </div>
+
+              {/* Expected Move Bounds Signal */}
+              <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700/50">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs text-gray-400 uppercase tracking-wide">±1 Std Bounds</span>
+                  <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                    gammaData.market_structure.bounds.direction === 'SHIFTED_UP'
+                      ? 'bg-emerald-500/20 text-emerald-400'
+                      : gammaData.market_structure.bounds.direction === 'SHIFTED_DOWN'
+                      ? 'bg-rose-500/20 text-rose-400'
+                      : gammaData.market_structure.bounds.direction === 'MIXED'
+                      ? 'bg-yellow-500/20 text-yellow-400'
+                      : 'bg-gray-600/20 text-gray-400'
+                  }`}>
+                    {gammaData.market_structure.bounds.direction === 'SHIFTED_UP' && '↑'}
+                    {gammaData.market_structure.bounds.direction === 'SHIFTED_DOWN' && '↓'}
+                    {gammaData.market_structure.bounds.direction === 'STABLE' && '→'}
+                    {gammaData.market_structure.bounds.direction === 'MIXED' && '↔'}
+                    {' '}{gammaData.market_structure.bounds.direction.replace('_', ' ')}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="text-center">
+                    <div className="text-xs text-gray-500">Lower</div>
+                    <div className="text-sm font-bold text-cyan-400">
+                      ${gammaData.market_structure.bounds.current_lower.toFixed(2)}
+                    </div>
+                  </div>
+                  <div className="text-gray-600">—</div>
+                  <div className="text-center">
+                    <div className="text-xs text-gray-500">Upper</div>
+                    <div className="text-sm font-bold text-purple-400">
+                      ${gammaData.market_structure.bounds.current_upper.toFixed(2)}
+                    </div>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-400 leading-relaxed">
+                  {gammaData.market_structure.bounds.implication}
+                </p>
+              </div>
+
+              {/* Range Width Signal */}
+              <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700/50">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs text-gray-400 uppercase tracking-wide">Range Width</span>
+                  <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                    gammaData.market_structure.width.direction === 'WIDENING'
+                      ? 'bg-orange-500/20 text-orange-400'
+                      : gammaData.market_structure.width.direction === 'NARROWING'
+                      ? 'bg-blue-500/20 text-blue-400'
+                      : 'bg-gray-600/20 text-gray-400'
+                  }`}>
+                    {gammaData.market_structure.width.direction === 'WIDENING' && '↔'}
+                    {gammaData.market_structure.width.direction === 'NARROWING' && '→←'}
+                    {gammaData.market_structure.width.direction === 'STABLE' && '→'}
+                    {' '}{gammaData.market_structure.width.direction}
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-2 mb-2">
+                  <span className="text-xl font-bold text-white">
+                    ${gammaData.market_structure.width.current_width.toFixed(2)}
+                  </span>
+                  {gammaData.market_structure.width.change_pct !== null && (
+                    <span className={`text-sm font-medium ${
+                      gammaData.market_structure.width.change_pct > 0 ? 'text-orange-400' :
+                      gammaData.market_structure.width.change_pct < 0 ? 'text-blue-400' : 'text-gray-400'
+                    }`}>
+                      {gammaData.market_structure.width.change_pct > 0 ? '+' : ''}
+                      {gammaData.market_structure.width.change_pct?.toFixed(1)}%
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-gray-400 leading-relaxed">
+                  {gammaData.market_structure.width.implication}
+                </p>
+              </div>
+
+              {/* Walls Signal */}
+              <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700/50">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs text-gray-400 uppercase tracking-wide">Gamma Walls</span>
+                  {gammaData.market_structure.walls.asymmetry !== null && (
+                    <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                      gammaData.market_structure.walls.asymmetry > 0.3
+                        ? 'bg-rose-500/20 text-rose-400'
+                        : gammaData.market_structure.walls.asymmetry < -0.3
+                        ? 'bg-emerald-500/20 text-emerald-400'
+                        : 'bg-gray-600/20 text-gray-400'
+                    }`}>
+                      {gammaData.market_structure.walls.asymmetry > 0.3 ? 'PUT CLOSER' :
+                       gammaData.market_structure.walls.asymmetry < -0.3 ? 'CALL CLOSER' : 'BALANCED'}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="text-center">
+                    <div className="text-xs text-gray-500">Put Wall</div>
+                    <div className="text-sm font-bold text-rose-400">
+                      ${gammaData.market_structure.walls.current_put_wall?.toFixed(0) || '-'}
+                    </div>
+                  </div>
+                  <div className="text-gray-600">|</div>
+                  <div className="text-center">
+                    <div className="text-xs text-gray-500">Call Wall</div>
+                    <div className="text-sm font-bold text-emerald-400">
+                      ${gammaData.market_structure.walls.current_call_wall?.toFixed(0) || '-'}
+                    </div>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-400 leading-relaxed">
+                  {gammaData.market_structure.walls.implication}
+                </p>
+              </div>
+            </div>
+
+            {/* Second Row: Context Signals */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
+              {/* Intraday Vol Signal */}
+              <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700/50">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs text-gray-400 uppercase tracking-wide">Intraday Vol</span>
+                  <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                    gammaData.market_structure.intraday?.direction === 'EXPANDING'
+                      ? 'bg-orange-500/20 text-orange-400'
+                      : gammaData.market_structure.intraday?.direction === 'CONTRACTING'
+                      ? 'bg-blue-500/20 text-blue-400'
+                      : 'bg-gray-600/20 text-gray-400'
+                  }`}>
+                    {gammaData.market_structure.intraday?.direction || 'UNKNOWN'}
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-2 mb-2">
+                  <span className="text-lg font-bold text-white">
+                    {gammaData.market_structure.intraday?.change_pct !== null
+                      ? `${gammaData.market_structure.intraday.change_pct > 0 ? '+' : ''}${gammaData.market_structure.intraday.change_pct}%`
+                      : '-'}
+                  </span>
+                  <span className="text-xs text-gray-500">from open</span>
+                </div>
+                <p className="text-xs text-gray-400 leading-relaxed">
+                  {gammaData.market_structure.intraday?.implication || 'No intraday data'}
+                </p>
+              </div>
+
+              {/* VIX Regime Signal */}
+              <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700/50">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs text-gray-400 uppercase tracking-wide">VIX Regime</span>
+                  <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                    gammaData.market_structure.vix_regime?.regime === 'LOW'
+                      ? 'bg-blue-500/20 text-blue-400'
+                      : gammaData.market_structure.vix_regime?.regime === 'NORMAL'
+                      ? 'bg-emerald-500/20 text-emerald-400'
+                      : gammaData.market_structure.vix_regime?.regime === 'ELEVATED'
+                      ? 'bg-yellow-500/20 text-yellow-400'
+                      : gammaData.market_structure.vix_regime?.regime === 'HIGH'
+                      ? 'bg-orange-500/20 text-orange-400'
+                      : gammaData.market_structure.vix_regime?.regime === 'EXTREME'
+                      ? 'bg-rose-500/20 text-rose-400'
+                      : 'bg-gray-600/20 text-gray-400'
+                  }`}>
+                    {gammaData.market_structure.vix_regime?.regime || 'UNKNOWN'}
+                  </span>
+                </div>
+                <div className="text-lg font-bold text-white mb-2">
+                  VIX {gammaData.market_structure.vix_regime?.vix?.toFixed(1) || '-'}
+                </div>
+                <p className="text-xs text-gray-400 leading-relaxed">
+                  {gammaData.market_structure.vix_regime?.strategy_modifier || gammaData.market_structure.vix_regime?.implication || 'No VIX data'}
+                </p>
+              </div>
+
+              {/* Gamma Regime Signal */}
+              <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700/50">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs text-gray-400 uppercase tracking-wide">Gamma Regime</span>
+                  <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                    gammaData.market_structure.gamma_regime?.current_regime === 'POSITIVE'
+                      ? 'bg-emerald-500/20 text-emerald-400'
+                      : gammaData.market_structure.gamma_regime?.current_regime === 'NEGATIVE'
+                      ? 'bg-rose-500/20 text-rose-400'
+                      : 'bg-gray-600/20 text-gray-400'
+                  }`}>
+                    {gammaData.market_structure.gamma_regime?.alignment || 'UNKNOWN'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="text-center">
+                    <div className="text-xs text-gray-500">IC Safety</div>
+                    <div className={`text-sm font-bold ${
+                      gammaData.market_structure.gamma_regime?.ic_safety === 'HIGH' ? 'text-emerald-400' :
+                      gammaData.market_structure.gamma_regime?.ic_safety === 'LOW' ? 'text-rose-400' : 'text-yellow-400'
+                    }`}>
+                      {gammaData.market_structure.gamma_regime?.ic_safety || '-'}
+                    </div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xs text-gray-500">Breakout</div>
+                    <div className={`text-sm font-bold ${
+                      gammaData.market_structure.gamma_regime?.breakout_reliability === 'HIGH' ? 'text-emerald-400' :
+                      gammaData.market_structure.gamma_regime?.breakout_reliability === 'LOW' ? 'text-rose-400' : 'text-yellow-400'
+                    }`}>
+                      {gammaData.market_structure.gamma_regime?.breakout_reliability || '-'}
+                    </div>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-400 leading-relaxed">
+                  {gammaData.market_structure.gamma_regime?.implication || 'No regime data'}
+                </p>
+              </div>
+
+              {/* GEX Momentum Signal */}
+              <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700/50">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs text-gray-400 uppercase tracking-wide">GEX Momentum</span>
+                  <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                    gammaData.market_structure.gex_momentum?.conviction?.includes('BULLISH')
+                      ? 'bg-emerald-500/20 text-emerald-400'
+                      : gammaData.market_structure.gex_momentum?.conviction?.includes('BEARISH')
+                      ? 'bg-rose-500/20 text-rose-400'
+                      : 'bg-gray-600/20 text-gray-400'
+                  }`}>
+                    {gammaData.market_structure.gex_momentum?.conviction?.replace('_', ' ') || 'UNKNOWN'}
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-2 mb-2">
+                  <span className={`text-lg font-bold ${
+                    (gammaData.market_structure.gex_momentum?.change_pct || 0) > 0 ? 'text-emerald-400' :
+                    (gammaData.market_structure.gex_momentum?.change_pct || 0) < 0 ? 'text-rose-400' : 'text-gray-400'
+                  }`}>
+                    {gammaData.market_structure.gex_momentum?.change_pct !== null
+                      ? `${gammaData.market_structure.gex_momentum.change_pct > 0 ? '+' : ''}${gammaData.market_structure.gex_momentum.change_pct}%`
+                      : '-'}
+                  </span>
+                  <span className="text-xs text-gray-500">vs prior day</span>
+                </div>
+                <p className="text-xs text-gray-400 leading-relaxed">
+                  {gammaData.market_structure.gex_momentum?.implication || 'No GEX momentum data'}
+                </p>
+              </div>
+
+              {/* Wall Break Risk Signal */}
+              <div className={`rounded-xl p-4 border ${
+                gammaData.market_structure.wall_break?.primary_risk === 'CALL_BREAK' ||
+                gammaData.market_structure.wall_break?.primary_risk === 'PUT_BREAK'
+                  ? 'bg-rose-500/10 border-rose-500/50'
+                  : gammaData.market_structure.wall_break?.primary_risk?.includes('APPROACHING')
+                  ? 'bg-yellow-500/10 border-yellow-500/50'
+                  : 'bg-gray-800/50 border-gray-700/50'
+              }`}>
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs text-gray-400 uppercase tracking-wide">Wall Break Risk</span>
+                  <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                    gammaData.market_structure.wall_break?.primary_risk === 'CALL_BREAK' ||
+                    gammaData.market_structure.wall_break?.primary_risk === 'PUT_BREAK'
+                      ? 'bg-rose-500 text-white'
+                      : gammaData.market_structure.wall_break?.primary_risk?.includes('APPROACHING')
+                      ? 'bg-yellow-500 text-black'
+                      : 'bg-gray-600/20 text-gray-400'
+                  }`}>
+                    {gammaData.market_structure.wall_break?.primary_risk === 'NONE' ? 'SAFE' :
+                     gammaData.market_structure.wall_break?.primary_risk?.replace('_', ' ') || 'UNKNOWN'}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="text-center">
+                    <div className="text-xs text-gray-500">Call</div>
+                    <div className={`text-sm font-bold ${
+                      gammaData.market_structure.wall_break?.call_wall_risk === 'HIGH' ? 'text-rose-400' :
+                      gammaData.market_structure.wall_break?.call_wall_risk === 'ELEVATED' ? 'text-yellow-400' :
+                      'text-emerald-400'
+                    }`}>
+                      {gammaData.market_structure.wall_break?.call_distance_pct?.toFixed(1) || '-'}%
+                    </div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xs text-gray-500">Put</div>
+                    <div className={`text-sm font-bold ${
+                      gammaData.market_structure.wall_break?.put_wall_risk === 'HIGH' ? 'text-rose-400' :
+                      gammaData.market_structure.wall_break?.put_wall_risk === 'ELEVATED' ? 'text-yellow-400' :
+                      'text-emerald-400'
+                    }`}>
+                      {gammaData.market_structure.wall_break?.put_distance_pct?.toFixed(1) || '-'}%
+                    </div>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-400 leading-relaxed">
+                  {gammaData.market_structure.wall_break?.implication || 'No wall break data'}
+                </p>
+              </div>
+            </div>
+
+            {/* Warnings Banner (if any) */}
+            {gammaData.market_structure.combined.warnings && gammaData.market_structure.combined.warnings.length > 0 && (
+              <div className="bg-yellow-500/10 border border-yellow-500/50 rounded-lg p-3">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-5 h-5 text-yellow-400 flex-shrink-0" />
+                  <div>
+                    <div className="text-sm font-bold text-yellow-400 mb-1">Active Warnings</div>
+                    <ul className="text-xs text-yellow-300/80 space-y-1">
+                      {gammaData.market_structure.combined.warnings.map((warning, idx) => (
+                        <li key={idx}>• {warning}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Trading Context Footer */}
+            <div className="bg-gray-900/30 rounded-lg p-3 border border-gray-800/50">
+              <div className="flex items-start gap-2">
+                <Info className="w-4 h-4 text-gray-500 flex-shrink-0 mt-0.5" />
+                <div className="text-xs text-gray-500 leading-relaxed">
+                  <strong className="text-gray-400">How to use:</strong> Flip point shows dealer positioning (support/resistance).
+                  Bounds show market&apos;s expected price range. Width shows volatility expectations.
+                  Walls show where gamma will absorb moves. Trade within walls for premium collection,
+                  but size for potential breakouts.
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Legacy Expected Move Change (fallback if no market_structure) */}
+        {!gammaData?.market_structure && gammaData?.expected_move_change && (
           <div className={`rounded-xl p-5 mb-6 border-2 ${
             gammaData.expected_move_change.sentiment === 'BULLISH'
               ? 'bg-emerald-500/10 border-emerald-500/50'
               : gammaData.expected_move_change.sentiment === 'BEARISH'
               ? 'bg-rose-500/10 border-rose-500/50'
-              : gammaData.expected_move_change.sentiment === 'VOLATILE'
-              ? 'bg-orange-500/10 border-orange-500/50'
               : 'bg-gray-800/50 border-gray-600/50'
           }`}>
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-              <div className="flex items-center gap-4">
-                <div className={`w-14 h-14 rounded-xl flex items-center justify-center ${
-                  gammaData.expected_move_change.sentiment === 'BULLISH'
-                    ? 'bg-emerald-500/20'
-                    : gammaData.expected_move_change.sentiment === 'BEARISH'
-                    ? 'bg-rose-500/20'
-                    : gammaData.expected_move_change.sentiment === 'VOLATILE'
-                    ? 'bg-orange-500/20'
-                    : 'bg-gray-700/50'
-                }`}>
-                  {gammaData.expected_move_change.signal === 'UP' && <TrendingUp className="w-7 h-7 text-emerald-400" />}
-                  {gammaData.expected_move_change.signal === 'DOWN' && <TrendingDown className="w-7 h-7 text-rose-400" />}
-                  {gammaData.expected_move_change.signal === 'FLAT' && <Minus className="w-7 h-7 text-gray-400" />}
-                  {gammaData.expected_move_change.signal === 'WIDEN' && <Zap className="w-7 h-7 text-orange-400" />}
-                </div>
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xs text-gray-400 uppercase tracking-wide">Expected Move vs Prior Day</span>
-                    <span className={`px-2 py-0.5 rounded text-xs font-bold ${
-                      gammaData.expected_move_change.sentiment === 'BULLISH'
-                        ? 'bg-emerald-500 text-white'
-                        : gammaData.expected_move_change.sentiment === 'BEARISH'
-                        ? 'bg-rose-500 text-white'
-                        : gammaData.expected_move_change.sentiment === 'VOLATILE'
-                        ? 'bg-orange-500 text-white'
-                        : 'bg-gray-600 text-white'
-                    }`}>
-                      {gammaData.expected_move_change.signal}
-                    </span>
-                  </div>
-                  <p className={`text-lg font-semibold ${
-                    gammaData.expected_move_change.sentiment === 'BULLISH'
-                      ? 'text-emerald-400'
-                      : gammaData.expected_move_change.sentiment === 'BEARISH'
-                      ? 'text-rose-400'
-                      : gammaData.expected_move_change.sentiment === 'VOLATILE'
-                      ? 'text-orange-400'
-                      : 'text-gray-300'
-                  }`}>
-                    {gammaData.expected_move_change.interpretation}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-6 lg:gap-8">
-                <div className="text-center">
-                  <div className="text-xs text-gray-500 mb-1">Prior Day</div>
-                  <div className="text-lg font-bold text-gray-400">
-                    ±${gammaData.expected_move_change.prior_day?.toFixed(2) || '-'}
-                  </div>
-                </div>
-                <div className="text-center">
-                  <div className="text-xs text-gray-500 mb-1">Current</div>
-                  <div className="text-lg font-bold text-white">
-                    ±${gammaData.expected_move_change.current.toFixed(2)}
-                  </div>
-                </div>
-                <div className="text-center">
-                  <div className="text-xs text-gray-500 mb-1">Change</div>
-                  <div className={`text-lg font-bold ${
-                    gammaData.expected_move_change.pct_change_prior > 0
-                      ? 'text-emerald-400'
-                      : gammaData.expected_move_change.pct_change_prior < 0
-                      ? 'text-rose-400'
-                      : 'text-gray-400'
-                  }`}>
-                    {gammaData.expected_move_change.pct_change_prior > 0 ? '+' : ''}{gammaData.expected_move_change.pct_change_prior.toFixed(1)}%
-                  </div>
-                </div>
-              </div>
+            <div className="flex items-center gap-4">
+              <div className="text-xs text-gray-400 uppercase">Expected Move vs Prior Day</div>
+              <span className="text-lg font-bold">{gammaData.expected_move_change.signal}</span>
             </div>
-
-            {/* Historical Edge Stats - Based on Backtest */}
-            <div className="mt-4 pt-4 border-t border-gray-700/50">
-              <div className="flex items-center gap-2 mb-3">
-                <BarChart3 className="w-4 h-4 text-gray-500" />
-                <span className="text-xs text-gray-500 uppercase tracking-wide">Historical Edge (2022-2025 Backtest)</span>
-              </div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {gammaData.expected_move_change.signal === 'DOWN' && (
-                  <>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Signal Accuracy</div>
-                      <div className="text-lg font-bold text-rose-400">51.0%</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Avg Move</div>
-                      <div className="text-lg font-bold text-rose-400">-0.26%</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Occurrence</div>
-                      <div className="text-lg font-bold text-gray-300">5.2%</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Edge</div>
-                      <div className="text-sm font-medium text-rose-400">Bearish bias confirmed</div>
-                    </div>
-                  </>
-                )}
-                {gammaData.expected_move_change.signal === 'UP' && (
-                  <>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Signal Accuracy</div>
-                      <div className="text-lg font-bold text-emerald-400">53.3%</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Avg Move</div>
-                      <div className="text-lg font-bold text-emerald-400">+0.02%</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Occurrence</div>
-                      <div className="text-lg font-bold text-gray-300">19.7%</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Edge</div>
-                      <div className="text-sm font-medium text-emerald-400">Slight bullish bias</div>
-                    </div>
-                  </>
-                )}
-                {gammaData.expected_move_change.signal === 'FLAT' && (
-                  <>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Signal Accuracy</div>
-                      <div className="text-lg font-bold text-gray-400">51.7%</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Avg Move</div>
-                      <div className="text-lg font-bold text-gray-400">+0.04%</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Occurrence</div>
-                      <div className="text-lg font-bold text-gray-300">74.2%</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Edge</div>
-                      <div className="text-sm font-medium text-gray-400">Range-bound expected</div>
-                    </div>
-                  </>
-                )}
-                {gammaData.expected_move_change.signal === 'WIDEN' && (
-                  <>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Signal Accuracy</div>
-                      <div className="text-lg font-bold text-orange-400">88.9%</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Avg Abs Move</div>
-                      <div className="text-lg font-bold text-orange-400">±1.53%</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Occurrence</div>
-                      <div className="text-lg font-bold text-gray-300">0.9%</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Edge</div>
-                      <div className="text-sm font-medium text-orange-400">BIG MOVE LIKELY!</div>
-                    </div>
-                  </>
-                )}
-              </div>
-              <div className="mt-3 text-xs text-gray-600 flex items-center gap-1">
-                <Info className="w-3 h-3" />
-                <span>Based on 990 trading days. DOWN vs UP directional edge: +0.27%</span>
-              </div>
-            </div>
+            <p className="text-gray-300 mt-2">{gammaData.expected_move_change.interpretation}</p>
           </div>
         )}
 
@@ -1630,16 +2083,16 @@ export default function ArgusPage() {
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 mb-6">
           <div className="bg-gray-800/50 rounded-xl p-4">
             <div className="text-gray-500 text-xs mb-1">SPY Spot</div>
-            <div className="text-xl font-bold text-white">${gammaData?.spot_price.toFixed(2)}</div>
+            <div className="text-xl font-bold text-white">${gammaData?.spot_price?.toFixed(2) ?? '-'}</div>
           </div>
           <div className="bg-gray-800/50 rounded-xl p-4">
             <div className="text-gray-500 text-xs mb-1">Expected Move</div>
-            <div className="text-xl font-bold text-blue-400">±${gammaData?.expected_move.toFixed(2)}</div>
+            <div className="text-xl font-bold text-blue-400">±${gammaData?.expected_move?.toFixed(2) ?? '-'}</div>
           </div>
           <div className="bg-gray-800/50 rounded-xl p-4">
             <div className="text-gray-500 text-xs mb-1">VIX</div>
             <div className={`text-xl font-bold ${(gammaData?.vix || 0) > 20 ? 'text-orange-400' : 'text-emerald-400'}`}>
-              {gammaData?.vix.toFixed(1)}
+              {gammaData?.vix?.toFixed(1) ?? '-'}
             </div>
           </div>
           <div className="bg-gray-800/50 rounded-xl p-4">
@@ -1695,58 +2148,8 @@ export default function ArgusPage() {
           </div>
         </div>
 
-        {/* NEW: Accuracy Dashboard + Trade Ideas Row */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-          {/* Accuracy Dashboard */}
-          <div className="bg-gray-800/50 rounded-xl p-5">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold text-white flex items-center gap-2">
-                <Percent className="w-5 h-5 text-cyan-400" />
-                System Accuracy
-              </h3>
-              <button
-                onClick={() => setShowAccuracyPanel(!showAccuracyPanel)}
-                className="text-xs text-gray-500 hover:text-white"
-              >
-                {showAccuracyPanel ? 'Hide' : 'Show'}
-              </button>
-            </div>
-            {showAccuracyPanel && accuracyMetrics && accuracyMetrics.total_predictions > 0 ? (
-              <>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                  <div className="bg-gray-900/50 rounded-lg p-3 text-center">
-                    <div className="text-xs text-gray-500 mb-1">Pin Accuracy (7d)</div>
-                    <div className={`text-xl font-bold ${accuracyMetrics.pin_accuracy_7d >= 75 ? 'text-emerald-400' : accuracyMetrics.pin_accuracy_7d >= 50 ? 'text-yellow-400' : 'text-rose-400'}`}>
-                      {accuracyMetrics.pin_accuracy_7d.toFixed(0)}%
-                    </div>
-                  </div>
-                  <div className="bg-gray-900/50 rounded-lg p-3 text-center">
-                    <div className="text-xs text-gray-500 mb-1">Direction (7d)</div>
-                    <div className={`text-xl font-bold ${accuracyMetrics.direction_accuracy_7d >= 55 ? 'text-emerald-400' : accuracyMetrics.direction_accuracy_7d >= 50 ? 'text-yellow-400' : 'text-rose-400'}`}>
-                      {accuracyMetrics.direction_accuracy_7d.toFixed(0)}%
-                    </div>
-                  </div>
-                  <div className="bg-gray-900/50 rounded-lg p-3 text-center">
-                    <div className="text-xs text-gray-500 mb-1">Magnet Hit (7d)</div>
-                    <div className={`text-xl font-bold ${accuracyMetrics.magnet_hit_rate_7d >= 70 ? 'text-emerald-400' : accuracyMetrics.magnet_hit_rate_7d >= 50 ? 'text-yellow-400' : 'text-rose-400'}`}>
-                      {accuracyMetrics.magnet_hit_rate_7d.toFixed(0)}%
-                    </div>
-                  </div>
-                </div>
-                <div className="mt-3 text-xs text-gray-600 flex items-center gap-1">
-                  <Info className="w-3 h-3" />
-                  Based on {accuracyMetrics.total_predictions} predictions
-                </div>
-              </>
-            ) : showAccuracyPanel ? (
-              <div className="text-center py-4 text-gray-500">
-                <Percent className="w-6 h-6 mx-auto mb-2 opacity-30" />
-                <p className="text-sm">No accuracy data yet</p>
-                <p className="text-xs text-gray-600 mt-1">Predictions will be tracked over time</p>
-              </div>
-            ) : null}
-          </div>
-
+        {/* Trade Ideas Section */}
+        <div className="mb-6">
           {/* Trade Ideas Generator */}
           <div className="bg-gradient-to-r from-emerald-900/30 to-blue-900/30 border border-emerald-500/30 rounded-xl p-5">
             <div className="flex items-center justify-between mb-4">
@@ -1823,98 +2226,121 @@ export default function ArgusPage() {
           </div>
         </div>
 
-        {/* NEW: Pattern Similarity + Gamma Flips Row */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-          {/* Pattern Similarity Scorecard */}
+        {/* Pattern Similarity Section - Enhanced with price details */}
+        <div className="mb-6">
           <div className="bg-gray-800/50 rounded-xl p-5">
             <h3 className="font-bold text-white flex items-center gap-2 mb-4">
               <Repeat className="w-5 h-5 text-indigo-400" />
               Pattern Similarity
-              <span className="text-xs text-gray-500 font-normal">vs Historical Days</span>
+              <span className="text-xs text-gray-500 font-normal">vs Historical Days (90d)</span>
             </h3>
             {patternMatches.length > 0 ? (
-              <div className="space-y-2">
-                {patternMatches.slice(0, 3).map((match, idx) => (
-                  <div key={match.date} className="flex items-center justify-between p-2 bg-gray-900/50 rounded-lg">
-                    <div className="flex items-center gap-3">
-                      <span className="text-xs text-gray-500">#{idx + 1}</span>
-                      <div>
-                        <div className="font-mono text-white text-sm">{match.date}</div>
-                        <div className="text-xs text-gray-500">{match.gamma_regime_then} regime</div>
+              <div className="space-y-4">
+                {patternMatches.slice(0, 5).map((match, idx) => (
+                  <div key={match.date} className="p-4 bg-gray-900/50 rounded-lg border border-gray-700/50">
+                    {/* Header row */}
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-3">
+                        <span className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
+                          idx === 0 ? 'bg-indigo-500/30 text-indigo-300' :
+                          idx === 1 ? 'bg-purple-500/30 text-purple-300' : 'bg-gray-700 text-gray-400'
+                        }`}>#{idx + 1}</span>
+                        <div>
+                          <div className="font-mono text-white text-sm font-bold">{match.date}</div>
+                          <div className="text-xs text-gray-500 flex items-center gap-2">
+                            <span className={`${match.gamma_regime_then === 'POSITIVE' ? 'text-emerald-400' : match.gamma_regime_then === 'NEGATIVE' ? 'text-rose-400' : 'text-gray-400'}`}>
+                              {match.gamma_regime_then} gamma
+                            </span>
+                            {match.mm_state && <span className="text-gray-600">• MMs {match.mm_state}</span>}
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-4">
-                      <div className="text-center">
-                        <div className="text-xs text-gray-500">Match</div>
-                        <div className="font-bold text-indigo-400">{match.similarity_score.toFixed(0)}%</div>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-xs text-gray-500">Result</div>
-                        <div className={`font-bold flex items-center gap-1 ${
-                          match.outcome_direction === 'UP' ? 'text-emerald-400' :
-                          match.outcome_direction === 'DOWN' ? 'text-rose-400' : 'text-gray-400'
-                        }`}>
-                          {match.outcome_direction === 'UP' ? <ArrowUpRight className="w-3 h-3" /> :
-                           match.outcome_direction === 'DOWN' ? <ArrowDownRight className="w-3 h-3" /> : null}
-                          {match.outcome_pct > 0 ? '+' : ''}{match.outcome_pct.toFixed(2)}%
+                      <div className="flex items-center gap-4">
+                        <div className="text-center">
+                          <div className="text-[10px] text-gray-500 uppercase">Match</div>
+                          <div className="font-bold text-indigo-400">{match.similarity_score?.toFixed(0) || 0}%</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="text-[10px] text-gray-500 uppercase">Result</div>
+                          <div className={`font-bold flex items-center gap-1 ${
+                            match.outcome_direction === 'UP' ? 'text-emerald-400' :
+                            match.outcome_direction === 'DOWN' ? 'text-rose-400' : 'text-gray-400'
+                          }`}>
+                            {match.outcome_direction === 'UP' ? <ArrowUpRight className="w-4 h-4" /> :
+                             match.outcome_direction === 'DOWN' ? <ArrowDownRight className="w-4 h-4" /> : null}
+                            {match.outcome_pct > 0 ? '+' : ''}{(match.outcome_pct || 0).toFixed(2)}%
+                          </div>
                         </div>
                       </div>
                     </div>
+
+                    {/* Price details row */}
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3 py-2 border-t border-b border-gray-700/30">
+                      <div>
+                        <div className="text-[10px] text-gray-500 uppercase">Open</div>
+                        <div className="text-sm font-mono text-white">${match.open_price?.toFixed(2) || '-'}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-gray-500 uppercase">Close</div>
+                        <div className={`text-sm font-mono ${
+                          (match.price_change || 0) > 0 ? 'text-emerald-400' :
+                          (match.price_change || 0) < 0 ? 'text-rose-400' : 'text-white'
+                        }`}>
+                          ${match.close_price?.toFixed(2) || '-'}
+                          <span className="text-xs ml-1">
+                            ({(match.price_change || 0) > 0 ? '+' : ''}{(match.price_change || 0).toFixed(2)})
+                          </span>
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-gray-500 uppercase">High</div>
+                        <div className="text-sm font-mono text-emerald-400/80">${match.day_high?.toFixed(2) || '-'}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-gray-500 uppercase">Low</div>
+                        <div className="text-sm font-mono text-rose-400/80">${match.day_low?.toFixed(2) || '-'}</div>
+                      </div>
+                      <div>
+                        <div className="text-[10px] text-gray-500 uppercase">Range</div>
+                        <div className="text-sm font-mono text-yellow-400">${match.day_range?.toFixed(2) || '-'}</div>
+                      </div>
+                    </div>
+
+                    {/* Key levels row */}
+                    {(match.flip_point || match.call_wall || match.put_wall) && (
+                      <div className="flex flex-wrap gap-3 mb-3 text-xs">
+                        {match.flip_point && (
+                          <span className="px-2 py-1 bg-purple-500/20 text-purple-300 rounded">
+                            Flip: ${match.flip_point.toFixed(0)}
+                          </span>
+                        )}
+                        {match.call_wall && (
+                          <span className="px-2 py-1 bg-emerald-500/20 text-emerald-300 rounded">
+                            Call Wall: ${match.call_wall.toFixed(0)}
+                          </span>
+                        )}
+                        {match.put_wall && (
+                          <span className="px-2 py-1 bg-rose-500/20 text-rose-300 rounded">
+                            Put Wall: ${match.put_wall.toFixed(0)}
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Summary */}
+                    {match.summary && (
+                      <div className="text-sm text-gray-400 leading-relaxed">
+                        <span className="text-indigo-400 font-medium">Summary:</span> {match.summary}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
             ) : (
               <div className="text-center py-6 text-gray-500">
                 <Repeat className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                <p className="text-sm">Analyzing historical patterns...</p>
-              </div>
-            )}
-          </div>
-
-          {/* Gamma Flip History with Outcomes */}
-          <div className="bg-gray-800/50 rounded-xl p-5">
-            <h3 className="font-bold text-white flex items-center gap-2 mb-4">
-              <Zap className="w-5 h-5 text-orange-400" />
-              Recent Gamma Flips
-              <span className="text-xs text-gray-500 font-normal">Last 30 min</span>
-            </h3>
-            {gammaFlips30m.length > 0 ? (
-              <div className="space-y-2 max-h-48 overflow-y-auto">
-                {gammaFlips30m.slice(0, 6).map((flip, idx) => (
-                  <div key={`${flip.strike}-${flip.flipped_at}`} className={`flex items-center justify-between p-2 rounded-lg ${
-                    flip.direction === 'POS_TO_NEG' ? 'bg-rose-500/10' : 'bg-emerald-500/10'
-                  }`}>
-                    <div className="flex items-center gap-3">
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                        flip.direction === 'POS_TO_NEG' ? 'bg-rose-500 text-white' : 'bg-emerald-500 text-white'
-                      }`}>
-                        {flip.direction === 'POS_TO_NEG' ? '→ -γ' : '→ +γ'}
-                      </span>
-                      <div>
-                        <div className="font-mono text-white">${flip.strike}</div>
-                        <div className="text-xs text-gray-500">{flip.mins_ago.toFixed(0)}m ago</div>
-                      </div>
-                    </div>
-                    <div className="text-right text-xs">
-                      <div className="text-gray-500">Before → After</div>
-                      <div className="font-mono">
-                        <span className={flip.gamma_before > 0 ? 'text-emerald-400' : 'text-rose-400'}>
-                          {formatGamma(flip.gamma_before)}
-                        </span>
-                        <span className="text-gray-500 mx-1">→</span>
-                        <span className={flip.gamma_after > 0 ? 'text-emerald-400' : 'text-rose-400'}>
-                          {formatGamma(flip.gamma_after)}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-6 text-gray-500">
-                <Zap className="w-8 h-8 mx-auto mb-2 opacity-30" />
-                <p className="text-sm">No gamma flips in last 30 min</p>
-                <p className="text-xs text-gray-600 mt-1">Flips occur when gamma changes sign</p>
+                <p className="text-sm">No similar patterns found in historical data</p>
+                <p className="text-xs text-gray-600 mt-1">Comparing current gamma structure against 90 days of history</p>
               </div>
             )}
           </div>
@@ -2281,6 +2707,19 @@ export default function ArgusPage() {
                       <th className="text-right py-2 px-2 text-gray-500 font-medium">Prob %</th>
                       <th className="text-right py-2 px-2 text-gray-500 font-medium">1m ROC</th>
                       <th className="text-right py-2 px-2 text-gray-500 font-medium">5m ROC</th>
+                      <th className="text-right py-2 px-2 text-gray-500 font-medium">30m ROC</th>
+                      <th className="text-right py-2 px-2 text-gray-500 font-medium">1hr ROC</th>
+                      <th className="text-right py-2 px-2 text-gray-500 font-medium">
+                        <select
+                          value={selectedRocTimeframe}
+                          onChange={(e) => setSelectedRocTimeframe(e.target.value as RocTimeframe)}
+                          className="bg-gray-800 border border-gray-600 rounded px-1 py-0.5 text-xs text-gray-300 cursor-pointer hover:border-purple-500 focus:outline-none focus:border-purple-500"
+                        >
+                          {rocTimeframeOptions.map(opt => (
+                            <option key={opt.value} value={opt.value}>{opt.shortLabel} ROC</option>
+                          ))}
+                        </select>
+                      </th>
                       <th className="text-center py-2 px-2 text-gray-500 font-medium">30m Trend</th>
                       <th className="text-center py-2 px-2 text-gray-500 font-medium">Status</th>
                     </tr>
@@ -2332,6 +2771,27 @@ export default function ArgusPage() {
                           strike.roc_5min > 0 ? 'text-emerald-400' : strike.roc_5min < 0 ? 'text-rose-400' : 'text-gray-500'
                         }`}>
                           {strike.roc_5min > 0 ? '+' : ''}{strike.roc_5min.toFixed(1)}%
+                        </td>
+                        <td className={`py-2 px-2 text-right font-mono ${
+                          (strike.roc_30min ?? 0) > 0 ? 'text-emerald-400' : (strike.roc_30min ?? 0) < 0 ? 'text-rose-400' : 'text-gray-500'
+                        }`}>
+                          {(strike.roc_30min ?? 0) > 0 ? '+' : ''}{(strike.roc_30min ?? 0).toFixed(1)}%
+                        </td>
+                        <td className={`py-2 px-2 text-right font-mono ${
+                          (strike.roc_1hr ?? 0) > 0 ? 'text-emerald-400' : (strike.roc_1hr ?? 0) < 0 ? 'text-rose-400' : 'text-gray-500'
+                        }`}>
+                          {(strike.roc_1hr ?? 0) > 0 ? '+' : ''}{(strike.roc_1hr ?? 0).toFixed(1)}%
+                        </td>
+                        <td className={`py-2 px-2 text-right font-mono ${
+                          (() => {
+                            const roc = getLongRocValue(strike)
+                            return roc > 0 ? 'text-emerald-400' : roc < 0 ? 'text-rose-400' : 'text-gray-500'
+                          })()
+                        }`}>
+                          {(() => {
+                            const roc = getLongRocValue(strike)
+                            return `${roc > 0 ? '+' : ''}${roc.toFixed(1)}%`
+                          })()}
                         </td>
                         <td className="py-2 px-2 text-center">
                           {(() => {
@@ -2392,6 +2852,116 @@ export default function ArgusPage() {
                 </table>
               </div>
             </div>
+
+            {/* Selected Strike ROC Detail Panel */}
+            {selectedStrike && (
+              <div className="bg-gray-800/50 rounded-xl p-5 border border-purple-500/30">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-bold text-white flex items-center gap-2">
+                    <Activity className="w-5 h-5 text-purple-400" />
+                    ROC Analysis: ${selectedStrike.strike}
+                    {selectedStrike.is_pin && <span className="text-xs bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded">PIN</span>}
+                    {selectedStrike.is_magnet && <span className="text-xs bg-yellow-500/20 text-yellow-300 px-2 py-0.5 rounded">MAGNET</span>}
+                  </h3>
+                  <button
+                    onClick={() => setSelectedStrike(null)}
+                    className="text-gray-500 hover:text-white text-sm"
+                  >
+                    ✕ Close
+                  </button>
+                </div>
+
+                {/* ROC Grid - All Timeframes */}
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+                  {[
+                    { label: '1 Min', value: selectedStrike.roc_1min, key: '1min', alwaysInTable: true },
+                    { label: '5 Min', value: selectedStrike.roc_5min, key: '5min', alwaysInTable: true },
+                    { label: '30 Min', value: selectedStrike.roc_30min ?? 0, key: '30min', alwaysInTable: true },
+                    { label: '1 Hour', value: selectedStrike.roc_1hr ?? 0, key: '1hr', alwaysInTable: true },
+                    { label: '4 Hour', value: selectedStrike.roc_4hr ?? 0, key: '4hr', alwaysInTable: false },
+                    { label: 'Today', value: selectedStrike.roc_trading_day ?? 0, key: 'day', alwaysInTable: false },
+                  ].map(({ label, value, key, alwaysInTable }) => (
+                    <div
+                      key={key}
+                      className={`bg-gray-900/50 rounded-lg p-3 text-center transition-all ${
+                        alwaysInTable
+                          ? 'border border-gray-600'  // 1m and 5m are always shown
+                          : selectedRocTimeframe === key
+                            ? 'ring-2 ring-purple-500 cursor-pointer'
+                            : 'hover:bg-gray-800/50 cursor-pointer'
+                      }`}
+                      onClick={() => !alwaysInTable && setSelectedRocTimeframe(key as RocTimeframe)}
+                    >
+                      <div className="text-xs text-gray-500 mb-1">
+                        {label}
+                        {alwaysInTable && <span className="ml-1 text-[9px] text-gray-600">(in table)</span>}
+                      </div>
+                      <div className={`text-lg font-mono font-bold ${
+                        value > 0 ? 'text-emerald-400' : value < 0 ? 'text-rose-400' : 'text-gray-500'
+                      }`}>
+                        {value > 0 ? '+' : ''}{value.toFixed(1)}%
+                      </div>
+                      {/* Visual indicator bar */}
+                      <div className="mt-2 h-1 bg-gray-700 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all ${
+                            value > 0 ? 'bg-emerald-500' : value < 0 ? 'bg-rose-500' : 'bg-gray-600'
+                          }`}
+                          style={{
+                            width: `${Math.min(Math.abs(value) * 2, 100)}%`,
+                            marginLeft: value < 0 ? 'auto' : 0
+                          }}
+                        />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Additional Strike Info */}
+                <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                  <div className="bg-gray-900/30 rounded px-3 py-2">
+                    <span className="text-gray-500">Net Gamma:</span>
+                    <span className={`ml-2 font-mono ${selectedStrike.net_gamma > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {selectedStrike.net_gamma > 1e6
+                        ? `${(selectedStrike.net_gamma / 1e6).toFixed(1)}M`
+                        : selectedStrike.net_gamma > 1e3
+                          ? `${(selectedStrike.net_gamma / 1e3).toFixed(1)}K`
+                          : selectedStrike.net_gamma.toFixed(0)}
+                    </span>
+                  </div>
+                  <div className="bg-gray-900/30 rounded px-3 py-2">
+                    <span className="text-gray-500">Probability:</span>
+                    <span className="ml-2 font-mono text-blue-400">{selectedStrike.probability.toFixed(1)}%</span>
+                  </div>
+                  <div className="bg-gray-900/30 rounded px-3 py-2">
+                    <span className="text-gray-500">Distance:</span>
+                    <span className={`ml-2 font-mono ${
+                      gammaData?.spot_price && selectedStrike.strike > gammaData.spot_price ? 'text-emerald-400' : 'text-rose-400'
+                    }`}>
+                      {gammaData?.spot_price
+                        ? `${((selectedStrike.strike - gammaData.spot_price) / gammaData.spot_price * 100) > 0 ? '+' : ''}${((selectedStrike.strike - gammaData.spot_price) / gammaData.spot_price * 100).toFixed(2)}%`
+                        : '-'}
+                    </span>
+                  </div>
+                  <div className="bg-gray-900/30 rounded px-3 py-2">
+                    <span className="text-gray-500">Status:</span>
+                    <span className={`ml-2 ${
+                      selectedStrike.is_danger
+                        ? 'text-orange-400'
+                        : selectedStrike.gamma_flipped
+                          ? 'text-yellow-400'
+                          : 'text-gray-400'
+                    }`}>
+                      {selectedStrike.is_danger
+                        ? selectedStrike.danger_type
+                        : selectedStrike.gamma_flipped
+                          ? `Flipped ${selectedStrike.flip_direction}`
+                          : 'Normal'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Live Commentary / ARGUS Log */}
             <div className="bg-gray-800/50 rounded-xl p-5">

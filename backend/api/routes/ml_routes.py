@@ -1068,3 +1068,436 @@ async def score_trade_and_log(
     except Exception as e:
         logger.error(f"Score and log error: {e}")
         return {"success": False, "error": str(e)}
+
+
+# ============================================================================
+# SAGE (ARES ML ADVISOR) ENDPOINTS - Trading Bot ML Intelligence
+# ============================================================================
+
+class SagePredictRequest(BaseModel):
+    """Request for SAGE (ARES ML Advisor) prediction"""
+    vix: float
+    day_of_week: int = None  # 0-6, defaults to today
+    price: float = None  # SPY price
+    price_change_1d: float = 0.0
+    expected_move_pct: float = 1.0
+    gex_regime_positive: bool = True
+    gex_normalized: float = 0.0
+    gex_distance_to_flip_pct: float = 5.0
+    gex_between_walls: bool = True
+    vix_percentile_30d: float = 50.0
+    vix_change_1d: float = 0.0
+    win_rate_30d: float = 0.7
+
+
+@router.get("/sage/status")
+async def get_sage_status():
+    """
+    Get SAGE (ARES ML Advisor) status - the PRIMARY ML system for trading bots.
+
+    SAGE provides ML-driven predictions for Iron Condor and directional strategies.
+    Used by ARES, ATHENA, ICARUS, PEGASUS, and TITAN bots.
+    """
+    try:
+        from quant.ares_ml_advisor import get_advisor, AresMLAdvisor
+
+        advisor = get_advisor()
+
+        # Check if model is trained
+        model_trained = advisor.model is not None
+        model_version = advisor.model_version if hasattr(advisor, 'model_version') else None
+
+        # Get training metrics if available
+        training_metrics = None
+        if hasattr(advisor, 'training_metrics') and advisor.training_metrics:
+            tm = advisor.training_metrics
+            training_metrics = {
+                "accuracy": tm.accuracy if hasattr(tm, 'accuracy') else None,
+                "precision": tm.precision if hasattr(tm, 'precision') else None,
+                "recall": tm.recall if hasattr(tm, 'recall') else None,
+                "f1": tm.f1 if hasattr(tm, 'f1') else None,
+                "auc_roc": tm.auc_roc if hasattr(tm, 'auc_roc') else None,
+                "brier_score": tm.brier_score if hasattr(tm, 'brier_score') else None
+            }
+
+        # Count training data from outcomes table
+        training_data_count = 0
+        try:
+            from database_adapter import get_connection
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM ares_ml_outcomes WHERE actual_outcome IS NOT NULL")
+            training_data_count = cursor.fetchone()[0]
+            conn.close()
+        except:
+            pass
+
+        can_train = training_data_count >= 30
+        should_trust = model_trained and training_data_count >= 50
+
+        return {
+            "success": True,
+            "ml_library_available": True,
+            "model_trained": model_trained,
+            "model_version": model_version,
+            "training_data_available": training_data_count,
+            "can_train": can_train,
+            "should_trust_predictions": should_trust,
+            "honest_assessment": _get_sage_assessment(model_trained, training_data_count),
+            "training_metrics": training_metrics,
+            "what_ml_can_do": [
+                "Identify favorable market conditions from historical patterns",
+                "Adjust position sizing based on win probability",
+                "Learn from KRONOS backtest results and live trades",
+                "Provide calibrated probability estimates",
+                "Integrate GEX regime signals for better timing"
+            ],
+            "what_ml_cannot_do": [
+                "Predict black swan events or flash crashes",
+                "Guarantee profits on any individual trade",
+                "Eliminate the inherent risks of options trading",
+                "Replace proper risk management and position sizing",
+                "Foresee unprecedented market conditions"
+            ]
+        }
+
+    except ImportError as e:
+        logger.error(f"SAGE import error: {e}")
+        return {
+            "success": True,
+            "ml_library_available": False,
+            "model_trained": False,
+            "error": f"SAGE module not available: {str(e)}",
+            "honest_assessment": "SAGE (ARES ML Advisor) module not available. Using fallback rules."
+        }
+    except Exception as e:
+        logger.error(f"SAGE status error: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+def _get_sage_assessment(model_trained: bool, data_count: int) -> str:
+    """Provide honest assessment of SAGE readiness"""
+    if not model_trained and data_count < 30:
+        return f"SAGE needs training data. Currently have {data_count} outcomes, need 30 minimum. Using conservative fallback rules."
+    elif not model_trained and data_count >= 30:
+        return "SAGE can be trained. Sufficient data available. Call POST /api/ml/sage/train to train."
+    elif model_trained and data_count < 50:
+        return f"SAGE trained on {data_count} trades. Predictions available but may have limited reliability. Consider as secondary signal."
+    elif model_trained and data_count < 100:
+        return f"SAGE trained on {data_count} trades. Reasonably reliable for filtering trade opportunities."
+    else:
+        return f"SAGE trained on {data_count} trades. Should provide useful ML-driven predictions for trading decisions."
+
+
+@router.post("/sage/predict")
+async def sage_predict(request: SagePredictRequest):
+    """
+    Get SAGE (ARES ML Advisor) prediction for current market conditions.
+
+    Returns win probability, trading advice, and suggested position sizing.
+    """
+    try:
+        from quant.ares_ml_advisor import get_advisor
+        from datetime import datetime
+
+        advisor = get_advisor()
+
+        # Default day_of_week to today if not provided
+        day_of_week = request.day_of_week
+        if day_of_week is None:
+            day_of_week = datetime.now().weekday()
+
+        # Get prediction
+        prediction = advisor.predict(
+            vix=request.vix,
+            day_of_week=day_of_week,
+            price=request.price,
+            price_change_1d=request.price_change_1d,
+            expected_move_pct=request.expected_move_pct,
+            gex_regime_positive=request.gex_regime_positive,
+            gex_normalized=request.gex_normalized,
+            gex_distance_to_flip_pct=request.gex_distance_to_flip_pct,
+            gex_between_walls=request.gex_between_walls,
+            vix_percentile_30d=request.vix_percentile_30d,
+            vix_change_1d=request.vix_change_1d,
+            win_rate_30d=request.win_rate_30d
+        )
+
+        # Convert to dict if it's a dataclass
+        prediction_dict = {}
+        if hasattr(prediction, '__dict__'):
+            for key, value in prediction.__dict__.items():
+                if key == 'advice' and hasattr(value, 'value'):
+                    prediction_dict[key] = value.value
+                elif key == 'top_factors':
+                    prediction_dict[key] = list(value) if value else []
+                else:
+                    prediction_dict[key] = value
+        else:
+            prediction_dict = prediction
+
+        # Log the prediction
+        log_ml_action(
+            action="SAGE_PREDICT",
+            details={
+                "vix": request.vix,
+                "day_of_week": day_of_week,
+                "gex_regime": "positive" if request.gex_regime_positive else "negative"
+            },
+            ml_score=prediction_dict.get('win_probability'),
+            recommendation=prediction_dict.get('advice'),
+            reasoning=f"SAGE prediction for VIX={request.vix}, DOW={day_of_week}"
+        )
+
+        return {
+            "success": True,
+            "data": {
+                "prediction": prediction_dict
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"SAGE predict error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@router.post("/sage/train")
+async def train_sage(min_samples: int = 30, use_kronos: bool = True):
+    """
+    Train SAGE (ARES ML Advisor) model.
+
+    Can train from:
+    1. KRONOS backtest results (default)
+    2. Live trade outcomes
+    """
+    try:
+        from quant.ares_ml_advisor import get_advisor
+
+        advisor = get_advisor()
+
+        if use_kronos:
+            # Train from KRONOS backtests
+            from backtest.zero_dte_backtest import ZeroDTEBacktester
+
+            backtester = ZeroDTEBacktester()
+            results = backtester.get_recent_results(limit=500)
+
+            if not results or len(results) < min_samples:
+                return {
+                    "success": False,
+                    "error": f"Not enough KRONOS backtest data. Have {len(results) if results else 0}, need {min_samples}"
+                }
+
+            metrics = advisor.train_from_kronos(results, min_samples=min_samples)
+
+            log_ml_action(
+                action="SAGE_TRAIN_KRONOS",
+                details={"samples": len(results), "min_samples": min_samples},
+                ml_score=metrics.accuracy if metrics else None,
+                recommendation="TRAINED" if metrics else "FAILED",
+                reasoning="Trained SAGE from KRONOS backtest results"
+            )
+
+            return {
+                "success": True,
+                "message": f"SAGE trained on {len(results)} KRONOS backtest results",
+                "data": {
+                    "accuracy": metrics.accuracy if metrics else None,
+                    "precision": metrics.precision if metrics else None,
+                    "recall": metrics.recall if metrics else None,
+                    "model_version": advisor.model_version
+                }
+            }
+        else:
+            # Train from live outcomes
+            metrics = advisor.retrain_from_outcomes(min_new_samples=min_samples)
+
+            if not metrics:
+                return {
+                    "success": False,
+                    "error": f"Not enough live trade outcomes. Need {min_samples} minimum."
+                }
+
+            log_ml_action(
+                action="SAGE_TRAIN_LIVE",
+                details={"min_samples": min_samples},
+                ml_score=metrics.accuracy if metrics else None,
+                recommendation="TRAINED",
+                reasoning="Trained SAGE from live trade outcomes"
+            )
+
+            return {
+                "success": True,
+                "message": "SAGE trained on live trade outcomes",
+                "data": {
+                    "accuracy": metrics.accuracy,
+                    "precision": metrics.precision,
+                    "model_version": advisor.model_version
+                }
+            }
+
+    except Exception as e:
+        logger.error(f"SAGE train error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@router.get("/sage/feature-importance")
+async def get_sage_feature_importance():
+    """
+    Get SAGE feature importance - which factors drive predictions.
+    """
+    try:
+        from quant.ares_ml_advisor import get_advisor
+
+        advisor = get_advisor()
+
+        if not advisor.model:
+            return {
+                "success": True,
+                "data": {
+                    "model_trained": False,
+                    "features": [],
+                    "message": "Train SAGE to see feature importance"
+                }
+            }
+
+        # Get feature importance from the model
+        importance = {}
+        if hasattr(advisor.model, 'feature_importances_'):
+            feature_names = advisor.feature_columns if hasattr(advisor, 'feature_columns') else [
+                'vix', 'vix_percentile_30d', 'vix_change_1d', 'day_of_week',
+                'price_change_1d', 'expected_move_pct', 'win_rate_30d',
+                'gex_normalized', 'gex_regime_positive', 'gex_distance_to_flip_pct', 'gex_between_walls'
+            ]
+            for i, imp in enumerate(advisor.model.feature_importances_):
+                if i < len(feature_names):
+                    importance[feature_names[i]] = float(imp)
+
+        sorted_features = sorted(importance.items(), key=lambda x: x[1], reverse=True)
+        total_importance = sum(importance.values()) if importance else 1
+
+        features = []
+        for rank, (name, imp) in enumerate(sorted_features, 1):
+            features.append({
+                "rank": rank,
+                "name": name,
+                "importance": round(imp, 4),
+                "importance_pct": round(imp / total_importance * 100, 1),
+                "meaning": _get_sage_feature_meaning(name)
+            })
+
+        return {
+            "success": True,
+            "data": {
+                "model_trained": True,
+                "features": features
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"SAGE feature importance error: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+def _get_sage_feature_meaning(feature: str) -> str:
+    """Get plain English meaning of SAGE features"""
+    meanings = {
+        'vix': 'Market fear gauge - higher VIX means more premium but more risk',
+        'vix_percentile_30d': 'VIX compared to 30-day history - identifies elevated volatility',
+        'vix_change_1d': 'VIX movement - rising VIX can signal stress',
+        'day_of_week': 'Day of week - some days historically perform better',
+        'price_change_1d': '1-day price movement - momentum signal',
+        'expected_move_pct': 'Expected move % - options market implied range',
+        'win_rate_30d': 'Recent 30-day win rate - momentum in strategy performance',
+        'gex_normalized': 'Normalized GEX value - dealer positioning strength',
+        'gex_regime_positive': 'GEX regime - positive = dealers buy dips (supportive)',
+        'gex_distance_to_flip_pct': 'Distance to GEX flip point - proximity to regime change',
+        'gex_between_walls': 'Price between put/call walls - ideal positioning zone'
+    }
+    return meanings.get(feature, 'Feature used by ML model')
+
+
+@router.get("/bot-status")
+async def get_bot_ml_status():
+    """
+    Get ML integration status for all trading bots.
+
+    Shows which bots use SAGE as primary prediction source,
+    their minimum win probability thresholds, and last prediction.
+    """
+    try:
+        bots = [
+            {"name": "ARES", "min_win_prob": 50, "description": "SPY Iron Condor"},
+            {"name": "ATHENA", "min_win_prob": 48, "description": "Directional Spreads"},
+            {"name": "ICARUS", "min_win_prob": 40, "description": "Aggressive Directional"},
+            {"name": "PEGASUS", "min_win_prob": 50, "description": "SPX Iron Condor"},
+            {"name": "TITAN", "min_win_prob": 40, "description": "Aggressive SPX IC"}
+        ]
+
+        bot_statuses = []
+
+        for bot in bots:
+            # Check for last prediction in logs
+            last_prediction = None
+            try:
+                from database_adapter import get_connection
+                conn = get_connection()
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT ml_score, recommendation, timestamp
+                    FROM ml_decision_logs
+                    WHERE action LIKE %s
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                ''', (f'%{bot["name"]}%',))
+                row = cursor.fetchone()
+                if row:
+                    last_prediction = {
+                        "win_probability": float(row[0]) if row[0] else None,
+                        "advice": row[1],
+                        "timestamp": row[2].isoformat() if row[2] else None
+                    }
+                conn.close()
+            except:
+                pass
+
+            bot_statuses.append({
+                "bot_name": bot["name"],
+                "ml_enabled": True,
+                "ml_source": "SAGE (ARES_ML_ADVISOR)",
+                "min_win_probability": bot["min_win_prob"],
+                "description": bot["description"],
+                "last_prediction": last_prediction
+            })
+
+        return {
+            "success": True,
+            "data": {
+                "bots": bot_statuses,
+                "primary_source": "SAGE (ARES ML Advisor)",
+                "backup_source": "Oracle (when ML unavailable)"
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Bot status error: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }

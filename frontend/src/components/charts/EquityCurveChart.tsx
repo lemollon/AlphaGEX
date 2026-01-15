@@ -35,6 +35,20 @@ const getBrandColors = (botFilter?: string) => {
       dark: BOT_BRANDS.PEGASUS.hexDark,        // Dark blue
     }
   }
+  if (botFilter === 'ICARUS') {
+    return {
+      primary: BOT_BRANDS.ICARUS.hexPrimary, // Orange #F97316
+      light: BOT_BRANDS.ICARUS.hexLight,      // Light orange
+      dark: BOT_BRANDS.ICARUS.hexDark,        // Dark orange
+    }
+  }
+  if (botFilter === 'TITAN') {
+    return {
+      primary: BOT_BRANDS.TITAN.hexPrimary, // Violet #8B5CF6
+      light: BOT_BRANDS.TITAN.hexLight,      // Light violet
+      dark: BOT_BRANDS.TITAN.hexDark,        // Dark violet
+    }
+  }
   // Default green/red for combined view
   return {
     primary: '#22C55E',
@@ -82,6 +96,28 @@ interface EquityCurveData {
   summary: EquityCurveSummary
 }
 
+interface IntradayEquityPoint {
+  timestamp: string
+  time: string
+  equity: number
+  cumulative_pnl: number
+  open_positions: number
+  unrealized_pnl: number
+}
+
+interface IntradayEquityData {
+  success: boolean
+  date: string
+  bot?: string
+  data_points: IntradayEquityPoint[]
+  current_equity: number
+  day_pnl: number
+  starting_equity: number
+  high_of_day: number
+  low_of_day: number
+  snapshots_count: number
+}
+
 interface EquityCurveChartProps {
   botFilter?: string  // 'ARES', 'ATHENA', or undefined for all
   defaultTimeframe?: 'daily' | 'weekly' | 'monthly'
@@ -89,6 +125,7 @@ interface EquityCurveChartProps {
   height?: number
   showDrawdown?: boolean
   title?: string
+  showIntradayOption?: boolean  // Whether to show intraday toggle
 }
 
 // ============================================================================
@@ -218,18 +255,28 @@ export default function EquityCurveChart({
   defaultDays = 90,
   height = 400,
   showDrawdown = true,
-  title = 'Equity Curve'
+  title = 'Equity Curve',
+  showIntradayOption = true
 }: EquityCurveChartProps) {
+  const [viewMode, setViewMode] = useState<'historical' | 'intraday'>('historical')
   const [timeframe, setTimeframe] = useState<'daily' | 'weekly' | 'monthly'>(defaultTimeframe)
   const [days, setDays] = useState(defaultDays)
   const [selectedEvent, setSelectedEvent] = useState<{ event: TradingEvent; position: { x: number; y: number } } | null>(null)
   const [hoveredEventDate, setHoveredEventDate] = useState<string | null>(null)
 
-  // Fetch data
+  // Fetch historical data
   const { data, error, isLoading } = useSWR<EquityCurveData>(
-    `/api/events/equity-curve?days=${days}&timeframe=${timeframe}${botFilter ? `&bot=${botFilter}` : ''}`,
+    viewMode === 'historical' ? `/api/events/equity-curve?days=${days}&timeframe=${timeframe}${botFilter ? `&bot=${botFilter}` : ''}` : null,
     fetcher,
     { refreshInterval: 60000 }
+  )
+
+  // Fetch intraday data (only when botFilter is set and viewMode is intraday)
+  const intradayEndpoint = botFilter ? `/api/${botFilter.toLowerCase()}/equity-curve/intraday` : null
+  const { data: intradayData, error: intradayError, isLoading: intradayLoading } = useSWR<IntradayEquityData>(
+    viewMode === 'intraday' && intradayEndpoint ? intradayEndpoint : null,
+    fetcher,
+    { refreshInterval: 60000 }  // Refresh every 60 seconds (data is captured every 5 min)
   )
 
   // Process equity curve for gradient
@@ -244,6 +291,23 @@ export default function EquityCurveChart({
       }
     })
   }, [data?.equity_curve])
+
+  // Process intraday data
+  const processedIntradayData = useMemo(() => {
+    if (!intradayData?.data_points) return []
+
+    return intradayData.data_points.map((point, i, arr) => {
+      const prevEquity = i > 0 ? arr[i - 1].equity : point.equity
+      return {
+        ...point,
+        isRising: point.equity >= prevEquity,
+        date: point.time, // For tooltip compatibility
+        daily_pnl: point.cumulative_pnl,
+        drawdown_pct: 0,
+        trade_count: point.open_positions
+      }
+    })
+  }, [intradayData?.data_points])
 
   // Get events for the visible date range
   const visibleEvents = useMemo(() => {
@@ -262,12 +326,13 @@ export default function EquityCurveChart({
     })
   }, [])
 
-  // Chart bounds
+  // Chart bounds (handles both historical and intraday)
   const { minEquity, maxEquity, minDrawdown, maxDrawdown } = useMemo(() => {
-    if (!processedData.length) return { minEquity: 0, maxEquity: 100000, minDrawdown: 0, maxDrawdown: 10 }
+    const dataToUse = viewMode === 'intraday' ? processedIntradayData : processedData
+    if (!dataToUse.length) return { minEquity: 0, maxEquity: 100000, minDrawdown: 0, maxDrawdown: 10 }
 
-    const equities = processedData.map(p => p.equity)
-    const drawdowns = processedData.map(p => p.drawdown_pct)
+    const equities = dataToUse.map(p => p.equity)
+    const drawdowns = viewMode === 'intraday' ? [0] : processedData.map(p => p.drawdown_pct)
 
     return {
       minEquity: Math.min(...equities) * 0.98,
@@ -275,7 +340,7 @@ export default function EquityCurveChart({
       minDrawdown: 0,
       maxDrawdown: Math.max(...drawdowns, 5) * 1.2
     }
-  }, [processedData])
+  }, [processedData, processedIntradayData, viewMode])
 
   // Render event markers
   const renderEventMarkers = () => {
@@ -324,13 +389,19 @@ export default function EquityCurveChart({
     })
   }
 
-  if (error) {
+  // Handle error state
+  const hasError = viewMode === 'intraday' ? intradayError : error
+  const isCurrentlyLoading = viewMode === 'intraday' ? intradayLoading : isLoading
+  const currentData = viewMode === 'intraday' ? processedIntradayData : processedData
+
+  if (hasError) {
     const brandColors = getBrandColors(botFilter)
     return (
       <div className={`bg-[#0a0a0a] border rounded-lg p-6 ${
         botFilter === 'ARES' ? 'border-amber-700/50' :
         botFilter === 'ATHENA' ? 'border-cyan-700/50' :
         botFilter === 'PEGASUS' ? 'border-blue-700/50' :
+        botFilter === 'ICARUS' ? 'border-orange-700/50' :
         'border-gray-800'
       }`}>
         <div className="text-center py-8">
@@ -338,12 +409,14 @@ export default function EquityCurveChart({
             botFilter === 'ARES' ? 'bg-amber-900/30' :
             botFilter === 'ATHENA' ? 'bg-cyan-900/30' :
             botFilter === 'PEGASUS' ? 'bg-blue-900/30' :
+            botFilter === 'ICARUS' ? 'bg-orange-900/30' :
             'bg-gray-800/50'
           }`}>
             <TrendingUp className={`w-8 h-8 ${
               botFilter === 'ARES' ? 'text-amber-400' :
               botFilter === 'ATHENA' ? 'text-cyan-400' :
               botFilter === 'PEGASUS' ? 'text-blue-400' :
+              botFilter === 'ICARUS' ? 'text-orange-400' :
               'text-gray-400'
             }`} />
           </div>
@@ -351,25 +424,45 @@ export default function EquityCurveChart({
             botFilter === 'ARES' ? 'text-amber-400' :
             botFilter === 'ATHENA' ? 'text-cyan-400' :
             botFilter === 'PEGASUS' ? 'text-blue-400' :
+            botFilter === 'ICARUS' ? 'text-orange-400' :
             'text-gray-300'
           }`}>No Equity Data Available</p>
           <p className="text-gray-500 text-sm">
-            {botFilter ? `${botFilter} hasn't completed any trades yet.` : 'No trading history found.'}
+            {viewMode === 'intraday'
+              ? `No intraday snapshots recorded yet today.`
+              : (botFilter ? `${botFilter} hasn't completed any trades yet.` : 'No trading history found.')
+            }
           </p>
           <p className="text-gray-600 text-xs mt-2">
-            Data will appear once trades are executed and closed.
+            {viewMode === 'intraday'
+              ? 'Intraday data is captured every 5 minutes during market hours.'
+              : 'Data will appear once trades are executed and closed.'
+            }
           </p>
+          {viewMode === 'intraday' && (
+            <button
+              onClick={() => setViewMode('historical')}
+              className="mt-4 px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition-colors"
+            >
+              View Historical Data
+            </button>
+          )}
         </div>
       </div>
     )
   }
 
-  if (isLoading || !data) {
+  const shouldShowLoading = viewMode === 'intraday'
+    ? (intradayLoading || !intradayData)
+    : (isLoading || !data)
+
+  if (shouldShowLoading) {
     return (
       <div className={`bg-[#0a0a0a] border rounded-lg p-6 ${
         botFilter === 'ARES' ? 'border-amber-700/50' :
         botFilter === 'ATHENA' ? 'border-cyan-700/50' :
         botFilter === 'PEGASUS' ? 'border-blue-700/50' :
+        botFilter === 'ICARUS' ? 'border-orange-700/50' :
         'border-gray-800'
       }`}>
         <div className="animate-pulse space-y-4">
@@ -377,12 +470,14 @@ export default function EquityCurveChart({
             botFilter === 'ARES' ? 'bg-amber-900/30' :
             botFilter === 'ATHENA' ? 'bg-cyan-900/30' :
             botFilter === 'PEGASUS' ? 'bg-blue-900/30' :
+            botFilter === 'ICARUS' ? 'bg-orange-900/30' :
             'bg-gray-800'
           }`} />
           <div className={`h-64 rounded ${
             botFilter === 'ARES' ? 'bg-amber-900/20' :
             botFilter === 'ATHENA' ? 'bg-cyan-900/20' :
             botFilter === 'PEGASUS' ? 'bg-blue-900/20' :
+            botFilter === 'ICARUS' ? 'bg-orange-900/20' :
             'bg-gray-800'
           }`} />
         </div>
@@ -390,26 +485,37 @@ export default function EquityCurveChart({
     )
   }
 
-  const summary = data.summary
+  // Get summary based on view mode
+  const summary = viewMode === 'intraday' && intradayData
+    ? {
+        total_pnl: intradayData.day_pnl,
+        final_equity: intradayData.current_equity,
+        max_drawdown_pct: 0,
+        total_trades: intradayData.snapshots_count,
+        starting_capital: intradayData.starting_equity
+      }
+    : data?.summary || { total_pnl: 0, final_equity: 0, max_drawdown_pct: 0, total_trades: 0, starting_capital: 100000 }
 
   return (
     <div className={`bg-[#0a0a0a] border rounded-lg overflow-hidden ${
       botFilter === 'ARES' ? 'border-amber-700/50' :
       botFilter === 'ATHENA' ? 'border-cyan-700/50' :
       botFilter === 'PEGASUS' ? 'border-blue-700/50' :
+      botFilter === 'ICARUS' ? 'border-orange-700/50' :
       'border-gray-800'
     }`}>
       {/* Header */}
       <div className="p-4 border-b border-gray-800">
         <div className="flex items-center justify-between flex-wrap gap-4">
           <div className="flex items-center gap-3">
-            <TrendingUp className={`w-5 h-5 ${botFilter === 'ARES' ? 'text-amber-400' : botFilter === 'ATHENA' ? 'text-cyan-400' : botFilter === 'PEGASUS' ? 'text-blue-400' : 'text-green-400'}`} />
+            <TrendingUp className={`w-5 h-5 ${botFilter === 'ARES' ? 'text-amber-400' : botFilter === 'ATHENA' ? 'text-cyan-400' : botFilter === 'PEGASUS' ? 'text-blue-400' : botFilter === 'ICARUS' ? 'text-orange-400' : 'text-green-400'}`} />
             <h3 className="font-bold text-white">{title}</h3>
             {botFilter && (
               <span className={`px-2 py-0.5 text-xs rounded ${
                 botFilter === 'ARES' ? 'bg-amber-500/20 text-amber-400' :
                 botFilter === 'ATHENA' ? 'bg-cyan-500/20 text-cyan-400' :
                 botFilter === 'PEGASUS' ? 'bg-blue-500/20 text-blue-400' :
+                botFilter === 'ICARUS' ? 'bg-orange-500/20 text-orange-400' :
                 'bg-purple-500/20 text-purple-400'
               }`}>
                 {botFilter}
@@ -422,45 +528,112 @@ export default function EquityCurveChart({
             <span className={summary.total_pnl >= 0 ? 'text-green-400' : 'text-red-400'}>
               {summary.total_pnl >= 0 ? '+' : ''}${summary.total_pnl?.toLocaleString() || 0}
             </span>
-            <span className="text-red-400">
-              -{summary.max_drawdown_pct?.toFixed(1) || 0}% DD
-            </span>
+            {viewMode === 'historical' && (
+              <span className="text-red-400">
+                -{summary.max_drawdown_pct?.toFixed(1) || 0}% DD
+              </span>
+            )}
             <span className="text-gray-400">
-              {summary.total_trades || 0} trades
+              {viewMode === 'intraday'
+                ? `${summary.total_trades || 0} snapshots`
+                : `${summary.total_trades || 0} trades`
+              }
             </span>
           </div>
 
-          {/* Timeframe Selector */}
-          <div className="flex items-center gap-1 bg-gray-800 rounded-lg p-1">
-            {(['daily', 'weekly', 'monthly'] as const).map((tf) => (
-              <button
-                key={tf}
-                onClick={() => setTimeframe(tf)}
-                className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
-                  timeframe === tf
-                    ? 'bg-purple-600 text-white'
-                    : 'text-gray-400 hover:text-white hover:bg-gray-700'
-                }`}
-              >
-                {tf.charAt(0).toUpperCase()}
-              </button>
-            ))}
+          {/* View Mode Toggle + Timeframe Selector */}
+          <div className="flex items-center gap-2">
+            {/* Historical / Intraday Toggle */}
+            {showIntradayOption && botFilter && (
+              <div className="flex items-center gap-1 bg-gray-800 rounded-lg p-1">
+                <button
+                  onClick={() => setViewMode('historical')}
+                  className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                    viewMode === 'historical'
+                      ? 'bg-purple-600 text-white'
+                      : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                  }`}
+                >
+                  Historical
+                </button>
+                <button
+                  onClick={() => setViewMode('intraday')}
+                  className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                    viewMode === 'intraday'
+                      ? 'bg-green-600 text-white'
+                      : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                  }`}
+                >
+                  Intraday
+                </button>
+              </div>
+            )}
+
+            {/* Timeframe Selector (only for historical view) */}
+            {viewMode === 'historical' && (
+              <div className="flex items-center gap-1 bg-gray-800 rounded-lg p-1">
+                {(['daily', 'weekly', 'monthly'] as const).map((tf) => (
+                  <button
+                    key={tf}
+                    onClick={() => setTimeframe(tf)}
+                    className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+                      timeframe === tf
+                        ? 'bg-purple-600 text-white'
+                        : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                    }`}
+                  >
+                    {tf.charAt(0).toUpperCase()}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Intraday date indicator */}
+            {viewMode === 'intraday' && intradayData?.date && (
+              <span className="text-xs text-gray-400 flex items-center gap-1">
+                <Calendar className="w-3 h-3" />
+                {intradayData.date}
+              </span>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Event Markers Row */}
-      {visibleEvents.length > 0 && (
+      {/* Event Markers Row (historical only) */}
+      {viewMode === 'historical' && visibleEvents.length > 0 && (
         <div className="relative h-10 border-b border-gray-800 bg-gray-900/50">
           {renderEventMarkers()}
         </div>
       )}
 
+      {/* Intraday Info Banner */}
+      {viewMode === 'intraday' && intradayData && (
+        <div className="px-4 py-2 border-b border-gray-800 bg-gray-900/50 flex items-center justify-between text-xs">
+          <div className="flex items-center gap-4">
+            <span className="text-gray-400">
+              High: <span className="text-green-400 font-medium">${intradayData.high_of_day?.toLocaleString()}</span>
+            </span>
+            <span className="text-gray-400">
+              Low: <span className="text-red-400 font-medium">${intradayData.low_of_day?.toLocaleString()}</span>
+            </span>
+            <span className="text-gray-400">
+              Current: <span className="text-white font-medium">${intradayData.current_equity?.toLocaleString()}</span>
+            </span>
+          </div>
+          <span className="text-gray-500">
+            Updated every 5 minutes
+          </span>
+        </div>
+      )}
+
       {/* Main Chart */}
       <div className="p-4" style={{ height }}>
-        {processedData.length > 0 ? (
+        {(viewMode === 'intraday' ? processedIntradayData.length : processedData.length) > 0 ? (
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={processedData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+            <AreaChart
+              data={viewMode === 'intraday' ? processedIntradayData : processedData}
+              margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+            >
               <defs>
                 {/* Brand-colored gradient */}
                 <linearGradient id={`equityGradient-${botFilter || 'default'}`} x1="0" y1="0" x2="0" y2="1">
@@ -481,13 +654,17 @@ export default function EquityCurveChart({
               <CartesianGrid strokeDasharray="3 3" stroke="#374151" strokeOpacity={0.5} />
 
               <XAxis
-                dataKey="date"
+                dataKey={viewMode === 'intraday' ? 'time' : 'date'}
                 stroke="#6B7280"
                 fontSize={10}
-                tickFormatter={(date) => {
-                  if (timeframe === 'daily') return date?.slice(5) || ''
-                  if (timeframe === 'weekly') return date?.slice(5) || ''
-                  return date?.slice(0, 7) || ''
+                tickFormatter={(value) => {
+                  if (viewMode === 'intraday') {
+                    // Format time like "9:30" or "14:00"
+                    return value || ''
+                  }
+                  if (timeframe === 'daily') return value?.slice(5) || ''
+                  if (timeframe === 'weekly') return value?.slice(5) || ''
+                  return value?.slice(0, 7) || ''
                 }}
                 interval="preserveStartEnd"
                 tickMargin={8}
@@ -509,7 +686,7 @@ export default function EquityCurveChart({
                 stroke="#6B7280"
                 strokeDasharray="5 5"
                 label={{
-                  value: 'Start',
+                  value: viewMode === 'intraday' ? 'Open' : 'Start',
                   position: 'insideLeft',
                   fill: '#6B7280',
                   fontSize: 10
@@ -536,26 +713,41 @@ export default function EquityCurveChart({
                 botFilter === 'ARES' ? 'bg-amber-900/30' :
                 botFilter === 'ATHENA' ? 'bg-cyan-900/30' :
                 botFilter === 'PEGASUS' ? 'bg-blue-900/30' :
+                botFilter === 'ICARUS' ? 'bg-orange-900/30' :
                 'bg-gray-800/50'
               }`}>
                 <TrendingUp className={`w-6 h-6 ${
                   botFilter === 'ARES' ? 'text-amber-400/70' :
                   botFilter === 'ATHENA' ? 'text-cyan-400/70' :
                   botFilter === 'PEGASUS' ? 'text-blue-400/70' :
+                  botFilter === 'ICARUS' ? 'text-orange-400/70' :
                   'text-gray-500'
                 }`} />
               </div>
-              <p className="text-gray-500 text-sm">No equity data available</p>
-              <p className="text-gray-600 text-xs mt-1">
-                Chart will populate once trades are closed
+              <p className="text-gray-500 text-sm">
+                {viewMode === 'intraday' ? 'No intraday data available' : 'No equity data available'}
               </p>
+              <p className="text-gray-600 text-xs mt-1">
+                {viewMode === 'intraday'
+                  ? 'Snapshots are taken every 5 minutes during market hours'
+                  : 'Chart will populate once trades are closed'
+                }
+              </p>
+              {viewMode === 'intraday' && (
+                <button
+                  onClick={() => setViewMode('historical')}
+                  className="mt-3 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs rounded-lg transition-colors"
+                >
+                  View Historical
+                </button>
+              )}
             </div>
           </div>
         )}
       </div>
 
-      {/* Drawdown Chart */}
-      {showDrawdown && processedData.length > 0 && (
+      {/* Drawdown Chart (historical only) */}
+      {showDrawdown && viewMode === 'historical' && processedData.length > 0 && (
         <div className="border-t border-gray-800">
           <div className="px-4 py-2 flex items-center gap-2 text-xs text-gray-400">
             <TrendingDown className="w-3 h-3 text-red-400" />
@@ -596,8 +788,8 @@ export default function EquityCurveChart({
         </div>
       )}
 
-      {/* Event Legend */}
-      {visibleEvents.length > 0 && (
+      {/* Event Legend (historical only) */}
+      {viewMode === 'historical' && visibleEvents.length > 0 && (
         <div className="px-4 pb-4 flex flex-wrap gap-2">
           {Object.entries(
             visibleEvents.reduce((acc, e) => {

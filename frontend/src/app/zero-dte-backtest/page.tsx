@@ -196,6 +196,7 @@ export default function ZeroDTEBacktestPage() {
 
   // Preset application feedback
   const [presetAppliedMessage, setPresetAppliedMessage] = useState<string | null>(null)
+  const [selectedPresetId, setSelectedPresetId] = useState<string>('')
 
   // Check backend health on mount
   const checkBackendHealth = async () => {
@@ -351,6 +352,8 @@ export default function ZeroDTEBacktestPage() {
         end_date: prev.end_date,
         initial_capital: prev.initial_capital,
       }))
+      // Track selected preset
+      setSelectedPresetId(presetId)
       // Show feedback message
       setPresetAppliedMessage(`Applied preset: ${preset.name}`)
       setTimeout(() => setPresetAppliedMessage(null), 3000)
@@ -621,6 +624,20 @@ export default function ZeroDTEBacktestPage() {
     } catch (err) {
       console.error('Failed to load results:', err)
     }
+  }
+
+  const resetBacktest = () => {
+    // Clear current job state to start fresh, but preserve history for comparison
+    setSelectedResult(null)
+    setLiveJobResult(null)
+    setCurrentJobId(null)
+    setCompletedJobId(null)
+    setJobStatus(null)
+    setRunning(false)
+    setError(null)
+    setSelectedPresetId('')
+    // Reload results from database to get latest (including any newly saved backtests)
+    loadResults()
   }
 
   const runBacktest = async () => {
@@ -1213,8 +1230,14 @@ export default function ZeroDTEBacktestPage() {
                   <span className="text-gray-600 ml-1">(Quick Start)</span>
                 </label>
                 <select
-                  value=""
-                  onChange={e => e.target.value && applyPreset(e.target.value)}
+                  value={selectedPresetId}
+                  onChange={e => {
+                    if (e.target.value) {
+                      applyPreset(e.target.value)
+                    } else {
+                      setSelectedPresetId('')
+                    }
+                  }}
                   className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
                 >
                   <option value="">Select a preset...</option>
@@ -1562,6 +1585,17 @@ export default function ZeroDTEBacktestPage() {
                 <Download className="w-4 h-4" />
                 Save Strategy
               </button>
+
+              {(liveJobResult || results.length > 0 || completedJobId) && !running && (
+                <button
+                  onClick={resetBacktest}
+                  className="px-4 py-3 bg-orange-600 hover:bg-orange-700 rounded-lg font-medium flex items-center gap-2 text-sm"
+                  title="Clear results and start a new backtest"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  New Backtest
+                </button>
+              )}
 
               {error && !error.includes('Backend') && (
                 <div className="flex items-center gap-2 text-red-400">
@@ -2035,6 +2069,15 @@ export default function ZeroDTEBacktestPage() {
                 <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
                   <div className="px-6 py-4 border-b border-gray-800 flex justify-between items-center">
                     <h3 className="font-bold">Trade Log ({liveJobResult.all_trades.length} trades)</h3>
+                    {completedJobId && (
+                      <button
+                        onClick={() => exportTrades(completedJobId)}
+                        className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm"
+                      >
+                        <FileSpreadsheet className="w-4 h-4" />
+                        Export Trades CSV
+                      </button>
+                    )}
                   </div>
                   <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
                     <table className="w-full text-sm">

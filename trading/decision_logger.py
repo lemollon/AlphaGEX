@@ -401,6 +401,31 @@ class DecisionLogger:
 
         Returns decision_id for later outcome update.
         """
+        # Helper to convert numpy types to Python native types
+        def _convert_numpy(val):
+            try:
+                import numpy as np
+                if isinstance(val, (np.integer, np.int64, np.int32)):
+                    return int(val)
+                elif isinstance(val, (np.floating, np.float64, np.float32)):
+                    return float(val)
+                elif isinstance(val, np.bool_):
+                    return bool(val)
+                elif isinstance(val, np.ndarray):
+                    return val.tolist()
+            except ImportError:
+                pass
+            return val
+
+        def _convert_dict_numpy(d):
+            if d is None:
+                return None
+            if isinstance(d, dict):
+                return {k: _convert_dict_numpy(v) for k, v in d.items()}
+            elif isinstance(d, list):
+                return [_convert_dict_numpy(item) for item in d]
+            return _convert_numpy(d)
+
         self._maybe_init_db()
 
         if not decision.decision_id:
@@ -438,8 +463,8 @@ class DecisionLogger:
                 backtest_real_data = decision.backtest_reference.uses_real_data if decision.backtest_reference else None
 
                 primary_reason = decision.reasoning.primary_reason if decision.reasoning else None
-                supporting = json.dumps(decision.reasoning.supporting_factors) if decision.reasoning else None
-                risks = json.dumps(decision.reasoning.risk_factors) if decision.reasoning else None
+                supporting = json.dumps(_convert_dict_numpy(decision.reasoning.supporting_factors)) if decision.reasoning else None
+                risks = json.dumps(_convert_dict_numpy(decision.reasoning.risk_factors)) if decision.reasoning else None
 
                 cursor.execute('''
                     INSERT INTO trading_decisions (
@@ -466,14 +491,14 @@ class DecisionLogger:
                 ''', (
                     decision.decision_id, decision.timestamp, decision.decision_type.value,
                     decision.action, decision.symbol, decision.strategy,
-                    spot_price, spot_source, option_price, strike, expiration,
-                    vix, net_gex, gex_regime, market_regime, trend,
-                    backtest_strategy, backtest_win_rate, backtest_expectancy, backtest_real_data,
+                    _convert_numpy(spot_price), spot_source, _convert_numpy(option_price), _convert_numpy(strike), expiration,
+                    _convert_numpy(vix), _convert_numpy(net_gex), gex_regime, market_regime, trend,
+                    backtest_strategy, _convert_numpy(backtest_win_rate), _convert_numpy(backtest_expectancy), backtest_real_data,
                     primary_reason, supporting, risks,
-                    decision.position_size_dollars, decision.position_size_contracts, decision.max_risk_dollars,
-                    decision.target_profit_pct, decision.stop_loss_pct, decision.probability_of_profit,
-                    decision.passed_risk_checks, json.dumps(decision.risk_check_details),
-                    json.dumps(decision.to_dict())
+                    _convert_numpy(decision.position_size_dollars), _convert_numpy(decision.position_size_contracts), _convert_numpy(decision.max_risk_dollars),
+                    _convert_numpy(decision.target_profit_pct), _convert_numpy(decision.stop_loss_pct), _convert_numpy(decision.probability_of_profit),
+                    decision.passed_risk_checks, json.dumps(_convert_dict_numpy(decision.risk_check_details)),
+                    json.dumps(_convert_dict_numpy(decision.to_dict()))
                 ))
 
                 conn.commit()

@@ -92,7 +92,11 @@ def get_pegasus_instance():
         from scheduler.trader_scheduler import get_pegasus_trader
         pegasus_trader = get_pegasus_trader()
         return pegasus_trader
-    except Exception:
+    except ImportError as e:
+        logger.debug(f"Could not import trader_scheduler: {e}")
+        return None
+    except Exception as e:
+        logger.debug(f"Could not get PEGASUS trader: {e}")
         return None
 
 
@@ -148,6 +152,7 @@ def _get_tradier_account_balance() -> dict:
 def _get_heartbeat(bot_name: str) -> dict:
     """Get heartbeat info for a bot from the database"""
     CENTRAL_TZ = ZoneInfo("America/Chicago")
+    conn = None
 
     try:
         conn = get_connection()
@@ -160,7 +165,6 @@ def _get_heartbeat(bot_name: str) -> dict:
         ''', (bot_name,))
 
         row = cursor.fetchone()
-        conn.close()
 
         if row:
             last_heartbeat, status, scan_count, details = row
@@ -195,6 +199,9 @@ def _get_heartbeat(bot_name: str) -> dict:
             'scan_count_today': 0,
             'details': {}
         }
+    finally:
+        if conn:
+            conn.close()
 
 
 def _is_bot_actually_active(heartbeat: dict, scan_interval_minutes: int = 5) -> tuple[bool, str]:
@@ -232,8 +239,10 @@ def _is_bot_actually_active(heartbeat: dict, scan_interval_minutes: int = 5) -> 
         max_age_seconds = scan_interval_minutes * 60 * 2
         if age_seconds > max_age_seconds:
             return False, f'Heartbeat stale ({int(age_seconds)}s old, max {max_age_seconds}s)'
+    except ValueError as e:
+        logger.debug(f"Could not parse heartbeat time format: {e}")
     except Exception as e:
-        logger.debug(f"Could not parse heartbeat time: {e}")
+        logger.warning(f"Unexpected error parsing heartbeat time: {e}")
 
     # Active statuses
     if status in ('SCAN_COMPLETE', 'TRADED', 'MARKET_CLOSED', 'BEFORE_WINDOW', 'AFTER_WINDOW'):
@@ -306,13 +315,13 @@ async def get_pegasus_status():
         now = datetime.now(ZoneInfo("America/Chicago"))
         current_time_str = now.strftime('%Y-%m-%d %H:%M:%S CT')
 
-        # PEGASUS trading window: 8:30 AM - 3:30 PM CT
+        # PEGASUS trading window: 8:30 AM - 2:45 PM CT (market closes at 3:00 PM CT)
         entry_start = "08:30"
-        entry_end = "15:30"
+        entry_end = "14:45"
 
         # Check for early close days (Christmas Eve - Dec 31 is normal)
         if now.month == 12 and now.day == 24:
-            entry_end = "12:00"  # Christmas Eve early close
+            entry_end = "11:50"  # Christmas Eve early close (10 min before 12:00 PM)
 
         start_parts = entry_start.split(':')
         end_parts = entry_end.split(':')
@@ -366,9 +375,9 @@ async def get_pegasus_status():
     now = datetime.now(ZoneInfo("America/Chicago"))
     current_time_str = now.strftime('%Y-%m-%d %H:%M:%S CT')
     entry_start = "08:30"
-    entry_end = "15:30"
+    entry_end = "14:45"  # Market closes at 3:00 PM CT, stop entries 15 min before
     if now.month == 12 and now.day == 24:
-        entry_end = "12:00"  # Christmas Eve early close
+        entry_end = "11:50"  # Christmas Eve early close (10 min before 12:00 PM)
     start_parts = entry_start.split(':')
     end_parts = entry_end.split(':')
     start_time = now.replace(hour=int(start_parts[0]), minute=int(start_parts[1]), second=0, microsecond=0)
@@ -487,8 +496,8 @@ async def get_pegasus_positions():
                         exp_date = datetime.strptime(str(exp), "%Y-%m-%d").date()
                         today = datetime.now(ZoneInfo("America/Chicago")).date()
                         dte = (exp_date - today).days
-                    except:
-                        pass
+                    except (ValueError, TypeError):
+                        pass  # Keep default dte=0 if date parsing fails
 
                 # Format open_time to Central Time
                 open_time_ct = None
@@ -636,8 +645,8 @@ async def get_pegasus_positions():
                     exp_date = datetime.strptime(pos.expiration, "%Y-%m-%d").date()
                     today = datetime.now(ZoneInfo("America/Chicago")).date()
                     dte = (exp_date - today).days
-                except:
-                    pass
+                except (ValueError, TypeError, AttributeError):
+                    pass  # Keep default dte=0 if date parsing fails
 
             open_positions.append({
                 "position_id": pos.position_id,
@@ -785,6 +794,303 @@ async def get_pegasus_equity_curve(days: int = 30):
     }
 
 
+@router.get("/equity-curve/intraday")
+async def get_pegasus_intraday_equity(date: str = None):
+    """
+    Get PEGASUS intraday equity curve with 5-minute interval snapshots.
+
+    Returns equity data points throughout the trading day showing:
+    - Realized P&L from closed positions
+    - Unrealized P&L from open positions (mark-to-market)
+
+    Args:
+        date: Date to get intraday data for (default: today)
+    """
+    CENTRAL_TZ = ZoneInfo("America/Chicago")
+    now = datetime.now(CENTRAL_TZ)
+    today = date or now.strftime('%Y-%m-%d')
+    current_time = now.strftime('%H:%M:%S')
+
+    starting_capital = 200000
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Get starting capital from config
+        cursor.execute("""
+            SELECT value FROM autonomous_config WHERE key = 'pegasus_starting_capital'
+        """)
+        row = cursor.fetchone()
+        if row and row[0]:
+            try:
+                starting_capital = float(row[0])
+            except (ValueError, TypeError):
+                pass
+
+        # Get intraday snapshots for the requested date
+        cursor.execute("""
+            SELECT timestamp, balance, unrealized_pnl, realized_pnl, open_positions, note
+            FROM pegasus_equity_snapshots
+            WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+            ORDER BY timestamp ASC
+        """, (today,))
+        snapshots = cursor.fetchall()
+
+        # Get total realized P&L from closed positions up to today
+        cursor.execute("""
+            SELECT COALESCE(SUM(realized_pnl), 0)
+            FROM pegasus_positions
+            WHERE status IN ('closed', 'expired')
+            AND DATE(close_time AT TIME ZONE 'America/Chicago') <= %s
+        """, (today,))
+        total_realized_row = cursor.fetchone()
+        total_realized = float(total_realized_row[0]) if total_realized_row and total_realized_row[0] else 0
+
+        # Get today's closed positions P&L
+        cursor.execute("""
+            SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
+            FROM pegasus_positions
+            WHERE status IN ('closed', 'expired')
+            AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
+        """, (today,))
+        today_row = cursor.fetchone()
+        today_realized = float(today_row[0]) if today_row and today_row[0] else 0
+        today_closed_count = int(today_row[1]) if today_row and today_row[1] else 0
+
+        # Calculate unrealized P&L from open positions
+        unrealized_pnl = 0
+        open_positions = []
+        try:
+            # NOTE: PEGASUS uses total_credit, not entry_credit
+            cursor.execute("""
+                SELECT position_id, total_credit, contracts, spread_width,
+                       call_short_strike, call_long_strike, put_short_strike, put_long_strike
+                FROM pegasus_positions
+                WHERE status = 'open'
+            """)
+            open_rows = cursor.fetchall()
+
+            for row in open_rows:
+                pos_id, total_credit, contracts, spread_width, cs_strike, cl_strike, ps_strike, pl_strike = row
+                credit_val = float(total_credit) if total_credit else 0
+                num_contracts = int(contracts) if contracts else 1
+                spread_w = float(spread_width) if spread_width else 10
+
+                # Without live pricing, assume conservative 0 unrealized
+                # The actual P&L comes from the PEGASUS trader's live-pnl endpoint
+                current_unrealized = 0
+
+                open_positions.append({
+                    "position_id": pos_id,
+                    "unrealized_pnl": round(current_unrealized, 2)
+                })
+                unrealized_pnl += current_unrealized
+        except Exception as e:
+            logger.warning(f"Error calculating unrealized P&L: {e}")
+
+        conn.close()
+
+        # Build intraday data points (frontend expects data_points with cumulative_pnl)
+        data_points = []
+
+        # Add market open point
+        prev_day_realized = total_realized - today_realized
+        market_open_equity = round(starting_capital + prev_day_realized, 2)
+        data_points.append({
+            "timestamp": f"{today}T08:30:00",
+            "time": "08:30:00",
+            "equity": market_open_equity,
+            "cumulative_pnl": round(prev_day_realized, 2),
+            "open_positions": 0,
+            "unrealized_pnl": 0
+        })
+
+        # Track high/low for summary
+        all_equities = [market_open_equity]
+
+        # Add snapshots
+        for snapshot in snapshots:
+            ts, balance, snap_unrealized, snap_realized, open_count, note = snapshot
+            snap_time = ts.astimezone(CENTRAL_TZ) if ts.tzinfo else ts
+            snap_unrealized_val = float(snap_unrealized or 0)
+            snap_realized_val = float(snap_realized or 0)
+            snap_equity = round(float(balance) if balance else starting_capital, 2)
+            all_equities.append(snap_equity)
+
+            data_points.append({
+                "timestamp": snap_time.isoformat(),
+                "time": snap_time.strftime('%H:%M:%S'),
+                "equity": snap_equity,
+                "cumulative_pnl": round(snap_realized_val + snap_unrealized_val, 2),
+                "open_positions": open_count or 0,
+                "unrealized_pnl": round(snap_unrealized_val, 2)
+            })
+
+        # Add current live point if viewing today
+        current_equity = starting_capital + total_realized + unrealized_pnl
+        if today == now.strftime('%Y-%m-%d'):
+            total_pnl = total_realized + unrealized_pnl
+            current_equity = starting_capital + total_pnl
+            all_equities.append(round(current_equity, 2))
+
+            data_points.append({
+                "timestamp": now.isoformat(),
+                "time": current_time,
+                "equity": round(current_equity, 2),
+                "cumulative_pnl": round(total_pnl, 2),
+                "open_positions": len(open_positions),
+                "unrealized_pnl": round(unrealized_pnl, 2)
+            })
+
+        # Calculate high/low of day
+        high_of_day = max(all_equities) if all_equities else starting_capital
+        low_of_day = min(all_equities) if all_equities else starting_capital
+        day_pnl = today_realized + unrealized_pnl
+
+        return {
+            "success": True,
+            "date": today,
+            "bot": "PEGASUS",
+            "data_points": data_points,
+            "current_equity": round(current_equity, 2),
+            "day_pnl": round(day_pnl, 2),
+            "starting_equity": round(starting_capital, 2),
+            "high_of_day": round(high_of_day, 2),
+            "low_of_day": round(low_of_day, 2),
+            "snapshots_count": len(snapshots)
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting PEGASUS intraday equity: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": False,
+            "error": str(e),
+            "date": today,
+            "bot": "PEGASUS",
+            "data_points": [{
+                "timestamp": now.isoformat(),
+                "time": current_time,
+                "equity": starting_capital,
+                "cumulative_pnl": 0,
+                "open_positions": 0,
+                "unrealized_pnl": 0
+            }],
+            "current_equity": starting_capital,
+            "day_pnl": 0,
+            "starting_equity": starting_capital,
+            "high_of_day": starting_capital,
+            "low_of_day": starting_capital,
+            "snapshots_count": 0
+        }
+
+
+@router.post("/equity-snapshot")
+async def save_pegasus_equity_snapshot():
+    """
+    Save current equity snapshot for intraday tracking.
+
+    Call this periodically (every 5 minutes) during market hours
+    to build detailed intraday equity curve.
+    """
+    CENTRAL_TZ = ZoneInfo("America/Chicago")
+    now = datetime.now(CENTRAL_TZ)
+
+    starting_capital = 200000
+    unrealized_pnl = 0
+    realized_pnl = 0
+    open_count = 0
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Get starting capital
+        cursor.execute("""
+            SELECT value FROM autonomous_config WHERE key = 'pegasus_starting_capital'
+        """)
+        row = cursor.fetchone()
+        if row and row[0]:
+            try:
+                starting_capital = float(row[0])
+            except (ValueError, TypeError):
+                pass
+
+        # Get total realized P&L
+        cursor.execute("""
+            SELECT COALESCE(SUM(realized_pnl), 0)
+            FROM pegasus_positions
+            WHERE status IN ('closed', 'expired')
+        """)
+        row = cursor.fetchone()
+        realized_pnl = float(row[0]) if row and row[0] else 0
+
+        # Get open positions and calculate unrealized P&L
+        # NOTE: PEGASUS uses total_credit, not entry_credit
+        # For proper unrealized, we'd need live SPX pricing - using 0 for conservative snapshot
+        cursor.execute("""
+            SELECT COUNT(*) FROM pegasus_positions WHERE status = 'open'
+        """)
+        open_count = cursor.fetchone()[0] or 0
+
+        # NOTE: Unrealized P&L requires live pricing which API endpoint doesn't have
+        # The scheduler's equity_snapshots job uses bot instances to get actual unrealized
+        unrealized_pnl = 0
+
+        current_equity = starting_capital + realized_pnl + unrealized_pnl
+
+        # Create table if not exists
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS pegasus_equity_snapshots (
+                id SERIAL PRIMARY KEY,
+                timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+                balance DECIMAL(12, 2) NOT NULL,
+                unrealized_pnl DECIMAL(12, 2),
+                realized_pnl DECIMAL(12, 2),
+                open_positions INTEGER,
+                note TEXT,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+        ''')
+
+        # Insert snapshot
+        cursor.execute('''
+            INSERT INTO pegasus_equity_snapshots
+            (timestamp, balance, unrealized_pnl, realized_pnl, open_positions, note)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        ''', (
+            now,
+            current_equity,
+            unrealized_pnl,
+            realized_pnl,
+            open_count,
+            f"Auto snapshot at {now.strftime('%H:%M:%S')}"
+        ))
+
+        conn.commit()
+        conn.close()
+
+        return {
+            "success": True,
+            "data": {
+                "timestamp": now.isoformat(),
+                "equity": round(current_equity, 2),
+                "unrealized_pnl": round(unrealized_pnl, 2),
+                "realized_pnl": round(realized_pnl, 2),
+                "open_positions": open_count
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error saving PEGASUS equity snapshot: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
 @router.post("/run-cycle")
 async def run_pegasus_cycle(
     request: Request,
@@ -830,10 +1136,11 @@ async def get_pegasus_config():
         "spread_width": 10.0,
         "risk_per_trade_pct": 10.0,
         "sd_multiplier": 1.0,
-        "min_credit": 1.50,
+        "min_credit": 0.75,
         "profit_target_pct": 50,
         "use_stop_loss": False,
-        "entry_window": "08:30 - 15:55 CT",
+        "entry_window": "08:30 - 14:45 CT",
+        "force_exit": "14:50 CT (10 min before market close)",
         "description": "PEGASUS trades SPX Iron Condors with $10 spread widths using SPXW weekly options."
     }
 
@@ -1020,19 +1327,21 @@ async def get_pegasus_logs(
         conn = get_connection()
         c = conn.cursor()
 
-        where_clause = "WHERE bot_name = 'PEGASUS'"
+        # pegasus_logs table has columns: log_time, level (not created_at, log_level)
+        # and does NOT have bot_name column (it's PEGASUS-specific)
+        where_clause = "WHERE 1=1"
         params = []
         if level:
-            where_clause += " AND log_level = %s"
+            where_clause += " AND level = %s"
             params.append(level)
         params.append(limit)
 
         c.execute(f"""
             SELECT
-                id, created_at, log_level, message, details
+                id, log_time, level, message, details
             FROM pegasus_logs
             {where_clause}
-            ORDER BY created_at DESC
+            ORDER BY log_time DESC
             LIMIT %s
         """, tuple(params))
 
@@ -1070,10 +1379,10 @@ async def get_pegasus_logs(
 
             c.execute(f"""
                 SELECT
-                    id, created_at, level, message, details
+                    id, log_time, level, message, details
                 FROM bot_logs
                 {where_clause}
-                ORDER BY created_at DESC
+                ORDER BY log_time DESC
                 LIMIT %s
             """, tuple(params))
 

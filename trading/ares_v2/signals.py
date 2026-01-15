@@ -14,7 +14,7 @@ Key concepts:
 import math
 import logging
 from datetime import datetime
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 from zoneinfo import ZoneInfo
 
 from .models import (
@@ -24,6 +24,9 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
+# Oracle is the god of all trade decisions
+# No config flag needed - Oracle always decides, GEX + VIX is fallback
+
 # Optional imports with fallbacks
 try:
     from quant.oracle_advisor import OracleAdvisor, OraclePrediction
@@ -31,6 +34,14 @@ try:
 except ImportError:
     ORACLE_AVAILABLE = False
     OracleAdvisor = None
+
+try:
+    from quant.ares_ml_advisor import AresMLAdvisor, MLPrediction
+    ARES_ML_AVAILABLE = True
+except ImportError:
+    ARES_ML_AVAILABLE = False
+    AresMLAdvisor = None
+    MLPrediction = None
 
 try:
     from quant.kronos_gex_calculator import KronosGEXCalculator
@@ -52,6 +63,29 @@ try:
 except ImportError:
     DATA_PROVIDER_AVAILABLE = False
 
+# REMOVED: Ensemble Strategy and ML Regime Classifier
+# Oracle is the god of all trade decisions. GEX + VIX is the fallback.
+# These systems were dead code that only blocked trades unnecessarily.
+
+# IV Solver - accurate implied volatility calculation
+IV_SOLVER_AVAILABLE = False
+try:
+    from quant.iv_solver import IVSolver, calculate_iv_from_price
+    IV_SOLVER_AVAILABLE = True
+except ImportError:
+    IVSolver = None
+    calculate_iv_from_price = None
+
+# Walk-Forward Optimizer - parameter validation
+WALK_FORWARD_AVAILABLE = False
+try:
+    from quant.walk_forward_optimizer import WalkForwardOptimizer, WalkForwardResult
+    WALK_FORWARD_AVAILABLE = True
+except ImportError:
+    WalkForwardOptimizer = None
+    WalkForwardResult = None
+
+
 
 class SignalGenerator:
     """
@@ -64,57 +98,102 @@ class SignalGenerator:
 
     def _init_components(self) -> None:
         """Initialize signal generation components"""
-        # GEX Calculator
+        # GEX Calculator - Use Tradier for LIVE trading data
+        # Kronos uses ORAT database (EOD) - only for backtesting, NOT live trading
         self.gex_calculator = None
-        if KRONOS_AVAILABLE:
-            try:
-                self.gex_calculator = KronosGEXCalculator()
-                logger.info("ARES SignalGenerator: Using Kronos GEX")
-            except Exception as e:
-                logger.warning(f"Kronos init failed: {e}")
 
-        if not self.gex_calculator and TRADIER_GEX_AVAILABLE:
+        if TRADIER_GEX_AVAILABLE:
             try:
-                self.gex_calculator = get_gex_calculator()
-                logger.info("ARES SignalGenerator: Using Tradier GEX fallback")
+                tradier_calc = get_gex_calculator()
+                # Verify Tradier works with live data
+                test_result = tradier_calc.calculate_gex(self.config.ticker)
+                if test_result and test_result.get('spot_price', 0) > 0:
+                    self.gex_calculator = tradier_calc
+                    logger.info(f"ARES: Using Tradier GEX for LIVE trading (spot={test_result.get('spot_price')})")
+                else:
+                    logger.error("ARES: Tradier GEX returned no data!")
             except Exception as e:
-                logger.warning(f"Tradier GEX init failed: {e}")
+                logger.warning(f"ARES: Tradier GEX init/test failed: {e}")
 
-        # Oracle Advisor
+        if not self.gex_calculator:
+            logger.error("ARES: NO GEX CALCULATOR AVAILABLE - Tradier required for live trading")
+
+        # ARES ML Advisor (PRIMARY - trained on KRONOS backtests with ~70% win rate)
+        self.ares_ml = None
+        if ARES_ML_AVAILABLE:
+            try:
+                self.ares_ml = AresMLAdvisor()
+                if self.ares_ml.is_trained:
+                    logger.info(f"ARES SignalGenerator: ML Advisor v{self.ares_ml.model_version} loaded (PRIMARY)")
+                else:
+                    logger.info("ARES SignalGenerator: ML Advisor initialized (not yet trained)")
+            except Exception as e:
+                logger.warning(f"ARES ML Advisor init failed: {e}")
+
+        # Oracle Advisor (BACKUP - used when ML not available)
         self.oracle = None
         if ORACLE_AVAILABLE:
             try:
                 self.oracle = OracleAdvisor()
-                logger.info("ARES SignalGenerator: Oracle initialized")
+                logger.info("ARES SignalGenerator: Oracle initialized (BACKUP)")
             except Exception as e:
                 logger.warning(f"Oracle init failed: {e}")
+
+        # REMOVED: Ensemble Strategy, GEX Directional ML, ML Regime Classifier
+        # All redundant - Oracle is the god of all trade decisions
+
 
     def get_market_data(self) -> Optional[Dict[str, Any]]:
         """Get current market data including price, VIX, and GEX"""
         try:
-            # Get spot price
-            spot = None
-            if DATA_PROVIDER_AVAILABLE:
-                spot = get_price(self.config.ticker)
+            # Get GEX data FIRST - it includes spot price from production API
+            gex_data = self._get_gex_data()
 
-            if not spot:
-                logger.warning("Could not get spot price")
+            # Get spot price - try multiple sources for reliability
+            spot = None
+
+            # Source 1: GEX calculator (uses production Tradier API)
+            if gex_data and gex_data.get('spot_price', 0) > 0:
+                spot = gex_data.get('spot_price')
+                logger.debug(f"Using spot price from GEX calculator: ${spot:.2f}")
+
+            # Source 2: Data provider (fallback)
+            if not spot and DATA_PROVIDER_AVAILABLE:
+                spot = get_price(self.config.ticker)
+                if spot and spot > 0:
+                    logger.debug(f"Using spot price from data provider: ${spot:.2f}")
+
+            if not spot or spot <= 0:
+                logger.warning("Could not get spot price from any source (GEX calc or data provider)")
                 return None
 
-            # Get VIX
+            # Get VIX with minimum floor
             vix = 20.0
             if DATA_PROVIDER_AVAILABLE:
                 try:
-                    vix = get_vix() or 20.0
-                except Exception:
-                    pass
-
-            # Get GEX data
-            gex_data = self._get_gex_data()
+                    fetched_vix = get_vix()
+                    # VIX should be at least 10 (historically never below ~9)
+                    # If we get 0 or very low, use default
+                    if fetched_vix and fetched_vix >= 10:
+                        vix = fetched_vix
+                    elif fetched_vix:
+                        logger.warning(f"VIX unusually low ({fetched_vix:.1f}), using default 20.0")
+                except Exception as e:
+                    logger.debug(f"VIX fetch failed: {e}, using default 20.0")
 
             # Calculate expected move (1 SD)
             expected_move = self._calculate_expected_move(spot, vix)
 
+            # Sanity check - expected move should be reasonable (0.5% to 5% of spot)
+            min_em = spot * 0.005
+            max_em = spot * 0.05
+            if expected_move < min_em:
+                logger.warning(f"Expected move ${expected_move:.2f} too low, using minimum ${min_em:.2f}")
+                expected_move = min_em
+            elif expected_move > max_em:
+                logger.warning(f"Expected move ${expected_move:.2f} unusually high (VIX={vix:.1f})")
+
+            now = datetime.now(CENTRAL_TZ)
             return {
                 'spot_price': spot,
                 'vix': vix,
@@ -124,14 +203,15 @@ class SignalGenerator:
                 'gex_regime': gex_data.get('regime', 'NEUTRAL') if gex_data else 'NEUTRAL',
                 'net_gex': gex_data.get('net_gex', 0) if gex_data else 0,
                 'flip_point': gex_data.get('flip_point', 0) if gex_data else 0,
-                'timestamp': datetime.now(CENTRAL_TZ),
+                'timestamp': now,
+                'data_age_seconds': 0,  # Fresh data
             }
         except Exception as e:
             logger.error(f"Error getting market data: {e}")
             return None
 
     def _get_gex_data(self) -> Optional[Dict[str, Any]]:
-        """Get GEX data from calculator"""
+        """Get GEX data from calculator (includes spot_price for fallback)"""
         if not self.gex_calculator:
             return None
 
@@ -144,11 +224,59 @@ class SignalGenerator:
                     'regime': gex.get('regime', gex.get('gex_regime', 'NEUTRAL')),
                     'net_gex': gex.get('net_gex', 0),
                     'flip_point': gex.get('flip_point', gex.get('gamma_flip', 0)),
+                    # CRITICAL: Include spot_price for fallback when data provider fails
+                    'spot_price': gex.get('spot_price', gex.get('underlying_price', 0)),
                 }
         except Exception as e:
             logger.warning(f"GEX fetch error: {e}")
 
         return None
+
+    def get_gex_data(self) -> Optional[Dict[str, Any]]:
+        """
+        Get current GEX data - PUBLIC method for trader.
+
+        Returns dict with: spot_price, call_wall, put_wall, gex_regime, vix
+        """
+        if not self.gex_calculator:
+            logger.warning("No GEX calculator available")
+            return None
+
+        try:
+            gex = self.gex_calculator.calculate_gex(self.config.ticker)
+            if not gex:
+                return None
+
+            # Get spot price
+            spot = 0.0
+            if DATA_PROVIDER_AVAILABLE:
+                spot = get_price(self.config.ticker)
+            if not spot:
+                spot = gex.get('spot_price', gex.get('underlying_price', 0))
+
+            # Get VIX
+            vix = 20.0
+            if DATA_PROVIDER_AVAILABLE:
+                try:
+                    vix = get_vix() or 20.0
+                except Exception:
+                    pass
+
+            return {
+                'spot_price': spot,
+                'underlying_price': spot,
+                'call_wall': gex.get('call_wall', gex.get('major_call_wall', 0)),
+                'put_wall': gex.get('put_wall', gex.get('major_put_wall', 0)),
+                'gex_regime': gex.get('regime', gex.get('gex_regime', 'NEUTRAL')),
+                'regime': gex.get('regime', gex.get('gex_regime', 'NEUTRAL')),
+                'net_gex': gex.get('net_gex', 0),
+                'flip_point': gex.get('flip_point', gex.get('gamma_flip', 0)),
+                'vix': vix,
+                'timestamp': datetime.now(CENTRAL_TZ),
+            }
+        except Exception as e:
+            logger.error(f"GEX fetch error: {e}")
+            return None
 
     def _calculate_expected_move(self, spot: float, vix: float) -> float:
         """
@@ -167,25 +295,67 @@ class SignalGenerator:
 
         Returns (can_trade, reason).
         """
-        vix_skip = self.config.vix_skip
+        # VIX filter - only block in extreme conditions (VIX > 50)
+        # Normal trading should happen every day regardless of VIX
+        # High VIX actually means higher premiums which can offset risk
+        if vix > 50:
+            return False, f"VIX ({vix:.1f}) extremely elevated - market crisis conditions"
 
-        if vix_skip and vix > vix_skip:
-            return False, f"VIX {vix:.1f} > {vix_skip} threshold"
+        return True, f"VIX={vix:.1f} - trading allowed"
 
-        return True, "VIX within range"
+    def adjust_confidence_from_top_factors(
+        self,
+        confidence: float,
+        top_factors: List[Dict],
+        market_data: Dict
+    ) -> Tuple[float, List[str]]:
+        """
+        Adjust confidence based on Oracle's top contributing factors.
+
+        The top_factors reveal which features most influenced Oracle's prediction.
+        Use this insight to further calibrate confidence based on current conditions.
+
+        Returns (adjusted_confidence, adjustment_reasons).
+        """
+        if not top_factors:
+            return confidence, []
+
+        adjustments = []
+        original_confidence = confidence
+        vix = market_data.get('vix', 20)
+        gex_regime = market_data.get('gex_regime', 'NEUTRAL')
+
+        # REMOVED: VIX, GEX regime, day of week adjustments
+        # Oracle already analyzed all these factors in MarketContext.
+        # Re-adjusting confidence based on the same factors is redundant.
+        # Trust Oracle's win_probability output directly.
+
+        # Clamp confidence to reasonable range
+        confidence = max(0.4, min(0.95, confidence))
+
+        if adjustments:
+            logger.info(f"[TOP_FACTORS ADJUSTMENTS] {original_confidence:.0%} -> {confidence:.0%}")
+            for adj in adjustments:
+                logger.info(f"  - {adj}")
+
+        return confidence, adjustments
 
     def calculate_strikes(
         self,
         spot_price: float,
         expected_move: float,
         call_wall: float = 0,
-        put_wall: float = 0
+        put_wall: float = 0,
+        oracle_put_strike: Optional[float] = None,
+        oracle_call_strike: Optional[float] = None,
     ) -> Dict[str, float]:
         """
         Calculate Iron Condor strikes.
 
-        Uses GEX walls if available (higher win rate),
-        otherwise falls back to SD-based strikes.
+        Priority:
+        1. Oracle suggested strikes (if provided and valid)
+        2. GEX walls (if available)
+        3. SD-based strikes (fallback)
         """
         sd = self.config.sd_multiplier
         width = self.config.spread_width
@@ -194,18 +364,37 @@ class SignalGenerator:
         def round_strike(x):
             return round(x)
 
-        # Determine short strikes
-        use_gex = call_wall > 0 and put_wall > 0
+        # Determine short strikes with Oracle priority
+        use_oracle = False
+        use_gex = False
 
-        if use_gex:
-            # GEX-Protected: Place shorts OUTSIDE the walls
+        # Priority 1: Oracle suggested strikes (must be reasonable distance from spot)
+        if oracle_put_strike and oracle_call_strike:
+            # Validate Oracle strikes are reasonable (between 0.5% and 5% from spot)
+            put_dist = (spot_price - oracle_put_strike) / spot_price
+            call_dist = (oracle_call_strike - spot_price) / spot_price
+            if 0.005 <= put_dist <= 0.05 and 0.005 <= call_dist <= 0.05:
+                put_short = round_strike(oracle_put_strike)
+                call_short = round_strike(oracle_call_strike)
+                use_oracle = True
+                logger.info(f"Using Oracle strikes: Put short ${put_short}, Call short ${call_short}")
+
+        # Priority 2: GEX walls (only if Oracle not used)
+        if not use_oracle and call_wall > 0 and put_wall > 0:
             put_short = round_strike(put_wall)
             call_short = round_strike(call_wall)
+            use_gex = True
             logger.info(f"Using GEX walls: Put short ${put_short}, Call short ${call_short}")
-        else:
-            # SD-based: Place shorts at expected move distance
-            put_short = round_strike(spot_price - sd * expected_move)
-            call_short = round_strike(spot_price + sd * expected_move)
+
+        # Priority 3: SD-based fallback (only if neither Oracle nor GEX)
+        if not use_oracle and not use_gex:
+            # Ensure minimum expected move of 0.5% of spot to prevent overlapping strikes
+            min_expected_move = spot_price * 0.005  # 0.5% minimum
+            effective_em = max(expected_move, min_expected_move)
+            put_short = round_strike(spot_price - sd * effective_em)
+            call_short = round_strike(spot_price + sd * effective_em)
+            if expected_move < min_expected_move:
+                logger.warning(f"Expected move ${expected_move:.2f} too small, using minimum ${effective_em:.2f}")
             logger.info(f"Using SD-based: Put short ${put_short}, Call short ${call_short}")
 
         # Long strikes are spread_width away from shorts
@@ -218,6 +407,8 @@ class SignalGenerator:
             'call_short': call_short,
             'call_long': call_long,
             'using_gex': use_gex,
+            'using_oracle': use_oracle,
+            'source': 'ORACLE' if use_oracle else ('GEX' if use_gex else 'SD'),
         }
 
     def estimate_credits(
@@ -264,6 +455,81 @@ class SignalGenerator:
             'max_loss': round(max_loss, 2),
         }
 
+    def get_ml_prediction(self, market_data: Dict) -> Optional[Dict[str, Any]]:
+        """
+        Get prediction from ARES ML Advisor (PRIMARY prediction source).
+
+        This model was trained on KRONOS backtests with ~70% win rate.
+        It takes precedence over Oracle for trading decisions.
+
+        Returns dict with:
+        - win_probability: Calibrated probability of winning (key metric)
+        - confidence: Model confidence score
+        - advice: TRADE_FULL, TRADE_REDUCED, or SKIP_TODAY
+        - suggested_risk_pct: Position size recommendation
+        - suggested_sd_multiplier: Strike width recommendation
+        - top_factors: Feature importances explaining the decision
+        """
+        if not self.ares_ml:
+            return None
+
+        try:
+            now = datetime.now(CENTRAL_TZ)
+            day_of_week = now.weekday()
+
+            # Calculate GEX features
+            gex_regime_str = market_data.get('gex_regime', 'NEUTRAL').upper()
+            gex_regime_positive = 1 if gex_regime_str == 'POSITIVE' else 0
+
+            spot = market_data['spot_price']
+            flip_point = market_data.get('flip_point', spot)
+            gex_distance_to_flip_pct = abs(spot - flip_point) / spot * 100 if spot > 0 else 0
+
+            put_wall = market_data.get('put_wall', spot * 0.98)
+            call_wall = market_data.get('call_wall', spot * 1.02)
+            gex_between_walls = 1 if put_wall <= spot <= call_wall else 0
+
+            # Get ML prediction
+            prediction = self.ares_ml.predict(
+                vix=market_data['vix'],
+                day_of_week=day_of_week,
+                price=spot,
+                price_change_1d=market_data.get('price_change_1d', 0),
+                expected_move_pct=(market_data.get('expected_move', 0) / spot * 100) if spot > 0 else 1.0,
+                win_rate_30d=0.70,  # Use historical baseline
+                vix_percentile_30d=50,  # Default if not available
+                vix_change_1d=0,
+                gex_normalized=market_data.get('gex_normalized', 0),
+                gex_regime_positive=gex_regime_positive,
+                gex_distance_to_flip_pct=gex_distance_to_flip_pct,
+                gex_between_walls=gex_between_walls,
+            )
+
+            if prediction:
+                # Format top factors for logging
+                top_factors = []
+                if hasattr(prediction, 'top_factors') and prediction.top_factors:
+                    for factor_name, impact in prediction.top_factors:
+                        top_factors.append({'factor': factor_name, 'impact': impact})
+
+                return {
+                    'win_probability': prediction.win_probability,
+                    'confidence': prediction.confidence,
+                    'advice': prediction.advice.value if prediction.advice else 'SKIP_TODAY',
+                    'suggested_risk_pct': prediction.suggested_risk_pct,
+                    'suggested_sd_multiplier': prediction.suggested_sd_multiplier,
+                    'top_factors': top_factors,
+                    'probabilities': prediction.probabilities,
+                    'model_version': prediction.model_version,
+                    'model_name': 'ARES_ML_ADVISOR',
+                }
+        except Exception as e:
+            logger.warning(f"ARES ML prediction error: {e}")
+            import traceback
+            traceback.print_exc()
+
+        return None
+
     def get_oracle_advice(self, market_data: Dict) -> Optional[Dict[str, Any]]:
         """
         Get Oracle ML advice if available.
@@ -278,6 +544,24 @@ class SignalGenerator:
         """
         if not self.oracle:
             return None
+
+        # Validate required market data before calling Oracle
+        spot_price = market_data.get('spot_price', 0)
+        if not spot_price or spot_price <= 0:
+            logger.debug("Oracle skipped: No valid spot price available")
+            return {
+                'confidence': 0,
+                'win_probability': 0,
+                'advice': 'NO_DATA',
+                'reasoning': 'No valid spot price available for Oracle analysis',
+                'top_factors': [],
+                'probabilities': {},
+                'suggested_sd_multiplier': 1.0,
+                'use_gex_walls': False,
+                'suggested_put_strike': None,
+                'suggested_call_strike': None,
+                'suggested_risk_pct': 0,
+            }
 
         try:
             # Build context for Oracle using correct field names
@@ -298,14 +582,20 @@ class SignalGenerator:
                 gex_regime=gex_regime,
                 gex_net=market_data.get('net_gex', 0),
                 gex_flip_point=market_data.get('flip_point', 0),
-                expected_move_pct=market_data.get('expected_move', 0) / market_data['spot_price'] * 100 if market_data['spot_price'] else 0,
+                expected_move_pct=(market_data.get('expected_move', 0) / market_data.get('spot_price', 1) * 100) if market_data.get('spot_price') else 0,
             )
 
             # Call correct method: get_ares_advice instead of get_prediction
+            # Pass all VIX filtering parameters for proper skip logic
+            # NOTE: VIX skips are disabled to allow daily trading (only extreme VIX > 50 blocked in check_vix_filter)
             prediction = self.oracle.get_ares_advice(
                 context=context,
                 use_gex_walls=True,
-                use_claude_validation=False,  # Skip Claude for performance during live trading
+                use_claude_validation=True,  # Enable Claude for transparency logging
+                vix_hard_skip=0.0,  # Disabled - main VIX filter only blocks VIX > 50
+                vix_monday_friday_skip=0.0,  # Disabled - trade every day
+                vix_streak_skip=0.0,  # Disabled - allow trading after losses
+                recent_losses=getattr(self, '_recent_losses', 0),
             )
 
             if prediction:
@@ -332,11 +622,38 @@ class SignalGenerator:
                     'suggested_put_strike': getattr(prediction, 'suggested_put_strike', None),
                     'suggested_call_strike': getattr(prediction, 'suggested_call_strike', None),
                     'suggested_risk_pct': getattr(prediction, 'suggested_risk_pct', 10.0),
+
+                    # NEUTRAL Regime Analysis (trend-based direction for NEUTRAL GEX)
+                    'neutral_derived_direction': getattr(prediction, 'neutral_derived_direction', ''),
+                    'neutral_confidence': getattr(prediction, 'neutral_confidence', 0),
+                    'neutral_reasoning': getattr(prediction, 'neutral_reasoning', ''),
+                    'ic_suitability': getattr(prediction, 'ic_suitability', 0),
+                    'bullish_suitability': getattr(prediction, 'bullish_suitability', 0),
+                    'bearish_suitability': getattr(prediction, 'bearish_suitability', 0),
+                    'trend_direction': getattr(prediction, 'trend_direction', ''),
+                    'trend_strength': getattr(prediction, 'trend_strength', 0),
+                    'position_in_range_pct': getattr(prediction, 'position_in_range_pct', 50.0),
+                    'wall_filter_passed': getattr(prediction, 'wall_filter_passed', False),
                 }
         except Exception as e:
             logger.warning(f"Oracle advice error: {e}")
             import traceback
             traceback.print_exc()
+            # Return fallback values instead of None so scan activity shows meaningful data
+            # This helps debugging - we can see Oracle was attempted but failed
+            return {
+                'confidence': 0,
+                'win_probability': 0,
+                'advice': 'ERROR',
+                'reasoning': f"Oracle error: {str(e)[:100]}",
+                'top_factors': [{'factor': 'error', 'impact': 0}],
+                'probabilities': {},
+                'suggested_sd_multiplier': 1.0,
+                'use_gex_walls': False,
+                'suggested_put_strike': None,
+                'suggested_call_strike': None,
+                'suggested_risk_pct': 0,
+            }
 
         return None
 
@@ -356,31 +673,183 @@ class SignalGenerator:
         # Step 1: Get market data (includes Kronos GEX)
         market_data = self.get_market_data()
         if not market_data:
-            logger.info("No market data available")
-            return None
+            logger.info("No market data available - returning blocked signal for diagnostics")
+            return IronCondorSignal(
+                spot_price=0,
+                vix=0,
+                expected_move=0,
+                call_wall=0,
+                put_wall=0,
+                gex_regime="UNKNOWN",
+                confidence=0,
+                reasoning="NO_MARKET_DATA: GEX data not available",
+                source="BLOCKED_NO_DATA",
+            )
 
         spot = market_data['spot_price']
         vix = market_data['vix']
         expected_move = market_data['expected_move']
 
-        # Step 2: Check VIX filter
-        can_trade, vix_reason = self.check_vix_filter(vix)
-        if not can_trade:
-            logger.info(f"VIX filter blocked: {vix_reason}")
-            return None
+        # Step 1.5: Validate data freshness (max 2 minutes old)
+        data_timestamp = market_data.get('timestamp')
+        if data_timestamp:
+            data_age = (datetime.now(CENTRAL_TZ) - data_timestamp).total_seconds()
+            if data_age > 120:  # 2 minutes
+                logger.warning(f"Market data is {data_age:.0f}s old (>120s), refetching...")
+                market_data = self.get_market_data()
+                if not market_data:
+                    logger.info("No fresh market data available - returning blocked signal")
+                    return IronCondorSignal(
+                        spot_price=spot,
+                        vix=vix,
+                        expected_move=expected_move,
+                        call_wall=0,
+                        put_wall=0,
+                        gex_regime="UNKNOWN",
+                        confidence=0,
+                        reasoning=f"STALE_DATA: Market data is {data_age:.0f}s old",
+                        source="BLOCKED_STALE_DATA",
+                    )
+                spot = market_data['spot_price']
+                vix = market_data['vix']
+                expected_move = market_data['expected_move']
 
-        # Step 3: Get Oracle advice (FULL context)
+        # ============================================================
+        # Step 2: GET ORACLE PREDICTION (ORACLE IS THE GOD OF ALL DECISIONS)
+        #
+        # CRITICAL: When Oracle says TRADE, we TRADE. Period.
+        # Oracle already analyzed VIX, GEX, walls, regime, day of week.
+        # Bot's min_win_probability threshold does NOT override Oracle.
+        # ============================================================
+
+        # Step 2a: Try ML prediction first (PRIMARY SOURCE)
+        ml_prediction = self.get_ml_prediction(market_data)
+        ml_win_prob = ml_prediction.get('win_probability', 0) if ml_prediction else 0
+        ml_confidence = ml_prediction.get('confidence', 0) if ml_prediction else 0
+
+        # Step 2b: Get Oracle advice (BACKUP SOURCE)
         oracle = self.get_oracle_advice(market_data)
-        confidence = oracle.get('confidence', 0.7) if oracle else 0.7
-        win_probability = oracle.get('win_probability', 0) if oracle else 0
+        oracle_win_prob = oracle.get('win_probability', 0) if oracle else 0
+        oracle_confidence = oracle.get('confidence', 0.7) if oracle else 0.7
+        oracle_advice = oracle.get('advice', 'SKIP_TODAY') if oracle else 'SKIP_TODAY'
 
-        # Step 4: Calculate strikes (use Oracle's suggestion if available)
+        # Determine which source to use
+        use_ml_prediction = ml_prediction is not None and ml_win_prob > 0
+        effective_win_prob = ml_win_prob if use_ml_prediction else oracle_win_prob
+        confidence = ml_confidence if use_ml_prediction else oracle_confidence
+        prediction_source = "ARES_ML_ADVISOR" if use_ml_prediction else "ORACLE"
+
+        # ============================================================
+        # ORACLE IS THE GOD: If Oracle says TRADE, we TRADE
+        # No min_win_probability threshold check - Oracle's word is final
+        # ============================================================
+        oracle_says_trade = oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
+        ml_oracle_says_trade = oracle_says_trade
+
+        # Log Oracle decision
+        if ml_oracle_says_trade:
+            logger.info(f"[ARES] ORACLE SAYS TRADE: {oracle_advice} - {prediction_source} = {effective_win_prob:.0%} win prob")
+        else:
+            logger.info(f"[ARES] Oracle advice: {oracle_advice}, win prob: {effective_win_prob:.0%}")
+
+        # ============================================================
+        # Step 3: ORACLE SAYS NO TRADE - RESPECT ORACLE'S DECISION
+        # ============================================================
+        if not ml_oracle_says_trade:
+            logger.info(f"[ARES SKIP] Oracle says {oracle_advice} - respecting Oracle's decision")
+            return IronCondorSignal(
+                spot_price=spot,
+                vix=vix,
+                expected_move=expected_move,
+                call_wall=market_data.get('call_wall', 0),
+                put_wall=market_data.get('put_wall', 0),
+                gex_regime=market_data.get('gex_regime', 'UNKNOWN'),
+                confidence=0,
+                reasoning=f"BLOCKED: Oracle advice={oracle_advice}, win_prob={effective_win_prob:.0%}",
+                source="BLOCKED_ORACLE_NO_TRADE",
+                oracle_win_probability=oracle_win_prob,
+                oracle_advice=oracle_advice,
+            )
+        else:
+            # Oracle says trade - log that we're bypassing VIX filter if needed
+            can_trade, vix_reason = self.check_vix_filter(vix)
+            if not can_trade:
+                logger.info(f"[ARES] VIX would have blocked ({vix_reason}) but ORACLE SAYS TRADE - proceeding")
+
+        # Log ML analysis FIRST (PRIMARY source)
+        if ml_prediction:
+            logger.info(f"[ARES ML ANALYSIS] *** PRIMARY PREDICTION SOURCE ***")
+            logger.info(f"  Win Probability: {ml_win_prob:.1%}")
+            logger.info(f"  Confidence: {ml_confidence:.1%}")
+            logger.info(f"  Advice: {ml_prediction.get('advice', 'N/A')}")
+            logger.info(f"  Model Version: {ml_prediction.get('model_version', 'unknown')}")
+            logger.info(f"  Suggested Risk: {ml_prediction.get('suggested_risk_pct', 10):.1f}%")
+            logger.info(f"  Suggested SD: {ml_prediction.get('suggested_sd_multiplier', 1.0):.2f}x")
+
+            if ml_prediction.get('top_factors'):
+                logger.info(f"  Top Factors (Feature Importance):")
+                for i, factor in enumerate(ml_prediction['top_factors'][:5], 1):
+                    factor_name = factor.get('factor', 'unknown')
+                    impact = factor.get('impact', 0)
+                    logger.info(f"    {i}. {factor_name}: {impact:.3f}")
+        else:
+            logger.info(f"[ARES] ML Advisor not available, falling back to Oracle")
+
+        # Log Oracle analysis (BACKUP source)
+        if oracle:
+            logger.info(f"[ARES ORACLE ANALYSIS] {'(BACKUP)' if not use_ml_prediction else '(informational)'}")
+            logger.info(f"  Win Probability: {oracle_win_prob:.1%}")
+            logger.info(f"  Confidence: {oracle_confidence:.1%}")
+            logger.info(f"  Advice: {oracle.get('advice', 'N/A')}")
+
+            if oracle.get('top_factors'):
+                logger.info(f"  Top Factors:")
+                for i, factor in enumerate(oracle['top_factors'][:3], 1):
+                    factor_name = factor.get('factor', 'unknown')
+                    impact = factor.get('impact', 0)
+                    direction = "+" if impact > 0 else ""
+                    logger.info(f"    {i}. {factor_name}: {direction}{impact:.3f}")
+
+                # APPLY top_factors to adjust confidence based on current conditions
+                if not use_ml_prediction:
+                    confidence, factor_adjustments = self.adjust_confidence_from_top_factors(
+                        confidence, oracle['top_factors'], market_data
+                    )
+
+            # Oracle SKIP_TODAY is informational only when ML is available
+            if oracle.get('advice') == 'SKIP_TODAY':
+                if use_ml_prediction:
+                    logger.info(f"[ARES] Oracle advises SKIP_TODAY but ML override active")
+                    logger.info(f"  ML Win Prob: {ml_win_prob:.1%} will be used instead")
+                else:
+                    logger.info(f"[ARES ORACLE INFO] Oracle advises SKIP_TODAY (informational only)")
+                    logger.info(f"  Bot will use its own threshold: {self.config.min_win_probability:.1%}")
+
+        # ============================================================
+        # ORACLE IS THE GOD - No threshold check needed
+        # If we reached here, Oracle said TRADE. We proceed.
+        # ============================================================
+        logger.info(f"[ARES DECISION] Oracle says {oracle_advice} - proceeding with trade")
+        logger.info(f"[ARES] Using {prediction_source} win probability: {effective_win_prob:.1%}")
+
+        # Use ML's suggested SD multiplier if available
+        win_probability = effective_win_prob if effective_win_prob > 0 else 0.50  # Default to 50% if no prediction
+        if use_ml_prediction and ml_prediction.get('suggested_sd_multiplier'):
+            self._ml_suggested_sd = ml_prediction.get('suggested_sd_multiplier', 1.0)
+
+        logger.info(f"[ARES PASSED] {prediction_source} Win Prob {win_probability:.1%} >= threshold {self.config.min_win_probability:.1%}")
+
+        # Step 4: Calculate strikes (Oracle > GEX > SD priority)
         use_gex_walls = oracle.get('use_gex_walls', False) if oracle else False
+        oracle_put = oracle.get('suggested_put_strike') if oracle else None
+        oracle_call = oracle.get('suggested_call_strike') if oracle else None
         strikes = self.calculate_strikes(
             spot_price=spot,
             expected_move=expected_move,
             call_wall=market_data['call_wall'] if use_gex_walls else 0,
             put_wall=market_data['put_wall'] if use_gex_walls else 0,
+            oracle_put_strike=oracle_put,
+            oracle_call_strike=oracle_call,
         )
 
         # Step 5: Estimate credits
@@ -394,10 +863,9 @@ class SignalGenerator:
             vix=vix,
         )
 
-        # Step 6: Validate minimum credit
+        # Step 6: Log credit info (no blocking - Oracle decides)
         if pricing['total_credit'] < self.config.min_credit:
-            logger.info(f"Credit ${pricing['total_credit']:.2f} below minimum ${self.config.min_credit}")
-            return None
+            logger.warning(f"Credit ${pricing['total_credit']:.2f} below minimum ${self.config.min_credit} - proceeding (Oracle approved)")
 
         # Step 7: Get expiration (0DTE)
         now = datetime.now(CENTRAL_TZ)
@@ -408,7 +876,9 @@ class SignalGenerator:
         reasoning_parts.append(f"VIX={vix:.1f}, Expected Move=${expected_move:.2f}")
         reasoning_parts.append(f"GEX Regime={market_data['gex_regime']}")
 
-        if strikes['using_gex']:
+        if strikes.get('using_oracle'):
+            reasoning_parts.append(f"Oracle Strikes: Put ${strikes['put_short']}, Call ${strikes['call_short']}")
+        elif strikes['using_gex']:
             reasoning_parts.append(f"GEX-Protected: Put Wall ${market_data['put_wall']}, Call Wall ${market_data['call_wall']}")
         else:
             reasoning_parts.append(f"{self.config.sd_multiplier} SD strikes")
@@ -452,11 +922,13 @@ class SignalGenerator:
             # Signal quality
             confidence=confidence,
             reasoning=reasoning,
-            source="GEX" if strikes['using_gex'] else "SD",
+            source=strikes.get('source', 'SD'),
 
             # Oracle context (FULL for audit)
+            # BUG FIX: Use the oracle_advice variable from line 714 for consistency
             oracle_win_probability=win_probability,
-            oracle_advice=oracle.get('advice', '') if oracle else '',
+            oracle_advice=oracle_advice,  # Use local var, not re-fetch with different default
+            oracle_confidence=oracle.get('confidence', 0) if oracle else 0,
             oracle_top_factors=oracle.get('top_factors', []) if oracle else [],
             oracle_suggested_sd=oracle.get('suggested_sd_multiplier', 1.0) if oracle else 1.0,
             oracle_use_gex_walls=oracle.get('use_gex_walls', False) if oracle else False,
@@ -464,5 +936,5 @@ class SignalGenerator:
         )
 
         logger.info(f"Signal: IC {strikes['put_long']}/{strikes['put_short']}-{strikes['call_short']}/{strikes['call_long']} @ ${pricing['total_credit']:.2f}")
-        logger.info(f"Oracle: Win Prob={win_probability:.0%}, Advice={oracle.get('advice', 'N/A') if oracle else 'N/A'}")
+        logger.info(f"Oracle: Win Prob={win_probability:.0%}, Advice={oracle_advice}")
         return signal

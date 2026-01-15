@@ -1,14 +1,14 @@
 'use client'
 
 import React from 'react'
-import { Sword, Target, Shield, TrendingUp, TrendingDown, Clock, AlertTriangle, CheckCircle, XCircle, RefreshCw } from 'lucide-react'
+import { Sword, Target, Shield, Flame, Zap, TrendingUp, TrendingDown, Clock, AlertTriangle, CheckCircle, XCircle, RefreshCw } from 'lucide-react'
 
 // =============================================================================
 // BOT BRANDING SYSTEM
 // =============================================================================
 // Unified branding for ARES, ATHENA, and PEGASUS to ensure visual consistency
 
-export type BotName = 'ARES' | 'ATHENA' | 'PEGASUS'
+export type BotName = 'ARES' | 'ATHENA' | 'ICARUS' | 'PEGASUS' | 'TITAN' | 'PHOENIX' | 'ATLAS'
 
 export interface BotBrand {
   name: BotName
@@ -117,6 +117,41 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     hexLight: '#67E8F9',
     hexDark: '#0891B2',
   },
+  ICARUS: {
+    name: 'ICARUS',
+    fullName: 'ICARUS Aggressive Directional',
+    description: 'Aggressive GEX-Based Directional Spreads',
+    strategy: 'Aggressive Directional Spread Trading',
+    // Primary - Orange (bold, aggressive, flying toward the sun)
+    primaryColor: 'orange',
+    primaryBg: 'bg-orange-600',
+    primaryBorder: 'border-orange-500',
+    primaryText: 'text-orange-400',
+    // Light variants
+    lightBg: 'bg-orange-900/20',
+    lightText: 'text-orange-300',
+    lightBorder: 'border-orange-700/50',
+    // Chart colors
+    chartLine: 'stroke-orange-400',
+    chartFill: 'fill-orange-500/20',
+    chartPositive: 'text-orange-400',
+    chartNegative: 'text-orange-600',
+    // Position cards
+    positionBorder: 'border-orange-600/50',
+    positionBg: 'bg-orange-950/30',
+    positionAccent: 'bg-orange-500',
+    // Badges
+    badgeBg: 'bg-orange-900/50',
+    badgeText: 'text-orange-300',
+    // Gradient
+    icon: Flame,
+    gradientFrom: 'from-orange-500',
+    gradientTo: 'to-orange-900',
+    // Hex for Recharts
+    hexPrimary: '#F97316',
+    hexLight: '#FDBA74',
+    hexDark: '#EA580C',
+  },
   PEGASUS: {
     name: 'PEGASUS',
     fullName: 'PEGASUS SPX Iron Condor',
@@ -151,6 +186,111 @@ export const BOT_BRANDS: Record<BotName, BotBrand> = {
     hexPrimary: '#3B82F6',
     hexLight: '#93C5FD',
     hexDark: '#1D4ED8',
+  },
+  TITAN: {
+    name: 'TITAN',
+    fullName: 'TITAN Aggressive SPX Iron Condor',
+    description: 'Aggressive Daily SPX Iron Condor Trading',
+    strategy: 'Aggressive SPX Iron Condor Strategy',
+    // Primary - Violet/Purple (powerful, aggressive, primordial)
+    primaryColor: 'violet',
+    primaryBg: 'bg-violet-600',
+    primaryBorder: 'border-violet-500',
+    primaryText: 'text-violet-400',
+    // Light variants
+    lightBg: 'bg-violet-900/20',
+    lightText: 'text-violet-300',
+    lightBorder: 'border-violet-700/50',
+    // Chart colors
+    chartLine: 'stroke-violet-400',
+    chartFill: 'fill-violet-500/20',
+    chartPositive: 'text-violet-400',
+    chartNegative: 'text-violet-600',
+    // Position cards
+    positionBorder: 'border-violet-600/50',
+    positionBg: 'bg-violet-950/30',
+    positionAccent: 'bg-violet-500',
+    // Badges
+    badgeBg: 'bg-violet-900/50',
+    badgeText: 'text-violet-300',
+    // Gradient
+    icon: Zap,
+    gradientFrom: 'from-violet-500',
+    gradientTo: 'to-violet-900',
+    // Hex for Recharts
+    hexPrimary: '#8B5CF6',
+    hexLight: '#C4B5FD',
+    hexDark: '#6D28D9',
+  },
+  PHOENIX: {
+    name: 'PHOENIX',
+    fullName: 'PHOENIX Momentum',
+    description: 'Momentum Continuation with GEX-Confirmed Bias',
+    strategy: 'Momentum Continuation Strategy',
+    // Primary - Rose/Red (phoenix rising from flames)
+    primaryColor: 'rose',
+    primaryBg: 'bg-rose-600',
+    primaryBorder: 'border-rose-500',
+    primaryText: 'text-rose-400',
+    // Light variants
+    lightBg: 'bg-rose-900/20',
+    lightText: 'text-rose-300',
+    lightBorder: 'border-rose-700/50',
+    // Chart colors
+    chartLine: 'stroke-rose-400',
+    chartFill: 'fill-rose-500/20',
+    chartPositive: 'text-rose-400',
+    chartNegative: 'text-rose-600',
+    // Position cards
+    positionBorder: 'border-rose-600/50',
+    positionBg: 'bg-rose-950/30',
+    positionAccent: 'bg-rose-500',
+    // Badges
+    badgeBg: 'bg-rose-900/50',
+    badgeText: 'text-rose-300',
+    // Gradient
+    icon: Zap,
+    gradientFrom: 'from-rose-500',
+    gradientTo: 'to-rose-900',
+    // Hex for Recharts
+    hexPrimary: '#F43F5E',
+    hexLight: '#FDA4AF',
+    hexDark: '#E11D48',
+  },
+  ATLAS: {
+    name: 'ATLAS',
+    fullName: 'ATLAS Mean-Reversion',
+    description: 'Mean-Reversion Trading at Key GEX Levels',
+    strategy: 'Mean-Reversion Strategy',
+    // Primary - Indigo/Deep Blue (strength, stability, holding the world)
+    primaryColor: 'indigo',
+    primaryBg: 'bg-indigo-600',
+    primaryBorder: 'border-indigo-500',
+    primaryText: 'text-indigo-400',
+    // Light variants
+    lightBg: 'bg-indigo-900/20',
+    lightText: 'text-indigo-300',
+    lightBorder: 'border-indigo-700/50',
+    // Chart colors
+    chartLine: 'stroke-indigo-400',
+    chartFill: 'fill-indigo-500/20',
+    chartPositive: 'text-indigo-400',
+    chartNegative: 'text-indigo-600',
+    // Position cards
+    positionBorder: 'border-indigo-600/50',
+    positionBg: 'bg-indigo-950/30',
+    positionAccent: 'bg-indigo-500',
+    // Badges
+    badgeBg: 'bg-indigo-900/50',
+    badgeText: 'text-indigo-300',
+    // Gradient
+    icon: Target,
+    gradientFrom: 'from-indigo-500',
+    gradientTo: 'to-indigo-900',
+    // Hex for Recharts
+    hexPrimary: '#6366F1',
+    hexLight: '#A5B4FC',
+    hexDark: '#4F46E5',
   },
 }
 
@@ -384,7 +524,7 @@ interface StatCardProps {
   change?: number
   changeLabel?: string
   icon?: React.ReactNode
-  color?: 'green' | 'red' | 'yellow' | 'blue' | 'gray'
+  color?: 'green' | 'red' | 'yellow' | 'blue' | 'gray' | 'orange'
   className?: string
 }
 
@@ -403,6 +543,7 @@ export function StatCard({
     yellow: 'text-yellow-400',
     blue: 'text-blue-400',
     gray: 'text-gray-400',
+    orange: 'text-orange-400',
   }
 
   return (

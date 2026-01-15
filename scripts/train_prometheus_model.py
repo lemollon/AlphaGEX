@@ -283,12 +283,19 @@ def save_training_data_to_db(outcomes: List['PrometheusOutcome']) -> int:
         return 0
 
 
-def extract_from_backtest_results(backtest_id: str = None) -> List['PrometheusOutcome']:
+def extract_from_backtest_results(backtest_id: str = None, limit: int = 500) -> List['PrometheusOutcome']:
     """
     Extract training data from stored backtest results.
 
+    Converts SPX wheel backtest trades to Prometheus outcomes for ML training.
+    Each backtest trade is transformed into a PrometheusOutcome with:
+    - Trade features (strike, premium, DTE, delta)
+    - Market features (estimated from backtest parameters)
+    - Outcome (WIN/LOSS based on total_pnl)
+
     Args:
         backtest_id: Optional specific backtest to extract from
+        limit: Maximum number of trades to extract
 
     Returns:
         List of PrometheusOutcome objects
@@ -297,41 +304,176 @@ def extract_from_backtest_results(backtest_id: str = None) -> List['PrometheusOu
         print("Error: Database or Prometheus not available")
         return []
 
+    if not ML_AVAILABLE:
+        print("Error: ML libraries not available")
+        return []
+
     try:
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Get trades from backtest tables
+        # Get trades from backtest tables with their parameters
         if backtest_id:
             cursor.execute('''
-                SELECT t.*, r.vix_avg
+                SELECT t.id, t.backtest_id, t.trade_date, t.strike, t.entry_price, t.exit_price,
+                       t.contracts, t.premium_received, t.total_pnl, t.entry_underlying_price,
+                       t.exit_underlying_price, t.expiration, t.parameters
                 FROM spx_wheel_backtest_trades t
-                JOIN spx_wheel_backtest_runs r ON t.run_id = r.id
-                WHERE r.id = %s
+                WHERE t.backtest_id = %s
+                  AND t.total_pnl IS NOT NULL
+                ORDER BY t.trade_date
             ''', (backtest_id,))
         else:
             cursor.execute('''
-                SELECT t.*, r.vix_avg
+                SELECT t.id, t.backtest_id, t.trade_date, t.strike, t.entry_price, t.exit_price,
+                       t.contracts, t.premium_received, t.total_pnl, t.entry_underlying_price,
+                       t.exit_underlying_price, t.expiration, t.parameters
                 FROM spx_wheel_backtest_trades t
-                JOIN spx_wheel_backtest_runs r ON t.run_id = r.id
+                WHERE t.total_pnl IS NOT NULL
                 ORDER BY t.trade_date DESC
-                LIMIT 500
-            ''')
+                LIMIT %s
+            ''', (limit,))
 
         rows = cursor.fetchall()
         conn.close()
 
+        print(f"Found {len(rows)} backtest trades to process")
+
         outcomes = []
         for row in rows:
-            # Convert backtest trade to PrometheusOutcome
-            # Note: This is a simplified extraction - actual implementation
-            # would need to match the exact schema
-            pass
+            try:
+                trade_id = f"BT-{row[1]}-{row[0]}"  # backtest_id + trade_id
+                trade_date = str(row[2]) if row[2] else datetime.now().strftime('%Y-%m-%d')
+                strike = float(row[3]) if row[3] else 0
+                entry_price = float(row[4]) if row[4] else 0  # Premium per contract
+                exit_price = float(row[5]) if row[5] else 0
+                contracts = int(row[6]) if row[6] else 1
+                premium_received = float(row[7]) if row[7] else 0
+                total_pnl = float(row[8]) if row[8] else 0
+                entry_underlying = float(row[9]) if row[9] else 5800
+                exit_underlying = float(row[10]) if row[10] else entry_underlying
+                expiration = str(row[11]) if row[11] else trade_date
+                params = row[12] if row[12] else {}
+
+                # Parse params if it's a string
+                if isinstance(params, str):
+                    try:
+                        params = json.loads(params)
+                    except:
+                        params = {}
+
+                # Calculate DTE from trade_date and expiration
+                try:
+                    trade_dt = datetime.strptime(trade_date[:10], '%Y-%m-%d')
+                    exp_dt = datetime.strptime(expiration[:10], '%Y-%m-%d')
+                    dte = max(0, (exp_dt - trade_dt).days)
+                except:
+                    dte = 0
+
+                # Extract or estimate features
+                # Delta - estimate based on moneyness if not provided
+                if entry_underlying > 0 and strike > 0:
+                    moneyness = (entry_underlying - strike) / entry_underlying
+                    # Rough delta estimate: more OTM = smaller delta
+                    delta = -max(0.05, min(0.40, 0.30 - moneyness * 5))
+                else:
+                    delta = -0.15
+
+                # Premium per contract
+                premium = entry_price if entry_price > 0 else premium_received / max(contracts, 1) / 100
+
+                # Extract VIX from params or use reasonable estimate
+                vix = params.get('vix', params.get('vix_at_entry', 18.0))
+                if vix is None:
+                    vix = 18.0
+
+                # IV rank - estimate from VIX
+                iv_rank = params.get('iv_rank', min(100, max(0, (vix - 12) * 4)))
+
+                # VIX percentile
+                vix_percentile = params.get('vix_percentile', min(100, max(0, (vix - 12) / 30 * 100)))
+
+                # VIX term structure - typically contango
+                vix_term_structure = params.get('vix_term_structure', -1.5)
+
+                # GEX features - use defaults since not tracked in backtest
+                put_wall_distance = params.get('put_wall_distance_pct', 3.0)
+                call_wall_distance = params.get('call_wall_distance_pct', 3.0)
+                net_gex = params.get('net_gex', 5e9)
+
+                # SPX returns - estimate from underlying movement
+                spx_5d_return = params.get('spx_5d_return', 0.0)
+                spx_20d_return = params.get('spx_20d_return', 0.0)
+                spx_distance_from_high = params.get('spx_distance_from_high', 1.0)
+
+                # IV estimate
+                iv = params.get('iv', vix / 100 + 0.02)
+
+                # Premium metrics
+                premium_to_strike = (premium / strike * 100) if strike > 0 else 0
+                annualized_return = (premium_to_strike / 100) * (365 / max(dte, 0.5)) * 100 if dte >= 0 else 0
+                annualized_return = min(annualized_return, 500)  # Cap at 500%
+
+                # Determine outcome
+                is_win = total_pnl > 0
+                outcome = "WIN" if is_win else "LOSS"
+
+                # Settlement price estimate
+                settlement_price = exit_underlying if exit_underlying > 0 else (
+                    strike + 10 if is_win else strike - abs(total_pnl) / max(contracts, 1) / 100
+                )
+
+                # Max drawdown estimate - typically loss amount for losses
+                max_drawdown = -abs(total_pnl) * 1.5 if not is_win else -premium * 100 * contracts * 0.3
+
+                features = PrometheusFeatures(
+                    trade_date=trade_date[:10],
+                    strike=round(strike, 2),
+                    underlying_price=round(entry_underlying, 2),
+                    dte=dte,
+                    delta=round(delta, 4),
+                    premium=round(premium, 2),
+                    iv=round(iv, 4),
+                    iv_rank=round(iv_rank, 1),
+                    vix=round(vix, 2),
+                    vix_percentile=round(vix_percentile, 1),
+                    vix_term_structure=round(vix_term_structure, 2),
+                    put_wall_distance_pct=round(put_wall_distance, 2),
+                    call_wall_distance_pct=round(call_wall_distance, 2),
+                    net_gex=round(net_gex, 0),
+                    spx_20d_return=round(spx_20d_return, 2),
+                    spx_5d_return=round(spx_5d_return, 2),
+                    spx_distance_from_high=round(spx_distance_from_high, 2),
+                    premium_to_strike_pct=round(premium_to_strike, 4),
+                    annualized_return=round(annualized_return, 1)
+                )
+
+                outcomes.append(PrometheusOutcome(
+                    trade_id=trade_id,
+                    features=features,
+                    outcome=outcome,
+                    pnl=round(total_pnl, 2),
+                    max_drawdown=round(max_drawdown, 2),
+                    settlement_price=round(settlement_price, 2)
+                ))
+
+            except Exception as row_error:
+                logger.warning(f"Failed to process backtest row: {row_error}")
+                continue
+
+        print(f"Successfully extracted {len(outcomes)} outcomes from backtest data")
+
+        # Calculate win rate
+        if outcomes:
+            wins = sum(1 for o in outcomes if o.is_win())
+            print(f"Backtest win rate: {wins/len(outcomes):.1%}")
 
         return outcomes
 
     except Exception as e:
         print(f"Error extracting backtest data: {e}")
+        import traceback
+        traceback.print_exc()
         return []
 
 
@@ -359,6 +501,23 @@ def train_prometheus_with_data(outcomes: List['PrometheusOutcome']) -> Dict:
 
 def main():
     """Main entry point for training data generation and model training"""
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Prometheus Training Data Generator')
+    parser.add_argument('--source', choices=['synthetic', 'backtest', 'both'], default='both',
+                        help='Data source for training (default: both)')
+    parser.add_argument('--synthetic-samples', type=int, default=100,
+                        help='Number of synthetic samples to generate (default: 100)')
+    parser.add_argument('--backtest-limit', type=int, default=500,
+                        help='Maximum backtest trades to extract (default: 500)')
+    parser.add_argument('--backtest-id', type=str, default=None,
+                        help='Specific backtest ID to extract from')
+    parser.add_argument('--win-rate', type=float, default=0.68,
+                        help='Target win rate for synthetic data (default: 0.68)')
+    parser.add_argument('--save-to-db', action='store_true',
+                        help='Save synthetic data to database')
+    args = parser.parse_args()
+
     print("=" * 60)
     print("PROMETHEUS Training Data Generator")
     print("=" * 60)
@@ -374,26 +533,50 @@ def main():
         print("Error: Required dependencies not available")
         return
 
-    # Generate synthetic data
-    print("Generating synthetic training data...")
-    outcomes = generate_synthetic_training_data(n_samples=100, win_rate=0.68)
-    print(f"Generated {len(outcomes)} synthetic outcomes")
+    all_outcomes = []
+
+    # Extract from backtest if requested
+    if args.source in ['backtest', 'both']:
+        print("Extracting training data from backtests...")
+        backtest_outcomes = extract_from_backtest_results(
+            backtest_id=args.backtest_id,
+            limit=args.backtest_limit
+        )
+        all_outcomes.extend(backtest_outcomes)
+        print()
+
+    # Generate synthetic data if requested
+    if args.source in ['synthetic', 'both']:
+        print("Generating synthetic training data...")
+        synthetic_outcomes = generate_synthetic_training_data(
+            n_samples=args.synthetic_samples,
+            win_rate=args.win_rate
+        )
+        print(f"Generated {len(synthetic_outcomes)} synthetic outcomes")
+        all_outcomes.extend(synthetic_outcomes)
+        print()
+
+    print(f"Total outcomes for training: {len(all_outcomes)}")
+
+    if not all_outcomes:
+        print("Error: No training data available")
+        return
 
     # Calculate actual win rate
-    wins = sum(1 for o in outcomes if o.is_win())
-    print(f"Actual win rate: {wins/len(outcomes):.1%}")
+    wins = sum(1 for o in all_outcomes if o.is_win())
+    print(f"Combined win rate: {wins/len(all_outcomes):.1%}")
     print()
 
-    # Save to database if available
-    if DB_AVAILABLE:
+    # Save to database if requested
+    if args.save_to_db and DB_AVAILABLE:
         print("Saving to database...")
-        inserted = save_training_data_to_db(outcomes)
+        inserted = save_training_data_to_db(all_outcomes)
         print(f"Saved {inserted} records to database")
         print()
 
     # Train the model
     print("Training Prometheus model...")
-    result = train_prometheus_with_data(outcomes)
+    result = train_prometheus_with_data(all_outcomes)
 
     if result.get('success'):
         print("✅ Training successful!")

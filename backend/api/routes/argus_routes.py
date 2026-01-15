@@ -79,6 +79,193 @@ class CommentaryRequest(BaseModel):
     force: bool = False
 
 
+# ==================== ROC HISTORY PERSISTENCE ====================
+# Persist gamma history to database for ROC calculation continuity
+
+_history_loaded: Dict[str, bool] = {}  # Track if we've loaded history from DB per symbol
+
+
+def ensure_gamma_history_table():
+    """Create the gamma history table if it doesn't exist"""
+    try:
+        conn = get_connection()
+        if not conn:
+            return False
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS argus_gamma_history (
+                id SERIAL PRIMARY KEY,
+                symbol VARCHAR(10) NOT NULL DEFAULT 'SPY',
+                strike DECIMAL(10, 2) NOT NULL,
+                gamma_value DECIMAL(20, 8) NOT NULL,
+                recorded_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+        """)
+        # Create index for efficient lookups
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_argus_gamma_history_strike_time
+            ON argus_gamma_history(symbol, strike, recorded_at DESC)
+        """)
+        # Create index for cleanup queries
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_argus_gamma_history_recorded_at
+            ON argus_gamma_history(recorded_at)
+        """)
+        conn.commit()
+        cursor.close()
+        conn.close()
+        logger.info("ARGUS: Gamma history table ensured")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to create gamma history table: {e}")
+        return False
+
+
+def persist_gamma_history(engine, symbol: str = "SPY"):
+    """
+    Persist current gamma history from engine to database.
+    Called periodically to ensure ROC data survives restarts.
+    """
+    if not engine or not engine.history:
+        return
+
+    try:
+        conn = get_connection()
+        if not conn:
+            return
+
+        cursor = conn.cursor()
+        ensure_gamma_history_table()
+
+        # Get the most recent timestamp we have in DB for this symbol
+        cursor.execute("""
+            SELECT MAX(recorded_at) FROM argus_gamma_history WHERE symbol = %s
+        """, (symbol,))
+        row = cursor.fetchone()
+        last_db_time = row[0] if row and row[0] else None
+
+        # Insert only new history entries (avoid duplicates)
+        inserted = 0
+        for strike, history_list in engine.history.items():
+            for recorded_time, gamma_value in history_list:
+                # Skip if we already have this or older
+                if last_db_time:
+                    # Handle timezone-aware comparison
+                    check_time = recorded_time
+                    if check_time.tzinfo is None:
+                        check_time = check_time.replace(tzinfo=CENTRAL_TZ)
+                    if last_db_time.tzinfo is None:
+                        last_db_time = last_db_time.replace(tzinfo=CENTRAL_TZ)
+                    if check_time <= last_db_time:
+                        continue
+
+                cursor.execute("""
+                    INSERT INTO argus_gamma_history (symbol, strike, gamma_value, recorded_at)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT DO NOTHING
+                """, (symbol, strike, gamma_value, recorded_time))
+                inserted += 1
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        if inserted > 0:
+            logger.debug(f"ARGUS: Persisted {inserted} gamma history entries for {symbol}")
+    except Exception as e:
+        logger.warning(f"Failed to persist gamma history: {e}")
+
+
+def load_gamma_history(engine, symbol: str = "SPY"):
+    """
+    Load gamma history from database into engine.
+    Called on engine startup to restore ROC calculation capability.
+    """
+    global _history_loaded
+
+    if not engine:
+        return
+
+    if _history_loaded.get(symbol, False):
+        logger.debug(f"ARGUS: Gamma history already loaded for {symbol}, skipping")
+        return
+
+    try:
+        conn = get_connection()
+        if not conn:
+            return
+
+        cursor = conn.cursor()
+        ensure_gamma_history_table()
+
+        # Load full trading day of history (7 hours = 420 minutes to support all ROC timeframes)
+        cursor.execute("""
+            SELECT strike, gamma_value, recorded_at
+            FROM argus_gamma_history
+            WHERE symbol = %s
+            AND recorded_at > NOW() - INTERVAL '420 minutes'
+            ORDER BY strike, recorded_at ASC
+        """, (symbol,))
+
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        if not rows:
+            logger.debug(f"ARGUS: No recent gamma history found for {symbol}")
+            _history_loaded[symbol] = True
+            return
+
+        # Populate engine history
+        for strike, gamma_value, recorded_at in rows:
+            strike_float = float(strike)
+            if strike_float not in engine.history:
+                engine.history[strike_float] = []
+
+            # Ensure timezone awareness
+            if recorded_at.tzinfo is None:
+                recorded_at = recorded_at.replace(tzinfo=CENTRAL_TZ)
+
+            engine.history[strike_float].append((recorded_at, float(gamma_value)))
+
+        _history_loaded[symbol] = True
+        unique_strikes = len(engine.history)
+        total_entries = sum(len(h) for h in engine.history.values())
+        logger.info(f"ARGUS: Loaded gamma history for {symbol}: {unique_strikes} strikes, {total_entries} entries")
+
+    except Exception as e:
+        logger.warning(f"Failed to load gamma history: {e}")
+        _history_loaded[symbol] = True  # Prevent repeated failures
+
+
+def cleanup_old_gamma_history():
+    """
+    Clean up gamma history older than 8 hours.
+    Called periodically to prevent table bloat.
+    Keeps full trading day data for ROC calculations.
+    """
+    try:
+        conn = get_connection()
+        if not conn:
+            return
+
+        cursor = conn.cursor()
+        cursor.execute("""
+            DELETE FROM argus_gamma_history
+            WHERE recorded_at < NOW() - INTERVAL '8 hours'
+        """)
+        deleted = cursor.rowcount
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        if deleted > 0:
+            logger.debug(f"ARGUS: Cleaned up {deleted} old gamma history entries")
+    except Exception as e:
+        logger.warning(f"Failed to cleanup gamma history: {e}")
+
+
 def get_engine() -> Optional[ArgusEngine]:
     """Get the ARGUS engine instance"""
     if not ARGUS_AVAILABLE:
@@ -335,6 +522,10 @@ async def get_gamma_data(
     if not engine:
         raise HTTPException(status_code=503, detail="ARGUS engine not available")
 
+    # Load persisted gamma history from database for ROC continuity
+    # This ensures ROC values persist across page navigation and server restarts
+    load_gamma_history(engine, symbol)
+
     try:
         # Determine expiration
         if day:
@@ -385,12 +576,92 @@ async def get_gamma_data(
         # Get expected move change data (pass spot_price to normalize for overnight gaps)
         em_change = await get_expected_move_change(snapshot.expected_move, raw_data['vix'], snapshot.spot_price)
 
+        # Extract flip_point, call_wall, put_wall from snapshot strikes for structure analysis
+        current_flip_point = None
+        current_call_wall = None
+        current_put_wall = None
+
+        if snapshot.strikes:
+            # Find flip point (where gamma crosses zero)
+            for i, strike in enumerate(snapshot.strikes[:-1]):
+                if hasattr(strike, 'net_gamma'):
+                    curr_gamma = strike.net_gamma
+                    next_strike = snapshot.strikes[i + 1]
+                    next_gamma = next_strike.net_gamma if hasattr(next_strike, 'net_gamma') else 0
+                    if curr_gamma * next_gamma < 0:  # Sign change
+                        # Linear interpolation for more precise flip point
+                        if curr_gamma != next_gamma:
+                            ratio = abs(curr_gamma) / (abs(curr_gamma) + abs(next_gamma))
+                            current_flip_point = strike.strike + ratio * (next_strike.strike - strike.strike)
+                        else:
+                            current_flip_point = strike.strike
+                        break
+
+            # Find call wall (highest gamma above spot) and put wall (highest gamma below spot)
+            above_spot = [s for s in snapshot.strikes if hasattr(s, 'strike') and s.strike > snapshot.spot_price]
+            below_spot = [s for s in snapshot.strikes if hasattr(s, 'strike') and s.strike < snapshot.spot_price]
+
+            if above_spot:
+                call_wall_strike = max(above_spot, key=lambda s: abs(getattr(s, 'net_gamma', 0)))
+                current_call_wall = call_wall_strike.strike
+            if below_spot:
+                put_wall_strike = max(below_spot, key=lambda s: abs(getattr(s, 'net_gamma', 0)))
+                current_put_wall = put_wall_strike.strike
+
+        # Get call/put wall gamma for wall strength analysis
+        call_wall_gamma = None
+        put_wall_gamma = None
+        if snapshot.strikes:
+            for strike in snapshot.strikes:
+                if hasattr(strike, 'strike') and hasattr(strike, 'net_gamma'):
+                    if current_call_wall and abs(strike.strike - current_call_wall) < 0.5:
+                        call_wall_gamma = strike.net_gamma
+                    if current_put_wall and abs(strike.strike - current_put_wall) < 0.5:
+                        put_wall_gamma = strike.net_gamma
+
+        # Get open EM from the expected_move_change data
+        open_em_value = em_change.get('at_open') if em_change else None
+
+        # Get comprehensive market structure changes (flip point, bounds, width, walls, + new signals)
+        market_structure = await get_market_structure_changes(
+            current_spot=snapshot.spot_price,
+            current_em=snapshot.expected_move,
+            current_vix=raw_data['vix'],
+            current_flip_point=current_flip_point,
+            current_call_wall=current_call_wall,
+            current_put_wall=current_put_wall,
+            current_net_gex=snapshot.total_net_gamma,
+            gamma_regime=snapshot.gamma_regime,
+            open_em=open_em_value,
+            danger_zones=snapshot.danger_zones,
+            call_wall_gamma=call_wall_gamma,
+            put_wall_gamma=put_wall_gamma
+        )
+
         # Only persist danger zones and alerts when we process FRESH data
         # This prevents clearing danger zones due to cached data with stale ROC values
         if not is_cached:
             await persist_danger_zones_to_db(snapshot.danger_zones, snapshot.spot_price, expiration)
             if engine:
                 await persist_alerts_to_db(engine.get_active_alerts())
+                # Persist gamma history for ROC continuity across page navigation/server restarts
+                persist_gamma_history(engine, symbol)
+                # Periodically clean up old history entries
+                cleanup_old_gamma_history()
+
+            # Persist ARGUS snapshot for prior day market structure comparisons
+            await persist_argus_snapshot_to_db(
+                symbol=symbol,
+                expiration_date=expiration,
+                spot_price=snapshot.spot_price,
+                expected_move=snapshot.expected_move,
+                vix=raw_data.get('vix', 0),
+                total_net_gamma=snapshot.total_net_gamma,
+                gamma_regime=snapshot.gamma_regime,
+                previous_regime=getattr(snapshot, 'previous_regime', None),
+                regime_flipped=snapshot.regime_flipped,
+                market_status=snapshot.market_status
+            )
 
         # Build response
         return {
@@ -402,6 +673,7 @@ async def get_gamma_data(
                 "spot_price": snapshot.spot_price,
                 "expected_move": snapshot.expected_move,
                 "expected_move_change": em_change,
+                "market_structure": market_structure,
                 "vix": snapshot.vix,
                 "total_net_gamma": snapshot.total_net_gamma,
                 "gamma_regime": snapshot.gamma_regime,
@@ -564,6 +836,716 @@ async def get_expected_move_change(current_em: float, current_vix: float, spot_p
     _em_result_cache_time[cache_key] = time.time()
 
     return result
+
+
+# =============================================================================
+# MARKET STRUCTURE CHANGES - Multi-Signal Analysis
+# =============================================================================
+# Cache for market structure
+_structure_cache: Dict[str, Any] = {}
+_structure_cache_time: Dict[str, float] = {}
+STRUCTURE_CACHE_TTL = 300  # 5 minute cache
+
+
+async def get_market_structure_changes(
+    current_spot: float,
+    current_em: float,
+    current_vix: float,
+    current_flip_point: float = None,
+    current_call_wall: float = None,
+    current_put_wall: float = None,
+    current_net_gex: float = None,
+    gamma_regime: str = None,
+    open_em: float = None,
+    danger_zones: list = None,
+    call_wall_gamma: float = None,
+    put_wall_gamma: float = None
+) -> dict:
+    """
+    Comprehensive market structure analysis comparing today vs prior day.
+
+    Returns actionable signals for:
+    1. Flip Point Movement - Dealer positioning shift
+    2. Expected Move Bounds - Market's price expectations
+    3. Range Width - Volatility expansion/contraction
+    4. Combined Signal - Trading recommendation
+
+    Args:
+        current_spot: Current spot price
+        current_em: Current expected move (straddle price)
+        current_vix: Current VIX level
+        current_flip_point: Current gamma flip point (optional, from strikes)
+        current_call_wall: Current call wall strike (optional)
+        current_put_wall: Current put wall strike (optional)
+
+    Returns:
+        Dictionary with multi-signal analysis and trading implications
+    """
+    today = date.today().strftime('%Y-%m-%d')
+    cache_key = f"structure_{today}_{round(current_spot, 2)}_{round(current_em, 2)}"
+
+    # Check cache
+    if cache_key in _structure_cache and cache_key in _structure_cache_time:
+        if time.time() - _structure_cache_time[cache_key] < STRUCTURE_CACHE_TTL:
+            return _structure_cache[cache_key]
+
+    # Calculate current expected move bounds (+/- 1 std)
+    current_upper = current_spot + current_em
+    current_lower = current_spot - current_em
+    current_width = current_em * 2
+
+    # Initialize prior day values
+    prior_spot = None
+    prior_em = None
+    prior_upper = None
+    prior_lower = None
+    prior_width = None
+    prior_flip_point = None
+    prior_call_wall = None
+    prior_put_wall = None
+
+    try:
+        conn = get_connection()
+        if conn:
+            cursor = conn.cursor()
+
+            # Get yesterday's closing data from argus_snapshots
+            cursor.execute("""
+                SELECT spot_price, expected_move
+                FROM argus_snapshots
+                WHERE DATE(snapshot_time) < CURRENT_DATE
+                ORDER BY snapshot_time DESC
+                LIMIT 1
+            """)
+            row = cursor.fetchone()
+            if row:
+                prior_spot = float(row[0])
+                prior_em = float(row[1])
+                prior_upper = prior_spot + prior_em
+                prior_lower = prior_spot - prior_em
+                prior_width = prior_em * 2
+
+            # Get yesterday's flip point, call/put walls from gex_history
+            cursor.execute("""
+                SELECT flip_point, call_wall, put_wall, spot_price
+                FROM gex_history
+                WHERE symbol = 'SPY'
+                AND DATE(timestamp) < CURRENT_DATE
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """)
+            row = cursor.fetchone()
+            if row:
+                prior_flip_point = float(row[0]) if row[0] else None
+                prior_call_wall = float(row[1]) if row[1] else None
+                prior_put_wall = float(row[2]) if row[2] else None
+                # If we didn't get prior_spot from argus_snapshots, use gex_history
+                if prior_spot is None and row[3]:
+                    prior_spot = float(row[3])
+
+            cursor.close()
+            conn.close()
+    except Exception as e:
+        logger.warning(f"Could not fetch prior day structure: {e}")
+
+    # =========================================================================
+    # SIGNAL 1: FLIP POINT MOVEMENT
+    # =========================================================================
+    flip_signal = {
+        "current": round(current_flip_point, 2) if current_flip_point else None,
+        "prior": round(prior_flip_point, 2) if prior_flip_point else None,
+        "change": None,
+        "change_pct": None,
+        "direction": "UNKNOWN",
+        "implication": "Flip point data not available"
+    }
+
+    if current_flip_point and prior_flip_point and prior_flip_point > 0:
+        flip_change = current_flip_point - prior_flip_point
+        flip_change_pct = (flip_change / prior_flip_point) * 100
+        flip_signal["change"] = round(flip_change, 2)
+        flip_signal["change_pct"] = round(flip_change_pct, 2)
+
+        # Threshold: $2 or 0.3% move is significant
+        if flip_change > 2 or flip_change_pct > 0.3:
+            flip_signal["direction"] = "RISING"
+            flip_signal["implication"] = "Dealers added call gamma or reduced put gamma. Support level moved UP - bullish repositioning. MMs expect higher prices."
+        elif flip_change < -2 or flip_change_pct < -0.3:
+            flip_signal["direction"] = "FALLING"
+            flip_signal["implication"] = "Dealers added put gamma or reduced call gamma. Resistance moved DOWN - bearish repositioning. MMs expect lower prices."
+        else:
+            flip_signal["direction"] = "STABLE"
+            flip_signal["implication"] = "Dealers haven't significantly repositioned. Yesterday's support/resistance levels remain valid."
+
+    # =========================================================================
+    # SIGNAL 2: EXPECTED MOVE BOUNDS SHIFT
+    # =========================================================================
+    bounds_signal = {
+        "current_upper": round(current_upper, 2),
+        "current_lower": round(current_lower, 2),
+        "prior_upper": round(prior_upper, 2) if prior_upper else None,
+        "prior_lower": round(prior_lower, 2) if prior_lower else None,
+        "upper_change": None,
+        "lower_change": None,
+        "direction": "UNKNOWN",
+        "implication": "Prior day bounds not available"
+    }
+
+    if prior_upper and prior_lower:
+        upper_change = current_upper - prior_upper
+        lower_change = current_lower - prior_lower
+        bounds_signal["upper_change"] = round(upper_change, 2)
+        bounds_signal["lower_change"] = round(lower_change, 2)
+
+        # Check if both bounds shifted in same direction (directional bias)
+        # Threshold: $0.50 shift is significant
+        if upper_change > 0.5 and lower_change > 0.5:
+            bounds_signal["direction"] = "SHIFTED_UP"
+            bounds_signal["implication"] = f"Both bounds moved UP (upper +${upper_change:.2f}, lower +${lower_change:.2f}). Options market pricing HIGHER prices today. Bullish bias."
+        elif upper_change < -0.5 and lower_change < -0.5:
+            bounds_signal["direction"] = "SHIFTED_DOWN"
+            bounds_signal["implication"] = f"Both bounds moved DOWN (upper ${upper_change:.2f}, lower ${lower_change:.2f}). Options market pricing LOWER prices today. Bearish bias."
+        elif abs(upper_change) < 0.5 and abs(lower_change) < 0.5:
+            bounds_signal["direction"] = "STABLE"
+            bounds_signal["implication"] = "Expected range unchanged from prior day. Market has no new directional conviction."
+        else:
+            bounds_signal["direction"] = "MIXED"
+            bounds_signal["implication"] = f"Bounds moved asymmetrically (upper {upper_change:+.2f}, lower {lower_change:+.2f}). Possible skew shift in options."
+
+    # =========================================================================
+    # SIGNAL 3: RANGE WIDTH (VOLATILITY)
+    # =========================================================================
+    width_signal = {
+        "current_width": round(current_width, 2),
+        "prior_width": round(prior_width, 2) if prior_width else None,
+        "change": None,
+        "change_pct": None,
+        "direction": "UNKNOWN",
+        "implication": "Prior width not available"
+    }
+
+    if prior_width and prior_width > 0:
+        width_change = current_width - prior_width
+        width_change_pct = (width_change / prior_width) * 100
+        width_signal["change"] = round(width_change, 2)
+        width_signal["change_pct"] = round(width_change_pct, 1)
+
+        # Threshold: 5% width change is significant
+        if width_change_pct > 5:
+            width_signal["direction"] = "WIDENING"
+            width_signal["implication"] = f"Expected range EXPANDED {width_change_pct:.1f}% (+${width_change:.2f}). Bigger move priced in today. Iron Condors riskier - wider strikes needed. Straddles more expensive."
+        elif width_change_pct < -5:
+            width_signal["direction"] = "NARROWING"
+            width_signal["implication"] = f"Expected range CONTRACTED {abs(width_change_pct):.1f}% (${width_change:.2f}). Smaller move expected. Premium selling opportunity - Iron Condors favored. Straddles cheaper."
+        else:
+            width_signal["direction"] = "STABLE"
+            width_signal["implication"] = "Volatility expectations unchanged. Yesterday's position sizing still appropriate."
+
+    # =========================================================================
+    # SIGNAL 4: WALLS MOVEMENT
+    # =========================================================================
+    walls_signal = {
+        "current_call_wall": round(current_call_wall, 2) if current_call_wall else None,
+        "current_put_wall": round(current_put_wall, 2) if current_put_wall else None,
+        "prior_call_wall": round(prior_call_wall, 2) if prior_call_wall else None,
+        "prior_put_wall": round(prior_put_wall, 2) if prior_put_wall else None,
+        "call_wall_change": None,
+        "put_wall_change": None,
+        "asymmetry": None,
+        "implication": "Wall data not available"
+    }
+
+    if current_call_wall and current_put_wall and prior_call_wall and prior_put_wall:
+        call_change = current_call_wall - prior_call_wall
+        put_change = current_put_wall - prior_put_wall
+        walls_signal["call_wall_change"] = round(call_change, 2)
+        walls_signal["put_wall_change"] = round(put_change, 2)
+
+        # Calculate asymmetry: which wall is closer to spot?
+        call_dist = current_call_wall - current_spot
+        put_dist = current_spot - current_put_wall
+
+        if call_dist > 0 and put_dist > 0:
+            asymmetry = (call_dist - put_dist) / current_spot * 100
+            walls_signal["asymmetry"] = round(asymmetry, 2)
+
+            if asymmetry > 0.3:
+                walls_signal["implication"] = f"Put wall closer than call wall (asymmetry {asymmetry:.2f}%). More downside protection in place. Downside moves may find support faster."
+            elif asymmetry < -0.3:
+                walls_signal["implication"] = f"Call wall closer than put wall (asymmetry {asymmetry:.2f}%). Upside capped more tightly. Upside moves may face resistance."
+            else:
+                walls_signal["implication"] = "Walls roughly symmetric. Balanced risk profile for Iron Condors."
+
+    # =========================================================================
+    # SIGNAL 5: INTRADAY EM CHANGE (Open → Now)
+    # =========================================================================
+    intraday_signal = {
+        "open_em": round(open_em, 2) if open_em else None,
+        "current_em": round(current_em, 2),
+        "change": None,
+        "change_pct": None,
+        "direction": "UNKNOWN",
+        "implication": "Today's open EM not available"
+    }
+
+    if open_em and open_em > 0:
+        intraday_change = current_em - open_em
+        intraday_change_pct = (intraday_change / open_em) * 100
+        intraday_signal["change"] = round(intraday_change, 2)
+        intraday_signal["change_pct"] = round(intraday_change_pct, 1)
+
+        # Threshold: 3% intraday change is significant
+        if intraday_change_pct > 3:
+            intraday_signal["direction"] = "EXPANDING"
+            intraday_signal["implication"] = f"Intraday vol EXPANDING +{intraday_change_pct:.1f}%. Breakout developing NOW. Existing ICs at risk, directional plays gaining edge."
+        elif intraday_change_pct < -3:
+            intraday_signal["direction"] = "CONTRACTING"
+            intraday_signal["implication"] = f"Intraday vol CONTRACTING {intraday_change_pct:.1f}%. Morning spike fading. Premium selling window opening, consider new ICs."
+        else:
+            intraday_signal["direction"] = "STABLE"
+            intraday_signal["implication"] = "Intraday vol stable. No significant change from open. Current positions sizing still appropriate."
+
+    # =========================================================================
+    # SIGNAL 6: VIX REGIME CONTEXT
+    # =========================================================================
+    vix_regime_signal = {
+        "vix": round(current_vix, 2),
+        "regime": "UNKNOWN",
+        "implication": "VIX data not available"
+    }
+
+    if current_vix:
+        if current_vix < 15:
+            vix_regime_signal["regime"] = "LOW"
+            vix_regime_signal["implication"] = "LOW VIX (<15): Cheap options, small premiums. Directional plays affordable. IC profits will be modest."
+            vix_regime_signal["strategy_modifier"] = "Size up on directional, reduce IC allocation"
+        elif current_vix < 22:
+            vix_regime_signal["regime"] = "NORMAL"
+            vix_regime_signal["implication"] = "NORMAL VIX (15-22): Ideal for Iron Condors. Good premium, manageable risk. Standard position sizing."
+            vix_regime_signal["strategy_modifier"] = "Standard allocation to both ICs and directional"
+        elif current_vix < 28:
+            vix_regime_signal["regime"] = "ELEVATED"
+            vix_regime_signal["implication"] = "ELEVATED VIX (22-28): Fat premiums but bigger swings. Wider strikes on ICs, directional has edge."
+            vix_regime_signal["strategy_modifier"] = "Wider IC strikes, favor directional plays"
+        elif current_vix < 35:
+            vix_regime_signal["regime"] = "HIGH"
+            vix_regime_signal["implication"] = "HIGH VIX (28-35): Crisis conditions. Huge premiums but extreme risk. Reduce size, go directional with trend."
+            vix_regime_signal["strategy_modifier"] = "Reduce size 50%, favor directional with trend"
+        else:
+            vix_regime_signal["regime"] = "EXTREME"
+            vix_regime_signal["implication"] = "EXTREME VIX (>35): Panic mode. Skip ICs entirely. Small directional with strict stops only."
+            vix_regime_signal["strategy_modifier"] = "Skip ICs, small directional only"
+
+    # =========================================================================
+    # SIGNAL 7: GAMMA REGIME ALIGNMENT
+    # =========================================================================
+    regime_signal = {
+        "current_regime": gamma_regime or "UNKNOWN",
+        "alignment": "UNKNOWN",
+        "implication": "Gamma regime data not available"
+    }
+
+    if gamma_regime:
+        regime_signal["current_regime"] = gamma_regime
+
+        # Determine alignment with other signals
+        if gamma_regime == "POSITIVE":
+            regime_signal["alignment"] = "MEAN_REVERSION"
+            regime_signal["implication"] = "POSITIVE GAMMA: MMs absorb moves (mean reversion). Breakouts will face resistance. ICs safer, directional breakouts may fail."
+            regime_signal["ic_safety"] = "HIGH"
+            regime_signal["breakout_reliability"] = "LOW"
+        elif gamma_regime == "NEGATIVE":
+            regime_signal["alignment"] = "MOMENTUM"
+            regime_signal["implication"] = "NEGATIVE GAMMA: MMs amplify moves (momentum). Breakouts accelerate. ICs riskier, directional has strong edge."
+            regime_signal["ic_safety"] = "LOW"
+            regime_signal["breakout_reliability"] = "HIGH"
+        else:
+            regime_signal["alignment"] = "NEUTRAL"
+            regime_signal["implication"] = "NEUTRAL GAMMA: Balanced market. Standard trading rules apply."
+            regime_signal["ic_safety"] = "MEDIUM"
+            regime_signal["breakout_reliability"] = "MEDIUM"
+
+    # =========================================================================
+    # SIGNAL 8: NET GEX MOMENTUM
+    # =========================================================================
+    gex_momentum_signal = {
+        "current_gex": round(current_net_gex, 2) if current_net_gex else None,
+        "prior_gex": None,
+        "change": None,
+        "change_pct": None,
+        "direction": "UNKNOWN",
+        "conviction": "UNKNOWN",
+        "implication": "Net GEX data not available"
+    }
+
+    # Get prior day's net GEX from database
+    prior_net_gex = None
+    try:
+        conn = get_connection()
+        if conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT net_gex
+                FROM gex_history
+                WHERE symbol = 'SPY'
+                AND DATE(timestamp) < CURRENT_DATE
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """)
+            row = cursor.fetchone()
+            if row and row[0]:
+                prior_net_gex = float(row[0])
+            cursor.close()
+            conn.close()
+    except Exception as e:
+        logger.warning(f"Could not fetch prior net GEX: {e}")
+
+    if current_net_gex is not None and prior_net_gex is not None:
+        gex_momentum_signal["prior_gex"] = round(prior_net_gex, 2)
+        gex_change = current_net_gex - prior_net_gex
+
+        # Calculate percentage change relative to magnitude
+        if abs(prior_net_gex) > 0:
+            gex_change_pct = (gex_change / abs(prior_net_gex)) * 100
+        else:
+            gex_change_pct = 0
+
+        gex_momentum_signal["change"] = round(gex_change, 2)
+        gex_momentum_signal["change_pct"] = round(gex_change_pct, 1)
+
+        # Determine direction and conviction
+        if gex_change > 0 and current_net_gex > 0:
+            gex_momentum_signal["direction"] = "STRENGTHENING_POSITIVE"
+            gex_momentum_signal["conviction"] = "STRONG_BULLISH"
+            gex_momentum_signal["implication"] = f"Net GEX increasing (+{gex_change_pct:.1f}%) and POSITIVE. Strong bullish conviction. Dealers adding upside hedges."
+        elif gex_change < 0 and current_net_gex < 0:
+            gex_momentum_signal["direction"] = "STRENGTHENING_NEGATIVE"
+            gex_momentum_signal["conviction"] = "STRONG_BEARISH"
+            gex_momentum_signal["implication"] = f"Net GEX decreasing ({gex_change_pct:.1f}%) and NEGATIVE. Strong bearish conviction. Dealers adding downside hedges."
+        elif gex_change > 0 and current_net_gex < 0:
+            gex_momentum_signal["direction"] = "WEAKENING_NEGATIVE"
+            gex_momentum_signal["conviction"] = "BEARISH_FADING"
+            gex_momentum_signal["implication"] = f"Net GEX rising (+{gex_change_pct:.1f}%) but still NEGATIVE. Bearish conviction weakening. Possible reversal brewing."
+        elif gex_change < 0 and current_net_gex > 0:
+            gex_momentum_signal["direction"] = "WEAKENING_POSITIVE"
+            gex_momentum_signal["conviction"] = "BULLISH_FADING"
+            gex_momentum_signal["implication"] = f"Net GEX falling ({gex_change_pct:.1f}%) but still POSITIVE. Bullish conviction weakening. Watch for breakdown."
+        else:
+            gex_momentum_signal["direction"] = "STABLE"
+            gex_momentum_signal["conviction"] = "NEUTRAL"
+            gex_momentum_signal["implication"] = "Net GEX stable. No significant change in dealer positioning conviction."
+
+    # =========================================================================
+    # SIGNAL 9: WALL BREAK RISK
+    # =========================================================================
+    wall_break_signal = {
+        "call_wall_risk": "UNKNOWN",
+        "put_wall_risk": "UNKNOWN",
+        "primary_risk": "NONE",
+        "implication": "Wall break risk data not available"
+    }
+
+    if current_call_wall and current_put_wall and current_spot:
+        call_dist_pct = ((current_call_wall - current_spot) / current_spot) * 100
+        put_dist_pct = ((current_spot - current_put_wall) / current_spot) * 100
+
+        wall_break_signal["call_distance_pct"] = round(call_dist_pct, 2)
+        wall_break_signal["put_distance_pct"] = round(put_dist_pct, 2)
+
+        # Check for danger zones at walls
+        call_wall_danger = None
+        put_wall_danger = None
+        if danger_zones:
+            for dz in danger_zones:
+                dz_strike = dz.get('strike', 0)
+                # Check if danger zone is at or near a wall
+                if abs(dz_strike - current_call_wall) < 1:  # Within $1
+                    call_wall_danger = dz.get('danger_type')
+                if abs(dz_strike - current_put_wall) < 1:
+                    put_wall_danger = dz.get('danger_type')
+
+        # Assess call wall break risk
+        if call_dist_pct < 0.3:  # Within 0.3%
+            if call_wall_danger == "COLLAPSING" or gamma_regime == "NEGATIVE":
+                wall_break_signal["call_wall_risk"] = "HIGH"
+            else:
+                wall_break_signal["call_wall_risk"] = "ELEVATED"
+        elif call_dist_pct < 0.7:  # Within 0.7%
+            if call_wall_danger == "COLLAPSING":
+                wall_break_signal["call_wall_risk"] = "ELEVATED"
+            else:
+                wall_break_signal["call_wall_risk"] = "MODERATE"
+        else:
+            wall_break_signal["call_wall_risk"] = "LOW"
+
+        # Assess put wall break risk
+        if put_dist_pct < 0.3:  # Within 0.3%
+            if put_wall_danger == "COLLAPSING" or gamma_regime == "NEGATIVE":
+                wall_break_signal["put_wall_risk"] = "HIGH"
+            else:
+                wall_break_signal["put_wall_risk"] = "ELEVATED"
+        elif put_dist_pct < 0.7:  # Within 0.7%
+            if put_wall_danger == "COLLAPSING":
+                wall_break_signal["put_wall_risk"] = "ELEVATED"
+            else:
+                wall_break_signal["put_wall_risk"] = "MODERATE"
+        else:
+            wall_break_signal["put_wall_risk"] = "LOW"
+
+        # Determine primary risk
+        if wall_break_signal["call_wall_risk"] == "HIGH":
+            wall_break_signal["primary_risk"] = "CALL_BREAK"
+            wall_break_signal["implication"] = f"HIGH call wall break risk! Price {call_dist_pct:.2f}% from call wall. {'Gamma COLLAPSING at wall - weakening resistance.' if call_wall_danger == 'COLLAPSING' else 'Negative gamma regime amplifies breakouts.'}"
+        elif wall_break_signal["put_wall_risk"] == "HIGH":
+            wall_break_signal["primary_risk"] = "PUT_BREAK"
+            wall_break_signal["implication"] = f"HIGH put wall break risk! Price {put_dist_pct:.2f}% from put wall. {'Gamma COLLAPSING at wall - weakening support.' if put_wall_danger == 'COLLAPSING' else 'Negative gamma regime amplifies breakdowns.'}"
+        elif wall_break_signal["call_wall_risk"] == "ELEVATED":
+            wall_break_signal["primary_risk"] = "CALL_APPROACHING"
+            wall_break_signal["implication"] = f"Call wall under pressure. Price {call_dist_pct:.2f}% away. Watch for breakout."
+        elif wall_break_signal["put_wall_risk"] == "ELEVATED":
+            wall_break_signal["primary_risk"] = "PUT_APPROACHING"
+            wall_break_signal["implication"] = f"Put wall under pressure. Price {put_dist_pct:.2f}% away. Watch for breakdown."
+        else:
+            wall_break_signal["primary_risk"] = "NONE"
+            wall_break_signal["implication"] = f"Walls intact. Call {call_dist_pct:.1f}% away, Put {put_dist_pct:.1f}% away. Safe for premium selling within range."
+
+    # =========================================================================
+    # COMBINED SIGNAL & TRADING RECOMMENDATION
+    # =========================================================================
+    combined = _generate_combined_signal(
+        flip_signal["direction"],
+        bounds_signal["direction"],
+        width_signal["direction"],
+        current_spot,
+        current_flip_point,
+        current_call_wall,
+        current_put_wall,
+        gamma_regime=gamma_regime,
+        vix_regime=vix_regime_signal.get("regime"),
+        intraday_direction=intraday_signal.get("direction"),
+        wall_break_risk=wall_break_signal.get("primary_risk"),
+        gex_conviction=gex_momentum_signal.get("conviction")
+    )
+
+    result = {
+        "flip_point": flip_signal,
+        "bounds": bounds_signal,
+        "width": width_signal,
+        "walls": walls_signal,
+        "intraday": intraday_signal,
+        "vix_regime": vix_regime_signal,
+        "gamma_regime": regime_signal,
+        "gex_momentum": gex_momentum_signal,
+        "wall_break": wall_break_signal,
+        "combined": combined,
+        "spot_price": round(current_spot, 2),
+        "vix": round(current_vix, 2),
+        "timestamp": format_central_timestamp()
+    }
+
+    # Cache the result
+    _structure_cache[cache_key] = result
+    _structure_cache_time[cache_key] = time.time()
+
+    return result
+
+
+def _generate_combined_signal(
+    flip_direction: str,
+    bounds_direction: str,
+    width_direction: str,
+    spot: float,
+    flip_point: float = None,
+    call_wall: float = None,
+    put_wall: float = None,
+    gamma_regime: str = None,
+    vix_regime: str = None,
+    intraday_direction: str = None,
+    wall_break_risk: str = None,
+    gex_conviction: str = None
+) -> dict:
+    """
+    Generate combined trading signal from individual signals.
+
+    Now considers:
+    - Gamma regime (POSITIVE/NEGATIVE) for IC safety
+    - VIX regime for sizing
+    - Intraday vol direction for timing
+    - Wall break risk for warnings
+    - GEX conviction for confidence
+
+    Returns actionable recommendation with profit zone and breakout risks.
+    """
+    signal = "NEUTRAL"
+    bias = "NONE"
+    confidence = "LOW"
+    strategy = ""
+    profit_zone = ""
+    breakout_risk = ""
+    warnings = []
+
+    # Build profit zone description
+    if call_wall and put_wall:
+        profit_zone = f"Profit zone: ${put_wall:.0f} - ${call_wall:.0f}"
+        call_dist = ((call_wall - spot) / spot * 100) if spot > 0 else 0
+        put_dist = ((spot - put_wall) / spot * 100) if spot > 0 else 0
+        breakout_risk = f"Call wall {call_dist:.1f}% away, Put wall {put_dist:.1f}% away"
+
+    # Determine spot position relative to flip point
+    spot_vs_flip = ""
+    if flip_point and spot:
+        if spot > flip_point:
+            spot_vs_flip = "ABOVE_FLIP"
+        else:
+            spot_vs_flip = "BELOW_FLIP"
+
+    # =========================================================================
+    # CONTEXT MODIFIERS - Add warnings based on new signals
+    # =========================================================================
+
+    # Gamma regime warnings
+    ic_warning = ""
+    breakout_warning = ""
+    if gamma_regime == "NEGATIVE":
+        ic_warning = " WARNING: Negative gamma - ICs riskier, breakouts will accelerate!"
+        breakout_warning = " Negative gamma amplifies moves."
+    elif gamma_regime == "POSITIVE":
+        breakout_warning = " Positive gamma may resist breakout."
+
+    # VIX regime modifiers
+    vix_modifier = ""
+    if vix_regime == "HIGH" or vix_regime == "EXTREME":
+        vix_modifier = f" VIX {vix_regime}: Reduce size 50%!"
+        warnings.append(f"VIX {vix_regime} - reduce position size")
+    elif vix_regime == "ELEVATED":
+        vix_modifier = " VIX ELEVATED: Use wider strikes."
+        warnings.append("VIX elevated - widen IC strikes")
+    elif vix_regime == "LOW":
+        vix_modifier = " VIX LOW: Premiums are thin."
+
+    # Intraday vol modifier
+    intraday_modifier = ""
+    if intraday_direction == "EXPANDING":
+        intraday_modifier = " Vol expanding intraday - breakout in progress!"
+        warnings.append("Intraday vol expanding")
+    elif intraday_direction == "CONTRACTING":
+        intraday_modifier = " Vol contracting intraday - premium selling window."
+
+    # Wall break risk warnings
+    if wall_break_risk in ["CALL_BREAK", "PUT_BREAK"]:
+        warnings.append(f"HIGH {wall_break_risk.replace('_', ' ')} RISK!")
+
+    # GEX conviction boost
+    conviction_boost = False
+    if gex_conviction in ["STRONG_BULLISH", "STRONG_BEARISH"]:
+        conviction_boost = True
+
+    # =========================================================================
+    # SIGNAL LOGIC MATRIX (Enhanced with context)
+    # =========================================================================
+
+    # BULLISH SCENARIOS
+    if flip_direction == "RISING" and bounds_direction == "SHIFTED_UP":
+        if width_direction == "WIDENING":
+            signal = "BULLISH_BREAKOUT"
+            bias = "BULLISH"
+            confidence = "HIGH" if (gamma_regime == "NEGATIVE" or conviction_boost) else "MEDIUM"
+            strategy = f"BUY CALL SPREADS or GO LONG. Dealers and options market both bullish.{breakout_warning}{vix_modifier}"
+        else:
+            signal = "BULLISH_GRIND"
+            bias = "BULLISH"
+            confidence = "HIGH" if conviction_boost else "MEDIUM"
+            strategy = f"SELL PUT SPREADS. Bullish bias with contained volatility.{vix_modifier}"
+
+    # BEARISH SCENARIOS
+    elif flip_direction == "FALLING" and bounds_direction == "SHIFTED_DOWN":
+        if width_direction == "WIDENING":
+            signal = "BEARISH_BREAKOUT"
+            bias = "BEARISH"
+            confidence = "HIGH" if (gamma_regime == "NEGATIVE" or conviction_boost) else "MEDIUM"
+            strategy = f"BUY PUT SPREADS or GO SHORT. Dealers and options market both bearish.{breakout_warning}{vix_modifier}"
+        else:
+            signal = "BEARISH_GRIND"
+            bias = "BEARISH"
+            confidence = "HIGH" if conviction_boost else "MEDIUM"
+            strategy = f"SELL CALL SPREADS. Bearish bias with contained volatility.{vix_modifier}"
+
+    # PREMIUM SELLING SCENARIOS
+    elif width_direction == "NARROWING":
+        if gamma_regime == "NEGATIVE":
+            # Downgrade IC recommendations in negative gamma
+            signal = "SELL_PREMIUM_CAUTION"
+            bias = "NEUTRAL"
+            confidence = "LOW"
+            strategy = f"CAUTION: Vol narrowing but NEGATIVE gamma makes ICs risky. {profit_zone}. Consider smaller size or skip.{ic_warning}"
+        elif flip_direction == "STABLE" and bounds_direction in ["STABLE", "MIXED"]:
+            signal = "SELL_PREMIUM"
+            bias = "NEUTRAL"
+            confidence = "HIGH" if gamma_regime == "POSITIVE" else "MEDIUM"
+            strategy = f"IRON CONDORS favored. Volatility contracting, no directional conviction. {profit_zone}.{' Positive gamma = safer ICs.' if gamma_regime == 'POSITIVE' else ''}{vix_modifier}"
+        elif flip_direction == "RISING":
+            signal = "SELL_PREMIUM_BULLISH_TILT"
+            bias = "SLIGHT_BULLISH"
+            confidence = "MEDIUM"
+            strategy = f"IRON CONDORS with PUT SPREAD wider. Dealers slightly bullish. {profit_zone}.{vix_modifier}"
+        elif flip_direction == "FALLING":
+            signal = "SELL_PREMIUM_BEARISH_TILT"
+            bias = "SLIGHT_BEARISH"
+            confidence = "MEDIUM"
+            strategy = f"IRON CONDORS with CALL SPREAD wider. Dealers slightly bearish. {profit_zone}.{vix_modifier}"
+
+    # VOL EXPANSION WITHOUT DIRECTION
+    elif width_direction == "WIDENING" and flip_direction == "STABLE":
+        signal = "VOL_EXPANSION_NO_DIRECTION"
+        bias = "NONE"
+        confidence = "LOW"
+        strategy = f"CAUTION - vol expanding but no direction. Wait for clearer signal.{intraday_modifier}{vix_modifier}"
+
+    # DIVERGENCE SCENARIOS (conflicting signals)
+    elif flip_direction == "RISING" and bounds_direction == "SHIFTED_DOWN":
+        signal = "DIVERGENCE_BULLISH_DEALERS"
+        bias = "UNCERTAIN"
+        confidence = "LOW"
+        strategy = f"MIXED SIGNALS - Dealers bullish but options pricing lower. Possible reversal. Watch for confirmation."
+
+    elif flip_direction == "FALLING" and bounds_direction == "SHIFTED_UP":
+        signal = "DIVERGENCE_BEARISH_DEALERS"
+        bias = "UNCERTAIN"
+        confidence = "LOW"
+        strategy = f"MIXED SIGNALS - Dealers bearish but options pricing higher. Possible exhaustion. Watch for confirmation."
+
+    # WALL BREAK IMMINENT - Override other signals
+    elif wall_break_risk in ["CALL_BREAK", "PUT_BREAK"]:
+        if wall_break_risk == "CALL_BREAK":
+            signal = "CALL_WALL_BREAK_IMMINENT"
+            bias = "BULLISH"
+            confidence = "HIGH" if gamma_regime == "NEGATIVE" else "MEDIUM"
+            strategy = f"UPSIDE BREAKOUT IMMINENT! Consider buying calls or closing short call spreads.{breakout_warning}"
+        else:
+            signal = "PUT_WALL_BREAK_IMMINENT"
+            bias = "BEARISH"
+            confidence = "HIGH" if gamma_regime == "NEGATIVE" else "MEDIUM"
+            strategy = f"DOWNSIDE BREAKDOWN IMMINENT! Consider buying puts or closing short put spreads.{breakout_warning}"
+
+    # DEFAULT: NEUTRAL
+    else:
+        signal = "NEUTRAL"
+        bias = "NONE"
+        confidence = "LOW"
+        strategy = f"No clear edge. Consider ICs within {profit_zone}.{ic_warning if gamma_regime == 'NEGATIVE' else ''}{vix_modifier}"
+
+    return {
+        "signal": signal,
+        "bias": bias,
+        "confidence": confidence,
+        "strategy": strategy,
+        "profit_zone": profit_zone,
+        "breakout_risk": breakout_risk,
+        "spot_position": spot_vs_flip,
+        "warnings": warnings,
+        "gamma_regime_context": gamma_regime,
+        "vix_regime_context": vix_regime
+    }
 
 
 @router.get("/history")
@@ -783,6 +1765,84 @@ async def persist_danger_zones_to_db(danger_zones: list, spot_price: float, expi
         logger.debug(f"Danger zone sync: {count} active, resolved inactive ones")
     except Exception as e:
         logger.warning(f"Failed to persist danger zones: {e}")
+
+
+async def persist_argus_snapshot_to_db(
+    symbol: str,
+    expiration_date: str,
+    spot_price: float,
+    expected_move: float,
+    vix: float,
+    total_net_gamma: float,
+    gamma_regime: str,
+    previous_regime: str = None,
+    regime_flipped: bool = False,
+    market_status: str = "open"
+):
+    """
+    Persist ARGUS snapshot to database for prior day comparisons.
+
+    This enables the market structure signals to compare today vs prior day:
+    - Flip point movement
+    - Expected move bounds shift
+    - Range width changes
+    - GEX momentum
+    """
+    try:
+        conn = get_connection()
+        if not conn:
+            logger.warning("No database connection for ARGUS snapshot persistence")
+            return
+
+        cursor = conn.cursor()
+
+        # Check if we already have a snapshot for this minute (prevent duplicates)
+        cursor.execute("""
+            SELECT id FROM argus_snapshots
+            WHERE symbol = %s
+            AND snapshot_time > NOW() - INTERVAL '1 minute'
+            LIMIT 1
+        """, (symbol,))
+
+        if cursor.fetchone():
+            cursor.close()
+            conn.close()
+            return  # Already have a recent snapshot
+
+        # Insert new snapshot
+        cursor.execute("""
+            INSERT INTO argus_snapshots (
+                symbol, expiration_date, snapshot_time,
+                spot_price, expected_move, vix,
+                total_net_gamma, gamma_regime, previous_regime,
+                regime_flipped, market_status
+            ) VALUES (
+                %s, %s, NOW(),
+                %s, %s, %s,
+                %s, %s, %s,
+                %s, %s
+            )
+        """, (
+            symbol,
+            expiration_date,
+            spot_price,
+            expected_move,
+            vix,
+            total_net_gamma,
+            gamma_regime,
+            previous_regime,
+            regime_flipped,
+            market_status
+        ))
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        logger.debug(f"ARGUS snapshot persisted: {symbol} spot=${spot_price:.2f} EM=${expected_move:.2f}")
+
+    except Exception as e:
+        logger.warning(f"Failed to persist ARGUS snapshot: {e}")
 
 
 @router.get("/alerts")
@@ -1255,12 +2315,91 @@ def get_default_accuracy() -> dict:
     }
 
 
+def calculate_pattern_similarity(current: dict, historical: dict) -> float:
+    """
+    Calculate similarity score between current gamma structure and a historical day.
+    Returns a score from 0-100.
+    """
+    score = 0.0
+    weights = {
+        'regime': 30,      # Same regime is most important
+        'net_gex': 25,     # Similar net GEX level
+        'flip_dist': 20,   # Similar flip point distance from spot
+        'wall_ratio': 15,  # Similar call/put wall balance
+        'mm_state': 10,    # Same market maker state
+    }
+
+    # 1. Regime match (30 points)
+    if current.get('regime') and historical.get('regime'):
+        if current['regime'] == historical['regime']:
+            score += weights['regime']
+        elif (current['regime'] in ['POSITIVE', 'STRONG_POSITIVE'] and
+              historical['regime'] in ['POSITIVE', 'STRONG_POSITIVE']):
+            score += weights['regime'] * 0.7
+        elif (current['regime'] in ['NEGATIVE', 'STRONG_NEGATIVE'] and
+              historical['regime'] in ['NEGATIVE', 'STRONG_NEGATIVE']):
+            score += weights['regime'] * 0.7
+
+    # 2. Net GEX similarity (25 points) - compare magnitude
+    if current.get('net_gex') and historical.get('net_gex'):
+        curr_gex = abs(current['net_gex'])
+        hist_gex = abs(historical['net_gex'])
+        if curr_gex > 0 and hist_gex > 0:
+            ratio = min(curr_gex, hist_gex) / max(curr_gex, hist_gex)
+            # Same sign bonus
+            if (current['net_gex'] > 0) == (historical['net_gex'] > 0):
+                score += weights['net_gex'] * ratio
+            else:
+                score += weights['net_gex'] * ratio * 0.3
+
+    # 3. Flip point distance from spot (20 points)
+    if (current.get('flip_point') and current.get('spot_price') and
+        historical.get('flip_point') and historical.get('spot_price')):
+        curr_flip_dist = (current['flip_point'] - current['spot_price']) / current['spot_price'] * 100
+        hist_flip_dist = (historical['flip_point'] - historical['spot_price']) / historical['spot_price'] * 100
+        # Similar distance = higher score
+        dist_diff = abs(curr_flip_dist - hist_flip_dist)
+        if dist_diff < 0.5:
+            score += weights['flip_dist']
+        elif dist_diff < 1.0:
+            score += weights['flip_dist'] * 0.7
+        elif dist_diff < 2.0:
+            score += weights['flip_dist'] * 0.4
+
+    # 4. Call/Put wall ratio (15 points)
+    if (current.get('call_wall') and current.get('put_wall') and current.get('spot_price') and
+        historical.get('call_wall') and historical.get('put_wall') and historical.get('spot_price')):
+        curr_call_dist = (current['call_wall'] - current['spot_price']) / current['spot_price'] * 100
+        curr_put_dist = (current['spot_price'] - current['put_wall']) / current['spot_price'] * 100
+        hist_call_dist = (historical['call_wall'] - historical['spot_price']) / historical['spot_price'] * 100
+        hist_put_dist = (historical['spot_price'] - historical['put_wall']) / historical['spot_price'] * 100
+
+        call_diff = abs(curr_call_dist - hist_call_dist)
+        put_diff = abs(curr_put_dist - hist_put_dist)
+        avg_diff = (call_diff + put_diff) / 2
+
+        if avg_diff < 0.5:
+            score += weights['wall_ratio']
+        elif avg_diff < 1.0:
+            score += weights['wall_ratio'] * 0.7
+        elif avg_diff < 2.0:
+            score += weights['wall_ratio'] * 0.4
+
+    # 5. Market maker state (10 points)
+    if current.get('mm_state') and historical.get('mm_state'):
+        if current['mm_state'] == historical['mm_state']:
+            score += weights['mm_state']
+
+    return round(score, 1)
+
+
 @router.get("/patterns")
 async def get_pattern_matches():
     """
     Get pattern match analysis.
 
-    Compares current gamma structure to historical patterns.
+    Compares current gamma structure to historical patterns from gex_history table.
+    Returns similar historical days and their price outcomes.
     """
     engine = get_engine()
     if not engine or not engine.previous_snapshot:
@@ -1268,30 +2407,303 @@ async def get_pattern_matches():
             "success": True,
             "data": {
                 "patterns": [],
-                "message": "No pattern data available yet"
+                "message": "No current gamma data available"
             }
         }
 
     try:
-        # This would use historical data to find similar patterns
-        # For now, return placeholder
+        snapshot = engine.previous_snapshot
+
+        # Build current structure for comparison
+        current_structure = {
+            'regime': snapshot.gamma_regime,
+            'net_gex': snapshot.total_net_gamma,
+            'spot_price': snapshot.spot_price,
+            'flip_point': None,  # Will be calculated below
+            'call_wall': None,
+            'put_wall': None,
+            'mm_state': None,
+        }
+
+        # Get flip point, walls from strikes
+        if snapshot.strikes:
+            # Find flip point (where gamma crosses zero)
+            for i, strike in enumerate(snapshot.strikes[:-1]):
+                if hasattr(strike, 'net_gamma'):
+                    curr_gamma = strike.net_gamma
+                    next_gamma = snapshot.strikes[i + 1].net_gamma if hasattr(snapshot.strikes[i + 1], 'net_gamma') else 0
+                    if curr_gamma * next_gamma < 0:  # Sign change
+                        current_structure['flip_point'] = strike.strike
+                        break
+
+            # Find call and put walls (highest gamma strikes above/below spot)
+            above_spot = [s for s in snapshot.strikes if hasattr(s, 'strike') and s.strike > snapshot.spot_price]
+            below_spot = [s for s in snapshot.strikes if hasattr(s, 'strike') and s.strike < snapshot.spot_price]
+
+            if above_spot:
+                call_wall = max(above_spot, key=lambda s: abs(getattr(s, 'net_gamma', 0)))
+                current_structure['call_wall'] = call_wall.strike
+            if below_spot:
+                put_wall = max(below_spot, key=lambda s: abs(getattr(s, 'net_gamma', 0)))
+                current_structure['put_wall'] = put_wall.strike
+
+        # Query historical data from gex_history table
+        conn = get_connection()
+        if not conn:
+            return {
+                "success": True,
+                "data": {
+                    "patterns": [],
+                    "current_structure": {
+                        "gamma_regime": snapshot.gamma_regime,
+                        "top_magnet": snapshot.magnets[0]['strike'] if snapshot.magnets else None,
+                        "likely_pin": snapshot.likely_pin
+                    },
+                    "message": "Database not available for pattern matching"
+                }
+            }
+
+        cursor = conn.cursor()
+
+        # Get daily snapshots from gex_history for gamma structure
+        # Join with price_history AND market_data_daily for ACTUAL daily OHLC data
+        # Look back 90 days for pattern matching
+        #
+        # BUG FIX: Previously used gex_history spot_price as open/close which was
+        # just the price at snapshot time (e.g., 10 AM), NOT actual market open/close.
+        # Now uses price_history OR market_data_daily (Yahoo Finance) for real OHLC.
+        cursor.execute("""
+            WITH daily_snapshots AS (
+                -- Get one GEX snapshot per day (morning snapshot for gamma structure)
+                SELECT DISTINCT ON (DATE(timestamp))
+                    DATE(timestamp) as trade_date,
+                    net_gex,
+                    flip_point,
+                    call_wall,
+                    put_wall,
+                    spot_price as snapshot_price,
+                    mm_state,
+                    regime
+                FROM gex_history
+                WHERE symbol = 'SPY'
+                AND timestamp > NOW() - INTERVAL '90 days'
+                AND timestamp < NOW() - INTERVAL '1 day'
+                AND EXTRACT(HOUR FROM timestamp) BETWEEN 9 AND 11
+                ORDER BY DATE(timestamp), timestamp
+            ),
+            price_history_ohlc AS (
+                -- Get daily OHLC from price_history table (Tradier/Polygon)
+                SELECT
+                    DATE(timestamp) as trade_date,
+                    open as day_open,
+                    high as day_high,
+                    low as day_low,
+                    close as day_close,
+                    volume as day_volume
+                FROM price_history
+                WHERE symbol = 'SPY'
+                AND timeframe = '1d'
+                AND timestamp > NOW() - INTERVAL '90 days'
+            ),
+            yahoo_ohlc AS (
+                -- Fallback: Get daily OHLC from market_data_daily (Yahoo Finance)
+                SELECT
+                    date as trade_date,
+                    open as day_open,
+                    high as day_high,
+                    low as day_low,
+                    close as day_close,
+                    volume as day_volume
+                FROM market_data_daily
+                WHERE symbol = 'SPY'
+                AND date > NOW() - INTERVAL '90 days'
+            ),
+            combined_ohlc AS (
+                -- Combine both sources, preferring price_history over yahoo
+                SELECT DISTINCT ON (trade_date)
+                    COALESCE(ph.trade_date, yh.trade_date) as trade_date,
+                    COALESCE(ph.day_open, yh.day_open) as day_open,
+                    COALESCE(ph.day_high, yh.day_high) as day_high,
+                    COALESCE(ph.day_low, yh.day_low) as day_low,
+                    COALESCE(ph.day_close, yh.day_close) as day_close,
+                    COALESCE(ph.day_volume, yh.day_volume) as day_volume,
+                    CASE WHEN ph.trade_date IS NOT NULL THEN 'price_history' ELSE 'yahoo' END as data_source
+                FROM price_history_ohlc ph
+                FULL OUTER JOIN yahoo_ohlc yh ON ph.trade_date = yh.trade_date
+                ORDER BY trade_date, data_source
+            ),
+            daily_outcomes AS (
+                SELECT
+                    ds.trade_date,
+                    ds.net_gex,
+                    ds.flip_point,
+                    ds.call_wall,
+                    ds.put_wall,
+                    ds.mm_state,
+                    ds.regime,
+                    ds.snapshot_price,
+                    -- Use ACTUAL OHLC from combined sources, fallback to gex snapshot prices
+                    COALESCE(ohlc.day_open, ds.snapshot_price) as open_price,
+                    COALESCE(ohlc.day_close, ds.snapshot_price) as close_price,
+                    COALESCE(ohlc.day_high, ds.snapshot_price) as day_high,
+                    COALESCE(ohlc.day_low, ds.snapshot_price) as day_low,
+                    COALESCE(ohlc.day_high - ohlc.day_low, 0) as day_range,
+                    -- Flag to indicate if we have real OHLC data
+                    CASE WHEN ohlc.day_open IS NOT NULL THEN TRUE ELSE FALSE END as has_real_ohlc
+                FROM daily_snapshots ds
+                LEFT JOIN combined_ohlc ohlc ON ds.trade_date = ohlc.trade_date
+            )
+            SELECT
+                trade_date,
+                net_gex,
+                flip_point,
+                call_wall,
+                put_wall,
+                open_price,
+                mm_state,
+                regime,
+                close_price,
+                day_high,
+                day_low,
+                day_range,
+                CASE
+                    WHEN close_price > open_price THEN 'UP'
+                    WHEN close_price < open_price THEN 'DOWN'
+                    ELSE 'FLAT'
+                END as outcome_direction,
+                CASE
+                    WHEN open_price > 0 THEN ROUND(((close_price - open_price) / open_price * 100)::numeric, 2)
+                    ELSE 0
+                END as outcome_pct,
+                ROUND((close_price - open_price)::numeric, 2) as price_change,
+                has_real_ohlc
+            FROM daily_outcomes
+            WHERE net_gex IS NOT NULL
+            ORDER BY trade_date DESC
+        """)
+
+        rows = cursor.fetchall()
+        cursor.close()
+        conn.close()
+
+        if not rows:
+            return {
+                "success": True,
+                "data": {
+                    "patterns": [],
+                    "current_structure": {
+                        "gamma_regime": snapshot.gamma_regime,
+                        "top_magnet": snapshot.magnets[0]['strike'] if snapshot.magnets else None,
+                        "likely_pin": snapshot.likely_pin
+                    },
+                    "message": "No historical gamma data available for pattern matching"
+                }
+            }
+
+        # Calculate similarity for each historical day
+        pattern_matches = []
+        days_with_real_ohlc = 0
+        for row in rows:
+            (trade_date, net_gex, flip_point, call_wall, put_wall, open_price,
+             mm_state, regime, close_price, day_high, day_low, day_range,
+             outcome_dir, outcome_pct, price_change, has_real_ohlc) = row
+
+            # Track how many days have real OHLC data
+            if has_real_ohlc:
+                days_with_real_ohlc += 1
+
+            historical = {
+                'net_gex': float(net_gex) if net_gex else None,
+                'flip_point': float(flip_point) if flip_point else None,
+                'call_wall': float(call_wall) if call_wall else None,
+                'put_wall': float(put_wall) if put_wall else None,
+                'spot_price': float(open_price) if open_price else None,
+                'mm_state': mm_state,
+                'regime': regime,
+            }
+
+            similarity = calculate_pattern_similarity(current_structure, historical)
+
+            if similarity >= 30:  # Only include matches with at least 30% similarity
+                # Generate a summary of what happened that day
+                summary_parts = []
+                if regime:
+                    summary_parts.append(f"{regime} gamma regime")
+                if outcome_dir == 'UP':
+                    summary_parts.append(f"SPY rallied +${abs(float(price_change or 0)):.2f} ({abs(float(outcome_pct or 0)):.1f}%)")
+                elif outcome_dir == 'DOWN':
+                    summary_parts.append(f"SPY fell -${abs(float(price_change or 0)):.2f} ({abs(float(outcome_pct or 0)):.1f}%)")
+                else:
+                    # Only show "flat" if we have real OHLC and it truly was flat
+                    if has_real_ohlc:
+                        summary_parts.append("SPY closed flat")
+                    else:
+                        summary_parts.append("SPY outcome unknown (no price data)")
+
+                if day_range and float(day_range) > 0:
+                    range_pct = (float(day_range) / float(open_price) * 100) if open_price else 0
+                    summary_parts.append(f"Range: ${float(day_range):.2f} ({range_pct:.1f}%)")
+
+                if mm_state:
+                    summary_parts.append(f"MMs were {mm_state}")
+
+                summary = ". ".join(summary_parts) + "." if summary_parts else "No summary available."
+
+                pattern_matches.append({
+                    'date': trade_date.strftime('%Y-%m-%d') if trade_date else None,
+                    'similarity_score': similarity,
+                    'outcome_direction': outcome_dir if has_real_ohlc else 'UNKNOWN',
+                    'outcome_pct': float(outcome_pct) if outcome_pct else 0.0,
+                    'price_change': float(price_change) if price_change else 0.0,
+                    'gamma_regime_then': regime or 'UNKNOWN',
+                    'mm_state': mm_state or 'UNKNOWN',
+                    # Price details
+                    'open_price': float(open_price) if open_price else None,
+                    'close_price': float(close_price) if close_price else None,
+                    'day_high': float(day_high) if day_high else None,
+                    'day_low': float(day_low) if day_low else None,
+                    'day_range': float(day_range) if day_range else None,
+                    # Key levels that day
+                    'flip_point': float(flip_point) if flip_point else None,
+                    'call_wall': float(call_wall) if call_wall else None,
+                    'put_wall': float(put_wall) if put_wall else None,
+                    # Data quality indicator
+                    'has_real_ohlc': bool(has_real_ohlc),
+                    # Summary
+                    'summary': summary,
+                })
+
+        # Sort by similarity score and take top 5
+        pattern_matches.sort(key=lambda x: x['similarity_score'], reverse=True)
+        top_matches = pattern_matches[:5]
+
         return {
             "success": True,
             "data": {
-                "patterns": [],
+                "patterns": top_matches,
                 "current_structure": {
-                    "gamma_regime": engine.previous_snapshot.gamma_regime,
-                    "top_magnet": engine.previous_snapshot.magnets[0]['strike']
-                        if engine.previous_snapshot.magnets else None,
-                    "likely_pin": engine.previous_snapshot.likely_pin
+                    "gamma_regime": snapshot.gamma_regime,
+                    "top_magnet": snapshot.magnets[0]['strike'] if snapshot.magnets else None,
+                    "likely_pin": snapshot.likely_pin
                 },
-                "message": "Pattern matching will be available after collecting more historical data"
+                "total_days_analyzed": len(rows),
+                "matches_found": len(pattern_matches),
+                "days_with_real_ohlc": days_with_real_ohlc,
+                "data_quality_note": f"{days_with_real_ohlc}/{len(rows)} days have verified daily OHLC data" if rows else None
             }
         }
 
     except Exception as e:
         logger.error(f"Error getting pattern matches: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        traceback.print_exc()
+        return {
+            "success": True,
+            "data": {
+                "patterns": [],
+                "message": f"Error analyzing patterns: {str(e)}"
+            }
+        }
 
 
 @router.get("/export")

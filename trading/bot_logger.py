@@ -46,6 +46,7 @@ class BotName(Enum):
     HERMES = "HERMES"
     ORACLE = "ORACLE"
     ATHENA = "ATHENA"    # Directional Spreads (Bull Call / Bear Call)
+    ICARUS = "ICARUS"    # Aggressive Directional Spreads (relaxed GEX filters)
     PEGASUS = "PEGASUS"  # SPX Iron Condor ($10 spreads, weekly)
 
 
@@ -506,7 +507,34 @@ def log_bot_decision(decision: BotDecision) -> Optional[str]:
 
     Returns:
         decision_id if successful, None if failed
+
+    Note: Includes numpy type conversion to prevent database errors.
     """
+    # Helper to convert numpy types to Python native types
+    def _convert_numpy(val):
+        try:
+            import numpy as np
+            if isinstance(val, (np.integer, np.int64, np.int32)):
+                return int(val)
+            elif isinstance(val, (np.floating, np.float64, np.float32)):
+                return float(val)
+            elif isinstance(val, np.bool_):
+                return bool(val)
+            elif isinstance(val, np.ndarray):
+                return val.tolist()
+        except ImportError:
+            pass
+        return val
+
+    def _convert_dict_numpy(d):
+        if d is None:
+            return None
+        if isinstance(d, dict):
+            return {k: _convert_dict_numpy(v) for k, v in d.items()}
+        elif isinstance(d, list):
+            return [_convert_dict_numpy(item) for item in d]
+        return _convert_numpy(d)
+
     decision_id = generate_decision_id(decision.bot_name)
 
     # Auto-generate session_id if not provided
@@ -557,35 +585,35 @@ def log_bot_decision(decision: BotDecision) -> Optional[str]:
             )
             RETURNING decision_id
         """, (
-            decision_id, decision.bot_name, decision.session_id, decision.scan_cycle, decision.decision_sequence,
+            decision_id, decision.bot_name, decision.session_id, _convert_numpy(decision.scan_cycle), _convert_numpy(decision.decision_sequence),
             decision.decision_type, decision.action, decision.symbol, decision.strategy,
-            decision.signal_source, decision.override_occurred, json.dumps(decision.override_details),
-            decision.strike, decision.expiration, decision.option_type, decision.contracts,
-            decision.market_context.spot_price, decision.market_context.vix, decision.market_context.net_gex,
-            decision.market_context.gex_regime, decision.market_context.flip_point,
-            decision.market_context.call_wall, decision.market_context.put_wall, decision.market_context.trend,
+            decision.signal_source, decision.override_occurred, json.dumps(_convert_dict_numpy(decision.override_details)),
+            _convert_numpy(decision.strike), decision.expiration, decision.option_type, _convert_numpy(decision.contracts),
+            _convert_numpy(decision.market_context.spot_price), _convert_numpy(decision.market_context.vix), _convert_numpy(decision.market_context.net_gex),
+            decision.market_context.gex_regime, _convert_numpy(decision.market_context.flip_point),
+            _convert_numpy(decision.market_context.call_wall), _convert_numpy(decision.market_context.put_wall), decision.market_context.trend,
             decision.claude_context.prompt, decision.claude_context.response, decision.claude_context.model,
-            decision.claude_context.tokens_used, decision.claude_context.response_time_ms,
+            _convert_numpy(decision.claude_context.tokens_used), _convert_numpy(decision.claude_context.response_time_ms),
             decision.claude_context.chain_name, decision.claude_context.confidence,
-            json.dumps(decision.claude_context.warnings),
+            json.dumps(_convert_dict_numpy(decision.claude_context.warnings)),
             decision.entry_reasoning, decision.strike_reasoning, decision.size_reasoning, decision.exit_reasoning,
-            json.dumps([a.to_dict() for a in decision.alternatives_considered]),
+            json.dumps(_convert_dict_numpy([a.to_dict() for a in decision.alternatives_considered])),
             json.dumps({}),  # rejection_reasons
-            json.dumps(decision.other_strategies_considered),
+            json.dumps(_convert_dict_numpy(decision.other_strategies_considered)),
             decision.psychology_pattern, decision.liberation_setup, decision.false_floor_detected,
-            json.dumps(decision.forward_magnets),
-            decision.kelly_pct, decision.position_size_dollars, decision.max_risk_dollars,
-            decision.backtest_win_rate, decision.backtest_expectancy, decision.backtest_sharpe,
-            json.dumps([r.to_dict() for r in decision.risk_checks]),
+            json.dumps(_convert_dict_numpy(decision.forward_magnets)),
+            _convert_numpy(decision.kelly_pct), _convert_numpy(decision.position_size_dollars), _convert_numpy(decision.max_risk_dollars),
+            _convert_numpy(decision.backtest_win_rate), _convert_numpy(decision.backtest_expectancy), _convert_numpy(decision.backtest_sharpe),
+            json.dumps(_convert_dict_numpy([r.to_dict() for r in decision.risk_checks])),
             decision.passed_all_checks, decision.blocked_reason,
             decision.execution.order_submitted_at, decision.execution.order_filled_at,
-            decision.execution.broker_order_id, decision.execution.expected_fill_price,
-            decision.execution.actual_fill_price, decision.execution.slippage_pct,
+            decision.execution.broker_order_id, _convert_numpy(decision.execution.expected_fill_price),
+            _convert_numpy(decision.execution.actual_fill_price), _convert_numpy(decision.execution.slippage_pct),
             decision.execution.broker_status, decision.execution.execution_notes,
-            json.dumps([a.to_dict() for a in decision.api_calls]),
-            json.dumps(decision.errors_encountered),
-            decision.processing_time_ms,
-            json.dumps(decision.to_dict())
+            json.dumps(_convert_dict_numpy([a.to_dict() for a in decision.api_calls])),
+            json.dumps(_convert_dict_numpy(decision.errors_encountered)),
+            _convert_numpy(decision.processing_time_ms),
+            json.dumps(_convert_dict_numpy(decision.to_dict()))
         ))
 
         result = c.fetchone()
@@ -876,3 +904,8 @@ def get_athena_logger():
 def get_pegasus_logger():
     """Get a pre-configured logger for PEGASUS"""
     return lambda decision: log_bot_decision(decision) if decision.bot_name == "PEGASUS" else None
+
+
+def get_icarus_logger():
+    """Get a pre-configured logger for ICARUS"""
+    return lambda decision: log_bot_decision(decision) if decision.bot_name == "ICARUS" else None

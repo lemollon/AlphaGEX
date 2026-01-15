@@ -78,6 +78,36 @@ except ImportError:
     DB_AVAILABLE = False
     get_connection = None
 
+
+# Context manager for safe database connections (prevents connection leaks)
+from contextlib import contextmanager
+
+@contextmanager
+def get_db_connection():
+    """
+    Context manager for database connections.
+
+    Ensures connections are always closed, even if an exception occurs.
+
+    Usage:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(...)
+    """
+    conn = None
+    try:
+        if not DB_AVAILABLE or get_connection is None:
+            yield None
+        else:
+            conn = get_connection()
+            yield conn
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
 # Oracle integration
 try:
     from quant.oracle_advisor import (
@@ -114,6 +144,8 @@ class BotName(Enum):
     ATLAS = "ATLAS"       # SPX Wheel (Cash-Secured Puts)
     PEGASUS = "PEGASUS"
     PHOENIX = "PHOENIX"
+    ICARUS = "ICARUS"     # Aggressive Directional Spreads
+    TITAN = "TITAN"       # Aggressive SPX Iron Condor
 
 
 class ActionType(Enum):
@@ -663,7 +695,10 @@ class SolomonFeedbackLoop:
         self._ensure_schema()
         self._oracle = None
 
-        logger.info(f"Solomon initialized with session {self.session_id}")
+        logger.info(f"[SOLOMON] Initialized new session: {self.session_id}")
+        logger.info(f"[SOLOMON] Database available: {DB_AVAILABLE}")
+        logger.info(f"[SOLOMON] Oracle available: {ORACLE_AVAILABLE}")
+        logger.info(f"[SOLOMON] Math Optimizer available: {MATH_OPTIMIZER_AVAILABLE}")
 
     def _generate_session_id(self) -> str:
         """Generate unique session ID"""
@@ -676,15 +711,16 @@ class SolomonFeedbackLoop:
             logger.warning("Database not available - Solomon running in limited mode")
             return
 
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
-            cursor.execute(SCHEMA_SQL)
-            conn.commit()
-            conn.close()
-            logger.info("Solomon database schema verified")
-        except Exception as e:
-            logger.error(f"Failed to create Solomon schema: {e}")
+        with get_db_connection() as conn:
+            if conn is None:
+                return
+            try:
+                cursor = conn.cursor()
+                cursor.execute(SCHEMA_SQL)
+                conn.commit()
+                logger.info("Solomon database schema verified")
+            except Exception as e:
+                logger.error(f"Failed to create Solomon schema: {e}")
 
     @property
     def oracle(self):
@@ -740,47 +776,60 @@ class SolomonFeedbackLoop:
             error_message=error_message
         )
 
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
+        with get_db_connection() as conn:
+            if conn is None:
+                return None
+            try:
+                cursor = conn.cursor()
 
-            cursor.execute("""
-                INSERT INTO solomon_audit_log (
-                    timestamp, bot_name, actor, session_id, action_type,
-                    action_description, before_state, after_state, reason,
-                    justification, version_from, version_to, proposal_id,
-                    success, error_message
-                ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
-                ) RETURNING id
-            """, (
-                entry.timestamp,
-                entry.bot_name,
-                entry.actor,
-                entry.session_id,
-                entry.action_type,
-                entry.action_description,
-                json.dumps(entry.before_state),
-                json.dumps(entry.after_state),
-                entry.reason,
-                json.dumps(entry.justification),
-                entry.version_from,
-                entry.version_to,
-                entry.proposal_id,
-                entry.success,
-                entry.error_message
-            ))
+                cursor.execute("""
+                    INSERT INTO solomon_audit_log (
+                        timestamp, bot_name, actor, session_id, action_type,
+                        action_description, before_state, after_state, reason,
+                        justification, version_from, version_to, proposal_id,
+                        success, error_message
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    ) RETURNING id
+                """, (
+                    entry.timestamp,
+                    entry.bot_name,
+                    entry.actor,
+                    entry.session_id,
+                    entry.action_type,
+                    entry.action_description,
+                    json.dumps(entry.before_state),
+                    json.dumps(entry.after_state),
+                    entry.reason,
+                    json.dumps(entry.justification),
+                    entry.version_from,
+                    entry.version_to,
+                    entry.proposal_id,
+                    entry.success,
+                    entry.error_message
+                ))
 
-            audit_id = cursor.fetchone()[0]
-            conn.commit()
-            conn.close()
+                audit_id = cursor.fetchone()[0]
+                conn.commit()
 
-            logger.info(f"[AUDIT #{audit_id}] {bot_name} | {action_type.value} | {description}")
-            return audit_id
+                # Enhanced logging with more context
+                log_msg = f"[SOLOMON AUDIT #{audit_id}] {bot_name} | {action_type.value} | {description}"
+                if reason:
+                    log_msg += f" | Reason: {reason}"
+                if version_from and version_to:
+                    log_msg += f" | Version: {version_from} → {version_to}"
+                if proposal_id:
+                    log_msg += f" | Proposal: {proposal_id}"
+                if not success:
+                    log_msg += f" | FAILED: {error_message}"
 
-        except Exception as e:
-            logger.error(f"Failed to log audit entry: {e}")
-            return None
+                logger.info(log_msg)
+                return audit_id
+
+            except Exception as e:
+                logger.error(f"[SOLOMON] Failed to log audit entry: {e}")
+                logger.error(f"[SOLOMON] Audit details - Bot: {bot_name}, Action: {action_type.value}, Description: {description}")
+                return None
 
     def get_audit_log(
         self,
@@ -796,42 +845,43 @@ class SolomonFeedbackLoop:
         if not DB_AVAILABLE:
             return []
 
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
+        with get_db_connection() as conn:
+            if conn is None:
+                return []
+            try:
+                cursor = conn.cursor()
 
-            query = "SELECT * FROM solomon_audit_log WHERE 1=1"
-            params = []
+                query = "SELECT * FROM solomon_audit_log WHERE 1=1"
+                params = []
 
-            if bot_name:
-                query += " AND bot_name = %s"
-                params.append(bot_name)
+                if bot_name:
+                    query += " AND bot_name = %s"
+                    params.append(bot_name)
 
-            if action_type:
-                query += " AND action_type = %s"
-                params.append(action_type)
+                if action_type:
+                    query += " AND action_type = %s"
+                    params.append(action_type)
 
-            if start_date:
-                query += " AND timestamp >= %s"
-                params.append(start_date)
+                if start_date:
+                    query += " AND timestamp >= %s"
+                    params.append(start_date)
 
-            if end_date:
-                query += " AND timestamp <= %s"
-                params.append(end_date)
+                if end_date:
+                    query += " AND timestamp <= %s"
+                    params.append(end_date)
 
-            query += " ORDER BY timestamp DESC LIMIT %s"
-            params.append(limit)
+                query += " ORDER BY timestamp DESC LIMIT %s"
+                params.append(limit)
 
-            cursor.execute(query, params)
-            columns = [desc[0] for desc in cursor.description]
-            rows = cursor.fetchall()
-            conn.close()
+                cursor.execute(query, params)
+                columns = [desc[0] for desc in cursor.description]
+                rows = cursor.fetchall()
 
-            return [dict(zip(columns, row)) for row in rows]
+                return [dict(zip(columns, row)) for row in rows]
 
-        except Exception as e:
-            logger.error(f"Failed to get audit log: {e}")
-            return []
+            except Exception as e:
+                logger.error(f"Failed to get audit log: {e}")
+                return []
 
     # =========================================================================
     # PROPOSAL MANAGEMENT
@@ -889,58 +939,66 @@ class SolomonFeedbackLoop:
             logger.info(f"[PROPOSAL] {proposal_id} | {bot_name} | {title}")
             return proposal_id
 
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
+        with get_db_connection() as conn:
+            if conn is None:
+                return None
+            try:
+                cursor = conn.cursor()
 
-            cursor.execute("""
-                INSERT INTO solomon_proposals (
-                    proposal_id, created_at, expires_at, proposal_type, bot_name,
-                    title, description, current_value, proposed_value, change_summary,
-                    reason, supporting_metrics, expected_improvement, risk_level,
-                    risk_factors, rollback_plan, status
-                ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                cursor.execute("""
+                    INSERT INTO solomon_proposals (
+                        proposal_id, created_at, expires_at, proposal_type, bot_name,
+                        title, description, current_value, proposed_value, change_summary,
+                        reason, supporting_metrics, expected_improvement, risk_level,
+                        risk_factors, rollback_plan, status
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    )
+                """, (
+                    proposal.proposal_id,
+                    proposal.created_at,
+                    proposal.expires_at,
+                    proposal.proposal_type,
+                    proposal.bot_name,
+                    proposal.title,
+                    proposal.description,
+                    json.dumps(proposal.current_value),
+                    json.dumps(proposal.proposed_value),
+                    proposal.change_summary,
+                    proposal.reason,
+                    json.dumps(proposal.supporting_metrics),
+                    json.dumps(proposal.expected_improvement),
+                    proposal.risk_level,
+                    json.dumps(proposal.risk_factors),
+                    proposal.rollback_plan,
+                    ProposalStatus.PENDING.value
+                ))
+
+                conn.commit()
+
+                # Log the proposal creation
+                self.log_action(
+                    bot_name=bot_name,
+                    action_type=ActionType.PROPOSAL_CREATED,
+                    description=f"Proposal created: {title}",
+                    reason=reason,
+                    justification=supporting_metrics,
+                    proposal_id=proposal_id
                 )
-            """, (
-                proposal.proposal_id,
-                proposal.created_at,
-                proposal.expires_at,
-                proposal.proposal_type,
-                proposal.bot_name,
-                proposal.title,
-                proposal.description,
-                json.dumps(proposal.current_value),
-                json.dumps(proposal.proposed_value),
-                proposal.change_summary,
-                proposal.reason,
-                json.dumps(proposal.supporting_metrics),
-                json.dumps(proposal.expected_improvement),
-                proposal.risk_level,
-                json.dumps(proposal.risk_factors),
-                proposal.rollback_plan,
-                ProposalStatus.PENDING.value
-            ))
 
-            conn.commit()
-            conn.close()
+                logger.info(f"[SOLOMON PROPOSAL] Created {proposal_id}")
+                logger.info(f"[SOLOMON PROPOSAL]   Bot: {bot_name} | Type: {proposal_type.value}")
+                logger.info(f"[SOLOMON PROPOSAL]   Title: {title}")
+                logger.info(f"[SOLOMON PROPOSAL]   Risk Level: {risk_level} | Expires: {expires_at.strftime('%Y-%m-%d %H:%M')} CT")
+                logger.info(f"[SOLOMON PROPOSAL]   Change: {change_summary}")
+                if expected_improvement:
+                    logger.info(f"[SOLOMON PROPOSAL]   Expected Improvement: {expected_improvement}")
+                return proposal_id
 
-            # Log the proposal creation
-            self.log_action(
-                bot_name=bot_name,
-                action_type=ActionType.PROPOSAL_CREATED,
-                description=f"Proposal created: {title}",
-                reason=reason,
-                justification=supporting_metrics,
-                proposal_id=proposal_id
-            )
-
-            logger.info(f"Created proposal {proposal_id}: {title}")
-            return proposal_id
-
-        except Exception as e:
-            logger.error(f"Failed to create proposal: {e}")
-            return None
+            except Exception as e:
+                logger.error(f"[SOLOMON] Failed to create proposal: {e}")
+                logger.error(f"[SOLOMON] Proposal details - Bot: {bot_name}, Title: {title}, Type: {proposal_type.value}")
+                return None
 
     def _build_change_summary(self, current: Dict, proposed: Dict) -> str:
         """Build human-readable summary of changes"""
@@ -990,16 +1048,20 @@ class SolomonFeedbackLoop:
 
             row = cursor.fetchone()
             if not row:
-                logger.error(f"Proposal {proposal_id} not found")
+                logger.error(f"[SOLOMON] Proposal {proposal_id} not found - cannot approve")
                 conn.close()
                 return False
 
             proposal_type, bot_name, title, current_value, proposed_value, reason, metrics, status = row
 
             if status != ProposalStatus.PENDING.value:
-                logger.warning(f"Proposal {proposal_id} is not pending (status: {status})")
+                logger.warning(f"[SOLOMON] Proposal {proposal_id} is not pending (current status: {status}) - cannot approve")
                 conn.close()
                 return False
+
+            logger.info(f"[SOLOMON APPROVAL] Processing approval for {proposal_id}")
+            logger.info(f"[SOLOMON APPROVAL]   Bot: {bot_name} | Title: {title}")
+            logger.info(f"[SOLOMON APPROVAL]   Reviewer: {reviewer} | Notes: {notes or 'None'}")
 
             # Update proposal status
             reviewed_at = datetime.now(CENTRAL_TZ)
@@ -1025,6 +1087,7 @@ class SolomonFeedbackLoop:
             )
 
             # Apply the changes
+            logger.info(f"[SOLOMON APPROVAL] Applying changes for {proposal_id}...")
             success = self._apply_proposal(proposal_id, proposal_type, bot_name, proposed_value)
 
             if success:
@@ -1038,11 +1101,15 @@ class SolomonFeedbackLoop:
                 """, (ProposalStatus.APPLIED.value, datetime.now(CENTRAL_TZ), proposal_id))
                 conn.commit()
                 conn.close()
+                logger.info(f"[SOLOMON APPROVAL] Successfully applied proposal {proposal_id}")
+                logger.info(f"[SOLOMON APPROVAL]   Changes applied to {bot_name} at {datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d %H:%M:%S')} CT")
+            else:
+                logger.error(f"[SOLOMON APPROVAL] Failed to apply proposal {proposal_id}")
 
             return success
 
         except Exception as e:
-            logger.error(f"Failed to approve proposal: {e}")
+            logger.error(f"[SOLOMON] Failed to approve proposal {proposal_id}: {e}")
             traceback.print_exc()
             return False
 
@@ -1094,10 +1161,13 @@ class SolomonFeedbackLoop:
                 proposal_id=proposal_id
             )
 
+            logger.info(f"[SOLOMON REJECTION] Proposal {proposal_id} rejected")
+            logger.info(f"[SOLOMON REJECTION]   Bot: {bot_name} | Title: {title}")
+            logger.info(f"[SOLOMON REJECTION]   Reviewer: {reviewer} | Notes: {notes or 'None'}")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to reject proposal: {e}")
+            logger.error(f"[SOLOMON] Failed to reject proposal {proposal_id}: {e}")
             return False
 
     def _apply_proposal(
@@ -1513,8 +1583,14 @@ class SolomonFeedbackLoop:
         rollback_id = f"ROLL-{datetime.now(CENTRAL_TZ).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}"
 
         if not DB_AVAILABLE:
-            logger.info(f"[ROLLBACK] {rollback_id} | {bot_name} → {to_version_id}")
+            logger.info(f"[SOLOMON ROLLBACK] {rollback_id} | {bot_name} → {to_version_id} (DB not available)")
             return True
+
+        logger.info(f"[SOLOMON ROLLBACK] Initiating rollback {rollback_id}")
+        logger.info(f"[SOLOMON ROLLBACK]   Bot: {bot_name}")
+        logger.info(f"[SOLOMON ROLLBACK]   Target version: {to_version_id}")
+        logger.info(f"[SOLOMON ROLLBACK]   Reason: {reason}")
+        logger.info(f"[SOLOMON ROLLBACK]   Triggered by: {triggered_by} | Automatic: {automatic}")
 
         try:
             conn = get_connection()
@@ -1600,11 +1676,13 @@ class SolomonFeedbackLoop:
                 justification={'automatic': automatic, 'performance_before': perf_before}
             )
 
-            logger.info(f"Rollback {rollback_id} completed: {from_version_number} → {target_version_number}")
+            logger.info(f"[SOLOMON ROLLBACK] Rollback {rollback_id} completed successfully")
+            logger.info(f"[SOLOMON ROLLBACK]   Version change: {from_version_number} → {target_version_number}")
+            logger.info(f"[SOLOMON ROLLBACK]   Performance before rollback: {json.dumps(perf_before)}")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to rollback: {e}")
+            logger.error(f"[SOLOMON ROLLBACK] Failed to execute rollback {rollback_id}: {e}")
             traceback.print_exc()
             return False
 
@@ -1613,21 +1691,29 @@ class SolomonFeedbackLoop:
         if not DB_AVAILABLE:
             return {}
 
+        conn = None
         try:
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Get recent trades
-            table_map = {
+            # SECURITY: Whitelist table names to prevent SQL injection
+            # Only these exact table names are allowed
+            ALLOWED_TABLES = {
                 'ARES': 'ares_positions',
                 'ATHENA': 'athena_positions',
                 'PEGASUS': 'pegasus_positions',
-                'PHOENIX': 'autonomous_trades'
+                'PHOENIX': 'autonomous_trades',
+                'ATLAS': 'atlas_positions',
             }
 
-            table = table_map.get(bot_name, 'unified_trades')
+            # Validate bot_name against whitelist
+            table = ALLOWED_TABLES.get(bot_name.upper())
+            if not table:
+                logger.warning(f"Unknown bot_name '{bot_name}' - using unified_trades")
+                table = 'unified_trades'
 
-            cursor.execute(f"""
+            # Build query with whitelisted table name (safe from SQL injection)
+            query = f"""
                 SELECT
                     COUNT(*) as total_trades,
                     SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
@@ -1635,10 +1721,10 @@ class SolomonFeedbackLoop:
                     SUM(realized_pnl) as total_pnl
                 FROM {table}
                 WHERE created_at > NOW() - INTERVAL '30 days'
-            """)
+            """
+            cursor.execute(query)
 
             row = cursor.fetchone()
-            conn.close()
 
             if row:
                 total, wins, losses, pnl = row
@@ -1646,7 +1732,7 @@ class SolomonFeedbackLoop:
                     'total_trades': total or 0,
                     'wins': wins or 0,
                     'losses': losses or 0,
-                    'win_rate': (wins / total * 100) if total else 0,
+                    'win_rate': (wins / total * 100) if total and total > 0 else 0,
                     'total_pnl': float(pnl) if pnl else 0
                 }
             return {}
@@ -1654,6 +1740,9 @@ class SolomonFeedbackLoop:
         except Exception as e:
             logger.debug(f"Could not get performance: {e}")
             return {}
+        finally:
+            if conn:
+                conn.close()
 
     def get_rollback_history(self, bot_name: str = None, limit: int = 20) -> List[Dict]:
         """Get rollback history"""
@@ -1831,8 +1920,12 @@ class SolomonFeedbackLoop:
 
     def activate_kill_switch(self, bot_name: str, reason: str, killed_by: str = "SYSTEM") -> bool:
         """Activate kill switch for a bot"""
+        logger.warning(f"[SOLOMON KILL SWITCH] Activating kill switch for {bot_name}")
+        logger.warning(f"[SOLOMON KILL SWITCH]   Reason: {reason}")
+        logger.warning(f"[SOLOMON KILL SWITCH]   Killed by: {killed_by}")
+
         if not DB_AVAILABLE:
-            logger.warning(f"[KILL SWITCH] {bot_name} KILLED: {reason}")
+            logger.warning(f"[SOLOMON KILL SWITCH] {bot_name} KILLED (DB not available)")
             return True
 
         try:
@@ -1862,15 +1955,20 @@ class SolomonFeedbackLoop:
                 actor=killed_by
             )
 
+            logger.warning(f"[SOLOMON KILL SWITCH] Kill switch ACTIVATED for {bot_name} - all trading halted")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to activate kill switch: {e}")
+            logger.error(f"[SOLOMON KILL SWITCH] Failed to activate kill switch for {bot_name}: {e}")
             return False
 
     def deactivate_kill_switch(self, bot_name: str, resumed_by: str) -> bool:
         """Deactivate kill switch for a bot"""
+        logger.info(f"[SOLOMON KILL SWITCH] Deactivating kill switch for {bot_name}")
+        logger.info(f"[SOLOMON KILL SWITCH]   Resumed by: {resumed_by}")
+
         if not DB_AVAILABLE:
+            logger.info(f"[SOLOMON KILL SWITCH] {bot_name} resumed (DB not available)")
             return True
 
         try:
@@ -1894,53 +1992,45 @@ class SolomonFeedbackLoop:
                 actor=f"USER:{resumed_by}"
             )
 
+            logger.info(f"[SOLOMON KILL SWITCH] Kill switch DEACTIVATED for {bot_name} - trading resumed")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to deactivate kill switch: {e}")
+            logger.error(f"[SOLOMON KILL SWITCH] Failed to deactivate kill switch for {bot_name}: {e}")
             return False
 
     def is_bot_killed(self, bot_name: str) -> bool:
-        """Check if a bot's kill switch is active"""
-        if not DB_AVAILABLE:
-            return False
+        """Check if a bot's kill switch is active.
 
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
+        NOTE: Kill switch functionality has been removed.
+        This method always returns False (trading allowed).
 
-            cursor.execute("""
-                SELECT is_killed FROM solomon_kill_switch WHERE bot_name = %s
-            """, (bot_name,))
-
-            row = cursor.fetchone()
-            conn.close()
-
-            return row[0] if row else False
-
-        except Exception as e:
-            logger.error(f"Failed to check kill switch: {e}")
-            return False
+        Returns:
+            Always False - kill switch is never active
+        """
+        # Kill switch removed - always allow trading
+        return False
 
     def get_kill_switch_status(self) -> Dict[str, Dict]:
         """Get kill switch status for all bots"""
         if not DB_AVAILABLE:
             return {}
 
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
+        with get_db_connection() as conn:
+            if conn is None:
+                return {}
+            try:
+                cursor = conn.cursor()
 
-            cursor.execute("SELECT * FROM solomon_kill_switch")
-            columns = [desc[0] for desc in cursor.description]
-            rows = cursor.fetchall()
-            conn.close()
+                cursor.execute("SELECT * FROM solomon_kill_switch")
+                columns = [desc[0] for desc in cursor.description]
+                rows = cursor.fetchall()
 
-            return {row[1]: dict(zip(columns, row)) for row in rows}
+                return {row[1]: dict(zip(columns, row)) for row in rows}
 
-        except Exception as e:
-            logger.error(f"Failed to get kill switch status: {e}")
-            return {}
+            except Exception as e:
+                logger.error(f"Failed to get kill switch status: {e}")
+                return {}
 
     # =========================================================================
     # FEEDBACK LOOP EXECUTION
@@ -1965,6 +2055,12 @@ class SolomonFeedbackLoop:
         run_id = f"RUN-{datetime.now(CENTRAL_TZ).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}"
         started_at = datetime.now(CENTRAL_TZ)
 
+        logger.info(f"[SOLOMON FEEDBACK LOOP] ========================================")
+        logger.info(f"[SOLOMON FEEDBACK LOOP] Starting feedback loop run: {run_id}")
+        logger.info(f"[SOLOMON FEEDBACK LOOP] Start time: {started_at.strftime('%Y-%m-%d %H:%M:%S')} CT")
+        logger.info(f"[SOLOMON FEEDBACK LOOP] Session: {self.session_id}")
+        logger.info(f"[SOLOMON FEEDBACK LOOP] ========================================")
+
         self.log_action(
             bot_name="SYSTEM",
             action_type=ActionType.FEEDBACK_LOOP_RUN,
@@ -1979,17 +2075,22 @@ class SolomonFeedbackLoop:
         errors = []
         outcomes_processed = 0
 
-        bots = [BotName.ARES, BotName.ATHENA, BotName.PEGASUS, BotName.PHOENIX]
+        bots = [BotName.ARES, BotName.ATHENA, BotName.ATLAS, BotName.PEGASUS, BotName.PHOENIX]
 
         try:
             # Step 1: Expire old proposals
+            logger.info(f"[SOLOMON FEEDBACK LOOP] Step 1: Checking for expired proposals...")
             expired_count = self.expire_old_proposals()
             if expired_count > 0:
-                logger.info(f"Expired {expired_count} old proposals")
+                logger.info(f"[SOLOMON FEEDBACK LOOP]   Expired {expired_count} old proposals")
+            else:
+                logger.info(f"[SOLOMON FEEDBACK LOOP]   No proposals to expire")
 
             # Step 1.5: AUTO-APPLY proven proposals (Solomon's autonomous improvement)
             # Check all proposals with active validations for proven improvement
+            logger.info(f"[SOLOMON FEEDBACK LOOP] Step 1.5: Checking for proven proposals to auto-apply...")
             pending_proposals = self.get_pending_proposals()
+            logger.info(f"[SOLOMON FEEDBACK LOOP]   Found {len(pending_proposals)} pending proposals")
             for proposal in pending_proposals:
                 proposal_id = proposal.get('proposal_id')
                 if not proposal_id:
@@ -2026,28 +2127,39 @@ class SolomonFeedbackLoop:
                     logger.debug(f"Could not check proposal {proposal_id} for auto-apply: {e}")
 
             # Step 2-5: Process each bot
+            logger.info(f"[SOLOMON FEEDBACK LOOP] Step 2-5: Processing bots: {[b.value for b in bots]}")
             for bot in bots:
                 bot_name = bot.value
+                logger.info(f"[SOLOMON FEEDBACK LOOP] Processing {bot_name}...")
 
                 # Skip if killed
                 if self.is_bot_killed(bot_name):
-                    logger.info(f"Skipping {bot_name} - kill switch active")
+                    logger.info(f"[SOLOMON FEEDBACK LOOP]   {bot_name} - SKIPPED (kill switch active)")
                     continue
 
                 try:
                     # Record performance snapshot
-                    self.record_performance_snapshot(bot_name)
+                    logger.info(f"[SOLOMON FEEDBACK LOOP]   {bot_name} - Recording performance snapshot...")
+                    snapshot_id = self.record_performance_snapshot(bot_name)
+                    if snapshot_id:
+                        logger.info(f"[SOLOMON FEEDBACK LOOP]   {bot_name} - Performance snapshot: {snapshot_id}")
+                    else:
+                        logger.info(f"[SOLOMON FEEDBACK LOOP]   {bot_name} - No performance data available")
 
                     # Detect degradation
+                    logger.info(f"[SOLOMON FEEDBACK LOOP]   {bot_name} - Checking for performance degradation...")
                     degradation = self.detect_degradation(bot_name)
                     if degradation:
+                        logger.warning(f"[SOLOMON FEEDBACK LOOP]   {bot_name} - DEGRADATION DETECTED: {degradation['degradation_pct']:.1f}%")
                         alerts_raised.append(degradation)
 
                         # Auto-rollback if severe
                         if degradation['degradation_pct'] > GUARDRAILS['rollback_on_drawdown_pct']:
+                            logger.warning(f"[SOLOMON FEEDBACK LOOP]   {bot_name} - Triggering auto-rollback (degradation > {GUARDRAILS['rollback_on_drawdown_pct']}%)")
                             versions = self.get_version_history(bot_name, limit=2)
                             if len(versions) >= 2:
                                 prev_version = versions[1]
+                                logger.info(f"[SOLOMON FEEDBACK LOOP]   {bot_name} - Rolling back to version {prev_version['version_number']}")
                                 self.rollback(
                                     bot_name=bot_name,
                                     to_version_id=prev_version['version_id'],
@@ -2055,17 +2167,24 @@ class SolomonFeedbackLoop:
                                     triggered_by="SOLOMON",
                                     automatic=True
                                 )
+                            else:
+                                logger.warning(f"[SOLOMON FEEDBACK LOOP]   {bot_name} - Cannot rollback: insufficient version history")
+                    else:
+                        logger.info(f"[SOLOMON FEEDBACK LOOP]   {bot_name} - No degradation detected")
 
                 except Exception as e:
                     errors.append(f"{bot_name}: {str(e)}")
-                    logger.error(f"Error processing {bot_name}: {e}")
+                    logger.error(f"[SOLOMON FEEDBACK LOOP]   {bot_name} - ERROR: {e}")
 
             # Step 6: Check if Oracle retraining is needed
+            logger.info(f"[SOLOMON FEEDBACK LOOP] Step 6: Checking Oracle retraining requirements...")
             if ORACLE_AVAILABLE:
                 pending_outcomes = get_pending_outcomes_count()
                 outcomes_processed = pending_outcomes
+                logger.info(f"[SOLOMON FEEDBACK LOOP]   Oracle pending outcomes: {pending_outcomes} (threshold: {GUARDRAILS['min_sample_size']})")
 
                 if pending_outcomes >= GUARDRAILS['min_sample_size']:
+                    logger.info(f"[SOLOMON FEEDBACK LOOP]   Creating retraining proposal...")
                     # Create proposal for retraining
                     proposal_id = self.create_proposal(
                         bot_name="ORACLE",
@@ -2088,10 +2207,11 @@ class SolomonFeedbackLoop:
 
         except Exception as e:
             errors.append(f"Loop error: {str(e)}")
-            logger.error(f"Feedback loop error: {e}")
+            logger.error(f"[SOLOMON FEEDBACK LOOP] Loop error: {e}")
             traceback.print_exc()
 
         completed_at = datetime.now(CENTRAL_TZ)
+        duration = (completed_at - started_at).total_seconds()
 
         result = FeedbackLoopResult(
             run_id=run_id,
@@ -2106,6 +2226,22 @@ class SolomonFeedbackLoop:
             success=len(errors) == 0,
             errors=errors
         )
+
+        # Enhanced completion logging
+        logger.info(f"[SOLOMON FEEDBACK LOOP] ========================================")
+        logger.info(f"[SOLOMON FEEDBACK LOOP] Feedback loop completed: {run_id}")
+        logger.info(f"[SOLOMON FEEDBACK LOOP] Duration: {duration:.2f} seconds")
+        logger.info(f"[SOLOMON FEEDBACK LOOP] Status: {'SUCCESS' if result.success else 'FAILED'}")
+        logger.info(f"[SOLOMON FEEDBACK LOOP] Summary:")
+        logger.info(f"[SOLOMON FEEDBACK LOOP]   Bots checked: {len(result.bots_checked)}")
+        logger.info(f"[SOLOMON FEEDBACK LOOP]   Outcomes processed: {result.outcomes_processed}")
+        logger.info(f"[SOLOMON FEEDBACK LOOP]   Proposals created: {len(result.proposals_created)}")
+        logger.info(f"[SOLOMON FEEDBACK LOOP]   Proposals auto-applied: {len(result.proposals_applied)}")
+        logger.info(f"[SOLOMON FEEDBACK LOOP]   Models retrained: {len(result.models_retrained)}")
+        logger.info(f"[SOLOMON FEEDBACK LOOP]   Alerts raised: {len(result.alerts_raised)}")
+        if result.errors:
+            logger.warning(f"[SOLOMON FEEDBACK LOOP]   Errors: {result.errors}")
+        logger.info(f"[SOLOMON FEEDBACK LOOP] ========================================")
 
         self.log_action(
             bot_name="SYSTEM",

@@ -52,7 +52,7 @@ def test_endpoint(base_url, method, path, data=None):
     except HTTPError as e:
         try:
             body = json.loads(e.read().decode())
-        except:
+        except (json.JSONDecodeError, ValueError, UnicodeDecodeError):
             body = str(e)
         return False, e.code, body
 

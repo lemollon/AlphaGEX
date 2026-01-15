@@ -381,6 +381,23 @@ def _sanitize_numeric(value, default=0.0, max_value=999999999.99):
         return default
 
 
+def _format_strategy_name(strategy_type: str) -> str:
+    """Convert strategy_type to a human-readable display name"""
+    STRATEGY_NAMES = {
+        "iron_condor": "Iron Condor",
+        "bull_put": "Bull Put Spread",
+        "bear_call": "Bear Call Spread",
+        "iron_butterfly": "Iron Butterfly",
+        "diagonal_call": "Diagonal Call (PMCC)",
+        "diagonal_put": "Diagonal Put (PMCP)",
+        "gex_protected_iron_condor": "GEX-Protected IC",
+        "bull_call": "Bull Call Spread",
+        "bear_put": "Bear Put Spread",
+        "apache_directional": "Apache Directional",
+    }
+    return STRATEGY_NAMES.get(strategy_type, strategy_type.replace("_", " ").title())
+
+
 def save_backtest_results(results: Dict, config: ZeroDTEBacktestConfig, job_id: str):
     """Save backtest results to database"""
     try:
@@ -415,6 +432,25 @@ def save_backtest_results(results: Dict, config: ZeroDTEBacktestConfig, job_id: 
             )
         """)
 
+        # Migration: Update old 'hybrid_fixed' strategy names to actual strategy_type
+        cursor.execute("""
+            UPDATE zero_dte_backtest_results
+            SET strategy = CASE config->>'strategy_type'
+                WHEN 'iron_condor' THEN 'Iron Condor'
+                WHEN 'bull_put' THEN 'Bull Put Spread'
+                WHEN 'bear_call' THEN 'Bear Call Spread'
+                WHEN 'iron_butterfly' THEN 'Iron Butterfly'
+                WHEN 'diagonal_call' THEN 'Diagonal Call (PMCC)'
+                WHEN 'diagonal_put' THEN 'Diagonal Put (PMCP)'
+                WHEN 'gex_protected_iron_condor' THEN 'GEX-Protected IC'
+                WHEN 'bull_call' THEN 'Bull Call Spread'
+                WHEN 'bear_put' THEN 'Bear Put Spread'
+                WHEN 'apache_directional' THEN 'Apache Directional'
+                ELSE COALESCE(config->>'strategy_type', strategy)
+            END
+            WHERE strategy = 'hybrid_fixed' AND config->>'strategy_type' IS NOT NULL
+        """)
+
         s = results.get('summary', {})
         t = results.get('trades', {})
         c = results.get('costs', {})
@@ -440,8 +476,11 @@ def save_backtest_results(results: Dict, config: ZeroDTEBacktestConfig, job_id: 
         tier_stats_json = json.dumps(results.get('tier_stats', {}), default=str)
         monthly_returns_json = json.dumps(results.get('monthly_returns', {}), default=str)
 
+        # Get formatted strategy name from strategy_type
+        strategy_display_name = _format_strategy_name(config.strategy_type)
+
         # Debug logging
-        print(f"📝 KRONOS: Saving backtest - job_id={job_id}, trades={total_trades}, return={total_return_pct:.2f}%", flush=True)
+        print(f"📝 KRONOS: Saving backtest - job_id={job_id}, strategy={strategy_display_name}, trades={total_trades}, return={total_return_pct:.2f}%", flush=True)
 
         cursor.execute("""
             INSERT INTO zero_dte_backtest_results (
@@ -460,7 +499,7 @@ def save_backtest_results(results: Dict, config: ZeroDTEBacktestConfig, job_id: 
                 total_return_pct = EXCLUDED.total_return_pct
         """, (
             job_id,
-            config.strategy,
+            strategy_display_name,
             config.ticker,
             config.start_date,
             config.end_date,
@@ -1902,6 +1941,62 @@ STRATEGY_PRESETS = [
             "strike_selection": "sd",
             "sd_multiplier": 1.0
         }
+    },
+    {
+        "id": "bull_call_debit",
+        "name": "Bull Call Spread",
+        "description": "Bullish debit spread - buy ATM call, sell higher OTM call. Profit if price rises above breakeven.",
+        "is_preset": True,
+        "tags": ["bullish", "debit", "call_spread"],
+        "config": {
+            "strategy_type": "bull_call",
+            "sd_multiplier": 1.0,
+            "risk_per_trade_pct": 5.0,
+            "spread_width": 10.0,
+            "strike_selection": "sd"
+        }
+    },
+    {
+        "id": "bear_put_debit",
+        "name": "Bear Put Spread",
+        "description": "Bearish debit spread - buy ATM put, sell lower OTM put. Profit if price falls below breakeven.",
+        "is_preset": True,
+        "tags": ["bearish", "debit", "put_spread"],
+        "config": {
+            "strategy_type": "bear_put",
+            "sd_multiplier": 1.0,
+            "risk_per_trade_pct": 5.0,
+            "spread_width": 10.0,
+            "strike_selection": "sd"
+        }
+    },
+    {
+        "id": "diagonal_call_pmcc",
+        "name": "Diagonal Call (PMCC)",
+        "description": "Poor Man's Covered Call - sell near-term OTM call, buy longer-term ITM/ATM call. Profit from premium and theta decay.",
+        "is_preset": True,
+        "tags": ["diagonal", "pmcc", "theta"],
+        "config": {
+            "strategy_type": "diagonal_call",
+            "sd_multiplier": 1.0,
+            "risk_per_trade_pct": 5.0,
+            "spread_width": 10.0,
+            "strike_selection": "sd"
+        }
+    },
+    {
+        "id": "diagonal_put_pmcp",
+        "name": "Diagonal Put (PMCP)",
+        "description": "Poor Man's Covered Put - sell near-term OTM put, buy longer-term ITM/ATM put. Profit from premium and theta decay.",
+        "is_preset": True,
+        "tags": ["diagonal", "pmcp", "theta"],
+        "config": {
+            "strategy_type": "diagonal_put",
+            "sd_multiplier": 1.0,
+            "risk_per_trade_pct": 5.0,
+            "spread_width": 10.0,
+            "strike_selection": "sd"
+        }
     }
 ]
 
@@ -2549,7 +2644,7 @@ async def get_oracle_full_transparency(bot_name: str = None):
 
         # Get latest flow per bot
         latest_by_bot = {}
-        for bot in ['ARES', 'ATHENA', 'PEGASUS', 'PHOENIX']:
+        for bot in ['ARES', 'ATHENA', 'ICARUS', 'PEGASUS', 'TITAN', 'PHOENIX']:
             latest = oracle_live_log.get_latest_flow_for_bot(bot)
             if latest:
                 latest_by_bot[bot] = latest
@@ -2743,7 +2838,12 @@ async def get_oracle_predictions_full(
                 use_gex_walls, suggested_put_strike, suggested_call_strike,
                 reasoning, top_factors, model_version,
                 claude_analysis,
-                prediction_used, actual_outcome, actual_pnl, outcome_date
+                prediction_used, actual_outcome, actual_pnl, outcome_date,
+                -- NEUTRAL Regime Analysis Fields
+                neutral_derived_direction, neutral_confidence, neutral_reasoning,
+                ic_suitability, bullish_suitability, bearish_suitability,
+                recommended_strategy, trend_direction, trend_strength,
+                position_in_range_pct, is_contained, wall_filter_passed
             FROM oracle_predictions
             WHERE trade_date >= CURRENT_DATE - INTERVAL '%s days'
         """
@@ -2862,7 +2962,20 @@ async def get_oracle_bot_interactions(
                 op.claude_analysis,
                 op.actual_outcome,
                 op.actual_pnl,
-                op.outcome_date
+                op.outcome_date,
+                -- NEUTRAL Regime Analysis Fields
+                op.neutral_derived_direction,
+                op.neutral_confidence,
+                op.neutral_reasoning,
+                op.ic_suitability,
+                op.bullish_suitability,
+                op.bearish_suitability,
+                op.recommended_strategy,
+                op.trend_direction,
+                op.trend_strength,
+                op.position_in_range_pct,
+                op.is_contained,
+                op.wall_filter_passed
             FROM oracle_predictions op
             WHERE op.trade_date >= CURRENT_DATE - INTERVAL '%s days'
         """

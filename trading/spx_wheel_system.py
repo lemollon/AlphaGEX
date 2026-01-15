@@ -606,7 +606,8 @@ class SPXWheelTrader(MathOptimizerMixin):
                     "LIVE mode requires Tradier broker. "
                     "Set TRADIER_API_KEY and TRADIER_ACCOUNT_ID."
                 )
-            self.broker = TradierDataFetcher()
+            # CRITICAL: Pass sandbox=False for LIVE mode to use production Tradier
+            self.broker = TradierDataFetcher(sandbox=False)
             if self.broker.sandbox:
                 print("⚠️  WARNING: Tradier is in SANDBOX mode (paper trading via broker)")
             else:
@@ -626,11 +627,11 @@ class SPXWheelTrader(MathOptimizerMixin):
             except Exception as e:
                 logger.warning(f"ATLAS: Failed to initialize Oracle AI: {e}")
 
-        # Initialize Math Optimizers (HMM, Thompson Sampling, HJB Exit, etc.)
+        # Math Optimizers DISABLED - Oracle is the sole decision maker
         if MATH_OPTIMIZER_AVAILABLE:
             try:
-                self._init_math_optimizers("ATLAS", enabled=True)
-                logger.info("ATLAS: Math optimizers initialized (HMM, Thompson, HJB)")
+                self._init_math_optimizers("ATLAS", enabled=False)
+                logger.info("ATLAS: Math optimizers DISABLED - Oracle controls all trading decisions")
             except Exception as e:
                 logger.warning(f"ATLAS: Math optimizer init failed: {e}")
 
@@ -909,7 +910,8 @@ class SPXWheelTrader(MathOptimizerMixin):
                         strike_reasoning=f"Strike ${strike} at delta {self.params.put_delta}",
                         size_reasoning=f"{contracts} contracts",
                         exit_reasoning=why if dt_str == "EXIT" else "",
-                        kelly_pct=self.params.position_size_pct,
+                        # Calculate approx position size % from margin allocation / max positions
+                        kelly_pct=self.params.max_margin_pct / max(self.params.max_open_positions, 1),
                         position_size_dollars=premium if premium > 0 else 0,
                         max_risk_dollars=strike * 100 * contracts if strike > 0 else 0,
                         backtest_win_rate=self.params.backtest_win_rate,
@@ -1082,61 +1084,41 @@ class SPXWheelTrader(MathOptimizerMixin):
                 )
                 return False, reason
 
-        # Check VIX levels
-        if vix < self.params.min_vix:
-            reason = f"VIX ({vix:.1f}) below minimum ({self.params.min_vix})"
-            print(f"  {reason}")
-            self._log_decision(
-                decision_type="NO_TRADE",
-                action="SKIP",
-                what=f"NO TRADE for SPX - VIX too low",
-                why=f"VIX at {vix:.1f} is below minimum threshold of {self.params.min_vix}. Low VIX = low premium = bad risk/reward for CSP sellers.",
-                how=f"Checked VIX level against calibrated range {self.params.min_vix}-{self.params.max_vix}. Trade skipped.",
-                spot_price=spot,
-                vix=vix
-            )
-            return False, reason
-
-        if vix > self.params.max_vix:
-            reason = f"VIX ({vix:.1f}) above maximum ({self.params.max_vix})"
-            print(f"  {reason}")
-            self._log_decision(
-                decision_type="NO_TRADE",
-                action="SKIP",
-                what=f"NO TRADE for SPX - VIX too high",
-                why=f"VIX at {vix:.1f} exceeds maximum threshold of {self.params.max_vix}. High VIX = excessive assignment risk.",
-                how=f"Checked VIX level against calibrated range {self.params.min_vix}-{self.params.max_vix}. Trade skipped.",
-                spot_price=spot,
-                vix=vix
-            )
-            return False, reason
-
-        # Check if market is open
+        # Check if market is open FIRST (before Oracle)
         now = datetime.now(CENTRAL_TZ)
         if now.weekday() > 4:  # Weekend
             reason = "Weekend - market closed"
             print(f"  {reason}")
             return False, reason
 
-        # Market hours check (simplified - 9:30 AM to 4 PM ET)
-        if now.hour < 9 or now.hour >= 16:
-            reason = "Outside market hours"
+        # Market hours check in CENTRAL TIME (8:30 AM - 3:00 PM CT)
+        if now.hour < 8 or now.hour >= 15:
+            reason = f"Outside market hours (CT): {now.strftime('%H:%M')} not in 08:30-15:00"
             print(f"  {reason}")
             return False, reason
-        if now.hour == 9 and now.minute < 30:
-            reason = "Market not open yet"
+        if now.hour == 8 and now.minute < 30:
+            reason = f"Market not open yet (CT): {now.strftime('%H:%M')} < 08:30"
             print(f"  {reason}")
             return False, reason
 
         # =========================================================================
-        # CONSULT ORACLE AI FOR TRADING ADVICE
+        # CONSULT ORACLE AI FIRST (SUPERSEDES VIX FILTER)
+        #
+        # CRITICAL: Oracle already accounts for VIX in its predictions.
+        # If Oracle provides a good win probability, we TRADE regardless of VIX.
         # =========================================================================
         oracle_advice = self.consult_oracle(spot, vix)
+        min_win_prob = 0.55  # ATLAS minimum win probability
 
-        if oracle_advice:
-            # Honor Oracle's SKIP advice
+        if oracle_advice and oracle_advice.win_probability >= min_win_prob:
+            # Oracle says trade - bypass VIX filter
+            vix_ok = self.params.min_vix <= vix <= self.params.max_vix
+            if not vix_ok:
+                print(f"  ATLAS: Oracle SUPERSEDES VIX filter - Oracle predicts {oracle_advice.win_probability:.1%} win prob")
+                print(f"         VIX {vix:.1f} outside {self.params.min_vix}-{self.params.max_vix} but Oracle says TRADE")
+
             if ORACLE_AVAILABLE and TradingAdvice and oracle_advice.advice == TradingAdvice.SKIP:
-                reason = f"Oracle advises SKIP: {oracle_advice.reasoning}"
+                reason = f"Oracle advises SKIP despite {oracle_advice.win_probability:.1%} win prob: {oracle_advice.reasoning}"
                 print(f"  {reason}")
                 self._log_decision(
                     decision_type="NO_TRADE",
@@ -1153,8 +1135,21 @@ class SPXWheelTrader(MathOptimizerMixin):
             self._last_oracle_advice = oracle_advice
             print(f"  Oracle: {oracle_advice.advice.value} (Win Prob: {oracle_advice.win_probability:.1%})")
         else:
-            self._last_oracle_advice = None
-            print("  Oracle: Not available, using default parameters")
+            # Oracle win probability below threshold - trust Oracle's decision
+            # REMOVED: Redundant VIX filter - Oracle already analyzed VIX in MarketContext
+            oracle_win_prob = oracle_advice.win_probability if oracle_advice else 0
+            reason = f"Oracle win prob {oracle_win_prob:.1%} below threshold {min_win_prob:.1%}"
+            print(f"  ATLAS: {reason}")
+            self._log_decision(
+                decision_type="NO_TRADE",
+                action="SKIP",
+                what=f"NO TRADE for SPX - Oracle win probability insufficient",
+                why=f"Oracle win prob {oracle_win_prob:.1%} below {min_win_prob:.1%}. Oracle already analyzed VIX, GEX, and market conditions.",
+                how=f"Oracle is the authority - no additional VIX filtering needed.",
+                spot_price=spot,
+                vix=vix
+            )
+            return False, reason
 
         return True, "Market conditions favorable"
 
@@ -1860,10 +1855,28 @@ class SPXWheelTrader(MathOptimizerMixin):
                     price=exit_price
                 )
 
-                order_id = result.get('order', {}).get('id')
-                print(f"     Order ID: {order_id}")
+                # CRITICAL: Verify order was placed before updating DB
+                if not result:
+                    logger.error(f"ATLAS: Buy-to-close order failed - no result returned for {tradier_symbol}")
+                    return False
 
-            # Update database
+                order_id = result.get('order', {}).get('id')
+                order_status = result.get('order', {}).get('status', 'UNKNOWN')
+                print(f"     Order ID: {order_id}, Status: {order_status}")
+
+                # Verify order was accepted (not rejected)
+                if not order_id:
+                    error_msg = result.get('error', result.get('errors', 'Unknown error'))
+                    logger.error(f"ATLAS: Buy-to-close order rejected for {tradier_symbol}: {error_msg}")
+                    return False
+
+                if order_status in ['rejected', 'canceled', 'error']:
+                    logger.error(f"ATLAS: Buy-to-close order {order_id} status={order_status}")
+                    return False
+
+                logger.info(f"ATLAS: Buy-to-close order {order_id} placed successfully for {tradier_symbol}")
+
+            # Update database (only after order is verified)
             conn = get_connection()
             cursor = conn.cursor()
 

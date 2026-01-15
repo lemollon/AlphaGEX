@@ -120,53 +120,60 @@ async def get_trader_performance():
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Get latest equity snapshot - handle missing columns gracefully
-        max_drawdown = 0
-        sharpe_ratio = 0
-        try:
-            cursor.execute("""
-                SELECT equity, cumulative_pnl
-                FROM autonomous_equity_snapshots
-                ORDER BY timestamp DESC
-                LIMIT 1
-            """)
-            snapshot = cursor.fetchone()
-            # Calculate drawdown from equity if available
-            if snapshot and snapshot[0]:
-                # Get starting capital for drawdown calculation
-                cursor.execute("SELECT value FROM autonomous_config WHERE key = 'capital'")
-                cap_row = cursor.fetchone()
-                starting_capital = float(cap_row[0]) if cap_row else 1000000
-                current_equity = float(snapshot[0])
-                if current_equity < starting_capital:
-                    max_drawdown = ((starting_capital - current_equity) / starting_capital * 100)
-        except Exception as e:
-            # Rollback on error to clear aborted transaction state
-            logger.warning(f"Could not fetch equity snapshot: {e}")
-            conn.rollback()
-
-        # Get today's P&L
+        # PERFORMANCE FIX: Single CTE query for all metrics (was 4 sequential queries)
         from zoneinfo import ZoneInfo
         today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
 
+        max_drawdown = 0
+        sharpe_ratio = 0
         today_pnl = 0
+        starting_capital = 1000000
+
         try:
             cursor.execute("""
-                SELECT COALESCE(SUM(realized_pnl), 0)
-                FROM autonomous_closed_trades
-                WHERE exit_date = %s
+                WITH capital_config AS (
+                    SELECT COALESCE(value::numeric, 1000000) as capital
+                    FROM autonomous_config WHERE key = 'capital'
+                    LIMIT 1
+                ),
+                latest_equity AS (
+                    SELECT equity, cumulative_pnl
+                    FROM autonomous_equity_snapshots
+                    ORDER BY timestamp DESC
+                    LIMIT 1
+                ),
+                today_realized AS (
+                    SELECT COALESCE(SUM(realized_pnl), 0) as total
+                    FROM autonomous_closed_trades
+                    WHERE exit_date = %s
+                ),
+                today_unrealized AS (
+                    SELECT COALESCE(SUM(unrealized_pnl), 0) as total
+                    FROM autonomous_open_positions
+                )
+                SELECT
+                    COALESCE((SELECT capital FROM capital_config), 1000000) as starting_capital,
+                    (SELECT equity FROM latest_equity) as current_equity,
+                    (SELECT cumulative_pnl FROM latest_equity) as cumulative_pnl,
+                    (SELECT total FROM today_realized) as today_realized,
+                    (SELECT total FROM today_unrealized) as today_unrealized
             """, (today,))
-            today_realized = cursor.fetchone()[0] or 0
+            row = cursor.fetchone()
 
-            cursor.execute("""
-                SELECT COALESCE(SUM(unrealized_pnl), 0)
-                FROM autonomous_open_positions
-            """)
-            today_unrealized = cursor.fetchone()[0] or 0
+            if row:
+                starting_capital = float(row[0]) if row[0] else 1000000
+                current_equity = float(row[1]) if row[1] else starting_capital
+                today_realized = float(row[3]) if row[3] else 0
+                today_unrealized = float(row[4]) if row[4] else 0
 
-            today_pnl = float(today_realized) + float(today_unrealized)
+                today_pnl = today_realized + today_unrealized
+
+                # Calculate drawdown from equity if available
+                if current_equity < starting_capital:
+                    max_drawdown = ((starting_capital - current_equity) / starting_capital * 100)
+
         except Exception as e:
-            logger.warning(f"Could not fetch today's P&L: {e}")
+            logger.warning(f"Could not fetch performance metrics: {e}")
             conn.rollback()
 
         conn.close()
@@ -2175,12 +2182,13 @@ async def reset_bot_data(bot: str = None, confirm: bool = False):
 # ARES (Aggressive Iron Condor) Routes
 # =============================================================================
 
-# Try to import ARES trader
+# Try to import ARES V2 trader
 try:
-    from trading.ares_iron_condor import ARESTrader, TradingMode as ARESTradingMode
+    from trading.ares_v2 import ARESTrader, ARESConfig, TradingMode as ARESTradingMode
     ARES_AVAILABLE = True
 except ImportError as e:
     ARES_AVAILABLE = False
+    ARESConfig = None
     logger.warning(f"ARES trader not available: {e}")
 
 # Initialize ARES trader instance (lazy initialization)
@@ -2190,10 +2198,9 @@ def get_ares_trader():
     """Get or create ARES trader instance"""
     global _ares_trader
     if _ares_trader is None and ARES_AVAILABLE:
-        _ares_trader = ARESTrader(
-            mode=ARESTradingMode.PAPER,
-            initial_capital=200_000
-        )
+        # Use default ARESConfig which is LIVE mode (sandbox=True in executor)
+        config = ARESConfig()
+        _ares_trader = ARESTrader(config=config)
     return _ares_trader
 
 
@@ -2260,4 +2267,438 @@ async def run_ares_cycle():
         }
     except Exception as e:
         logger.error(f"Error running ARES cycle: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/debug/data-sources")
+async def debug_data_sources():
+    """
+    Debug endpoint to check if market data sources are working.
+    This is the FIRST thing to check if bots aren't trading.
+    """
+    result = {
+        "timestamp": datetime.now().isoformat(),
+        "data_sources": {},
+        "env_vars": {},
+        "test_results": {}
+    }
+
+    # 1. Check environment variables (masked)
+    env_vars = [
+        'TRADIER_API_KEY', 'TRADIER_ACCOUNT_ID',
+        'TRADIER_SANDBOX_API_KEY', 'TRADIER_SANDBOX_ACCOUNT_ID',
+        'POLYGON_API_KEY', 'TRADING_VOLATILITY_API_KEY', 'TV_USERNAME'
+    ]
+    for var in env_vars:
+        val = os.getenv(var, '')
+        if val:
+            result["env_vars"][var] = f"SET ({len(val)} chars, ends with ...{val[-4:]})"
+        else:
+            result["env_vars"][var] = "NOT SET"
+
+    # 2. Check data provider initialization
+    try:
+        from data.unified_data_provider import get_data_provider, TRADIER_AVAILABLE, POLYGON_AVAILABLE, TRADING_VOL_AVAILABLE
+        result["data_sources"]["tradier_module"] = TRADIER_AVAILABLE
+        result["data_sources"]["polygon_module"] = POLYGON_AVAILABLE
+        result["data_sources"]["trading_vol_module"] = TRADING_VOL_AVAILABLE
+
+        provider = get_data_provider()
+        result["data_sources"]["tradier_initialized"] = provider._tradier is not None
+        result["data_sources"]["polygon_initialized"] = provider._polygon is not None
+        result["data_sources"]["trading_vol_initialized"] = provider._trading_vol is not None
+
+        # 3. Test actual data fetch
+        try:
+            price = provider.get_price('SPY')
+            result["test_results"]["spy_price"] = price
+            result["test_results"]["spy_price_ok"] = price > 0
+        except Exception as e:
+            result["test_results"]["spy_price_error"] = str(e)
+
+        try:
+            vix = provider.get_vix()
+            result["test_results"]["vix"] = vix
+            result["test_results"]["vix_ok"] = vix > 0
+        except Exception as e:
+            result["test_results"]["vix_error"] = str(e)
+
+        try:
+            gex = provider.get_gex('SPY')
+            if gex:
+                result["test_results"]["gex"] = {
+                    "net_gex": gex.net_gex,
+                    "flip_point": gex.flip_point
+                }
+                result["test_results"]["gex_ok"] = True
+            else:
+                result["test_results"]["gex"] = None
+                result["test_results"]["gex_ok"] = False
+        except Exception as e:
+            result["test_results"]["gex_error"] = str(e)
+
+    except Exception as e:
+        result["error"] = str(e)
+
+    # 4. Summary
+    issues = []
+    if result["env_vars"].get("TRADIER_API_KEY") == "NOT SET":
+        issues.append("TRADIER_API_KEY not set")
+    if result["env_vars"].get("TRADIER_ACCOUNT_ID") == "NOT SET":
+        issues.append("TRADIER_ACCOUNT_ID not set")
+    if not result.get("data_sources", {}).get("tradier_initialized"):
+        issues.append("Tradier failed to initialize - check API key")
+    if result.get("test_results", {}).get("spy_price", 0) == 0:
+        issues.append("SPY price returned 0 - API may be down or key invalid")
+    if result.get("test_results", {}).get("vix", 0) == 0:
+        issues.append("VIX returned 0 - data source issue")
+
+    result["summary"] = issues if issues else ["All data sources working"]
+    result["trading_blocked"] = len(issues) > 0
+
+    return result
+
+
+@router.get("/debug/no-trades")
+async def debug_no_trades():
+    """
+    Debug endpoint to find exactly why bots didn't trade today.
+    Returns comprehensive diagnostic information.
+    """
+    from zoneinfo import ZoneInfo
+    CENTRAL_TZ = ZoneInfo("America/Chicago")
+    today = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
+
+    result = {
+        "date": today,
+        "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
+        "diagnostics": {}
+    }
+
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        # 1. Bot Heartbeats
+        try:
+            cursor.execute('''
+                SELECT bot_name, last_heartbeat, status, scan_count, details,
+                       EXTRACT(EPOCH FROM (NOW() - last_heartbeat))/60 as minutes_ago
+                FROM bot_heartbeats
+                ORDER BY last_heartbeat DESC NULLS LAST
+            ''')
+            result["diagnostics"]["heartbeats"] = cursor.fetchall()
+        except Exception as e:
+            result["diagnostics"]["heartbeats_error"] = str(e)
+
+        # 2. Today's Scan Activity
+        try:
+            cursor.execute('''
+                SELECT bot_name, timestamp, outcome, decision_summary,
+                       oracle_advice, oracle_win_probability, oracle_confidence,
+                       underlying_price, vix, gex_regime
+                FROM scan_activity
+                WHERE date = %s
+                ORDER BY timestamp DESC
+                LIMIT 100
+            ''', (today,))
+            result["diagnostics"]["scan_activity"] = cursor.fetchall()
+        except Exception as e:
+            result["diagnostics"]["scan_activity_error"] = str(e)
+
+        # 3. Scan Outcome Summary
+        try:
+            cursor.execute('''
+                SELECT bot_name, outcome, COUNT(*) as count
+                FROM scan_activity
+                WHERE date = %s
+                GROUP BY bot_name, outcome
+                ORDER BY bot_name, count DESC
+            ''', (today,))
+            result["diagnostics"]["outcome_summary"] = cursor.fetchall()
+        except Exception as e:
+            result["diagnostics"]["outcome_summary_error"] = str(e)
+
+        # 4. Open Positions
+        open_positions = {}
+        for table, bot in [('ares_positions', 'ARES'), ('athena_positions', 'ATHENA')]:
+            try:
+                cursor.execute(f'''
+                    SELECT position_id, status, open_time, underlying_at_entry
+                    FROM {table}
+                    WHERE status = 'open'
+                ''')
+                open_positions[bot] = cursor.fetchall()
+            except:
+                open_positions[bot] = []
+        result["diagnostics"]["open_positions"] = open_positions
+
+        # 5. Scheduler State
+        try:
+            cursor.execute('''
+                SELECT is_running, last_trade_check, execution_count,
+                       should_auto_restart, updated_at
+                FROM scheduler_state WHERE id = 1
+            ''')
+            result["diagnostics"]["scheduler_state"] = cursor.fetchone()
+        except Exception as e:
+            result["diagnostics"]["scheduler_state_error"] = str(e)
+
+        # 6. Recent decision logs
+        try:
+            cursor.execute('''
+                SELECT bot_name, timestamp, decision_type, decision_value, reasoning
+                FROM decision_logs
+                WHERE DATE(timestamp) = %s
+                ORDER BY timestamp DESC
+                LIMIT 30
+            ''', (today,))
+            result["diagnostics"]["decision_logs"] = cursor.fetchall()
+        except Exception as e:
+            result["diagnostics"]["decision_logs_error"] = str(e)
+
+        # 7. Bot configs (check thresholds)
+        try:
+            cursor.execute('''
+                SELECT bot_name, config_key, config_value
+                FROM bot_config
+                WHERE config_key IN ('min_win_probability', 'vix_skip', 'wall_filter_pct', 'mode')
+            ''')
+            result["diagnostics"]["bot_configs"] = cursor.fetchall()
+        except Exception as e:
+            result["diagnostics"]["bot_configs_error"] = str(e)
+
+        conn.close()
+
+        # 8. Add analysis summary
+        summary = []
+
+        # Check heartbeats
+        heartbeats = result["diagnostics"].get("heartbeats", [])
+        if not heartbeats:
+            summary.append("❌ NO HEARTBEATS - Bots may not be running!")
+        else:
+            for hb in heartbeats:
+                if hb.get('minutes_ago') and hb['minutes_ago'] > 10:
+                    summary.append(f"⚠️ {hb['bot_name']} last heartbeat was {hb['minutes_ago']:.0f} min ago")
+
+        # Check scan activity
+        scans = result["diagnostics"].get("scan_activity", [])
+        if not scans:
+            summary.append("❌ NO SCANS TODAY - Scheduler may not be running!")
+        else:
+            # Check for NO_TRADE outcomes
+            no_trades = [s for s in scans if s.get('outcome') == 'NO_TRADE']
+            if no_trades:
+                reasons = set(s.get('decision_summary', '') for s in no_trades[:5])
+                summary.append(f"ℹ️ {len(no_trades)} NO_TRADE scans. Reasons: {reasons}")
+
+        # Check for open positions
+        for bot, positions in result["diagnostics"].get("open_positions", {}).items():
+            if positions:
+                summary.append(f"🔒 {bot} has {len(positions)} open position(s) - BLOCKING NEW ENTRIES")
+
+        result["summary"] = summary if summary else ["✅ No obvious issues detected - check scan_activity for details"]
+
+        return result
+
+    except Exception as e:
+        if conn:
+            conn.close()
+        raise HTTPException(status_code=500, detail=f"Debug failed: {str(e)}")
+
+
+# =============================================================================
+# TRADE SYNC ENDPOINTS
+# =============================================================================
+
+@router.post("/sync/full")
+async def run_full_trade_sync():
+    """
+    Run full trade synchronization across all bots.
+
+    Operations performed:
+    1. Cleanup stale positions (expired but still 'open')
+    2. Fix missing P&L values on closed positions
+    3. Sync bot tables to unified tables
+
+    This endpoint should be called:
+    - On system startup
+    - Periodically during market hours
+    - After suspected data inconsistencies
+
+    Returns:
+        Complete sync results with counts and errors
+    """
+    try:
+        from trading.trade_sync_service import run_full_sync
+        results = run_full_sync()
+        return {
+            "success": len(results.get('total_errors', [])) == 0,
+            "data": results,
+            "message": f"Sync completed: {results.get('stale_cleanup', {}).get('total_cleaned', 0)} stale cleaned, "
+                      f"{results.get('pnl_fix', {}).get('total_fixed', 0)} P&L fixed, "
+                      f"{results.get('unified_sync', {}).get('open_synced', 0)} open synced"
+        }
+    except Exception as e:
+        logger.error(f"Full trade sync failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/sync/stale-cleanup")
+async def cleanup_stale_positions():
+    """
+    Cleanup stale positions across all bots.
+
+    Finds positions that:
+    - Have status='open'
+    - Have expiration date in the past
+
+    These are marked as 'expired' with calculated P&L.
+
+    Returns:
+        Cleanup results by bot
+    """
+    try:
+        from trading.trade_sync_service import cleanup_stale_positions as do_cleanup
+        results = do_cleanup()
+        return {
+            "success": len(results.get('errors', [])) == 0,
+            "data": results,
+            "message": f"Cleaned {results.get('total_cleaned', 0)} stale positions"
+        }
+    except Exception as e:
+        logger.error(f"Stale cleanup failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/sync/fix-pnl")
+async def fix_missing_pnl():
+    """
+    Fix missing P&L values on closed/expired positions.
+
+    Calculates and updates realized_pnl for positions where it's NULL.
+
+    Returns:
+        Fix results by bot
+    """
+    try:
+        from trading.trade_sync_service import fix_missing_pnl as do_fix
+        results = do_fix()
+        return {
+            "success": len(results.get('errors', [])) == 0,
+            "data": results,
+            "message": f"Fixed {results.get('total_fixed', 0)} positions with missing P&L"
+        }
+    except Exception as e:
+        logger.error(f"P&L fix failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/sync/unified")
+async def sync_to_unified_tables():
+    """
+    Sync bot-specific tables to unified tracking tables.
+
+    Ensures:
+    - autonomous_open_positions has all open positions
+    - autonomous_closed_trades has all closed positions
+
+    Returns:
+        Sync results by bot
+    """
+    try:
+        from trading.trade_sync_service import sync_to_unified as do_sync
+        results = do_sync()
+        return {
+            "success": len(results.get('errors', [])) == 0,
+            "data": results,
+            "message": f"Synced {results.get('open_synced', 0)} open, {results.get('closed_synced', 0)} closed positions"
+        }
+    except Exception as e:
+        logger.error(f"Unified sync failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/sync/status")
+async def get_sync_status():
+    """
+    Get current sync status and data integrity metrics.
+
+    Checks:
+    - Stale positions count
+    - Positions with missing P&L
+    - Unified table sync status
+
+    Returns:
+        Sync status and recommendations
+    """
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        status = {
+            "timestamp": datetime.now().isoformat(),
+            "stale_positions": {},
+            "missing_pnl": {},
+            "unified_sync": {},
+            "recommendations": []
+        }
+
+        bot_tables = [
+            ('ares', 'ares_positions'),
+            ('athena', 'athena_positions'),
+            ('titan', 'titan_positions'),
+            ('pegasus', 'pegasus_positions'),
+            ('icarus', 'icarus_positions')
+        ]
+
+        today = datetime.now().date()
+
+        for bot_name, table in bot_tables:
+            try:
+                # Check for stale positions
+                cursor.execute(f"""
+                    SELECT COUNT(*) FROM {table}
+                    WHERE status = 'open' AND expiration < %s
+                """, (today,))
+                stale_count = cursor.fetchone()[0]
+                status["stale_positions"][bot_name] = stale_count
+
+                # Check for missing P&L
+                cursor.execute(f"""
+                    SELECT COUNT(*) FROM {table}
+                    WHERE status IN ('closed', 'expired') AND realized_pnl IS NULL
+                """, ())
+                missing_pnl_count = cursor.fetchone()[0]
+                status["missing_pnl"][bot_name] = missing_pnl_count
+
+                if stale_count > 0:
+                    status["recommendations"].append(f"Run /sync/stale-cleanup - {bot_name} has {stale_count} stale positions")
+                if missing_pnl_count > 0:
+                    status["recommendations"].append(f"Run /sync/fix-pnl - {bot_name} has {missing_pnl_count} positions with missing P&L")
+
+            except Exception as e:
+                logger.debug(f"Error checking {bot_name}: {e}")
+
+        # Check unified table status
+        try:
+            cursor.execute("SELECT COUNT(*) FROM autonomous_open_positions WHERE status = 'open'")
+            status["unified_sync"]["open_positions"] = cursor.fetchone()[0]
+
+            cursor.execute("SELECT COUNT(*) FROM autonomous_closed_trades WHERE exit_time >= NOW() - INTERVAL '7 days'")
+            status["unified_sync"]["recent_closed"] = cursor.fetchone()[0]
+        except Exception as e:
+            status["unified_sync"]["error"] = str(e)
+
+        conn.close()
+
+        if not status["recommendations"]:
+            status["recommendations"].append("✅ No sync issues detected")
+
+        return {"success": True, "data": status}
+
+    except Exception as e:
+        logger.error(f"Sync status check failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))

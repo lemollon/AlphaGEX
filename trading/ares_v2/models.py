@@ -28,6 +28,7 @@ class PositionStatus(Enum):
     OPEN = "open"
     CLOSED = "closed"
     EXPIRED = "expired"
+    PARTIAL_CLOSE = "partial_close"  # One leg closed, other failed - needs manual intervention
 
 
 class StrategyPreset(Enum):
@@ -220,10 +221,14 @@ class ARESConfig:
     spread_width: float = 2.0   # $2 wide spreads for SPY
 
     # Risk limits
+    capital: float = 100000.0  # Starting capital - can be overridden by Tradier balance
     risk_per_trade_pct: float = 10.0
     max_contracts: int = 50
     min_credit: float = 0.02  # Min credit per spread
     max_trades_per_day: int = 3  # Allow up to 3 trades per day with re-entry
+
+    # Oracle thresholds
+    min_win_probability: float = 0.42  # Minimum Oracle win probability to trade (42%)
 
     # Stop loss / Profit target
     use_stop_loss: bool = False
@@ -231,12 +236,13 @@ class ARESConfig:
     profit_target_pct: float = 50.0  # Take profit at 50%
 
     # Trading window (Central Time)
+    # Market closes at 3:00 PM CT (4:00 PM ET)
     entry_start: str = "08:30"
-    entry_end: str = "15:30"
-    force_exit: str = "15:55"
+    entry_end: str = "14:45"  # Stop new entries 15 min before close
+    force_exit: str = "14:50"  # Force close 10 min before market close
 
-    # Mode
-    mode: TradingMode = TradingMode.PAPER
+    # Mode - LIVE uses Tradier SANDBOX account (see executor.py line 224)
+    mode: TradingMode = TradingMode.LIVE
 
     def apply_preset(self, preset: StrategyPreset) -> None:
         """Apply a strategy preset"""
@@ -257,6 +263,57 @@ class ARESConfig:
                     value = StrategyPreset(value)
                 setattr(config, key, value)
         return config
+
+    def validate(self) -> tuple[bool, str]:
+        """
+        Validate configuration values.
+
+        Returns: (is_valid, error_message)
+        """
+        errors = []
+
+        # Capital validation
+        if self.capital <= 0:
+            errors.append(f"capital must be > 0, got {self.capital}")
+
+        # Risk validation
+        if self.risk_per_trade_pct <= 0 or self.risk_per_trade_pct > 100:
+            errors.append(f"risk_per_trade_pct must be 0-100, got {self.risk_per_trade_pct}")
+
+        # Contract limits
+        if self.max_contracts <= 0:
+            errors.append(f"max_contracts must be > 0, got {self.max_contracts}")
+
+        # Spread width
+        if self.spread_width <= 0:
+            errors.append(f"spread_width must be > 0, got {self.spread_width}")
+
+        # Profit target
+        if self.profit_target_pct <= 0 or self.profit_target_pct > 100:
+            errors.append(f"profit_target_pct must be 0-100, got {self.profit_target_pct}")
+
+        # Time format validation
+        def validate_time(time_str: str, field_name: str) -> Optional[str]:
+            try:
+                parts = time_str.split(':')
+                if len(parts) != 2:
+                    return f"{field_name} must be HH:MM format, got {time_str}"
+                hour, minute = int(parts[0]), int(parts[1])
+                if not (0 <= hour <= 23 and 0 <= minute <= 59):
+                    return f"{field_name} has invalid time values: {time_str}"
+            except (ValueError, AttributeError):
+                return f"{field_name} must be HH:MM format, got {time_str}"
+            return None
+
+        for field, value in [('entry_start', self.entry_start),
+                             ('entry_end', self.entry_end),
+                             ('force_exit', self.force_exit)]:
+            if err := validate_time(value, field):
+                errors.append(err)
+
+        if errors:
+            return False, "; ".join(errors)
+        return True, ""
 
 
 @dataclass
@@ -300,6 +357,7 @@ class IronCondorSignal:
     # Oracle prediction details (CRITICAL for audit)
     oracle_win_probability: float = 0
     oracle_advice: str = ""  # ENTER, HOLD, EXIT
+    oracle_confidence: float = 0  # Oracle's confidence in its prediction
     oracle_top_factors: List[Dict[str, Any]] = field(default_factory=list)
     oracle_suggested_sd: float = 1.0
     oracle_use_gex_walls: bool = False
@@ -308,8 +366,11 @@ class IronCondorSignal:
     @property
     def is_valid(self) -> bool:
         """Check if signal passes basic validation"""
+        # ORACLE IS GOD: When Oracle says TRADE, nothing blocks it
+        oracle_approved = self.oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
+
         return (
-            self.confidence >= 0.5 and
+            (oracle_approved or self.confidence >= 0.5) and
             self.total_credit > 0 and
             self.put_short > self.put_long > 0 and
             self.call_short < self.call_long and

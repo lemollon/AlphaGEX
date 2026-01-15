@@ -19,6 +19,7 @@ For Market Makers (assuming they're short options):
 """
 
 import logging
+import math
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass
@@ -28,6 +29,9 @@ logger = logging.getLogger(__name__)
 
 # Texas Central Time - standard timezone for all AlphaGEX operations
 CENTRAL_TZ = ZoneInfo("America/Chicago")
+
+# Default implied volatility for strike range filtering (20%)
+DEFAULT_IV_FOR_FILTERING = 0.20
 
 
 # =============================================================================
@@ -135,6 +139,65 @@ def validate_options_data(
         logger.debug(f"Options data validated for {symbol}: {result['stats']}")
 
     return result
+
+
+def filter_strikes_to_7day_range(
+    gamma_array: List[Dict],
+    spot_price: float,
+    implied_vol: float = None
+) -> Tuple[List[Dict], float, float, float, float]:
+    """
+    Filter gamma_array to +/- 7-day expected move range.
+
+    This matches TradingVolatility API's filtering behavior where strikes
+    are limited to those within one standard deviation of the 7-day expected move.
+
+    Args:
+        gamma_array: List of strike data with 'strike', 'call_gamma', 'put_gamma', 'total_gamma'
+        spot_price: Current spot price
+        implied_vol: Implied volatility (defaults to 0.20 if not provided)
+
+    Returns:
+        Tuple of (filtered_array, call_wall, put_wall, min_strike, max_strike)
+    """
+    if implied_vol is None or implied_vol <= 0:
+        implied_vol = DEFAULT_IV_FOR_FILTERING
+
+    # 7-day expected move: spot * IV * sqrt(7/252)
+    seven_day_std = spot_price * implied_vol * math.sqrt(7 / 252)
+    min_strike = spot_price - seven_day_std
+    max_strike = spot_price + seven_day_std
+
+    # Filter strikes to +/- 7 day std range
+    filtered_array = [
+        s for s in gamma_array
+        if min_strike <= s.get('strike', 0) <= max_strike
+    ]
+
+    # Recalculate call_wall and put_wall from filtered strikes
+    # Call wall = strike with highest call gamma
+    # Put wall = strike with highest put gamma (absolute value)
+    call_wall = spot_price  # Default fallback
+    put_wall = spot_price   # Default fallback
+    max_call_gamma = 0
+    max_put_gamma = 0
+
+    for strike_data in filtered_array:
+        call_g = abs(strike_data.get('call_gamma', 0))
+        put_g = abs(strike_data.get('put_gamma', 0))
+
+        if call_g > max_call_gamma:
+            max_call_gamma = call_g
+            call_wall = strike_data['strike']
+
+        if put_g > max_put_gamma:
+            max_put_gamma = put_g
+            put_wall = strike_data['strike']
+
+    logger.debug(f"Strike filtering: {len(gamma_array)} -> {len(filtered_array)} "
+                 f"(range: ${min_strike:.2f} to ${max_strike:.2f})")
+
+    return filtered_array, call_wall, put_wall, min_strike, max_strike
 
 
 @dataclass
@@ -378,8 +441,17 @@ class TradierGEXCalculator:
     This is the fallback when TradingVolatilityAPI is unavailable.
     """
 
-    def __init__(self):
+    def __init__(self, sandbox: bool = None):
+        """
+        Initialize GEX Calculator.
+
+        Args:
+            sandbox: If True, use sandbox API. If False, use production.
+                     If None, use TRADIER_SANDBOX env var (default behavior).
+                     SPX requires sandbox=False since sandbox doesn't support SPX.
+        """
         self._tradier = None
+        self._sandbox = sandbox  # None = use env var default
         self._cache = {}
         self._cache_ttl = 300  # 5 minutes
 
@@ -388,8 +460,13 @@ class TradierGEXCalculator:
         if self._tradier is None:
             try:
                 from data.tradier_data_fetcher import TradierDataFetcher
-                self._tradier = TradierDataFetcher()
-            except ImportError as e:
+                # Pass sandbox parameter if explicitly set, otherwise use default
+                if self._sandbox is not None:
+                    self._tradier = TradierDataFetcher(sandbox=self._sandbox)
+                else:
+                    self._tradier = TradierDataFetcher()
+            except Exception as e:
+                # Catch all exceptions: ImportError, ValueError (missing API key), etc.
                 logger.error(f"Tradier not available: {e}")
                 return None
         return self._tradier
@@ -491,6 +568,25 @@ class TradierGEXCalculator:
         except Exception as e:
             logger.error(f"GEX calculation failed for {symbol}: {e}")
             return {'error': f'GEX calculation failed: {str(e)}'}
+
+    def calculate_gex(self, ticker: str) -> Optional[Dict[str, Any]]:
+        """
+        Calculate GEX for ticker - wrapper for signals compatibility.
+
+        This method provides a consistent interface that matches KronosGEXCalculator.calculate_gex()
+        so signals code can call gex_calculator.calculate_gex(ticker) regardless of which
+        calculator is in use.
+
+        Args:
+            ticker: Symbol to calculate GEX for (SPY, SPX, etc.)
+
+        Returns:
+            Dict with GEX data or None if unavailable
+        """
+        result = self.get_gex(ticker)
+        if result and not result.get('error'):
+            return result
+        return None
 
     def get_gex_profile(self, symbol: str) -> Optional[Dict[str, Any]]:
         """
@@ -682,20 +778,47 @@ class TradierGEXCalculator:
                     'net_gex': strike_data.get('net_gex', 0)           # Alias
                 })
 
+            # Apply 7-day expected move filtering to match TradingVolatility API behavior
+            # This ensures Tradier shows the same number of strikes as TradingVol API
+            total_strikes_before = len(gamma_array)
+            gamma_array_filtered, call_wall_filtered, put_wall_filtered, min_strike, max_strike = \
+                filter_strikes_to_7day_range(gamma_array, spot_price)
+
+            logger.info(f"0DTE strike filtering for {symbol}: "
+                       f"{total_strikes_before} -> {len(gamma_array_filtered)} strikes "
+                       f"(range: ${min_strike:.2f} - ${max_strike:.2f})")
+
+            # Recalculate flip point within filtered range
+            flip_point_filtered = result.gamma_flip
+            for i in range(len(gamma_array_filtered) - 1):
+                net_current = gamma_array_filtered[i].get('net_gex', 0)
+                net_next = gamma_array_filtered[i + 1].get('net_gex', 0)
+
+                # Check for sign change (zero crossing)
+                if net_current * net_next < 0:
+                    strike_current = gamma_array_filtered[i]['strike']
+                    strike_next = gamma_array_filtered[i + 1]['strike']
+                    # Linear interpolation
+                    flip_point_filtered = strike_current + (strike_next - strike_current) * (
+                        -net_current / (net_next - net_current)
+                    )
+                    break
+
             return {
                 'symbol': symbol,
                 'spot_price': spot_price,
-                'flip_point': result.gamma_flip,
-                'call_wall': result.call_wall,
-                'put_wall': result.put_wall,
+                'flip_point': flip_point_filtered,
+                'call_wall': call_wall_filtered,
+                'put_wall': put_wall_filtered,
                 'max_pain': result.max_pain,
                 'net_gex': result.net_gex,
                 'put_call_ratio': round(put_call_ratio, 3),
                 'total_call_oi': total_call_oi,
                 'total_put_oi': total_put_oi,
-                'gamma_array': gamma_array,
+                'gamma_array': gamma_array_filtered,
                 'expiration': zero_dte_expiration,
-                'contracts_count': len(zero_dte_contracts),
+                'contracts_count': len(gamma_array_filtered),
+                'total_contracts_before_filter': total_strikes_before,
                 'data_source': 'tradier_0dte_calculated',
                 'timestamp': datetime.now(CENTRAL_TZ).isoformat()
             }
@@ -790,21 +913,48 @@ class TradierGEXCalculator:
                     'net_gex': strike_data.get('net_gex', 0)           # Alias
                 })
 
+            # Apply 7-day expected move filtering to match TradingVolatility API behavior
+            # This ensures Tradier shows the same number of strikes as TradingVol API
+            total_strikes_before = len(gamma_array)
+            gamma_array_filtered, call_wall_filtered, put_wall_filtered, min_strike, max_strike = \
+                filter_strikes_to_7day_range(gamma_array, spot_price)
+
+            logger.info(f"All expirations strike filtering for {symbol}: "
+                       f"{total_strikes_before} -> {len(gamma_array_filtered)} strikes "
+                       f"(range: ${min_strike:.2f} - ${max_strike:.2f})")
+
+            # Recalculate flip point within filtered range
+            flip_point_filtered = result.gamma_flip
+            for i in range(len(gamma_array_filtered) - 1):
+                net_current = gamma_array_filtered[i].get('net_gex', 0)
+                net_next = gamma_array_filtered[i + 1].get('net_gex', 0)
+
+                # Check for sign change (zero crossing)
+                if net_current * net_next < 0:
+                    strike_current = gamma_array_filtered[i]['strike']
+                    strike_next = gamma_array_filtered[i + 1]['strike']
+                    # Linear interpolation
+                    flip_point_filtered = strike_current + (strike_next - strike_current) * (
+                        -net_current / (net_next - net_current)
+                    )
+                    break
+
             return {
                 'symbol': symbol,
                 'spot_price': spot_price,
-                'flip_point': result.gamma_flip,
-                'call_wall': result.call_wall,
-                'put_wall': result.put_wall,
+                'flip_point': flip_point_filtered,
+                'call_wall': call_wall_filtered,
+                'put_wall': put_wall_filtered,
                 'max_pain': result.max_pain,
                 'net_gex': result.net_gex,
                 'put_call_ratio': round(put_call_ratio, 3),
                 'total_call_oi': total_call_oi,
                 'total_put_oi': total_put_oi,
-                'gamma_array': gamma_array,
+                'gamma_array': gamma_array_filtered,
                 'expiration': 'All expirations',
                 'expirations_included': sorted(expirations_included),
-                'contracts_count': len(all_contracts),
+                'contracts_count': len(gamma_array_filtered),
+                'total_contracts_before_filter': total_strikes_before,
                 'data_source': 'tradier_all_expirations_calculated',
                 'timestamp': datetime.now(CENTRAL_TZ).isoformat()
             }

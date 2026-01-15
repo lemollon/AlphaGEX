@@ -109,6 +109,15 @@ const fetchers = {
       return { success: false, data: { equity_curve: [] } }
     }
   },
+  aresIntradayEquity: async (date?: string) => {
+    try {
+      const params = date ? `?date=${date}` : ''
+      const response = await api.get(`/api/ares/equity-curve/intraday${params}`)
+      return response.data
+    } catch {
+      return { success: false, data: { intraday_curve: [] } }
+    }
+  },
   aresTradierStatus: async () => {
     try {
       const response = await api.get('/api/ares/tradier-status')
@@ -205,6 +214,123 @@ const fetchers = {
       return { success: false, data: null }
     }
   },
+  athenaEquityCurve: async (days: number = 30) => {
+    try {
+      const response = await api.get(`/api/athena/equity-curve?days=${days}`)
+      return response.data
+    } catch {
+      return { success: false, data: { equity_curve: [] } }
+    }
+  },
+  athenaIntradayEquity: async (date?: string) => {
+    try {
+      const params = date ? `?date=${date}` : ''
+      const response = await api.get(`/api/athena/equity-curve/intraday${params}`)
+      return response.data
+    } catch {
+      return { success: false, data: { intraday_curve: [] } }
+    }
+  },
+
+  // ICARUS Bot - Aggressive Directional Spreads
+  icarusStatus: async () => {
+    try {
+      const response = await api.get('/api/icarus/status')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  icarusPositions: async () => {
+    try {
+      const response = await api.get('/api/icarus/positions')
+      return response.data
+    } catch {
+      // Return consistent shape - data should always be an array like success case
+      return { success: false, data: [] }
+    }
+  },
+  icarusSignals: async (limit: number) => {
+    try {
+      const response = await api.get(`/api/icarus/signals?limit=${limit}`)
+      return response.data
+    } catch {
+      return { success: false, data: [] }
+    }
+  },
+  icarusPerformance: async (days: number) => {
+    try {
+      const response = await api.get(`/api/icarus/performance?days=${days}`)
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  icarusOracleAdvice: async () => {
+    try {
+      const response = await api.get('/api/icarus/oracle-advice')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  icarusLogs: async (level?: string, limit?: number) => {
+    try {
+      const params = new URLSearchParams()
+      if (level) params.append('level', level)
+      params.append('limit', String(limit || 50))
+      const response = await api.get(`/api/icarus/logs?${params}`)
+      return response.data
+    } catch {
+      return { success: false, data: [] }
+    }
+  },
+  icarusLivePnL: async () => {
+    try {
+      const response = await api.get('/api/icarus/live-pnl')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  icarusConfig: async () => {
+    try {
+      const response = await api.get('/api/icarus/config')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  icarusEquityCurve: async (days: number = 30) => {
+    try {
+      const response = await api.get(`/api/icarus/equity-curve?days=${days}`)
+      return response.data
+    } catch {
+      return { success: false, data: { equity_curve: [] } }
+    }
+  },
+  icarusIntradayEquity: async (date?: string) => {
+    try {
+      const params = date ? `?date=${date}` : ''
+      const response = await api.get(`/api/icarus/equity-curve/intraday${params}`)
+      return response.data
+    } catch {
+      return { success: false, data: { intraday_curve: [] } }
+    }
+  },
+  icarusScanActivity: async (limit?: number, date?: string) => {
+    try {
+      const params = new URLSearchParams()
+      params.append('limit', String(limit || 50))
+      if (date) params.append('date', date)
+      // Use ICARUS-specific scan activity endpoint
+      const response = await api.get(`/api/icarus/scan-activity?${params}`)
+      return response.data
+    } catch {
+      return { success: false, data: { scans: [] } }
+    }
+  },
+
   aresLivePnL: async () => {
     try {
       const response = await api.get('/api/ares/live-pnl')
@@ -572,6 +698,15 @@ const fetchers = {
       return { success: false, data: { equity_curve: [] } }
     }
   },
+  pegasusIntradayEquity: async (date?: string) => {
+    try {
+      const params = date ? `?date=${date}` : ''
+      const response = await api.get(`/api/pegasus/equity-curve/intraday${params}`)
+      return response.data
+    } catch {
+      return { success: false, data: { intraday_curve: [] } }
+    }
+  },
   pegasusConfig: async () => {
     try {
       const response = await api.get('/api/pegasus/config')
@@ -594,6 +729,68 @@ const fetchers = {
       params.append('limit', String(limit || 50))
       if (date) params.append('date', date)
       const response = await api.get(`/api/scans/activity/PEGASUS?${params}`)
+      return response.data
+    } catch {
+      return { success: false, data: { scans: [] } }
+    }
+  },
+
+  // TITAN Aggressive SPX Iron Condor Bot (Daily Trading)
+  titanStatus: async () => {
+    try {
+      const response = await api.get('/api/titan/status')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  titanPositions: async () => {
+    try {
+      const response = await api.get('/api/titan/positions')
+      return response.data
+    } catch {
+      return { success: false, data: { open_positions: [], closed_positions: [] } }
+    }
+  },
+  titanEquityCurve: async (days: number = 30) => {
+    try {
+      const response = await api.get(`/api/titan/equity-curve?days=${days}`)
+      return response.data
+    } catch {
+      return { success: false, data: { equity_curve: [] } }
+    }
+  },
+  titanIntradayEquity: async (date?: string) => {
+    try {
+      const params = date ? `?date=${date}` : ''
+      const response = await api.get(`/api/titan/equity-curve/intraday${params}`)
+      return response.data
+    } catch {
+      return { success: false, data: { intraday_curve: [] } }
+    }
+  },
+  titanConfig: async () => {
+    try {
+      const response = await api.get('/api/titan/config')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  titanLivePnL: async () => {
+    try {
+      const response = await api.get('/api/titan/live-pnl')
+      return response.data
+    } catch {
+      return { success: false, data: null }
+    }
+  },
+  scanActivityTitan: async (limit?: number, date?: string) => {
+    try {
+      const params = new URLSearchParams()
+      params.append('limit', String(limit || 50))
+      if (date) params.append('date', date)
+      const response = await api.get(`/api/scans/activity/TITAN?${params}`)
       return response.data
     } catch {
       return { success: false, data: { scans: [] } }
@@ -802,6 +999,14 @@ export function useARESEquityCurve(days: number = 30, options?: SWRConfiguration
   )
 }
 
+export function useARESIntradayEquity(date?: string, options?: SWRConfiguration) {
+  return useSWR(
+    `ares-intraday-equity-${date || 'today'}`,
+    () => fetchers.aresIntradayEquity(date),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
 export function useARESTradierStatus(options?: SWRConfiguration) {
   return useSWR('ares-tradier-status', fetchers.aresTradierStatus, {
     ...swrConfig,
@@ -910,6 +1115,22 @@ export function useATHENAConfig(options?: SWRConfiguration) {
   })
 }
 
+export function useATHENAEquityCurve(days: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `athena-equity-curve-${days}`,
+    () => fetchers.athenaEquityCurve(days),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useATHENAIntradayEquity(date?: string, options?: SWRConfiguration) {
+  return useSWR(
+    `athena-intraday-equity-${date || 'today'}`,
+    () => fetchers.athenaIntradayEquity(date),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
 export function useARESLivePnL(options?: SWRConfiguration) {
   return useSWR(
     'ares-live-pnl',
@@ -922,6 +1143,98 @@ export function useARESLogs(level?: string, limit: number = 100, options?: SWRCo
   return useSWR(
     `ares-logs-${level || 'all'}-${limit}`,
     () => fetchers.aresLogs(level, limit),
+    { ...swrConfig, refreshInterval: 30 * 1000, ...options }
+  )
+}
+
+// =============================================================================
+// ICARUS BOT HOOKS - Aggressive Directional Spreads
+// =============================================================================
+
+export function useICARUSStatus(options?: SWRConfiguration) {
+  return useSWR('icarus-status', fetchers.icarusStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useICARUSPositions(options?: SWRConfiguration) {
+  return useSWR('icarus-positions', fetchers.icarusPositions, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useICARUSSignals(limit: number = 50, options?: SWRConfiguration) {
+  return useSWR(
+    `icarus-signals-${limit}`,
+    () => fetchers.icarusSignals(limit),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useICARUSPerformance(days: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `icarus-performance-${days}`,
+    () => fetchers.icarusPerformance(days),
+    { ...swrConfig, refreshInterval: 5 * 60 * 1000, ...options }
+  )
+}
+
+export function useICARUSOracleAdvice(options?: SWRConfiguration) {
+  return useSWR('icarus-oracle-advice', fetchers.icarusOracleAdvice, {
+    ...swrConfig,
+    refreshInterval: 60 * 1000,
+    ...options,
+  })
+}
+
+export function useICARUSLogs(level?: string, limit: number = 50, options?: SWRConfiguration) {
+  return useSWR(
+    `icarus-logs-${level || 'all'}-${limit}`,
+    () => fetchers.icarusLogs(level, limit),
+    { ...swrConfig, refreshInterval: 30 * 1000, ...options }
+  )
+}
+
+export function useICARUSLivePnL(options?: SWRConfiguration) {
+  return useSWR(
+    'icarus-live-pnl',
+    fetchers.icarusLivePnL,
+    { ...swrConfig, refreshInterval: 10 * 1000, ...options }  // 10 second refresh for live data
+  )
+}
+
+export function useICARUSConfig(options?: SWRConfiguration) {
+  return useSWR('icarus-config', fetchers.icarusConfig, {
+    ...swrConfig,
+    refreshInterval: 5 * 60 * 1000,  // 5 minute refresh for config
+    ...options,
+  })
+}
+
+export function useICARUSEquityCurve(days: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `icarus-equity-curve-${days}`,
+    () => fetchers.icarusEquityCurve(days),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useICARUSIntradayEquity(date?: string, options?: SWRConfiguration) {
+  return useSWR(
+    `icarus-intraday-equity-${date || 'today'}`,
+    () => fetchers.icarusIntradayEquity(date),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useICARUSScanActivity(limit: number = 50, date?: string, options?: SWRConfiguration) {
+  return useSWR(
+    `icarus-scan-activity-${limit}-${date || 'all'}`,
+    () => fetchers.icarusScanActivity(limit, date),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
 }
@@ -982,6 +1295,14 @@ export function usePEGASUSEquityCurve(days: number = 30, options?: SWRConfigurat
   )
 }
 
+export function usePEGASUSIntradayEquity(date?: string, options?: SWRConfiguration) {
+  return useSWR(
+    `pegasus-intraday-equity-${date || 'today'}`,
+    () => fetchers.pegasusIntradayEquity(date),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
 export function usePEGASUSConfig(options?: SWRConfiguration) {
   return useSWR('pegasus-config', fetchers.pegasusConfig, {
     ...swrConfig,
@@ -1002,6 +1323,66 @@ export function useScanActivityPegasus(limit: number = 50, date?: string, option
   return useSWR(
     `scan-activity-pegasus-${limit}-${date || 'all'}`,
     () => fetchers.scanActivityPegasus(limit, date),
+    { ...swrConfig, refreshInterval: 30 * 1000, ...options }
+  )
+}
+
+// =============================================================================
+// TITAN AGGRESSIVE SPX IRON CONDOR HOOKS (Daily Trading)
+// =============================================================================
+
+export function useTITANStatus(options?: SWRConfiguration) {
+  return useSWR('titan-status', fetchers.titanStatus, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useTITANPositions(options?: SWRConfiguration) {
+  return useSWR('titan-positions', fetchers.titanPositions, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useTITANEquityCurve(days: number = 30, options?: SWRConfiguration) {
+  return useSWR(
+    `titan-equity-curve-${days}`,
+    () => fetchers.titanEquityCurve(days),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useTITANIntradayEquity(date?: string, options?: SWRConfiguration) {
+  return useSWR(
+    `titan-intraday-equity-${date || 'today'}`,
+    () => fetchers.titanIntradayEquity(date),
+    { ...swrConfig, refreshInterval: 60 * 1000, ...options }
+  )
+}
+
+export function useTITANConfig(options?: SWRConfiguration) {
+  return useSWR('titan-config', fetchers.titanConfig, {
+    ...swrConfig,
+    refreshInterval: 5 * 60 * 1000,
+    ...options,
+  })
+}
+
+export function useTITANLivePnL(options?: SWRConfiguration) {
+  return useSWR('titan-live-pnl', fetchers.titanLivePnL, {
+    ...swrConfig,
+    refreshInterval: 30 * 1000,
+    ...options,
+  })
+}
+
+export function useScanActivityTitan(limit: number = 50, date?: string, options?: SWRConfiguration) {
+  return useSWR(
+    `scan-activity-titan-${limit}-${date || 'all'}`,
+    () => fetchers.scanActivityTitan(limit, date),
     { ...swrConfig, refreshInterval: 30 * 1000, ...options }
   )
 }

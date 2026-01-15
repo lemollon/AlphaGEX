@@ -55,11 +55,11 @@ export default function RecommendationsHistory() {
       ])
 
       if (historyRes.data.success) {
-        setRecommendations(historyRes.data.recommendations)
+        setRecommendations(historyRes.data.recommendations || [])
       }
 
       if (perfRes.data.success) {
-        setPerformance(perfRes.data.performance_buckets)
+        setPerformance(perfRes.data.performance_buckets || [])
       }
     } catch (error) {
       logger.error('Error fetching recommendations:', error)

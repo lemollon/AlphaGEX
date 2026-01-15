@@ -80,8 +80,8 @@ export default function RedFlagsSection({
               <div className="space-y-2">
                 {redFlags.map((item, idx) => (
                   <div key={idx} className="bg-red-900/30 rounded p-3">
-                    <div className="font-bold text-red-300">{item.flag}</div>
-                    <div className="text-sm text-gray-300">→ {item.reason}</div>
+                    <div className="font-bold text-red-300">{typeof item.flag === 'object' ? JSON.stringify(item.flag) : item.flag}</div>
+                    <div className="text-sm text-gray-300">→ {typeof item.reason === 'object' ? JSON.stringify(item.reason) : item.reason}</div>
                   </div>
                 ))}
               </div>

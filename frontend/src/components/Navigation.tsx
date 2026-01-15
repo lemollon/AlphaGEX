@@ -2,7 +2,7 @@
 
 import { logger } from '@/lib/logger'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
@@ -36,7 +36,8 @@ import {
   Pin,
   PinOff,
   Flame,
-  Shield
+  Shield,
+  Zap
 } from 'lucide-react'
 import { apiClient } from '@/lib/api'
 import BuildVersion from './BuildVersion'
@@ -51,15 +52,20 @@ const navItems = [
   { href: '/hyperion', label: 'HYPERION (Weekly Gamma)', icon: Sparkles, category: 'Analysis' },
   { href: '/apollo', label: 'APOLLO (ML Scanner)', icon: Sun, category: 'Trading' },
   { href: '/zero-dte-backtest', label: 'KRONOS (0DTE Condor)', icon: Clock, category: 'AI & Testing' },
+  { href: '/sage', label: 'SAGE (ML Advisor)', icon: Brain, category: 'AI & Testing' },
   { href: '/oracle', label: 'ORACLE (AI Advisor)', icon: Eye, category: 'AI & Testing' },
+  { href: '/quant', label: 'QUANT (ML Models)', icon: Calculator, category: 'AI & Testing' },
   { href: '/solomon', label: 'SOLOMON (Feedback Loop)', icon: BookOpen, category: 'AI & Testing' },
+  { href: '/prometheus', label: 'PROMETHEUS (ML System)', icon: Flame, category: 'AI & Testing' },
+  { href: '/math-optimizer', label: 'Math Optimizer', icon: Brain, category: 'AI & Testing' },
   { href: '/ares', label: 'ARES (SPY Iron Condor)', icon: Sword, category: 'Live Trading' },
   { href: '/athena', label: 'ATHENA (Directional Spreads)', icon: Target, category: 'Live Trading' },
+  { href: '/icarus', label: 'ICARUS (Aggressive Directional)', icon: Flame, category: 'Live Trading' },
   { href: '/pegasus', label: 'PEGASUS (SPX Iron Condor)', icon: Shield, category: 'Live Trading' },
+  { href: '/titan', label: 'TITAN (Aggressive SPX IC)', icon: Zap, category: 'Live Trading' },
   { href: '/vix', label: 'VIX Dashboard', icon: Activity, category: 'Volatility' },
   { href: '/volatility-comparison', label: 'Volatility Comparison', icon: TrendingDown, category: 'Volatility' },
   { href: '/alerts', label: 'Alerts', icon: Bell, category: 'Volatility' },
-  { href: '/prometheus', label: 'PROMETHEUS (ML System)', icon: Flame, category: 'Beta' },
   { href: '/trader', label: 'PHOENIX (SPY 0DTE)', icon: Bot, category: 'Beta' },
   { href: '/wheel', label: 'HERMES (Manual Wheel)', icon: RotateCcw, category: 'Beta' },
   { href: '/spx-wheel', label: 'ATLAS (SPX Wheel)', icon: Target, category: 'Beta' },
@@ -104,18 +110,36 @@ export default function Navigation() {
   // Sidebar is expanded when pinned OR hovered (on desktop)
   const isExpanded = isPinned || isHovered
 
-  // Fetch SPY/VIX prices and market status with 5-minute auto-refresh
+  // Fetch SPY/VIX prices and market status with 30-second auto-refresh during market hours
   useEffect(() => {
     const fetchMarketData = async () => {
       try {
         const [gexRes, timeRes, vixRes] = await Promise.all([
-          apiClient.getGEX('SPY').catch(() => null),
-          apiClient.time().catch(() => null),
-          apiClient.getVIXCurrent().catch(() => null)
+          apiClient.getGEX('SPY').catch((err) => {
+            logger.debug('GEX fetch failed:', err)
+            return null
+          }),
+          apiClient.time().catch((err) => {
+            logger.debug('Time fetch failed:', err)
+            return null
+          }),
+          apiClient.getVIXCurrent().catch((err) => {
+            logger.debug('VIX fetch failed:', err)
+            return null
+          })
         ])
+
+        // Update market status first
+        if (timeRes?.data?.market_open !== undefined) {
+          setMarketOpen(timeRes.data.market_open)
+        }
 
         if (gexRes?.data?.data?.spot_price) {
           setSpyPrice(gexRes.data.data.spot_price)
+          setApiConnected(true)
+        } else if (gexRes?.data?.spot_price) {
+          // Handle case where data is not nested
+          setSpyPrice(gexRes.data.spot_price)
           setApiConnected(true)
         } else {
           setApiConnected(false)
@@ -123,10 +147,9 @@ export default function Navigation() {
 
         if (vixRes?.data?.data?.vix_spot) {
           setVixPrice(vixRes.data.data.vix_spot)
-        }
-
-        if (timeRes?.data?.market_open !== undefined) {
-          setMarketOpen(timeRes.data.market_open)
+        } else if (vixRes?.data?.vix_spot) {
+          // Handle case where data is not nested
+          setVixPrice(vixRes.data.vix_spot)
         }
       } catch (error) {
         logger.error('Error fetching market data:', error)
@@ -136,20 +159,23 @@ export default function Navigation() {
 
     fetchMarketData()
 
-    // Auto-refresh every 5 minutes (300000ms)
-    const interval = setInterval(fetchMarketData, 5 * 60 * 1000)
+    // Auto-refresh every 30 seconds for real-time market data
+    // (Backend caches for 60 seconds, so 30s ensures fresh data without hammering API)
+    const interval = setInterval(fetchMarketData, 30 * 1000)
 
     return () => clearInterval(interval)
   }, [])
 
-  // Group nav items by category
-  const groupedItems = navItems.reduce((acc, item) => {
-    if (!acc[item.category]) {
-      acc[item.category] = []
-    }
-    acc[item.category].push(item)
-    return acc
-  }, {} as Record<string, typeof navItems>)
+  // PERFORMANCE FIX: Memoize grouped nav items (navItems is static, no need to recalculate)
+  const groupedItems = useMemo(() => {
+    return navItems.reduce((acc, item) => {
+      if (!acc[item.category]) {
+        acc[item.category] = []
+      }
+      acc[item.category].push(item)
+      return acc
+    }, {} as Record<string, typeof navItems>)
+  }, [])  // Empty deps since navItems is static
 
   return (
     <>

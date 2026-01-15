@@ -68,41 +68,43 @@ async def get_all_logs_summary(days: int = 7):
 
         total_records = 0
 
-        for table_name, display_name, ts_col in log_tables:
+        # PERFORMANCE FIX: Batch check which tables exist (1 query instead of 18)
+        table_names = [t[0] for t in log_tables]
+        cursor.execute("""
+            SELECT table_name FROM information_schema.tables
+            WHERE table_schema = 'public' AND table_name = ANY(%s)
+        """, (table_names,))
+        existing_tables = {row[0] for row in cursor.fetchall()}
+
+        # Build lookup for display names and timestamp columns
+        table_info = {t[0]: {'display_name': t[1], 'ts_col': t[2]} for t in log_tables}
+
+        for table_name in table_names:
+            info = table_info[table_name]
+            display_name = info['display_name']
+            ts_col = info['ts_col']
+
+            if table_name not in existing_tables:
+                summaries[table_name] = {
+                    'display_name': display_name,
+                    'exists': False,
+                    'total_count': 0,
+                    'recent_count': 0,
+                    'latest_entry': None
+                }
+                continue
+
             try:
-                # Check if table exists
-                cursor.execute("""
-                    SELECT EXISTS (
-                        SELECT FROM information_schema.tables
-                        WHERE table_name = %s
-                    )
-                """, (table_name,))
-                exists = cursor.fetchone()[0]
-
-                if not exists:
-                    summaries[table_name] = {
-                        'display_name': display_name,
-                        'exists': False,
-                        'total_count': 0,
-                        'recent_count': 0,
-                        'latest_entry': None
-                    }
-                    continue
-
-                # Get total count
-                cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-                total = cursor.fetchone()[0]
-
-                # Get recent count (last N days)
+                # PERFORMANCE FIX: Single query for all stats (was 3 queries per table)
                 cursor.execute(f"""
-                    SELECT COUNT(*) FROM {table_name}
-                    WHERE {ts_col} >= NOW() - INTERVAL '%s days'
+                    SELECT
+                        COUNT(*) as total_count,
+                        COUNT(*) FILTER (WHERE {ts_col} >= NOW() - INTERVAL '%s days') as recent_count,
+                        MAX({ts_col}) as latest_entry
+                    FROM {table_name}
                 """, (days,))
-                recent = cursor.fetchone()[0]
-
-                # Get latest entry timestamp
-                cursor.execute(f"SELECT MAX({ts_col}) FROM {table_name}")
-                latest = cursor.fetchone()[0]
+                row = cursor.fetchone()
+                total, recent, latest = row[0], row[1], row[2]
 
                 summaries[table_name] = {
                     'display_name': display_name,

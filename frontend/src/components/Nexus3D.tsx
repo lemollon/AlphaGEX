@@ -11,6 +11,260 @@ import {
   Line
 } from '@react-three/drei'
 import * as THREE from 'three'
+import useSWR from 'swr'
+
+// =============================================================================
+// API FETCHER FOR LIVE DATA
+// =============================================================================
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+
+const fetcher = async (url: string) => {
+  const res = await fetch(`${API_BASE}${url}`)
+  if (!res.ok) throw new Error('Failed to fetch')
+  return res.json()
+}
+
+// Map system IDs to their API endpoint prefixes
+const SYSTEM_API_MAP: Record<string, string> = {
+  ares: '/api/ares',
+  athena: '/api/athena',
+  icarus: '/api/icarus',
+  pegasus: '/api/pegasus',
+  titan: '/api/titan',
+  sage: '/api/sage',
+  quant: '/api/quant',
+  oracle: '/api/oracle',
+  phoenix: '/api/phoenix',
+  atlas: '/api/atlas',
+}
+
+// Map planet names to their associated bot/metric type
+const PLANET_BOT_MAP: Record<string, string> = {
+  // ARES planets
+  'condor': 'ares',
+  'shield': 'ares',
+  'strategy': 'ares',
+  // ATHENA planets
+  'spread': 'athena',
+  'direction': 'athena',
+  'momentum': 'athena',
+  // ORACLE planets
+  'prediction': 'oracle',
+  'probability': 'oracle',
+  'confidence': 'oracle',
+  // PHOENIX planets
+  'rebirth': 'phoenix',
+  'flame': 'phoenix',
+  'ash': 'phoenix',
+  // ATLAS planets
+  'foundation': 'atlas',
+  'endurance': 'atlas',
+  'strength': 'atlas',
+}
+
+// Route mapping for navigation
+const SYSTEM_ROUTES: Record<string, string> = {
+  manna: '/daily-manna',
+  icarus: '/icarus',
+  pegasus: '/pegasus',
+  titan: '/titan',
+  sage: '/sage',
+  quant: '/quant',
+  oracle: '/oracle',
+  argus: '/argus',
+  systems: '/system/processes',
+  apollo: '/apollo',
+  kronos: '/zero-dte-backtest',
+  solomon: '/solomon',
+  hyperion: '/probability',
+  ares: '/ares',
+  athena: '/athena',
+  phoenix: '/phoenix',
+  atlas: '/atlas',
+  gexcore: '/gex',
+  vix: '/vix',
+}
+
+// =============================================================================
+// LIVE DATA HOOK - Fetches bot performance data from API
+// =============================================================================
+
+interface BotPerformanceData {
+  total_pnl?: number
+  today_pnl?: number
+  win_rate?: number
+  open_positions?: number
+  total_trades?: number
+  today_trades?: number
+  status?: 'active' | 'idle' | 'error'
+  capital?: number
+  return_pct?: number
+}
+
+interface AllBotsLiveData {
+  [systemId: string]: {
+    [planetName: string]: PlanetLiveData
+  }
+}
+
+function useBotLiveData(): { liveData: AllBotsLiveData, isLoading: boolean } {
+  // Fetch unified trader performance
+  const { data: traderPerf } = useSWR('/api/trader/performance', fetcher, {
+    refreshInterval: 30000, // Refresh every 30 seconds
+    revalidateOnFocus: false,
+  })
+
+  // Fetch ARES status
+  const { data: aresData } = useSWR('/api/ares/status', fetcher, {
+    refreshInterval: 30000,
+    revalidateOnFocus: false,
+  })
+
+  // Fetch ATHENA status
+  const { data: athenaData } = useSWR('/api/athena/status', fetcher, {
+    refreshInterval: 30000,
+    revalidateOnFocus: false,
+  })
+
+  // Fetch all bots status
+  const { data: botsStatus } = useSWR('/api/trader/bots/status', fetcher, {
+    refreshInterval: 30000,
+    revalidateOnFocus: false,
+  })
+
+  // Build live data object for all systems
+  const liveData = useMemo<AllBotsLiveData>(() => {
+    const data: AllBotsLiveData = {}
+
+    // Helper to safely extract performance data
+    const extractPerf = (botData: any): Partial<BotPerformanceData> => {
+      if (!botData) return {}
+      const d = botData.data || botData
+      return {
+        total_pnl: d.total_pnl ?? d.pnl ?? d.realized_pnl,
+        today_pnl: d.today_pnl ?? d.daily_pnl,
+        win_rate: d.win_rate,
+        open_positions: d.open_positions ?? d.positions_count ?? 0,
+        total_trades: d.total_trades ?? d.trades_count ?? 0,
+        today_trades: d.today_trades ?? d.trades_today ?? 0,
+        status: d.is_active || d.status === 'active' ? 'active' :
+                d.status === 'error' ? 'error' : 'idle',
+        return_pct: d.return_pct ?? d.total_return_pct,
+      }
+    }
+
+    // ARES system - Iron Condor bot
+    if (aresData) {
+      const perf = extractPerf(aresData)
+      data['ares'] = {
+        // Map to ORACLE system planets (where ARES performance is shown)
+        'prediction': {
+          pnl: perf.total_pnl,
+          pnlPercent: perf.return_pct,
+          winRate: perf.win_rate,
+          activePositions: perf.open_positions,
+          todayTrades: perf.today_trades,
+          status: perf.status,
+        }
+      }
+    }
+
+    // ATHENA system - Directional Spreads bot
+    if (athenaData) {
+      const perf = extractPerf(athenaData)
+      data['athena'] = {
+        'direction': {
+          pnl: perf.total_pnl,
+          pnlPercent: perf.return_pct,
+          winRate: perf.win_rate,
+          activePositions: perf.open_positions,
+          todayTrades: perf.today_trades,
+          status: perf.status,
+        }
+      }
+    }
+
+    // Bots status endpoint contains data for multiple bots
+    if (botsStatus?.data) {
+      const bots = botsStatus.data
+
+      // PHOENIX
+      if (bots.PHOENIX) {
+        const perf = extractPerf(bots.PHOENIX)
+        data['phoenix'] = {
+          'rebirth': {
+            pnl: perf.total_pnl,
+            winRate: perf.win_rate,
+            activePositions: perf.open_positions,
+            status: perf.status,
+          }
+        }
+      }
+
+      // ATLAS
+      if (bots.ATLAS) {
+        const perf = extractPerf(bots.ATLAS)
+        data['atlas'] = {
+          'foundation': {
+            pnl: perf.total_pnl,
+            winRate: perf.win_rate,
+            activePositions: perf.open_positions,
+            status: perf.status,
+          }
+        }
+      }
+
+      // ORACLE
+      if (bots.ORACLE) {
+        const perf = extractPerf(bots.ORACLE)
+        data['oracle'] = {
+          'prediction': {
+            pnl: perf.total_pnl,
+            winRate: perf.win_rate,
+            status: perf.status,
+          },
+          'probability': {
+            winRate: perf.win_rate,
+            status: perf.status,
+          },
+          'confidence': {
+            status: perf.status,
+          }
+        }
+      }
+    }
+
+    // Global trader performance for MANNA (the center)
+    if (traderPerf?.data) {
+      const perf = traderPerf.data
+      data['manna'] = {
+        'provision': {
+          pnl: perf.total_pnl,
+          pnlPercent: perf.total_return_pct,
+          winRate: perf.win_rate,
+          activePositions: perf.total_trades,
+          status: 'active',
+        },
+        'sustenance': {
+          pnl: perf.realized_pnl ?? perf.total_pnl,
+          winRate: perf.win_rate,
+          status: 'active',
+        },
+        'blessing': {
+          pnl: perf.unrealized_pnl ?? 0,
+          status: 'active',
+        }
+      }
+    }
+
+    return data
+  }, [traderPerf, aresData, athenaData, botsStatus])
+
+  const isLoading = !traderPerf && !aresData && !athenaData && !botsStatus
+
+  return { liveData, isLoading }
+}
 
 // =============================================================================
 // ERROR BOUNDARY
@@ -55,6 +309,36 @@ export interface BotStatus {
   atlas?: 'active' | 'idle' | 'trading' | 'error'
   oracle?: 'active' | 'idle' | 'trading' | 'error'
   gex?: 'active' | 'idle' | 'trading' | 'error'
+}
+
+// Live data for planets - metrics displayed on each planet
+export interface PlanetLiveData {
+  pnl?: number
+  pnlPercent?: number
+  winRate?: number
+  activePositions?: number
+  todayTrades?: number
+  status?: 'active' | 'idle' | 'error'
+}
+
+// System categories for navigation
+export type SystemCategory = 'center' | 'inner' | 'outer'
+
+// Get system category based on position
+function getSystemCategory(systemId: string): SystemCategory {
+  if (systemId === 'manna') return 'center'
+  const innerRing = ['icarus', 'pegasus', 'titan', 'sage', 'quant']
+  if (innerRing.includes(systemId)) return 'inner'
+  return 'outer'
+}
+
+// Get category label
+function getCategoryLabel(category: SystemCategory): string {
+  switch (category) {
+    case 'center': return 'CENTER'
+    case 'inner': return 'INNER RING'
+    case 'outer': return 'OUTER RING'
+  }
 }
 
 export type ColorTheme = 'cyan' | 'purple' | 'green' | 'red'
@@ -1999,45 +2283,119 @@ const STOCK_TICKERS = [
 
 // =============================================================================
 // SOLAR SYSTEM DEFINITIONS - Each with unique flares and planet effects
+// MANNA is the CENTER OF THE UNIVERSE - all systems orbit around it
+// Inner Ring: 5 Bot Systems (ICARUS, PEGASUS, TITAN, SAGE, QUANT) - radius ~45
+// Outer Ring: 7 Original Systems - radius ~80
 // =============================================================================
 
 const SOLAR_SYSTEMS = [
+  // =============================================================================
+  // MANNA - THE CENTER OF THE NEXUS UNIVERSE (Christian Theme)
+  // =============================================================================
   {
-    id: 'solomon',
-    name: 'SOLOMON',
-    subtitle: 'AI Wisdom',
-    route: '/solomon',
-    position: [-45, 15, -50] as [number, number, number],  // Far upper left - spread out
-    sunColor: '#f59e0b',
-    glowColor: '#fbbf24',
+    id: 'manna',
+    name: 'MANNA',
+    subtitle: 'Bread of Heaven',
+    route: '/daily-manna',
+    position: [0, 0, -60] as [number, number, number],  // CENTER OF THE UNIVERSE
+    sunColor: '#fef3c7',  // Warm golden white - heavenly bread
+    glowColor: '#fde68a',
+    flareType: 'radiant' as const,
+    planets: [
+      { name: 'Provision', color: '#fbbf24', size: 0.35, orbit: 3.0, speed: 0.4, effect: 'glow' as const, moons: 2 },
+      { name: 'Sustenance', color: '#f59e0b', size: 0.28, orbit: 4.5, speed: 0.28, effect: 'rings' as const, moons: 1 },
+      { name: 'Blessing', color: '#fef3c7', size: 0.24, orbit: 6.0, speed: 0.18, effect: 'aura' as const, moons: 3 },
+    ]
+  },
+  // =============================================================================
+  // INNER RING - The 5 Bot Solar Systems (radius ~45 from MANNA)
+  // Arranged in a pentagon around MANNA
+  // =============================================================================
+  {
+    id: 'icarus',
+    name: 'ICARUS',
+    subtitle: 'Sun Chaser',
+    route: '/icarus',
+    position: [0, 45, -60] as [number, number, number],  // Top - 12 o'clock
+    sunColor: '#fb923c',  // Blazing orange - the sun he dared approach
+    glowColor: '#fdba74',
+    flareType: 'eruption' as const,
+    planets: [
+      { name: 'Ambition', color: '#ef4444', size: 0.22, orbit: 2.2, speed: 0.8, effect: 'fire' as const, moons: 1 },
+      { name: 'Velocity', color: '#f97316', size: 0.18, orbit: 3.2, speed: 0.6, effect: 'electric' as const, moons: 2 },
+      { name: 'Zenith', color: '#fbbf24', size: 0.15, orbit: 4.0, speed: 0.4, effect: 'pulse' as const, moons: 0 },
+    ]
+  },
+  {
+    id: 'pegasus',
+    name: 'PEGASUS',
+    subtitle: 'Divine Steed',
+    route: '/pegasus',
+    position: [43, 14, -60] as [number, number, number],  // Upper right - 2 o'clock
+    sunColor: '#14b8a6',  // Teal - swift and graceful
+    glowColor: '#2dd4bf',
+    flareType: 'wings' as const,
+    planets: [
+      { name: 'Flight', color: '#06b6d4', size: 0.20, orbit: 2.0, speed: 0.7, effect: 'glow' as const, moons: 1 },
+      { name: 'Liberty', color: '#5eead4', size: 0.17, orbit: 3.0, speed: 0.5, effect: 'rings' as const, moons: 2 },
+      { name: 'Horizon', color: '#99f6e4', size: 0.15, orbit: 4.0, speed: 0.35, effect: 'aura' as const, moons: 0 },
+    ]
+  },
+  {
+    id: 'titan',
+    name: 'TITAN',
+    subtitle: 'Primordial Force',
+    route: '/titan',
+    position: [26, -36, -60] as [number, number, number],  // Lower right - 4 o'clock
+    sunColor: '#7c3aed',  // Deep purple - ancient cosmic power
+    glowColor: '#a78bfa',
+    flareType: 'mystic' as const,
+    planets: [
+      { name: 'Colossus', color: '#8b5cf6', size: 0.26, orbit: 2.4, speed: 0.5, effect: 'rings' as const, moons: 2 },
+      { name: 'Fortress', color: '#6366f1', size: 0.22, orbit: 3.4, speed: 0.35, effect: 'crystals' as const, moons: 1 },
+      { name: 'Apex', color: '#4f46e5', size: 0.18, orbit: 4.2, speed: 0.25, effect: 'hexagon' as const, moons: 3 },
+    ]
+  },
+  {
+    id: 'sage',
+    name: 'SAGE',
+    subtitle: 'Enlightened Mind',
+    route: '/sage',
+    position: [-26, -36, -60] as [number, number, number],  // Lower left - 8 o'clock
+    sunColor: '#0ea5e9',  // Deep sky blue - clarity and insight
+    glowColor: '#38bdf8',
     flareType: 'wisdom' as const,
     planets: [
-      { name: 'Analysis', color: '#22d3ee', size: 0.18, orbit: 1.8, speed: 0.6, effect: 'rings' as const, moons: 1 },
-      { name: 'Strategy', color: '#a855f7', size: 0.15, orbit: 2.8, speed: 0.4, effect: 'crystals' as const, moons: 2 },
-      { name: 'Insight', color: '#10b981', size: 0.12, orbit: 3.6, speed: 0.25, effect: 'aura' as const, moons: 0 },
+      { name: 'Insight', color: '#06b6d4', size: 0.21, orbit: 2.3, speed: 0.55, effect: 'glow' as const, moons: 1 },
+      { name: 'Foresight', color: '#0284c7', size: 0.18, orbit: 3.3, speed: 0.4, effect: 'orbit_rings' as const, moons: 2 },
+      { name: 'Clarity', color: '#0369a1', size: 0.15, orbit: 4.1, speed: 0.28, effect: 'aura' as const, moons: 0 },
     ]
   },
   {
-    id: 'argus',
-    name: 'ARGUS',
-    subtitle: 'All-Seeing Eye',
-    route: '/argus',
-    position: [50, 10, -35] as [number, number, number],  // Far right
-    sunColor: '#06b6d4',
-    glowColor: '#22d3ee',
-    flareType: 'pulse' as const,
+    id: 'quant',
+    name: 'QUANT',
+    subtitle: 'Algorithmic Core',
+    route: '/quant',
+    position: [-43, 14, -60] as [number, number, number],  // Upper left - 10 o'clock
+    sunColor: '#f1f5f9',  // Silver-white - mathematical precision
+    glowColor: '#e2e8f0',
+    flareType: 'fractal' as const,
     planets: [
-      { name: 'Gamma', color: '#f97316', size: 0.22, orbit: 2.0, speed: 0.8, effect: 'fire' as const, moons: 2 },
-      { name: 'Delta', color: '#ef4444', size: 0.16, orbit: 3.0, speed: 0.5, effect: 'electric' as const, moons: 1 },
-      { name: 'Theta', color: '#8b5cf6', size: 0.13, orbit: 3.8, speed: 0.35, effect: 'spiral' as const, moons: 3 },
+      { name: 'Algorithm', color: '#cbd5e1', size: 0.20, orbit: 2.2, speed: 0.618, effect: 'binary' as const, moons: 1 },
+      { name: 'Matrix', color: '#94a3b8', size: 0.17, orbit: 3.14, speed: 0.45, effect: 'data_stream' as const, moons: 2 },
+      { name: 'Calculus', color: '#64748b', size: 0.14, orbit: 4.0, speed: 0.3, effect: 'spiral' as const, moons: 1 },
     ]
   },
+  // =============================================================================
+  // OUTER RING - The Original Systems (radius ~80 from MANNA)
+  // Arranged in a heptagon around the inner ring
+  // =============================================================================
   {
     id: 'oracle',
     name: 'ORACLE',
     subtitle: 'Future Sight',
     route: '/oracle',
-    position: [0, 35, -60] as [number, number, number],  // High above - way up
+    position: [0, 80, -60] as [number, number, number],  // Top - 12 o'clock
     sunColor: '#8b5cf6',
     glowColor: '#a855f7',
     flareType: 'mystic' as const,
@@ -2048,18 +2406,18 @@ const SOLAR_SYSTEMS = [
     ]
   },
   {
-    id: 'kronos',
-    name: 'KRONOS',
-    subtitle: 'Time Master',
-    route: '/zero-dte-backtest',
-    position: [-40, -20, -45] as [number, number, number],  // Lower left - spread out
-    sunColor: '#ef4444',
-    glowColor: '#f87171',
-    flareType: 'eruption' as const,
+    id: 'argus',
+    name: 'ARGUS',
+    subtitle: 'All-Seeing Eye',
+    route: '/argus',
+    position: [70, 40, -55] as [number, number, number],  // Upper right - 1:30
+    sunColor: '#06b6d4',
+    glowColor: '#22d3ee',
+    flareType: 'pulse' as const,
     planets: [
-      { name: 'History', color: '#6b7280', size: 0.19, orbit: 2.4, speed: 0.55, effect: 'dust' as const, moons: 1 },
-      { name: 'Backtest', color: '#3b82f6', size: 0.16, orbit: 3.4, speed: 0.38, effect: 'data_stream' as const, moons: 2 },
-      { name: 'Patterns', color: '#fbbf24', size: 0.13, orbit: 4.2, speed: 0.25, effect: 'hexagon' as const, moons: 1 },
+      { name: 'Gamma', color: '#f97316', size: 0.22, orbit: 2.0, speed: 0.8, effect: 'fire' as const, moons: 2 },
+      { name: 'Delta', color: '#ef4444', size: 0.16, orbit: 3.0, speed: 0.5, effect: 'electric' as const, moons: 1 },
+      { name: 'Theta', color: '#8b5cf6', size: 0.13, orbit: 3.8, speed: 0.35, effect: 'spiral' as const, moons: 3 },
     ]
   },
   {
@@ -2067,7 +2425,7 @@ const SOLAR_SYSTEMS = [
     name: 'SYSTEMS',
     subtitle: 'Core Hub',
     route: '/system/processes',
-    position: [45, -15, -55] as [number, number, number],  // Lower right - spread out
+    position: [78, -20, -65] as [number, number, number],  // Right - 3 o'clock
     sunColor: '#10b981',
     glowColor: '#34d399',
     flareType: 'network' as const,
@@ -2082,7 +2440,7 @@ const SOLAR_SYSTEMS = [
     name: 'APOLLO',
     subtitle: 'ML Scanner',
     route: '/apollo',
-    position: [0, -30, -40] as [number, number, number],  // Below center
+    position: [45, -68, -60] as [number, number, number],  // Lower right - 5 o'clock
     sunColor: '#fbbf24',
     glowColor: '#fcd34d',
     flareType: 'radiant' as const,
@@ -2093,11 +2451,41 @@ const SOLAR_SYSTEMS = [
     ]
   },
   {
+    id: 'kronos',
+    name: 'KRONOS',
+    subtitle: 'Time Master',
+    route: '/zero-dte-backtest',
+    position: [-45, -68, -60] as [number, number, number],  // Lower left - 7 o'clock
+    sunColor: '#ef4444',
+    glowColor: '#f87171',
+    flareType: 'eruption' as const,
+    planets: [
+      { name: 'History', color: '#6b7280', size: 0.19, orbit: 2.4, speed: 0.55, effect: 'dust' as const, moons: 1 },
+      { name: 'Backtest', color: '#3b82f6', size: 0.16, orbit: 3.4, speed: 0.38, effect: 'data_stream' as const, moons: 2 },
+      { name: 'Patterns', color: '#fbbf24', size: 0.13, orbit: 4.2, speed: 0.25, effect: 'hexagon' as const, moons: 1 },
+    ]
+  },
+  {
+    id: 'solomon',
+    name: 'SOLOMON',
+    subtitle: 'AI Wisdom',
+    route: '/solomon',
+    position: [-78, -20, -65] as [number, number, number],  // Left - 9 o'clock
+    sunColor: '#f59e0b',
+    glowColor: '#fbbf24',
+    flareType: 'wisdom' as const,
+    planets: [
+      { name: 'Analysis', color: '#22d3ee', size: 0.18, orbit: 1.8, speed: 0.6, effect: 'rings' as const, moons: 1 },
+      { name: 'Strategy', color: '#a855f7', size: 0.15, orbit: 2.8, speed: 0.4, effect: 'crystals' as const, moons: 2 },
+      { name: 'Insight', color: '#10b981', size: 0.12, orbit: 3.6, speed: 0.25, effect: 'aura' as const, moons: 0 },
+    ]
+  },
+  {
     id: 'hyperion',
     name: 'HYPERION',
     subtitle: 'Mathematical Titan',
     route: '/probability',
-    position: [-25, 25, -30] as [number, number, number],  // Upper left closer
+    position: [-70, 40, -55] as [number, number, number],  // Upper left - 10:30
     sunColor: '#6366f1',
     glowColor: '#818cf8',
     flareType: 'fractal' as const,
@@ -2107,19 +2495,44 @@ const SOLAR_SYSTEMS = [
       { name: 'Gauss', color: '#10b981', size: 0.14, orbit: 4.0, speed: 0.3, effect: 'glow' as const, moons: 0 },
     ]
   },
+  // =============================================================================
+  // GEX CORE - The Analytical Heart (Gamma Exposure Analysis)
+  // =============================================================================
   {
-    id: 'pegasus',
-    name: 'PEGASUS',
-    subtitle: 'Winged Guardian',
-    route: '/pegasus',
-    position: [35, 20, -35] as [number, number, number],  // Upper right - opposite from HYPERION
-    sunColor: '#14b8a6',  // Teal - protection/stability
-    glowColor: '#2dd4bf',
-    flareType: 'wings' as const,
+    id: 'gexcore',
+    name: 'GEX CORE',
+    subtitle: 'Gamma Exposure Heart',
+    route: '/gex',
+    position: [0, -130, -60] as [number, number, number],  // Bottom - 6 o'clock (spaced from MANNA)
+    sunColor: '#22d3ee',  // Cyan - GEX signature color
+    glowColor: '#06b6d4',
+    flareType: 'pulse' as const,
     planets: [
-      { name: 'Shield', color: '#06b6d4', size: 0.20, orbit: 2.0, speed: 0.55, effect: 'rings' as const, moons: 1 },
-      { name: 'Premium', color: '#f59e0b', size: 0.17, orbit: 3.0, speed: 0.4, effect: 'fire' as const, moons: 2 },
-      { name: 'Wings', color: '#e2e8f0', size: 0.15, orbit: 4.0, speed: 0.3, effect: 'glow' as const, moons: 0 },
+      { name: 'Gamma', color: '#f97316', size: 0.24, orbit: 2.5, speed: 0.8, effect: 'fire' as const, moons: 2 },
+      { name: 'Delta', color: '#ef4444', size: 0.20, orbit: 3.5, speed: 0.6, effect: 'electric' as const, moons: 1 },
+      { name: 'Vanna', color: '#8b5cf6', size: 0.18, orbit: 4.5, speed: 0.45, effect: 'spiral' as const, moons: 2 },
+      { name: 'Charm', color: '#10b981', size: 0.15, orbit: 5.5, speed: 0.3, effect: 'glow' as const, moons: 1 },
+    ]
+  },
+  // =============================================================================
+  // VIX - The Fear Index Solar System (Volatility Analysis)
+  // =============================================================================
+  {
+    id: 'vix',
+    name: 'VIX',
+    subtitle: 'Fear Index',
+    route: '/vix',
+    position: [55, -100, -60] as [number, number, number],  // Near GEX CORE - volatility metrics
+    sunColor: '#ef4444',  // Red - fear/volatility signature color
+    glowColor: '#f87171',
+    flareType: 'eruption' as const,
+    planets: [
+      { name: 'Spot', color: '#ef4444', size: 0.26, orbit: 2.5, speed: 0.7, effect: 'fire' as const, moons: 1 },
+      { name: 'IV Percentile', color: '#f97316', size: 0.22, orbit: 3.5, speed: 0.55, effect: 'pulse' as const, moons: 2 },
+      { name: 'Term Structure', color: '#eab308', size: 0.20, orbit: 4.5, speed: 0.45, effect: 'rings' as const, moons: 1 },
+      { name: 'VVIX', color: '#22c55e', size: 0.24, orbit: 5.5, speed: 0.35, effect: 'electric' as const, moons: 2 },
+      { name: 'Real Vol', color: '#06b6d4', size: 0.18, orbit: 6.5, speed: 0.28, effect: 'glow' as const, moons: 1 },
+      { name: 'IV-RV Spread', color: '#8b5cf6', size: 0.16, orbit: 7.5, speed: 0.2, effect: 'spiral' as const, moons: 0 },
     ]
   },
 ]
@@ -4012,6 +4425,8 @@ function SystemAmbientEffects({
   // Wrap all effects in AlwaysVisibleGroup so they render from ANY viewing angle
   const getEffects = () => {
     switch (systemId) {
+      case 'manna':
+        return <MannaEffects color={color} sunColor={sunColor} paused={paused} />
       case 'solomon':
         return <SolomonEffects color={color} sunColor={sunColor} paused={paused} />
       case 'argus':
@@ -4028,6 +4443,8 @@ function SystemAmbientEffects({
         return <HyperionEffects color={color} sunColor={sunColor} paused={paused} />
       case 'pegasus':
         return <PegasusEffects color={color} sunColor={sunColor} paused={paused} />
+      case 'gexcore':
+        return <GexCoreEffects color={color} sunColor={sunColor} paused={paused} />
       default:
         return null
     }
@@ -4035,6 +4452,565 @@ function SystemAmbientEffects({
 
   const effects = getEffects()
   return effects ? <AlwaysVisibleGroup>{effects}</AlwaysVisibleGroup> : null
+}
+
+// =============================================================================
+// MANNA EFFECTS - The Most Divine, Extravagant System in the Nexus
+// Features: Bible verse rings, divine rays, falling manna, halos, cross core
+// =============================================================================
+
+// Bible verses for the rings
+const MANNA_VERSES = [
+  "I am the bread of life - John 6:35",
+  "Man shall not live by bread alone - Matthew 4:4",
+  "Give us this day our daily bread - Matthew 6:11",
+  "The Lord is my shepherd - Psalm 23:1",
+  "For God so loved the world - John 3:16",
+  "I can do all things through Christ - Philippians 4:13",
+  "The Lord will provide - Genesis 22:14",
+  "Taste and see that the Lord is good - Psalm 34:8",
+  "Be still and know that I am God - Psalm 46:10",
+  "The Lord is my light and salvation - Psalm 27:1",
+  "His mercies are new every morning - Lamentations 3:23",
+  "Trust in the Lord with all your heart - Proverbs 3:5",
+]
+
+function MannaEffects({ color, sunColor, paused }: { color: string, sunColor: string, paused: boolean }) {
+  const groupRef = useRef<THREE.Group>(null)
+  const breathingCoreRef = useRef<THREE.Group>(null)
+  const crossRef = useRef<THREE.Group>(null)
+  const lightningRef = useRef<THREE.Group>(null)
+  const starDustRef = useRef<THREE.Points>(null)
+  const haloRef = useRef<THREE.Group>(null)
+  const raysRef = useRef<THREE.Group>(null)
+  const verseRingsRef = useRef<THREE.Group>(null)
+  const mannaRef = useRef<THREE.Points>(null)
+
+  // ==================== GOLDEN LIGHTNING BOLTS ====================
+  // Thin electric bolts shooting from center in ALL directions - DBZ style
+  // Full spherical distribution (up, down, horizontal, everywhere)
+  const lightningBolts = useMemo(() =>
+    Array.from({ length: 72 }, (_, i) => {
+      // True spherical distribution - phi goes 0 to PI (pole to pole)
+      const phi = Math.acos(2 * Math.random() - 1) // Uniform sphere distribution
+      const theta = Math.random() * Math.PI * 2 // Full 360 horizontal
+      return {
+        phi,
+        theta,
+        length: 18 + Math.random() * 28,
+        width: 0.025 + Math.random() * 0.04,
+        speed: 8 + Math.random() * 12, // MUCH faster flashing than GEX Core
+        phase: Math.random() * Math.PI * 2
+      }
+    })
+  , [])
+
+  // ==================== STAR DUST PARTICLES ====================
+  // Golden sparkles surrounding the system
+  const starDustCount = 400
+  const starDustPositions = useMemo(() => {
+    const positions = new Float32Array(starDustCount * 3)
+    for (let i = 0; i < starDustCount; i++) {
+      const theta = Math.random() * Math.PI * 2
+      const phi = Math.random() * Math.PI
+      const radius = 8 + Math.random() * 20
+      positions[i * 3] = Math.sin(phi) * Math.cos(theta) * radius
+      positions[i * 3 + 1] = Math.cos(phi) * radius
+      positions[i * 3 + 2] = Math.sin(phi) * Math.sin(theta) * radius
+    }
+    return positions
+  }, [])
+
+  // ==================== DIVINE RAYS FROM CENTER ====================
+  // All rays originate from (0,0,0) in FULL spherical distribution
+  const divineRays = useMemo(() =>
+    Array.from({ length: 96 }, (_, i) => {
+      // True spherical distribution - rays go everywhere
+      const phi = Math.acos(2 * Math.random() - 1) // Uniform sphere distribution
+      const theta = Math.random() * Math.PI * 2 // Full 360 horizontal
+      return {
+        phi,
+        theta,
+        length: 12 + Math.random() * 22,
+        width: 0.02 + Math.random() * 0.035,
+        speed: 3 + Math.random() * 5,
+        phase: Math.random() * Math.PI * 2
+      }
+    })
+  , [])
+
+  // ==================== HALOS ====================
+  const halos = useMemo(() => [
+    { radius: 3, opacity: 0.5, speed: 0.3 },
+    { radius: 5, opacity: 0.4, speed: -0.25 },
+    { radius: 7, opacity: 0.3, speed: 0.2 },
+    { radius: 9, opacity: 0.25, speed: -0.15 },
+    { radius: 11, opacity: 0.2, speed: 0.1 },
+  ], [])
+
+  // ==================== FALLING MANNA ====================
+  const mannaCount = 150
+  const mannaPositions = useMemo(() => {
+    const positions = new Float32Array(mannaCount * 3)
+    for (let i = 0; i < mannaCount; i++) {
+      const angle = Math.random() * Math.PI * 2
+      const radius = 3 + Math.random() * 15
+      positions[i * 3] = Math.cos(angle) * radius
+      positions[i * 3 + 1] = 15 + Math.random() * 20
+      positions[i * 3 + 2] = Math.sin(angle) * radius
+    }
+    return positions
+  }, [])
+
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    // Breathing core - pulsing divine heart at center
+    if (breathingCoreRef.current) {
+      const breathe = 1 + Math.sin(t * 1.5) * 0.2
+      breathingCoreRef.current.scale.setScalar(breathe)
+      breathingCoreRef.current.rotation.y = t * 0.3
+    }
+
+    // Cross rotation
+    if (crossRef.current) {
+      crossRef.current.rotation.y = t * 0.1
+      const pulse = 1 + Math.sin(t * 1.5) * 0.1
+      crossRef.current.scale.setScalar(pulse)
+    }
+
+    // Lightning bolts flashing rapidly from center - faster than GEX Core
+    if (lightningRef.current) {
+      lightningRef.current.children.forEach((bolt, i) => {
+        // Rapid flashing with sharp on/off effect
+        const flash = Math.sin(t * lightningBolts[i].speed + lightningBolts[i].phase)
+        const intensity = flash > 0.3 ? 1 : (flash > 0 ? 0.5 : 0.2) // Sharp flash effect
+        bolt.scale.y = intensity
+        bolt.scale.x = 0.5 + intensity * 0.5
+        // Also animate opacity through material
+        const mesh = bolt as THREE.Mesh
+        if (mesh.material && 'opacity' in mesh.material) {
+          (mesh.material as THREE.MeshBasicMaterial).opacity = 0.3 + intensity * 0.7
+        }
+      })
+      lightningRef.current.rotation.y = t * 0.03
+    }
+
+    // Star dust twinkling
+    if (starDustRef.current) {
+      const positions = starDustRef.current.geometry.attributes.position.array as Float32Array
+      for (let i = 0; i < starDustCount; i++) {
+        // Gentle twinkling movement
+        positions[i * 3] += Math.sin(t * 2 + i) * 0.005
+        positions[i * 3 + 1] += Math.cos(t * 1.5 + i * 0.5) * 0.005
+        positions[i * 3 + 2] += Math.sin(t * 1.8 + i * 0.3) * 0.005
+      }
+      starDustRef.current.geometry.attributes.position.needsUpdate = true
+      starDustRef.current.rotation.y = t * 0.01
+    }
+
+    // Halos pulsing
+    if (haloRef.current) {
+      haloRef.current.children.forEach((halo, i) => {
+        const scale = 1 + Math.sin(t * halos[i].speed * 3 + i * 0.5) * 0.15
+        halo.scale.setScalar(scale)
+        halo.rotation.z = t * halos[i].speed
+      })
+    }
+
+    // Divine rays pulsing from center
+    if (raysRef.current) {
+      raysRef.current.children.forEach((ray, i) => {
+        const pulse = 0.5 + Math.abs(Math.sin(t * divineRays[i].speed + divineRays[i].phase)) * 0.5
+        ray.scale.y = pulse
+      })
+    }
+
+    // Verse rings rotation
+    if (verseRingsRef.current) {
+      verseRingsRef.current.children.forEach((ring, i) => {
+        ring.rotation.y = t * (0.1 + i * 0.03) * (i % 2 === 0 ? 1 : -1)
+        ring.rotation.x = Math.sin(t * 0.2 + i) * 0.1
+      })
+    }
+
+    // Falling manna particles
+    if (mannaRef.current) {
+      const positions = mannaRef.current.geometry.attributes.position.array as Float32Array
+      for (let i = 0; i < mannaCount; i++) {
+        positions[i * 3 + 1] -= 0.06 + Math.random() * 0.02
+        positions[i * 3] += Math.sin(t + i) * 0.008
+        positions[i * 3 + 2] += Math.cos(t + i) * 0.008
+        if (positions[i * 3 + 1] < -5) {
+          positions[i * 3 + 1] = 20 + Math.random() * 10
+          const angle = Math.random() * Math.PI * 2
+          const radius = 3 + Math.random() * 15
+          positions[i * 3] = Math.cos(angle) * radius
+          positions[i * 3 + 2] = Math.sin(angle) * radius
+        }
+      }
+      mannaRef.current.geometry.attributes.position.needsUpdate = true
+    }
+
+    // Gentle rotation of entire effect group
+    if (groupRef.current) {
+      groupRef.current.rotation.y = t * 0.01
+    }
+  })
+
+  return (
+    <group ref={groupRef}>
+      {/* ==================== BREATHING DIVINE CORE ==================== */}
+      {/* All effects originate from this central point at (0,0,0) */}
+      <group ref={breathingCoreRef}>
+        {/* Outer glow shell */}
+        <Sphere args={[2.5, 64, 64]}>
+          <MeshDistortMaterial
+            color="#fef3c7"
+            emissive="#fde68a"
+            emissiveIntensity={2}
+            distort={0.2}
+            speed={2}
+            transparent
+            opacity={0.4}
+          />
+        </Sphere>
+        {/* Middle layer */}
+        <Sphere args={[1.8, 48, 48]}>
+          <meshBasicMaterial color="#fcd34d" transparent opacity={0.5} />
+        </Sphere>
+        {/* Inner brilliant core */}
+        <Sphere args={[1.2, 32, 32]}>
+          <meshBasicMaterial color="#ffffff" transparent opacity={0.9} />
+        </Sphere>
+        {/* Center point of pure light */}
+        <Sphere args={[0.4, 16, 16]}>
+          <meshBasicMaterial color="#ffffff" />
+        </Sphere>
+      </group>
+
+      {/* ==================== GOLDEN CROSS - Centered at origin ==================== */}
+      <group ref={crossRef}>
+        {/* Main vertical beam */}
+        <mesh position={[0, 0, 0]}>
+          <boxGeometry args={[0.8, 12, 0.8]} />
+          <meshBasicMaterial color="#fbbf24" transparent opacity={0.9} />
+        </mesh>
+        {/* Main horizontal beam */}
+        <mesh position={[0, 3, 0]}>
+          <boxGeometry args={[8, 0.8, 0.8]} />
+          <meshBasicMaterial color="#fbbf24" transparent opacity={0.9} />
+        </mesh>
+        {/* Cross glow */}
+        <Sphere args={[5, 32, 32]}>
+          <meshBasicMaterial color="#fde68a" transparent opacity={0.1} side={THREE.DoubleSide} />
+        </Sphere>
+        <Sphere args={[8, 32, 32]}>
+          <meshBasicMaterial color="#fbbf24" transparent opacity={0.05} side={THREE.DoubleSide} />
+        </Sphere>
+      </group>
+
+      {/* ==================== GOLDEN LIGHTNING BOLTS - From center outward in ALL directions ==================== */}
+      <group ref={lightningRef}>
+        {lightningBolts.map((bolt, i) => {
+          // Spherical to Cartesian: x = sin(phi)cos(theta), y = cos(phi), z = sin(phi)sin(theta)
+          const rotationX = bolt.phi - Math.PI / 2 // Adjust so 0 phi points up
+          const rotationY = -bolt.theta
+          return (
+            <mesh
+              key={i}
+              position={[0, 0, 0]}
+              rotation={[rotationX, rotationY, 0]}
+            >
+              <cylinderGeometry args={[0.015, bolt.width, bolt.length, 6]} />
+              <meshBasicMaterial color="#fbbf24" transparent opacity={0.9} side={THREE.DoubleSide} />
+            </mesh>
+          )
+        })}
+      </group>
+
+      {/* ==================== STAR DUST - Twinkling golden particles ==================== */}
+      <points ref={starDustRef}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" count={starDustCount} array={starDustPositions} itemSize={3} />
+        </bufferGeometry>
+        <pointsMaterial color="#fef3c7" size={0.08} transparent opacity={0.9} sizeAttenuation />
+      </points>
+
+      {/* ==================== DIVINE RAYS - From center outward in ALL directions ==================== */}
+      <group ref={raysRef}>
+        {divineRays.map((ray, i) => {
+          // Spherical to rotation - same as lightning
+          const rotationX = ray.phi - Math.PI / 2
+          const rotationY = -ray.theta
+          return (
+            <mesh
+              key={i}
+              position={[0, 0, 0]}
+              rotation={[rotationX, rotationY, 0]}
+            >
+              <cylinderGeometry args={[0.008, ray.width, ray.length, 6]} />
+              <meshBasicMaterial color="#fcd34d" transparent opacity={0.6} side={THREE.DoubleSide} />
+            </mesh>
+          )
+        })}
+      </group>
+
+      {/* ==================== HALOS - Centered rings ==================== */}
+      <group ref={haloRef}>
+        {halos.map((halo, i) => (
+          <mesh key={i} rotation={[Math.PI / 2, 0, 0]}>
+            <torusGeometry args={[halo.radius, 0.08, 16, 128]} />
+            <meshBasicMaterial color="#fbbf24" transparent opacity={halo.opacity} side={THREE.DoubleSide} />
+          </mesh>
+        ))}
+      </group>
+
+      {/* ==================== FALLING MANNA - Heavenly Bread ==================== */}
+      <points ref={mannaRef}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" count={mannaCount} array={mannaPositions} itemSize={3} />
+        </bufferGeometry>
+        <pointsMaterial color="#fef3c7" size={0.15} transparent opacity={0.9} sizeAttenuation />
+      </points>
+
+      {/* ==================== BIBLE VERSE RINGS ==================== */}
+      <group ref={verseRingsRef}>
+        {/* Ring 1 - Inner */}
+        <group rotation={[Math.PI / 5, 0, 0]}>
+          <mesh rotation={[Math.PI / 2, 0, 0]}>
+            <torusGeometry args={[13, 0.03, 8, 128]} />
+            <meshBasicMaterial color="#fbbf24" transparent opacity={0.5} side={THREE.DoubleSide} />
+          </mesh>
+          {MANNA_VERSES.slice(0, 4).map((verse, i) => (
+            <Html key={i} position={[Math.cos((i / 4) * Math.PI * 2) * 13, 0, Math.sin((i / 4) * Math.PI * 2) * 13]} center style={{ pointerEvents: 'none' }}>
+              <div className="text-[8px] text-amber-200 whitespace-nowrap font-serif italic px-2 py-0.5 rounded bg-black/30 backdrop-blur-sm">
+                {verse}
+              </div>
+            </Html>
+          ))}
+        </group>
+
+        {/* Ring 2 - Outer */}
+        <group rotation={[-Math.PI / 6, 0, Math.PI / 5]}>
+          <mesh rotation={[Math.PI / 2, 0, 0]}>
+            <torusGeometry args={[17, 0.03, 8, 128]} />
+            <meshBasicMaterial color="#f59e0b" transparent opacity={0.4} side={THREE.DoubleSide} />
+          </mesh>
+          {MANNA_VERSES.slice(4, 8).map((verse, i) => (
+            <Html key={i} position={[Math.cos((i / 4) * Math.PI * 2) * 17, 0, Math.sin((i / 4) * Math.PI * 2) * 17]} center style={{ pointerEvents: 'none' }}>
+              <div className="text-[7px] text-yellow-300/80 whitespace-nowrap font-serif italic px-2 py-0.5 rounded bg-black/30 backdrop-blur-sm">
+                {verse}
+              </div>
+            </Html>
+          ))}
+        </group>
+      </group>
+
+      {/* ==================== CONNECTION BEAMS TO ALL SYSTEMS ==================== */}
+      <group>
+        {SOLAR_SYSTEMS.filter(s => s.id !== 'manna').map((system) => {
+          const dir = new THREE.Vector3(
+            system.position[0],
+            system.position[1],
+            system.position[2] + 60
+          ).normalize()
+          return (
+            <Line
+              key={system.id}
+              points={[[0, 0, 0], [dir.x * 20, dir.y * 20, dir.z * 20]]}
+              color="#fcd34d"
+              lineWidth={1}
+              transparent
+              opacity={0.15}
+              dashed
+              dashSize={0.8}
+              gapSize={0.4}
+            />
+          )
+        })}
+      </group>
+    </group>
+  )
+}
+
+// =============================================================================
+// GEX CORE EFFECTS - The Analytical Heart of Gamma Exposure
+// Features: Data streams, gamma waves, pulsing vortex, trading signals
+// =============================================================================
+
+function GexCoreEffects({ color, sunColor, paused }: { color: string, sunColor: string, paused: boolean }) {
+  const groupRef = useRef<THREE.Group>(null)
+  const vortexRef = useRef<THREE.Group>(null)
+  const dataStreamsRef = useRef<THREE.Points>(null)
+  const waveRingsRef = useRef<THREE.Group>(null)
+
+  // Data stream particles (representing market data flowing in)
+  const streamCount = 150
+  const streamPositions = useMemo(() => {
+    const positions = new Float32Array(streamCount * 3)
+    for (let i = 0; i < streamCount; i++) {
+      const angle = Math.random() * Math.PI * 2
+      const radius = 8 + Math.random() * 6
+      const height = (Math.random() - 0.5) * 10
+      positions[i * 3] = Math.cos(angle) * radius
+      positions[i * 3 + 1] = height
+      positions[i * 3 + 2] = Math.sin(angle) * radius
+    }
+    return positions
+  }, [])
+
+  // Gamma wave rings
+  const waveRings = useMemo(() => [
+    { radius: 4, speed: 1.5, direction: 1 },
+    { radius: 6, speed: 1.0, direction: -1 },
+    { radius: 8, speed: 0.7, direction: 1 },
+  ], [])
+
+  // GEX level indicators (like price levels)
+  const gexLevels = useMemo(() => [
+    { level: 2, label: '+2B', color: '#22c55e' },
+    { level: 0, label: '0', color: '#fbbf24' },
+    { level: -2, label: '-2B', color: '#ef4444' },
+  ], [])
+
+  useFrame((state) => {
+    if (paused) return
+    const t = state.clock.elapsedTime
+
+    // Rotate main group slowly
+    if (groupRef.current) {
+      groupRef.current.rotation.y = t * 0.05
+    }
+
+    // Animate vortex - fast spinning core
+    if (vortexRef.current) {
+      vortexRef.current.rotation.y = t * 2
+      vortexRef.current.rotation.x = Math.sin(t * 0.5) * 0.2
+    }
+
+    // Animate data streams - spiral inward
+    if (dataStreamsRef.current) {
+      const positions = dataStreamsRef.current.geometry.attributes.position.array as Float32Array
+      for (let i = 0; i < streamCount; i++) {
+        const x = positions[i * 3]
+        const z = positions[i * 3 + 2]
+        const radius = Math.sqrt(x * x + z * z)
+        const angle = Math.atan2(z, x)
+
+        // Spiral inward
+        const newRadius = radius - 0.05
+        const newAngle = angle + 0.02
+
+        if (newRadius < 2) {
+          // Reset to outer edge
+          const resetRadius = 10 + Math.random() * 4
+          const resetAngle = Math.random() * Math.PI * 2
+          positions[i * 3] = Math.cos(resetAngle) * resetRadius
+          positions[i * 3 + 2] = Math.sin(resetAngle) * resetRadius
+          positions[i * 3 + 1] = (Math.random() - 0.5) * 10
+        } else {
+          positions[i * 3] = Math.cos(newAngle) * newRadius
+          positions[i * 3 + 2] = Math.sin(newAngle) * newRadius
+        }
+      }
+      dataStreamsRef.current.geometry.attributes.position.needsUpdate = true
+    }
+
+    // Pulse wave rings
+    if (waveRingsRef.current) {
+      waveRingsRef.current.children.forEach((ring, i) => {
+        const scale = 1 + Math.sin(t * waveRings[i].speed) * 0.15
+        ring.scale.setScalar(scale)
+        ring.rotation.z = t * 0.3 * waveRings[i].direction
+      })
+    }
+  })
+
+  return (
+    <group ref={groupRef}>
+      {/* CENTRAL VORTEX - Fast spinning core representing data processing */}
+      <group ref={vortexRef}>
+        {/* Inner spinning torus */}
+        <mesh rotation={[Math.PI / 2, 0, 0]}>
+          <torusGeometry args={[1.5, 0.3, 16, 32]} />
+          <meshBasicMaterial color="#22d3ee" transparent opacity={0.6} side={THREE.DoubleSide} />
+        </mesh>
+        {/* Cross torus */}
+        <mesh rotation={[0, 0, 0]}>
+          <torusGeometry args={[1.5, 0.2, 16, 32]} />
+          <meshBasicMaterial color="#06b6d4" transparent opacity={0.4} side={THREE.DoubleSide} />
+        </mesh>
+        {/* Core sphere */}
+        <Sphere args={[0.8, 32, 32]}>
+          <meshBasicMaterial color="#0891b2" transparent opacity={0.8} />
+        </Sphere>
+      </group>
+
+      {/* GAMMA WAVE RINGS - Pulsing outward like sonar */}
+      <group ref={waveRingsRef}>
+        {waveRings.map((ring, i) => (
+          <mesh key={i} rotation={[Math.PI / 2, 0, 0]}>
+            <torusGeometry args={[ring.radius, 0.05, 8, 64]} />
+            <meshBasicMaterial color="#22d3ee" transparent opacity={0.3 - i * 0.08} side={THREE.DoubleSide} />
+          </mesh>
+        ))}
+      </group>
+
+      {/* DATA STREAM PARTICLES - Market data flowing into the core */}
+      <points ref={dataStreamsRef}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" count={streamCount} array={streamPositions} itemSize={3} />
+        </bufferGeometry>
+        <pointsMaterial color="#22d3ee" size={0.1} transparent opacity={0.7} sizeAttenuation />
+      </points>
+
+      {/* GEX LEVEL INDICATORS - Horizontal planes showing gamma levels */}
+      {gexLevels.map((gex, i) => (
+        <group key={i} position={[0, gex.level * 2, 0]}>
+          <mesh rotation={[Math.PI / 2, 0, 0]}>
+            <ringGeometry args={[3, 3.1, 64]} />
+            <meshBasicMaterial color={gex.color} transparent opacity={0.4} side={THREE.DoubleSide} />
+          </mesh>
+          <Html position={[4, 0, 0]} center style={{ pointerEvents: 'none' }}>
+            <div className="text-[10px] font-mono font-bold px-1 rounded" style={{ color: gex.color, textShadow: '0 0 4px black' }}>
+              {gex.label}
+            </div>
+          </Html>
+        </group>
+      ))}
+
+      {/* OUTER DATA SHELL - Represents the boundary of analysis */}
+      <Sphere args={[10, 32, 32]}>
+        <meshBasicMaterial color="#22d3ee" transparent opacity={0.02} side={THREE.DoubleSide} wireframe />
+      </Sphere>
+
+      {/* CONNECTING BEAMS - Data connections to other systems */}
+      <group>
+        {[0, 60, 120, 180, 240, 300].map((angle, i) => {
+          const rad = (angle * Math.PI) / 180
+          return (
+            <Line
+              key={i}
+              points={[
+                [0, 0, 0],
+                [Math.cos(rad) * 12, Math.sin(i * 0.5) * 3, Math.sin(rad) * 12]
+              ]}
+              color="#22d3ee"
+              lineWidth={1}
+              transparent
+              opacity={0.2}
+              dashed
+              dashSize={0.3}
+              gapSize={0.2}
+            />
+          )
+        })}
+      </group>
+    </group>
+  )
 }
 
 // SOLOMON - Wisdom scrolls, knowledge particles, ancient symbols
@@ -5492,25 +6468,51 @@ function PegasusEffects({ color, sunColor, paused }: { color: string, sunColor: 
 
 // =============================================================================
 // SOLAR SYSTEM - Beautiful Mini Solar System with Orbiting Planets
+// Now with LOD (Level of Detail) for performance optimization
 // =============================================================================
+
+// LOD levels based on camera distance
+type LODLevel = 'high' | 'medium' | 'low' | 'minimal'
+
+function getLODLevel(distance: number): LODLevel {
+  if (distance < 30) return 'high'
+  if (distance < 60) return 'medium'
+  if (distance < 100) return 'low'
+  return 'minimal'
+}
+
+function getLODPolygons(lod: LODLevel): { sphere: number, torus: number } {
+  switch (lod) {
+    case 'high': return { sphere: 32, torus: 64 }
+    case 'medium': return { sphere: 16, torus: 32 }
+    case 'low': return { sphere: 8, torus: 16 }
+    case 'minimal': return { sphere: 6, torus: 8 }
+  }
+}
 
 function SolarSystem({
   system,
   paused = false,
   onPulseToSystem,
-  onSystemClick
+  onSystemClick,
+  liveData,
+  onPlanetClick
 }: {
   system: typeof SOLAR_SYSTEMS[0]
   paused?: boolean
   onPulseToSystem?: (targetId: string) => void
   onSystemClick?: (systemId: string, position: [number, number, number]) => void
+  liveData?: Record<string, PlanetLiveData>
+  onPlanetClick?: (systemId: string, planetName: string) => void
 }) {
+  const { camera } = useThree()
   const groupRef = useRef<THREE.Group>(null)
   const sunRef = useRef<THREE.Mesh>(null)
   const glowRef = useRef<THREE.Mesh>(null)
   const ringsRef = useRef<THREE.Group>(null)
   const [isHovered, setIsHovered] = useState(false)
   const [pulseIntensity, setPulseIntensity] = useState(0)
+  const [lodLevel, setLodLevel] = useState<LODLevel>('high')
 
   // Track pointer to distinguish click from drag
   const pointerDownPos = useRef<{ x: number, y: number } | null>(null)
@@ -5556,13 +6558,21 @@ function SolarSystem({
     if (paused) return
     const t = state.clock.elapsedTime
 
-    // Gentle floating motion
-    if (groupRef.current) {
+    // Calculate LOD based on camera distance
+    const systemPos = new THREE.Vector3(...system.position)
+    const distance = camera.position.distanceTo(systemPos)
+    const newLodLevel = getLODLevel(distance)
+    if (newLodLevel !== lodLevel) {
+      setLodLevel(newLodLevel)
+    }
+
+    // Gentle floating motion (skip for minimal LOD)
+    if (groupRef.current && lodLevel !== 'minimal') {
       groupRef.current.position.y = system.position[1] + Math.sin(t * 0.3 + system.position[0]) * 0.3
     }
 
-    // Sun pulsing glow
-    if (sunRef.current) {
+    // Sun pulsing glow (skip for low/minimal LOD)
+    if (sunRef.current && (lodLevel === 'high' || lodLevel === 'medium')) {
       const pulse = 1 + Math.sin(t * 2) * 0.1
       sunRef.current.scale.setScalar(pulse)
     }
@@ -5572,8 +6582,8 @@ function SolarSystem({
       ;(glowRef.current.material as THREE.MeshBasicMaterial).opacity = 0.05
     }
 
-    // Orbital rings rotation
-    if (ringsRef.current) {
+    // Orbital rings rotation (skip for minimal LOD)
+    if (ringsRef.current && lodLevel !== 'minimal') {
       ringsRef.current.rotation.x = Math.PI / 2 + Math.sin(t * 0.2) * 0.1
       ringsRef.current.rotation.z = t * 0.05
     }
@@ -5597,6 +6607,11 @@ function SolarSystem({
     return () => clearInterval(interval)
   }, [paused, system.id, onPulseToSystem])
 
+  // Get polygon counts based on LOD
+  const lodPolygons = getLODPolygons(lodLevel)
+  const showEffects = lodLevel === 'high' || lodLevel === 'medium'
+  const showPlanets = lodLevel !== 'minimal'
+
   return (
     <group
       ref={groupRef}
@@ -5608,70 +6623,103 @@ function SolarSystem({
       onClick={handleClick}
     >
       {/* Far-distance beacon glow - always visible from afar */}
-      <Sphere args={[8, 16, 16]}>
+      <Sphere args={[8, Math.max(8, lodPolygons.sphere / 2), Math.max(8, lodPolygons.sphere / 2)]}>
         <meshBasicMaterial color={system.glowColor} transparent opacity={0.02} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
       </Sphere>
 
-      {/* Outer glow halo */}
-      <Sphere ref={glowRef} args={[5, 32, 32]}>
-        <meshBasicMaterial color={system.glowColor} transparent opacity={0.04} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+      {/* Outer glow halo - skip for minimal LOD */}
+      {lodLevel !== 'minimal' && (
+        <Sphere ref={glowRef} args={[5, lodPolygons.sphere, lodPolygons.sphere]}>
+          <meshBasicMaterial color={system.glowColor} transparent opacity={0.04} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+        </Sphere>
+      )}
+
+      {/* Secondary glow - only for high/medium LOD */}
+      {/* MANNA gets extra outer glow layers for divine presence */}
+      {system.id === 'manna' && showEffects && (
+        <>
+          <Sphere args={[8, lodPolygons.sphere, lodPolygons.sphere]}>
+            <meshBasicMaterial color="#fef3c7" transparent opacity={0.02} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+          </Sphere>
+          <Sphere args={[6, lodPolygons.sphere, lodPolygons.sphere]}>
+            <meshBasicMaterial color="#fde68a" transparent opacity={0.03} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+          </Sphere>
+        </>
+      )}
+
+      {showEffects && (
+        <Sphere args={[system.id === 'manna' ? 7 : 3.5, lodPolygons.sphere, lodPolygons.sphere]}>
+          <meshBasicMaterial color={system.glowColor} transparent opacity={system.id === 'manna' ? 0.05 : 0.03} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+        </Sphere>
+      )}
+
+      {/* Central sun with distortion - MANNA is 3x larger */}
+      <Sphere ref={sunRef} args={[system.id === 'manna' ? 4 : 2, lodPolygons.sphere, lodPolygons.sphere]}>
+        {showEffects ? (
+          <MeshDistortMaterial
+            color={system.sunColor}
+            emissive={system.sunColor}
+            emissiveIntensity={system.id === 'manna' ? (isHovered ? 4 : 3) : (isHovered ? 3 : 2)}
+            distort={system.id === 'manna' ? 0.5 : 0.35}
+            speed={system.id === 'manna' ? 4 : 3}
+            side={THREE.DoubleSide}
+          />
+        ) : (
+          <meshBasicMaterial color={system.sunColor} side={THREE.DoubleSide} />
+        )}
       </Sphere>
 
-      {/* Secondary glow */}
-      <Sphere args={[3.5, 32, 32]}>
-        <meshBasicMaterial color={system.glowColor} transparent opacity={0.03} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
-      </Sphere>
+      {/* Sun core (bright center) - MANNA gets larger, brighter core */}
+      {showEffects && (
+        <Sphere args={[system.id === 'manna' ? 1.6 : 0.8, lodPolygons.sphere / 2, lodPolygons.sphere / 2]}>
+          <meshBasicMaterial color="#ffffff" side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+        </Sphere>
+      )}
 
-      {/* Central sun with distortion */}
-      <Sphere ref={sunRef} args={[2, 32, 32]}>
-        <MeshDistortMaterial
-          color={system.sunColor}
-          emissive={system.sunColor}
-          emissiveIntensity={isHovered ? 3 : 2}
-          distort={0.35}
-          speed={3}
-          side={THREE.DoubleSide}
-        />
-      </Sphere>
+      {/* Orbital rings - scaled up for visibility, skip for minimal LOD */}
+      {showPlanets && (
+        <group ref={ringsRef}>
+          {system.planets.map((planet, i) => (
+            <mesh key={i} rotation={[Math.PI / 2, 0, 0]}>
+              <torusGeometry args={[planet.orbit * 2.5, 0.04, 8, lodPolygons.torus]} />
+              <meshBasicMaterial color={planet.color} transparent opacity={0.4} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+            </mesh>
+          ))}
+        </group>
+      )}
 
-      {/* Sun core (bright center) */}
-      <Sphere args={[0.8, 16, 16]}>
-        <meshBasicMaterial color="#ffffff" side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
-      </Sphere>
-
-      {/* Orbital rings - scaled up for visibility */}
-      <group ref={ringsRef}>
-        {system.planets.map((planet, i) => (
-          <mesh key={i} rotation={[Math.PI / 2, 0, 0]}>
-            <torusGeometry args={[planet.orbit * 2.5, 0.04, 8, 64]} />
-            <meshBasicMaterial color={planet.color} transparent opacity={0.4} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
-          </mesh>
-        ))}
-      </group>
-
-      {/* Orbiting planets */}
-      {system.planets.map((planet, i) => (
+      {/* Orbiting planets - skip for minimal LOD */}
+      {showPlanets && system.planets.map((planet, i) => (
         <OrbitingPlanet
           key={i}
           planet={planet}
           systemId={system.id}
           paused={paused}
           phaseOffset={i * Math.PI * 0.7}
+          lodLevel={lodLevel}
+          liveData={liveData?.[planet.name.toLowerCase()]}
+          onClick={() => onPlanetClick?.(system.id, planet.name)}
         />
       ))}
 
-      {/* Particle corona around sun - wrapped for visibility */}
-      <AlwaysVisibleGroup>
-        <SunCorona color={system.glowColor} paused={paused} />
-      </AlwaysVisibleGroup>
+      {/* Particle corona around sun - only for high LOD */}
+      {lodLevel === 'high' && (
+        <AlwaysVisibleGroup>
+          <SunCorona color={system.glowColor} paused={paused} />
+        </AlwaysVisibleGroup>
+      )}
 
-      {/* Unique sun flare effect - wrapped for visibility from all angles */}
-      <AlwaysVisibleGroup>
-        <SunFlareEffect flareType={system.flareType as FlareType} color={system.glowColor} paused={paused} />
-      </AlwaysVisibleGroup>
+      {/* Unique sun flare effect - only for high/medium LOD */}
+      {showEffects && (
+        <AlwaysVisibleGroup>
+          <SunFlareEffect flareType={system.flareType as FlareType} color={system.glowColor} paused={paused} />
+        </AlwaysVisibleGroup>
+      )}
 
-      {/* Unique system ambient effects */}
-      <SystemAmbientEffects systemId={system.id} color={system.glowColor} sunColor={system.sunColor} paused={paused} />
+      {/* Unique system ambient effects - only for high LOD */}
+      {lodLevel === 'high' && (
+        <SystemAmbientEffects systemId={system.id} color={system.glowColor} sunColor={system.sunColor} paused={paused} />
+      )}
 
       {/* System label */}
       <Html position={[0, 1.5, 0]} center>
@@ -5708,12 +6756,18 @@ function OrbitingPlanet({
   planet,
   systemId,
   paused,
-  phaseOffset
+  phaseOffset,
+  lodLevel = 'high',
+  liveData,
+  onClick
 }: {
   planet: { name: string, color: string, size: number, orbit: number, speed: number, effect?: PlanetEffect, moons?: number }
   systemId: string
   paused: boolean
   phaseOffset: number
+  lodLevel?: LODLevel
+  liveData?: PlanetLiveData
+  onClick?: () => void
 }) {
   const groupRef = useRef<THREE.Group>(null)
   const meshRef = useRef<THREE.Mesh>(null)
@@ -5721,12 +6775,45 @@ function OrbitingPlanet({
   const atmosphereRef = useRef<THREE.Mesh>(null)
   const [isHovered, setIsHovered] = useState(false)
 
+  // Track pointer to distinguish click from drag
+  const pointerDownPos = useRef<{ x: number, y: number } | null>(null)
+  const isDragging = useRef(false)
+
+  const handlePointerDown = useCallback((e: any) => {
+    pointerDownPos.current = { x: e.clientX, y: e.clientY }
+    isDragging.current = false
+  }, [])
+
+  const handlePointerMove = useCallback((e: any) => {
+    if (pointerDownPos.current) {
+      const dx = e.clientX - pointerDownPos.current.x
+      const dy = e.clientY - pointerDownPos.current.y
+      if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+        isDragging.current = true
+      }
+    }
+  }, [])
+
+  const handleClick = useCallback(() => {
+    if (!isDragging.current && onClick) {
+      onClick()
+    }
+    pointerDownPos.current = null
+  }, [onClick])
+
   // Trail positions
   const trailPositions = useMemo(() => new Float32Array(30 * 3), [])
   const trailIndex = useRef(0)
 
   // Scale orbit to match the larger solar system visualization
   const scaledOrbit = planet.orbit * 2.5
+
+  // Get polygon counts based on LOD
+  const lodPolygons = getLODPolygons(lodLevel)
+  const showAtmosphere = lodLevel === 'high' || lodLevel === 'medium'
+  const showTrail = lodLevel === 'high'
+  const showMoons = lodLevel === 'high' || lodLevel === 'medium'
+  const showEffects = lodLevel === 'high'
 
   useFrame((state) => {
     if (paused) return
@@ -5778,57 +6865,91 @@ function OrbitingPlanet({
   // Scale planet size for better visibility
   const scaledSize = planet.size * 3
 
+  // Format P&L value with color
+  const formatPnL = (pnl?: number, pnlPercent?: number) => {
+    if (pnl === undefined) return null
+    const isPositive = pnl >= 0
+    const color = isPositive ? '#10b981' : '#ef4444'
+    const sign = isPositive ? '+' : ''
+    const percentStr = pnlPercent !== undefined ? ` (${sign}${pnlPercent.toFixed(1)}%)` : ''
+    return { value: `${sign}$${Math.abs(pnl).toLocaleString()}${percentStr}`, color }
+  }
+
   return (
     <group>
-      {/* Planet trail - always visible from all angles */}
-      <points ref={trailRef}>
-        <bufferGeometry>
-          <bufferAttribute
-            attach="attributes-position"
-            count={30}
-            array={trailPositions}
-            itemSize={3}
-          />
-        </bufferGeometry>
-        <pointsMaterial color={planet.color} size={0.08} transparent opacity={0.5} depthTest={false} depthWrite={false} />
-      </points>
+      {/* Planet trail - only for high LOD */}
+      {showTrail && (
+        <points ref={trailRef}>
+          <bufferGeometry>
+            <bufferAttribute
+              attach="attributes-position"
+              count={30}
+              array={trailPositions}
+              itemSize={3}
+            />
+          </bufferGeometry>
+          <pointsMaterial color={planet.color} size={0.08} transparent opacity={0.5} depthTest={false} depthWrite={false} />
+        </points>
+      )}
 
       {/* Planet with effects */}
       <group ref={groupRef}>
-        {/* Planet atmosphere glow - always visible from all angles (95-97% transparent) */}
-        <Sphere ref={atmosphereRef} args={[scaledSize * 1.5, 16, 16]}>
-          <meshBasicMaterial color={planet.color} transparent opacity={isHovered ? 0.05 : 0.03} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
-        </Sphere>
+        {/* Planet atmosphere glow - only for high/medium LOD */}
+        {showAtmosphere && (
+          <Sphere ref={atmosphereRef} args={[scaledSize * 1.5, lodPolygons.sphere / 2, lodPolygons.sphere / 2]}>
+            <meshBasicMaterial color={planet.color} transparent opacity={isHovered ? 0.05 : 0.03} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+          </Sphere>
+        )}
 
-        {/* Planet sphere */}
+        {/* Planet sphere - uses LOD polygon count */}
         <Sphere
           ref={meshRef}
-          args={[scaledSize, 16, 16]}
-          onPointerOver={() => setIsHovered(true)}
-          onPointerOut={() => setIsHovered(false)}
+          args={[scaledSize, lodPolygons.sphere, lodPolygons.sphere]}
+          onPointerOver={() => {
+            setIsHovered(true)
+            if (onClick) document.body.style.cursor = 'pointer'
+          }}
+          onPointerOut={() => {
+            setIsHovered(false)
+            document.body.style.cursor = 'default'
+          }}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onClick={handleClick}
         >
-          <MeshDistortMaterial
-            color={planet.color}
-            emissive={planet.color}
-            emissiveIntensity={isHovered ? 0.6 : 0.3}
-            distort={isHovered ? 0.15 : 0.05}
-            speed={2}
-            side={THREE.DoubleSide}
-          />
+          {showEffects ? (
+            <MeshDistortMaterial
+              color={planet.color}
+              emissive={planet.color}
+              emissiveIntensity={isHovered ? 0.6 : 0.3}
+              distort={isHovered ? 0.15 : 0.05}
+              speed={2}
+              side={THREE.DoubleSide}
+            />
+          ) : (
+            <meshBasicMaterial
+              color={planet.color}
+              transparent
+              opacity={0.9}
+              side={THREE.DoubleSide}
+            />
+          )}
         </Sphere>
 
-        {/* Inner core glow - always visible from all angles (reduced opacity) */}
-        <Sphere args={[scaledSize * 0.5, 8, 8]}>
-          <meshBasicMaterial color="#ffffff" transparent opacity={0.15} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
-        </Sphere>
+        {/* Inner core glow - only for high/medium LOD */}
+        {showAtmosphere && (
+          <Sphere args={[scaledSize * 0.5, lodPolygons.sphere / 4, lodPolygons.sphere / 4]}>
+            <meshBasicMaterial color="#ffffff" transparent opacity={0.15} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
+          </Sphere>
+        )}
 
-        {/* Orbiting moons */}
-        {moons.map(moon => (
+        {/* Orbiting moons - only for high/medium LOD */}
+        {showMoons && moons.map(moon => (
           <OrbitingMoon key={moon.id} moon={moon} planetColor={planet.color} paused={paused} />
         ))}
 
-        {/* Planet unique effect - wrapped in AlwaysVisibleGroup for 100% visibility from all angles */}
-        {planet.effect && (
+        {/* Planet unique effect - only for high LOD */}
+        {showEffects && planet.effect && (
           <AlwaysVisibleGroup>
             <PlanetEffectComponent
               effect={planet.effect}
@@ -5839,26 +6960,73 @@ function OrbitingPlanet({
           </AlwaysVisibleGroup>
         )}
 
-        {/* Hover tooltip */}
+        {/* Hover tooltip with live data */}
         {isHovered && (
           <Html position={[0, scaledSize + 0.5, 0]} center>
-            <div className="bg-gray-900/90 border border-gray-700 rounded-lg px-3 py-2 text-center backdrop-blur-sm min-w-[80px]">
-              <div className="text-xs font-bold" style={{ color: planet.color }}>
+            <div className="bg-gray-900/95 border border-gray-700 rounded-lg px-3 py-2 text-center backdrop-blur-sm min-w-[120px] shadow-xl">
+              <div className="text-xs font-bold mb-1" style={{ color: planet.color }}>
                 {planet.name}
               </div>
+              {/* Live data section */}
+              {liveData && (
+                <div className="border-t border-gray-700 pt-1.5 mt-1.5 space-y-1">
+                  {/* P&L */}
+                  {liveData.pnl !== undefined && (
+                    <div className="flex justify-between items-center text-[10px]">
+                      <span className="text-gray-400">P&L:</span>
+                      <span style={{ color: formatPnL(liveData.pnl, liveData.pnlPercent)?.color }}>
+                        {formatPnL(liveData.pnl, liveData.pnlPercent)?.value}
+                      </span>
+                    </div>
+                  )}
+                  {/* Win Rate */}
+                  {liveData.winRate !== undefined && (
+                    <div className="flex justify-between items-center text-[10px]">
+                      <span className="text-gray-400">Win Rate:</span>
+                      <span className="text-cyan-400">{liveData.winRate.toFixed(1)}%</span>
+                    </div>
+                  )}
+                  {/* Active Positions */}
+                  {liveData.activePositions !== undefined && (
+                    <div className="flex justify-between items-center text-[10px]">
+                      <span className="text-gray-400">Positions:</span>
+                      <span className="text-yellow-400">{liveData.activePositions}</span>
+                    </div>
+                  )}
+                  {/* Today's Trades */}
+                  {liveData.todayTrades !== undefined && (
+                    <div className="flex justify-between items-center text-[10px]">
+                      <span className="text-gray-400">Today:</span>
+                      <span className="text-purple-400">{liveData.todayTrades} trades</span>
+                    </div>
+                  )}
+                  {/* Status */}
+                  {liveData.status && (
+                    <div className="flex justify-between items-center text-[10px]">
+                      <span className="text-gray-400">Status:</span>
+                      <span className={
+                        liveData.status === 'active' ? 'text-green-400' :
+                        liveData.status === 'error' ? 'text-red-400' : 'text-gray-400'
+                      }>
+                        {liveData.status.toUpperCase()}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </Html>
         )}
 
-        {/* Enhanced glow when hovered - always visible from all angles (reduced opacity) */}
-        {isHovered && (
+        {/* Enhanced glow when hovered - only for high/medium LOD */}
+        {isHovered && showAtmosphere && (
           <>
-            <Sphere args={[scaledSize * 2, 8, 8]}>
+            <Sphere args={[scaledSize * 2, lodPolygons.sphere / 2, lodPolygons.sphere / 2]}>
               <meshBasicMaterial color={planet.color} transparent opacity={0.12} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </Sphere>
             {/* Pulsing ring */}
             <mesh rotation={[Math.PI / 2, 0, 0]}>
-              <torusGeometry args={[scaledSize * 1.5, 0.03, 8, 32]} />
+              <torusGeometry args={[scaledSize * 1.5, 0.03, 8, lodPolygons.torus / 2]} />
               <meshBasicMaterial color="#ffffff" transparent opacity={0.5} side={THREE.DoubleSide} depthTest={false} depthWrite={false} />
             </mesh>
           </>
@@ -7649,10 +8817,14 @@ function PlasmaStorms({ paused }: { paused: boolean }) {
 
 function SolarSystemsContainer({
   paused,
-  onSystemClick
+  onSystemClick,
+  liveData,
+  onPlanetClick
 }: {
   paused: boolean
   onSystemClick?: (systemId: string, position: [number, number, number]) => void
+  liveData?: AllBotsLiveData
+  onPlanetClick?: (systemId: string, planetName: string) => void
 }) {
   const handlePulseToSystem = useCallback((targetId: string) => {
     // This could trigger effects on the target system
@@ -7669,6 +8841,8 @@ function SolarSystemsContainer({
           paused={paused}
           onPulseToSystem={handlePulseToSystem}
           onSystemClick={onSystemClick}
+          liveData={liveData?.[system.id]}
+          onPlanetClick={onPlanetClick}
         />
       ))}
 
@@ -10011,6 +11185,36 @@ function AmbientParticles({ performanceMode, paused = false }: { performanceMode
 }
 
 // =============================================================================
+// ZOOM LEVEL CONTROLLER
+// =============================================================================
+
+function ZoomLevelController({ controlsRef, zoomLevel }: { controlsRef: React.RefObject<any>, zoomLevel: number }) {
+  const { camera } = useThree()
+  const prevZoomLevel = useRef(zoomLevel)
+
+  useEffect(() => {
+    if (controlsRef.current && prevZoomLevel.current !== zoomLevel) {
+      const target = controlsRef.current.target as THREE.Vector3
+      const direction = new THREE.Vector3()
+      direction.subVectors(camera.position, target).normalize()
+
+      // Calculate new distance based on zoom level
+      const currentDistance = camera.position.distanceTo(target)
+      const zoomFactor = zoomLevel / prevZoomLevel.current
+      const newDistance = Math.max(3, Math.min(100, currentDistance * zoomFactor))
+
+      // Move camera to new position
+      camera.position.copy(target).addScaledVector(direction, newDistance)
+      controlsRef.current.update()
+
+      prevZoomLevel.current = zoomLevel
+    }
+  }, [zoomLevel, camera, controlsRef])
+
+  return null
+}
+
+// =============================================================================
 // MAIN SCENE
 // =============================================================================
 
@@ -10035,7 +11239,28 @@ interface SceneProps {
   konamiActive: boolean
   zoomTarget: THREE.Vector3 | null
   setZoomTarget: (t: THREE.Vector3 | null) => void
+  zoomLevel?: number
   stockPrices: Array<{ symbol: string, price: number, change: number }>
+  onCameraMove?: (pos: { x: number, y: number, z: number }) => void
+  liveData?: AllBotsLiveData
+  onPlanetClick?: (systemId: string, planetName: string) => void
+}
+
+// Camera position tracker component for minimap
+function CameraPositionTracker({ onCameraMove }: { onCameraMove?: (pos: { x: number, y: number, z: number }) => void }) {
+  const { camera } = useThree()
+
+  useFrame(() => {
+    if (onCameraMove) {
+      onCameraMove({
+        x: camera.position.x,
+        y: camera.position.y,
+        z: camera.position.z
+      })
+    }
+  })
+
+  return null
 }
 
 function Scene({
@@ -10059,7 +11284,11 @@ function Scene({
   konamiActive,
   zoomTarget,
   setZoomTarget,
-  stockPrices
+  zoomLevel = 1,
+  stockPrices,
+  onCameraMove,
+  liveData,
+  onPlanetClick
 }: SceneProps) {
   const { mouse3D } = useMousePosition()
   const controlsRef = useRef<any>(null)
@@ -10085,6 +11314,9 @@ function Scene({
 
   return (
     <>
+      {/* Zoom Level Controller */}
+      <ZoomLevelController controlsRef={controlsRef} zoomLevel={zoomLevel} />
+
       {/* Camera Controller */}
       <CameraController
         controlsRef={controlsRef}
@@ -10093,6 +11325,9 @@ function Scene({
         paused={paused}
         setPaused={setPaused}
       />
+
+      {/* Camera Position Tracker for minimap */}
+      <CameraPositionTracker onCameraMove={onCameraMove} />
 
       {/* Lighting */}
       <ambientLight intensity={0.1} />
@@ -10111,7 +11346,7 @@ function Scene({
         <LensFlare paused={paused} />
       </AlwaysVisibleGroup>
 
-      {/* Core - wrapped for visibility from all angles */}
+      {/* GEX Core - separate system, the analytical heart of the trading universe */}
       <AlwaysVisibleGroup>
         <BreathingCore gexValue={gexValue} vixValue={vixValue} paused={paused} />
         <CoreVortex paused={paused} />
@@ -10221,7 +11456,7 @@ function Scene({
       </AlwaysVisibleGroup>
 
       {/* Solar Systems with Neural Synapse Connections */}
-      <SolarSystemsContainer paused={paused} onSystemClick={handleSolarSystemClick} />
+      <SolarSystemsContainer paused={paused} onSystemClick={handleSolarSystemClick} liveData={liveData} onPlanetClick={onPlanetClick} />
 
       {/* WOW FACTOR FEATURES - wrapped for visibility from all angles */}
       <AlwaysVisibleGroup>
@@ -10465,7 +11700,250 @@ function ControlPanel({
 }
 
 // =============================================================================
-// SOLAR SYSTEM NAVIGATOR - Quick travel buttons to each solar system
+// MINIMAP - 2D overhead view showing all systems and camera position
+// =============================================================================
+
+function NexusMinimap({
+  currentSystem,
+  cameraPosition,
+  onNavigate,
+  onOverview,
+  onZoomIn,
+  onZoomOut,
+  onZoomReset,
+  zoomLevel
+}: {
+  currentSystem: string | null
+  cameraPosition?: { x: number, y: number, z: number }
+  onNavigate: (systemId: string, position: [number, number, number]) => void
+  onOverview?: () => void
+  onZoomIn?: () => void
+  onZoomOut?: () => void
+  onZoomReset?: () => void
+  zoomLevel?: number
+}) {
+  const [expanded, setExpanded] = useState(true)
+
+  // Scale factor to fit systems in minimap (systems go from -80 to +80)
+  const scale = 0.5
+  const mapSize = 120
+  const center = mapSize / 2
+
+  return (
+    <div className="absolute top-4 right-4 z-10">
+      <div className="flex gap-2 mb-2 justify-end">
+        {/* Zoom Controls */}
+        <div className="flex bg-black/70 border border-cyan-500/30 rounded-lg overflow-hidden backdrop-blur">
+          <button
+            onClick={onZoomIn}
+            className="w-8 h-8 flex items-center justify-center text-cyan-400 hover:bg-cyan-500/20 transition-colors border-r border-cyan-500/30"
+            title="Zoom In"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v6m3-3H7" />
+            </svg>
+          </button>
+          <button
+            onClick={onZoomReset}
+            className="px-2 h-8 flex items-center justify-center text-cyan-400 hover:bg-cyan-500/20 transition-colors text-xs font-bold border-r border-cyan-500/30"
+            title="Reset Zoom"
+          >
+            {zoomLevel ? `${Math.round(100 / zoomLevel)}%` : '100%'}
+          </button>
+          <button
+            onClick={onZoomOut}
+            className="w-8 h-8 flex items-center justify-center text-cyan-400 hover:bg-cyan-500/20 transition-colors"
+            title="Zoom Out"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM13 10H7" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Overview Button - See All Systems */}
+        <button
+          onClick={onOverview}
+          className="px-3 h-8 bg-gradient-to-r from-amber-500/20 to-yellow-500/20 border border-amber-500/50 rounded-lg flex items-center gap-2 text-amber-400 hover:from-amber-500/30 hover:to-yellow-500/30 transition-all backdrop-blur text-xs font-bold tracking-wider"
+          title="Galaxy Overview - See All Systems"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          OVERVIEW
+        </button>
+
+        {/* Toggle Minimap */}
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="w-8 h-8 bg-black/70 border border-cyan-500/30 rounded-lg flex items-center justify-center text-cyan-400 hover:bg-cyan-500/20 transition-colors backdrop-blur"
+          title="Toggle Minimap"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" />
+          </svg>
+        </button>
+      </div>
+
+      {expanded && (
+        <div className="bg-black/80 border border-cyan-500/30 rounded-lg p-2 backdrop-blur">
+          <div className="text-[10px] text-cyan-400 font-bold mb-1 tracking-wider">GALAXY MAP</div>
+          <div
+            className="relative rounded border border-gray-700/50"
+            style={{ width: mapSize, height: mapSize, background: 'radial-gradient(circle at center, #1a1a2e 0%, #0a0a15 100%)' }}
+          >
+            {/* Grid lines */}
+            <div className="absolute inset-0 opacity-20">
+              <div className="absolute left-1/2 top-0 bottom-0 w-px bg-gray-500" />
+              <div className="absolute top-1/2 left-0 right-0 h-px bg-gray-500" />
+              <div className="absolute inset-0 border border-gray-600 rounded-full" style={{ margin: '25%' }} />
+              <div className="absolute inset-0 border border-gray-600 rounded-full" style={{ margin: '10%' }} />
+            </div>
+
+            {/* Solar systems as dots */}
+            {SOLAR_SYSTEMS.map(system => {
+              const x = center + system.position[0] * scale
+              const y = center - system.position[1] * scale // Invert Y for top-down view
+              const isCenter = system.id === 'manna'
+              const isCurrent = currentSystem === system.id
+              const category = getSystemCategory(system.id)
+
+              return (
+                <button
+                  key={system.id}
+                  onClick={() => onNavigate(system.id, system.position)}
+                  className={`absolute transform -translate-x-1/2 -translate-y-1/2 transition-all hover:scale-150 ${isCurrent ? 'z-20' : 'z-10'}`}
+                  style={{ left: x, top: y }}
+                  title={`${system.name} - ${system.subtitle}`}
+                >
+                  <div
+                    className={`rounded-full ${isCurrent ? 'ring-2 ring-white ring-offset-1 ring-offset-black' : ''}`}
+                    style={{
+                      width: isCenter ? 10 : category === 'inner' ? 6 : 5,
+                      height: isCenter ? 10 : category === 'inner' ? 6 : 5,
+                      backgroundColor: system.sunColor,
+                      boxShadow: `0 0 ${isCenter ? 8 : 4}px ${system.glowColor}`
+                    }}
+                  />
+                </button>
+              )
+            })}
+
+            {/* Camera position indicator */}
+            {cameraPosition && (
+              <div
+                className="absolute w-0 h-0 border-l-[4px] border-r-[4px] border-b-[8px] border-l-transparent border-r-transparent border-b-white transform -translate-x-1/2 -translate-y-1/2 z-30"
+                style={{
+                  left: center + (cameraPosition.x || 0) * scale,
+                  top: center - (cameraPosition.y || 0) * scale,
+                  filter: 'drop-shadow(0 0 4px white)'
+                }}
+                title="Camera Position"
+              />
+            )}
+
+            {/* Ring labels */}
+            <div className="absolute text-[6px] text-gray-500" style={{ left: 4, top: mapSize / 2 - 20 }}>OUTER</div>
+            <div className="absolute text-[6px] text-gray-500" style={{ left: 4, top: mapSize / 2 + 5 }}>INNER</div>
+          </div>
+
+          {/* Legend */}
+          <div className="flex gap-2 mt-1 text-[8px] text-gray-500">
+            <span className="flex items-center gap-1">
+              <span className="w-2 h-2 rounded-full bg-amber-200" /> Center
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-gray-400" /> Inner
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="w-1 h-1 rounded-full bg-gray-500" /> Outer
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// =============================================================================
+// BREADCRUMBS - Show current navigation path
+// =============================================================================
+
+function NavigationBreadcrumbs({
+  currentSystem,
+  onNavigate
+}: {
+  currentSystem: string | null
+  onNavigate: (systemId: string, position: [number, number, number]) => void
+}) {
+  if (!currentSystem) return null
+
+  const system = SOLAR_SYSTEMS.find(s => s.id === currentSystem)
+  if (!system) return null
+
+  const category = getSystemCategory(currentSystem)
+  const categoryLabel = getCategoryLabel(category)
+
+  return (
+    <div className="absolute top-4 left-1/2 -translate-x-1/2 z-10">
+      <div className="bg-black/80 border border-purple-500/30 rounded-lg px-4 py-2 backdrop-blur flex items-center gap-2 text-sm">
+        {/* Home */}
+        <button
+          onClick={() => onNavigate('home', [0, 0, 0])}
+          className="text-gray-400 hover:text-cyan-400 transition-colors flex items-center gap-1"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+          </svg>
+          <span>NEXUS</span>
+        </button>
+
+        {/* Separator */}
+        <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+        </svg>
+
+        {/* Category (only if not center) */}
+        {category !== 'center' && (
+          <>
+            <button
+              onClick={() => {
+                // Navigate to MANNA (center) when clicking ring
+                const manna = SOLAR_SYSTEMS.find(s => s.id === 'manna')
+                if (manna) onNavigate(manna.id, manna.position)
+              }}
+              className="text-gray-400 hover:text-purple-400 transition-colors"
+            >
+              {categoryLabel}
+            </button>
+
+            <svg className="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </>
+        )}
+
+        {/* Current System */}
+        <span
+          className="font-bold flex items-center gap-2"
+          style={{ color: system.sunColor, textShadow: `0 0 10px ${system.glowColor}` }}
+        >
+          <span
+            className="w-3 h-3 rounded-full"
+            style={{ backgroundColor: system.sunColor, boxShadow: `0 0 8px ${system.glowColor}` }}
+          />
+          {system.name}
+        </span>
+
+        {/* Subtitle */}
+        <span className="text-gray-500 text-xs">({system.subtitle})</span>
+      </div>
+    </div>
+  )
+}
+
+// =============================================================================
+// SOLAR SYSTEM NAVIGATOR - Enhanced with categories
 // =============================================================================
 
 function SolarSystemNavigator({
@@ -10476,6 +11954,45 @@ function SolarSystemNavigator({
   currentSystem: string | null
 }) {
   const [expanded, setExpanded] = useState(true)
+  const [collapsedCategories, setCollapsedCategories] = useState<Set<SystemCategory>>(new Set())
+
+  // Group systems by category
+  const systemsByCategory = useMemo(() => {
+    const groups: Record<SystemCategory, typeof SOLAR_SYSTEMS> = {
+      center: [],
+      inner: [],
+      outer: []
+    }
+    SOLAR_SYSTEMS.forEach(system => {
+      const category = getSystemCategory(system.id)
+      groups[category].push(system)
+    })
+    return groups
+  }, [])
+
+  const toggleCategory = (category: SystemCategory) => {
+    setCollapsedCategories(prev => {
+      const next = new Set(prev)
+      if (next.has(category)) {
+        next.delete(category)
+      } else {
+        next.add(category)
+      }
+      return next
+    })
+  }
+
+  const categoryColors: Record<SystemCategory, string> = {
+    center: '#fef3c7',
+    inner: '#a855f7',
+    outer: '#06b6d4'
+  }
+
+  const categoryIcons: Record<SystemCategory, string> = {
+    center: '✦',
+    inner: '◉',
+    outer: '○'
+  }
 
   return (
     <div className="absolute bottom-4 left-4 z-10">
@@ -10490,43 +12007,74 @@ function SolarSystemNavigator({
       </button>
 
       {expanded && (
-        <div className="bg-black/80 border border-purple-500/30 rounded-lg p-3 backdrop-blur min-w-[180px]">
+        <div className="bg-black/80 border border-purple-500/30 rounded-lg p-3 backdrop-blur min-w-[220px] max-h-[70vh] overflow-y-auto">
           <h3 className="text-purple-400 font-bold mb-3 text-xs tracking-wider flex items-center gap-2">
             <span className="text-lg">🚀</span> SOLAR SYSTEMS
+            <span className="text-gray-500 font-normal">({SOLAR_SYSTEMS.length})</span>
           </h3>
 
-          <div className="space-y-1.5">
-            {SOLAR_SYSTEMS.map(system => (
+          {/* Grouped systems */}
+          {(['center', 'inner', 'outer'] as SystemCategory[]).map(category => (
+            <div key={category} className="mb-2">
+              {/* Category header */}
               <button
-                key={system.id}
-                onClick={() => onNavigate(system.id, system.position)}
-                className={`w-full py-2 px-3 rounded text-xs font-medium transition-all flex items-center gap-2 ${
-                  currentSystem === system.id
-                    ? 'bg-gradient-to-r from-purple-500/40 to-cyan-500/40 text-white border border-purple-500/50'
-                    : 'bg-gray-800/50 text-gray-300 hover:bg-gray-700/50 border border-transparent'
-                }`}
+                onClick={() => toggleCategory(category)}
+                className="w-full flex items-center gap-2 py-1.5 px-2 rounded text-xs font-medium hover:bg-gray-800/50 transition-colors"
+                style={{ color: categoryColors[category] }}
               >
-                <span
-                  className="w-3 h-3 rounded-full"
-                  style={{ backgroundColor: system.sunColor, boxShadow: `0 0 8px ${system.glowColor}` }}
-                />
-                <span className="flex-1 text-left">{system.name}</span>
-                <span className="text-gray-500 text-[10px]">{system.subtitle}</span>
+                <span className="text-sm">{categoryIcons[category]}</span>
+                <span className="flex-1 text-left">{getCategoryLabel(category)}</span>
+                <span className="text-gray-500">({systemsByCategory[category].length})</span>
+                <svg
+                  className={`w-3 h-3 transition-transform ${collapsedCategories.has(category) ? '' : 'rotate-90'}`}
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                </svg>
               </button>
-            ))}
-          </div>
+
+              {/* Systems in category */}
+              {!collapsedCategories.has(category) && (
+                <div className="space-y-1 mt-1 ml-2">
+                  {systemsByCategory[category].map(system => (
+                    <button
+                      key={system.id}
+                      onClick={() => onNavigate(system.id, system.position)}
+                      className={`w-full py-1.5 px-2 rounded text-xs font-medium transition-all flex items-center gap-2 ${
+                        currentSystem === system.id
+                          ? 'bg-gradient-to-r from-purple-500/40 to-cyan-500/40 text-white border border-purple-500/50'
+                          : 'bg-gray-800/30 text-gray-300 hover:bg-gray-700/50 border border-transparent'
+                      }`}
+                    >
+                      <span
+                        className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                        style={{ backgroundColor: system.sunColor, boxShadow: `0 0 6px ${system.glowColor}` }}
+                      />
+                      <span className="flex-1 text-left truncate">{system.name}</span>
+                      <span className="text-gray-500 text-[9px] truncate max-w-[60px]">{system.subtitle}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
 
           <div className="mt-3 pt-2 border-t border-purple-500/20">
             <button
               onClick={() => onNavigate('home', [0, 0, 0])}
-              className="w-full py-1.5 rounded text-xs font-medium bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30 transition-colors"
+              className="w-full py-1.5 rounded text-xs font-medium bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30 transition-colors flex items-center justify-center gap-2"
             >
-              🏠 Return to Center
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+              </svg>
+              Return to Overview
             </button>
           </div>
 
-          <div className="mt-2 text-[10px] text-gray-500">
-            Click on any solar system to fly there
+          <div className="mt-2 text-[10px] text-gray-500 text-center">
+            Click systems or use minimap to navigate
           </div>
         </div>
       )}
@@ -10580,8 +12128,10 @@ export default function Nexus3D({
   const [konamiActive, setKonamiActive] = useState(false)
   const [shakeActive, setShakeActive] = useState(false)
   const [zoomTarget, setZoomTarget] = useState<THREE.Vector3 | null>(null)
+  const [zoomLevel, setZoomLevel] = useState(1) // 1 = normal, 0.5 = zoomed in, 2 = zoomed out
   const [currentSystem, setCurrentSystem] = useState<string | null>(null)
   const [audioMuted, setAudioMuted] = useState(true)
+  const [cameraPosition, setCameraPosition] = useState<{ x: number, y: number, z: number }>({ x: 0, y: 2, z: 10 })
   const audioContextRef = useRef<AudioContext | null>(null)
   const gainNodeRef = useRef<GainNode | null>(null)
   const holdTimer = useRef<NodeJS.Timeout | null>(null)
@@ -10628,8 +12178,45 @@ export default function Nexus3D({
     setCurrentSystem(systemId === 'home' ? null : systemId)
   }, [])
 
+  // Zoom in handler - moves camera closer
+  const handleZoomIn = useCallback(() => {
+    setZoomLevel(prev => Math.max(0.3, prev * 0.7))
+  }, [])
+
+  // Zoom out handler - moves camera further
+  const handleZoomOut = useCallback(() => {
+    setZoomLevel(prev => Math.min(3, prev * 1.4))
+  }, [])
+
+  // Reset zoom handler
+  const handleZoomReset = useCallback(() => {
+    setZoomLevel(1)
+  }, [])
+
   // Fetch real-time stock prices
   const { prices: stockPrices, isLive: stockPricesLive } = useStockPrices()
+
+  // Fetch live bot data for planets
+  const { liveData: botLiveData } = useBotLiveData()
+
+  // Handler for planet clicks - navigate to the system's route
+  const handlePlanetClick = useCallback((systemId: string, planetName: string) => {
+    // Get the route for this system
+    const route = SYSTEM_ROUTES[systemId]
+    if (route) {
+      // Use Next.js router or window.location
+      window.location.href = route
+    }
+  }, [])
+
+  // Handler for galaxy overview - zoom out to see all systems
+  const handleGalaxyOverview = useCallback(() => {
+    // Zoom to a position high above MANNA that can see all 13 systems
+    // Systems span roughly -80 to +80 in x, -130 to +80 in y, with z around -55 to -65
+    const overviewPosition = new THREE.Vector3(0, 0, 120) // Far back to see everything including GEX Core at Y=-130
+    setZoomTarget(overviewPosition)
+    setCurrentSystem(null) // Clear current system to show we're in overview
+  }, [])
 
   // Update global COLORS when theme changes
   useEffect(() => {
@@ -10758,6 +12345,24 @@ export default function Nexus3D({
         {/* Pause Indicator */}
         <PauseIndicator paused={paused} />
 
+        {/* Navigation Breadcrumbs */}
+        <NavigationBreadcrumbs
+          currentSystem={currentSystem}
+          onNavigate={handleNavigateToSystem}
+        />
+
+        {/* Minimap */}
+        <NexusMinimap
+          currentSystem={currentSystem}
+          cameraPosition={cameraPosition}
+          onNavigate={handleNavigateToSystem}
+          onOverview={handleGalaxyOverview}
+          onZoomIn={handleZoomIn}
+          onZoomOut={handleZoomOut}
+          onZoomReset={handleZoomReset}
+          zoomLevel={zoomLevel}
+        />
+
         {/* Solar System Navigator */}
         <SolarSystemNavigator
           onNavigate={handleNavigateToSystem}
@@ -10804,7 +12409,11 @@ export default function Nexus3D({
               konamiActive={konamiActive}
               zoomTarget={zoomTarget}
               setZoomTarget={setZoomTarget}
+              zoomLevel={zoomLevel}
               stockPrices={stockPrices}
+              onCameraMove={setCameraPosition}
+              liveData={botLiveData}
+              onPlanetClick={handlePlanetClick}
             />
           </Suspense>
         </Canvas>

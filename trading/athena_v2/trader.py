@@ -12,13 +12,13 @@ Design principles:
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from zoneinfo import ZoneInfo
 
 from .models import (
     SpreadPosition, PositionStatus, ATHENAConfig,
-    TradingMode, DailySummary, CENTRAL_TZ
+    TradingMode, DailySummary, SpreadType, CENTRAL_TZ
 )
 from .db import ATHENADatabase
 from .signals import SignalGenerator
@@ -38,11 +38,23 @@ except ImportError:
 try:
     from trading.scan_activity_logger import log_athena_scan, ScanOutcome, CheckResult
     SCAN_LOGGER_AVAILABLE = True
-except ImportError:
+    print("✅ ATHENA: Scan activity logger loaded")
+except ImportError as e:
     SCAN_LOGGER_AVAILABLE = False
     log_athena_scan = None
     ScanOutcome = None
     CheckResult = None
+    print(f"❌ ATHENA: Scan activity logger FAILED: {e}")
+
+# ML Data Gatherer for comprehensive ML analysis logging
+try:
+    from trading.ml_data_gatherer import gather_ml_data
+    ML_GATHERER_AVAILABLE = True
+    print("✅ ATHENA: ML Data Gatherer loaded")
+except ImportError as e:
+    ML_GATHERER_AVAILABLE = False
+    gather_ml_data = None
+    print(f"⚠️ ATHENA: ML Data Gatherer not available: {e}")
 
 # Oracle for outcome recording
 try:
@@ -70,6 +82,32 @@ except ImportError:
     MATH_OPTIMIZER_AVAILABLE = False
     MathOptimizerMixin = object  # Fallback to empty base class
 
+# Solomon Enhanced for feedback loop recording
+try:
+    from quant.solomon_enhancements import get_solomon_enhanced
+    SOLOMON_ENHANCED_AVAILABLE = True
+except ImportError:
+    SOLOMON_ENHANCED_AVAILABLE = False
+    get_solomon_enhanced = None
+
+# Auto-Validation System for Thompson Sampling capital allocation
+try:
+    from quant.auto_validation_system import get_auto_validation_system, record_bot_outcome
+    AUTO_VALIDATION_AVAILABLE = True
+except ImportError:
+    AUTO_VALIDATION_AVAILABLE = False
+    get_auto_validation_system = None
+    record_bot_outcome = None
+
+# Market calendar for holiday checking
+try:
+    from trading.market_calendar import MarketCalendar
+    MARKET_CALENDAR = MarketCalendar()
+    MARKET_CALENDAR_AVAILABLE = True
+except ImportError:
+    MARKET_CALENDAR = None
+    MARKET_CALENDAR_AVAILABLE = False
+
 
 class ATHENATrader(MathOptimizerMixin):
     """
@@ -92,6 +130,12 @@ class ATHENATrader(MathOptimizerMixin):
         # Load config from DB or use provided
         self.config = config or self.db.load_config()
 
+        # Validate configuration at startup
+        is_valid, error = self.config.validate()
+        if not is_valid:
+            logger.error(f"ATHENA config validation failed: {error}")
+            raise ValueError(f"Invalid ATHENA configuration: {error}")
+
         # Initialize components
         self.signals = SignalGenerator(self.config)
         self.executor = OrderExecutor(self.config)
@@ -99,10 +143,13 @@ class ATHENATrader(MathOptimizerMixin):
         # Learning Memory prediction tracking (position_id -> prediction_id)
         self._prediction_ids: Dict[str, str] = {}
 
-        # Initialize Math Optimizers (HMM, Kalman, Thompson, Convex, HJB, MDP)
+        # Skip date functionality - set via API to skip trading for a specific day
+        self.skip_date: Optional[datetime] = None
+
+        # Math Optimizers DISABLED - Oracle is the sole decision maker
         if MATH_OPTIMIZER_AVAILABLE:
-            self._init_math_optimizers("ATHENA", enabled=True)
-            logger.info("ATHENA: Math optimizers enabled (HMM, Kalman, Thompson, Convex, HJB, MDP)")
+            self._init_math_optimizers("ATHENA", enabled=False)
+            logger.info("ATHENA: Math optimizers DISABLED - Oracle controls all trading decisions")
 
         logger.info(
             f"ATHENA V2 initialized: mode={self.config.mode.value}, "
@@ -136,12 +183,41 @@ class ATHENATrader(MathOptimizerMixin):
             'gex_data': None,
             'signal': None,
             'checks': [],
+            'oracle_data': None,
             'position': None
         }
 
         try:
             # Update heartbeat
             self.db.update_heartbeat("SCANNING", f"Cycle at {now.strftime('%I:%M %p')}")
+
+            # CRITICAL: Fetch market data FIRST for ALL scans
+            # This ensures we log comprehensive data even for skipped scans
+            try:
+                gex_data = self.signals.get_gex_data()
+                if gex_data:
+                    scan_context['market_data'] = {
+                        'underlying_price': gex_data.get('spot_price', 0),
+                        'symbol': self.config.ticker,
+                        'vix': gex_data.get('vix', 0),
+                        'expected_move': gex_data.get('expected_move', 0),
+                    }
+                    scan_context['gex_data'] = {
+                        'regime': gex_data.get('gex_regime', 'UNKNOWN'),
+                        'net_gex': gex_data.get('net_gex', 0),
+                        'call_wall': gex_data.get('call_wall', 0),
+                        'put_wall': gex_data.get('put_wall', 0),
+                        'flip_point': gex_data.get('flip_point', 0),
+                    }
+                    # Also fetch Oracle advice for visibility
+                    try:
+                        oracle_advice = self.signals.get_oracle_advice(gex_data)
+                        if oracle_advice:
+                            scan_context['oracle_data'] = oracle_advice
+                    except Exception as e:
+                        logger.debug(f"Oracle fetch skipped: {e}")
+            except Exception as e:
+                logger.warning(f"Market data fetch failed: {e}")
 
             # Step 1: Check if we should trade
             can_trade, reason = self._check_trading_conditions(now, today)
@@ -198,10 +274,20 @@ class ATHENATrader(MathOptimizerMixin):
             traceback.print_exc()
             result['errors'].append(str(e))
             result['action'] = 'error'
-            self.db.log("ERROR", f"Cycle error: {e}")
 
-            # Log error to scan activity
-            self._log_scan_activity(result, scan_context, error_msg=str(e))
+            # CRITICAL: Log scan activity FIRST, before any other DB operations
+            # This ensures we always have visibility into what happened, even if
+            # subsequent database operations fail (which could cause silent scan stoppage)
+            try:
+                self._log_scan_activity(result, scan_context, error_msg=str(e))
+            except Exception as log_err:
+                logger.error(f"CRITICAL: Failed to log scan activity: {log_err}")
+
+            # Then try to log to bot's own log (non-critical)
+            try:
+                self.db.log("ERROR", f"Cycle error: {e}")
+            except Exception as db_err:
+                logger.error(f"Failed to log to bot DB: {db_err}")
 
         return result
 
@@ -219,6 +305,16 @@ class ATHENATrader(MathOptimizerMixin):
         if now.weekday() >= 5:
             return False, "Weekend"
 
+        # Market holiday check
+        if MARKET_CALENDAR_AVAILABLE and MARKET_CALENDAR:
+            today_str = now.strftime("%Y-%m-%d")
+            if not MARKET_CALENDAR.is_trading_day(today_str):
+                return False, "Market holiday"
+
+        # Skip date check (set via API to skip trading for the day)
+        if self.skip_date and self.skip_date == now.date():
+            return False, f"Skipping by request (skip_date={self.skip_date.isoformat()})"
+
         # Trading window check
         start_parts = self.config.entry_start.split(':')
         end_parts = self.config.entry_end.split(':')
@@ -230,10 +326,7 @@ class ATHENATrader(MathOptimizerMixin):
         if now > end_time:
             return False, f"After trading window ({self.config.entry_end})"
 
-        # Daily trade limit
-        daily_trades = self.db.get_daily_trades_count(today)
-        if daily_trades >= self.config.max_daily_trades:
-            return False, f"Daily limit reached ({self.config.max_daily_trades})"
+        # NOTE: Daily trade limit removed - Oracle decides trade frequency
 
         # Position limit
         open_count = self.db.get_position_count()
@@ -274,17 +367,26 @@ class ATHENATrader(MathOptimizerMixin):
                 success, close_price, pnl = self.executor.close_position(pos, reason)
 
                 if success:
-                    self.db.close_position(
+                    db_success = self.db.close_position(
                         position_id=pos.position_id,
                         close_price=close_price,
                         realized_pnl=pnl,
                         close_reason=reason
                     )
+                    if not db_success:
+                        logger.error(f"CRITICAL: Position {pos.position_id} closed but DB update failed!")
                     closed_count += 1
                     total_pnl += pnl
 
                     # Record outcome to Oracle for ML feedback loop
                     self._record_oracle_outcome(pos, reason, pnl)
+
+                    # Record outcome to Solomon Enhanced for feedback loops
+                    trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+                    self._record_solomon_outcome(pnl, trade_date)
+
+                    # Record outcome to Thompson Sampling for capital allocation
+                    self._record_thompson_outcome(pnl)
 
                     # Record outcome to Learning Memory for self-improvement
                     if pos.position_id in self._prediction_ids:
@@ -298,8 +400,8 @@ class ATHENATrader(MathOptimizerMixin):
                     if CIRCUIT_BREAKER_AVAILABLE and record_trade_pnl:
                         try:
                             record_trade_pnl(pnl)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.warning(f"[ATHENA] Failed to record P&L to circuit breaker: {e}")
 
                     # MATH OPTIMIZER: Record outcome for Thompson Sampling
                     if MATH_OPTIMIZER_AVAILABLE and hasattr(self, 'math_record_outcome'):
@@ -346,6 +448,53 @@ class ATHENATrader(MathOptimizerMixin):
         except Exception as e:
             logger.warning(f"ATHENA: Oracle outcome recording failed: {e}")
 
+    def _record_solomon_outcome(self, pnl: float, trade_date: str):
+        """
+        Record trade outcome to Solomon Enhanced for feedback loop tracking.
+
+        This updates:
+        - Consecutive loss tracking (triggers kill if threshold reached)
+        - Daily P&L monitoring (triggers kill if max loss reached)
+        - Performance tracking for version comparison
+        """
+        if not SOLOMON_ENHANCED_AVAILABLE or not get_solomon_enhanced:
+            return
+
+        try:
+            enhanced = get_solomon_enhanced()
+            alerts = enhanced.record_trade_outcome(
+                bot_name='ATHENA',
+                pnl=pnl,
+                trade_date=trade_date,
+                capital_base=getattr(self, 'config', {}).get('capital', 100000.0)
+                if hasattr(self.config, 'get') else 100000.0
+            )
+
+            if alerts:
+                for alert in alerts:
+                    logger.warning(f"ATHENA Solomon Alert: {alert}")
+
+            logger.debug(f"ATHENA: Recorded outcome to Solomon Enhanced - P&L=${pnl:.2f}")
+
+        except Exception as e:
+            logger.warning(f"ATHENA: Solomon outcome recording failed: {e}")
+
+    def _record_thompson_outcome(self, pnl: float):
+        """
+        Record trade outcome to Thompson Sampling for capital allocation.
+
+        This updates the Beta distribution parameters for ATHENA,
+        which affects future capital allocation across bots.
+        """
+        if not AUTO_VALIDATION_AVAILABLE or not record_bot_outcome:
+            return
+
+        try:
+            record_bot_outcome('ATHENA', win=(pnl > 0), pnl=pnl)
+            logger.debug(f"ATHENA: Recorded outcome to Thompson Sampling - P&L=${pnl:.2f}")
+        except Exception as e:
+            logger.warning(f"ATHENA: Thompson outcome recording failed: {e}")
+
     def _record_learning_memory_prediction(self, pos: SpreadPosition, signal) -> Optional[str]:
         """
         Record trade prediction to Learning Memory for self-improvement tracking.
@@ -371,11 +520,12 @@ class ATHENATrader(MathOptimizerMixin):
             }
 
             # Record directional prediction
+            # Note: signal.confidence is already 0-1 from ML, not 0-100
             prediction = f"{signal.direction if hasattr(signal, 'direction') else 'directional'} spread profitable"
             prediction_id = memory.record_prediction(
                 prediction_type="directional_spread_outcome",
                 prediction=prediction,
-                confidence=signal.confidence / 100 if hasattr(signal, 'confidence') else 0.7,
+                confidence=signal.confidence if hasattr(signal, 'confidence') else 0.7,
                 context=context
             )
 
@@ -409,6 +559,224 @@ class ATHENATrader(MathOptimizerMixin):
         except Exception as e:
             logger.warning(f"ATHENA: Learning Memory outcome recording failed: {e}")
 
+    def _store_oracle_prediction(self, signal, position: SpreadPosition):
+        """
+        Store Oracle prediction to database BEFORE trade execution.
+
+        This is CRITICAL for the ML feedback loop:
+        1. store_prediction() creates the record in oracle_predictions table
+        2. After trade closes, update_outcome() updates that record with actual results
+        3. Oracle uses this data for continuous model improvement
+
+        Without this call, update_outcome() has no record to update!
+        """
+        if not ORACLE_AVAILABLE:
+            return
+
+        try:
+            oracle = OracleAdvisor()
+
+            # Build MarketContext from signal
+            from quant.oracle_advisor import MarketContext as OracleMarketContext, GEXRegime
+
+            gex_regime_str = signal.gex_regime.upper() if signal.gex_regime else 'NEUTRAL'
+            try:
+                gex_regime = GEXRegime[gex_regime_str]
+            except (KeyError, AttributeError):
+                gex_regime = GEXRegime.NEUTRAL
+
+            context = OracleMarketContext(
+                spot_price=signal.spot_price,
+                vix=signal.vix,
+                gex_regime=gex_regime,
+                gex_call_wall=signal.call_wall,
+                gex_put_wall=signal.put_wall,
+                gex_flip_point=getattr(signal, 'flip_point', 0),
+                gex_net=getattr(signal, 'net_gex', 0),
+                day_of_week=datetime.now(CENTRAL_TZ).weekday(),
+            )
+
+            # Build OraclePrediction from signal's Oracle context
+            from quant.oracle_advisor import OraclePrediction, TradingAdvice, BotName
+
+            # Determine advice from signal
+            advice_str = getattr(signal, 'oracle_advice', 'TRADE_FULL')
+            try:
+                advice = TradingAdvice[advice_str] if advice_str else TradingAdvice.TRADE_FULL
+            except (KeyError, ValueError):
+                advice = TradingAdvice.TRADE_FULL
+
+            prediction = OraclePrediction(
+                bot_name=BotName.ATHENA,
+                advice=advice,
+                win_probability=getattr(signal, 'oracle_win_probability', 0.6),
+                confidence=signal.confidence,
+                suggested_risk_pct=10.0,
+                suggested_sd_multiplier=1.0,
+                use_gex_walls=True,
+                suggested_put_strike=signal.long_strike if signal.direction == 'BEARISH' else None,
+                suggested_call_strike=signal.long_strike if signal.direction == 'BULLISH' else None,
+                top_factors=[],
+                reasoning=signal.reasoning,
+                probabilities={},
+            )
+
+            # Store to database
+            trade_date = position.expiration if hasattr(position, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+            success = oracle.store_prediction(prediction, context, trade_date)
+
+            if success:
+                logger.info(f"ATHENA: Oracle prediction stored for {trade_date} (Win Prob: {prediction.win_probability:.0%})")
+            else:
+                logger.warning(f"ATHENA: Failed to store Oracle prediction for {trade_date}")
+
+        except Exception as e:
+            logger.warning(f"ATHENA: Oracle prediction storage failed: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _store_oracle_prediction_for_scan(
+        self,
+        signal,
+        oracle_data: Dict[str, Any],
+        market_data: Dict[str, Any],
+        decision: str
+    ):
+        """
+        Store Oracle prediction to database for ALL scans (not just traded).
+
+        This provides visibility into Oracle decisions even when no trade is executed.
+        Critical for debugging "why isn't the bot trading?" scenarios.
+
+        Args:
+            signal: The generated signal (may be invalid)
+            oracle_data: Oracle advice dict from get_oracle_advice()
+            market_data: Market conditions at scan time
+            decision: The decision made (TRADED, NO_TRADE, SKIP, etc.)
+        """
+        if not ORACLE_AVAILABLE:
+            return
+
+        try:
+            oracle = OracleAdvisor()
+            from quant.oracle_advisor import MarketContext as OracleMarketContext, GEXRegime
+            from quant.oracle_advisor import OraclePrediction, TradingAdvice, BotName
+
+            # Build MarketContext
+            gex_regime_str = market_data.get('gex_regime', market_data.get('regime', 'NEUTRAL'))
+            if isinstance(gex_regime_str, str):
+                gex_regime_str = gex_regime_str.upper()
+            else:
+                gex_regime_str = 'NEUTRAL'
+            try:
+                gex_regime = GEXRegime[gex_regime_str]
+            except (KeyError, AttributeError):
+                gex_regime = GEXRegime.NEUTRAL
+
+            spot_price = market_data.get('underlying_price', market_data.get('spot_price', 0))
+            context = OracleMarketContext(
+                spot_price=spot_price,
+                vix=market_data.get('vix', 0),
+                gex_regime=gex_regime,
+                gex_call_wall=market_data.get('call_wall', 0),
+                gex_put_wall=market_data.get('put_wall', 0),
+                gex_flip_point=market_data.get('flip_point', 0),
+                gex_net=market_data.get('net_gex', 0),
+                day_of_week=datetime.now(CENTRAL_TZ).weekday(),
+            )
+
+            # Get advice from oracle_data or signal
+            advice_str = oracle_data.get('advice', 'SKIP_TODAY') if oracle_data else 'SKIP_TODAY'
+            if signal and hasattr(signal, 'oracle_advice') and signal.oracle_advice:
+                advice_str = signal.oracle_advice
+            try:
+                advice = TradingAdvice[advice_str] if advice_str else TradingAdvice.SKIP_TODAY
+            except (KeyError, ValueError):
+                advice = TradingAdvice.SKIP_TODAY
+
+            # Get win probability
+            win_prob = 0
+            if oracle_data:
+                win_prob = oracle_data.get('win_probability', 0)
+            if signal and hasattr(signal, 'oracle_win_probability') and signal.oracle_win_probability > win_prob:
+                win_prob = signal.oracle_win_probability
+
+            # Get confidence
+            confidence = 0
+            if oracle_data:
+                confidence = oracle_data.get('confidence', 0)
+            if signal and hasattr(signal, 'confidence') and signal.confidence > confidence:
+                confidence = signal.confidence
+
+            # Get top factors
+            top_factors = []
+            if oracle_data and oracle_data.get('top_factors'):
+                factors = oracle_data['top_factors']
+                if isinstance(factors, list):
+                    for f in factors:
+                        if isinstance(f, dict):
+                            top_factors.append((f.get('factor', 'unknown'), f.get('impact', 0)))
+                        elif isinstance(f, tuple):
+                            top_factors.append(f)
+
+            # Build reasoning
+            reasoning = f"Decision: {decision}"
+            if oracle_data and oracle_data.get('reasoning'):
+                reasoning = oracle_data['reasoning']
+            if signal and signal.reasoning:
+                reasoning = signal.reasoning
+
+            prediction = OraclePrediction(
+                bot_name=BotName.ATHENA,
+                advice=advice,
+                win_probability=win_prob,
+                confidence=confidence,
+                suggested_risk_pct=oracle_data.get('suggested_risk_pct', 0) if oracle_data else 0,
+                suggested_sd_multiplier=1.0,
+                use_gex_walls=True,
+                suggested_put_strike=signal.long_strike if signal and signal.direction == 'BEARISH' else None,
+                suggested_call_strike=signal.long_strike if signal and signal.direction == 'BULLISH' else None,
+                top_factors=top_factors,
+                reasoning=reasoning,
+                probabilities=oracle_data.get('probabilities', {}) if oracle_data else {},
+            )
+
+            # Store to database - use today's date for non-traded scans
+            trade_date = datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+            success = oracle.store_prediction(prediction, context, trade_date)
+
+            if success:
+                logger.debug(f"ATHENA: Oracle scan prediction stored (Win Prob: {win_prob:.0%}, Decision: {decision})")
+            else:
+                logger.debug(f"ATHENA: Oracle scan prediction storage returned False")
+
+        except Exception as e:
+            logger.debug(f"ATHENA: Oracle scan prediction storage skipped: {e}")
+
+    def _get_force_exit_time(self, now: datetime, today: str) -> datetime:
+        """
+        Get the effective force exit time, accounting for early close days.
+
+        On early close days (Christmas Eve, day after Thanksgiving), market closes at 12:00 PM CT.
+        We should force exit 5 minutes before market close instead of using the normal config.
+        """
+        # Default force exit from config
+        force_parts = self.config.force_exit.split(':')
+        config_force_time = now.replace(hour=int(force_parts[0]), minute=int(force_parts[1]), second=0)
+
+        # Check if today is an early close day
+        if MARKET_CALENDAR_AVAILABLE and MARKET_CALENDAR:
+            close_hour, close_minute = MARKET_CALENDAR.get_market_close_time(today)
+            # Early close: force exit 10 min before market close
+            early_close_force = now.replace(hour=close_hour, minute=close_minute, second=0) - timedelta(minutes=10)
+
+            # Use the earlier of config time and early close time
+            if early_close_force < config_force_time:
+                logger.info(f"ATHENA: Early close day - adjusting force exit from {self.config.force_exit} to {early_close_force.strftime('%H:%M')}")
+                return early_close_force
+
+        return config_force_time
+
     def _check_exit_conditions(
         self,
         pos: SpreadPosition,
@@ -418,24 +786,42 @@ class ATHENATrader(MathOptimizerMixin):
         """
         Check if a position should be closed.
 
-        Returns (should_close, reason).
+        Exit conditions (in priority order):
+        1. FORCE_EXIT: Current time >= force exit time on expiration day
+        2. EXPIRED: Position's expiration date is BEFORE today (past expiration)
+        3. PROFIT_TARGET / STOP_LOSS: P&L targets
+
+        NOTE: On expiration day, we use FORCE_EXIT (not EXPIRED) to ensure positions are
+        closed at the proper time (10 min before market close), not at market open.
         """
-        from datetime import timedelta
+        # Get force exit time (handles early close days)
+        force_time = self._get_force_exit_time(now, today)
 
-        # Expiration check
-        if pos.expiration <= today:
-            return True, "EXPIRED"
-
-        # Force exit time check
-        force_parts = self.config.force_exit.split(':')
-        force_time = now.replace(hour=int(force_parts[0]), minute=int(force_parts[1]), second=0)
-        if now >= force_time and pos.expiration == today:
+        # FORCE_EXIT: On expiration day, close at force exit time (10 min before market close)
+        if pos.expiration == today and now >= force_time:
             return True, "FORCE_EXIT_TIME"
 
-        # Get current value
+        # EXPIRED: Position is PAST expiration (should have been closed yesterday)
+        if pos.expiration < today:
+            logger.warning(f"Position {pos.position_id} is PAST expiration ({pos.expiration}) - closing immediately")
+            return True, "EXPIRED"
+
+        # Get current value with fallback handling
         current_value = self.executor.get_position_current_value(pos)
         if current_value is None:
-            return False, ""
+            # PRICING FALLBACK: Don't silently block exits when pricing fails
+            logger.warning(f"[ATHENA EXIT] Pricing unavailable for {pos.position_id}")
+
+            # If we're within 30 minutes of force exit time, force close anyway
+            force_time = self._get_force_exit_time(now, today)
+            minutes_to_force = (force_time - now).total_seconds() / 60
+            if minutes_to_force <= 30 and pos.expiration == today:
+                logger.warning(f"[ATHENA EXIT] Force closing {pos.position_id} - pricing failed but {minutes_to_force:.0f}min to force exit")
+                return True, "PRICING_FAILURE_NEAR_EXPIRY"
+
+            # Log but don't block - we'll retry next cycle
+            self.db.log("WARNING", f"Pricing unavailable for exit check: {pos.position_id}")
+            return False, "PRICING_UNAVAILABLE"
 
         # Calculate current P&L percentage
         entry_cost = pos.entry_debit
@@ -448,7 +834,8 @@ class ATHENATrader(MathOptimizerMixin):
                 max_profit = pos.spread_width - entry_cost
 
                 expiry_time = now.replace(hour=16, minute=0, second=0)
-                entry_time = pos.entry_time if hasattr(pos, 'entry_time') else now - timedelta(hours=2)
+                # Field is 'open_time' not 'entry_time'
+                entry_time = pos.open_time if hasattr(pos, 'open_time') and pos.open_time else now - timedelta(hours=2)
 
                 hjb_result = self.math_should_exit(
                     current_pnl=current_pnl,
@@ -479,15 +866,6 @@ class ATHENATrader(MathOptimizerMixin):
 
         return False, ""
 
-    def _try_new_entry(self) -> Optional[SpreadPosition]:
-        """
-        Try to open a new position.
-
-        Returns SpreadPosition if successful, None otherwise.
-        """
-        position, _ = self._try_new_entry_with_context()
-        return position
-
     def _try_new_entry_with_context(self) -> tuple[Optional[SpreadPosition], Optional[Any]]:
         """
         Try to open a new position, returning both position and signal for logging.
@@ -499,7 +877,8 @@ class ATHENATrader(MathOptimizerMixin):
         # MATH OPTIMIZER: Check regime before generating signal
         if MATH_OPTIMIZER_AVAILABLE and hasattr(self, '_math_enabled') and self._math_enabled:
             try:
-                market_data = self.signals.get_market_snapshot() if hasattr(self.signals, 'get_market_snapshot') else {}
+                # BUG FIX: Use get_gex_data() - get_market_snapshot doesn't exist
+                market_data = self.signals.get_gex_data() if hasattr(self.signals, 'get_gex_data') else {}
                 if market_data:
                     should_trade, regime_reason = self.math_should_trade_regime(market_data)
                     if not should_trade:
@@ -542,19 +921,50 @@ class ATHENATrader(MathOptimizerMixin):
             reasoning=signal.reasoning
         )
 
-        # Execute the trade
-        position = self.executor.execute_spread(signal)
+        # MATH OPTIMIZER: Get Thompson Sampling allocation weight
+        thompson_weight = 1.0  # Default neutral weight
+        if MATH_OPTIMIZER_AVAILABLE and hasattr(self, 'math_get_allocation'):
+            try:
+                allocation = self.math_get_allocation()
+                # Convert allocation percentage to weight (20% baseline = 1.0)
+                # So 30% = 1.5x, 10% = 0.5x
+                athena_alloc = allocation.get('allocations', {}).get('ATHENA', 0.2)
+                thompson_weight = athena_alloc / 0.2  # Normalize to 20% baseline
+                logger.info(f"ATHENA Thompson weight: {thompson_weight:.2f} (allocation: {athena_alloc:.1%})")
+            except Exception as e:
+                logger.debug(f"Thompson allocation skipped: {e}")
+
+        # Execute the trade with Thompson-adjusted position sizing
+        position = self.executor.execute_spread(signal, thompson_weight=thompson_weight)
         if not position:
             self.db.log("ERROR", "Execution failed", {'signal': signal.reasoning})
             return None, signal
 
-        # Save to database
-        if not self.db.save_position(position):
+        # Save to database - CRITICAL for position tracking
+        db_saved = self.db.save_position(position)
+        if not db_saved:
             self.db.log("ERROR", "Failed to save position to DB", {'pos_id': position.position_id})
-            # Still return position - it was executed
-            logger.error(f"Position {position.position_id} executed but not saved to DB!")
+            logger.error(
+                f"CRITICAL: Position {position.position_id} executed but NOT saved to DB! "
+                f"Position will NOT be managed (no stop loss, no expiration handling). "
+                f"Manual intervention required."
+            )
+            # Attempt one retry after brief pause
+            import time
+            time.sleep(0.5)
+            db_saved = self.db.save_position(position)
+            if db_saved:
+                logger.info(f"Position {position.position_id} saved to DB on retry")
+            else:
+                logger.error(f"CRITICAL: Position {position.position_id} DB save retry failed!")
+                # Mark the position as not persisted for caller awareness
+                position.db_persisted = False
 
         self.db.log("INFO", f"Opened: {position.position_id}", position.to_dict())
+
+        # CRITICAL: Store Oracle prediction for ML feedback loop
+        # This enables update_outcome to find and update the prediction record
+        self._store_oracle_prediction(signal, position)
 
         # Record prediction to Learning Memory for self-improvement tracking
         prediction_id = self._record_learning_memory_prediction(position, signal)
@@ -571,8 +981,12 @@ class ATHENATrader(MathOptimizerMixin):
         error_msg: str = ""
     ):
         """Log scan activity for visibility and tracking"""
+        print(f"[ATHENA DEBUG] _log_scan_activity called at {datetime.now(CENTRAL_TZ).strftime('%I:%M:%S %p CT')}")
         if not SCAN_LOGGER_AVAILABLE or not log_athena_scan:
+            print(f"[ATHENA DEBUG] Scan logging SKIPPED: SCAN_LOGGER_AVAILABLE={SCAN_LOGGER_AVAILABLE}, log_athena_scan={log_athena_scan is not None}")
+            logger.warning(f"[ATHENA] Scan logging SKIPPED: SCAN_LOGGER_AVAILABLE={SCAN_LOGGER_AVAILABLE}, log_athena_scan={log_athena_scan is not None}")
             return
+        print(f"[ATHENA DEBUG] Proceeding with scan logging...")
 
         try:
             # Determine outcome
@@ -598,25 +1012,123 @@ class ATHENATrader(MathOptimizerMixin):
                 outcome = ScanOutcome.NO_TRADE
                 decision = "No valid signal"
 
-            # Build signal context
+            # Build signal context with FULL Oracle data for frontend visibility
             signal = context.get('signal')
+            oracle_data = context.get('oracle_data', {})
             signal_direction = ""
             signal_confidence = 0
             signal_win_probability = 0
             oracle_advice = ""
             oracle_reasoning = ""
+            oracle_win_probability = 0
+            oracle_confidence = 0
+            oracle_top_factors = None
+            oracle_probabilities = None
+            oracle_suggested_strikes = None
+            oracle_thresholds = None
+            min_win_prob_threshold = self.config.min_win_probability
 
+            # ALWAYS set thresholds - this should never be 0
+            oracle_thresholds = {
+                'min_win_probability': min_win_prob_threshold,
+                'wall_distance_threshold': getattr(self.config, 'wall_distance_threshold', 0.01),
+            }
+
+            # Extract Oracle data from context FIRST (fetched early for all scans)
+            # This ensures we always have Oracle data even if signal doesn't have it
+            # Initialize NEUTRAL regime analysis fields
+            neutral_derived_direction = ""
+            neutral_confidence = 0
+            neutral_reasoning = ""
+            ic_suitability = 0
+            bullish_suitability = 0
+            bearish_suitability = 0
+            trend_direction = ""
+            trend_strength = 0
+            position_in_range_pct = 50.0
+            wall_filter_passed = False
+
+            if oracle_data:
+                oracle_advice = oracle_data.get('advice', oracle_data.get('recommendation', ''))
+                oracle_reasoning = oracle_data.get('reasoning', oracle_data.get('full_reasoning', ''))
+                oracle_win_probability = oracle_data.get('win_probability', 0)
+                oracle_confidence = oracle_data.get('confidence', 0)
+                oracle_top_factors = oracle_data.get('top_factors', oracle_data.get('factors', []))
+                # Extract NEUTRAL regime analysis fields
+                neutral_derived_direction = oracle_data.get('neutral_derived_direction', '')
+                neutral_confidence = oracle_data.get('neutral_confidence', 0)
+                neutral_reasoning = oracle_data.get('neutral_reasoning', '')
+                ic_suitability = oracle_data.get('ic_suitability', 0)
+                bullish_suitability = oracle_data.get('bullish_suitability', 0)
+                bearish_suitability = oracle_data.get('bearish_suitability', 0)
+                trend_direction = oracle_data.get('trend_direction', '')
+                trend_strength = oracle_data.get('trend_strength', 0)
+                position_in_range_pct = oracle_data.get('position_in_range_pct', 50.0)
+                wall_filter_passed = oracle_data.get('wall_filter_passed', False)
+
+            # If we have a signal, use signal data (but don't override Oracle data with zeros)
             if signal:
                 signal_direction = signal.direction
                 signal_confidence = signal.confidence
-                signal_win_probability = getattr(signal, 'win_probability', 0)
-                oracle_advice = "ENTER" if signal.is_valid else "SKIP"
-                oracle_reasoning = signal.reasoning
+                signal_win_probability = getattr(signal, 'ml_win_probability', 0)
+
+                # Only override Oracle data if signal has it (don't replace with zeros)
+                signal_oracle_advice = getattr(signal, 'oracle_advice', '')
+                if signal_oracle_advice:
+                    oracle_advice = signal_oracle_advice
+                elif not oracle_advice:
+                    oracle_advice = "ENTER" if signal.is_valid else "SKIP"
+
+                if signal.reasoning:
+                    oracle_reasoning = signal.reasoning
+
+                # Only override win probability if signal has a non-zero value
+                signal_oracle_wp = getattr(signal, 'oracle_win_probability', 0)
+                if signal_oracle_wp > 0:
+                    oracle_win_probability = signal_oracle_wp
+
+                signal_oracle_conf = getattr(signal, 'oracle_confidence', 0)
+                if signal_oracle_conf > 0:
+                    oracle_confidence = signal_oracle_conf
+                elif oracle_confidence == 0:
+                    oracle_confidence = signal.confidence
+
+                # Get top factors (may be JSON string or list) - only if signal has them
+                top_factors_raw = getattr(signal, 'oracle_top_factors', None)
+                if top_factors_raw:
+                    if isinstance(top_factors_raw, str):
+                        try:
+                            import json
+                            oracle_top_factors = json.loads(top_factors_raw)
+                        except Exception:
+                            pass  # Keep existing oracle_top_factors
+                    elif isinstance(top_factors_raw, list):
+                        oracle_top_factors = top_factors_raw
 
             # Build trade details if position opened
             position = context.get('position')
 
-            log_athena_scan(
+            # Gather comprehensive ML data for logging
+            ml_kwargs = {}
+            if ML_GATHERER_AVAILABLE and gather_ml_data:
+                try:
+                    market_data = context.get('market_data', {})
+                    gex_data = context.get('gex_data', {})
+                    ml_kwargs = gather_ml_data(
+                        symbol=self.config.ticker,  # ATHENAConfig uses 'ticker' not 'symbol'
+                        spot_price=market_data.get('spot_price', 0) if market_data else 0,
+                        vix=market_data.get('vix', 0) if market_data else 0,
+                        gex_data=gex_data,
+                        market_data=market_data,
+                        bot_name="ATHENA",
+                        win_rate=0.65,  # ATHENA historical win rate
+                        avg_win=200,
+                        avg_loss=300,
+                    )
+                except Exception as ml_err:
+                    logger.debug(f"ML data gathering failed (non-critical): {ml_err}")
+
+            scan_id = log_athena_scan(
                 outcome=outcome,
                 decision_summary=decision,
                 market_data=context.get('market_data'),
@@ -628,12 +1140,76 @@ class ATHENATrader(MathOptimizerMixin):
                 signal_win_probability=signal_win_probability,
                 oracle_advice=oracle_advice,
                 oracle_reasoning=oracle_reasoning,
+                oracle_win_probability=oracle_win_probability,
+                oracle_confidence=oracle_confidence,
+                oracle_top_factors=oracle_top_factors,
+                oracle_probabilities=oracle_probabilities,
+                oracle_suggested_strikes=oracle_suggested_strikes,
+                oracle_thresholds=oracle_thresholds,
+                min_win_probability_threshold=min_win_prob_threshold,
                 trade_executed=result.get('trades_opened', 0) > 0,
                 error_message=error_msg,
                 generate_ai_explanation=False,  # Keep it simple
+                # NEUTRAL Regime Analysis fields
+                neutral_derived_direction=neutral_derived_direction,
+                neutral_confidence=neutral_confidence,
+                neutral_reasoning=neutral_reasoning,
+                ic_suitability=ic_suitability,
+                bullish_suitability=bullish_suitability,
+                bearish_suitability=bearish_suitability,
+                trend_direction=trend_direction,
+                trend_strength=trend_strength,
+                position_in_range_pct=position_in_range_pct,
+                wall_filter_passed=wall_filter_passed,
+                **ml_kwargs,  # Include all ML analysis data
             )
+            if scan_id:
+                print(f"[ATHENA DEBUG] ✅ Scan logged successfully: {scan_id}")
+                logger.info(f"[ATHENA] Scan logged: {scan_id}")
+            else:
+                print(f"[ATHENA DEBUG] ❌ Scan logging returned None - check database!")
+                logger.warning("[ATHENA] Scan logging returned None - possible DB issue")
+
+            # Store Oracle prediction for NON-TRADED scans to provide visibility
+            # This enables the Oracle Knowledge Base to show all bot interactions,
+            # not just executed trades. Critical for debugging "why no trades?"
+            if outcome != ScanOutcome.TRADED and (oracle_data or (signal and oracle_win_probability > 0)):
+                try:
+                    market_data_for_oracle = context.get('market_data', {})
+                    if context.get('gex_data'):
+                        market_data_for_oracle.update(context['gex_data'])
+                    self._store_oracle_prediction_for_scan(
+                        signal=signal,
+                        oracle_data=oracle_data,
+                        market_data=market_data_for_oracle,
+                        decision=decision
+                    )
+                except Exception as oracle_store_err:
+                    logger.debug(f"[ATHENA] Oracle scan prediction storage skipped: {oracle_store_err}")
+
         except Exception as e:
-            logger.warning(f"Failed to log scan activity: {e}")
+            print(f"[ATHENA DEBUG] ❌ EXCEPTION in _log_scan_activity: {e}")
+            import traceback
+            print(traceback.format_exc())
+            logger.error(f"[ATHENA] CRITICAL: Failed to log scan activity: {e}")
+            logger.error(traceback.format_exc())
+            # FALLBACK: Try simple logging without ML kwargs
+            try:
+                fallback_scan_id = log_athena_scan(
+                    outcome=outcome,
+                    decision_summary=f"{decision} [FALLBACK - ML data excluded]",
+                    market_data=context.get('market_data'),
+                    gex_data=context.get('gex_data'),
+                    trade_executed=result.get('trades_opened', 0) > 0,
+                    error_message=error_msg or f"Original logging failed: {str(e)[:100]}",
+                    generate_ai_explanation=False,
+                )
+                if fallback_scan_id:
+                    logger.info(f"[ATHENA] Fallback scan logged: {fallback_scan_id}")
+                else:
+                    logger.error("[ATHENA] FALLBACK scan logging also failed!")
+            except Exception as fallback_err:
+                logger.error(f"[ATHENA] FALLBACK logging failed: {fallback_err}")
 
     def _update_daily_summary(self, today: str, cycle_result: Dict) -> None:
         """Update daily performance summary"""
@@ -693,6 +1269,47 @@ class ATHENATrader(MathOptimizerMixin):
         """Get all open positions"""
         return self.db.get_open_positions()
 
+    def get_gex_data(self) -> Optional[Dict[str, Any]]:
+        """Delegate to SignalGenerator for GEX data"""
+        return self.signals.get_gex_data()
+
+    def get_ml_signal(self, gex_data: Dict) -> Optional[Dict[str, Any]]:
+        """Delegate to SignalGenerator for ML signal"""
+        return self.signals.get_ml_signal(gex_data)
+
+    def get_oracle_advice(self) -> Optional[Dict[str, Any]]:
+        """Get Oracle advice with current GEX data"""
+        gex_data = self.signals.get_gex_data()
+        if not gex_data:
+            return None
+        return self.signals.get_oracle_advice(gex_data)
+
+    def get_live_pnl(self) -> Dict[str, Any]:
+        """Get live P&L for all open positions"""
+        positions = self.db.get_open_positions()
+        total_unrealized = 0.0
+        position_pnls = []
+
+        for pos in positions:
+            current_value = self.executor.get_position_current_value(pos)
+            if current_value:
+                pnl = (current_value - pos.entry_debit) * 100 * pos.contracts
+                total_unrealized += pnl
+                position_pnls.append({
+                    'position_id': pos.position_id,
+                    'entry_debit': pos.entry_debit,
+                    'current_value': current_value,
+                    'unrealized_pnl': pnl,
+                    'contracts': pos.contracts,
+                })
+
+        return {
+            'total_unrealized_pnl': total_unrealized,
+            'position_count': len(positions),
+            'positions': position_pnls,
+            'timestamp': datetime.now(CENTRAL_TZ).isoformat(),
+        }
+
     def force_close_all(self, reason: str = "MANUAL_CLOSE") -> Dict[str, Any]:
         """Force close all open positions"""
         positions = self.db.get_open_positions()
@@ -706,6 +1323,11 @@ class ATHENATrader(MathOptimizerMixin):
                 )
                 # Record outcome to Oracle for ML feedback
                 self._record_oracle_outcome(pos, reason, pnl)
+                # Record outcome to Solomon Enhanced for feedback loops
+                trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+                self._record_solomon_outcome(pnl, trade_date)
+                # Record outcome to Thompson Sampling for capital allocation
+                self._record_thompson_outcome(pnl)
                 # Record outcome to Learning Memory for self-improvement
                 if pos.position_id in self._prediction_ids:
                     self._record_learning_memory_outcome(
@@ -770,12 +1392,23 @@ class ATHENATrader(MathOptimizerMixin):
                     # Calculate final P&L based on where price ended
                     final_pnl = self._calculate_expiration_pnl(pos, current_price)
 
-                    # Mark position as expired in database
-                    self.db.expire_position(pos.position_id, final_pnl)
+                    # Calculate estimated close price (spread value at expiration)
+                    # This is the intrinsic value the spread expired with
+                    close_price = (final_pnl / (100 * pos.contracts)) + pos.entry_debit if pos.contracts > 0 else 0
+
+                    # Mark position as expired in database with close price for audit trail
+                    self.db.expire_position(pos.position_id, final_pnl, close_price)
 
                     # Record outcome for ML feedback
                     close_reason = "EXPIRED_PROFIT" if final_pnl > 0 else "EXPIRED_LOSS"
                     self._record_oracle_outcome(pos, close_reason, final_pnl)
+
+                    # Record outcome to Solomon Enhanced for feedback loops
+                    trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
+                    self._record_solomon_outcome(final_pnl, trade_date)
+
+                    # Record outcome to Thompson Sampling for capital allocation
+                    self._record_thompson_outcome(final_pnl)
 
                     # Record to Learning Memory
                     if pos.position_id in self._prediction_ids:
@@ -827,8 +1460,8 @@ class ATHENATrader(MathOptimizerMixin):
         entry_cost = pos.entry_debit * 100 * contracts  # Total cost paid
         spread_width = pos.spread_width  # Max value the spread can reach
 
-        # Determine spread type from direction
-        is_bullish = pos.direction.lower() in ('bull', 'bullish', 'call')
+        # Determine spread type from spread_type enum
+        is_bullish = pos.spread_type == SpreadType.BULL_CALL
 
         if is_bullish:
             # Bull Call Spread: long_strike is lower, short_strike is higher

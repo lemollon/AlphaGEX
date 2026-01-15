@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 
 import requests
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 
 # Import dependencies with fallback handling
 try:
@@ -88,6 +89,49 @@ async def health_check():
             "database": "operational"
         }
     }
+
+
+@router.get("/ready")
+async def readiness_check():
+    """
+    Readiness probe endpoint for zero-downtime deployments.
+
+    Returns 200 if the service is ready to accept traffic.
+    Returns 503 if the service is shutting down or not yet ready.
+
+    Used by load balancers to determine whether to route traffic here.
+    During graceful shutdown, this returns 503 BEFORE /health goes unhealthy,
+    giving time to drain in-flight requests.
+    """
+    try:
+        from backend.services.graceful_shutdown import get_shutdown_manager
+        manager = get_shutdown_manager()
+
+        if not manager.is_ready:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "not_ready",
+                    "phase": manager.phase.value,
+                    "reason": "Service is shutting down" if manager.is_shutting_down else "Service is starting up",
+                    "in_flight_requests": manager.in_flight_count
+                }
+            )
+
+        return {
+            "status": "ready",
+            "phase": manager.phase.value,
+            "in_flight_requests": manager.in_flight_count,
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except ImportError:
+        # Graceful shutdown manager not available - assume ready
+        return {
+            "status": "ready",
+            "phase": "RUNNING",
+            "timestamp": datetime.now().isoformat()
+        }
 
 
 @router.get("/api/system-health")
@@ -293,6 +337,45 @@ async def comprehensive_system_health():
         }
     except Exception as e:
         health["components"]["market"] = {"status": "error", "message": str(e)}
+
+    # 8. ORACLE ML SYSTEM (Model staleness and training status)
+    try:
+        from quant.oracle_advisor import get_oracle, get_pending_outcomes_count
+        oracle = get_oracle()
+
+        hours_since_training = oracle._get_hours_since_training() if hasattr(oracle, '_get_hours_since_training') else 0.0
+        is_model_fresh = oracle._is_model_fresh() if hasattr(oracle, '_is_model_fresh') else True
+        pending_outcomes = get_pending_outcomes_count()
+
+        oracle_status = "healthy"
+        if not oracle.is_trained:
+            oracle_status = "untrained"
+        elif not is_model_fresh:
+            oracle_status = "stale"
+
+        health["components"]["oracle"] = {
+            "status": oracle_status,
+            "is_trained": oracle.is_trained,
+            "model_version": oracle.model_version,
+            "hours_since_training": round(hours_since_training, 2),
+            "is_model_fresh": is_model_fresh,
+            "pending_outcomes": pending_outcomes,
+            "training_threshold": 20,
+            "needs_retraining": pending_outcomes >= 20 or not is_model_fresh
+        }
+
+        if not oracle.is_trained:
+            health["issues"].append("Oracle ML model is NOT trained - predictions will use default values")
+        elif not is_model_fresh:
+            health["warnings"].append(f"Oracle model is {hours_since_training:.1f} hours old - retraining recommended")
+
+        if pending_outcomes >= 20:
+            health["warnings"].append(f"Oracle has {pending_outcomes} pending outcomes - auto-training should trigger")
+
+    except ImportError:
+        health["components"]["oracle"] = {"status": "not_available", "message": "Oracle module not loaded"}
+    except Exception as e:
+        health["components"]["oracle"] = {"status": "error", "message": str(e)}
 
     # OVERALL STATUS CALCULATION
     if len(health["issues"]) > 0:

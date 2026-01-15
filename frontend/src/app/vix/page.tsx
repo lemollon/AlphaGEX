@@ -1,9 +1,23 @@
 'use client'
 
 import { useState } from 'react'
-import { Activity, Shield, AlertTriangle, BarChart3, Clock, Zap, Target, RefreshCw, ChevronLeft, ChevronRight, AlertCircle } from 'lucide-react'
+import dynamic from 'next/dynamic'
+import { Activity, Shield, AlertTriangle, BarChart3, Clock, Zap, Target, RefreshCw, ChevronLeft, ChevronRight, AlertCircle, Globe, LayoutGrid } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { useVIX, useVIXHedgeSignal, useVIXSignalHistory } from '@/lib/hooks/useMarketData'
+
+// Dynamically import VIX Solar System with SSR disabled (Three.js requires browser)
+const VIXSolarSystem = dynamic(() => import('@/components/VIXSolarSystem'), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-full flex items-center justify-center bg-[#030712]">
+      <div className="text-center">
+        <div className="w-16 h-16 border-4 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin mx-auto mb-4" />
+        <p className="text-cyan-400 text-sm">Initializing VIX Solar System...</p>
+      </div>
+    </div>
+  )
+})
 
 interface VIXData {
   vix_spot: number
@@ -58,7 +72,11 @@ interface SignalHistory {
 // Pagination constants
 const ITEMS_PER_PAGE = 10
 
+type ViewMode = 'dashboard' | 'solar-system'
+
 export default function VIXDashboard() {
+  // View mode state
+  const [viewMode, setViewMode] = useState<ViewMode>('dashboard')
   // Pagination state
   const [currentPage, setCurrentPage] = useState(0)
 
@@ -151,6 +169,31 @@ export default function VIXDashboard() {
                 <div className="text-xs text-text-muted">
                   <span className="text-success">Auto-refresh 1min • Cached across pages</span>
                 </div>
+                {/* View Mode Toggle */}
+                <div className="flex items-center bg-background-card rounded-lg p-1 border border-border">
+                  <button
+                    onClick={() => setViewMode('dashboard')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                      viewMode === 'dashboard'
+                        ? 'bg-primary text-white'
+                        : 'text-text-secondary hover:text-text-primary hover:bg-background-hover'
+                    }`}
+                  >
+                    <LayoutGrid className="w-4 h-4" />
+                    Dashboard
+                  </button>
+                  <button
+                    onClick={() => setViewMode('solar-system')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                      viewMode === 'solar-system'
+                        ? 'bg-primary text-white'
+                        : 'text-text-secondary hover:text-text-primary hover:bg-background-hover'
+                    }`}
+                  >
+                    <Globe className="w-4 h-4" />
+                    Solar System
+                  </button>
+                </div>
                 <button
                   onClick={handleRefresh}
                   disabled={isRefreshing}
@@ -162,44 +205,69 @@ export default function VIXDashboard() {
               </div>
             </div>
 
-            {/* Data Date Display */}
-            {vixData?.data_date && (
-              <div className="flex items-center gap-2 text-sm text-primary bg-primary/10 px-3 py-1.5 rounded-lg w-fit">
-                <Clock className="w-4 h-4" />
-                <span>Market Data as of: <span className="font-semibold">{vixData.data_date}</span></span>
-              </div>
-            )}
-
-            {/* Fallback Mode Indicator */}
-            {isUsingFallback && (
-              <div className="flex items-center gap-2 text-sm text-warning bg-warning/10 border border-warning/20 px-3 py-2 rounded-lg">
-                <AlertCircle className="w-4 h-4" />
-                <div>
-                  <span className="font-semibold">Fallback Mode Active</span>
-                  <span className="text-text-secondary ml-2">
-                    Primary data source unavailable. Using backup sources (data may be delayed).
-                  </span>
-                </div>
-              </div>
-            )}
-
-            {loading && !vixData ? (
-              <div className="text-center py-12">
-                <Activity className="w-8 h-8 text-primary mx-auto animate-spin" />
-                <p className="text-text-secondary mt-2">Loading VIX data...</p>
-              </div>
-            ) : error ? (
-              <div className="card bg-danger/10 border-danger/20">
-                <div className="flex items-center gap-3">
-                  <AlertTriangle className="w-6 h-6 text-danger" />
-                  <div>
-                    <p className="text-danger font-semibold">Error Loading Data</p>
-                    <p className="text-text-secondary text-sm">{error}</p>
-                  </div>
-                </div>
+            {/* Solar System View */}
+            {viewMode === 'solar-system' ? (
+              <div className="relative -mx-4 sm:-mx-6 lg:-mx-8 -mb-8" style={{ height: 'calc(100vh - 180px)' }}>
+                <VIXSolarSystem
+                  vixData={vixData ? {
+                    vix_spot: vixData.vix_spot,
+                    vix_m1: vixData.vix_m1,
+                    vix_m2: vixData.vix_m2,
+                    term_structure_pct: vixData.term_structure_pct,
+                    structure_type: vixData.structure_type as 'contango' | 'backwardation' | 'flat',
+                    vvix: vixData.vvix,
+                    iv_percentile: vixData.iv_percentile,
+                    realized_vol_20d: vixData.realized_vol_20d,
+                    iv_rv_spread: vixData.iv_rv_spread,
+                    vol_regime: vixData.vol_regime,
+                    vix_stress_level: vixData.vix_stress_level,
+                    position_size_multiplier: vixData.position_size_multiplier,
+                  } : null}
+                  onPlanetClick={(planetId) => {
+                    console.log('Planet clicked:', planetId)
+                  }}
+                />
               </div>
             ) : (
               <>
+                {/* Data Date Display */}
+                {vixData?.data_date && (
+                  <div className="flex items-center gap-2 text-sm text-primary bg-primary/10 px-3 py-1.5 rounded-lg w-fit">
+                    <Clock className="w-4 h-4" />
+                    <span>Market Data as of: <span className="font-semibold">{vixData.data_date}</span></span>
+                  </div>
+                )}
+
+                {/* Fallback Mode Indicator */}
+                {isUsingFallback && (
+                  <div className="flex items-center gap-2 text-sm text-warning bg-warning/10 border border-warning/20 px-3 py-2 rounded-lg">
+                    <AlertCircle className="w-4 h-4" />
+                    <div>
+                      <span className="font-semibold">Fallback Mode Active</span>
+                      <span className="text-text-secondary ml-2">
+                        Primary data source unavailable. Using backup sources (data may be delayed).
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {loading && !vixData ? (
+                  <div className="text-center py-12">
+                    <Activity className="w-8 h-8 text-primary mx-auto animate-spin" />
+                    <p className="text-text-secondary mt-2">Loading VIX data...</p>
+                  </div>
+                ) : error ? (
+                  <div className="card bg-danger/10 border-danger/20">
+                    <div className="flex items-center gap-3">
+                      <AlertTriangle className="w-6 h-6 text-danger" />
+                      <div>
+                        <p className="text-danger font-semibold">Error Loading Data</p>
+                        <p className="text-text-secondary text-sm">{error}</p>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <>
                 {/* VIX Overview Cards */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                   <div className="card">
@@ -584,11 +652,23 @@ export default function VIXDashboard() {
                   ) : (
                     <div className="text-center py-8 text-text-secondary">
                       <Clock className="w-10 h-10 text-text-muted mx-auto mb-2" />
-                      <p>No signal history yet</p>
-                      <p className="text-xs text-text-muted mt-1">Signals will appear as they are generated</p>
+                      <p>No signal history available</p>
+                      {historyResponse?.diagnostics ? (
+                        <div className="mt-2 text-xs text-text-muted space-y-1">
+                          <p>Latest signal: {historyResponse.diagnostics.latest_signal_date || 'None'}</p>
+                          <p>Total signals: {historyResponse.diagnostics.total_signals_in_db || 0}</p>
+                          <p className="text-warning mt-2">{historyResponse.diagnostics.message}</p>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-text-muted mt-1">
+                          Signals are generated hourly during market hours (9 AM - 3 PM CT)
+                        </p>
+                      )}
                     </div>
                   )}
                 </div>
+                  </>
+                )}
               </>
             )}
           </div>

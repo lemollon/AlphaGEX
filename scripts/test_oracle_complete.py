@@ -47,6 +47,7 @@ def main():
     # TEST 1: Database Connection
     # ========================================
     print_header("1. DATABASE CONNECTION")
+    conn = None
     try:
         from database_adapter import get_connection
 
@@ -54,13 +55,15 @@ def main():
         cursor = conn.cursor()
         cursor.execute("SELECT version()")
         version = cursor.fetchone()[0]
-        conn.close()
 
         print_result("PostgreSQL connection", True, version[:50] + "...")
         results['db_connection'] = True
     except Exception as e:
         print_result("PostgreSQL connection", False, str(e))
         results['db_connection'] = False
+    finally:
+        if conn:
+            conn.close()
 
     # ========================================
     # TEST 2: Oracle Module Import
@@ -140,6 +143,7 @@ def main():
     # TEST 5: Training Data Sources
     # ========================================
     print_header("5. TRAINING DATA SOURCES")
+    conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
@@ -152,7 +156,7 @@ def main():
             cursor.execute("SELECT COUNT(*) FROM oracle_live_outcomes")
             live = cursor.fetchone()[0]
             sources.append(('oracle_live_outcomes', live))
-        except:
+        except Exception:
             sources.append(('oracle_live_outcomes', 'TABLE NOT FOUND'))
 
         # Training outcomes
@@ -160,7 +164,7 @@ def main():
             cursor.execute("SELECT COUNT(*) FROM oracle_training_outcomes")
             training = cursor.fetchone()[0]
             sources.append(('oracle_training_outcomes', training))
-        except:
+        except Exception:
             sources.append(('oracle_training_outcomes', 'TABLE NOT FOUND'))
 
         # Backtest results
@@ -168,7 +172,7 @@ def main():
             cursor.execute("SELECT COUNT(*) FROM backtest_results")
             backtests = cursor.fetchone()[0]
             sources.append(('backtest_results', backtests))
-        except:
+        except Exception:
             sources.append(('backtest_results', 'TABLE NOT FOUND'))
 
         # KRONOS memory
@@ -176,10 +180,8 @@ def main():
             cursor.execute("SELECT COUNT(*) FROM kronos_memory")
             kronos = cursor.fetchone()[0]
             sources.append(('kronos_memory', kronos))
-        except:
+        except Exception:
             sources.append(('kronos_memory', 'TABLE NOT FOUND'))
-
-        conn.close()
 
         print("\n  Data Sources:")
         total_samples = 0
@@ -196,6 +198,9 @@ def main():
     except Exception as e:
         print_result("Training data check", False, str(e))
         results['training_data'] = False
+    finally:
+        if conn:
+            conn.close()
 
     # ========================================
     # TEST 6: Bot Advice Generation
@@ -325,6 +330,7 @@ def main():
     # TEST 10: Database Model Persistence
     # ========================================
     print_header("10. DATABASE MODEL PERSISTENCE (CRITICAL)")
+    conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
@@ -368,11 +374,12 @@ def main():
             print("  Table will be created on first training.")
             results['db_persistence'] = False
 
-        conn.close()
-
     except Exception as e:
         print_result("Database persistence check", False, str(e))
         results['db_persistence'] = False
+    finally:
+        if conn:
+            conn.close()
 
     # ========================================
     # FINAL SUMMARY

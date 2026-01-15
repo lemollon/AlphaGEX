@@ -5,6 +5,7 @@
 
 services:
   # SERVICE 1: FastAPI Backend API
+  # Zero-downtime deployment enabled via gracePeriodSeconds
   - type: web
     name: alphagex-api
     runtime: python
@@ -15,6 +16,12 @@ services:
     buildCommand: "chmod +x verify_deployment.sh && ./verify_deployment.sh && pip install --no-cache-dir -r requirements-render.txt"
     startCommand: "./start.sh"
     healthCheckPath: /health
+    # Zero-downtime deployment settings:
+    # - New instance starts and must pass /health
+    # - Load balancer switches traffic to new instance
+    # - Old instance receives SIGTERM
+    # - gracePeriodSeconds gives old instance time to drain requests
+    gracePeriodSeconds: 60
     envVars:
       - key: TZ
         value: America/Chicago
@@ -39,21 +46,25 @@ services:
 
   # SERVICE 2: Autonomous Trader (Background Worker)
   # Runs ALL trading bots:
-  #   - ARES: Aggressive Iron Condor (8:30 AM - 3:30 PM CT, every 5 min, once daily)
-  #   - ATHENA: GEX Directional Spreads (8:35 AM - 2:30 PM CT, every 5 min, up to 5/day)
+  #   - ARES: Aggressive Iron Condor (every 5 min, once daily)
+  #   - ATHENA: GEX Directional Spreads (every 5 min, up to 5/day)
   #   - PHOENIX: 0DTE SPY/SPX options (hourly during market hours)
   #   - ATLAS: SPX Wheel strategy (daily at 9:05 AM CT)
+  # Zero-downtime: handles SIGTERM, drains active scans, cleans up DB connections
   - type: worker
     name: alphagex-trader
     runtime: python
     plan: starter
     branch: main
     autoDeploy: true
+    gracePeriodSeconds: 60
     buildCommand: pip install --no-cache-dir -r requirements.txt
-    startCommand: python scheduler/trader_scheduler.py
+    startCommand: cd /opt/render/project/src && PYTHONPATH=/opt/render/project/src python scheduler/trader_scheduler.py
     envVars:
       - key: TZ
         value: America/Chicago
+      - key: PYTHONPATH
+        value: /opt/render/project/src
       - key: PYTHON_VERSION
         value: 3.11.0
       - key: TV_USERNAME
@@ -78,12 +89,14 @@ services:
           property: connectionString
 
   # SERVICE 3: Automated Data Collector (Background Worker)
+  # Zero-downtime: handles SIGTERM, finishes current collection, cleans up DB
   - type: worker
     name: alphagex-collector
     runtime: python
     plan: starter
     branch: main
     autoDeploy: true
+    gracePeriodSeconds: 45
     buildCommand: pip install --no-cache-dir -r requirements.txt
     startCommand: python data/automated_data_collector.py
     envVars:
@@ -105,12 +118,14 @@ services:
   # SERVICE 4: Backtest Worker (Background Worker)
   # Processes long-running backtests without HTTP timeouts
   # Jobs are queued via API and processed asynchronously
+  # Zero-downtime: handles SIGTERM, marks running jobs for retry, cleans up DB
   - type: worker
     name: alphagex-backtester
     runtime: python
     plan: starter  # Can upgrade to standard for better performance
     branch: main
     autoDeploy: true
+    gracePeriodSeconds: 90
     buildCommand: pip install --no-cache-dir -r requirements.txt
     startCommand: python backend/services/backtest_worker.py
     envVars:

@@ -8,6 +8,10 @@ import BotStatusOverview from '@/components/BotStatusOverview'
 import OracleRecommendationWidget from '@/components/OracleRecommendationWidget'
 import ARGUSAlertsWidget from '@/components/ARGUSAlertsWidget'
 import DashboardScanFeed from '@/components/DashboardScanFeed'
+import SAGEStatusWidget from '@/components/SAGEStatusWidget'
+import QuantStatusWidget from '@/components/QuantStatusWidget'
+import MathOptimizerWidget from '@/components/MathOptimizerWidget'
+import SyncStatusWidget from '@/components/SyncStatusWidget'
 
 export default function Dashboard() {
   return (
@@ -28,20 +32,32 @@ export default function Dashboard() {
             <p className="text-text-secondary text-sm mt-1">Real-time GEX intelligence & trading signals</p>
           </div>
 
-          {/* Row 1: Bot Status & Oracle - Equal width */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+          {/* Row 1: Bot Status - Full width with all 5 bots */}
+          <div className="mb-4">
             <BotStatusOverview />
-            <OracleRecommendationWidget />
           </div>
 
-          {/* Row 2: ARGUS, Gamma Widget, Scan Feed - Equal thirds */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
-            <ARGUSAlertsWidget />
+          {/* Row 2: Oracle & Gamma Expiration */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+            <OracleRecommendationWidget />
             <GammaExpirationWidget />
+          </div>
+
+          {/* Row 3: AI/ML Systems - SAGE, QUANT, Math Optimizer, Sync Status */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+            <SAGEStatusWidget />
+            <QuantStatusWidget />
+            <MathOptimizerWidget />
+            <SyncStatusWidget />
+          </div>
+
+          {/* Row 4: ARGUS Alerts & Scan Feed - Activity monitoring */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+            <ARGUSAlertsWidget />
             <DashboardScanFeed />
           </div>
 
-          {/* Row 3: Intelligence Dashboard - Full width */}
+          {/* Row 5: Intelligence Dashboard - Full width */}
           <div>
             <IntelligenceDashboard />
           </div>

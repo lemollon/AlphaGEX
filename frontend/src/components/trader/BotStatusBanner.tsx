@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { Activity, Clock, TrendingUp, TrendingDown, Zap, Pause, AlertCircle } from 'lucide-react'
 
 interface BotStatusBannerProps {
-  botName: 'ATHENA' | 'ARES' | 'PEGASUS'
+  botName: 'ATHENA' | 'ARES' | 'PEGASUS' | 'PHOENIX' | 'ATLAS' | 'ICARUS' | 'TITAN'
   isActive: boolean
   isPaused?: boolean
   lastScan?: string | null

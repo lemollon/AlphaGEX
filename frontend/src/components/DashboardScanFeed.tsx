@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo, useCallback, memo } from 'react'
 import Link from 'next/link'
 import {
   Activity,
@@ -14,97 +14,127 @@ import {
   Target,
   Shield,
   AlertTriangle,
-  Ban
+  Ban,
+  Flame,
+  Rocket
 } from 'lucide-react'
-import { useScanActivityAres, useScanActivityAthena, useScanActivityPegasus } from '@/lib/hooks/useMarketData'
+import { useScanActivityAres, useScanActivityAthena, useScanActivityPegasus, useICARUSScanActivity, useScanActivityTitan } from '@/lib/hooks/useMarketData'
+
+// PERFORMANCE FIX: Move helper functions outside component (no re-creation per render)
+const getBotIcon = (botName: string) => {
+  switch (botName?.toUpperCase()) {
+    case 'ARES':
+      return <Sword className="w-4 h-4 text-blue-500" />
+    case 'ATHENA':
+      return <Target className="w-4 h-4 text-purple-500" />
+    case 'PEGASUS':
+      return <Shield className="w-4 h-4 text-amber-500" />
+    case 'ICARUS':
+      return <Flame className="w-4 h-4 text-cyan-500" />
+    case 'TITAN':
+      return <Rocket className="w-4 h-4 text-rose-500" />
+    default:
+      return <Activity className="w-4 h-4 text-text-muted" />
+  }
+}
+
+const getOutcomeConfig = (outcome: string, tradeExecuted: boolean) => {
+  if (tradeExecuted || outcome === 'TRADED') {
+    return {
+      icon: <CheckCircle className="w-4 h-4 text-success" />,
+      bg: 'bg-success/10',
+      border: 'border-success/20',
+      text: 'text-success',
+      label: 'Traded'
+    }
+  }
+  switch (outcome) {
+    case 'NO_TRADE':
+    case 'SKIP':
+      return {
+        icon: <Ban className="w-4 h-4 text-warning" />,
+        bg: 'bg-warning/10',
+        border: 'border-warning/20',
+        text: 'text-warning',
+        label: 'Skipped'
+      }
+    case 'ERROR':
+      return {
+        icon: <XCircle className="w-4 h-4 text-danger" />,
+        bg: 'bg-danger/10',
+        border: 'border-danger/20',
+        text: 'text-danger',
+        label: 'Error'
+      }
+    case 'MARKET_CLOSED':
+    case 'BEFORE_WINDOW':
+      return {
+        icon: <Clock className="w-4 h-4 text-text-muted" />,
+        bg: 'bg-background-hover',
+        border: 'border-border',
+        text: 'text-text-muted',
+        label: outcome.replace(/_/g, ' ')
+      }
+    default:
+      return {
+        icon: <Activity className="w-4 h-4 text-text-muted" />,
+        bg: 'bg-background-hover',
+        border: 'border-border',
+        text: 'text-text-muted',
+        label: outcome
+      }
+  }
+}
 
 export default function DashboardScanFeed() {
   const [expanded, setExpanded] = useState(false)
 
+  // Live bots
   const { data: aresScans, isLoading: aresLoading, mutate: refreshAres } = useScanActivityAres(10)
   const { data: athenaScans, isLoading: athenaLoading, mutate: refreshAthena } = useScanActivityAthena(10)
   const { data: pegasusScans, isLoading: pegasusLoading, mutate: refreshPegasus } = useScanActivityPegasus(10)
 
-  const isLoading = aresLoading || athenaLoading || pegasusLoading
+  // Paper bots
+  const { data: icarusScans, isLoading: icarusLoading, mutate: refreshIcarus } = useICARUSScanActivity(10)
+  const { data: titanScans, isLoading: titanLoading, mutate: refreshTitan } = useScanActivityTitan(10)
 
-  const refreshAll = () => {
+  const isLoading = aresLoading || athenaLoading || pegasusLoading || icarusLoading || titanLoading
+
+  // PERFORMANCE FIX: useCallback for refreshAll to prevent child re-renders
+  const refreshAll = useCallback(() => {
     refreshAres()
     refreshAthena()
     refreshPegasus()
-  }
+    refreshIcarus()
+    refreshTitan()
+  }, [refreshAres, refreshAthena, refreshPegasus, refreshIcarus, refreshTitan])
 
-  // Combine and sort all scans by timestamp
-  const allScans = [
-    ...(aresScans?.data?.scans || []).map((s: any) => ({ ...s, bot: 'ARES' })),
-    ...(athenaScans?.data?.scans || []).map((s: any) => ({ ...s, bot: 'ATHENA' })),
-    ...(pegasusScans?.data?.scans || []).map((s: any) => ({ ...s, bot: 'PEGASUS' }))
-  ].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, 10)
+  // PERFORMANCE FIX: useMemo for allScans array (was creating new arrays every render)
+  const allScans = useMemo(() => {
+    return [
+      ...(aresScans?.data?.scans || []).map((s: any) => ({ ...s, bot: 'ARES' })),
+      ...(athenaScans?.data?.scans || []).map((s: any) => ({ ...s, bot: 'ATHENA' })),
+      ...(pegasusScans?.data?.scans || []).map((s: any) => ({ ...s, bot: 'PEGASUS' })),
+      ...(icarusScans?.data?.scans || []).map((s: any) => ({ ...s, bot: 'ICARUS' })),
+      ...(titanScans?.data?.scans || []).map((s: any) => ({ ...s, bot: 'TITAN' }))
+    ].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, 10)
+  }, [aresScans, athenaScans, pegasusScans, icarusScans, titanScans])
 
-  // Calculate stats
-  const tradesCount = allScans.filter((s: any) => s.trade_executed || s.outcome === 'TRADED').length
-  const skipsCount = allScans.filter((s: any) => s.outcome === 'NO_TRADE' || s.outcome === 'SKIP').length
-  const errorsCount = allScans.filter((s: any) => s.outcome === 'ERROR').length
-
-  const getBotIcon = (botName: string) => {
-    switch (botName?.toUpperCase()) {
-      case 'ARES':
-        return <Sword className="w-4 h-4 text-blue-500" />
-      case 'ATHENA':
-        return <Target className="w-4 h-4 text-purple-500" />
-      case 'PEGASUS':
-        return <Shield className="w-4 h-4 text-amber-500" />
-      default:
-        return <Activity className="w-4 h-4 text-text-muted" />
-    }
-  }
-
-  const getOutcomeConfig = (outcome: string, tradeExecuted: boolean) => {
-    if (tradeExecuted || outcome === 'TRADED') {
-      return {
-        icon: <CheckCircle className="w-4 h-4 text-success" />,
-        bg: 'bg-success/10',
-        border: 'border-success/20',
-        text: 'text-success',
-        label: 'Traded'
+  // PERFORMANCE FIX: useMemo for stats (single pass instead of 3 filter operations)
+  const { tradesCount, skipsCount, errorsCount } = useMemo(() => {
+    return allScans.reduce((acc, scan: any) => {
+      if (scan.trade_executed || scan.outcome === 'TRADED') {
+        acc.tradesCount++
+      } else if (scan.outcome === 'NO_TRADE' || scan.outcome === 'SKIP') {
+        acc.skipsCount++
+      } else if (scan.outcome === 'ERROR') {
+        acc.errorsCount++
       }
-    }
-    switch (outcome) {
-      case 'NO_TRADE':
-      case 'SKIP':
-        return {
-          icon: <Ban className="w-4 h-4 text-warning" />,
-          bg: 'bg-warning/10',
-          border: 'border-warning/20',
-          text: 'text-warning',
-          label: 'Skipped'
-        }
-      case 'ERROR':
-        return {
-          icon: <XCircle className="w-4 h-4 text-danger" />,
-          bg: 'bg-danger/10',
-          border: 'border-danger/20',
-          text: 'text-danger',
-          label: 'Error'
-        }
-      case 'MARKET_CLOSED':
-      case 'BEFORE_WINDOW':
-        return {
-          icon: <Clock className="w-4 h-4 text-text-muted" />,
-          bg: 'bg-background-hover',
-          border: 'border-border',
-          text: 'text-text-muted',
-          label: outcome.replace(/_/g, ' ')
-        }
-      default:
-        return {
-          icon: <Activity className="w-4 h-4 text-text-muted" />,
-          bg: 'bg-background-hover',
-          border: 'border-border',
-          text: 'text-text-muted',
-          label: outcome
-        }
-    }
-  }
+      return acc
+    }, { tradesCount: 0, skipsCount: 0, errorsCount: 0 })
+  }, [allScans])
+
+  // Helper functions getBotIcon and getOutcomeConfig moved outside component
 
   return (
     <div className="card bg-gradient-to-r from-text-muted/5 to-transparent border border-border">

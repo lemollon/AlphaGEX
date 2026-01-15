@@ -292,3 +292,189 @@ async def get_autonomous_positions(status: str = "open"):
 
     except Exception as e:
         return {"success": False, "error": str(e), "positions": []}
+
+
+@router.get("/orphaned-orders")
+async def get_orphaned_orders(include_resolved: bool = False):
+    """
+    Get orphaned orders across all bots that need manual intervention.
+
+    Orphaned orders occur when:
+    - One leg of a spread closes but the other fails
+    - Order fills but DB update fails
+    - Rollback of a spread fails
+    """
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+
+        if include_resolved:
+            c.execute("""
+                SELECT id, bot_name, order_id, order_type, ticker, expiration, strikes,
+                       contracts, reason, error_details, resolved, resolved_at, created_at
+                FROM orphaned_orders
+                ORDER BY created_at DESC
+                LIMIT 100
+            """)
+        else:
+            c.execute("""
+                SELECT id, bot_name, order_id, order_type, ticker, expiration, strikes,
+                       contracts, reason, error_details, resolved, resolved_at, created_at
+                FROM orphaned_orders
+                WHERE resolved = FALSE
+                ORDER BY created_at DESC
+            """)
+
+        orders = []
+        for row in c.fetchall():
+            orders.append({
+                'id': row[0],
+                'bot_name': row[1],
+                'order_id': row[2],
+                'order_type': row[3],
+                'ticker': row[4],
+                'expiration': str(row[5]) if row[5] else None,
+                'strikes': row[6],
+                'contracts': row[7],
+                'reason': row[8],
+                'error_details': row[9],
+                'resolved': row[10],
+                'resolved_at': str(row[11]) if row[11] else None,
+                'created_at': str(row[12]) if row[12] else None
+            })
+
+        conn.close()
+        return {
+            "success": True,
+            "data": orders,
+            "count": len(orders),
+            "unresolved_count": len([o for o in orders if not o['resolved']])
+        }
+
+    except Exception as e:
+        return {"success": False, "error": str(e), "data": [], "count": 0}
+
+
+@router.get("/partial-close-positions")
+async def get_partial_close_positions():
+    """
+    Get positions in partial_close state across all bots.
+
+    Partial close occurs when one leg of a multi-leg position closes
+    but the other leg(s) fail to close, leaving a partial position.
+    """
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+
+        positions = []
+
+        # Check ARES positions
+        try:
+            c.execute("""
+                SELECT position_id, ticker, expiration, 'ARES' as bot_name,
+                       close_reason, close_time, realized_pnl
+                FROM ares_positions
+                WHERE status = 'partial_close'
+                ORDER BY close_time DESC
+            """)
+            for row in c.fetchall():
+                positions.append({
+                    'position_id': row[0],
+                    'ticker': row[1],
+                    'expiration': str(row[2]) if row[2] else None,
+                    'bot_name': row[3],
+                    'close_reason': row[4],
+                    'close_time': str(row[5]) if row[5] else None,
+                    'realized_pnl': float(row[6]) if row[6] else 0
+                })
+        except Exception:
+            pass  # Table might not exist yet
+
+        # Check ATHENA positions
+        try:
+            c.execute("""
+                SELECT position_id, ticker, expiration, 'ATHENA' as bot_name,
+                       close_reason, close_time, realized_pnl
+                FROM athena_positions
+                WHERE status = 'partial_close'
+                ORDER BY close_time DESC
+            """)
+            for row in c.fetchall():
+                positions.append({
+                    'position_id': row[0],
+                    'ticker': row[1],
+                    'expiration': str(row[2]) if row[2] else None,
+                    'bot_name': row[3],
+                    'close_reason': row[4],
+                    'close_time': str(row[5]) if row[5] else None,
+                    'realized_pnl': float(row[6]) if row[6] else 0
+                })
+        except Exception:
+            pass
+
+        # Check PEGASUS positions
+        try:
+            c.execute("""
+                SELECT position_id, ticker, expiration, 'PEGASUS' as bot_name,
+                       close_reason, close_time, realized_pnl
+                FROM pegasus_positions
+                WHERE status = 'partial_close'
+                ORDER BY close_time DESC
+            """)
+            for row in c.fetchall():
+                positions.append({
+                    'position_id': row[0],
+                    'ticker': row[1],
+                    'expiration': str(row[2]) if row[2] else None,
+                    'bot_name': row[3],
+                    'close_reason': row[4],
+                    'close_time': str(row[5]) if row[5] else None,
+                    'realized_pnl': float(row[6]) if row[6] else 0
+                })
+        except Exception:
+            pass
+
+        conn.close()
+        return {
+            "success": True,
+            "data": positions,
+            "count": len(positions),
+            "by_bot": {
+                "ARES": len([p for p in positions if p['bot_name'] == 'ARES']),
+                "ATHENA": len([p for p in positions if p['bot_name'] == 'ATHENA']),
+                "PEGASUS": len([p for p in positions if p['bot_name'] == 'PEGASUS'])
+            }
+        }
+
+    except Exception as e:
+        return {"success": False, "error": str(e), "data": [], "count": 0}
+
+
+@router.post("/orphaned-orders/{order_id}/resolve")
+async def resolve_orphaned_order(order_id: int, resolved_by: str = "manual"):
+    """Mark an orphaned order as resolved."""
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+
+        c.execute("""
+            UPDATE orphaned_orders
+            SET resolved = TRUE,
+                resolved_at = NOW(),
+                resolved_by = %s
+            WHERE id = %s
+            RETURNING id
+        """, (resolved_by, order_id))
+
+        result = c.fetchone()
+        conn.commit()
+        conn.close()
+
+        if result:
+            return {"success": True, "message": f"Order {order_id} marked as resolved"}
+        else:
+            return {"success": False, "error": f"Order {order_id} not found"}
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
