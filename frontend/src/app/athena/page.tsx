@@ -48,6 +48,8 @@ interface ATHENAStatus {
   mode: string
   ticker: string
   capital: number
+  starting_capital?: number
+  current_equity?: number
   total_pnl: number
   trade_count: number
   win_rate: number
