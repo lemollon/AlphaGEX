@@ -41,6 +41,30 @@ def _to_python(val):
     return val
 
 
+def _normalize_confidence(value) -> float:
+    """
+    Normalize confidence values to 0-1 range.
+
+    Handles both decimal (0.75) and percentage (75) formats.
+    Returns None if value is None/0.
+    """
+    if value is None:
+        return None
+
+    val = _to_python(value)
+    if val is None or val == 0:
+        return None
+
+    val = float(val)
+
+    # If value > 1, assume it's a percentage and convert
+    if val > 1.0:
+        val = val / 100.0
+
+    # Clamp to valid range
+    return max(0.0, min(1.0, val))
+
+
 @contextmanager
 def db_connection():
     """Context manager for database connections"""
@@ -97,10 +121,10 @@ class ICARUSDatabase:
                         flip_point DECIMAL(10, 2),
                         net_gex DECIMAL(15, 2),
                         -- Oracle/ML context (FULL audit trail)
-                        oracle_confidence DECIMAL(5, 4),
+                        oracle_confidence DECIMAL(8, 4),
                         oracle_advice VARCHAR(50),
                         ml_direction VARCHAR(20),
-                        ml_confidence DECIMAL(5, 4),
+                        ml_confidence DECIMAL(8, 4),
                         ml_model_name VARCHAR(100),
                         ml_win_probability DECIMAL(8, 4),
                         ml_top_features TEXT,
@@ -207,6 +231,23 @@ class ICARUSDatabase:
             except Exception as e:
                 # Log but don't fail - column might already exist
                 logger.debug(f"{self.bot_name}: Column migration {col_name}: {e}")
+
+        # Widen confidence columns from DECIMAL(5,4) to DECIMAL(8,4) to handle percentage inputs
+        columns_to_widen = [
+            ("oracle_confidence", "DECIMAL(8, 4)"),
+            ("ml_confidence", "DECIMAL(8, 4)"),
+        ]
+
+        for col_name, col_type in columns_to_widen:
+            try:
+                cursor.execute(f"""
+                    ALTER TABLE icarus_positions
+                    ALTER COLUMN {col_name} TYPE {col_type}
+                """)
+                logger.debug(f"{self.bot_name}: Widened column {col_name} to {col_type}")
+            except Exception as e:
+                # Column might already have correct type
+                logger.debug(f"{self.bot_name}: Column type migration {col_name}: {e}")
 
     # =========================================================================
     # POSITION OPERATIONS
@@ -334,13 +375,13 @@ class ICARUSDatabase:
                     # Kronos context
                     _to_python(pos.flip_point) if pos.flip_point else None,
                     _to_python(pos.net_gex) if pos.net_gex else None,
-                    # ML context (FULL audit trail)
-                    _to_python(pos.oracle_confidence) if pos.oracle_confidence else None,
+                    # ML context (FULL audit trail) - normalize confidence to 0-1 range
+                    _normalize_confidence(pos.oracle_confidence),
                     pos.oracle_advice or None,
                     pos.ml_direction or None,
-                    _to_python(pos.ml_confidence) if pos.ml_confidence else None,
+                    _normalize_confidence(pos.ml_confidence),
                     pos.ml_model_name or None,
-                    _to_python(pos.ml_win_probability) if pos.ml_win_probability else None,
+                    _normalize_confidence(pos.ml_win_probability),
                     pos.ml_top_features or None,
                     # Wall proximity context
                     pos.wall_type or None,
