@@ -576,6 +576,48 @@ async def get_gamma_data(
         # Get expected move change data (pass spot_price to normalize for overnight gaps)
         em_change = await get_expected_move_change(snapshot.expected_move, raw_data['vix'], snapshot.spot_price)
 
+        # Extract flip_point, call_wall, put_wall from snapshot strikes for structure analysis
+        current_flip_point = None
+        current_call_wall = None
+        current_put_wall = None
+
+        if snapshot.strikes:
+            # Find flip point (where gamma crosses zero)
+            for i, strike in enumerate(snapshot.strikes[:-1]):
+                if hasattr(strike, 'net_gamma'):
+                    curr_gamma = strike.net_gamma
+                    next_strike = snapshot.strikes[i + 1]
+                    next_gamma = next_strike.net_gamma if hasattr(next_strike, 'net_gamma') else 0
+                    if curr_gamma * next_gamma < 0:  # Sign change
+                        # Linear interpolation for more precise flip point
+                        if curr_gamma != next_gamma:
+                            ratio = abs(curr_gamma) / (abs(curr_gamma) + abs(next_gamma))
+                            current_flip_point = strike.strike + ratio * (next_strike.strike - strike.strike)
+                        else:
+                            current_flip_point = strike.strike
+                        break
+
+            # Find call wall (highest gamma above spot) and put wall (highest gamma below spot)
+            above_spot = [s for s in snapshot.strikes if hasattr(s, 'strike') and s.strike > snapshot.spot_price]
+            below_spot = [s for s in snapshot.strikes if hasattr(s, 'strike') and s.strike < snapshot.spot_price]
+
+            if above_spot:
+                call_wall_strike = max(above_spot, key=lambda s: abs(getattr(s, 'net_gamma', 0)))
+                current_call_wall = call_wall_strike.strike
+            if below_spot:
+                put_wall_strike = max(below_spot, key=lambda s: abs(getattr(s, 'net_gamma', 0)))
+                current_put_wall = put_wall_strike.strike
+
+        # Get comprehensive market structure changes (flip point, bounds, width, walls)
+        market_structure = await get_market_structure_changes(
+            current_spot=snapshot.spot_price,
+            current_em=snapshot.expected_move,
+            current_vix=raw_data['vix'],
+            current_flip_point=current_flip_point,
+            current_call_wall=current_call_wall,
+            current_put_wall=current_put_wall
+        )
+
         # Only persist danger zones and alerts when we process FRESH data
         # This prevents clearing danger zones due to cached data with stale ROC values
         if not is_cached:
@@ -597,6 +639,7 @@ async def get_gamma_data(
                 "spot_price": snapshot.spot_price,
                 "expected_move": snapshot.expected_move,
                 "expected_move_change": em_change,
+                "market_structure": market_structure,
                 "vix": snapshot.vix,
                 "total_net_gamma": snapshot.total_net_gamma,
                 "gamma_regime": snapshot.gamma_regime,
@@ -759,6 +802,391 @@ async def get_expected_move_change(current_em: float, current_vix: float, spot_p
     _em_result_cache_time[cache_key] = time.time()
 
     return result
+
+
+# =============================================================================
+# MARKET STRUCTURE CHANGES - Multi-Signal Analysis
+# =============================================================================
+# Cache for market structure
+_structure_cache: Dict[str, Any] = {}
+_structure_cache_time: Dict[str, float] = {}
+STRUCTURE_CACHE_TTL = 300  # 5 minute cache
+
+
+async def get_market_structure_changes(
+    current_spot: float,
+    current_em: float,
+    current_vix: float,
+    current_flip_point: float = None,
+    current_call_wall: float = None,
+    current_put_wall: float = None
+) -> dict:
+    """
+    Comprehensive market structure analysis comparing today vs prior day.
+
+    Returns actionable signals for:
+    1. Flip Point Movement - Dealer positioning shift
+    2. Expected Move Bounds - Market's price expectations
+    3. Range Width - Volatility expansion/contraction
+    4. Combined Signal - Trading recommendation
+
+    Args:
+        current_spot: Current spot price
+        current_em: Current expected move (straddle price)
+        current_vix: Current VIX level
+        current_flip_point: Current gamma flip point (optional, from strikes)
+        current_call_wall: Current call wall strike (optional)
+        current_put_wall: Current put wall strike (optional)
+
+    Returns:
+        Dictionary with multi-signal analysis and trading implications
+    """
+    today = date.today().strftime('%Y-%m-%d')
+    cache_key = f"structure_{today}_{round(current_spot, 2)}_{round(current_em, 2)}"
+
+    # Check cache
+    if cache_key in _structure_cache and cache_key in _structure_cache_time:
+        if time.time() - _structure_cache_time[cache_key] < STRUCTURE_CACHE_TTL:
+            return _structure_cache[cache_key]
+
+    # Calculate current expected move bounds (+/- 1 std)
+    current_upper = current_spot + current_em
+    current_lower = current_spot - current_em
+    current_width = current_em * 2
+
+    # Initialize prior day values
+    prior_spot = None
+    prior_em = None
+    prior_upper = None
+    prior_lower = None
+    prior_width = None
+    prior_flip_point = None
+    prior_call_wall = None
+    prior_put_wall = None
+
+    try:
+        conn = get_connection()
+        if conn:
+            cursor = conn.cursor()
+
+            # Get yesterday's closing data from argus_snapshots
+            cursor.execute("""
+                SELECT spot_price, expected_move
+                FROM argus_snapshots
+                WHERE DATE(snapshot_time) < CURRENT_DATE
+                ORDER BY snapshot_time DESC
+                LIMIT 1
+            """)
+            row = cursor.fetchone()
+            if row:
+                prior_spot = float(row[0])
+                prior_em = float(row[1])
+                prior_upper = prior_spot + prior_em
+                prior_lower = prior_spot - prior_em
+                prior_width = prior_em * 2
+
+            # Get yesterday's flip point, call/put walls from gex_history
+            cursor.execute("""
+                SELECT flip_point, call_wall, put_wall, spot_price
+                FROM gex_history
+                WHERE symbol = 'SPY'
+                AND DATE(timestamp) < CURRENT_DATE
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """)
+            row = cursor.fetchone()
+            if row:
+                prior_flip_point = float(row[0]) if row[0] else None
+                prior_call_wall = float(row[1]) if row[1] else None
+                prior_put_wall = float(row[2]) if row[2] else None
+                # If we didn't get prior_spot from argus_snapshots, use gex_history
+                if prior_spot is None and row[3]:
+                    prior_spot = float(row[3])
+
+            cursor.close()
+            conn.close()
+    except Exception as e:
+        logger.warning(f"Could not fetch prior day structure: {e}")
+
+    # =========================================================================
+    # SIGNAL 1: FLIP POINT MOVEMENT
+    # =========================================================================
+    flip_signal = {
+        "current": round(current_flip_point, 2) if current_flip_point else None,
+        "prior": round(prior_flip_point, 2) if prior_flip_point else None,
+        "change": None,
+        "change_pct": None,
+        "direction": "UNKNOWN",
+        "implication": "Flip point data not available"
+    }
+
+    if current_flip_point and prior_flip_point and prior_flip_point > 0:
+        flip_change = current_flip_point - prior_flip_point
+        flip_change_pct = (flip_change / prior_flip_point) * 100
+        flip_signal["change"] = round(flip_change, 2)
+        flip_signal["change_pct"] = round(flip_change_pct, 2)
+
+        # Threshold: $2 or 0.3% move is significant
+        if flip_change > 2 or flip_change_pct > 0.3:
+            flip_signal["direction"] = "RISING"
+            flip_signal["implication"] = "Dealers added call gamma or reduced put gamma. Support level moved UP - bullish repositioning. MMs expect higher prices."
+        elif flip_change < -2 or flip_change_pct < -0.3:
+            flip_signal["direction"] = "FALLING"
+            flip_signal["implication"] = "Dealers added put gamma or reduced call gamma. Resistance moved DOWN - bearish repositioning. MMs expect lower prices."
+        else:
+            flip_signal["direction"] = "STABLE"
+            flip_signal["implication"] = "Dealers haven't significantly repositioned. Yesterday's support/resistance levels remain valid."
+
+    # =========================================================================
+    # SIGNAL 2: EXPECTED MOVE BOUNDS SHIFT
+    # =========================================================================
+    bounds_signal = {
+        "current_upper": round(current_upper, 2),
+        "current_lower": round(current_lower, 2),
+        "prior_upper": round(prior_upper, 2) if prior_upper else None,
+        "prior_lower": round(prior_lower, 2) if prior_lower else None,
+        "upper_change": None,
+        "lower_change": None,
+        "direction": "UNKNOWN",
+        "implication": "Prior day bounds not available"
+    }
+
+    if prior_upper and prior_lower:
+        upper_change = current_upper - prior_upper
+        lower_change = current_lower - prior_lower
+        bounds_signal["upper_change"] = round(upper_change, 2)
+        bounds_signal["lower_change"] = round(lower_change, 2)
+
+        # Check if both bounds shifted in same direction (directional bias)
+        # Threshold: $0.50 shift is significant
+        if upper_change > 0.5 and lower_change > 0.5:
+            bounds_signal["direction"] = "SHIFTED_UP"
+            bounds_signal["implication"] = f"Both bounds moved UP (upper +${upper_change:.2f}, lower +${lower_change:.2f}). Options market pricing HIGHER prices today. Bullish bias."
+        elif upper_change < -0.5 and lower_change < -0.5:
+            bounds_signal["direction"] = "SHIFTED_DOWN"
+            bounds_signal["implication"] = f"Both bounds moved DOWN (upper ${upper_change:.2f}, lower ${lower_change:.2f}). Options market pricing LOWER prices today. Bearish bias."
+        elif abs(upper_change) < 0.5 and abs(lower_change) < 0.5:
+            bounds_signal["direction"] = "STABLE"
+            bounds_signal["implication"] = "Expected range unchanged from prior day. Market has no new directional conviction."
+        else:
+            bounds_signal["direction"] = "MIXED"
+            bounds_signal["implication"] = f"Bounds moved asymmetrically (upper {upper_change:+.2f}, lower {lower_change:+.2f}). Possible skew shift in options."
+
+    # =========================================================================
+    # SIGNAL 3: RANGE WIDTH (VOLATILITY)
+    # =========================================================================
+    width_signal = {
+        "current_width": round(current_width, 2),
+        "prior_width": round(prior_width, 2) if prior_width else None,
+        "change": None,
+        "change_pct": None,
+        "direction": "UNKNOWN",
+        "implication": "Prior width not available"
+    }
+
+    if prior_width and prior_width > 0:
+        width_change = current_width - prior_width
+        width_change_pct = (width_change / prior_width) * 100
+        width_signal["change"] = round(width_change, 2)
+        width_signal["change_pct"] = round(width_change_pct, 1)
+
+        # Threshold: 5% width change is significant
+        if width_change_pct > 5:
+            width_signal["direction"] = "WIDENING"
+            width_signal["implication"] = f"Expected range EXPANDED {width_change_pct:.1f}% (+${width_change:.2f}). Bigger move priced in today. Iron Condors riskier - wider strikes needed. Straddles more expensive."
+        elif width_change_pct < -5:
+            width_signal["direction"] = "NARROWING"
+            width_signal["implication"] = f"Expected range CONTRACTED {abs(width_change_pct):.1f}% (${width_change:.2f}). Smaller move expected. Premium selling opportunity - Iron Condors favored. Straddles cheaper."
+        else:
+            width_signal["direction"] = "STABLE"
+            width_signal["implication"] = "Volatility expectations unchanged. Yesterday's position sizing still appropriate."
+
+    # =========================================================================
+    # SIGNAL 4: WALLS MOVEMENT
+    # =========================================================================
+    walls_signal = {
+        "current_call_wall": round(current_call_wall, 2) if current_call_wall else None,
+        "current_put_wall": round(current_put_wall, 2) if current_put_wall else None,
+        "prior_call_wall": round(prior_call_wall, 2) if prior_call_wall else None,
+        "prior_put_wall": round(prior_put_wall, 2) if prior_put_wall else None,
+        "call_wall_change": None,
+        "put_wall_change": None,
+        "asymmetry": None,
+        "implication": "Wall data not available"
+    }
+
+    if current_call_wall and current_put_wall and prior_call_wall and prior_put_wall:
+        call_change = current_call_wall - prior_call_wall
+        put_change = current_put_wall - prior_put_wall
+        walls_signal["call_wall_change"] = round(call_change, 2)
+        walls_signal["put_wall_change"] = round(put_change, 2)
+
+        # Calculate asymmetry: which wall is closer to spot?
+        call_dist = current_call_wall - current_spot
+        put_dist = current_spot - current_put_wall
+
+        if call_dist > 0 and put_dist > 0:
+            asymmetry = (call_dist - put_dist) / current_spot * 100
+            walls_signal["asymmetry"] = round(asymmetry, 2)
+
+            if asymmetry > 0.3:
+                walls_signal["implication"] = f"Put wall closer than call wall (asymmetry {asymmetry:.2f}%). More downside protection in place. Downside moves may find support faster."
+            elif asymmetry < -0.3:
+                walls_signal["implication"] = f"Call wall closer than put wall (asymmetry {asymmetry:.2f}%). Upside capped more tightly. Upside moves may face resistance."
+            else:
+                walls_signal["implication"] = "Walls roughly symmetric. Balanced risk profile for Iron Condors."
+
+    # =========================================================================
+    # COMBINED SIGNAL & TRADING RECOMMENDATION
+    # =========================================================================
+    combined = _generate_combined_signal(
+        flip_signal["direction"],
+        bounds_signal["direction"],
+        width_signal["direction"],
+        current_spot,
+        current_flip_point,
+        current_call_wall,
+        current_put_wall
+    )
+
+    result = {
+        "flip_point": flip_signal,
+        "bounds": bounds_signal,
+        "width": width_signal,
+        "walls": walls_signal,
+        "combined": combined,
+        "spot_price": round(current_spot, 2),
+        "vix": round(current_vix, 2),
+        "timestamp": format_central_timestamp()
+    }
+
+    # Cache the result
+    _structure_cache[cache_key] = result
+    _structure_cache_time[cache_key] = time.time()
+
+    return result
+
+
+def _generate_combined_signal(
+    flip_direction: str,
+    bounds_direction: str,
+    width_direction: str,
+    spot: float,
+    flip_point: float = None,
+    call_wall: float = None,
+    put_wall: float = None
+) -> dict:
+    """
+    Generate combined trading signal from individual signals.
+
+    Returns actionable recommendation with profit zone and breakout risks.
+    """
+    signal = "NEUTRAL"
+    bias = "NONE"
+    confidence = "LOW"
+    strategy = ""
+    profit_zone = ""
+    breakout_risk = ""
+
+    # Build profit zone description
+    if call_wall and put_wall:
+        profit_zone = f"Profit zone: ${put_wall:.0f} - ${call_wall:.0f}"
+        call_dist = ((call_wall - spot) / spot * 100) if spot > 0 else 0
+        put_dist = ((spot - put_wall) / spot * 100) if spot > 0 else 0
+        breakout_risk = f"Call wall {call_dist:.1f}% away, Put wall {put_dist:.1f}% away"
+
+    # Determine spot position relative to flip point
+    spot_vs_flip = ""
+    if flip_point and spot:
+        if spot > flip_point:
+            spot_vs_flip = "ABOVE_FLIP"
+        else:
+            spot_vs_flip = "BELOW_FLIP"
+
+    # =========================================================================
+    # SIGNAL LOGIC MATRIX
+    # =========================================================================
+
+    # BULLISH SCENARIOS
+    if flip_direction == "RISING" and bounds_direction == "SHIFTED_UP":
+        if width_direction == "WIDENING":
+            signal = "BULLISH_BREAKOUT"
+            bias = "BULLISH"
+            confidence = "HIGH"
+            strategy = "BUY CALL SPREADS or GO LONG. Dealers and options market both bullish. Vol expanding = big move expected upward."
+        else:
+            signal = "BULLISH_GRIND"
+            bias = "BULLISH"
+            confidence = "MEDIUM"
+            strategy = "SELL PUT SPREADS. Bullish bias with contained volatility. Collect premium on downside protection."
+
+    # BEARISH SCENARIOS
+    elif flip_direction == "FALLING" and bounds_direction == "SHIFTED_DOWN":
+        if width_direction == "WIDENING":
+            signal = "BEARISH_BREAKOUT"
+            bias = "BEARISH"
+            confidence = "HIGH"
+            strategy = "BUY PUT SPREADS or GO SHORT. Dealers and options market both bearish. Vol expanding = big move expected downward."
+        else:
+            signal = "BEARISH_GRIND"
+            bias = "BEARISH"
+            confidence = "MEDIUM"
+            strategy = "SELL CALL SPREADS. Bearish bias with contained volatility. Collect premium on upside resistance."
+
+    # PREMIUM SELLING SCENARIOS
+    elif width_direction == "NARROWING":
+        if flip_direction == "STABLE" and bounds_direction in ["STABLE", "MIXED"]:
+            signal = "SELL_PREMIUM"
+            bias = "NEUTRAL"
+            confidence = "MEDIUM"
+            strategy = f"IRON CONDORS favored. Volatility contracting with no directional conviction. {profit_zone}. Collect theta decay."
+        elif flip_direction == "RISING":
+            signal = "SELL_PREMIUM_BULLISH_TILT"
+            bias = "SLIGHT_BULLISH"
+            confidence = "MEDIUM"
+            strategy = f"IRON CONDORS with PUT SPREAD wider. Dealers slightly bullish but vol low. {profit_zone}. Skew your IC to give more room on the downside."
+        elif flip_direction == "FALLING":
+            signal = "SELL_PREMIUM_BEARISH_TILT"
+            bias = "SLIGHT_BEARISH"
+            confidence = "MEDIUM"
+            strategy = f"IRON CONDORS with CALL SPREAD wider. Dealers slightly bearish but vol low. {profit_zone}. Skew your IC to give more room on the upside."
+
+    # VOL EXPANSION WITHOUT DIRECTION
+    elif width_direction == "WIDENING" and flip_direction == "STABLE":
+        signal = "VOL_EXPANSION_NO_DIRECTION"
+        bias = "NONE"
+        confidence = "LOW"
+        strategy = "CAUTION - volatility expanding but no clear direction. Straddles expensive. Wait for clearer signal or use wider Iron Condors with reduced size."
+
+    # DIVERGENCE SCENARIOS (conflicting signals)
+    elif flip_direction == "RISING" and bounds_direction == "SHIFTED_DOWN":
+        signal = "DIVERGENCE_BULLISH_DEALERS"
+        bias = "UNCERTAIN"
+        confidence = "LOW"
+        strategy = "MIXED SIGNALS - Dealers repositioning bullish but options pricing lower. Possible reversal setup. Watch for confirmation before entering."
+
+    elif flip_direction == "FALLING" and bounds_direction == "SHIFTED_UP":
+        signal = "DIVERGENCE_BEARISH_DEALERS"
+        bias = "UNCERTAIN"
+        confidence = "LOW"
+        strategy = "MIXED SIGNALS - Dealers repositioning bearish but options pricing higher. Possible exhaustion. Watch for confirmation before entering."
+
+    # DEFAULT: NEUTRAL
+    else:
+        signal = "NEUTRAL"
+        bias = "NONE"
+        confidence = "LOW"
+        strategy = f"No clear edge detected. Consider Iron Condors within {profit_zone} if volatility is reasonable. {breakout_risk}"
+
+    return {
+        "signal": signal,
+        "bias": bias,
+        "confidence": confidence,
+        "strategy": strategy,
+        "profit_zone": profit_zone,
+        "breakout_risk": breakout_risk,
+        "spot_position": spot_vs_flip
+    }
 
 
 @router.get("/history")

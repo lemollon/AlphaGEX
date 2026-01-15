@@ -122,6 +122,68 @@ interface ExpectedMoveChange {
   interpretation: string
 }
 
+// Market Structure Changes - Multi-signal analysis
+interface FlipPointSignal {
+  current: number | null
+  prior: number | null
+  change: number | null
+  change_pct: number | null
+  direction: 'RISING' | 'FALLING' | 'STABLE' | 'UNKNOWN'
+  implication: string
+}
+
+interface BoundsSignal {
+  current_upper: number
+  current_lower: number
+  prior_upper: number | null
+  prior_lower: number | null
+  upper_change: number | null
+  lower_change: number | null
+  direction: 'SHIFTED_UP' | 'SHIFTED_DOWN' | 'STABLE' | 'MIXED' | 'UNKNOWN'
+  implication: string
+}
+
+interface WidthSignal {
+  current_width: number
+  prior_width: number | null
+  change: number | null
+  change_pct: number | null
+  direction: 'WIDENING' | 'NARROWING' | 'STABLE' | 'UNKNOWN'
+  implication: string
+}
+
+interface WallsSignal {
+  current_call_wall: number | null
+  current_put_wall: number | null
+  prior_call_wall: number | null
+  prior_put_wall: number | null
+  call_wall_change: number | null
+  put_wall_change: number | null
+  asymmetry: number | null
+  implication: string
+}
+
+interface CombinedSignal {
+  signal: string
+  bias: string
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW'
+  strategy: string
+  profit_zone: string
+  breakout_risk: string
+  spot_position: 'ABOVE_FLIP' | 'BELOW_FLIP' | ''
+}
+
+interface MarketStructure {
+  flip_point: FlipPointSignal
+  bounds: BoundsSignal
+  width: WidthSignal
+  walls: WallsSignal
+  combined: CombinedSignal
+  spot_price: number
+  vix: number
+  timestamp: string
+}
+
 interface GammaData {
   symbol: string
   expiration_date: string
@@ -129,6 +191,7 @@ interface GammaData {
   spot_price: number
   expected_move: number
   expected_move_change: ExpectedMoveChange
+  market_structure?: MarketStructure
   vix: number
   total_net_gamma: number
   gamma_regime: string
@@ -1484,182 +1547,289 @@ export default function ArgusPage() {
           </div>
         )}
 
-        {/* Expected Move Change Banner - TOP PRIORITY */}
-        {gammaData?.expected_move_change && (
+        {/* Market Structure Changes Panel - Multi-Signal Analysis */}
+        {gammaData?.market_structure && (
+          <div className="mb-6 space-y-4">
+            {/* Combined Signal Banner */}
+            <div className={`rounded-xl p-5 border-2 ${
+              gammaData.market_structure.combined.bias === 'BULLISH'
+                ? 'bg-emerald-500/10 border-emerald-500/50'
+                : gammaData.market_structure.combined.bias === 'BEARISH'
+                ? 'bg-rose-500/10 border-rose-500/50'
+                : gammaData.market_structure.combined.bias === 'SLIGHT_BULLISH'
+                ? 'bg-emerald-500/5 border-emerald-500/30'
+                : gammaData.market_structure.combined.bias === 'SLIGHT_BEARISH'
+                ? 'bg-rose-500/5 border-rose-500/30'
+                : gammaData.market_structure.combined.confidence === 'LOW'
+                ? 'bg-yellow-500/10 border-yellow-500/50'
+                : 'bg-gray-800/50 border-gray-600/50'
+            }`}>
+              <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+                <div className="flex items-start gap-4">
+                  <div className={`w-14 h-14 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                    gammaData.market_structure.combined.bias === 'BULLISH' || gammaData.market_structure.combined.bias === 'SLIGHT_BULLISH'
+                      ? 'bg-emerald-500/20'
+                      : gammaData.market_structure.combined.bias === 'BEARISH' || gammaData.market_structure.combined.bias === 'SLIGHT_BEARISH'
+                      ? 'bg-rose-500/20'
+                      : gammaData.market_structure.combined.confidence === 'LOW'
+                      ? 'bg-yellow-500/20'
+                      : 'bg-gray-700/50'
+                  }`}>
+                    {(gammaData.market_structure.combined.bias === 'BULLISH' || gammaData.market_structure.combined.bias === 'SLIGHT_BULLISH') &&
+                      <TrendingUp className="w-7 h-7 text-emerald-400" />}
+                    {(gammaData.market_structure.combined.bias === 'BEARISH' || gammaData.market_structure.combined.bias === 'SLIGHT_BEARISH') &&
+                      <TrendingDown className="w-7 h-7 text-rose-400" />}
+                    {gammaData.market_structure.combined.bias === 'NONE' && gammaData.market_structure.combined.confidence === 'LOW' &&
+                      <AlertTriangle className="w-7 h-7 text-yellow-400" />}
+                    {gammaData.market_structure.combined.bias === 'NONE' && gammaData.market_structure.combined.confidence !== 'LOW' &&
+                      <Minus className="w-7 h-7 text-gray-400" />}
+                    {gammaData.market_structure.combined.bias === 'UNCERTAIN' &&
+                      <AlertTriangle className="w-7 h-7 text-yellow-400" />}
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-2 flex-wrap">
+                      <span className="text-xs text-gray-400 uppercase tracking-wide">Market Structure vs Prior Day</span>
+                      <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                        gammaData.market_structure.combined.confidence === 'HIGH'
+                          ? gammaData.market_structure.combined.bias === 'BULLISH' ? 'bg-emerald-500 text-white' : 'bg-rose-500 text-white'
+                          : gammaData.market_structure.combined.confidence === 'MEDIUM'
+                          ? 'bg-blue-500 text-white'
+                          : 'bg-yellow-500 text-black'
+                      }`}>
+                        {gammaData.market_structure.combined.confidence} CONFIDENCE
+                      </span>
+                      <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                        gammaData.market_structure.combined.bias === 'BULLISH' || gammaData.market_structure.combined.bias === 'SLIGHT_BULLISH'
+                          ? 'bg-emerald-600/50 text-emerald-200'
+                          : gammaData.market_structure.combined.bias === 'BEARISH' || gammaData.market_structure.combined.bias === 'SLIGHT_BEARISH'
+                          ? 'bg-rose-600/50 text-rose-200'
+                          : 'bg-gray-600/50 text-gray-200'
+                      }`}>
+                        {gammaData.market_structure.combined.signal.replace(/_/g, ' ')}
+                      </span>
+                    </div>
+                    <p className={`text-base font-semibold mb-2 ${
+                      gammaData.market_structure.combined.bias === 'BULLISH' || gammaData.market_structure.combined.bias === 'SLIGHT_BULLISH'
+                        ? 'text-emerald-400'
+                        : gammaData.market_structure.combined.bias === 'BEARISH' || gammaData.market_structure.combined.bias === 'SLIGHT_BEARISH'
+                        ? 'text-rose-400'
+                        : gammaData.market_structure.combined.confidence === 'LOW'
+                        ? 'text-yellow-400'
+                        : 'text-gray-300'
+                    }`}>
+                      {gammaData.market_structure.combined.strategy}
+                    </p>
+                    {gammaData.market_structure.combined.profit_zone && (
+                      <div className="flex flex-wrap gap-4 text-sm">
+                        <span className="text-blue-400">{gammaData.market_structure.combined.profit_zone}</span>
+                        {gammaData.market_structure.combined.breakout_risk && (
+                          <span className="text-gray-500">{gammaData.market_structure.combined.breakout_risk}</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {/* Spot Position Indicator */}
+                {gammaData.market_structure.combined.spot_position && (
+                  <div className={`px-3 py-2 rounded-lg text-center ${
+                    gammaData.market_structure.combined.spot_position === 'ABOVE_FLIP'
+                      ? 'bg-emerald-500/20 border border-emerald-500/30'
+                      : 'bg-rose-500/20 border border-rose-500/30'
+                  }`}>
+                    <div className="text-xs text-gray-400 mb-1">Spot vs Flip</div>
+                    <div className={`text-sm font-bold ${
+                      gammaData.market_structure.combined.spot_position === 'ABOVE_FLIP'
+                        ? 'text-emerald-400'
+                        : 'text-rose-400'
+                    }`}>
+                      {gammaData.market_structure.combined.spot_position === 'ABOVE_FLIP' ? 'ABOVE' : 'BELOW'}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Four Signal Cards */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              {/* Flip Point Signal */}
+              <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700/50">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs text-gray-400 uppercase tracking-wide">Flip Point</span>
+                  <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                    gammaData.market_structure.flip_point.direction === 'RISING'
+                      ? 'bg-emerald-500/20 text-emerald-400'
+                      : gammaData.market_structure.flip_point.direction === 'FALLING'
+                      ? 'bg-rose-500/20 text-rose-400'
+                      : 'bg-gray-600/20 text-gray-400'
+                  }`}>
+                    {gammaData.market_structure.flip_point.direction === 'RISING' && '↑'}
+                    {gammaData.market_structure.flip_point.direction === 'FALLING' && '↓'}
+                    {gammaData.market_structure.flip_point.direction === 'STABLE' && '→'}
+                    {' '}{gammaData.market_structure.flip_point.direction}
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-2 mb-2">
+                  <span className="text-xl font-bold text-white">
+                    ${gammaData.market_structure.flip_point.current?.toFixed(2) || '-'}
+                  </span>
+                  {gammaData.market_structure.flip_point.change !== null && (
+                    <span className={`text-sm font-medium ${
+                      gammaData.market_structure.flip_point.change > 0 ? 'text-emerald-400' :
+                      gammaData.market_structure.flip_point.change < 0 ? 'text-rose-400' : 'text-gray-400'
+                    }`}>
+                      {gammaData.market_structure.flip_point.change > 0 ? '+' : ''}
+                      ${gammaData.market_structure.flip_point.change?.toFixed(2)}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-gray-400 leading-relaxed">
+                  {gammaData.market_structure.flip_point.implication}
+                </p>
+              </div>
+
+              {/* Expected Move Bounds Signal */}
+              <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700/50">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs text-gray-400 uppercase tracking-wide">±1 Std Bounds</span>
+                  <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                    gammaData.market_structure.bounds.direction === 'SHIFTED_UP'
+                      ? 'bg-emerald-500/20 text-emerald-400'
+                      : gammaData.market_structure.bounds.direction === 'SHIFTED_DOWN'
+                      ? 'bg-rose-500/20 text-rose-400'
+                      : gammaData.market_structure.bounds.direction === 'MIXED'
+                      ? 'bg-yellow-500/20 text-yellow-400'
+                      : 'bg-gray-600/20 text-gray-400'
+                  }`}>
+                    {gammaData.market_structure.bounds.direction === 'SHIFTED_UP' && '↑'}
+                    {gammaData.market_structure.bounds.direction === 'SHIFTED_DOWN' && '↓'}
+                    {gammaData.market_structure.bounds.direction === 'STABLE' && '→'}
+                    {gammaData.market_structure.bounds.direction === 'MIXED' && '↔'}
+                    {' '}{gammaData.market_structure.bounds.direction.replace('_', ' ')}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="text-center">
+                    <div className="text-xs text-gray-500">Lower</div>
+                    <div className="text-sm font-bold text-cyan-400">
+                      ${gammaData.market_structure.bounds.current_lower.toFixed(2)}
+                    </div>
+                  </div>
+                  <div className="text-gray-600">—</div>
+                  <div className="text-center">
+                    <div className="text-xs text-gray-500">Upper</div>
+                    <div className="text-sm font-bold text-purple-400">
+                      ${gammaData.market_structure.bounds.current_upper.toFixed(2)}
+                    </div>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-400 leading-relaxed">
+                  {gammaData.market_structure.bounds.implication}
+                </p>
+              </div>
+
+              {/* Range Width Signal */}
+              <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700/50">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs text-gray-400 uppercase tracking-wide">Range Width</span>
+                  <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                    gammaData.market_structure.width.direction === 'WIDENING'
+                      ? 'bg-orange-500/20 text-orange-400'
+                      : gammaData.market_structure.width.direction === 'NARROWING'
+                      ? 'bg-blue-500/20 text-blue-400'
+                      : 'bg-gray-600/20 text-gray-400'
+                  }`}>
+                    {gammaData.market_structure.width.direction === 'WIDENING' && '↔'}
+                    {gammaData.market_structure.width.direction === 'NARROWING' && '→←'}
+                    {gammaData.market_structure.width.direction === 'STABLE' && '→'}
+                    {' '}{gammaData.market_structure.width.direction}
+                  </span>
+                </div>
+                <div className="flex items-baseline gap-2 mb-2">
+                  <span className="text-xl font-bold text-white">
+                    ${gammaData.market_structure.width.current_width.toFixed(2)}
+                  </span>
+                  {gammaData.market_structure.width.change_pct !== null && (
+                    <span className={`text-sm font-medium ${
+                      gammaData.market_structure.width.change_pct > 0 ? 'text-orange-400' :
+                      gammaData.market_structure.width.change_pct < 0 ? 'text-blue-400' : 'text-gray-400'
+                    }`}>
+                      {gammaData.market_structure.width.change_pct > 0 ? '+' : ''}
+                      {gammaData.market_structure.width.change_pct?.toFixed(1)}%
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-gray-400 leading-relaxed">
+                  {gammaData.market_structure.width.implication}
+                </p>
+              </div>
+
+              {/* Walls Signal */}
+              <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700/50">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs text-gray-400 uppercase tracking-wide">Gamma Walls</span>
+                  {gammaData.market_structure.walls.asymmetry !== null && (
+                    <span className={`px-2 py-0.5 rounded text-xs font-bold ${
+                      gammaData.market_structure.walls.asymmetry > 0.3
+                        ? 'bg-rose-500/20 text-rose-400'
+                        : gammaData.market_structure.walls.asymmetry < -0.3
+                        ? 'bg-emerald-500/20 text-emerald-400'
+                        : 'bg-gray-600/20 text-gray-400'
+                    }`}>
+                      {gammaData.market_structure.walls.asymmetry > 0.3 ? 'PUT CLOSER' :
+                       gammaData.market_structure.walls.asymmetry < -0.3 ? 'CALL CLOSER' : 'BALANCED'}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 mb-2">
+                  <div className="text-center">
+                    <div className="text-xs text-gray-500">Put Wall</div>
+                    <div className="text-sm font-bold text-rose-400">
+                      ${gammaData.market_structure.walls.current_put_wall?.toFixed(0) || '-'}
+                    </div>
+                  </div>
+                  <div className="text-gray-600">|</div>
+                  <div className="text-center">
+                    <div className="text-xs text-gray-500">Call Wall</div>
+                    <div className="text-sm font-bold text-emerald-400">
+                      ${gammaData.market_structure.walls.current_call_wall?.toFixed(0) || '-'}
+                    </div>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-400 leading-relaxed">
+                  {gammaData.market_structure.walls.implication}
+                </p>
+              </div>
+            </div>
+
+            {/* Trading Context Footer */}
+            <div className="bg-gray-900/30 rounded-lg p-3 border border-gray-800/50">
+              <div className="flex items-start gap-2">
+                <Info className="w-4 h-4 text-gray-500 flex-shrink-0 mt-0.5" />
+                <div className="text-xs text-gray-500 leading-relaxed">
+                  <strong className="text-gray-400">How to use:</strong> Flip point shows dealer positioning (support/resistance).
+                  Bounds show market&apos;s expected price range. Width shows volatility expectations.
+                  Walls show where gamma will absorb moves. Trade within walls for premium collection,
+                  but size for potential breakouts.
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Legacy Expected Move Change (fallback if no market_structure) */}
+        {!gammaData?.market_structure && gammaData?.expected_move_change && (
           <div className={`rounded-xl p-5 mb-6 border-2 ${
             gammaData.expected_move_change.sentiment === 'BULLISH'
               ? 'bg-emerald-500/10 border-emerald-500/50'
               : gammaData.expected_move_change.sentiment === 'BEARISH'
               ? 'bg-rose-500/10 border-rose-500/50'
-              : gammaData.expected_move_change.sentiment === 'VOLATILE'
-              ? 'bg-orange-500/10 border-orange-500/50'
               : 'bg-gray-800/50 border-gray-600/50'
           }`}>
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-              <div className="flex items-center gap-4">
-                <div className={`w-14 h-14 rounded-xl flex items-center justify-center ${
-                  gammaData.expected_move_change.sentiment === 'BULLISH'
-                    ? 'bg-emerald-500/20'
-                    : gammaData.expected_move_change.sentiment === 'BEARISH'
-                    ? 'bg-rose-500/20'
-                    : gammaData.expected_move_change.sentiment === 'VOLATILE'
-                    ? 'bg-orange-500/20'
-                    : 'bg-gray-700/50'
-                }`}>
-                  {gammaData.expected_move_change.signal === 'UP' && <TrendingUp className="w-7 h-7 text-emerald-400" />}
-                  {gammaData.expected_move_change.signal === 'DOWN' && <TrendingDown className="w-7 h-7 text-rose-400" />}
-                  {gammaData.expected_move_change.signal === 'FLAT' && <Minus className="w-7 h-7 text-gray-400" />}
-                  {gammaData.expected_move_change.signal === 'WIDEN' && <Zap className="w-7 h-7 text-orange-400" />}
-                </div>
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-xs text-gray-400 uppercase tracking-wide">Expected Move vs Prior Day</span>
-                    <span className={`px-2 py-0.5 rounded text-xs font-bold ${
-                      gammaData.expected_move_change.sentiment === 'BULLISH'
-                        ? 'bg-emerald-500 text-white'
-                        : gammaData.expected_move_change.sentiment === 'BEARISH'
-                        ? 'bg-rose-500 text-white'
-                        : gammaData.expected_move_change.sentiment === 'VOLATILE'
-                        ? 'bg-orange-500 text-white'
-                        : 'bg-gray-600 text-white'
-                    }`}>
-                      {gammaData.expected_move_change.signal}
-                    </span>
-                  </div>
-                  <p className={`text-lg font-semibold ${
-                    gammaData.expected_move_change.sentiment === 'BULLISH'
-                      ? 'text-emerald-400'
-                      : gammaData.expected_move_change.sentiment === 'BEARISH'
-                      ? 'text-rose-400'
-                      : gammaData.expected_move_change.sentiment === 'VOLATILE'
-                      ? 'text-orange-400'
-                      : 'text-gray-300'
-                  }`}>
-                    {gammaData.expected_move_change.interpretation}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-6 lg:gap-8">
-                <div className="text-center">
-                  <div className="text-xs text-gray-500 mb-1">Prior Day</div>
-                  <div className="text-lg font-bold text-gray-400">
-                    ±${gammaData.expected_move_change.prior_day?.toFixed(2) || '-'}
-                  </div>
-                </div>
-                <div className="text-center">
-                  <div className="text-xs text-gray-500 mb-1">Current</div>
-                  <div className="text-lg font-bold text-white">
-                    ±${gammaData.expected_move_change.current.toFixed(2)}
-                  </div>
-                </div>
-                <div className="text-center">
-                  <div className="text-xs text-gray-500 mb-1">Change</div>
-                  <div className={`text-lg font-bold ${
-                    gammaData.expected_move_change.pct_change_prior > 0
-                      ? 'text-emerald-400'
-                      : gammaData.expected_move_change.pct_change_prior < 0
-                      ? 'text-rose-400'
-                      : 'text-gray-400'
-                  }`}>
-                    {gammaData.expected_move_change.pct_change_prior > 0 ? '+' : ''}{gammaData.expected_move_change.pct_change_prior.toFixed(1)}%
-                  </div>
-                </div>
-              </div>
+            <div className="flex items-center gap-4">
+              <div className="text-xs text-gray-400 uppercase">Expected Move vs Prior Day</div>
+              <span className="text-lg font-bold">{gammaData.expected_move_change.signal}</span>
             </div>
-
-            {/* Historical Edge Stats - Based on Backtest */}
-            <div className="mt-4 pt-4 border-t border-gray-700/50">
-              <div className="flex items-center gap-2 mb-3">
-                <BarChart3 className="w-4 h-4 text-gray-500" />
-                <span className="text-xs text-gray-500 uppercase tracking-wide">Historical Edge (2022-2025 Backtest)</span>
-              </div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {gammaData.expected_move_change.signal === 'DOWN' && (
-                  <>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Signal Accuracy</div>
-                      <div className="text-lg font-bold text-rose-400">51.0%</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Avg Move</div>
-                      <div className="text-lg font-bold text-rose-400">-0.26%</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Occurrence</div>
-                      <div className="text-lg font-bold text-gray-300">5.2%</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Edge</div>
-                      <div className="text-sm font-medium text-rose-400">Bearish bias confirmed</div>
-                    </div>
-                  </>
-                )}
-                {gammaData.expected_move_change.signal === 'UP' && (
-                  <>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Signal Accuracy</div>
-                      <div className="text-lg font-bold text-emerald-400">53.3%</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Avg Move</div>
-                      <div className="text-lg font-bold text-emerald-400">+0.02%</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Occurrence</div>
-                      <div className="text-lg font-bold text-gray-300">19.7%</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Edge</div>
-                      <div className="text-sm font-medium text-emerald-400">Slight bullish bias</div>
-                    </div>
-                  </>
-                )}
-                {gammaData.expected_move_change.signal === 'FLAT' && (
-                  <>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Signal Accuracy</div>
-                      <div className="text-lg font-bold text-gray-400">51.7%</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Avg Move</div>
-                      <div className="text-lg font-bold text-gray-400">+0.04%</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Occurrence</div>
-                      <div className="text-lg font-bold text-gray-300">74.2%</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Edge</div>
-                      <div className="text-sm font-medium text-gray-400">Range-bound expected</div>
-                    </div>
-                  </>
-                )}
-                {gammaData.expected_move_change.signal === 'WIDEN' && (
-                  <>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Signal Accuracy</div>
-                      <div className="text-lg font-bold text-orange-400">88.9%</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Avg Abs Move</div>
-                      <div className="text-lg font-bold text-orange-400">±1.53%</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Occurrence</div>
-                      <div className="text-lg font-bold text-gray-300">0.9%</div>
-                    </div>
-                    <div className="bg-gray-900/50 rounded-lg p-3">
-                      <div className="text-xs text-gray-500 mb-1">Edge</div>
-                      <div className="text-sm font-medium text-orange-400">BIG MOVE LIKELY!</div>
-                    </div>
-                  </>
-                )}
-              </div>
-              <div className="mt-3 text-xs text-gray-600 flex items-center gap-1">
-                <Info className="w-3 h-3" />
-                <span>Based on 990 trading days. DOWN vs UP directional edge: +0.27%</span>
-              </div>
-            </div>
+            <p className="text-gray-300 mt-2">{gammaData.expected_move_change.interpretation}</p>
           </div>
         )}
 
