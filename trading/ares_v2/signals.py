@@ -167,16 +167,31 @@ class SignalGenerator:
                 logger.warning("Could not get spot price from any source (GEX calc or data provider)")
                 return None
 
-            # Get VIX
+            # Get VIX with minimum floor
             vix = 20.0
             if DATA_PROVIDER_AVAILABLE:
                 try:
-                    vix = get_vix() or 20.0
-                except Exception:
-                    pass
+                    fetched_vix = get_vix()
+                    # VIX should be at least 10 (historically never below ~9)
+                    # If we get 0 or very low, use default
+                    if fetched_vix and fetched_vix >= 10:
+                        vix = fetched_vix
+                    elif fetched_vix:
+                        logger.warning(f"VIX unusually low ({fetched_vix:.1f}), using default 20.0")
+                except Exception as e:
+                    logger.debug(f"VIX fetch failed: {e}, using default 20.0")
 
             # Calculate expected move (1 SD)
             expected_move = self._calculate_expected_move(spot, vix)
+
+            # Sanity check - expected move should be reasonable (0.5% to 5% of spot)
+            min_em = spot * 0.005
+            max_em = spot * 0.05
+            if expected_move < min_em:
+                logger.warning(f"Expected move ${expected_move:.2f} too low, using minimum ${min_em:.2f}")
+                expected_move = min_em
+            elif expected_move > max_em:
+                logger.warning(f"Expected move ${expected_move:.2f} unusually high (VIX={vix:.1f})")
 
             now = datetime.now(CENTRAL_TZ)
             return {

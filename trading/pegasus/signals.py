@@ -156,11 +156,17 @@ class SignalGenerator:
             vix = 20.0
             if DATA_AVAILABLE:
                 try:
-                    vix = get_vix() or 20.0
+                    fetched_vix = get_vix()
+                    if fetched_vix and fetched_vix >= 10:
+                        vix = fetched_vix
                 except Exception as e:
                     logger.debug(f"VIX fetch failed, using default: {e}")
 
             expected_move = self._calculate_expected_move(spot, vix)
+            # Ensure minimum expected move (0.5% of spot)
+            min_em = spot * 0.005
+            if expected_move < min_em:
+                expected_move = min_em
 
             # Only scale GEX walls by 10 if data came from SPY (not SPX)
             scale = 10 if (gex_data and gex_data.get('from_spy', False)) else 1
