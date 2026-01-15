@@ -475,6 +475,81 @@ Real-time 0DTE gamma analysis with actionable trading strategies.
 
 **Files**: `frontend/src/app/gamma/0dte/page.tsx` (715 lines)
 
+### ARGUS - Real-Time 0DTE Gamma Visualization (`/argus`)
+Named after the "all-seeing" giant with 100 eyes from Greek mythology. ARGUS provides real-time gamma analysis with comprehensive market structure signals.
+
+**Core Features**:
+- Real-time gamma visualization with per-strike data
+- Danger zone detection (BUILDING/COLLAPSING/SPIKE gamma)
+- Pin strike prediction with probability
+- Magnet identification (high gamma attractors)
+- Gamma regime tracking (POSITIVE/NEGATIVE/NEUTRAL)
+
+**Market Structure Panel** (9 signals comparing today vs prior day):
+
+| Signal | What It Shows | Trading Use |
+|--------|--------------|-------------|
+| **Flip Point** | RISING/FALLING/STABLE | Dealer repositioning - where support/resistance moved |
+| **±1 Std Bounds** | SHIFTED_UP/DOWN/STABLE/MIXED | Options market's price expectations |
+| **Range Width** | WIDENING/NARROWING/STABLE | Volatility expansion/contraction |
+| **Gamma Walls** | PUT CLOSER/CALL CLOSER/BALANCED | Asymmetric risk profile |
+| **Intraday Vol** | EXPANDING/CONTRACTING/STABLE | Real-time vol vs open |
+| **VIX Regime** | LOW/NORMAL/ELEVATED/HIGH/EXTREME | Sizing and strategy context |
+| **Gamma Regime** | MEAN_REVERSION/MOMENTUM | IC safety vs breakout reliability |
+| **GEX Momentum** | STRONG_BULLISH/FADING/etc | Dealer conviction direction |
+| **Wall Break Risk** | HIGH/ELEVATED/MODERATE/LOW | Imminent breakout warning |
+
+**Combined Signal Logic Matrix**:
+
+| Flip Point | Bounds | Width | Gamma Regime | Combined Signal |
+|------------|--------|-------|--------------|-----------------|
+| RISING | SHIFTED_UP | WIDENING | NEGATIVE | BULLISH_BREAKOUT (HIGH confidence) |
+| RISING | SHIFTED_UP | * | POSITIVE | BULLISH_GRIND (MEDIUM confidence) |
+| FALLING | SHIFTED_DOWN | WIDENING | NEGATIVE | BEARISH_BREAKOUT (HIGH confidence) |
+| FALLING | SHIFTED_DOWN | * | POSITIVE | BEARISH_GRIND (MEDIUM confidence) |
+| STABLE | STABLE | NARROWING | POSITIVE | SELL_PREMIUM (HIGH confidence) |
+| STABLE | STABLE | NARROWING | NEGATIVE | SELL_PREMIUM_CAUTION (LOW confidence) |
+| * | * | WIDENING | STABLE | VOL_EXPANSION_NO_DIRECTION |
+| RISING | SHIFTED_DOWN | * | * | DIVERGENCE_BULLISH_DEALERS |
+| FALLING | SHIFTED_UP | * | * | DIVERGENCE_BEARISH_DEALERS |
+
+**Wall Break Risk Logic**:
+```
+HIGH RISK = Distance <0.3% AND (gamma COLLAPSING at wall OR NEGATIVE regime)
+ELEVATED = Distance <0.3% OR (Distance <0.7% AND COLLAPSING)
+MODERATE = Distance 0.3-0.7%
+LOW = Distance >0.7%
+```
+
+When wall break is HIGH, it overrides other signals with `CALL_WALL_BREAK_IMMINENT` or `PUT_WALL_BREAK_IMMINENT`.
+
+**VIX Regime Thresholds**:
+- LOW: VIX < 15 (thin premiums, favor directional)
+- NORMAL: 15-22 (ideal for Iron Condors)
+- ELEVATED: 22-28 (widen IC strikes)
+- HIGH: 28-35 (reduce size 50%)
+- EXTREME: >35 (skip ICs, small directional only)
+
+**Key Thresholds**:
+- Flip point change: ±$2 or ±0.3% = significant
+- Bounds shift: ±$0.50 = significant
+- Width change: ±5% = significant
+- Intraday EM change: ±3% = significant
+
+**Files**:
+- Backend: `backend/api/routes/argus_routes.py` (~2K lines)
+- Frontend: `frontend/src/app/argus/page.tsx` (~2.5K lines)
+- Engine: `core/argus_engine.py` (~1K lines)
+
+**API Endpoints**:
+```
+GET  /api/argus/snapshot           # Full gamma snapshot with market structure
+GET  /api/argus/history            # Historical gamma for sparklines
+GET  /api/argus/danger-zones       # Active danger zone alerts
+GET  /api/argus/pattern-matching   # Historical pattern analysis
+POST /api/argus/commentary         # Generate AI commentary
+```
+
 ### Key Dashboard Components
 - `SAGEStatusWidget.tsx` - ML Advisor status and bot integration
 - `DriftStatusCard.tsx` - Backtest vs Live performance comparison
@@ -504,6 +579,14 @@ GET  /ready                     # Kubernetes readiness probe
 GET  /api/gex/{symbol}          # GEX data for symbol
 GET  /api/gex/{symbol}/levels   # Support/resistance levels
 GET  /api/gamma/0dte            # 0DTE gamma expiration data
+
+# ARGUS (Real-time 0DTE Gamma)
+GET  /api/argus/snapshot        # Full gamma snapshot with market structure (9 signals)
+GET  /api/argus/history         # Historical gamma for sparklines
+GET  /api/argus/danger-zones    # Active danger zone alerts (BUILDING/COLLAPSING/SPIKE)
+GET  /api/argus/pattern-matching # Historical pattern analysis
+GET  /api/argus/gamma-flip-history # Regime flip history
+POST /api/argus/commentary      # Generate AI commentary
 
 # Trading Bots (8 bots, 100+ endpoints total)
 GET  /api/ares/status           # ARES bot status
