@@ -272,6 +272,7 @@ class OrderExecutor:
                 flip_point=signal.flip_point,
                 net_gex=signal.net_gex,
                 oracle_confidence=signal.oracle_confidence,
+                oracle_advice=signal.oracle_advice,
                 ml_direction=signal.oracle_direction,  # Use oracle direction since ML doesn't predict direction
                 ml_confidence=signal.ml_win_probability,  # Use ML win probability as confidence proxy
                 ml_model_name=signal.ml_model_name,
@@ -374,6 +375,7 @@ class OrderExecutor:
                 flip_point=signal.flip_point,
                 net_gex=signal.net_gex,
                 oracle_confidence=signal.oracle_confidence,
+                oracle_advice=signal.oracle_advice,
                 ml_direction=signal.oracle_direction,  # Use oracle direction since ML doesn't predict direction
                 ml_confidence=signal.ml_win_probability,  # Use ML win probability as confidence proxy
                 ml_model_name=signal.ml_model_name,

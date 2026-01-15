@@ -156,11 +156,17 @@ class SignalGenerator:
             vix = 20.0
             if DATA_AVAILABLE:
                 try:
-                    vix = get_vix() or 20.0
+                    fetched_vix = get_vix()
+                    if fetched_vix and fetched_vix >= 10:
+                        vix = fetched_vix
                 except Exception as e:
                     logger.debug(f"VIX fetch failed, using default: {e}")
 
             expected_move = self._calculate_expected_move(spot, vix)
+            # Ensure minimum expected move (0.5% of spot)
+            min_em = spot * 0.005
+            if expected_move < min_em:
+                expected_move = min_em
 
             # Only scale GEX walls by 10 if data came from SPY (not SPX)
             scale = 10 if (gex_data and gex_data.get('from_spy', False)) else 1
@@ -507,8 +513,11 @@ class SignalGenerator:
 
         # Priority 3: SD-based fallback (0.8 SD for TITAN = closer strikes)
         if not use_oracle and not use_gex:
-            put_short = round_to_5(spot - sd * expected_move)
-            call_short = round_to_5(spot + sd * expected_move)
+            # Ensure minimum expected move of 0.5% of spot to prevent overlapping strikes
+            min_expected_move = spot * 0.005
+            effective_em = max(expected_move, min_expected_move)
+            put_short = round_to_5(spot - sd * effective_em)
+            call_short = round_to_5(spot + sd * effective_em)
 
         put_long = put_short - width
         call_long = call_short + width

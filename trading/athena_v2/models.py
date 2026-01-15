@@ -74,6 +74,7 @@ class SpreadPosition:
 
     # Oracle/ML context (FULL for audit)
     oracle_confidence: float = 0.0
+    oracle_advice: str = ""  # TRADE_FULL, TRADE_REDUCED, SKIP_TODAY
     ml_direction: str = ""
     ml_confidence: float = 0.0
     ml_model_name: str = ""
