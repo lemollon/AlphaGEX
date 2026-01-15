@@ -128,9 +128,20 @@ class SignalGenerator:
     def get_market_data(self) -> Optional[Dict[str, Any]]:
         """Get SPX market data"""
         try:
-            # SPX price - try to get from SPX or derive from SPY
+            # GEX data (fetch first - it has spot_price from production API)
+            gex_data = self._get_gex_data()
+
+            # CRITICAL: Use spot_price from GEX calculator FIRST (uses production API for SPX)
+            # The global get_price() uses sandbox which doesn't support SPX
             spot = None
-            if DATA_AVAILABLE:
+            if gex_data:
+                spot = gex_data.get('spot_price', 0)
+                # Scale if from SPY
+                if gex_data.get('from_spy', False) and spot > 0 and spot < 1000:
+                    spot = spot * 10
+
+            # Fallback to get_price() only if GEX calc didn't return spot
+            if not spot and DATA_AVAILABLE:
                 spot = get_price("SPX")
                 if not spot:
                     # Fallback: SPY * 10 approximation
@@ -139,6 +150,7 @@ class SignalGenerator:
                         spot = spy * 10
 
             if not spot:
+                logger.warning("PEGASUS: No spot price available from GEX calc or price API")
                 return None
 
             vix = 20.0
@@ -147,9 +159,6 @@ class SignalGenerator:
                     vix = get_vix() or 20.0
                 except Exception as e:
                     logger.debug(f"VIX fetch failed, using default: {e}")
-
-            # GEX data (scale from SPY if needed)
-            gex_data = self._get_gex_data()
 
             expected_move = self._calculate_expected_move(spot, vix)
 
@@ -668,7 +677,11 @@ class SignalGenerator:
 
         if effective_win_prob < min_win_prob:
             logger.info(f"[PEGASUS BLOCKED] Win probability {effective_win_prob:.1%} < threshold {min_win_prob:.1%}")
-            # Return an invalid signal with the reason
+
+            # Convert Oracle top_factors to list for blocked signal audit trail
+            oracle_top_factors = oracle.get('top_factors', []) if oracle else []
+
+            # Return an invalid signal with the reason - include Oracle fields for audit trail
             return IronCondorSignal(
                 spot_price=market['spot_price'],
                 vix=market['vix'],
@@ -688,6 +701,13 @@ class SignalGenerator:
                 reasoning=f"Win probability {effective_win_prob:.1%} below threshold {min_win_prob:.1%}",
                 source="THRESHOLD_BLOCKED",
                 is_valid=False,
+                # BUG FIX: Include Oracle fields for audit trail
+                oracle_win_probability=oracle_win_prob,
+                oracle_advice=oracle.get('advice', '') if oracle else '',
+                oracle_top_factors=oracle_top_factors,
+                oracle_suggested_sd=oracle.get('suggested_sd_multiplier', 1.0) if oracle else 1.0,
+                oracle_use_gex_walls=oracle.get('use_gex_walls', False) if oracle else False,
+                oracle_probabilities=oracle.get('probabilities', {}) if oracle else {},
             )
 
         if effective_win_prob <= 0:
@@ -786,6 +806,7 @@ class SignalGenerator:
             # Oracle context (CRITICAL for audit)
             oracle_win_probability=oracle['win_probability'] if oracle else 0,
             oracle_advice=oracle['advice'] if oracle else '',
+            oracle_confidence=oracle['confidence'] if oracle else 0,
             oracle_top_factors=oracle['top_factors'] if oracle else [],
             oracle_suggested_sd=oracle['suggested_sd_multiplier'] if oracle else 1.0,
             oracle_use_gex_walls=oracle['use_gex_walls'] if oracle else False,

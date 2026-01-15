@@ -1289,7 +1289,8 @@ class ARESTrader(MathOptimizerMixin):
         if MATH_OPTIMIZER_AVAILABLE and hasattr(self, '_math_enabled') and self._math_enabled:
             # Get market data for regime check (VIX from signal generator)
             try:
-                market_data = self.signals.get_market_snapshot() if hasattr(self.signals, 'get_market_snapshot') else {}
+                # BUG FIX: Use get_gex_data() - get_market_snapshot doesn't exist
+                market_data = self.signals.get_gex_data() if hasattr(self.signals, 'get_gex_data') else {}
                 if market_data:
                     should_trade, regime_reason = self.math_should_trade_regime(market_data)
                     if not should_trade:
@@ -1458,7 +1459,10 @@ class ARESTrader(MathOptimizerMixin):
                 continue
 
             if success:
-                self.db.close_position(pos.position_id, close_price, pnl, reason)
+                # BUG FIX: Check DB return value - don't silently ignore failures
+                db_success = self.db.close_position(pos.position_id, close_price, pnl, reason)
+                if not db_success:
+                    logger.error(f"CRITICAL: Position {pos.position_id} closed but DB update failed!")
                 # Record outcome to Oracle for ML feedback
                 self._record_oracle_outcome(pos, reason, pnl)
                 # Record outcome to Solomon Enhanced for feedback loops

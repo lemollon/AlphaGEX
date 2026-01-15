@@ -283,7 +283,8 @@ class OrderExecutor:
                 flip_point=signal.flip_point,
                 net_gex=signal.net_gex,
                 # ML context (FULL audit trail)
-                oracle_confidence=signal.confidence,
+                # BUG FIX: Use signal.oracle_confidence not signal.confidence
+                oracle_confidence=signal.oracle_confidence,
                 ml_direction=signal.direction,
                 ml_confidence=signal.confidence,
                 ml_model_name=signal.ml_model_name,
@@ -399,7 +400,8 @@ class OrderExecutor:
                 flip_point=signal.flip_point,
                 net_gex=signal.net_gex,
                 # ML context (FULL audit trail)
-                oracle_confidence=signal.confidence,
+                # BUG FIX: Use signal.oracle_confidence not signal.confidence
+                oracle_confidence=signal.oracle_confidence,
                 ml_direction=signal.direction,
                 ml_confidence=signal.confidence,
                 ml_model_name=signal.ml_model_name,

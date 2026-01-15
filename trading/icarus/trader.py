@@ -704,7 +704,8 @@ class ICARUSTrader(MathOptimizerMixin):
         # MATH OPTIMIZER: Check regime before generating signal
         if MATH_OPTIMIZER_AVAILABLE and hasattr(self, '_math_enabled') and self._math_enabled:
             try:
-                market_data = self.signals.get_market_snapshot() if hasattr(self.signals, 'get_market_snapshot') else {}
+                # BUG FIX: Use get_gex_data() - get_market_snapshot doesn't exist
+                market_data = self.signals.get_gex_data() if hasattr(self.signals, 'get_gex_data') else {}
                 if market_data:
                     should_trade, regime_reason = self.math_should_trade_regime(market_data)
                     if not should_trade:
