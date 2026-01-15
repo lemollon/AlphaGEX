@@ -241,8 +241,8 @@ class ARESConfig:
     entry_end: str = "14:45"  # Stop new entries 15 min before close
     force_exit: str = "14:50"  # Force close 10 min before market close
 
-    # Mode
-    mode: TradingMode = TradingMode.PAPER
+    # Mode - LIVE uses Tradier SANDBOX account (see executor.py line 224)
+    mode: TradingMode = TradingMode.LIVE
 
     def apply_preset(self, preset: StrategyPreset) -> None:
         """Apply a strategy preset"""

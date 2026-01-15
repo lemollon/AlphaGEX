@@ -2182,12 +2182,13 @@ async def reset_bot_data(bot: str = None, confirm: bool = False):
 # ARES (Aggressive Iron Condor) Routes
 # =============================================================================
 
-# Try to import ARES trader
+# Try to import ARES V2 trader
 try:
-    from trading.ares_iron_condor import ARESTrader, TradingMode as ARESTradingMode
+    from trading.ares_v2 import ARESTrader, ARESConfig, TradingMode as ARESTradingMode
     ARES_AVAILABLE = True
 except ImportError as e:
     ARES_AVAILABLE = False
+    ARESConfig = None
     logger.warning(f"ARES trader not available: {e}")
 
 # Initialize ARES trader instance (lazy initialization)
@@ -2197,10 +2198,9 @@ def get_ares_trader():
     """Get or create ARES trader instance"""
     global _ares_trader
     if _ares_trader is None and ARES_AVAILABLE:
-        _ares_trader = ARESTrader(
-            mode=ARESTradingMode.PAPER,
-            initial_capital=200_000
-        )
+        # Use default ARESConfig which is LIVE mode (sandbox=True in executor)
+        config = ARESConfig()
+        _ares_trader = ARESTrader(config=config)
     return _ares_trader
 
 
