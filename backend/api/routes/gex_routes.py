@@ -530,6 +530,7 @@ async def get_gex_history(symbol: str = "SPY", days: int = 30):
 
             gex_history.append({
                 **h,
+                'symbol': symbol,  # Include symbol in each record for frontend
                 'regime': regime,
                 'mm_state': mm_state,
                 'data_source': 'gex_history'

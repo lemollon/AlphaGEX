@@ -31,6 +31,7 @@ interface RegimeChange {
 
 export default function GEXHistory() {
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [history, setHistory] = useState<GEXSnapshot[]>([])
   const [regimeChanges, setRegimeChanges] = useState<RegimeChange[]>([])
   const [symbol, setSymbol] = useState('SPY')
@@ -43,6 +44,7 @@ export default function GEXHistory() {
   const fetchData = async () => {
     try {
       setLoading(true)
+      setError(null)
 
       const [historyRes, regimeRes] = await Promise.all([
         apiClient.getGEXHistory(symbol, days),
@@ -51,13 +53,17 @@ export default function GEXHistory() {
 
       if (historyRes.data.success) {
         setHistory(historyRes.data.gex_history || [])
+      } else {
+        setError(historyRes.data.error || 'Failed to fetch GEX history')
       }
 
       if (regimeRes.data.success) {
         setRegimeChanges(regimeRes.data.regime_changes || [])
       }
-    } catch (error) {
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : 'Failed to connect to API'
       logger.error('Error fetching GEX history:', error)
+      setError(errorMessage)
     } finally {
       setLoading(false)
     }
@@ -165,6 +171,22 @@ export default function GEXHistory() {
           {loading ? (
             <div className="flex items-center justify-center py-20">
               <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+            </div>
+          ) : error ? (
+            <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-6 mb-8">
+              <div className="flex items-center gap-3">
+                <AlertCircle className="h-6 w-6 text-red-400" />
+                <div>
+                  <h3 className="text-red-400 font-medium">Error Loading Data</h3>
+                  <p className="text-gray-400 text-sm mt-1">{error}</p>
+                  <button
+                    onClick={() => fetchData()}
+                    className="mt-3 px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-300 rounded-lg text-sm transition-colors"
+                  >
+                    Retry
+                  </button>
+                </div>
+              </div>
             </div>
           ) : (
             <>
@@ -295,8 +317,13 @@ export default function GEXHistory() {
                   {history.length === 0 ? (
                     <div className="p-8 text-center text-gray-400">
                       <AlertCircle className="h-12 w-12 mx-auto mb-3 text-gray-600" />
-                      <p>No GEX history available yet</p>
-                      <p className="text-sm mt-1">Run gex_history_snapshot_job.py to populate historical data</p>
+                      <p>No GEX history available for {symbol}</p>
+                      <p className="text-sm mt-1">
+                        Data is collected automatically every 5 minutes during market hours.
+                      </p>
+                      <p className="text-xs mt-2 text-gray-500">
+                        Check the alphagex-collector worker logs if data is not appearing.
+                      </p>
                     </div>
                   ) : (
                     <table className="w-full">
