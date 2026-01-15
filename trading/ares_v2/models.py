@@ -236,9 +236,10 @@ class ARESConfig:
     profit_target_pct: float = 50.0  # Take profit at 50%
 
     # Trading window (Central Time)
+    # Market closes at 3:00 PM CT (4:00 PM ET)
     entry_start: str = "08:30"
-    entry_end: str = "15:30"
-    force_exit: str = "15:55"
+    entry_end: str = "14:45"  # Stop new entries 15 min before close
+    force_exit: str = "14:50"  # Force close 10 min before market close
 
     # Mode
     mode: TradingMode = TradingMode.PAPER

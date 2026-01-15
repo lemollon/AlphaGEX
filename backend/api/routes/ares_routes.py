@@ -925,15 +925,15 @@ async def get_ares_status():
     now = datetime.now(ZoneInfo("America/Chicago"))
     current_time_str = now.strftime('%Y-%m-%d %H:%M:%S CT')
 
-    # ARES trading window: 8:30 AM - 3:30 PM CT (configurable)
+    # ARES trading window: 8:30 AM - 2:45 PM CT (market closes at 3:00 PM CT)
     entry_start = "08:30"
-    entry_end = "15:30"
+    entry_end = "14:45"  # Stop new entries 15 min before close
 
     # Check for early close days (typically day before Thanksgiving, Christmas Eve)
     # Dec 24 is typically 1 PM ET = 12 PM CT early close
     # Dec 31 is a NORMAL trading day (closes at 3 PM CT)
     if now.month == 12 and now.day == 24:
-        entry_end = "12:00"  # Christmas Eve early close
+        entry_end = "11:50"  # Christmas Eve early close (10 min before 12:00 PM)
 
     start_parts = entry_start.split(':')
     end_parts = entry_end.split(':')

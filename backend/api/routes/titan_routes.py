@@ -295,12 +295,12 @@ async def get_titan_status():
         now = datetime.now(ZoneInfo("America/Chicago"))
         current_time_str = now.strftime('%Y-%m-%d %H:%M:%S CT')
 
-        # TITAN trading window: 8:30 AM - 3:00 PM CT
+        # TITAN trading window: 8:30 AM - 2:45 PM CT (market closes at 3:00 PM CT)
         entry_start = "08:30"
-        entry_end = "15:00"
+        entry_end = "14:45"  # Stop new entries 15 min before close
 
         if now.month == 12 and now.day == 24:
-            entry_end = "12:00"  # Christmas Eve early close
+            entry_end = "11:50"  # Christmas Eve early close (10 min before 12:00 PM)
 
         start_parts = entry_start.split(':')
         end_parts = entry_end.split(':')
@@ -356,9 +356,9 @@ async def get_titan_status():
     now = datetime.now(ZoneInfo("America/Chicago"))
     current_time_str = now.strftime('%Y-%m-%d %H:%M:%S CT')
     entry_start = "08:30"
-    entry_end = "15:00"
+    entry_end = "14:45"  # Market closes at 3:00 PM CT
     if now.month == 12 and now.day == 24:
-        entry_end = "12:00"
+        entry_end = "11:50"  # Christmas Eve early close
     start_parts = entry_start.split(':')
     end_parts = entry_end.split(':')
     start_time = now.replace(hour=int(start_parts[0]), minute=int(start_parts[1]), second=0, microsecond=0)
