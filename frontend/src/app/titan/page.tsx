@@ -524,7 +524,8 @@ export default function TitanPage() {
   const totalPnL = status?.total_pnl || 0
   const winRate = status?.win_rate || 0
   const tradeCount = status?.trade_count || 0
-  const capital = status?.capital || 200000
+  // Use current_equity (starting_capital + total_pnl) to match equity curve
+  const currentEquity = status?.current_equity || status?.capital || 200000
 
   // Brand info
   const brand = BOT_BRANDS.TITAN
@@ -635,8 +636,8 @@ export default function TitanPage() {
           {/* Quick Stats */}
           <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
             <StatCard
-              label="Capital"
-              value={formatCurrency(capital)}
+              label="Current"
+              value={formatCurrency(currentEquity)}
               icon={<DollarSign className="h-4 w-4" />}
               color="blue"
             />
