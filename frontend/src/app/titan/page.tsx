@@ -31,6 +31,7 @@ import {
   BOT_BRANDS,
   BotName,
   BotStatusBanner,
+  UnrealizedPnLCard,
 } from '@/components/trader'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
 import DriftStatusCard from '@/components/DriftStatusCard'
@@ -713,6 +714,13 @@ export default function TitanPage() {
                     const today = new Date().toISOString().split('T')[0]
                     return closeTime.startsWith(today)
                   }).length}
+                />
+
+                {/* Live Unrealized P&L Card */}
+                <UnrealizedPnLCard
+                  botName="TITAN"
+                  data={livePnLData?.data || livePnLData}
+                  isLoading={!livePnLData}
                 />
 
                 {/* Performance Drift - Backtest vs Live */}

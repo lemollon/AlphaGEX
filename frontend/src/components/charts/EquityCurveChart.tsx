@@ -258,7 +258,8 @@ export default function EquityCurveChart({
   title = 'Equity Curve',
   showIntradayOption = true
 }: EquityCurveChartProps) {
-  const [viewMode, setViewMode] = useState<'historical' | 'intraday'>('historical')
+  // Default to intraday when botFilter is set (bot-specific pages), historical otherwise
+  const [viewMode, setViewMode] = useState<'historical' | 'intraday'>(botFilter ? 'intraday' : 'historical')
   const [timeframe, setTimeframe] = useState<'daily' | 'weekly' | 'monthly'>(defaultTimeframe)
   const [days, setDays] = useState(defaultDays)
   const [selectedEvent, setSelectedEvent] = useState<{ event: TradingEvent; position: { x: number; y: number } } | null>(null)

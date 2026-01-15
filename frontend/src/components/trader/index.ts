@@ -50,6 +50,7 @@ export { default as WhyNotTrading } from './WhyNotTrading'
 export { default as RiskMetrics } from './RiskMetrics'
 export { default as PerformanceComparison } from './PerformanceComparison'
 export { default as PresetPerformanceChart } from './PresetPerformanceChart'
+export { default as UnrealizedPnLCard } from './UnrealizedPnLCard'
 
 // Activity & Timeline
 export { default as ActivityTimeline } from './ActivityTimeline'
