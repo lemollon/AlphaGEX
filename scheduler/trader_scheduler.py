@@ -16,9 +16,8 @@ TRADING BOTS:
 - PHOENIX: 0DTE options trading (hourly 10 AM - 3 PM ET)
 - ATLAS: SPX Cash-Secured Put Wheel (daily at 10:05 AM ET)
 - ARES: Aggressive Iron Condor targeting 10% monthly (every 5 min 8:30 AM - 2:55 PM CT)
-- ARES EOD: Process expired 0DTE positions (daily at 3:05 PM CT)
 - ATHENA: GEX Directional Spreads (every 5 min 8:35 AM - 2:30 PM CT)
-- ATHENA EOD: Process expired 0DTE spreads (daily at 3:10 PM CT)
+- ALL EOD: Process expired positions at 3:01 PM CT (all bots run simultaneously for <5 min reconciliation)
 - ARGUS: Gamma Commentary Generation (every 5 min 8:30 AM - 3:00 PM CT)
 
 All bots now scan every 5 minutes for optimal entry timing and log NO_TRADE
@@ -2439,13 +2438,14 @@ class AutonomousTraderScheduler:
             logger.info("✅ ARES job scheduled (every 5 min, checks market hours internally)")
 
             # =================================================================
-            # ARES EOD JOB: Process expired positions - runs at 3:05 PM CT
+            # ARES EOD JOB: Process expired positions - runs at 3:01 PM CT
+            # All EOD jobs run at 3:01 PM CT for fast reconciliation (<5 min post-close)
             # =================================================================
             self.scheduler.add_job(
                 self.scheduled_ares_eod_logic,
                 trigger=CronTrigger(
                     hour=15,       # 3:00 PM CT - after market close
-                    minute=5,      # 3:05 PM CT to ensure market data is final
+                    minute=1,      # 3:01 PM CT - immediate post-close reconciliation
                     day_of_week='mon-fri',
                     timezone='America/Chicago'
                 ),
@@ -2453,7 +2453,7 @@ class AutonomousTraderScheduler:
                 name='ARES - EOD Position Expiration',
                 replace_existing=True
             )
-            logger.info("✅ ARES EOD job scheduled (3:05 PM CT daily)")
+            logger.info("✅ ARES EOD job scheduled (3:01 PM CT daily)")
         else:
             logger.warning("⚠️ ARES not available - aggressive IC trading disabled")
 
@@ -2477,13 +2477,14 @@ class AutonomousTraderScheduler:
             logger.info("✅ ATHENA job scheduled (every 5 min, checks market hours internally)")
 
             # =================================================================
-            # ATHENA EOD JOB: Process expired positions - runs at 3:10 PM CT
+            # ATHENA EOD JOB: Process expired positions - runs at 3:01 PM CT
+            # All EOD jobs run at 3:01 PM CT for fast reconciliation (<5 min post-close)
             # =================================================================
             self.scheduler.add_job(
                 self.scheduled_athena_eod_logic,
                 trigger=CronTrigger(
                     hour=15,       # 3:00 PM CT - after market close
-                    minute=10,     # 3:10 PM CT (after ARES EOD at 3:05)
+                    minute=1,      # 3:01 PM CT - immediate post-close reconciliation
                     day_of_week='mon-fri',
                     timezone='America/Chicago'
                 ),
@@ -2491,7 +2492,7 @@ class AutonomousTraderScheduler:
                 name='ATHENA - EOD Position Expiration',
                 replace_existing=True
             )
-            logger.info("✅ ATHENA EOD job scheduled (3:10 PM CT daily)")
+            logger.info("✅ ATHENA EOD job scheduled (3:01 PM CT daily)")
         else:
             logger.warning("⚠️ ATHENA not available - GEX directional trading disabled")
 
@@ -2515,13 +2516,14 @@ class AutonomousTraderScheduler:
             logger.info("✅ PEGASUS job scheduled (every 5 min, checks market hours internally)")
 
             # =================================================================
-            # PEGASUS EOD JOB: Process expired positions - runs at 3:15 PM CT
+            # PEGASUS EOD JOB: Process expired positions - runs at 3:01 PM CT
+            # All EOD jobs run at 3:01 PM CT for fast reconciliation (<5 min post-close)
             # =================================================================
             self.scheduler.add_job(
                 self.scheduled_pegasus_eod_logic,
                 trigger=CronTrigger(
                     hour=15,       # 3:00 PM CT - after market close
-                    minute=15,     # 3:15 PM CT (after ARES/ATHENA EOD)
+                    minute=1,      # 3:01 PM CT - immediate post-close reconciliation
                     day_of_week='mon-fri',
                     timezone='America/Chicago'
                 ),
@@ -2529,7 +2531,7 @@ class AutonomousTraderScheduler:
                 name='PEGASUS - EOD Position Expiration',
                 replace_existing=True
             )
-            logger.info("✅ PEGASUS EOD job scheduled (3:15 PM CT daily)")
+            logger.info("✅ PEGASUS EOD job scheduled (3:01 PM CT daily)")
         else:
             logger.warning("⚠️ PEGASUS not available - SPX IC trading disabled")
 
@@ -2553,13 +2555,14 @@ class AutonomousTraderScheduler:
             logger.info("✅ ICARUS job scheduled (every 5 min, checks market hours internally)")
 
             # =================================================================
-            # ICARUS EOD JOB: Process expired positions - runs at 3:12 PM CT
+            # ICARUS EOD JOB: Process expired positions - runs at 3:01 PM CT
+            # All EOD jobs run at 3:01 PM CT for fast reconciliation (<5 min post-close)
             # =================================================================
             self.scheduler.add_job(
                 self.scheduled_icarus_eod_logic,
                 trigger=CronTrigger(
                     hour=15,       # 3:00 PM CT - after market close
-                    minute=12,     # 3:12 PM CT (after ATHENA EOD at 3:10)
+                    minute=1,      # 3:01 PM CT - immediate post-close reconciliation
                     day_of_week='mon-fri',
                     timezone='America/Chicago'
                 ),
@@ -2567,7 +2570,7 @@ class AutonomousTraderScheduler:
                 name='ICARUS - EOD Position Expiration',
                 replace_existing=True
             )
-            logger.info("✅ ICARUS EOD job scheduled (3:12 PM CT daily)")
+            logger.info("✅ ICARUS EOD job scheduled (3:01 PM CT daily)")
         else:
             logger.warning("⚠️ ICARUS not available - aggressive directional trading disabled")
 
@@ -2591,13 +2594,14 @@ class AutonomousTraderScheduler:
             logger.info("✅ TITAN job scheduled (every 5 min, checks market hours internally)")
 
             # =================================================================
-            # TITAN EOD JOB: Process expired positions - runs at 3:17 PM CT
+            # TITAN EOD JOB: Process expired positions - runs at 3:01 PM CT
+            # All EOD jobs run at 3:01 PM CT for fast reconciliation (<5 min post-close)
             # =================================================================
             self.scheduler.add_job(
                 self.scheduled_titan_eod_logic,
                 trigger=CronTrigger(
                     hour=15,       # 3:00 PM CT - after market close
-                    minute=17,     # 3:17 PM CT (after PEGASUS EOD at 3:15)
+                    minute=1,      # 3:01 PM CT - immediate post-close reconciliation
                     day_of_week='mon-fri',
                     timezone='America/Chicago'
                 ),
@@ -2605,7 +2609,7 @@ class AutonomousTraderScheduler:
                 name='TITAN - EOD Position Expiration',
                 replace_existing=True
             )
-            logger.info("✅ TITAN EOD job scheduled (3:17 PM CT daily)")
+            logger.info("✅ TITAN EOD job scheduled (3:01 PM CT daily)")
         else:
             logger.warning("⚠️ TITAN not available - aggressive SPX IC trading disabled")
 
