@@ -330,8 +330,10 @@ export default function IcarusPage() {
   const winCount = closedPositions.filter(p => (p.realized_pnl || 0) > 0).length
   const winRate = closedPositions.length > 0 ? (winCount / closedPositions.length) * 100 : 0
   const tradeCount = closedPositions.length
-  // Use current_equity (starting_capital + total_pnl) to match equity curve
+  // Use current_equity (starting_capital + total_pnl + unrealized_pnl when available)
   const currentEquity = status?.current_equity || status?.capital || 100000
+  // Check if unrealized P&L is available (live pricing from worker)
+  const hasLivePricing = status?.unrealized_pnl !== null && status?.unrealized_pnl !== undefined
 
   // Brand info
   const brand = BOT_BRANDS.ICARUS
@@ -390,13 +392,13 @@ export default function IcarusPage() {
           {/* Quick Stats */}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
             <StatCard
-              label="Current"
+              label={hasLivePricing ? "Current Equity" : "Realized Equity"}
               value={formatCurrency(currentEquity)}
               icon={<DollarSign className="h-4 w-4" />}
               color="orange"
             />
             <StatCard
-              label="Total P&L"
+              label="Realized P&L"
               value={`${totalPnL >= 0 ? '+' : ''}${formatCurrency(totalPnL)}`}
               icon={<TrendingUp className="h-4 w-4" />}
               color={totalPnL >= 0 ? 'green' : 'red'}
