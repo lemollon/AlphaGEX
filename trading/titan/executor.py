@@ -674,16 +674,38 @@ class OrderExecutor:
         return max(1, min(adjusted_contracts, self.config.max_contracts))
 
     def _get_current_spx_price(self) -> Optional[float]:
+        """Get current SPX price from multiple sources with fallbacks."""
+        # Try unified data provider first
         if DATA_AVAILABLE:
             try:
                 spx = get_price("SPX")
-                if spx:
+                if spx and spx > 0:
                     return spx
                 spy = get_price("SPY")
-                if spy:
+                if spy and spy > 0:
                     return spy * 10
             except Exception as e:
-                logger.debug(f"Failed to get SPX price: {e}")
+                logger.debug(f"Unified data provider failed: {e}")
+
+        # Try Tradier directly as fallback
+        try:
+            from data.tradier_data_fetcher import TradierDataFetcher
+            import os
+            api_key = os.environ.get('TRADIER_API_KEY') or os.environ.get('TRADIER_SANDBOX_API_KEY')
+            if api_key:
+                tradier = TradierDataFetcher(api_key=api_key, sandbox='SANDBOX' in (os.environ.get('TRADIER_SANDBOX_API_KEY') or ''))
+                for symbol in ['SPX', 'SPY']:
+                    quote = tradier.get_quote(symbol)
+                    if quote and quote.get('last'):
+                        price = float(quote['last'])
+                        if price > 0:
+                            result = price if symbol == 'SPX' else price * 10
+                            logger.debug(f"Got {symbol} price from Tradier: ${result:.2f}")
+                            return result
+        except Exception as e:
+            logger.debug(f"Tradier direct fetch failed: {e}")
+
+        logger.warning("Could not get SPX price from any source")
         return None
 
     def _estimate_ic_value(self, position: IronCondorPosition, current_price: float) -> float:

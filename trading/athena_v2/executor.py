@@ -630,12 +630,35 @@ class OrderExecutor:
         return max(1, min(adjusted_contracts, 50))
 
     def _get_current_price(self) -> Optional[float]:
-        """Get current underlying price"""
+        """Get current underlying price from multiple sources with fallbacks."""
+        ticker = self.config.ticker  # Usually 'SPY'
+
+        # Try unified data provider first
         if DATA_AVAILABLE:
             try:
-                return get_price(self.config.ticker)
-            except Exception:
-                pass
+                price = get_price(ticker)
+                if price and price > 0:
+                    return price
+            except Exception as e:
+                logger.debug(f"Unified data provider failed for {ticker}: {e}")
+
+        # Try Tradier directly as fallback
+        try:
+            from data.tradier_data_fetcher import TradierDataFetcher
+            import os
+            api_key = os.environ.get('TRADIER_API_KEY') or os.environ.get('TRADIER_SANDBOX_API_KEY')
+            if api_key:
+                tradier = TradierDataFetcher(api_key=api_key, sandbox='SANDBOX' in (os.environ.get('TRADIER_SANDBOX_API_KEY') or ''))
+                quote = tradier.get_quote(ticker)
+                if quote and quote.get('last'):
+                    price = float(quote['last'])
+                    if price > 0:
+                        logger.debug(f"Got {ticker} price from Tradier: ${price:.2f}")
+                        return price
+        except Exception as e:
+            logger.debug(f"Tradier direct fetch failed for {ticker}: {e}")
+
+        logger.warning(f"Could not get {ticker} price from any source")
         return None
 
     def _get_spread_quote(
