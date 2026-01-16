@@ -2917,15 +2917,19 @@ async def get_ares_live_pnl():
             today_realized = float(realized_row[0]) if realized_row else 0
             conn.close()
 
-            # Format open positions with entry context
+            # Format open positions with entry context and calculate MTM
             positions = []
             today_date = datetime.now(ZoneInfo("America/Chicago")).date()
+            total_unrealized = 0.0
+            mtm_method = 'estimation'
 
             for row in open_rows:
                 (pos_id, open_date, exp, put_long, put_short, call_short, call_long,
                  credit, contracts, max_loss, spread_width, status) = row
 
-                credit_received = float(credit or 0) * 100 * (contracts or 0)
+                credit_val = float(credit or 0)
+                contracts_val = int(contracts or 0)
+                credit_received = credit_val * 100 * contracts_val
 
                 # Calculate DTE
                 dte = None
@@ -2938,6 +2942,31 @@ async def get_ares_live_pnl():
                 except (ValueError, TypeError):
                     pass  # Keep default dte=None if date parsing fails
 
+                # Calculate unrealized P&L using MTM
+                pos_unrealized = None
+                method = 'estimation'
+
+                if MTM_AVAILABLE and exp and put_short and put_long and call_short and call_long:
+                    try:
+                        mtm_result = calculate_ic_mark_to_market(
+                            underlying='SPY',
+                            expiration=str(exp),
+                            put_short_strike=float(put_short),
+                            put_long_strike=float(put_long),
+                            call_short_strike=float(call_short),
+                            call_long_strike=float(call_long),
+                            contracts=contracts_val,
+                            entry_credit=credit_val,
+                            use_cache=True
+                        )
+                        if mtm_result.get('success') and mtm_result.get('unrealized_pnl') is not None:
+                            pos_unrealized = mtm_result['unrealized_pnl']
+                            total_unrealized += pos_unrealized
+                            method = 'mark_to_market'
+                            mtm_method = 'mark_to_market'
+                    except Exception as e:
+                        logger.debug(f"ARES live-pnl MTM failed for {pos_id}: {e}")
+
                 positions.append({
                     'position_id': pos_id,
                     'open_date': str(open_date) if open_date else None,
@@ -2947,30 +2976,31 @@ async def get_ares_live_pnl():
                     'call_short_strike': float(call_short) if call_short else 0,
                     'call_long_strike': float(call_long) if call_long else 0,
                     'credit_received': round(credit_received, 2),
-                    'contracts': contracts or 0,
-                    'max_loss': round(float(max_loss or 0) * 100 * (contracts or 0), 2),
+                    'contracts': contracts_val,
+                    'max_loss': round(float(max_loss or 0) * 100 * contracts_val, 2),
                     'spread_width': float(spread_width) if spread_width else 0,
                     'dte': dte,
                     'is_0dte': is_0dte,
                     'max_profit': round(credit_received, 2),
                     'strategy': 'IRON_CONDOR',
                     'direction': 'NEUTRAL',
-                    # Live data not available from DB
-                    'unrealized_pnl': None,
-                    'profit_progress_pct': None,
-                    'note': 'Live valuation requires ARES worker'
+                    'unrealized_pnl': round(pos_unrealized, 2) if pos_unrealized is not None else None,
+                    'method': method
                 })
+
+            final_unrealized = round(total_unrealized, 2) if mtm_method == 'mark_to_market' else None
 
             return {
                 "success": True,
                 "data": {
-                    "total_unrealized_pnl": None,
+                    "total_unrealized_pnl": final_unrealized,
                     "total_realized_pnl": round(today_realized, 2),
-                    "net_pnl": round(today_realized, 2),
+                    "net_pnl": round(today_realized + (final_unrealized or 0), 2) if final_unrealized is not None else round(today_realized, 2),
                     "positions": positions,
                     "position_count": len(positions),
                     "source": "database",
-                    "message": "Open positions loaded from DB - live valuation requires ARES worker"
+                    "method": mtm_method,
+                    "message": "Live valuation via mark-to-market" if mtm_method == 'mark_to_market' else "MTM unavailable - estimation fallback"
                 }
             }
         except Exception as db_err:

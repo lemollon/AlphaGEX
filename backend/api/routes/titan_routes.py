@@ -1356,6 +1356,7 @@ async def get_titan_live_pnl():
             conn = get_connection()
             cursor = conn.cursor()
 
+            # Query positions with all fields needed for MTM
             cursor.execute('''
                 SELECT
                     position_id, expiration,
@@ -1378,12 +1379,42 @@ async def get_titan_live_pnl():
             today_realized = float(realized_row[0]) if realized_row else 0
             conn.close()
 
+            # Calculate unrealized P&L using MTM
             positions = []
+            total_unrealized = 0.0
+            mtm_method = 'estimation'
+
             for row in open_rows:
                 (pos_id, exp, put_long, put_short, call_short, call_long,
                  credit, contracts, max_loss, spread_width, entry_price, vix_entry) = row
 
-                credit_received = float(credit or 0) * 100 * (contracts or 0)
+                credit_val = float(credit or 0)
+                contracts_val = int(contracts or 0)
+                credit_received = credit_val * 100 * contracts_val
+                pos_unrealized = None
+                method = 'estimation'
+
+                # Try MTM for this position
+                if MTM_AVAILABLE and exp and put_short and put_long and call_short and call_long:
+                    try:
+                        mtm_result = calculate_ic_mark_to_market(
+                            underlying='SPX',
+                            expiration=str(exp),
+                            put_short_strike=float(put_short),
+                            put_long_strike=float(put_long),
+                            call_short_strike=float(call_short),
+                            call_long_strike=float(call_long),
+                            contracts=contracts_val,
+                            entry_credit=credit_val,
+                            use_cache=True
+                        )
+                        if mtm_result.get('success') and mtm_result.get('unrealized_pnl') is not None:
+                            pos_unrealized = mtm_result['unrealized_pnl']
+                            total_unrealized += pos_unrealized
+                            method = 'mark_to_market'
+                            mtm_method = 'mark_to_market'
+                    except Exception as e:
+                        logger.debug(f"TITAN live-pnl MTM failed for {pos_id}: {e}")
 
                 positions.append({
                     'position_id': pos_id,
@@ -1393,24 +1424,28 @@ async def get_titan_live_pnl():
                     'call_short_strike': float(call_short) if call_short else 0,
                     'call_long_strike': float(call_long) if call_long else 0,
                     'credit_received': round(credit_received, 2),
-                    'contracts': contracts or 0,
-                    'max_loss': round(float(max_loss or 0) * 100 * (contracts or 0), 2),
+                    'contracts': contracts_val,
+                    'max_loss': round(float(max_loss or 0) * 100 * contracts_val, 2),
                     'underlying_at_entry': float(entry_price) if entry_price else 0,
                     'vix_at_entry': float(vix_entry) if vix_entry else 0,
-                    'unrealized_pnl': None,
-                    'note': 'Live valuation requires TITAN worker'
+                    'unrealized_pnl': round(pos_unrealized, 2) if pos_unrealized is not None else None,
+                    'method': method
                 })
+
+            # Use MTM total if we got any successful MTM calculations
+            final_unrealized = round(total_unrealized, 2) if mtm_method == 'mark_to_market' else None
 
             return {
                 "success": True,
                 "data": {
-                    "total_unrealized_pnl": None,
+                    "total_unrealized_pnl": final_unrealized,
                     "total_realized_pnl": round(today_realized, 2),
-                    "net_pnl": round(today_realized, 2),
+                    "net_pnl": round(today_realized + (final_unrealized or 0), 2) if final_unrealized is not None else round(today_realized, 2),
                     "positions": positions,
                     "position_count": len(positions),
                     "source": "database",
-                    "message": "Open positions loaded from DB - live valuation requires TITAN worker"
+                    "method": mtm_method,
+                    "message": "Live valuation via mark-to-market" if mtm_method == 'mark_to_market' else "MTM unavailable - estimation fallback"
                 }
             }
         except Exception as db_err:
