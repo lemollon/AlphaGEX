@@ -626,6 +626,16 @@ class VIXHedgeManager:
             is_fallback = signal.metrics.get('is_fallback', False)
             vix_source = signal.metrics.get('vix_source', 'unknown')
 
+            # Convert numpy types to native Python types for database insertion
+            def to_float(val, default=0.0):
+                """Convert any numeric type to native Python float"""
+                if val is None:
+                    return default
+                try:
+                    return float(val)
+                except (TypeError, ValueError):
+                    return default
+
             c.execute("""
                 INSERT INTO vix_hedge_signals (
                     signal_date, signal_time, signal_type, confidence,
@@ -638,16 +648,16 @@ class VIXHedgeManager:
                 signal.timestamp.strftime('%Y-%m-%d'),
                 signal.timestamp.strftime('%H:%M:%S'),
                 signal.signal_type.value,
-                signal.confidence,
+                to_float(signal.confidence),
                 signal.vol_regime.value,
-                signal.metrics.get('vix_spot', 0),
-                signal.metrics.get('vix_m1', 0),
-                signal.metrics.get('vix_m2', 0),
-                signal.metrics.get('term_structure_pct', 0),
-                signal.metrics.get('iv_percentile', 0),
-                signal.metrics.get('realized_vol_20d', 0),
-                signal.metrics.get('iv_rv_spread', 0),
-                signal.metrics.get('spy_spot', 0),
+                to_float(signal.metrics.get('vix_spot', 0)),
+                to_float(signal.metrics.get('vix_m1', 0)),
+                to_float(signal.metrics.get('vix_m2', 0)),
+                to_float(signal.metrics.get('term_structure_pct', 0)),
+                to_float(signal.metrics.get('iv_percentile', 0)),
+                to_float(signal.metrics.get('realized_vol_20d', 0)),
+                to_float(signal.metrics.get('iv_rv_spread', 0)),
+                to_float(signal.metrics.get('spy_spot', 0)),
                 signal.reasoning,
                 signal.recommended_action,
                 signal.risk_warning,
