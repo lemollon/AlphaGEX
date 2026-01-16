@@ -1684,3 +1684,86 @@ async def reset_titan_data(
     except Exception as e:
         logger.error(f"Error resetting TITAN data: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/cleanup-open-positions")
+async def cleanup_titan_open_positions(confirm: bool = False):
+    """
+    Clean up open TITAN positions without affecting closed trade history.
+
+    Use this to remove test/demo/orphaned positions that are showing in Live P&L
+    without wiping the entire trading history.
+
+    Args:
+        confirm: Must be True to actually delete positions (safety check)
+    """
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Get current open positions for preview
+        cursor.execute("""
+            SELECT position_id, expiration, total_credit, contracts,
+                   put_short_strike, call_short_strike, open_time
+            FROM titan_positions
+            WHERE status = 'open'
+            ORDER BY open_time DESC
+        """)
+        open_positions = cursor.fetchall()
+
+        if not confirm:
+            positions_preview = []
+            for pos in open_positions:
+                positions_preview.append({
+                    "position_id": pos[0],
+                    "expiration": str(pos[1]) if pos[1] else None,
+                    "credit": float(pos[2]) if pos[2] else 0,
+                    "contracts": pos[3],
+                    "put_short": float(pos[4]) if pos[4] else 0,
+                    "call_short": float(pos[5]) if pos[5] else 0,
+                    "open_time": pos[6].isoformat() if pos[6] else None
+                })
+
+            conn.close()
+            return {
+                "success": False,
+                "message": "Set confirm=true to delete open positions. This will NOT affect closed trade history.",
+                "preview": {
+                    "open_positions_count": len(open_positions),
+                    "positions": positions_preview
+                }
+            }
+
+        # Delete only open positions
+        cursor.execute("DELETE FROM titan_positions WHERE status = 'open'")
+        deleted_count = cursor.rowcount
+
+        # Also clear any equity snapshots from today (they include the bad unrealized P&L)
+        deleted_snapshots = 0
+        try:
+            cursor.execute("""
+                DELETE FROM titan_equity_snapshots
+                WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = CURRENT_DATE
+            """)
+            deleted_snapshots = cursor.rowcount
+        except Exception:
+            pass  # Table might not exist
+
+        conn.commit()
+        conn.close()
+
+        logger.info(f"TITAN cleanup: Deleted {deleted_count} open positions and {deleted_snapshots} today's snapshots")
+
+        return {
+            "success": True,
+            "message": f"Cleaned up {deleted_count} open positions",
+            "data": {
+                "deleted_positions": deleted_count,
+                "deleted_snapshots": deleted_snapshots,
+                "note": "Closed trade history preserved"
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error cleaning up TITAN positions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
