@@ -54,6 +54,7 @@ interface TITANStatus {
   capital: number
   starting_capital?: number
   current_equity?: number
+  unrealized_pnl?: number | null
   capital_source?: string
   total_pnl: number
   trade_count: number
@@ -526,8 +527,10 @@ export default function TitanPage() {
   const totalPnL = status?.total_pnl || 0
   const winRate = status?.win_rate || 0
   const tradeCount = status?.trade_count || 0
-  // Use current_equity (starting_capital + total_pnl) to match equity curve
+  // Use current_equity (starting_capital + total_pnl + unrealized_pnl when available)
   const currentEquity = status?.current_equity || status?.capital || 200000
+  // Check if unrealized P&L is available (live pricing from worker)
+  const hasLivePricing = status?.unrealized_pnl !== null && status?.unrealized_pnl !== undefined
 
   // Brand info
   const brand = BOT_BRANDS.TITAN
@@ -638,13 +641,13 @@ export default function TitanPage() {
           {/* Quick Stats */}
           <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
             <StatCard
-              label="Current"
+              label={hasLivePricing ? "Current Equity" : "Realized Equity"}
               value={formatCurrency(currentEquity)}
               icon={<DollarSign className="h-4 w-4" />}
               color="blue"
             />
             <StatCard
-              label="Total P&L"
+              label="Realized P&L"
               value={`${totalPnL >= 0 ? '+' : ''}${formatCurrency(totalPnL)}`}
               icon={<TrendingUp className="h-4 w-4" />}
               color={totalPnL >= 0 ? 'green' : 'red'}

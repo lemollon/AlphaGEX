@@ -947,7 +947,9 @@ async def get_ares_status():
     if not ares:
         # ARES not running in this process - read stats from database
         total_pnl = 0
-        unrealized_pnl = 0
+        # IMPORTANT: Don't use stale unrealized_pnl from database when worker isn't running
+        # Set to None to indicate live pricing is unavailable
+        unrealized_pnl = None
         trade_count = 0
         win_count = 0
         open_count = 0
@@ -960,7 +962,8 @@ async def get_ares_status():
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Get summary stats including unrealized P&L from open positions
+            # Note: We intentionally do NOT use unrealized_pnl from database here
+            # because it may be stale. Unrealized P&L requires live pricing.
             cursor.execute('''
                 SELECT
                     COUNT(*) as total,
@@ -968,8 +971,7 @@ async def get_ares_status():
                     SUM(CASE WHEN status IN ('closed', 'expired') THEN 1 ELSE 0 END) as closed_count,
                     SUM(CASE WHEN status IN ('closed', 'expired') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
                     COALESCE(SUM(CASE WHEN status IN ('closed', 'expired') THEN realized_pnl ELSE 0 END), 0) as total_pnl,
-                    SUM(CASE WHEN open_date = %s THEN 1 ELSE 0 END) as traded_today,
-                    COALESCE(SUM(CASE WHEN status = 'open' THEN unrealized_pnl ELSE 0 END), 0) as unrealized_pnl
+                    SUM(CASE WHEN open_date = %s THEN 1 ELSE 0 END) as traded_today
                 FROM ares_positions
             ''', (today,))
             row = cursor.fetchone()
@@ -982,7 +984,6 @@ async def get_ares_status():
                 win_count = row[3] or 0
                 total_pnl = float(row[4] or 0)
                 traded_today = (row[5] or 0) > 0
-                unrealized_pnl = float(row[6] or 0)
         except Exception as db_err:
             logger.debug(f"Could not read ARES stats from database: {db_err}")
 
@@ -1034,9 +1035,12 @@ async def get_ares_status():
         scan_interval = 5
         is_active, active_reason = _is_ares_actually_active(heartbeat, scan_interval)
 
-        # Calculate current_equity = starting_capital + realized + unrealized (matches equity curve)
+        # current_equity = starting_capital + realized
+        # Only add unrealized if we have live pricing (worker running)
         starting_capital = 100000  # Default starting capital
-        current_equity = starting_capital + total_pnl + unrealized_pnl
+        current_equity = starting_capital + total_pnl
+        if unrealized_pnl is not None:
+            current_equity += unrealized_pnl
 
         return {
             "success": True,
@@ -1049,7 +1053,8 @@ async def get_ares_status():
                 "current_equity": round(current_equity, 2),
                 "capital_source": "tradier" if sandbox_connected else "paper_fallback",
                 "total_pnl": round(total_pnl, 2),
-                "unrealized_pnl": round(unrealized_pnl, 2),
+                # Return None to frontend when live pricing unavailable
+                "unrealized_pnl": round(unrealized_pnl, 2) if unrealized_pnl is not None else None,
                 "trade_count": trade_count,
                 "win_rate": win_rate,
                 "open_positions": open_count,

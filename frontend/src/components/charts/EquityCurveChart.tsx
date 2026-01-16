@@ -628,6 +628,12 @@ export default function EquityCurveChart({
             </span>
             <span className="text-gray-400">
               Current: <span className="text-white font-medium">${intradayData.current_equity?.toLocaleString()}</span>
+              {/* Show note if snapshots might be stale */}
+              {intradayData.snapshots_count === 0 && (
+                <span className="text-yellow-500 ml-1" title="No snapshots recorded today - showing realized P&L only">
+                  (realized only)
+                </span>
+              )}
             </span>
           </div>
           <span className="text-gray-500">
