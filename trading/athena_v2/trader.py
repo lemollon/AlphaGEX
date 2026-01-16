@@ -148,11 +148,15 @@ class ATHENATrader(MathOptimizerMixin):
             f"ticker={self.config.ticker}"
         )
 
-    def run_cycle(self) -> Dict[str, Any]:
+    def run_cycle(self, close_only: bool = False) -> Dict[str, Any]:
         """
         Run a single trading cycle.
 
         This is the MAIN entry point called by the scheduler.
+
+        Args:
+            close_only: If True, only manage existing positions (close expiring ones),
+                       don't check conditions or try new entries. Used after market close.
 
         Returns dict with cycle results.
         """
@@ -181,7 +185,25 @@ class ATHENATrader(MathOptimizerMixin):
 
         try:
             # Update heartbeat
-            self.db.update_heartbeat("SCANNING", f"Cycle at {now.strftime('%I:%M %p')}")
+            self.db.update_heartbeat("SCANNING", f"Cycle at {now.strftime('%I:%M %p')}" + (" [CLOSE_ONLY]" if close_only else ""))
+
+            # In close_only mode, skip market data fetch and conditions check
+            # Just manage existing positions
+            if close_only:
+                logger.info("ATHENA running in CLOSE_ONLY mode - managing positions only")
+                closed_count, close_pnl = self._manage_positions()
+                result['trades_closed'] = closed_count
+                result['realized_pnl'] = close_pnl
+                result['action'] = 'close_only'
+                result['details']['mode'] = 'close_only'
+
+                if closed_count > 0:
+                    self.db.log("INFO", f"CLOSE_ONLY: Closed {closed_count} positions, P&L: ${close_pnl:.2f}")
+                else:
+                    self.db.log("INFO", "CLOSE_ONLY: No positions to close")
+
+                self._log_scan_activity(result, scan_context, skip_reason="Close-only mode after market")
+                return result
 
             # CRITICAL: Fetch market data FIRST for ALL scans
             # This ensures we log comprehensive data even for skipped scans
