@@ -179,16 +179,24 @@ def _calculate_pegasus_unrealized_pnl(positions: list) -> dict:
             spx_price = None
 
         if not spx_price or spx_price <= 0:
-            # Try Tradier direct
+            # Try Tradier direct - SPX requires PRODUCTION API
             try:
                 import os
                 from data.tradier_data_fetcher import TradierDataFetcher as TDF
-                api_key = os.environ.get('TRADIER_API_KEY') or os.environ.get('TRADIER_SANDBOX_API_KEY')
-                if api_key:
-                    tradier = TDF(api_key=api_key, sandbox='SANDBOX' in str(os.environ.get('TRADIER_SANDBOX_API_KEY', '')))
+                prod_key = os.environ.get('TRADIER_API_KEY')
+                if prod_key:
+                    tradier = TDF(api_key=prod_key, sandbox=False)
                     quote = tradier.get_quote('SPX')
                     if quote and quote.get('last'):
                         spx_price = float(quote['last'])
+                # Fallback: Try SPY * 10 from sandbox if production not available
+                if (not spx_price or spx_price <= 0):
+                    sandbox_key = os.environ.get('TRADIER_SANDBOX_API_KEY')
+                    if sandbox_key:
+                        tradier = TDF(api_key=sandbox_key, sandbox=True)
+                        quote = tradier.get_quote('SPY')
+                        if quote and quote.get('last'):
+                            spx_price = float(quote['last']) * 10
             except Exception:
                 pass
 
@@ -1844,4 +1852,84 @@ async def reset_pegasus_data(confirm: bool = False):
         }
     except Exception as e:
         logger.error(f"Error resetting PEGASUS data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/cleanup-open-positions")
+async def cleanup_open_positions(confirm: bool = False):
+    """
+    Clean up open PEGASUS positions without affecting closed trade history.
+
+    Use this to remove test/demo/orphaned positions that are showing in Live P&L
+    without wiping the entire trading history.
+
+    Args:
+        confirm: Must be True to actually delete positions (safety check)
+    """
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Get current open positions for preview
+        cursor.execute("""
+            SELECT position_id, expiration, total_credit, contracts,
+                   put_short_strike, call_short_strike, open_time
+            FROM pegasus_positions
+            WHERE status = 'open'
+            ORDER BY open_time DESC
+        """)
+        open_positions = cursor.fetchall()
+
+        if not confirm:
+            positions_preview = []
+            for pos in open_positions:
+                positions_preview.append({
+                    "position_id": pos[0],
+                    "expiration": str(pos[1]) if pos[1] else None,
+                    "credit": float(pos[2]) if pos[2] else 0,
+                    "contracts": pos[3],
+                    "put_short": float(pos[4]) if pos[4] else 0,
+                    "call_short": float(pos[5]) if pos[5] else 0,
+                    "open_time": pos[6].isoformat() if pos[6] else None
+                })
+
+            conn.close()
+            return {
+                "success": False,
+                "message": "Set confirm=true to delete open positions. This will NOT affect closed trade history.",
+                "preview": {
+                    "open_positions_count": len(open_positions),
+                    "positions": positions_preview
+                }
+            }
+
+        # Delete only open positions
+        cursor.execute("DELETE FROM pegasus_positions WHERE status = 'open'")
+        deleted_count = cursor.rowcount
+
+        # Also clear any equity snapshots from today (they include the bad unrealized P&L)
+        today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
+        cursor.execute("""
+            DELETE FROM pegasus_equity_snapshots
+            WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+        """, (today,))
+        deleted_snapshots = cursor.rowcount
+
+        conn.commit()
+        conn.close()
+
+        logger.info(f"PEGASUS cleanup: Deleted {deleted_count} open positions and {deleted_snapshots} today's snapshots")
+
+        return {
+            "success": True,
+            "message": f"Cleaned up {deleted_count} open positions",
+            "data": {
+                "deleted_positions": deleted_count,
+                "deleted_snapshots": deleted_snapshots,
+                "note": "Closed trade history preserved"
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error cleaning up PEGASUS positions: {e}")
         raise HTTPException(status_code=500, detail=str(e))

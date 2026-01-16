@@ -21,14 +21,39 @@ _quote_cache: Dict[str, Tuple[float, Dict]] = {}  # symbol -> (timestamp, quote)
 CACHE_TTL_SECONDS = 30  # Cache quotes for 30 seconds
 
 
-def _get_tradier_client():
-    """Get Tradier client instance."""
+def _get_tradier_client(underlying: str = None, force_production: bool = False):
+    """Get Tradier client instance.
+
+    Args:
+        underlying: The underlying symbol (SPX, SPY, etc.)
+        force_production: Always use production API (required for SPX quotes)
+
+    Note: SPX/SPXW options require the Tradier PRODUCTION API - sandbox does not
+    provide SPX option quotes. This function automatically uses production for SPX.
+    """
     try:
         from data.tradier_data_fetcher import TradierDataFetcher
-        api_key = os.environ.get('TRADIER_API_KEY') or os.environ.get('TRADIER_SANDBOX_API_KEY')
-        if api_key:
-            sandbox = 'SANDBOX' in str(os.environ.get('TRADIER_SANDBOX_API_KEY', ''))
-            return TradierDataFetcher(api_key=api_key, sandbox=sandbox)
+
+        # SPX options REQUIRE production API - sandbox doesn't have SPX quotes
+        requires_production = force_production or (underlying and underlying.upper() in ('SPX', 'SPXW'))
+
+        prod_key = os.environ.get('TRADIER_API_KEY')
+        sandbox_key = os.environ.get('TRADIER_SANDBOX_API_KEY')
+
+        if requires_production:
+            if prod_key:
+                logger.debug(f"Using Tradier PRODUCTION API for {underlying or 'option'} quotes")
+                return TradierDataFetcher(api_key=prod_key, sandbox=False)
+            else:
+                logger.warning(f"SPX quotes require TRADIER_API_KEY (production) but only sandbox key available")
+                return None
+
+        # For non-SPX, prefer production but fall back to sandbox
+        if prod_key:
+            return TradierDataFetcher(api_key=prod_key, sandbox=False)
+        elif sandbox_key:
+            return TradierDataFetcher(api_key=sandbox_key, sandbox=True)
+
     except Exception as e:
         logger.debug(f"Could not create Tradier client: {e}")
     return None
@@ -94,8 +119,11 @@ def get_option_quote(symbol: str, use_cache: bool = True) -> Optional[Dict]:
         if time.time() - cache_time < CACHE_TTL_SECONDS:
             return cached_quote
 
-    # Fetch from Tradier
-    tradier = _get_tradier_client()
+    # Detect underlying from OCC symbol (SPXW, SPY, etc.)
+    underlying = 'SPXW' if symbol.startswith('SPXW') else 'SPY' if symbol.startswith('SPY') else None
+
+    # Fetch from Tradier - use production API for SPX
+    tradier = _get_tradier_client(underlying=underlying)
     if not tradier:
         return None
 
@@ -142,7 +170,10 @@ def get_option_quotes_batch(symbols: List[str], use_cache: bool = True) -> Dict[
 
     # Fetch remaining from Tradier
     if symbols_to_fetch:
-        tradier = _get_tradier_client()
+        # Detect if any symbol is for SPX - if so, use production API
+        has_spx = any(s.startswith('SPXW') for s in symbols_to_fetch)
+        underlying = 'SPXW' if has_spx else None
+        tradier = _get_tradier_client(underlying=underlying)
         if tradier:
             try:
                 # Tradier supports comma-separated symbols
