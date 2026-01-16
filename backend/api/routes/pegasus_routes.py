@@ -430,9 +430,13 @@ async def get_pegasus_status():
         # Calculate current_equity = starting_capital + realized + unrealized (matches equity curve)
         starting_capital = 200000  # PEGASUS starting capital
         total_pnl = status.get('total_pnl', 0)
-        unrealized_pnl = status.get('unrealized_pnl', 0)
+        unrealized_pnl = status.get('unrealized_pnl')  # Can be None if no live pricing
         status['starting_capital'] = starting_capital
-        status['current_equity'] = round(starting_capital + total_pnl + unrealized_pnl, 2)
+        # Only include unrealized in equity if we have live pricing
+        if unrealized_pnl is not None:
+            status['current_equity'] = round(starting_capital + total_pnl + unrealized_pnl, 2)
+        else:
+            status['current_equity'] = round(starting_capital + total_pnl, 2)
 
         return {
             "success": True,
@@ -1313,23 +1317,33 @@ async def get_pegasus_live_pnl():
         status = pegasus.get_status()
         positions = pegasus.get_positions()
 
+        # unrealized_pnl is None when live pricing unavailable
+        unrealized_pnl = status.get('unrealized_pnl')
+        has_live_pricing = status.get('has_live_pricing', False)
+
+        # net_pnl = realized + unrealized (but only if unrealized is available)
+        net_pnl = unrealized_pnl if unrealized_pnl is not None else None
+
         return {
             "success": True,
             "data": {
-                "total_unrealized_pnl": status.get('unrealized_pnl', 0),
+                "total_unrealized_pnl": unrealized_pnl,
                 "total_realized_pnl": 0,
-                "net_pnl": status.get('unrealized_pnl', 0),
+                "net_pnl": net_pnl,
+                "has_live_pricing": has_live_pricing,
                 "positions": [
                     {
                         'position_id': p.position_id,
                         'expiration': p.expiration,
                         'credit_received': p.total_credit * 100 * p.contracts,
                         'contracts': p.contracts,
-                        'status': p.status.value
+                        'status': p.status.value,
+                        'unrealized_pnl': None  # Individual position P&L requires live pricing
                     }
                     for p in positions
                 ],
-                "position_count": len(positions)
+                "position_count": len(positions),
+                "note": "Live pricing available" if has_live_pricing else "Live pricing unavailable - unrealized P&L cannot be calculated"
             }
         }
     except Exception as e:

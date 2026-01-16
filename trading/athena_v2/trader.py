@@ -1310,11 +1310,13 @@ class ATHENATrader(MathOptimizerMixin):
         positions = self.db.get_open_positions()
         daily_trades = self.db.get_daily_trades_count(today)
 
-        # Calculate unrealized P&L
+        # Calculate unrealized P&L (only if live pricing available)
         unrealized_pnl = 0.0
+        has_live_pricing = False
         for pos in positions:
             current_value = self.executor.get_position_current_value(pos)
-            if current_value:
+            if current_value is not None:
+                has_live_pricing = True
                 pnl = (current_value - pos.entry_debit) * 100 * pos.contracts
                 unrealized_pnl += pnl
 
@@ -1329,7 +1331,8 @@ class ATHENATrader(MathOptimizerMixin):
             'max_positions': self.config.max_open_positions,
             'daily_trades': daily_trades,
             'max_daily_trades': self.config.max_daily_trades,
-            'unrealized_pnl': unrealized_pnl,
+            'unrealized_pnl': unrealized_pnl if has_live_pricing else None,
+            'has_live_pricing': has_live_pricing,
             'positions': [p.to_dict() for p in positions],
         }
 

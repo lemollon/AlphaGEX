@@ -899,7 +899,17 @@ async def get_icarus_live_pnl():
     icarus = get_icarus_instance()
 
     if not icarus:
-        raise HTTPException(status_code=503, detail="ICARUS not available")
+        return {
+            "success": True,
+            "data": {
+                "total_unrealized_pnl": None,
+                "total_realized_pnl": 0,
+                "net_pnl": None,
+                "positions": [],
+                "position_count": 0,
+                "message": "ICARUS not initialized"
+            }
+        }
 
     try:
         pnl_data = icarus.get_live_pnl()

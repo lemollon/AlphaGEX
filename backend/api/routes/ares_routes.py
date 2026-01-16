@@ -1146,9 +1146,13 @@ async def get_ares_status():
         # Calculate current_equity = starting_capital + realized + unrealized (matches equity curve)
         starting_capital = 100000  # Default starting capital
         total_pnl = status.get('total_pnl', 0)
-        unrealized_pnl = status.get('unrealized_pnl', 0)
+        unrealized_pnl = status.get('unrealized_pnl')  # Can be None if no live pricing
         status['starting_capital'] = starting_capital
-        status['current_equity'] = round(starting_capital + total_pnl + unrealized_pnl, 2)
+        # Only include unrealized in equity if we have live pricing
+        if unrealized_pnl is not None:
+            status['current_equity'] = round(starting_capital + total_pnl + unrealized_pnl, 2)
+        else:
+            status['current_equity'] = round(starting_capital + total_pnl, 2)
 
         return {
             "success": True,
@@ -2908,9 +2912,9 @@ async def get_ares_live_pnl():
         return {
             "success": True,
             "data": {
-                "total_unrealized_pnl": 0,
+                "total_unrealized_pnl": None,
                 "total_realized_pnl": 0,
-                "net_pnl": 0,
+                "net_pnl": None,
                 "positions": [],
                 "position_count": 0,
                 "message": "ARES not initialized"
@@ -2985,9 +2989,9 @@ async def get_ares_live_pnl():
             return {
                 "success": True,
                 "data": {
-                    "total_unrealized_pnl": 0,
+                    "total_unrealized_pnl": None,
                     "total_realized_pnl": 0,
-                    "net_pnl": 0,
+                    "net_pnl": None,
                     "positions": [],
                     "position_count": 0,
                     "message": "Could not retrieve live P&L"
@@ -3007,9 +3011,9 @@ async def get_ares_live_pnl():
         return {
             "success": True,
             "data": {
-                "total_unrealized_pnl": 0,
+                "total_unrealized_pnl": None,
                 "total_realized_pnl": 0,
-                "net_pnl": 0,
+                "net_pnl": None,
                 "positions": [],
                 "position_count": 0,
                 "message": f"Live P&L method error: {str(e)}"
