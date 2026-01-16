@@ -426,13 +426,22 @@ class TITANDatabase:
             return 0
 
     def get_last_trade_time(self) -> Optional[datetime]:
-        """Get the time of the last trade (for cooldown checking)"""
+        """Get the time of the last completed trade (for cooldown checking).
+
+        Returns the close_time of the most recently CLOSED position.
+        Cooldown should start when a trade COMPLETES, not when it opens.
+        This ensures that after a trade closes, TITAN waits the cooldown period
+        before opening a new trade.
+
+        Returns None if no closed positions exist (first trade ever).
+        """
         try:
             with db_connection() as conn:
                 c = conn.cursor()
                 c.execute("""
-                    SELECT open_time FROM titan_positions
-                    ORDER BY open_time DESC
+                    SELECT close_time FROM titan_positions
+                    WHERE status = 'closed' AND close_time IS NOT NULL
+                    ORDER BY close_time DESC
                     LIMIT 1
                 """)
                 result = c.fetchone()
