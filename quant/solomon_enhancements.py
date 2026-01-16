@@ -2166,6 +2166,7 @@ class SolomonEnhanced:
             rows = cursor.fetchall()
             conn.close()
 
+            # Build nested advice -> strategy structure
             advice_analysis = {}
             for row in rows:
                 advice = row[0]
@@ -2179,11 +2180,50 @@ class SolomonEnhanced:
                     'avg_pnl': float(row[4] or 0)
                 }
 
+            # Build flattened by_advice for UI display (aggregate across strategies)
+            by_advice_flat = {}
+            for advice, strategies in advice_analysis.items():
+                total_trades = sum(s.get('trades', 0) for s in strategies.values())
+                total_wins = sum(s.get('wins', 0) for s in strategies.values())
+                total_pnl = sum(s.get('avg_pnl', 0) * s.get('trades', 0) for s in strategies.values())
+                by_advice_flat[advice] = {
+                    'count': total_trades,
+                    'accuracy': (total_wins / total_trades * 100) if total_trades > 0 else 0,
+                    'avg_pnl': (total_pnl / total_trades) if total_trades > 0 else 0,
+                    'strategies': strategies  # Keep detailed breakdown
+                }
+
+            # Build by_strategy aggregation (aggregate across advice types)
+            by_strategy = {}
+            for advice, strategies in advice_analysis.items():
+                for strategy, metrics in strategies.items():
+                    if strategy not in by_strategy:
+                        by_strategy[strategy] = {'trades': 0, 'wins': 0, 'total_pnl': 0}
+                    by_strategy[strategy]['trades'] += metrics.get('trades', 0)
+                    by_strategy[strategy]['wins'] += metrics.get('wins', 0)
+                    by_strategy[strategy]['total_pnl'] += metrics.get('avg_pnl', 0) * metrics.get('trades', 0)
+
+            # Calculate final strategy metrics
+            for strategy in by_strategy:
+                trades = by_strategy[strategy]['trades']
+                wins = by_strategy[strategy]['wins']
+                total_pnl = by_strategy[strategy]['total_pnl']
+                by_strategy[strategy] = {
+                    'count': trades,
+                    'accuracy': (wins / trades * 100) if trades > 0 else 0,
+                    'avg_pnl': (total_pnl / trades) if trades > 0 else 0
+                }
+
+            summary_data = self._generate_oracle_accuracy_summary(advice_analysis)
+
             return {
                 'status': 'analyzed',
                 'period_days': days,
-                'by_advice': advice_analysis,
-                'summary': self._generate_oracle_accuracy_summary(advice_analysis)
+                'by_advice': by_advice_flat,  # Flattened for UI
+                'by_advice_detailed': advice_analysis,  # Nested for detailed view
+                'by_strategy': by_strategy,  # Aggregated by strategy type
+                'summary': summary_data.get('summary_text', ''),  # String for display
+                'summary_data': summary_data  # Full data for programmatic use
             }
 
         except Exception as e:
@@ -2196,8 +2236,12 @@ class SolomonEnhanced:
             'trade_full_effective': False,
             'trade_reduced_effective': False,
             'skip_followed': False,
-            'recommendations': []
+            'recommendations': [],
+            'summary_text': ''
         }
+
+        full_win_rate = 0
+        reduced_win_rate = 0
 
         if 'TRADE_FULL' in advice_analysis:
             full_trades = advice_analysis['TRADE_FULL']
@@ -2216,6 +2260,21 @@ class SolomonEnhanced:
             if total_reduced_trades > 0:
                 reduced_win_rate = total_reduced_wins / total_reduced_trades * 100
                 summary['trade_reduced_effective'] = reduced_win_rate > 40
+
+        # Generate human-readable summary text
+        summary_parts = []
+        if summary['trade_full_effective']:
+            summary_parts.append(f"TRADE_FULL signals are effective ({full_win_rate:.1f}% win rate)")
+        elif full_win_rate > 0:
+            summary_parts.append(f"TRADE_FULL signals need review ({full_win_rate:.1f}% win rate)")
+
+        if summary['trade_reduced_effective']:
+            summary_parts.append(f"TRADE_REDUCED signals performing adequately ({reduced_win_rate:.1f}%)")
+
+        if summary['recommendations']:
+            summary_parts.extend(summary['recommendations'])
+
+        summary['summary_text'] = ' | '.join(summary_parts) if summary_parts else 'Insufficient data for Oracle accuracy analysis'
 
         return summary
 

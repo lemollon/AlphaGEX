@@ -588,32 +588,30 @@ class TestMigration023StrategyAnalysis:
         """Test get_bot_strategy_config method"""
         from quant.solomon_enhancements import SolomonEnhanced
 
-        with patch('quant.solomon_enhancements.get_solomon') as mock_get_solomon:
-            mock_get_solomon.return_value = MagicMock()
+        # Create SolomonEnhanced without calling __init__
+        enhanced = SolomonEnhanced.__new__(SolomonEnhanced)
+        enhanced.solomon = MagicMock()
+        enhanced.proposal_validator = MagicMock()
 
-            enhanced = SolomonEnhanced.__new__(SolomonEnhanced)
-            enhanced.solomon = mock_get_solomon.return_value
-            enhanced.proposal_validator = MagicMock()
+        config = enhanced.get_bot_strategy_config('ARES')
+        assert config['strategy_type'] == 'IRON_CONDOR'
+        assert config['goal'] == 'stability'
 
-            config = enhanced.get_bot_strategy_config('ARES')
-            assert config['strategy_type'] == 'IRON_CONDOR'
-            assert config['goal'] == 'stability'
+        config = enhanced.get_bot_strategy_config('ATHENA')
+        assert config['strategy_type'] == 'DIRECTIONAL'
+        assert config['goal'] == 'movement'
 
-            config = enhanced.get_bot_strategy_config('ATHENA')
-            assert config['strategy_type'] == 'DIRECTIONAL'
-            assert config['goal'] == 'movement'
-
-            # Unknown bot
-            config = enhanced.get_bot_strategy_config('UNKNOWN_BOT')
-            assert config['strategy_type'] == 'UNKNOWN'
+        # Unknown bot
+        config = enhanced.get_bot_strategy_config('UNKNOWN_BOT')
+        assert config['strategy_type'] == 'UNKNOWN'
 
     def test_get_strategy_analysis_structure(self):
         """Test get_strategy_analysis returns correct structure"""
         from quant.solomon_enhancements import SolomonEnhanced
+        import quant.solomon_enhancements as se_module
 
-        with patch('quant.solomon_enhancements.get_solomon') as mock_get_solomon, \
-             patch('quant.solomon_enhancements.get_connection') as mock_get_conn, \
-             patch('quant.solomon_enhancements.DB_AVAILABLE', True):
+        with patch.object(se_module, 'get_connection') as mock_get_conn, \
+             patch.object(se_module, 'DB_AVAILABLE', True):
 
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
@@ -628,7 +626,7 @@ class TestMigration023StrategyAnalysis:
             mock_get_conn.return_value = mock_conn
 
             enhanced = SolomonEnhanced.__new__(SolomonEnhanced)
-            enhanced.solomon = mock_get_solomon.return_value
+            enhanced.solomon = MagicMock()
             enhanced.proposal_validator = MagicMock()
 
             result = enhanced.get_strategy_analysis(days=30)
@@ -654,10 +652,10 @@ class TestMigration023StrategyAnalysis:
     def test_get_oracle_accuracy_structure(self):
         """Test get_oracle_accuracy returns correct structure"""
         from quant.solomon_enhancements import SolomonEnhanced
+        import quant.solomon_enhancements as se_module
 
-        with patch('quant.solomon_enhancements.get_solomon') as mock_get_solomon, \
-             patch('quant.solomon_enhancements.get_connection') as mock_get_conn, \
-             patch('quant.solomon_enhancements.DB_AVAILABLE', True):
+        with patch.object(se_module, 'get_connection') as mock_get_conn, \
+             patch.object(se_module, 'DB_AVAILABLE', True):
 
             mock_conn = MagicMock()
             mock_cursor = MagicMock()
@@ -672,7 +670,7 @@ class TestMigration023StrategyAnalysis:
             mock_get_conn.return_value = mock_conn
 
             enhanced = SolomonEnhanced.__new__(SolomonEnhanced)
-            enhanced.solomon = mock_get_solomon.return_value
+            enhanced.solomon = MagicMock()
             enhanced.proposal_validator = MagicMock()
 
             result = enhanced.get_oracle_accuracy(days=30)
@@ -680,12 +678,27 @@ class TestMigration023StrategyAnalysis:
             assert result['status'] == 'analyzed'
             assert result['period_days'] == 30
             assert 'by_advice' in result
+            assert 'by_advice_detailed' in result
+            assert 'by_strategy' in result
             assert 'summary' in result
+            assert 'summary_data' in result
 
-            # Check TRADE_FULL analysis
+            # Check flattened by_advice for UI (aggregate across strategies)
             assert 'TRADE_FULL' in result['by_advice']
-            assert 'IRON_CONDOR' in result['by_advice']['TRADE_FULL']
-            assert result['by_advice']['TRADE_FULL']['IRON_CONDOR']['trades'] == 15
+            assert 'count' in result['by_advice']['TRADE_FULL']
+            assert 'accuracy' in result['by_advice']['TRADE_FULL']
+            assert result['by_advice']['TRADE_FULL']['count'] == 27  # 15 + 12
+
+            # Check detailed by_advice (nested structure)
+            assert 'TRADE_FULL' in result['by_advice_detailed']
+            assert 'IRON_CONDOR' in result['by_advice_detailed']['TRADE_FULL']
+            assert result['by_advice_detailed']['TRADE_FULL']['IRON_CONDOR']['trades'] == 15
+
+            # Check by_strategy aggregation
+            assert 'IRON_CONDOR' in result['by_strategy']
+            assert result['by_strategy']['IRON_CONDOR']['count'] == 20  # 15 + 5
+            assert 'DIRECTIONAL' in result['by_strategy']
+            assert result['by_strategy']['DIRECTIONAL']['count'] == 12
 
     def test_strategy_recommendation_ic_outperforming(self):
         """Test recommendation when Iron Condor is outperforming"""
