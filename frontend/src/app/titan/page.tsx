@@ -54,6 +54,7 @@ interface TITANStatus {
   capital: number
   starting_capital?: number
   current_equity?: number
+  unrealized_pnl?: number | null
   capital_source?: string
   total_pnl: number
   trade_count: number
