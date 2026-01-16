@@ -220,6 +220,9 @@ class ICARUSDatabase:
             ("trade_reasoning", "TEXT"),
             # Oracle advice (for audit trail)
             ("oracle_advice", "VARCHAR(50)"),
+            # Migration 023: Feedback loop enhancements
+            ("oracle_prediction_id", "INTEGER"),  # Links to oracle_predictions.id
+            ("direction_taken", "VARCHAR(10)"),   # BULLISH or BEARISH
         ]
 
         for col_name, col_type in columns_to_add:
@@ -248,6 +251,71 @@ class ICARUSDatabase:
             except Exception as e:
                 # Column might already have correct type
                 logger.debug(f"{self.bot_name}: Column type migration {col_name}: {e}")
+
+    def update_oracle_prediction_id(self, position_id: str, oracle_prediction_id: int, direction_taken: str = None) -> bool:
+        """
+        Update the oracle_prediction_id for a position after Oracle prediction is stored.
+
+        Migration 023: This links the position to the specific oracle prediction for
+        accurate outcome tracking in the feedback loop.
+
+        Args:
+            position_id: The position to update
+            oracle_prediction_id: The ID from oracle_predictions table
+            direction_taken: BULLISH or BEARISH (for directional bots)
+        """
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    UPDATE icarus_positions
+                    SET oracle_prediction_id = %s,
+                        direction_taken = COALESCE(%s, direction_taken),
+                        updated_at = NOW()
+                    WHERE position_id = %s
+                """, (oracle_prediction_id, direction_taken, position_id))
+                conn.commit()
+                if c.rowcount > 0:
+                    logger.info(f"{self.bot_name}: Linked position {position_id} to oracle_prediction_id={oracle_prediction_id}")
+                    return True
+                else:
+                    logger.warning(f"{self.bot_name}: No position found to update: {position_id}")
+                    return False
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to update oracle_prediction_id: {e}")
+            return False
+
+    def get_oracle_prediction_id(self, position_id: str) -> int | None:
+        """Get the oracle_prediction_id for a position (for outcome recording)."""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    SELECT oracle_prediction_id
+                    FROM icarus_positions
+                    WHERE position_id = %s
+                """, (position_id,))
+                row = c.fetchone()
+                return row[0] if row else None
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to get oracle_prediction_id: {e}")
+            return None
+
+    def get_direction_taken(self, position_id: str) -> str | None:
+        """Get the direction_taken for a position (for direction accuracy tracking)."""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    SELECT direction_taken
+                    FROM icarus_positions
+                    WHERE position_id = %s
+                """, (position_id,))
+                row = c.fetchone()
+                return row[0] if row else None
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to get direction_taken: {e}")
+            return None
 
     # =========================================================================
     # POSITION OPERATIONS

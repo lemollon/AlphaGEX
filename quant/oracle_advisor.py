@@ -4186,9 +4186,26 @@ class OracleAdvisor:
         self,
         prediction: OraclePrediction,
         context: MarketContext,
-        trade_date: str
-    ) -> bool:
-        """Store prediction to database for feedback loop - FULL data persistence"""
+        trade_date: str,
+        position_id: str = None,
+        strategy_recommendation: str = None
+    ) -> int:
+        """
+        Store prediction to database for feedback loop - FULL data persistence.
+
+        Args:
+            prediction: The OraclePrediction object
+            context: Market context at prediction time
+            trade_date: Date of the trade
+            position_id: Unique position ID (required for 1:1 prediction-to-position linking)
+            strategy_recommendation: IRON_CONDOR or DIRECTIONAL (Oracle's strategy advice)
+
+        Returns:
+            prediction_id (int) if successful, None if failed
+
+        Note: Per Option C, this should only be called when a position is actually opened,
+        not on every scan. This ensures 1:1 prediction-to-position mapping.
+        """
         # Helper to convert numpy types to Python native types
         def _convert_numpy(val):
             try:
@@ -4283,6 +4300,11 @@ class OracleAdvisor:
                     ("actual_pnl", "REAL"),
                     ("outcome_date", "DATE"),
                     ("prediction_time", "TIMESTAMPTZ DEFAULT NOW()"),
+                    # New columns for feedback loop enhancements
+                    ("position_id", "VARCHAR(100)"),
+                    ("strategy_recommendation", "VARCHAR(20)"),
+                    ("direction_predicted", "VARCHAR(10)"),
+                    ("direction_correct", "BOOLEAN"),
                 ]
                 for col_name, col_type in migration_columns:
                     try:
@@ -4324,6 +4346,7 @@ class OracleAdvisor:
                     }))
 
                 # Issue #3 fix: Use RETURNING to get prediction_id for outcome linking
+                # Option C: Include position_id for 1:1 prediction-to-position linking
                 cursor.execute("""
                     INSERT INTO oracle_predictions (
                         trade_date, bot_name, spot_price, vix, gex_net, gex_normalized, gex_regime,
@@ -4331,9 +4354,12 @@ class OracleAdvisor:
                         advice, win_probability, confidence, suggested_risk_pct,
                         suggested_sd_multiplier, model_version,
                         use_gex_walls, suggested_put_strike, suggested_call_strike,
-                        reasoning, top_factors, probabilities, claude_analysis
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (trade_date, bot_name) DO UPDATE SET
+                        reasoning, top_factors, probabilities, claude_analysis,
+                        position_id, strategy_recommendation
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (trade_date, bot_name)
+                    WHERE position_id IS NULL
+                    DO UPDATE SET
                         advice = EXCLUDED.advice,
                         win_probability = EXCLUDED.win_probability,
                         confidence = EXCLUDED.confidence,
@@ -4367,7 +4393,9 @@ class OracleAdvisor:
                     prediction.reasoning,
                     top_factors_json,
                     probabilities_json,
-                    claude_json
+                    claude_json,
+                    position_id,
+                    strategy_recommendation
                 ))
 
                 # Issue #3 fix: Fetch the returned prediction_id for linking
@@ -4431,13 +4459,24 @@ class OracleAdvisor:
         spot_at_exit: float = None,
         put_strike: float = None,
         call_strike: float = None,
-        prediction_id: int = None  # Issue #3: Optional direct linking by ID
+        prediction_id: int = None,  # Issue #3: Optional direct linking by ID
+        # New feedback loop parameters (Migration 023)
+        outcome_type: str = None,  # MAX_PROFIT, PUT_BREACHED, CALL_BREACHED, WIN, LOSS, etc.
+        direction_predicted: str = None,  # BULLISH or BEARISH (for directional bots)
+        direction_correct: bool = None  # Was the direction prediction correct?
     ) -> bool:
         """
         Update prediction with actual outcome and store training data for ML feedback loop.
 
         Issue #3 fix: Supports both (trade_date, bot_name) linking and direct prediction_id linking.
         The prediction_id provides a more robust link when available.
+
+        Feedback Loop Enhancement (Migration 023):
+        - outcome_type: Specific outcome classification (MAX_PROFIT, PUT_BREACHED, etc.)
+        - direction_predicted: For directional bots (ATHENA, ICARUS) - BULLISH or BEARISH
+        - direction_correct: Whether the directional prediction was correct
+
+        This data flows to Solomon for strategy-level analysis.
         """
         if not DB_AVAILABLE:
             return False
@@ -4450,26 +4489,30 @@ class OracleAdvisor:
             # If prediction_id is provided, use it for direct linking (more robust)
             # Otherwise, fall back to (trade_date, bot_name) composite key
             if prediction_id:
-                # Direct linking by prediction_id
+                # Direct linking by prediction_id - includes direction tracking (Migration 023)
                 cursor.execute("""
                     UPDATE oracle_predictions
                     SET prediction_used = TRUE,
                         actual_outcome = %s,
                         actual_pnl = %s,
-                        outcome_date = CURRENT_DATE
+                        outcome_date = CURRENT_DATE,
+                        direction_predicted = COALESCE(%s, direction_predicted),
+                        direction_correct = %s
                     WHERE id = %s
-                """, (outcome.value, actual_pnl, prediction_id))
-                logger.info(f"Updated outcome for prediction_id={prediction_id}")
+                """, (outcome.value, actual_pnl, direction_predicted, direction_correct, prediction_id))
+                logger.info(f"Updated outcome for prediction_id={prediction_id}, direction_correct={direction_correct}")
             else:
-                # Fall back to composite key linking
+                # Fall back to composite key linking - includes direction tracking (Migration 023)
                 cursor.execute("""
                     UPDATE oracle_predictions
                     SET prediction_used = TRUE,
                         actual_outcome = %s,
                         actual_pnl = %s,
-                        outcome_date = CURRENT_DATE
+                        outcome_date = CURRENT_DATE,
+                        direction_predicted = COALESCE(%s, direction_predicted),
+                        direction_correct = %s
                     WHERE trade_date = %s AND bot_name = %s
-                """, (outcome.value, actual_pnl, trade_date, bot_name.value))
+                """, (outcome.value, actual_pnl, direction_predicted, direction_correct, trade_date, bot_name.value))
 
             # Also store in oracle_training_outcomes for ML feedback loop
             # First, get the original prediction features
@@ -4512,7 +4555,7 @@ class OracleAdvisor:
                     'predicted_win_probability': win_prob,
                 })
 
-                # Create training outcomes table if needed
+                # Create training outcomes table if needed (Migration 023: added direction tracking)
                 cursor.execute("""
                     CREATE TABLE IF NOT EXISTS oracle_training_outcomes (
                         id SERIAL PRIMARY KEY,
@@ -4527,21 +4570,35 @@ class OracleAdvisor:
                         spot_at_entry REAL,
                         spot_at_exit REAL,
                         created_at TIMESTAMPTZ DEFAULT NOW(),
+                        -- Migration 023: Feedback loop enhancements
+                        strategy_type VARCHAR(20),       -- IRON_CONDOR or DIRECTIONAL
+                        outcome_type VARCHAR(30),        -- MAX_PROFIT, PUT_BREACHED, etc.
+                        direction_predicted VARCHAR(10), -- BULLISH or BEARISH
+                        direction_correct BOOLEAN,       -- Was direction prediction correct?
+                        prediction_id INTEGER,           -- Link to oracle_predictions
                         UNIQUE(trade_date, bot_name)
                     )
                 """)
 
-                # Store training outcome for ML retraining
+                # Determine strategy type from bot name
+                strategy_type = 'DIRECTIONAL' if bot_name.value in ['ATHENA', 'ICARUS'] else 'IRON_CONDOR'
+
+                # Store training outcome for ML retraining (Migration 023: added direction tracking)
                 cursor.execute("""
                     INSERT INTO oracle_training_outcomes (
                         trade_date, bot_name, features, outcome, is_win, net_pnl,
-                        put_strike, call_strike, spot_at_entry, spot_at_exit
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        put_strike, call_strike, spot_at_entry, spot_at_exit,
+                        strategy_type, outcome_type, direction_predicted, direction_correct, prediction_id
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (trade_date, bot_name) DO UPDATE SET
                         outcome = EXCLUDED.outcome,
                         is_win = EXCLUDED.is_win,
                         net_pnl = EXCLUDED.net_pnl,
-                        spot_at_exit = EXCLUDED.spot_at_exit
+                        spot_at_exit = EXCLUDED.spot_at_exit,
+                        outcome_type = EXCLUDED.outcome_type,
+                        direction_predicted = EXCLUDED.direction_predicted,
+                        direction_correct = EXCLUDED.direction_correct,
+                        prediction_id = EXCLUDED.prediction_id
                 """, (
                     trade_date,
                     bot_name.value,
@@ -4552,16 +4609,26 @@ class OracleAdvisor:
                     put_strike or pred_put,
                     call_strike or pred_call,
                     spot_at_entry,
-                    spot_at_exit
+                    spot_at_exit,
+                    strategy_type,
+                    outcome_type or outcome.value,  # Use outcome_type if provided, else use outcome
+                    direction_predicted,
+                    direction_correct,
+                    prediction_id
                 ))
 
-                # Log to live log
-                self.live_log.log("OUTCOME", f"{bot_name.value}: {outcome.value} (${actual_pnl:+.2f})", {
+                # Log to live log (Migration 023: includes direction tracking)
+                log_data = {
                     "bot": bot_name.value,
                     "outcome": outcome.value,
                     "pnl": actual_pnl,
-                    "is_win": is_win
-                })
+                    "is_win": is_win,
+                    "strategy_type": strategy_type
+                }
+                if direction_predicted:
+                    log_data["direction_predicted"] = direction_predicted
+                    log_data["direction_correct"] = direction_correct
+                self.live_log.log("OUTCOME", f"{bot_name.value}: {outcome.value} (${actual_pnl:+.2f})", log_data)
 
             conn.commit()
             conn.close()

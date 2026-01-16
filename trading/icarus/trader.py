@@ -417,7 +417,12 @@ class ICARUSTrader(MathOptimizerMixin):
         return closed_count, total_pnl
 
     def _record_oracle_outcome(self, pos: SpreadPosition, close_reason: str, pnl: float):
-        """Record trade outcome to Oracle for ML feedback loop"""
+        """
+        Record trade outcome to Oracle for ML feedback loop.
+
+        Migration 023: Enhanced to pass prediction_id and direction_correct for
+        accurate feedback loop tracking of directional strategy performance.
+        """
         if not ORACLE_AVAILABLE:
             return
 
@@ -426,21 +431,35 @@ class ICARUSTrader(MathOptimizerMixin):
 
             if pnl > 0:
                 outcome = OracleTradeOutcome.MAX_PROFIT if 'PROFIT_TARGET' in close_reason else OracleTradeOutcome.PARTIAL_PROFIT
+                outcome_type = 'WIN'
             else:
                 outcome = OracleTradeOutcome.LOSS
+                outcome_type = 'LOSS'
 
             trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
 
-            # Record to Oracle with ICARUS's own bot name for proper tracking
+            # Migration 023: Get prediction_id and direction from database
+            prediction_id = self.db.get_oracle_prediction_id(pos.position_id)
+            direction_predicted = self.db.get_direction_taken(pos.position_id)
+
+            # Migration 023: Direction is correct if trade was profitable
+            # For directional bots, profitability = direction prediction was correct
+            direction_correct = pnl > 0
+
+            # Record to Oracle with ICARUS's own bot name and enhanced feedback data
             success = oracle.update_outcome(
                 trade_date=trade_date,
                 bot_name=OracleBotName.ICARUS,
                 outcome=outcome,
                 actual_pnl=pnl,
+                prediction_id=prediction_id,  # Migration 023: Direct linking
+                outcome_type=outcome_type,  # Migration 023: Specific outcome classification
+                direction_predicted=direction_predicted,  # Migration 023: BULLISH or BEARISH
+                direction_correct=direction_correct,  # Migration 023: Was direction right?
             )
 
             if success:
-                logger.info(f"ICARUS: Recorded outcome to Oracle - {outcome.value}, P&L=${pnl:.2f}")
+                logger.info(f"ICARUS: Recorded outcome to Oracle - {outcome.value}, Dir={direction_predicted}, Correct={direction_correct}, P&L=${pnl:.2f}")
 
         except Exception as e:
             logger.warning(f"ICARUS: Oracle outcome recording failed: {e}")
@@ -543,10 +562,18 @@ class ICARUSTrader(MathOptimizerMixin):
         except Exception as e:
             logger.warning(f"ICARUS: Learning Memory outcome recording failed: {e}")
 
-    def _store_oracle_prediction(self, signal, position: SpreadPosition):
-        """Store Oracle prediction to database BEFORE trade execution."""
+    def _store_oracle_prediction(self, signal, position: SpreadPosition) -> int | None:
+        """
+        Store Oracle prediction to database AFTER position opens.
+
+        Migration 023 (Option C): This is called ONLY when a position is opened,
+        not during every scan. This ensures 1:1 prediction-to-position mapping.
+
+        Returns:
+            int: The oracle_prediction_id for linking, or None if storage failed
+        """
         if not ORACLE_AVAILABLE:
-            return
+            return None
 
         try:
             oracle = OracleAdvisor()
@@ -578,6 +605,9 @@ class ICARUSTrader(MathOptimizerMixin):
             except (KeyError, ValueError):
                 advice = TradingAdvice.TRADE_FULL
 
+            # Get direction for directional bot tracking (Migration 023)
+            direction_predicted = getattr(signal, 'direction', 'BULLISH')
+
             prediction = OraclePrediction(
                 bot_name=BotName.ICARUS,
                 advice=advice,
@@ -593,14 +623,31 @@ class ICARUSTrader(MathOptimizerMixin):
                 probabilities={},
             )
 
+            # Store to database with position_id and strategy_recommendation (Migration 023)
             trade_date = position.expiration if hasattr(position, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
-            success = oracle.store_prediction(prediction, context, trade_date)
+            prediction_id = oracle.store_prediction(
+                prediction,
+                context,
+                trade_date,
+                position_id=position.position_id,  # Migration 023: Link to specific position
+                strategy_recommendation='DIRECTIONAL'  # Migration 023: ICARUS uses Directional strategy
+            )
 
-            if success:
-                logger.info(f"ICARUS: Oracle prediction stored for {trade_date}")
+            if prediction_id and isinstance(prediction_id, int):
+                logger.info(f"ICARUS: Oracle prediction stored for {trade_date} (id={prediction_id}, Dir={direction_predicted}, Win Prob: {prediction.win_probability:.0%})")
+                # Update position in database with the oracle_prediction_id and direction
+                self.db.update_oracle_prediction_id(position.position_id, prediction_id, direction_predicted)
+                return prediction_id
+            elif prediction_id:  # True (backward compatibility)
+                logger.info(f"ICARUS: Oracle prediction stored for {trade_date} (Win Prob: {prediction.win_probability:.0%})")
+                return None
+            else:
+                logger.warning(f"ICARUS: Failed to store Oracle prediction for {trade_date}")
+                return None
 
         except Exception as e:
             logger.warning(f"ICARUS: Oracle prediction storage failed: {e}")
+            return None
 
     def _get_force_exit_time(self, now: datetime, today: str) -> datetime:
         """
