@@ -1261,15 +1261,15 @@ async def get_icarus_scan_activity_today():
 @router.get("/equity-curve")
 async def get_icarus_equity_curve(days: int = 30):
     """
-    Get ICARUS equity curve data.
+    Get ICARUS equity curve data including unrealized P&L from open positions.
 
     Args:
         days: Number of days of history (default 30)
-
-    Returns equity curve built from closed positions.
     """
     starting_capital = 100000
     today = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
+    unrealized_pnl = 0.0
+    open_positions_count = 0
 
     try:
         conn = get_connection()
@@ -1297,11 +1297,44 @@ async def get_icarus_equity_curve(days: int = 30):
             ORDER BY close_time ASC
         ''', (days,))
         rows = cursor.fetchall()
+
+        # Get open positions for unrealized P&L calculation
+        cursor.execute('''
+            SELECT position_id, spread_type, entry_debit, contracts,
+                   long_strike, short_strike, expiration, ticker
+            FROM icarus_positions
+            WHERE status = 'open'
+        ''')
+        open_positions = cursor.fetchall()
+        open_positions_count = len(open_positions)
         conn.close()
 
+        # Calculate unrealized P&L from open positions
+        if open_positions and MTM_AVAILABLE:
+            for pos in open_positions:
+                pos_id, spread_type, entry_debit, contracts, long_strike, short_strike, exp, ticker = pos
+                try:
+                    exp_str = exp.strftime('%Y-%m-%d') if hasattr(exp, 'strftime') else str(exp)
+                    mtm_result = calculate_spread_mark_to_market(
+                        underlying=ticker or 'SPY',
+                        expiration=exp_str,
+                        long_strike=float(long_strike),
+                        short_strike=float(short_strike),
+                        spread_type=spread_type or 'BEAR_PUT',
+                        contracts=int(contracts),
+                        entry_debit=float(entry_debit) if entry_debit else 0
+                    )
+                    if mtm_result and mtm_result.get('success'):
+                        pos_pnl = mtm_result.get('unrealized_pnl', 0) or 0
+                        unrealized_pnl += pos_pnl
+                except Exception as e:
+                    logger.debug(f"MTM calculation failed for {pos_id}: {e}")
+
+        equity_curve = []
+        positions_by_date = {}
+        cumulative_pnl = 0
+
         if rows:
-            equity_curve = []
-            positions_by_date = {}
             for row in rows:
                 close_date, pnl, pos_id = row
                 date_key = str(close_date) if close_date else None
@@ -1311,7 +1344,6 @@ async def get_icarus_equity_curve(days: int = 30):
                     positions_by_date[date_key].append({'pnl': float(pnl) if pnl else 0, 'id': pos_id})
 
             sorted_dates = sorted(positions_by_date.keys())
-            cumulative_pnl = 0
 
             if sorted_dates:
                 equity_curve.append({
@@ -1336,27 +1368,43 @@ async def get_icarus_equity_curve(days: int = 30):
                     "trades_closed": len(positions_by_date[date_str])
                 })
 
-            if equity_curve and equity_curve[-1]["date"] != today:
-                equity_curve.append({
-                    "date": today,
-                    "equity": round(starting_capital + cumulative_pnl, 2),
-                    "pnl": round(cumulative_pnl, 2),
-                    "daily_pnl": 0,
-                    "return_pct": round((cumulative_pnl / starting_capital) * 100, 2)
-                })
+        # Add today's entry with unrealized P&L from open positions
+        total_pnl_with_unrealized = cumulative_pnl + unrealized_pnl
+        current_equity_with_unrealized = starting_capital + total_pnl_with_unrealized
+
+        # Always add today's data point if we have open positions or closed positions
+        if open_positions_count > 0 or rows:
+            # Remove duplicate today entry if exists
+            if equity_curve and equity_curve[-1]["date"] == today:
+                equity_curve.pop()
+
+            equity_curve.append({
+                "date": today,
+                "equity": round(current_equity_with_unrealized, 2),
+                "pnl": round(total_pnl_with_unrealized, 2),
+                "realized_pnl": round(cumulative_pnl, 2),
+                "unrealized_pnl": round(unrealized_pnl, 2),
+                "daily_pnl": round(unrealized_pnl, 2),
+                "return_pct": round((total_pnl_with_unrealized / starting_capital) * 100, 2),
+                "open_positions": open_positions_count
+            })
 
             return {
                 "success": True,
                 "data": {
                     "equity_curve": equity_curve,
                     "starting_capital": starting_capital,
-                    "current_equity": round(starting_capital + cumulative_pnl, 2),
-                    "total_pnl": round(cumulative_pnl, 2),
-                    "total_return_pct": round((cumulative_pnl / starting_capital) * 100, 2),
+                    "current_equity": round(current_equity_with_unrealized, 2),
+                    "total_pnl": round(total_pnl_with_unrealized, 2),
+                    "realized_pnl": round(cumulative_pnl, 2),
+                    "unrealized_pnl": round(unrealized_pnl, 2),
+                    "total_return_pct": round((total_pnl_with_unrealized / starting_capital) * 100, 2),
                     "closed_positions_count": len(rows),
+                    "open_positions_count": open_positions_count,
                     "source": "database"
                 }
             }
+
     except Exception as db_err:
         logger.warning(f"Could not read equity curve from database: {db_err}")
 
@@ -1373,7 +1421,7 @@ async def get_icarus_equity_curve(days: int = 30):
             "starting_capital": starting_capital,
             "current_equity": starting_capital,
             "total_pnl": 0,
-            "message": "No closed positions found"
+            "message": "No positions found"
         }
     }
 
