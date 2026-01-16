@@ -1343,7 +1343,21 @@ class AutonomousTraderScheduler:
             return
 
         is_open, market_status = self.get_market_status()
-        if not is_open:
+
+        # CRITICAL FIX: Allow position management even after market close
+        # PEGASUS needs to close expiring positions up to 15 minutes after market close
+        # to handle any positions that weren't closed during the 14:50-15:00 window
+        allow_close_only = False
+        if not is_open and market_status == 'AFTER_WINDOW':
+            # Check if we're within 15 minutes of market close (15:00-15:15 CT)
+            market_close = now.replace(hour=15, minute=0, second=0, microsecond=0)
+            minutes_after_close = (now - market_close).total_seconds() / 60
+            if 0 <= minutes_after_close <= 15:
+                # Allow position management but not new entries
+                allow_close_only = True
+                logger.info(f"PEGASUS: {minutes_after_close:.0f}min after market close - running close-only cycle")
+
+        if not is_open and not allow_close_only:
             # Map market status to appropriate message
             message_mapping = {
                 'BEFORE_WINDOW': "Before trading window (8:30 AM CT)",
@@ -1373,8 +1387,8 @@ class AutonomousTraderScheduler:
             return
 
         try:
-            # Run the cycle
-            result = self.pegasus_trader.run_cycle()
+            # Run the cycle (close_only mode prevents new entries after market close)
+            result = self.pegasus_trader.run_cycle(close_only=allow_close_only)
 
             traded = result.get('trade_opened', False)
             closed = result.get('positions_closed', 0)
