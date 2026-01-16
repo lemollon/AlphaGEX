@@ -1510,12 +1510,10 @@ async def get_ares_positions():
 @router.get("/equity-curve")
 async def get_ares_equity_curve(days: int = 30):
     """
-    Get ARES equity curve data.
+    Get ARES equity curve data including unrealized P&L from open positions.
 
     Args:
         days: Number of days of history (default 30)
-
-    Returns equity curve built from closed positions.
     """
     ares = get_ares_instance()
 
@@ -1527,6 +1525,8 @@ async def get_ares_equity_curve(days: int = 30):
         starting_capital = 100000  # Default fallback
 
     today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
+    unrealized_pnl = 0.0
+    open_positions_count = 0
 
     if not ares:
         # ARES not running in this process - read from database directly
@@ -1536,7 +1536,6 @@ async def get_ares_equity_curve(days: int = 30):
             cursor = conn.cursor()
 
             # Get closed positions from database
-            # NOTE: Use DATE(close_time) since close_date column doesn't exist
             cursor.execute('''
                 SELECT DATE(close_time AT TIME ZONE 'America/Chicago') as close_date,
                        realized_pnl, position_id
@@ -1546,12 +1545,47 @@ async def get_ares_equity_curve(days: int = 30):
                 ORDER BY close_time ASC
             ''')
             rows = cursor.fetchall()
+
+            # Get open positions for unrealized P&L calculation
+            cursor.execute('''
+                SELECT position_id, total_credit, contracts,
+                       put_long_strike, put_short_strike, call_short_strike, call_long_strike,
+                       expiration
+                FROM ares_positions
+                WHERE status = 'open'
+            ''')
+            open_positions = cursor.fetchall()
+            open_positions_count = len(open_positions)
             conn.close()
 
+            # Calculate unrealized P&L from open positions using MTM
+            if open_positions and MTM_AVAILABLE:
+                for pos in open_positions:
+                    pos_id, total_credit, contracts, pl, ps, cs, cl, exp = pos
+                    try:
+                        exp_str = exp.strftime('%Y-%m-%d') if hasattr(exp, 'strftime') else str(exp)
+                        mtm_result = calculate_ic_mark_to_market(
+                            underlying='SPY',
+                            expiration=exp_str,
+                            put_short_strike=float(ps) if ps else 0,
+                            put_long_strike=float(pl) if pl else 0,
+                            call_short_strike=float(cs) if cs else 0,
+                            call_long_strike=float(cl) if cl else 0,
+                            contracts=int(contracts) if contracts else 1,
+                            entry_credit=float(total_credit) if total_credit else 0
+                        )
+                        if mtm_result and mtm_result.get('success'):
+                            pos_pnl = mtm_result.get('unrealized_pnl', 0) or 0
+                            unrealized_pnl += pos_pnl
+                    except Exception as e:
+                        logger.debug(f"ARES MTM calculation failed for {pos_id}: {e}")
+
+            # Build equity curve from database positions
+            equity_curve = []
+            positions_by_date = {}
+            cumulative_pnl = 0
+
             if rows:
-                # Build equity curve from database positions
-                equity_curve = []
-                positions_by_date = {}
                 for row in rows:
                     close_date, pnl, pos_id = row
                     date_key = str(close_date) if close_date else None
@@ -1561,7 +1595,6 @@ async def get_ares_equity_curve(days: int = 30):
                         positions_by_date[date_key].append({'pnl': float(pnl or 0), 'id': pos_id})
 
                 sorted_dates = sorted(positions_by_date.keys())
-                cumulative_pnl = 0
 
                 # Add starting point
                 if sorted_dates:
@@ -1587,28 +1620,43 @@ async def get_ares_equity_curve(days: int = 30):
                         "trades_closed": len(positions_by_date[date_str])
                     })
 
-                # Add today's point if needed
-                if equity_curve and equity_curve[-1]["date"] != today:
-                    equity_curve.append({
-                        "date": today,
-                        "equity": round(starting_capital + cumulative_pnl, 2),
-                        "pnl": round(cumulative_pnl, 2),
-                        "daily_pnl": 0,
-                        "return_pct": round((cumulative_pnl / starting_capital) * 100, 2)
-                    })
+            # Add today's entry with unrealized P&L from open positions
+            total_pnl_with_unrealized = cumulative_pnl + unrealized_pnl
+            current_equity_with_unrealized = starting_capital + total_pnl_with_unrealized
+
+            # Always add today's data point if we have open positions or closed positions
+            if open_positions_count > 0 or rows:
+                # Remove duplicate today entry if exists
+                if equity_curve and equity_curve[-1]["date"] == today:
+                    equity_curve.pop()
+
+                equity_curve.append({
+                    "date": today,
+                    "equity": round(current_equity_with_unrealized, 2),
+                    "pnl": round(total_pnl_with_unrealized, 2),
+                    "realized_pnl": round(cumulative_pnl, 2),
+                    "unrealized_pnl": round(unrealized_pnl, 2),
+                    "daily_pnl": round(unrealized_pnl, 2),
+                    "return_pct": round((total_pnl_with_unrealized / starting_capital) * 100, 2),
+                    "open_positions": open_positions_count
+                })
 
                 return {
                     "success": True,
                     "data": {
                         "equity_curve": equity_curve,
                         "starting_capital": starting_capital,
-                        "current_equity": round(starting_capital + cumulative_pnl, 2),
-                        "total_pnl": round(cumulative_pnl, 2),
-                        "total_return_pct": round((cumulative_pnl / starting_capital) * 100, 2),
-                        "closed_positions_count": len(rows),
+                        "current_equity": round(current_equity_with_unrealized, 2),
+                        "total_pnl": round(total_pnl_with_unrealized, 2),
+                        "realized_pnl": round(cumulative_pnl, 2),
+                        "unrealized_pnl": round(unrealized_pnl, 2),
+                        "total_return_pct": round((total_pnl_with_unrealized / starting_capital) * 100, 2),
+                        "closed_positions_count": len(rows) if rows else 0,
+                        "open_positions_count": open_positions_count,
                         "source": "database"
                     }
                 }
+
         except Exception as db_err:
             logger.warning(f"Could not read equity curve from database: {db_err}")
 
@@ -1635,6 +1683,30 @@ async def get_ares_equity_curve(days: int = 30):
         equity_curve = []
         cumulative_pnl = 0
 
+        # Calculate unrealized P&L from open positions
+        unrealized_pnl = 0.0
+        open_positions_count = len(ares.open_positions) if hasattr(ares, 'open_positions') else 0
+
+        if hasattr(ares, 'open_positions') and ares.open_positions and MTM_AVAILABLE:
+            for pos in ares.open_positions:
+                try:
+                    exp_str = pos.expiration if isinstance(pos.expiration, str) else str(pos.expiration)
+                    mtm_result = calculate_ic_mark_to_market(
+                        underlying='SPY',
+                        expiration=exp_str,
+                        put_short_strike=float(pos.put_short_strike) if hasattr(pos, 'put_short_strike') else 0,
+                        put_long_strike=float(pos.put_long_strike) if hasattr(pos, 'put_long_strike') else 0,
+                        call_short_strike=float(pos.call_short_strike) if hasattr(pos, 'call_short_strike') else 0,
+                        call_long_strike=float(pos.call_long_strike) if hasattr(pos, 'call_long_strike') else 0,
+                        contracts=int(pos.contracts) if hasattr(pos, 'contracts') else 1,
+                        entry_credit=float(pos.total_credit) if hasattr(pos, 'total_credit') else 0
+                    )
+                    if mtm_result and mtm_result.get('success'):
+                        pos_pnl = mtm_result.get('unrealized_pnl', 0) or 0
+                        unrealized_pnl += pos_pnl
+                except Exception as e:
+                    logger.debug(f"ARES MTM calculation failed for position: {e}")
+
         # Group positions by close date (or expiration if no close_date)
         positions_by_date = {}
         for pos in ares.closed_positions:
@@ -1651,7 +1723,6 @@ async def get_ares_equity_curve(days: int = 30):
         # Add starting point
         if sorted_dates:
             first_date = sorted_dates[0]
-            # Add day before first trade as starting point
             equity_curve.append({
                 "date": first_date,
                 "equity": starting_capital,
@@ -1674,55 +1745,48 @@ async def get_ares_equity_curve(days: int = 30):
                 "trades_closed": len(positions_by_date[date_str])
             })
 
-        # If no closed positions but we have performance data, build from that
-        if not equity_curve and ares.total_pnl != 0:
-            equity_curve.append({
-                "date": today,
-                "equity": starting_capital,
-                "pnl": 0,
-                "daily_pnl": 0,
-                "return_pct": 0
-            })
-            equity_curve.append({
-                "date": today,
-                "equity": round(starting_capital + ares.total_pnl, 2),
-                "pnl": round(ares.total_pnl, 2),
-                "daily_pnl": round(ares.total_pnl, 2),
-                "return_pct": round((ares.total_pnl / starting_capital) * 100, 2)
-            })
+        # Add today's entry with unrealized P&L
+        total_pnl_with_unrealized = cumulative_pnl + unrealized_pnl
+        current_equity_with_unrealized = starting_capital + total_pnl_with_unrealized
 
-        # Add current point if we have trades
-        if equity_curve and equity_curve[-1]["date"] != today:
-            current_equity = starting_capital + ares.total_pnl
-            equity_curve.append({
-                "date": today,
-                "equity": round(current_equity, 2),
-                "pnl": round(ares.total_pnl, 2),
-                "daily_pnl": 0,
-                "return_pct": round((ares.total_pnl / starting_capital) * 100, 2)
-            })
+        # Remove duplicate today entry if exists
+        if equity_curve and equity_curve[-1]["date"] == today:
+            equity_curve.pop()
+
+        # Add today's data point
+        equity_curve.append({
+            "date": today,
+            "equity": round(current_equity_with_unrealized, 2),
+            "pnl": round(total_pnl_with_unrealized, 2),
+            "realized_pnl": round(cumulative_pnl, 2),
+            "unrealized_pnl": round(unrealized_pnl, 2),
+            "daily_pnl": round(unrealized_pnl, 2),
+            "return_pct": round((total_pnl_with_unrealized / starting_capital) * 100, 2),
+            "open_positions": open_positions_count
+        })
 
         # Add starting point if still empty
-        if not equity_curve:
-            equity_curve.append({
+        if len(equity_curve) == 1:
+            equity_curve.insert(0, {
                 "date": today,
                 "equity": starting_capital,
                 "pnl": 0,
                 "daily_pnl": 0,
                 "return_pct": 0
             })
-
-        current_equity = starting_capital + ares.total_pnl
 
         return {
             "success": True,
             "data": {
                 "equity_curve": equity_curve,
                 "starting_capital": starting_capital,
-                "current_equity": round(current_equity, 2),
-                "total_pnl": round(ares.total_pnl, 2),
-                "total_return_pct": round((ares.total_pnl / starting_capital) * 100, 2),
-                "closed_positions_count": len(ares.closed_positions)
+                "current_equity": round(current_equity_with_unrealized, 2),
+                "total_pnl": round(total_pnl_with_unrealized, 2),
+                "realized_pnl": round(cumulative_pnl, 2),
+                "unrealized_pnl": round(unrealized_pnl, 2),
+                "total_return_pct": round((total_pnl_with_unrealized / starting_capital) * 100, 2),
+                "closed_positions_count": len(ares.closed_positions),
+                "open_positions_count": open_positions_count
             }
         }
     except Exception as e:
