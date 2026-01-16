@@ -851,6 +851,70 @@ except ImportError as e:
     logger.warning(f"Solomon enhanced features not available: {e}")
 
 
+@router.get("/strategy-analysis")
+async def get_strategy_analysis(
+    days: int = Query(30, ge=1, le=365, description="Number of days to analyze")
+):
+    """
+    Get strategy-level performance analysis (IC vs Directional).
+
+    Migration 023: Compares Iron Condor strategy performance against
+    Directional strategy performance across all bots.
+
+    Returns:
+    - Iron Condor metrics (ARES, TITAN, PEGASUS)
+    - Directional metrics (ATHENA, ICARUS)
+    - Win rate comparison
+    - Average P&L comparison
+    - Strategy recommendation
+    """
+    if not ENHANCED_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Enhanced features not available")
+
+    try:
+        enhanced = get_solomon_enhanced()
+        analysis = enhanced.get_strategy_analysis(days=days)
+
+        return {
+            "success": True,
+            **analysis
+        }
+    except Exception as e:
+        logger.error(f"Failed to get strategy analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/oracle-accuracy")
+async def get_oracle_accuracy(
+    days: int = Query(30, ge=1, le=365, description="Number of days to analyze")
+):
+    """
+    Get Oracle advice accuracy analysis.
+
+    Migration 023: Analyzes how well Oracle's recommendations correlate
+    with actual trade outcomes.
+
+    Returns:
+    - Accuracy by advice type (TRADE_FULL, TRADE_REDUCED, SKIP_TODAY)
+    - Accuracy by strategy (IC vs Directional)
+    - Summary with overall accuracy
+    """
+    if not ENHANCED_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Enhanced features not available")
+
+    try:
+        enhanced = get_solomon_enhanced()
+        accuracy = enhanced.get_oracle_accuracy(days=days)
+
+        return {
+            "success": True,
+            **accuracy
+        }
+    except Exception as e:
+        logger.error(f"Failed to get oracle accuracy: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/enhanced/analysis/{bot_name}")
 async def get_enhanced_analysis(
     bot_name: str,
