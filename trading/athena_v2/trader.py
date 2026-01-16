@@ -383,10 +383,12 @@ class ATHENATrader(MathOptimizerMixin):
 
                     # Record outcome to Solomon Enhanced for feedback loops
                     trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
-                    # Migration 023: Pass outcome_type and oracle_prediction_id for feedback loop
+                    # Migration 023: Pass outcome_type, prediction_id, and direction data for feedback loop
                     outcome_type = self._determine_outcome_type(reason, pnl)
                     prediction_id = self.db.get_oracle_prediction_id(pos.position_id)
-                    self._record_solomon_outcome(pnl, trade_date, outcome_type, prediction_id)
+                    direction_predicted = self.db.get_direction_taken(pos.position_id)
+                    direction_correct = pnl > 0  # For directional, profit = correct direction
+                    self._record_solomon_outcome(pnl, trade_date, outcome_type, prediction_id, direction_predicted, direction_correct)
 
                     # Record outcome to Thompson Sampling for capital allocation
                     self._record_thompson_outcome(pnl)
@@ -475,7 +477,9 @@ class ATHENATrader(MathOptimizerMixin):
         pnl: float,
         trade_date: str,
         outcome_type: str = None,
-        oracle_prediction_id: int = None
+        oracle_prediction_id: int = None,
+        direction_predicted: str = None,
+        direction_correct: bool = None
     ):
         """
         Record trade outcome to Solomon Enhanced for feedback loop tracking.
@@ -487,6 +491,7 @@ class ATHENATrader(MathOptimizerMixin):
         - Daily P&L monitoring (triggers kill if max loss reached)
         - Performance tracking for version comparison
         - Strategy-level analysis (Directional effectiveness)
+        - Direction accuracy tracking for directional bots
         """
         if not SOLOMON_ENHANCED_AVAILABLE or not get_solomon_enhanced:
             return
@@ -502,14 +507,16 @@ class ATHENATrader(MathOptimizerMixin):
                 # Migration 023: Enhanced feedback loop parameters
                 outcome_type=outcome_type,
                 strategy_type='DIRECTIONAL',  # ATHENA is a Directional bot
-                oracle_prediction_id=oracle_prediction_id
+                oracle_prediction_id=oracle_prediction_id,
+                direction_predicted=direction_predicted,  # Migration 023: BULLISH or BEARISH
+                direction_correct=direction_correct  # Migration 023: Was direction prediction correct?
             )
 
             if alerts:
                 for alert in alerts:
                     logger.warning(f"ATHENA Solomon Alert: {alert}")
 
-            logger.debug(f"ATHENA: Recorded outcome to Solomon Enhanced - P&L=${pnl:.2f}")
+            logger.debug(f"ATHENA: Recorded outcome to Solomon Enhanced - P&L=${pnl:.2f}, Dir={direction_predicted}, Correct={direction_correct}")
 
         except Exception as e:
             logger.warning(f"ATHENA: Solomon outcome recording failed: {e}")
@@ -1386,10 +1393,12 @@ class ATHENATrader(MathOptimizerMixin):
                 self._record_oracle_outcome(pos, reason, pnl)
                 # Record outcome to Solomon Enhanced for feedback loops
                 trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
-                # Migration 023: Pass outcome_type and oracle_prediction_id for feedback loop
+                # Migration 023: Pass outcome_type, prediction_id, and direction data for feedback loop
                 outcome_type = self._determine_outcome_type(reason, pnl)
                 prediction_id = self.db.get_oracle_prediction_id(pos.position_id)
-                self._record_solomon_outcome(pnl, trade_date, outcome_type, prediction_id)
+                direction_predicted = self.db.get_direction_taken(pos.position_id)
+                direction_correct = pnl > 0  # For directional, profit = correct direction
+                self._record_solomon_outcome(pnl, trade_date, outcome_type, prediction_id, direction_predicted, direction_correct)
                 # Record outcome to Thompson Sampling for capital allocation
                 self._record_thompson_outcome(pnl)
                 # Record outcome to Learning Memory for self-improvement
@@ -1469,10 +1478,12 @@ class ATHENATrader(MathOptimizerMixin):
 
                     # Record outcome to Solomon Enhanced for feedback loops
                     trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
-                    # Migration 023: Pass outcome_type and oracle_prediction_id for feedback loop
+                    # Migration 023: Pass outcome_type, prediction_id, and direction data for feedback loop
                     outcome_type = self._determine_outcome_type(close_reason, final_pnl)
                     prediction_id = self.db.get_oracle_prediction_id(pos.position_id)
-                    self._record_solomon_outcome(final_pnl, trade_date, outcome_type, prediction_id)
+                    direction_predicted = self.db.get_direction_taken(pos.position_id)
+                    direction_correct = final_pnl > 0  # For directional, profit = correct direction
+                    self._record_solomon_outcome(final_pnl, trade_date, outcome_type, prediction_id, direction_predicted, direction_correct)
 
                     # Record outcome to Thompson Sampling for capital allocation
                     self._record_thompson_outcome(final_pnl)
