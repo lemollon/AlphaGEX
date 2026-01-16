@@ -549,5 +549,244 @@ class TestSolomonPerformance:
             assert 66 <= perf['win_rate'] <= 67
 
 
+# =============================================================================
+# 10. MIGRATION 023 TESTS - Strategy Analysis & Oracle Accuracy
+# =============================================================================
+
+class TestMigration023StrategyAnalysis:
+    """Test Migration 023: Strategy-level analysis features"""
+
+    def test_bot_strategy_configs_exist(self):
+        """Test that BOT_STRATEGY_CONFIGS has all 5 bots"""
+        from quant.solomon_enhancements import SolomonEnhanced
+
+        configs = SolomonEnhanced.BOT_STRATEGY_CONFIGS
+
+        # Verify all 5 bots are configured
+        assert 'ARES' in configs
+        assert 'TITAN' in configs
+        assert 'PEGASUS' in configs
+        assert 'ATHENA' in configs
+        assert 'ICARUS' in configs
+
+    def test_bot_strategy_types_correct(self):
+        """Test that bots have correct strategy types"""
+        from quant.solomon_enhancements import SolomonEnhanced
+
+        configs = SolomonEnhanced.BOT_STRATEGY_CONFIGS
+
+        # Iron Condor bots
+        assert configs['ARES']['strategy_type'] == 'IRON_CONDOR'
+        assert configs['TITAN']['strategy_type'] == 'IRON_CONDOR'
+        assert configs['PEGASUS']['strategy_type'] == 'IRON_CONDOR'
+
+        # Directional bots
+        assert configs['ATHENA']['strategy_type'] == 'DIRECTIONAL'
+        assert configs['ICARUS']['strategy_type'] == 'DIRECTIONAL'
+
+    def test_get_bot_strategy_config(self):
+        """Test get_bot_strategy_config method"""
+        from quant.solomon_enhancements import SolomonEnhanced
+
+        with patch('quant.solomon_enhancements.get_solomon') as mock_get_solomon:
+            mock_get_solomon.return_value = MagicMock()
+
+            enhanced = SolomonEnhanced.__new__(SolomonEnhanced)
+            enhanced.solomon = mock_get_solomon.return_value
+            enhanced.proposal_validator = MagicMock()
+
+            config = enhanced.get_bot_strategy_config('ARES')
+            assert config['strategy_type'] == 'IRON_CONDOR'
+            assert config['goal'] == 'stability'
+
+            config = enhanced.get_bot_strategy_config('ATHENA')
+            assert config['strategy_type'] == 'DIRECTIONAL'
+            assert config['goal'] == 'movement'
+
+            # Unknown bot
+            config = enhanced.get_bot_strategy_config('UNKNOWN_BOT')
+            assert config['strategy_type'] == 'UNKNOWN'
+
+    def test_get_strategy_analysis_structure(self):
+        """Test get_strategy_analysis returns correct structure"""
+        from quant.solomon_enhancements import SolomonEnhanced
+
+        with patch('quant.solomon_enhancements.get_solomon') as mock_get_solomon, \
+             patch('quant.solomon_enhancements.get_connection') as mock_get_conn, \
+             patch('quant.solomon_enhancements.DB_AVAILABLE', True):
+
+            mock_conn = MagicMock()
+            mock_cursor = MagicMock()
+
+            # Mock Iron Condor results: (trades, wins, total_pnl, avg_pnl)
+            # Mock Directional results: (trades, wins, total_pnl, avg_pnl, direction_correct)
+            mock_cursor.fetchone.side_effect = [
+                (10, 7, 500.0, 50.0),  # IC results
+                (8, 5, 300.0, 37.5, 4)  # Directional results
+            ]
+            mock_conn.cursor.return_value = mock_cursor
+            mock_get_conn.return_value = mock_conn
+
+            enhanced = SolomonEnhanced.__new__(SolomonEnhanced)
+            enhanced.solomon = mock_get_solomon.return_value
+            enhanced.proposal_validator = MagicMock()
+
+            result = enhanced.get_strategy_analysis(days=30)
+
+            assert result['status'] == 'analyzed'
+            assert result['period_days'] == 30
+            assert 'iron_condor' in result
+            assert 'directional' in result
+            assert 'recommendation' in result
+
+            # Check IC metrics
+            assert result['iron_condor']['trades'] == 10
+            assert result['iron_condor']['wins'] == 7
+            assert result['iron_condor']['win_rate'] == 70.0
+            assert 'ARES' in result['iron_condor']['bots']
+
+            # Check Directional metrics
+            assert result['directional']['trades'] == 8
+            assert result['directional']['wins'] == 5
+            assert 'direction_accuracy' in result['directional']
+            assert 'ATHENA' in result['directional']['bots']
+
+    def test_get_oracle_accuracy_structure(self):
+        """Test get_oracle_accuracy returns correct structure"""
+        from quant.solomon_enhancements import SolomonEnhanced
+
+        with patch('quant.solomon_enhancements.get_solomon') as mock_get_solomon, \
+             patch('quant.solomon_enhancements.get_connection') as mock_get_conn, \
+             patch('quant.solomon_enhancements.DB_AVAILABLE', True):
+
+            mock_conn = MagicMock()
+            mock_cursor = MagicMock()
+
+            # Mock results: (oracle_advice, strategy_type, trades, wins, avg_pnl)
+            mock_cursor.fetchall.return_value = [
+                ('TRADE_FULL', 'IRON_CONDOR', 15, 10, 45.0),
+                ('TRADE_FULL', 'DIRECTIONAL', 12, 8, 35.0),
+                ('TRADE_REDUCED', 'IRON_CONDOR', 5, 3, 20.0),
+            ]
+            mock_conn.cursor.return_value = mock_cursor
+            mock_get_conn.return_value = mock_conn
+
+            enhanced = SolomonEnhanced.__new__(SolomonEnhanced)
+            enhanced.solomon = mock_get_solomon.return_value
+            enhanced.proposal_validator = MagicMock()
+
+            result = enhanced.get_oracle_accuracy(days=30)
+
+            assert result['status'] == 'analyzed'
+            assert result['period_days'] == 30
+            assert 'by_advice' in result
+            assert 'summary' in result
+
+            # Check TRADE_FULL analysis
+            assert 'TRADE_FULL' in result['by_advice']
+            assert 'IRON_CONDOR' in result['by_advice']['TRADE_FULL']
+            assert result['by_advice']['TRADE_FULL']['IRON_CONDOR']['trades'] == 15
+
+    def test_strategy_recommendation_ic_outperforming(self):
+        """Test recommendation when Iron Condor is outperforming"""
+        from quant.solomon_enhancements import SolomonEnhanced
+
+        enhanced = SolomonEnhanced.__new__(SolomonEnhanced)
+
+        # IC: 80% win rate, $60 avg PnL
+        ic_row = (10, 8, 600.0, 60.0)
+        # Directional: 50% win rate, $30 avg PnL
+        dir_row = (10, 5, 300.0, 30.0, 3)
+
+        recommendation = enhanced._generate_strategy_recommendation(
+            ic_row, dir_row, ic_trades=10, dir_trades=10
+        )
+
+        assert 'Iron Condor' in recommendation
+        assert 'outperforming' in recommendation
+
+    def test_strategy_recommendation_directional_outperforming(self):
+        """Test recommendation when Directional is outperforming"""
+        from quant.solomon_enhancements import SolomonEnhanced
+
+        enhanced = SolomonEnhanced.__new__(SolomonEnhanced)
+
+        # IC: 45% win rate, $20 avg PnL
+        ic_row = (10, 4, 200.0, 20.0)
+        # Directional: 75% win rate, $50 avg PnL
+        dir_row = (10, 7, 500.0, 50.0, 6)
+
+        recommendation = enhanced._generate_strategy_recommendation(
+            ic_row, dir_row, ic_trades=10, dir_trades=10
+        )
+
+        assert 'Directional' in recommendation
+        assert 'outperforming' in recommendation or 'trending' in recommendation
+
+    def test_strategy_recommendation_insufficient_data(self):
+        """Test recommendation with insufficient data"""
+        from quant.solomon_enhancements import SolomonEnhanced
+
+        enhanced = SolomonEnhanced.__new__(SolomonEnhanced)
+
+        ic_row = (3, 2, 100.0, 33.0)
+        dir_row = (2, 1, 50.0, 25.0, 1)
+
+        recommendation = enhanced._generate_strategy_recommendation(
+            ic_row, dir_row, ic_trades=3, dir_trades=2
+        )
+
+        assert 'Insufficient data' in recommendation
+
+
+class TestMigration023APIRoutes:
+    """Test Migration 023 API route definitions"""
+
+    def test_strategy_analysis_route_exists(self):
+        """Test that /strategy-analysis route is defined"""
+        from backend.api.routes.solomon_routes import router
+
+        routes = [r.path for r in router.routes]
+        assert '/strategy-analysis' in routes
+
+    def test_oracle_accuracy_route_exists(self):
+        """Test that /oracle-accuracy route is defined"""
+        from backend.api.routes.solomon_routes import router
+
+        routes = [r.path for r in router.routes]
+        assert '/oracle-accuracy' in routes
+
+
+class TestMigration023FrontendContract:
+    """Test that frontend API client matches backend expectations"""
+
+    def test_frontend_api_methods_exist(self):
+        """Test that frontend api.ts has the required methods"""
+        import os
+
+        api_file_path = os.path.join(
+            os.path.dirname(__file__),
+            '..',
+            'frontend',
+            'src',
+            'lib',
+            'api.ts'
+        )
+
+        if not os.path.exists(api_file_path):
+            pytest.skip("Frontend api.ts not found")
+
+        with open(api_file_path, 'r') as f:
+            api_content = f.read()
+
+        # Check Migration 023 methods exist
+        assert 'getSolomonStrategyAnalysis' in api_content
+        assert 'getSolomonOracleAccuracy' in api_content
+
+        # Check they call the correct endpoints
+        assert '/api/solomon/strategy-analysis' in api_content
+        assert '/api/solomon/oracle-accuracy' in api_content
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
