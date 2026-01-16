@@ -1382,20 +1382,92 @@ async def save_icarus_equity_snapshot():
         row = cursor.fetchone()
         realized_pnl = float(row[0]) if row and row[0] else 0
 
-        # Get open positions and calculate unrealized P&L
+        # Get open positions with spread info for unrealized P&L calculation
         cursor.execute("""
-            SELECT position_id, entry_price, contracts
+            SELECT position_id, spread_type, entry_debit, contracts,
+                   long_strike, short_strike, max_profit, max_loss
             FROM icarus_positions
             WHERE status = 'open'
         """)
-        open_rows = cursor.fetchall()
-        open_count = len(open_rows)
+        open_positions = cursor.fetchall()
+        open_count = len(open_positions)
 
-        for row in open_rows:
-            pos_id, entry_price, contracts = row
-            entry_val = float(entry_price) if entry_price else 0
-            num_contracts = int(contracts) if contracts else 1
-            unrealized_pnl += entry_val * 100 * num_contracts * 0.5
+        # Get current SPY price for unrealized P&L calculation
+        unrealized_pnl = 0
+        spy_price = None
+
+        # Try to get SPY price from multiple sources
+        try:
+            from data.unified_data_provider import get_price
+            spy_price = get_price("SPY")
+            if not spy_price or spy_price <= 0:
+                spx_price = get_price("SPX")
+                if spx_price and spx_price > 0:
+                    spy_price = spx_price / 10
+        except Exception:
+            pass
+
+        # Fallback to Tradier direct
+        if not spy_price or spy_price <= 0:
+            try:
+                from data.tradier_data_fetcher import TradierDataFetcher
+                import os
+                api_key = os.environ.get('TRADIER_API_KEY') or os.environ.get('TRADIER_SANDBOX_API_KEY')
+                if api_key:
+                    tradier = TradierDataFetcher(api_key=api_key, sandbox='SANDBOX' in str(os.environ.get('TRADIER_SANDBOX_API_KEY', '')))
+                    quote = tradier.get_quote('SPY')
+                    if quote and quote.get('last'):
+                        price = float(quote['last'])
+                        if price > 0:
+                            spy_price = price
+            except Exception as e:
+                logger.debug(f"Tradier price fetch failed: {e}")
+
+        # Calculate unrealized P&L if we have price
+        if spy_price and spy_price > 0 and open_positions:
+            for pos in open_positions:
+                pos_id, spread_type, entry_debit, contracts, long_strike, short_strike, max_profit, max_loss = pos
+                entry_debit = float(entry_debit or 0)
+                contracts = int(contracts or 1)
+                long_strike = float(long_strike or 0)
+                short_strike = float(short_strike or 0)
+                max_profit = float(max_profit or 0)
+                max_loss = float(max_loss or entry_debit * 100)
+
+                spread_type_upper = (spread_type or '').upper()
+                spread_width = abs(short_strike - long_strike)
+
+                # Calculate current spread value based on type and price
+                if 'BULL' in spread_type_upper or 'CALL' in spread_type_upper:
+                    # Bull spread profits when price goes up
+                    if spy_price >= short_strike:
+                        # Max profit zone
+                        current_value = spread_width
+                    elif spy_price <= long_strike:
+                        # Max loss zone - spread worthless
+                        current_value = 0
+                    else:
+                        # In between - partial value
+                        current_value = max(0, spy_price - long_strike)
+                else:
+                    # Bear spread profits when price goes down
+                    if spy_price <= short_strike:
+                        # Max profit zone
+                        current_value = spread_width
+                    elif spy_price >= long_strike:
+                        # Max loss zone - spread worthless
+                        current_value = 0
+                    else:
+                        # In between - partial value
+                        current_value = max(0, long_strike - spy_price)
+
+                # Unrealized = (current_value - entry_debit) * 100 * contracts
+                pos_unrealized = (current_value - entry_debit) * 100 * contracts
+                # Cap at max profit/loss
+                pos_unrealized = max(-max_loss, min(max_profit * contracts, pos_unrealized))
+                unrealized_pnl += pos_unrealized
+
+            logger.debug(f"ICARUS: Calculated unrealized P&L: ${unrealized_pnl:.2f} using SPY ${spy_price:.2f}")
 
         current_equity = starting_capital + realized_pnl + unrealized_pnl
 

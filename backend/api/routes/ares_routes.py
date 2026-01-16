@@ -331,30 +331,51 @@ def _calculate_live_unrealized_pnl() -> dict:
     }
 
     try:
-        # Get current underlying price from Tradier
+        # Get current underlying price from multiple sources
         current_price = None
-        if TRADIER_AVAILABLE and TradierDataFetcher:
-            try:
-                from unified_config import APIConfig
-                api_key = APIConfig.TRADIER_SANDBOX_API_KEY
-                account_id = APIConfig.TRADIER_SANDBOX_ACCOUNT_ID
-                if api_key and account_id:
-                    tradier = TradierDataFetcher(api_key=api_key, account_id=account_id, sandbox=True)
-                    quote = tradier.get_quote('SPY')
-                    if quote:
-                        current_price = quote.get('last') or quote.get('close')
-            except Exception as e:
-                logger.warning(f"Could not get SPY quote: {e}")
 
-        # Fallback: try unified data provider
-        if not current_price:
-            try:
-                from data.unified_data_provider import get_price
-                current_price = get_price('SPY')
-            except Exception:
-                pass
+        # Try unified data provider first
+        try:
+            from data.unified_data_provider import get_price
+            current_price = get_price('SPY')
+            if not current_price or current_price <= 0:
+                current_price = None
+        except Exception:
+            pass
 
-        if not current_price:
+        # Fallback to Tradier direct
+        if not current_price or current_price <= 0:
+            if TRADIER_AVAILABLE and TradierDataFetcher:
+                try:
+                    from unified_config import APIConfig
+                    api_key = APIConfig.TRADIER_SANDBOX_API_KEY
+                    account_id = APIConfig.TRADIER_SANDBOX_ACCOUNT_ID
+                    if api_key and account_id:
+                        tradier = TradierDataFetcher(api_key=api_key, account_id=account_id, sandbox=True)
+                        quote = tradier.get_quote('SPY')
+                        if quote:
+                            price = quote.get('last') or quote.get('close')
+                            if price and float(price) > 0:
+                                current_price = float(price)
+                except Exception as e:
+                    logger.warning(f"Could not get SPY quote from Tradier: {e}")
+
+            # Try Tradier with env vars as final fallback
+            if not current_price or current_price <= 0:
+                try:
+                    import os
+                    api_key = os.environ.get('TRADIER_API_KEY') or os.environ.get('TRADIER_SANDBOX_API_KEY')
+                    if api_key:
+                        tradier = TradierDataFetcher(api_key=api_key, sandbox='SANDBOX' in str(os.environ.get('TRADIER_SANDBOX_API_KEY', '')))
+                        quote = tradier.get_quote('SPY')
+                        if quote and quote.get('last'):
+                            price = float(quote['last'])
+                            if price > 0:
+                                current_price = price
+                except Exception:
+                    pass
+
+        if not current_price or current_price <= 0:
             result['error'] = 'Could not fetch current SPY price'
             return result
 

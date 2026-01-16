@@ -1014,20 +1014,80 @@ async def save_titan_equity_snapshot():
         row = cursor.fetchone()
         realized_pnl = float(row[0]) if row and row[0] else 0
 
-        # Get open positions and calculate unrealized P&L
+        # Get open positions with strike information for unrealized P&L calculation
         cursor.execute("""
-            SELECT position_id, entry_credit, contracts
+            SELECT position_id, entry_credit, contracts, spread_width,
+                   put_short_strike, call_short_strike
             FROM titan_positions
             WHERE status = 'open'
         """)
-        open_rows = cursor.fetchall()
-        open_count = len(open_rows)
+        open_positions = cursor.fetchall()
+        open_count = len(open_positions)
 
-        for row in open_rows:
-            pos_id, entry_credit, contracts = row
-            entry_val = float(entry_credit) if entry_credit else 0
-            num_contracts = int(contracts) if contracts else 1
-            unrealized_pnl += entry_val * 100 * num_contracts * 0.5
+        # Get current SPX price for unrealized P&L calculation
+        unrealized_pnl = 0
+        spx_price = None
+
+        # Try to get SPX price from multiple sources
+        try:
+            from data.unified_data_provider import get_price
+            spx_price = get_price("SPX")
+            if not spx_price or spx_price <= 0:
+                spy_price = get_price("SPY")
+                if spy_price and spy_price > 0:
+                    spx_price = spy_price * 10
+        except Exception:
+            pass
+
+        # Fallback to Tradier direct
+        if not spx_price or spx_price <= 0:
+            try:
+                from data.tradier_data_fetcher import TradierDataFetcher
+                import os
+                api_key = os.environ.get('TRADIER_API_KEY') or os.environ.get('TRADIER_SANDBOX_API_KEY')
+                if api_key:
+                    tradier = TradierDataFetcher(api_key=api_key, sandbox='SANDBOX' in str(os.environ.get('TRADIER_SANDBOX_API_KEY', '')))
+                    for symbol in ['SPX', 'SPY']:
+                        quote = tradier.get_quote(symbol)
+                        if quote and quote.get('last'):
+                            price = float(quote['last'])
+                            if price > 0:
+                                spx_price = price if symbol == 'SPX' else price * 10
+                                break
+            except Exception as e:
+                logger.debug(f"Tradier price fetch failed: {e}")
+
+        # Calculate unrealized P&L if we have price
+        if spx_price and spx_price > 0 and open_positions:
+            for pos in open_positions:
+                pos_id, entry_credit, contracts, spread_width, put_short, call_short = pos
+                entry_credit = float(entry_credit or 0)
+                contracts = int(contracts or 0)
+                spread_width = float(spread_width or 10)
+                put_short = float(put_short or 0)
+                call_short = float(call_short or 0)
+
+                # Estimate current IC value based on where SPX is relative to strikes
+                if put_short < spx_price < call_short:
+                    # Safe zone - IC worth fraction of credit
+                    put_dist = (spx_price - put_short) / spread_width
+                    call_dist = (call_short - spx_price) / spread_width
+                    factor = min(put_dist, call_dist) / 2
+                    current_value = entry_credit * max(0.1, 0.5 - factor * 0.3)
+                elif spx_price <= put_short:
+                    # Below put short - losing money
+                    intrinsic = put_short - spx_price
+                    current_value = min(spread_width, intrinsic + entry_credit * 0.2)
+                else:
+                    # Above call short - losing money
+                    intrinsic = spx_price - call_short
+                    current_value = min(spread_width, intrinsic + entry_credit * 0.2)
+
+                # Unrealized = (credit received - cost to close) * 100 * contracts
+                pos_unrealized = (entry_credit - current_value) * 100 * contracts
+                unrealized_pnl += pos_unrealized
+
+            logger.debug(f"TITAN: Calculated unrealized P&L: ${unrealized_pnl:.2f} using SPX ${spx_price:.2f}")
 
         current_equity = starting_capital + realized_pnl + unrealized_pnl
 
