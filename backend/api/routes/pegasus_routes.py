@@ -26,6 +26,20 @@ except ImportError:
 router = APIRouter(prefix="/api/pegasus", tags=["PEGASUS"])
 logger = logging.getLogger(__name__)
 
+# Import mark-to-market utility for real option pricing
+MTM_AVAILABLE = False
+try:
+    from trading.mark_to_market import (
+        calculate_ic_mark_to_market,
+        build_occ_symbol,
+        get_option_quotes_batch,
+        clear_quote_cache
+    )
+    MTM_AVAILABLE = True
+    logger.info("Mark-to-market utility loaded for PEGASUS")
+except ImportError as e:
+    logger.debug(f"Mark-to-market import failed: {e}")
+
 # Try to import Tradier for account balance (same pattern as ARES)
 TradierDataFetcher = None
 TRADIER_AVAILABLE = False
@@ -68,6 +82,154 @@ def _resolve_query_param(param, default=None):
         return param.default if param.default is not None else default
     # Otherwise return the value as-is
     return param
+
+
+def _calculate_pegasus_unrealized_pnl(positions: list) -> dict:
+    """
+    Calculate unrealized P&L for PEGASUS positions using mark-to-market pricing.
+
+    Fetches real option quotes from Tradier and calculates actual cost to close
+    each position. Falls back to estimation if quotes unavailable.
+
+    Args:
+        positions: List of position tuples from database query with columns:
+                   (position_id, total_credit, contracts, spread_width,
+                    put_short_strike, put_long_strike, call_short_strike, call_long_strike,
+                    expiration)
+
+    Returns:
+        Dict with:
+        - total_unrealized_pnl: float
+        - positions: list of position details with individual P&L
+        - method: 'mark_to_market' or 'estimation'
+        - pricing_source: description of data source
+    """
+    result = {
+        'total_unrealized_pnl': 0,
+        'positions': [],
+        'method': 'estimation',
+        'pricing_source': 'estimated',
+        'mtm_success_count': 0,
+        'mtm_fail_count': 0
+    }
+
+    if not positions:
+        return result
+
+    total_unrealized = 0
+
+    for pos in positions:
+        pos_id, total_credit, contracts, spread_width, put_short, put_long, call_short, call_long, expiration = pos
+        total_credit = float(total_credit or 0)
+        contracts = int(contracts or 1)
+        spread_width = float(spread_width or 10)
+        put_short = float(put_short or 0)
+        put_long = float(put_long or 0)
+        call_short = float(call_short or 0)
+        call_long = float(call_long or 0)
+
+        pos_result = {
+            'position_id': pos_id,
+            'unrealized_pnl': 0,
+            'method': 'estimation',
+            'current_value': None
+        }
+
+        # Try mark-to-market first
+        if MTM_AVAILABLE and expiration:
+            try:
+                exp_str = expiration.strftime('%Y-%m-%d') if hasattr(expiration, 'strftime') else str(expiration)
+                mtm = calculate_ic_mark_to_market(
+                    underlying='SPX',
+                    expiration=exp_str,
+                    put_short_strike=put_short,
+                    put_long_strike=put_long,
+                    call_short_strike=call_short,
+                    call_long_strike=call_long,
+                    contracts=contracts,
+                    entry_credit=total_credit,
+                    use_cache=True
+                )
+
+                if mtm['success']:
+                    pos_result['unrealized_pnl'] = mtm['unrealized_pnl']
+                    pos_result['current_value'] = mtm['current_value']
+                    pos_result['method'] = 'mark_to_market'
+                    pos_result['leg_prices'] = mtm.get('leg_prices')
+                    result['mtm_success_count'] += 1
+                    total_unrealized += mtm['unrealized_pnl']
+                    result['positions'].append(pos_result)
+                    continue
+                else:
+                    result['mtm_fail_count'] += 1
+                    logger.debug(f"MTM failed for {pos_id}: {mtm.get('error')}")
+            except Exception as e:
+                result['mtm_fail_count'] += 1
+                logger.debug(f"MTM exception for {pos_id}: {e}")
+
+        # Fallback to estimation based on underlying price
+        try:
+            from data.unified_data_provider import get_price
+            spx_price = get_price("SPX")
+            if not spx_price or spx_price <= 0:
+                spy_price = get_price("SPY")
+                if spy_price and spy_price > 0:
+                    spx_price = spy_price * 10
+        except Exception:
+            spx_price = None
+
+        if not spx_price or spx_price <= 0:
+            # Try Tradier direct
+            try:
+                import os
+                from data.tradier_data_fetcher import TradierDataFetcher as TDF
+                api_key = os.environ.get('TRADIER_API_KEY') or os.environ.get('TRADIER_SANDBOX_API_KEY')
+                if api_key:
+                    tradier = TDF(api_key=api_key, sandbox='SANDBOX' in str(os.environ.get('TRADIER_SANDBOX_API_KEY', '')))
+                    quote = tradier.get_quote('SPX')
+                    if quote and quote.get('last'):
+                        spx_price = float(quote['last'])
+            except Exception:
+                pass
+
+        if spx_price and spx_price > 0:
+            # Estimate IC value based on underlying price
+            if put_short < spx_price < call_short:
+                # Safe zone
+                put_dist = (spx_price - put_short) / spread_width
+                call_dist = (call_short - spx_price) / spread_width
+                factor = min(put_dist, call_dist) / 2
+                current_value = total_credit * max(0.1, 0.5 - factor * 0.3)
+            elif spx_price <= put_short:
+                intrinsic = put_short - spx_price
+                current_value = min(spread_width, intrinsic + total_credit * 0.2)
+            else:
+                intrinsic = spx_price - call_short
+                current_value = min(spread_width, intrinsic + total_credit * 0.2)
+
+            pos_unrealized = (total_credit - current_value) * 100 * contracts
+            pos_result['unrealized_pnl'] = round(pos_unrealized, 2)
+            pos_result['current_value'] = round(current_value, 4)
+            pos_result['underlying_price'] = spx_price
+            total_unrealized += pos_unrealized
+
+        result['positions'].append(pos_result)
+
+    result['total_unrealized_pnl'] = round(total_unrealized, 2)
+
+    # Set method based on success rate
+    if result['mtm_success_count'] > 0:
+        if result['mtm_fail_count'] == 0:
+            result['method'] = 'mark_to_market'
+            result['pricing_source'] = 'Tradier real-time option quotes'
+        else:
+            result['method'] = 'mixed'
+            result['pricing_source'] = f"MTM: {result['mtm_success_count']}, estimated: {result['mtm_fail_count']}"
+    else:
+        result['method'] = 'estimation'
+        result['pricing_source'] = 'estimated from underlying price'
+
+    return result
 
 
 # Try to import PEGASUS trader
@@ -430,9 +592,13 @@ async def get_pegasus_status():
         # Calculate current_equity = starting_capital + realized + unrealized (matches equity curve)
         starting_capital = 200000  # PEGASUS starting capital
         total_pnl = status.get('total_pnl', 0)
-        unrealized_pnl = status.get('unrealized_pnl', 0)
+        unrealized_pnl = status.get('unrealized_pnl')  # Can be None if no live pricing
         status['starting_capital'] = starting_capital
-        status['current_equity'] = round(starting_capital + total_pnl + unrealized_pnl, 2)
+        # Only include unrealized in equity if we have live pricing
+        if unrealized_pnl is not None:
+            status['current_equity'] = round(starting_capital + total_pnl + unrealized_pnl, 2)
+        else:
+            status['current_equity'] = round(starting_capital + total_pnl, 2)
 
         return {
             "success": True,
@@ -881,34 +1047,29 @@ async def get_pegasus_intraday_equity(date: str = None):
         today_realized = float(today_row[0]) if today_row and today_row[0] else 0
         today_closed_count = int(today_row[1]) if today_row and today_row[1] else 0
 
-        # Calculate unrealized P&L from open positions
+        # Calculate unrealized P&L from open positions using mark-to-market pricing
         unrealized_pnl = 0
         open_positions = []
+        pricing_method = 'estimation'
+
         try:
-            # NOTE: PEGASUS uses total_credit, not entry_credit
+            # Query positions with all fields needed for MTM calculation
             cursor.execute("""
                 SELECT position_id, total_credit, contracts, spread_width,
-                       call_short_strike, call_long_strike, put_short_strike, put_long_strike
+                       put_short_strike, put_long_strike, call_short_strike, call_long_strike,
+                       expiration
                 FROM pegasus_positions
                 WHERE status = 'open'
             """)
             open_rows = cursor.fetchall()
 
-            for row in open_rows:
-                pos_id, total_credit, contracts, spread_width, cs_strike, cl_strike, ps_strike, pl_strike = row
-                credit_val = float(total_credit) if total_credit else 0
-                num_contracts = int(contracts) if contracts else 1
-                spread_w = float(spread_width) if spread_width else 10
-
-                # Without live pricing, assume conservative 0 unrealized
-                # The actual P&L comes from the PEGASUS trader's live-pnl endpoint
-                current_unrealized = 0
-
-                open_positions.append({
-                    "position_id": pos_id,
-                    "unrealized_pnl": round(current_unrealized, 2)
-                })
-                unrealized_pnl += current_unrealized
+            if open_rows:
+                # Use the MTM helper function for real option pricing
+                mtm_result = _calculate_pegasus_unrealized_pnl(open_rows)
+                unrealized_pnl = mtm_result['total_unrealized_pnl']
+                open_positions = mtm_result['positions']
+                pricing_method = mtm_result['method']
+                logger.debug(f"PEGASUS intraday: unrealized=${unrealized_pnl:.2f} via {pricing_method}")
         except Exception as e:
             logger.warning(f"Error calculating unrealized P&L: {e}")
 
@@ -1053,17 +1214,25 @@ async def save_pegasus_equity_snapshot():
         row = cursor.fetchone()
         realized_pnl = float(row[0]) if row and row[0] else 0
 
-        # Get open positions and calculate unrealized P&L
-        # NOTE: PEGASUS uses total_credit, not entry_credit
-        # For proper unrealized, we'd need live SPX pricing - using 0 for conservative snapshot
+        # Get open positions and calculate unrealized P&L using mark-to-market
         cursor.execute("""
-            SELECT COUNT(*) FROM pegasus_positions WHERE status = 'open'
+            SELECT position_id, total_credit, contracts, spread_width,
+                   put_short_strike, put_long_strike, call_short_strike, call_long_strike,
+                   expiration
+            FROM pegasus_positions WHERE status = 'open'
         """)
-        open_count = cursor.fetchone()[0] or 0
+        open_positions = cursor.fetchall()
+        open_count = len(open_positions)
 
-        # NOTE: Unrealized P&L requires live pricing which API endpoint doesn't have
-        # The scheduler's equity_snapshots job uses bot instances to get actual unrealized
+        # Calculate unrealized P&L using MTM helper
         unrealized_pnl = 0
+        pricing_method = 'estimation'
+
+        if open_positions:
+            mtm_result = _calculate_pegasus_unrealized_pnl(open_positions)
+            unrealized_pnl = mtm_result['total_unrealized_pnl']
+            pricing_method = mtm_result['method']
+            logger.debug(f"PEGASUS snapshot: unrealized=${unrealized_pnl:.2f} via {pricing_method}")
 
         current_equity = starting_capital + realized_pnl + unrealized_pnl
 
@@ -1237,6 +1406,7 @@ async def get_pegasus_live_pnl():
             conn = get_connection()
             cursor = conn.cursor()
 
+            # Query positions with all fields needed for MTM
             cursor.execute('''
                 SELECT
                     position_id, expiration,
@@ -1259,12 +1429,42 @@ async def get_pegasus_live_pnl():
             today_realized = float(realized_row[0]) if realized_row else 0
             conn.close()
 
+            # Calculate unrealized P&L using MTM
             positions = []
+            total_unrealized = 0.0
+            mtm_method = 'estimation'
+
             for row in open_rows:
                 (pos_id, exp, put_long, put_short, call_short, call_long,
                  credit, contracts, max_loss, spread_width, entry_price, vix_entry) = row
 
-                credit_received = float(credit or 0) * 100 * (contracts or 0)
+                credit_val = float(credit or 0)
+                contracts_val = int(contracts or 0)
+                credit_received = credit_val * 100 * contracts_val
+                pos_unrealized = None
+                method = 'estimation'
+
+                # Try MTM for this position
+                if MTM_AVAILABLE and exp and put_short and put_long and call_short and call_long:
+                    try:
+                        mtm_result = calculate_ic_mark_to_market(
+                            underlying='SPX',
+                            expiration=str(exp),
+                            put_short_strike=float(put_short),
+                            put_long_strike=float(put_long),
+                            call_short_strike=float(call_short),
+                            call_long_strike=float(call_long),
+                            contracts=contracts_val,
+                            entry_credit=credit_val,
+                            use_cache=True
+                        )
+                        if mtm_result.get('success') and mtm_result.get('unrealized_pnl') is not None:
+                            pos_unrealized = mtm_result['unrealized_pnl']
+                            total_unrealized += pos_unrealized
+                            method = 'mark_to_market'
+                            mtm_method = 'mark_to_market'
+                    except Exception as e:
+                        logger.debug(f"PEGASUS live-pnl MTM failed for {pos_id}: {e}")
 
                 positions.append({
                     'position_id': pos_id,
@@ -1274,24 +1474,28 @@ async def get_pegasus_live_pnl():
                     'call_short_strike': float(call_short) if call_short else 0,
                     'call_long_strike': float(call_long) if call_long else 0,
                     'credit_received': round(credit_received, 2),
-                    'contracts': contracts or 0,
-                    'max_loss': round(float(max_loss or 0) * 100 * (contracts or 0), 2),
+                    'contracts': contracts_val,
+                    'max_loss': round(float(max_loss or 0) * 100 * contracts_val, 2),
                     'underlying_at_entry': float(entry_price) if entry_price else 0,
                     'vix_at_entry': float(vix_entry) if vix_entry else 0,
-                    'unrealized_pnl': None,
-                    'note': 'Live valuation requires PEGASUS worker'
+                    'unrealized_pnl': round(pos_unrealized, 2) if pos_unrealized is not None else None,
+                    'method': method
                 })
+
+            # Use MTM total if we got any successful MTM calculations
+            final_unrealized = round(total_unrealized, 2) if mtm_method == 'mark_to_market' else None
 
             return {
                 "success": True,
                 "data": {
-                    "total_unrealized_pnl": None,
+                    "total_unrealized_pnl": final_unrealized,
                     "total_realized_pnl": round(today_realized, 2),
-                    "net_pnl": round(today_realized, 2),
+                    "net_pnl": round(today_realized + (final_unrealized or 0), 2) if final_unrealized is not None else round(today_realized, 2),
                     "positions": positions,
                     "position_count": len(positions),
                     "source": "database",
-                    "message": "Open positions loaded from DB - live valuation requires PEGASUS worker"
+                    "method": mtm_method,
+                    "message": "Live valuation via mark-to-market" if mtm_method == 'mark_to_market' else "MTM unavailable - estimation fallback"
                 }
             }
         except Exception as db_err:
@@ -1313,23 +1517,33 @@ async def get_pegasus_live_pnl():
         status = pegasus.get_status()
         positions = pegasus.get_positions()
 
+        # unrealized_pnl is None when live pricing unavailable
+        unrealized_pnl = status.get('unrealized_pnl')
+        has_live_pricing = status.get('has_live_pricing', False)
+
+        # net_pnl = realized + unrealized (but only if unrealized is available)
+        net_pnl = unrealized_pnl if unrealized_pnl is not None else None
+
         return {
             "success": True,
             "data": {
-                "total_unrealized_pnl": status.get('unrealized_pnl', 0),
+                "total_unrealized_pnl": unrealized_pnl,
                 "total_realized_pnl": 0,
-                "net_pnl": status.get('unrealized_pnl', 0),
+                "net_pnl": net_pnl,
+                "has_live_pricing": has_live_pricing,
                 "positions": [
                     {
                         'position_id': p.position_id,
                         'expiration': p.expiration,
                         'credit_received': p.total_credit * 100 * p.contracts,
                         'contracts': p.contracts,
-                        'status': p.status.value
+                        'status': p.status.value,
+                        'unrealized_pnl': None  # Individual position P&L requires live pricing
                     }
                     for p in positions
                 ],
-                "position_count": len(positions)
+                "position_count": len(positions),
+                "note": "Live pricing available" if has_live_pricing else "Live pricing unavailable - unrealized P&L cannot be calculated"
             }
         }
     except Exception as e:

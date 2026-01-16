@@ -47,8 +47,122 @@ except ImportError:
     DECISION_LOGGER_AVAILABLE = False
     export_decisions_json = None
 
+# Import mark-to-market module for real option pricing
+MTM_AVAILABLE = False
+try:
+    from trading.mark_to_market import (
+        calculate_spread_mark_to_market,
+        build_occ_symbol,
+        get_option_quotes_batch,
+        clear_quote_cache
+    )
+    MTM_AVAILABLE = True
+    logger.debug("ATHENA: Mark-to-market module loaded successfully")
+except ImportError as e:
+    logger.debug(f"ATHENA: Mark-to-market import failed (estimation fallback will be used): {e}")
+
 router = APIRouter(prefix="/api/athena", tags=["ATHENA"])
 logger = logging.getLogger(__name__)
+
+
+def _calculate_athena_unrealized_pnl(positions: list, spy_price: float = None) -> dict:
+    """
+    Calculate unrealized P&L for ATHENA open positions using real option quotes.
+
+    ATHENA trades directional spreads (Bull Call / Bear Put) on SPY.
+
+    Args:
+        positions: List of position tuples from DB query with fields:
+                   (position_id, spread_type, entry_debit, contracts,
+                    long_strike, short_strike, max_profit, max_loss, expiration)
+        spy_price: Current SPY price for estimation fallback
+
+    Returns:
+        Dict with total_unrealized_pnl, position_details, and method used
+    """
+    total_unrealized = 0.0
+    position_details = []
+    mtm_success_count = 0
+    estimation_count = 0
+
+    for pos in positions:
+        pos_id, spread_type, entry_debit, contracts, long_strike, short_strike, max_profit, max_loss, expiration = pos
+        entry_debit = float(entry_debit or 0)
+        contracts = int(contracts or 1)
+        long_strike = float(long_strike or 0)
+        short_strike = float(short_strike or 0)
+        max_profit = float(max_profit or 0)
+        max_loss = float(max_loss or entry_debit * 100)
+        spread_type_upper = (spread_type or '').upper()
+        spread_width = abs(short_strike - long_strike)
+
+        pos_unrealized = 0.0
+        method = 'estimation'
+
+        # Try mark-to-market first using real option quotes
+        if MTM_AVAILABLE and expiration:
+            try:
+                # Format expiration as string
+                exp_str = str(expiration) if not isinstance(expiration, str) else expiration
+
+                mtm_result = calculate_spread_mark_to_market(
+                    underlying='SPY',
+                    expiration=exp_str,
+                    long_strike=long_strike,
+                    short_strike=short_strike,
+                    spread_type=spread_type,  # e.g., 'BULL_CALL', 'BEAR_PUT'
+                    contracts=contracts,
+                    entry_debit=entry_debit,
+                    use_cache=True
+                )
+
+                if mtm_result.get('success') and mtm_result.get('unrealized_pnl') is not None:
+                    pos_unrealized = mtm_result['unrealized_pnl']
+                    method = 'mark_to_market'
+                    mtm_success_count += 1
+                    logger.debug(f"ATHENA MTM: {pos_id} unrealized=${pos_unrealized:.2f}")
+            except Exception as e:
+                logger.debug(f"ATHENA MTM failed for {pos_id}: {e}")
+
+        # Fallback to estimation if MTM failed
+        if method == 'estimation' and spy_price and spy_price > 0 and long_strike and short_strike:
+            estimation_count += 1
+            # Calculate current spread value based on type and price
+            if 'BULL' in spread_type_upper or 'CALL' in spread_type_upper:
+                # Bull spread profits when price goes up
+                if spy_price >= short_strike:
+                    current_value = spread_width
+                elif spy_price <= long_strike:
+                    current_value = 0
+                else:
+                    current_value = max(0, spy_price - long_strike)
+            else:
+                # Bear spread profits when price goes down
+                if spy_price <= short_strike:
+                    current_value = spread_width
+                elif spy_price >= long_strike:
+                    current_value = 0
+                else:
+                    current_value = max(0, long_strike - spy_price)
+
+            pos_unrealized = (current_value - entry_debit) * 100 * contracts
+            pos_unrealized = max(-max_loss, min(max_profit * contracts, pos_unrealized))
+
+        total_unrealized += pos_unrealized
+        position_details.append({
+            'position_id': pos_id,
+            'spread_type': spread_type,
+            'unrealized_pnl': round(pos_unrealized, 2),
+            'method': method
+        })
+
+    return {
+        'total_unrealized_pnl': round(total_unrealized, 2),
+        'position_details': position_details,
+        'mtm_count': mtm_success_count,
+        'estimation_count': estimation_count,
+        'primary_method': 'mark_to_market' if mtm_success_count > estimation_count else 'estimation'
+    }
 
 
 def _resolve_query_param(param, default=None):
@@ -381,9 +495,13 @@ async def get_athena_status():
         # Calculate current_equity = starting_capital + realized + unrealized (matches equity curve)
         starting_capital = 100000
         total_pnl = status.get('total_pnl', 0)
-        unrealized_pnl = status.get('unrealized_pnl', 0)
+        unrealized_pnl = status.get('unrealized_pnl')  # Can be None if no live pricing
         status['starting_capital'] = starting_capital
-        status['current_equity'] = round(starting_capital + total_pnl + unrealized_pnl, 2)
+        # Only include unrealized in equity if we have live pricing
+        if unrealized_pnl is not None:
+            status['current_equity'] = round(starting_capital + total_pnl + unrealized_pnl, 2)
+        else:
+            status['current_equity'] = round(starting_capital + total_pnl, 2)
 
         return {
             "success": True,
@@ -1355,8 +1473,11 @@ async def get_athena_live_pnl():
             today_realized = float(realized_row[0]) if realized_row else 0
             conn.close()
 
-            # Format open positions with entry context
+            # Format open positions with entry context and calculate MTM
             positions = []
+            total_unrealized = 0.0
+            mtm_method = 'estimation'
+
             for row in open_rows:
                 (pos_id, spread_type, open_time, exp, long_strike, short_strike,
                  entry_debit, contracts, max_profit, max_loss, underlying_at_entry,
@@ -1376,18 +1497,46 @@ async def get_athena_live_pnl():
                 # Determine direction from spread type
                 direction = 'BULLISH' if spread_type and 'BULL' in spread_type.upper() else 'BEARISH'
 
+                # Calculate unrealized P&L using MTM
+                pos_unrealized = None
+                method = 'estimation'
+                entry_debit_val = float(entry_debit) if entry_debit else 0
+                contracts_val = int(contracts) if contracts else 0
+                long_strike_val = float(long_strike) if long_strike else 0
+                short_strike_val = float(short_strike) if short_strike else 0
+
+                if MTM_AVAILABLE and exp and long_strike_val and short_strike_val:
+                    try:
+                        mtm_result = calculate_spread_mark_to_market(
+                            underlying='SPY',
+                            expiration=str(exp),
+                            long_strike=long_strike_val,
+                            short_strike=short_strike_val,
+                            spread_type=spread_type or 'BULL_CALL',
+                            contracts=contracts_val,
+                            entry_debit=entry_debit_val,
+                            use_cache=True
+                        )
+                        if mtm_result.get('success') and mtm_result.get('unrealized_pnl') is not None:
+                            pos_unrealized = mtm_result['unrealized_pnl']
+                            total_unrealized += pos_unrealized
+                            method = 'mark_to_market'
+                            mtm_method = 'mark_to_market'
+                    except Exception as e:
+                        logger.debug(f"ATHENA live-pnl MTM failed for {pos_id}: {e}")
+
                 positions.append({
                     'position_id': pos_id,
                     'spread_type': spread_type,
                     'open_date': str(open_time) if open_time else None,
                     'expiration': str(exp) if exp else None,
-                    'long_strike': float(long_strike) if long_strike else 0,
-                    'short_strike': float(short_strike) if short_strike else 0,
-                    'entry_debit': float(entry_debit) if entry_debit else 0,
-                    'contracts_remaining': int(contracts) if contracts else 0,
-                    'initial_contracts': int(contracts) if contracts else 0,
-                    'max_profit': round(float(max_profit or 0) * 100 * (contracts or 0), 2),
-                    'max_loss': round(float(max_loss or 0) * 100 * (contracts or 0), 2),
+                    'long_strike': long_strike_val,
+                    'short_strike': short_strike_val,
+                    'entry_debit': entry_debit_val,
+                    'contracts_remaining': contracts_val,
+                    'initial_contracts': contracts_val,
+                    'max_profit': round(float(max_profit or 0) * 100 * contracts_val, 2),
+                    'max_loss': round(float(max_loss or 0) * 100 * contracts_val, 2),
                     'underlying_at_entry': float(underlying_at_entry) if underlying_at_entry else 0,
                     # Entry context for transparency
                     'dte': dte,
@@ -1396,23 +1545,25 @@ async def get_athena_live_pnl():
                     'oracle_confidence': float(oracle_conf) if oracle_conf else 0,
                     'oracle_reasoning': trade_reasoning or '',
                     'direction': direction,
-                    # Live data not available from DB
-                    'unrealized_pnl': None,
-                    'profit_progress_pct': None,
-                    'current_spread_value': None,
-                    'note': 'Live valuation requires ATHENA worker'
+                    # MTM valuation
+                    'unrealized_pnl': round(pos_unrealized, 2) if pos_unrealized is not None else None,
+                    'method': method
                 })
+
+            # Use MTM total if we got any successful MTM calculations
+            final_unrealized = round(total_unrealized, 2) if mtm_method == 'mark_to_market' else None
 
             return {
                 "success": True,
                 "data": {
-                    "total_unrealized_pnl": None,
+                    "total_unrealized_pnl": final_unrealized,
                     "total_realized_pnl": round(today_realized, 2),
-                    "net_pnl": round(today_realized, 2),
+                    "net_pnl": round(today_realized + (final_unrealized or 0), 2) if final_unrealized is not None else round(today_realized, 2),
                     "positions": positions,
                     "position_count": len(positions),
                     "source": "database",
-                    "message": "Open positions loaded from DB - live valuation requires ATHENA worker"
+                    "method": mtm_method,
+                    "message": "Live valuation via mark-to-market" if mtm_method == 'mark_to_market' else "MTM unavailable - estimation fallback"
                 }
             }
         except Exception as db_err:
@@ -1421,9 +1572,9 @@ async def get_athena_live_pnl():
         return {
             "success": True,
             "data": {
-                "total_unrealized_pnl": 0,
+                "total_unrealized_pnl": None,
                 "total_realized_pnl": 0,
-                "net_pnl": 0,
+                "net_pnl": None,
                 "positions": [],
                 "position_count": 0,
                 "message": "ATHENA not initialized"
@@ -1495,9 +1646,9 @@ async def get_athena_live_pnl():
             return {
                 "success": True,
                 "data": {
-                    "total_unrealized_pnl": 0,
+                    "total_unrealized_pnl": None,
                     "total_realized_pnl": 0,
-                    "net_pnl": 0,
+                    "net_pnl": None,
                     "positions": [],
                     "position_count": 0,
                     "message": "Could not retrieve live P&L"
@@ -1517,9 +1668,9 @@ async def get_athena_live_pnl():
         return {
             "success": True,
             "data": {
-                "total_unrealized_pnl": 0,
+                "total_unrealized_pnl": None,
                 "total_realized_pnl": 0,
-                "net_pnl": 0,
+                "net_pnl": None,
                 "positions": [],
                 "position_count": 0,
                 "message": f"Live P&L method error: {str(e)}"
@@ -1952,44 +2103,55 @@ async def get_athena_intraday_equity(date: str = None):
         today_realized = float(today_row[0]) if today_row and today_row[0] else 0
         today_closed_count = int(today_row[1]) if today_row and today_row[1] else 0
 
-        # Calculate unrealized P&L from open positions
+        # Calculate unrealized P&L from open positions using real option quotes (MTM)
         unrealized_pnl = 0
         open_positions = []
+        spy_price = None
+
+        # Get current SPY price for estimation fallback
         try:
+            from data.unified_data_provider import get_price
+            spy_price = get_price("SPY")
+            if not spy_price or spy_price <= 0:
+                spx_price = get_price("SPX")
+                if spx_price and spx_price > 0:
+                    spy_price = spx_price / 10
+        except Exception:
+            pass
+
+        # Fallback to Tradier direct
+        if not spy_price or spy_price <= 0:
+            try:
+                from data.tradier_data_fetcher import TradierDataFetcher
+                import os
+                api_key = os.environ.get('TRADIER_API_KEY') or os.environ.get('TRADIER_SANDBOX_API_KEY')
+                if api_key:
+                    tradier = TradierDataFetcher(api_key=api_key, sandbox='SANDBOX' in str(os.environ.get('TRADIER_SANDBOX_API_KEY', '')))
+                    quote = tradier.get_quote('SPY')
+                    if quote and quote.get('last'):
+                        price = float(quote['last'])
+                        if price > 0:
+                            spy_price = price
+            except Exception as e:
+                logger.debug(f"Tradier price fetch failed: {e}")
+
+        try:
+            # Query includes expiration for MTM pricing
             cursor.execute("""
-                SELECT position_id, spread_type, entry_price, contracts,
-                       long_strike, short_strike, entry_time
+                SELECT position_id, spread_type, entry_debit, contracts,
+                       long_strike, short_strike, max_profit, max_loss, expiration
                 FROM athena_positions
                 WHERE status = 'open'
             """)
             open_rows = cursor.fetchall()
 
+            # Use MTM helper function for accurate unrealized P&L
             if open_rows:
-                # Get current SPY price for mark-to-market
-                try:
-                    from data.unified_data_provider import UnifiedDataProvider
-                    provider = UnifiedDataProvider()
-                    spy_data = provider.get_stock_data("SPY")
-                    spy_price = spy_data.get('last_price', 0) if spy_data else 0
-                except Exception:
-                    spy_price = 0
-
-                for row in open_rows:
-                    pos_id, spread_type, entry_price, contracts, long_strike, short_strike, entry_time = row
-                    entry_val = float(entry_price) if entry_price else 0
-                    num_contracts = int(contracts) if contracts else 1
-
-                    # Estimate current value (simplified - assume 50% decay towards max loss/profit)
-                    spread_width = abs(float(short_strike or 0) - float(long_strike or 0))
-                    max_profit = entry_val * 100 * num_contracts
-                    current_unrealized = max_profit * 0.5  # Simple estimate
-
-                    open_positions.append({
-                        "position_id": pos_id,
-                        "spread_type": spread_type,
-                        "unrealized_pnl": round(current_unrealized, 2)
-                    })
-                    unrealized_pnl += current_unrealized
+                pnl_result = _calculate_athena_unrealized_pnl(open_rows, spy_price)
+                unrealized_pnl = pnl_result['total_unrealized_pnl']
+                open_positions = pnl_result['position_details']
+                logger.debug(f"ATHENA intraday: unrealized=${unrealized_pnl:.2f} "
+                           f"(MTM: {pnl_result['mtm_count']}, Est: {pnl_result['estimation_count']})")
         except Exception as e:
             logger.debug(f"Error calculating unrealized P&L: {e}")
 
@@ -2131,21 +2293,54 @@ async def save_athena_equity_snapshot():
         row = cursor.fetchone()
         realized_pnl = float(row[0]) if row and row[0] else 0
 
-        # Get open positions and calculate unrealized P&L
+        # Get open positions with spread info for unrealized P&L calculation
+        # Include expiration for MTM pricing
         cursor.execute("""
-            SELECT position_id, entry_price, contracts
+            SELECT position_id, spread_type, entry_debit, contracts,
+                   long_strike, short_strike, max_profit, max_loss, expiration
             FROM athena_positions
             WHERE status = 'open'
         """)
-        open_rows = cursor.fetchall()
-        open_count = len(open_rows)
+        open_positions = cursor.fetchall()
+        open_count = len(open_positions)
 
-        for row in open_rows:
-            pos_id, entry_price, contracts = row
-            entry_val = float(entry_price) if entry_price else 0
-            num_contracts = int(contracts) if contracts else 1
-            # Simple estimate of unrealized P&L
-            unrealized_pnl += entry_val * 100 * num_contracts * 0.5
+        # Calculate unrealized P&L using MTM with estimation fallback
+        unrealized_pnl = 0
+        spy_price = None
+
+        # Get SPY price for estimation fallback
+        try:
+            from data.unified_data_provider import get_price
+            spy_price = get_price("SPY")
+            if not spy_price or spy_price <= 0:
+                spx_price = get_price("SPX")
+                if spx_price and spx_price > 0:
+                    spy_price = spx_price / 10
+        except Exception:
+            pass
+
+        # Fallback to Tradier direct
+        if not spy_price or spy_price <= 0:
+            try:
+                from data.tradier_data_fetcher import TradierDataFetcher
+                import os
+                api_key = os.environ.get('TRADIER_API_KEY') or os.environ.get('TRADIER_SANDBOX_API_KEY')
+                if api_key:
+                    tradier = TradierDataFetcher(api_key=api_key, sandbox='SANDBOX' in str(os.environ.get('TRADIER_SANDBOX_API_KEY', '')))
+                    quote = tradier.get_quote('SPY')
+                    if quote and quote.get('last'):
+                        price = float(quote['last'])
+                        if price > 0:
+                            spy_price = price
+            except Exception as e:
+                logger.debug(f"Tradier price fetch failed: {e}")
+
+        # Use MTM helper function for accurate unrealized P&L
+        if open_positions:
+            pnl_result = _calculate_athena_unrealized_pnl(open_positions, spy_price)
+            unrealized_pnl = pnl_result['total_unrealized_pnl']
+            logger.debug(f"ATHENA snapshot: unrealized=${unrealized_pnl:.2f} "
+                       f"(MTM: {pnl_result['mtm_count']}, Est: {pnl_result['estimation_count']})")
 
         current_equity = starting_capital + realized_pnl + unrealized_pnl
 

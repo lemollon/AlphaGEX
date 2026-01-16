@@ -1162,10 +1162,13 @@ class ICARUSTrader(MathOptimizerMixin):
         positions = self.db.get_open_positions()
         daily_trades = self.db.get_daily_trades_count(today)
 
+        # Calculate unrealized P&L (only if live pricing available)
         unrealized_pnl = 0.0
+        has_live_pricing = False
         for pos in positions:
             current_value = self.executor.get_position_current_value(pos)
-            if current_value:
+            if current_value is not None:
+                has_live_pricing = True
                 pnl = (current_value - pos.entry_debit) * 100 * pos.contracts
                 unrealized_pnl += pnl
 
@@ -1180,7 +1183,8 @@ class ICARUSTrader(MathOptimizerMixin):
             'max_positions': self.config.max_open_positions,
             'daily_trades': daily_trades,
             'max_daily_trades': self.config.max_daily_trades,
-            'unrealized_pnl': unrealized_pnl,
+            'unrealized_pnl': unrealized_pnl if has_live_pricing else None,
+            'has_live_pricing': has_live_pricing,
             'positions': [p.to_dict() for p in positions],
         }
 
@@ -1207,11 +1211,13 @@ class ICARUSTrader(MathOptimizerMixin):
         """Get live P&L for all open positions"""
         positions = self.db.get_open_positions()
         total_unrealized = 0.0
+        has_live_pricing = False
         position_pnls = []
 
         for pos in positions:
             current_value = self.executor.get_position_current_value(pos)
-            if current_value:
+            if current_value is not None:
+                has_live_pricing = True
                 pnl = (current_value - pos.entry_debit) * 100 * pos.contracts
                 total_unrealized += pnl
                 position_pnls.append({
@@ -1221,9 +1227,18 @@ class ICARUSTrader(MathOptimizerMixin):
                     'unrealized_pnl': pnl,
                     'contracts': pos.contracts,
                 })
+            else:
+                position_pnls.append({
+                    'position_id': pos.position_id,
+                    'entry_debit': pos.entry_debit,
+                    'current_value': None,
+                    'unrealized_pnl': None,
+                    'contracts': pos.contracts,
+                })
 
         return {
-            'total_unrealized_pnl': total_unrealized,
+            'total_unrealized_pnl': total_unrealized if has_live_pricing else None,
+            'has_live_pricing': has_live_pricing,
             'position_count': len(positions),
             'positions': position_pnls,
             'timestamp': datetime.now(CENTRAL_TZ).isoformat(),

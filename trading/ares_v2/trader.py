@@ -1485,11 +1485,13 @@ class ARESTrader(MathOptimizerMixin):
         positions = self.db.get_open_positions()
         has_traded = self.db.has_traded_today(today)
 
-        # Calculate unrealized P&L
+        # Calculate unrealized P&L (only if live pricing available)
         unrealized_pnl = 0.0
+        has_live_pricing = False
         for pos in positions:
             current_value = self.executor.get_position_current_value(pos)
-            if current_value:
+            if current_value is not None:
+                has_live_pricing = True
                 pnl = (pos.total_credit - current_value) * 100 * pos.contracts
                 unrealized_pnl += pnl
 
@@ -1503,7 +1505,8 @@ class ARESTrader(MathOptimizerMixin):
             'timestamp': now.isoformat(),
             'open_positions': len(positions),
             'traded_today': has_traded,
-            'unrealized_pnl': unrealized_pnl,
+            'unrealized_pnl': unrealized_pnl if has_live_pricing else None,
+            'has_live_pricing': has_live_pricing,
             'positions': [p.to_dict() for p in positions],
         }
 

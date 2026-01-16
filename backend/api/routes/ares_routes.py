@@ -42,6 +42,20 @@ except ImportError:
 router = APIRouter(prefix="/api/ares", tags=["ARES"])
 logger = logging.getLogger(__name__)
 
+# Import mark-to-market utility for real option pricing
+MTM_AVAILABLE = False
+try:
+    from trading.mark_to_market import (
+        calculate_ic_mark_to_market,
+        build_occ_symbol,
+        get_option_quotes_batch,
+        clear_quote_cache
+    )
+    MTM_AVAILABLE = True
+    logger.info("Mark-to-market utility loaded for ARES")
+except ImportError as e:
+    logger.debug(f"Mark-to-market import failed: {e}")
+
 
 def _resolve_query_param(param, default=None):
     """
@@ -309,15 +323,13 @@ def _calculate_live_unrealized_pnl() -> dict:
     """
     Calculate live unrealized P&L from open positions in AlphaGEX database.
 
+    Uses mark-to-market pricing by fetching real option quotes from Tradier.
+    Falls back to estimation based on underlying price if quotes unavailable.
+
     For Iron Condors:
     - Entry credit = what we received when opening
-    - Current value = what it would cost to close now
+    - Current value = what it would cost to close now (from real quotes or estimated)
     - Unrealized P&L = Entry credit - Current value (for credit spreads)
-
-    We estimate current value based on:
-    - Current underlying price
-    - Distance from short strikes
-    - Time to expiration
 
     Returns dict with position details and total unrealized P&L.
     """
@@ -327,34 +339,58 @@ def _calculate_live_unrealized_pnl() -> dict:
         'positions': [],
         'total_unrealized_pnl': 0,
         'total_open_credit': 0,
-        'error': None
+        'error': None,
+        'pricing_method': 'estimation',
+        'mtm_success_count': 0,
+        'mtm_fail_count': 0
     }
 
     try:
-        # Get current underlying price from Tradier
+        # Get current underlying price from multiple sources
         current_price = None
-        if TRADIER_AVAILABLE and TradierDataFetcher:
-            try:
-                from unified_config import APIConfig
-                api_key = APIConfig.TRADIER_SANDBOX_API_KEY
-                account_id = APIConfig.TRADIER_SANDBOX_ACCOUNT_ID
-                if api_key and account_id:
-                    tradier = TradierDataFetcher(api_key=api_key, account_id=account_id, sandbox=True)
-                    quote = tradier.get_quote('SPY')
-                    if quote:
-                        current_price = quote.get('last') or quote.get('close')
-            except Exception as e:
-                logger.warning(f"Could not get SPY quote: {e}")
 
-        # Fallback: try unified data provider
-        if not current_price:
-            try:
-                from data.unified_data_provider import get_price
-                current_price = get_price('SPY')
-            except Exception:
-                pass
+        # Try unified data provider first
+        try:
+            from data.unified_data_provider import get_price
+            current_price = get_price('SPY')
+            if not current_price or current_price <= 0:
+                current_price = None
+        except Exception:
+            pass
 
-        if not current_price:
+        # Fallback to Tradier direct
+        if not current_price or current_price <= 0:
+            if TRADIER_AVAILABLE and TradierDataFetcher:
+                try:
+                    from unified_config import APIConfig
+                    api_key = APIConfig.TRADIER_SANDBOX_API_KEY
+                    account_id = APIConfig.TRADIER_SANDBOX_ACCOUNT_ID
+                    if api_key and account_id:
+                        tradier = TradierDataFetcher(api_key=api_key, account_id=account_id, sandbox=True)
+                        quote = tradier.get_quote('SPY')
+                        if quote:
+                            price = quote.get('last') or quote.get('close')
+                            if price and float(price) > 0:
+                                current_price = float(price)
+                except Exception as e:
+                    logger.warning(f"Could not get SPY quote from Tradier: {e}")
+
+            # Try Tradier with env vars as final fallback
+            if not current_price or current_price <= 0:
+                try:
+                    import os
+                    api_key = os.environ.get('TRADIER_API_KEY') or os.environ.get('TRADIER_SANDBOX_API_KEY')
+                    if api_key:
+                        tradier = TradierDataFetcher(api_key=api_key, sandbox='SANDBOX' in str(os.environ.get('TRADIER_SANDBOX_API_KEY', '')))
+                        quote = tradier.get_quote('SPY')
+                        if quote and quote.get('last'):
+                            price = float(quote['last'])
+                            if price > 0:
+                                current_price = price
+                except Exception:
+                    pass
+
+        if not current_price or current_price <= 0:
             result['error'] = 'Could not fetch current SPY price'
             return result
 
@@ -399,47 +435,67 @@ def _calculate_live_unrealized_pnl() -> dict:
             call_short = float(call_short)
             call_long = float(call_long)
 
-            # Calculate estimated current value of Iron Condor
-            # For 0DTE, the value depends heavily on where price is relative to strikes
+            # Try mark-to-market pricing first
+            mtm_success = False
+            pricing_method = 'estimation'
+            leg_prices = None
 
-            # Check if price is in the "safe zone" (between short strikes)
-            in_safe_zone = put_short < current_price < call_short
+            if MTM_AVAILABLE and expiration:
+                try:
+                    exp_str = expiration.strftime('%Y-%m-%d') if hasattr(expiration, 'strftime') else str(expiration)
+                    mtm = calculate_ic_mark_to_market(
+                        underlying='SPY',
+                        expiration=exp_str,
+                        put_short_strike=put_short,
+                        put_long_strike=put_long,
+                        call_short_strike=call_short,
+                        call_long_strike=call_long,
+                        contracts=contracts,
+                        entry_credit=entry_credit,
+                        use_cache=True
+                    )
 
-            if in_safe_zone:
-                # Price between short strikes - position is profitable
-                # The further from strikes, the more profitable
-                put_distance = current_price - put_short
-                call_distance = call_short - current_price
-                min_distance = min(put_distance, call_distance)
+                    if mtm['success']:
+                        unrealized_pnl = mtm['unrealized_pnl']
+                        mtm_success = True
+                        pricing_method = 'mark_to_market'
+                        leg_prices = mtm.get('leg_prices')
+                        result['mtm_success_count'] += 1
+                    else:
+                        result['mtm_fail_count'] += 1
+                        logger.debug(f"MTM failed for {pos_id}: {mtm.get('error')}")
+                except Exception as e:
+                    result['mtm_fail_count'] += 1
+                    logger.debug(f"MTM exception for {pos_id}: {e}")
 
-                # Estimate: if well inside strikes, approaching max profit
-                # If close to a strike, less profit
-                half_width = spread_width / 2
-                safety_ratio = min(min_distance / half_width, 1.0)
+            # Fallback to estimation if MTM failed
+            if not mtm_success:
+                # Check if price is in the "safe zone" (between short strikes)
+                in_safe_zone = put_short < current_price < call_short
 
-                # Estimated current value (what we'd pay to close)
-                # At max profit (expiration, in safe zone) = $0 to close
-                # Current estimate based on safety ratio
-                estimated_close_cost = entry_credit * (1 - safety_ratio * 0.8)
-                unrealized_pnl = (entry_credit - estimated_close_cost) * 100 * contracts
-
-            else:
-                # Price outside safe zone - position is at risk
-                if current_price <= put_short:
-                    # Below put short - put spread is in trouble
-                    intrusion = put_short - current_price
-                    max_intrusion = spread_width
-                    loss_ratio = min(intrusion / max_intrusion, 1.0)
-                    # Loss = spread_width - credit (max loss) * loss_ratio
-                    max_loss_per_contract = (spread_width - entry_credit) * 100
-                    unrealized_pnl = -max_loss_per_contract * loss_ratio * contracts
+                if in_safe_zone:
+                    put_distance = current_price - put_short
+                    call_distance = call_short - current_price
+                    min_distance = min(put_distance, call_distance)
+                    half_width = spread_width / 2
+                    safety_ratio = min(min_distance / half_width, 1.0)
+                    estimated_close_cost = entry_credit * (1 - safety_ratio * 0.8)
+                    unrealized_pnl = (entry_credit - estimated_close_cost) * 100 * contracts
                 else:
-                    # Above call short - call spread is in trouble
-                    intrusion = current_price - call_short
-                    max_intrusion = spread_width
-                    loss_ratio = min(intrusion / max_intrusion, 1.0)
-                    max_loss_per_contract = (spread_width - entry_credit) * 100
-                    unrealized_pnl = -max_loss_per_contract * loss_ratio * contracts
+                    if current_price <= put_short:
+                        intrusion = put_short - current_price
+                        max_intrusion = spread_width
+                        loss_ratio = min(intrusion / max_intrusion, 1.0)
+                        max_loss_per_contract = (spread_width - entry_credit) * 100
+                        unrealized_pnl = -max_loss_per_contract * loss_ratio * contracts
+                    else:
+                        intrusion = current_price - call_short
+                        max_intrusion = spread_width
+                        loss_ratio = min(intrusion / max_intrusion, 1.0)
+                        max_loss_per_contract = (spread_width - entry_credit) * 100
+                        unrealized_pnl = -max_loss_per_contract * loss_ratio * contracts
+
+            in_safe_zone = put_short < current_price < call_short
 
             position_data = {
                 'position_id': pos_id,
@@ -458,7 +514,9 @@ def _calculate_live_unrealized_pnl() -> dict:
                 'in_safe_zone': in_safe_zone,
                 'unrealized_pnl': round(unrealized_pnl, 2),
                 'max_profit': round(entry_credit * 100 * contracts, 2),
-                'max_loss': round((spread_width - entry_credit) * 100 * contracts, 2)
+                'max_loss': round((spread_width - entry_credit) * 100 * contracts, 2),
+                'pricing_method': pricing_method,
+                'leg_prices': leg_prices
             }
 
             result['positions'].append(position_data)
@@ -469,6 +527,15 @@ def _calculate_live_unrealized_pnl() -> dict:
         result['total_unrealized_pnl'] = round(total_unrealized, 2)
         result['total_open_credit'] = round(total_credit, 2)
         result['position_count'] = len(rows)
+
+        # Set overall pricing method
+        if result['mtm_success_count'] > 0:
+            if result['mtm_fail_count'] == 0:
+                result['pricing_method'] = 'mark_to_market'
+            else:
+                result['pricing_method'] = 'mixed'
+        else:
+            result['pricing_method'] = 'estimation'
 
         return result
 
@@ -1146,9 +1213,13 @@ async def get_ares_status():
         # Calculate current_equity = starting_capital + realized + unrealized (matches equity curve)
         starting_capital = 100000  # Default starting capital
         total_pnl = status.get('total_pnl', 0)
-        unrealized_pnl = status.get('unrealized_pnl', 0)
+        unrealized_pnl = status.get('unrealized_pnl')  # Can be None if no live pricing
         status['starting_capital'] = starting_capital
-        status['current_equity'] = round(starting_capital + total_pnl + unrealized_pnl, 2)
+        # Only include unrealized in equity if we have live pricing
+        if unrealized_pnl is not None:
+            status['current_equity'] = round(starting_capital + total_pnl + unrealized_pnl, 2)
+        else:
+            status['current_equity'] = round(starting_capital + total_pnl, 2)
 
         return {
             "success": True,
@@ -2846,15 +2917,19 @@ async def get_ares_live_pnl():
             today_realized = float(realized_row[0]) if realized_row else 0
             conn.close()
 
-            # Format open positions with entry context
+            # Format open positions with entry context and calculate MTM
             positions = []
             today_date = datetime.now(ZoneInfo("America/Chicago")).date()
+            total_unrealized = 0.0
+            mtm_method = 'estimation'
 
             for row in open_rows:
                 (pos_id, open_date, exp, put_long, put_short, call_short, call_long,
                  credit, contracts, max_loss, spread_width, status) = row
 
-                credit_received = float(credit or 0) * 100 * (contracts or 0)
+                credit_val = float(credit or 0)
+                contracts_val = int(contracts or 0)
+                credit_received = credit_val * 100 * contracts_val
 
                 # Calculate DTE
                 dte = None
@@ -2867,6 +2942,31 @@ async def get_ares_live_pnl():
                 except (ValueError, TypeError):
                     pass  # Keep default dte=None if date parsing fails
 
+                # Calculate unrealized P&L using MTM
+                pos_unrealized = None
+                method = 'estimation'
+
+                if MTM_AVAILABLE and exp and put_short and put_long and call_short and call_long:
+                    try:
+                        mtm_result = calculate_ic_mark_to_market(
+                            underlying='SPY',
+                            expiration=str(exp),
+                            put_short_strike=float(put_short),
+                            put_long_strike=float(put_long),
+                            call_short_strike=float(call_short),
+                            call_long_strike=float(call_long),
+                            contracts=contracts_val,
+                            entry_credit=credit_val,
+                            use_cache=True
+                        )
+                        if mtm_result.get('success') and mtm_result.get('unrealized_pnl') is not None:
+                            pos_unrealized = mtm_result['unrealized_pnl']
+                            total_unrealized += pos_unrealized
+                            method = 'mark_to_market'
+                            mtm_method = 'mark_to_market'
+                    except Exception as e:
+                        logger.debug(f"ARES live-pnl MTM failed for {pos_id}: {e}")
+
                 positions.append({
                     'position_id': pos_id,
                     'open_date': str(open_date) if open_date else None,
@@ -2876,30 +2976,31 @@ async def get_ares_live_pnl():
                     'call_short_strike': float(call_short) if call_short else 0,
                     'call_long_strike': float(call_long) if call_long else 0,
                     'credit_received': round(credit_received, 2),
-                    'contracts': contracts or 0,
-                    'max_loss': round(float(max_loss or 0) * 100 * (contracts or 0), 2),
+                    'contracts': contracts_val,
+                    'max_loss': round(float(max_loss or 0) * 100 * contracts_val, 2),
                     'spread_width': float(spread_width) if spread_width else 0,
                     'dte': dte,
                     'is_0dte': is_0dte,
                     'max_profit': round(credit_received, 2),
                     'strategy': 'IRON_CONDOR',
                     'direction': 'NEUTRAL',
-                    # Live data not available from DB
-                    'unrealized_pnl': None,
-                    'profit_progress_pct': None,
-                    'note': 'Live valuation requires ARES worker'
+                    'unrealized_pnl': round(pos_unrealized, 2) if pos_unrealized is not None else None,
+                    'method': method
                 })
+
+            final_unrealized = round(total_unrealized, 2) if mtm_method == 'mark_to_market' else None
 
             return {
                 "success": True,
                 "data": {
-                    "total_unrealized_pnl": None,
+                    "total_unrealized_pnl": final_unrealized,
                     "total_realized_pnl": round(today_realized, 2),
-                    "net_pnl": round(today_realized, 2),
+                    "net_pnl": round(today_realized + (final_unrealized or 0), 2) if final_unrealized is not None else round(today_realized, 2),
                     "positions": positions,
                     "position_count": len(positions),
                     "source": "database",
-                    "message": "Open positions loaded from DB - live valuation requires ARES worker"
+                    "method": mtm_method,
+                    "message": "Live valuation via mark-to-market" if mtm_method == 'mark_to_market' else "MTM unavailable - estimation fallback"
                 }
             }
         except Exception as db_err:
@@ -2908,9 +3009,9 @@ async def get_ares_live_pnl():
         return {
             "success": True,
             "data": {
-                "total_unrealized_pnl": 0,
+                "total_unrealized_pnl": None,
                 "total_realized_pnl": 0,
-                "net_pnl": 0,
+                "net_pnl": None,
                 "positions": [],
                 "position_count": 0,
                 "message": "ARES not initialized"
@@ -2985,9 +3086,9 @@ async def get_ares_live_pnl():
             return {
                 "success": True,
                 "data": {
-                    "total_unrealized_pnl": 0,
+                    "total_unrealized_pnl": None,
                     "total_realized_pnl": 0,
-                    "net_pnl": 0,
+                    "net_pnl": None,
                     "positions": [],
                     "position_count": 0,
                     "message": "Could not retrieve live P&L"
@@ -3007,9 +3108,9 @@ async def get_ares_live_pnl():
         return {
             "success": True,
             "data": {
-                "total_unrealized_pnl": 0,
+                "total_unrealized_pnl": None,
                 "total_realized_pnl": 0,
-                "net_pnl": 0,
+                "net_pnl": None,
                 "positions": [],
                 "position_count": 0,
                 "message": f"Live P&L method error: {str(e)}"

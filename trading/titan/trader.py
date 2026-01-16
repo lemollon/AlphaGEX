@@ -1148,9 +1148,11 @@ class TITANTrader(MathOptimizerMixin):
         positions = self.db.get_open_positions()
 
         unrealized = 0.0
+        has_live_pricing = False
         for pos in positions:
             val = self.executor.get_position_current_value(pos)
-            if val:
+            if val is not None:
+                has_live_pricing = True
                 unrealized += (pos.total_credit - val) * 100 * pos.contracts
 
         return {
@@ -1161,7 +1163,8 @@ class TITANTrader(MathOptimizerMixin):
             'preset': self.config.preset.value,
             'open_positions': len(positions),
             'trades_today': self.db.get_trades_today(),
-            'unrealized_pnl': unrealized,
+            'unrealized_pnl': unrealized if has_live_pricing else None,
+            'has_live_pricing': has_live_pricing,
             'timestamp': now.isoformat(),
         }
 
