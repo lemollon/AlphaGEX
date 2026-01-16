@@ -58,6 +58,13 @@ CREATE INDEX IF NOT EXISTS idx_icarus_positions_oracle_pred ON icarus_positions(
 -- 3. SOLOMON PERFORMANCE - Add strategy-level tracking
 -- ============================================================================
 
+-- Add trade-level tracking columns (needed for per-trade analysis)
+ALTER TABLE solomon_performance ADD COLUMN IF NOT EXISTS trade_date DATE;
+ALTER TABLE solomon_performance ADD COLUMN IF NOT EXISTS pnl DECIMAL(12,2);
+ALTER TABLE solomon_performance ADD COLUMN IF NOT EXISTS is_win BOOLEAN;
+ALTER TABLE solomon_performance ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE solomon_performance ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
 -- Add strategy and outcome tracking to solomon_performance
 ALTER TABLE solomon_performance ADD COLUMN IF NOT EXISTS strategy_type VARCHAR(20);  -- IRON_CONDOR/DIRECTIONAL
 ALTER TABLE solomon_performance ADD COLUMN IF NOT EXISTS oracle_advice VARCHAR(20);   -- TRADE_FULL/REDUCED/SKIP
@@ -73,11 +80,16 @@ ALTER TABLE solomon_performance ADD COLUMN IF NOT EXISTS direction_correct BOOLE
 ALTER TABLE solomon_performance ADD COLUMN IF NOT EXISTS vix_at_trade DECIMAL(5,2);
 ALTER TABLE solomon_performance ADD COLUMN IF NOT EXISTS gex_regime_at_trade VARCHAR(20);
 
+-- Create unique constraint for per-bot per-day tracking (for ON CONFLICT)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_solomon_perf_bot_date ON solomon_performance(bot_name, trade_date)
+    WHERE trade_date IS NOT NULL;
+
 -- Indexes for strategy analysis
 CREATE INDEX IF NOT EXISTS idx_solomon_perf_strategy ON solomon_performance(strategy_type);
 CREATE INDEX IF NOT EXISTS idx_solomon_perf_oracle_advice ON solomon_performance(oracle_advice);
 CREATE INDEX IF NOT EXISTS idx_solomon_perf_outcome ON solomon_performance(outcome_type);
 CREATE INDEX IF NOT EXISTS idx_solomon_perf_direction ON solomon_performance(direction_correct);
+CREATE INDEX IF NOT EXISTS idx_solomon_perf_trade_date ON solomon_performance(trade_date);
 
 -- ============================================================================
 -- 4. SOLOMON STRATEGY ANALYSIS TABLE (New)
