@@ -191,13 +191,13 @@ class VIXHedgeManager:
             # Try to get VVIX (volatility of VIX) for timing signals
             vvix = None
             vvix_source = 'none'
-            if POLYGON_AVAILABLE and polygon_fetcher:
-                try:
-                    vvix = polygon_fetcher.get_current_price('I:VVIX')
-                    if vvix and vvix > 0:
-                        vvix_source = 'polygon'
-                except Exception:
-                    pass  # VVIX is optional, continue without it
+            try:
+                from data.vix_fetcher import get_vvix_with_source
+                vvix, vvix_source = get_vvix_with_source()
+            except Exception as e:
+                logger.warning(f"VVIX fetch failed: {e}")
+                vvix = None
+                vvix_source = 'none'
 
             # VIX FUTURES ESTIMATION
             # CRITICAL: This is an estimate - real futures data would be better
@@ -280,8 +280,18 @@ class VIXHedgeManager:
             logger.warning(f"Error getting live VIX data: {e} - using fallback defaults")
             # Return fallback data so signal generation can continue
             # Mark as estimated/fallback so frontend can show warning
+            fallback_vix = 18.0  # Reasonable market average
+
+            # Try to get VVIX even in fallback mode
+            try:
+                from data.vix_fetcher import get_vvix_with_source, DEFAULT_VVIX
+                fallback_vvix, vvix_source = get_vvix_with_source()
+            except Exception:
+                fallback_vvix = 85.0  # Historical average
+                vvix_source = 'fallback'
+
             return {
-                'vix_spot': 18.0,  # Reasonable market average
+                'vix_spot': fallback_vix,
                 'vix_source': 'fallback',
                 'vix_m1': 18.9,    # ~5% contango
                 'vix_m2': 19.4,    # ~8% contango
@@ -290,8 +300,8 @@ class VIXHedgeManager:
                 'term_structure_m1_pct': 5.0,
                 'term_structure_m2_pct': 8.0,
                 'structure_type': 'contango',
-                'vvix': None,
-                'vvix_source': 'none',
+                'vvix': fallback_vvix,
+                'vvix_source': vvix_source,
                 'vix_stress_level': 'normal',
                 'position_size_multiplier': 1.0,
                 'timestamp': datetime.now(CENTRAL_TZ).isoformat(),

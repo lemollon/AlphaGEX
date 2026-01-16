@@ -148,3 +148,112 @@ def get_vix_with_source() -> tuple:
     # 4. Fallback - NEVER raise an exception
     logger.warning(f"All VIX sources failed - using fallback default {DEFAULT_VIX}")
     return DEFAULT_VIX, 'fallback'
+
+
+# ============================================================================
+# VVIX FETCHING (Volatility of VIX)
+# ============================================================================
+
+DEFAULT_VVIX = 85.0  # Historical average VVIX
+
+
+def get_vvix_from_yahoo() -> tuple:
+    """Get VVIX from Yahoo Finance direct API."""
+    try:
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/%5EVVIX"
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+        resp = requests.get(url, timeout=10, headers=headers)
+        if resp.status_code == 200:
+            data = resp.json()
+            price = data['chart']['result'][0]['meta']['regularMarketPrice']
+            if price and 50 < price < 200:  # Sanity check for VVIX range
+                logger.debug(f"VVIX from Yahoo: {price}")
+                return float(price), 'yahoo'
+    except Exception as e:
+        logger.warning(f"Yahoo VVIX failed: {e}")
+    return None, None
+
+
+def get_vvix_from_tradier() -> tuple:
+    """Get VVIX from Tradier."""
+    try:
+        from data.tradier_data_fetcher import TradierDataFetcher
+
+        use_sandbox = os.getenv('TRADIER_SANDBOX', 'false').lower() == 'true'
+        tradier = TradierDataFetcher(sandbox=use_sandbox)
+
+        # VVIX index symbol in Tradier
+        vvix_quote = tradier.get_quote("$VVIX.X")
+        if vvix_quote and vvix_quote.get('last'):
+            price = float(vvix_quote['last'])
+            if 50 < price < 200:  # Sanity check
+                logger.debug(f"VVIX from Tradier: {price}")
+                return price, 'tradier'
+    except Exception as e:
+        logger.warning(f"Tradier VVIX failed: {e}")
+    return None, None
+
+
+def get_vvix_from_polygon() -> tuple:
+    """Get VVIX from Polygon API."""
+    try:
+        polygon_key = os.getenv('POLYGON_API_KEY')
+        if not polygon_key:
+            return None, None
+
+        from data.polygon_data_fetcher import polygon_fetcher
+        vvix = polygon_fetcher.get_current_price('I:VVIX')
+        if vvix and 50 < vvix < 200:
+            logger.debug(f"VVIX from Polygon: {vvix}")
+            return vvix, 'polygon'
+    except Exception as e:
+        logger.warning(f"Polygon VVIX failed: {e}")
+    return None, None
+
+
+def get_vvix_with_source() -> tuple:
+    """
+    Get VVIX with source name for tracking data quality.
+
+    Returns:
+        tuple: (price, source) where source is one of:
+            - 'tradier' (production data)
+            - 'yahoo' (direct API)
+            - 'polygon' (API)
+            - 'fallback' (default value)
+
+    NOTE: This function NEVER raises an exception.
+    """
+    # Try sources in priority order
+
+    # 1. Yahoo Finance (free, reliable)
+    price, source = get_vvix_from_yahoo()
+    if price:
+        return price, source
+
+    # 2. Tradier
+    price, source = get_vvix_from_tradier()
+    if price:
+        return price, source
+
+    # 3. Polygon
+    price, source = get_vvix_from_polygon()
+    if price:
+        return price, source
+
+    # 4. Fallback - NEVER raise an exception
+    logger.warning(f"All VVIX sources failed - using fallback default {DEFAULT_VVIX}")
+    return DEFAULT_VVIX, 'fallback'
+
+
+def get_vvix_price() -> float:
+    """
+    Get VVIX spot price from best available source.
+
+    Returns:
+        float: VVIX price (never raises, uses fallback if needed)
+    """
+    price, _ = get_vvix_with_source()
+    return price

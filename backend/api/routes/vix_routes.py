@@ -581,21 +581,22 @@ def fetch_vix_from_polygon() -> Optional[Dict[str, Any]]:
     return retry_with_backoff(_fetch, max_retries=2, operation_name="Polygon VIX fetch")
 
 
-def fetch_vvix_from_polygon() -> Optional[float]:
-    """Fetch VVIX from Polygon API"""
-    polygon_key = os.getenv('POLYGON_API_KEY')
-    if not polygon_key:
-        return None
+def fetch_vvix_with_source() -> tuple:
+    """
+    Fetch VVIX from multiple sources with fallback.
 
+    Returns:
+        tuple: (vvix_value, source_name)
+    """
     try:
-        from data.polygon_data_fetcher import polygon_fetcher
-        vvix = polygon_fetcher.get_current_price('I:VVIX')
+        from data.vix_fetcher import get_vvix_with_source
+        vvix, source = get_vvix_with_source()
         if vvix and vvix > 0:
-            return vvix
+            return vvix, source
     except Exception as e:
         log_with_context('debug', "VVIX fetch failed", error=str(e))
 
-    return None
+    return None, 'none'
 
 
 def get_vix_fallback_data() -> Dict[str, Any]:
@@ -623,11 +624,12 @@ def get_vix_fallback_data() -> Dict[str, Any]:
     log_with_context('info', f"VIX fetched successfully",
                     source=vix_source, value=vix_spot)
 
-    # Try to get VVIX
-    vvix = fetch_vvix_from_polygon()
+    # Get VVIX from multiple sources (Yahoo, Tradier, Polygon)
+    vvix, vvix_source = fetch_vvix_with_source()
     if vvix:
         vix_data['vvix'] = vvix
-        vix_data['vvix_source'] = 'polygon'
+        vix_data['vvix_source'] = vvix_source
+        log_with_context('info', f"VVIX fetched: {vvix:.1f} from {vvix_source}")
 
     # Calculate term structure
     term_data = calculate_term_structure(vix_data['vix_spot'])
