@@ -17,6 +17,9 @@ from zoneinfo import ZoneInfo
 
 from database_adapter import get_connection
 
+# Initialize logger early so it can be used in import blocks
+logger = logging.getLogger(__name__)
+
 # Authentication middleware
 try:
     from backend.api.auth_middleware import require_api_key, require_admin, optional_auth, AuthInfo
@@ -62,7 +65,6 @@ except ImportError as e:
     logger.debug(f"ATHENA: Mark-to-market import failed (estimation fallback will be used): {e}")
 
 router = APIRouter(prefix="/api/athena", tags=["ATHENA"])
-logger = logging.getLogger(__name__)
 
 
 def _calculate_athena_unrealized_pnl(positions: list, spy_price: float = None) -> dict:

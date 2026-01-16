@@ -5,6 +5,7 @@ Uses the unified AutonomousPaperTrader with symbol='SPX' and $100M capital.
 This replaces the legacy spx_institutional_trader.py.
 """
 
+import logging
 import math
 from datetime import datetime, timedelta
 
@@ -13,6 +14,7 @@ import psycopg2.extras
 
 from database_adapter import get_connection
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/spx", tags=["SPX Trader"])
 
 
