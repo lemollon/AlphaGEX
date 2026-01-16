@@ -1155,6 +1155,9 @@ class TITANTrader(MathOptimizerMixin):
                 has_live_pricing = True
                 unrealized += (pos.total_credit - val) * 100 * pos.contracts
 
+        # Get overall trading statistics (total trades, P&L, win rate)
+        stats = self.db.get_trading_stats()
+
         return {
             'bot_name': 'TITAN',
             'version': 'V1',
@@ -1163,6 +1166,9 @@ class TITANTrader(MathOptimizerMixin):
             'preset': self.config.preset.value,
             'open_positions': len(positions),
             'trades_today': self.db.get_trades_today(),
+            'trade_count': stats['trade_count'],
+            'total_pnl': stats['total_pnl'],
+            'win_rate': stats['win_rate'],
             'unrealized_pnl': unrealized if has_live_pricing else None,
             'has_live_pricing': has_live_pricing,
             'timestamp': now.isoformat(),
