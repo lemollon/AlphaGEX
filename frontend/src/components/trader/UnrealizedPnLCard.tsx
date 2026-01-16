@@ -96,12 +96,21 @@ export default function UnrealizedPnLCard({
 
   if (!data) return null
 
-  const hasUnrealized = data.total_unrealized_pnl !== null
-  const unrealizedPnL = data.total_unrealized_pnl || 0
-  const realizedPnL = data.total_realized_pnl || 0
-  const netPnL = data.net_pnl || 0
+  // Safely parse numeric values, treating null/undefined/NaN as unavailable
+  const parseNumericValue = (val: number | null | undefined): number | null => {
+    if (val === null || val === undefined) return null
+    const num = Number(val)
+    return isNaN(num) || !isFinite(num) ? null : num
+  }
+
+  const unrealizedPnL = parseNumericValue(data.total_unrealized_pnl)
+  const realizedPnL = parseNumericValue(data.total_realized_pnl) ?? 0
+  const hasUnrealized = unrealizedPnL !== null
+
+  // Net P&L = realized + unrealized (only if unrealized is known)
+  const netPnL = hasUnrealized ? realizedPnL + unrealizedPnL : realizedPnL
   const isPositive = netPnL >= 0
-  const unrealizedIsPositive = unrealizedPnL >= 0
+  const unrealizedIsPositive = (unrealizedPnL ?? 0) >= 0
 
   return (
     <div className={`bg-[#0a0a0a] border rounded-lg overflow-hidden ${brand.primaryBorder}`}>
@@ -144,10 +153,10 @@ export default function UnrealizedPnLCard({
                 ) : (
                   <TrendingDown className="w-4 h-4" />
                 )}
-                {unrealizedIsPositive ? '+' : ''}{formatCurrency(unrealizedPnL)}
+                {unrealizedIsPositive ? '+' : ''}{formatCurrency(unrealizedPnL!)}
               </div>
             ) : (
-              <div className="text-lg text-gray-500">--</div>
+              <div className="text-lg text-gray-500" title="Live pricing unavailable">--</div>
             )}
           </div>
 
@@ -161,7 +170,9 @@ export default function UnrealizedPnLCard({
 
           {/* Net P&L */}
           <div className="text-center">
-            <div className="text-xs text-gray-500 mb-1">Net P&L</div>
+            <div className="text-xs text-gray-500 mb-1">
+              {hasUnrealized ? 'Net P&L' : 'Realized Only'}
+            </div>
             <div className={`text-xl font-bold ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
               {isPositive ? '+' : ''}{formatCurrency(netPnL)}
             </div>
@@ -190,13 +201,13 @@ export default function UnrealizedPnLCard({
                       : pos.position_id.substring(0, 8)}
                   </span>
                   <div className="flex items-center gap-2">
-                    {pos.profit_progress_pct !== null && pos.profit_progress_pct !== undefined && (
+                    {pos.profit_progress_pct !== null && pos.profit_progress_pct !== undefined && !isNaN(pos.profit_progress_pct) && (
                       <span className={`${pos.profit_progress_pct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                         {pos.profit_progress_pct.toFixed(0)}%
                       </span>
                     )}
                     <span className={`font-medium ${(pos.unrealized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                      {pos.unrealized_pnl !== null
+                      {pos.unrealized_pnl !== null && pos.unrealized_pnl !== undefined && !isNaN(pos.unrealized_pnl)
                         ? `${(pos.unrealized_pnl >= 0 ? '+' : '')}${formatCurrencyDecimal(pos.unrealized_pnl)}`
                         : '--'}
                     </span>

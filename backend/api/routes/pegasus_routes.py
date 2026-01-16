@@ -265,7 +265,9 @@ async def get_pegasus_status():
         # PEGASUS not running - read stats from database
         starting_capital = 200000
         total_pnl = 0
-        unrealized_pnl = 0
+        # IMPORTANT: Don't use stale unrealized_pnl from database when worker isn't running
+        # Set to None to indicate live pricing is unavailable
+        unrealized_pnl = None
         trade_count = 0
         win_count = 0
         open_count = 0
@@ -277,6 +279,8 @@ async def get_pegasus_status():
             conn = get_connection()
             cursor = conn.cursor()
 
+            # Note: We intentionally do NOT use unrealized_pnl from database here
+            # because it may be stale. Unrealized P&L requires live pricing.
             cursor.execute('''
                 SELECT
                     COUNT(*) as total,
@@ -284,8 +288,7 @@ async def get_pegasus_status():
                     SUM(CASE WHEN status IN ('closed', 'expired') THEN 1 ELSE 0 END) as closed_count,
                     SUM(CASE WHEN status IN ('closed', 'expired') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
                     COALESCE(SUM(CASE WHEN status IN ('closed', 'expired') THEN realized_pnl ELSE 0 END), 0) as total_pnl,
-                    SUM(CASE WHEN DATE(open_time AT TIME ZONE 'America/Chicago') = %s THEN 1 ELSE 0 END) as traded_today,
-                    COALESCE(SUM(CASE WHEN status = 'open' THEN unrealized_pnl ELSE 0 END), 0) as unrealized_pnl
+                    SUM(CASE WHEN DATE(open_time AT TIME ZONE 'America/Chicago') = %s THEN 1 ELSE 0 END) as traded_today
                 FROM pegasus_positions
             ''', (today,))
             row = cursor.fetchone()
@@ -298,7 +301,6 @@ async def get_pegasus_status():
                 win_count = row[3] or 0
                 total_pnl = float(row[4] or 0)
                 traded_today = (row[5] or 0) > 0
-                unrealized_pnl = float(row[6] or 0)
         except Exception as db_err:
             logger.debug(f"Could not read PEGASUS stats from database: {db_err}")
 
@@ -339,8 +341,12 @@ async def get_pegasus_status():
         scan_interval = 5
         is_active, active_reason = _is_bot_actually_active(heartbeat, scan_interval)
 
-        # current_equity = starting_capital + realized + unrealized (matches equity curve)
-        current_equity = starting_capital + total_pnl + unrealized_pnl
+        # current_equity = starting_capital + realized
+        # Only add unrealized if we have live pricing (worker running)
+        # When unrealized is None, show realized-only equity
+        current_equity = starting_capital + total_pnl
+        if unrealized_pnl is not None:
+            current_equity += unrealized_pnl
 
         return {
             "success": True,
@@ -352,7 +358,8 @@ async def get_pegasus_status():
                 "current_equity": round(current_equity, 2),
                 "capital_source": "paper",
                 "total_pnl": round(total_pnl, 2),
-                "unrealized_pnl": round(unrealized_pnl, 2),
+                # Return None to frontend when live pricing unavailable
+                "unrealized_pnl": round(unrealized_pnl, 2) if unrealized_pnl is not None else None,
                 "trade_count": trade_count,
                 "win_rate": win_rate,
                 "open_positions": open_count,
@@ -944,6 +951,8 @@ async def get_pegasus_intraday_equity(date: str = None):
             })
 
         # Add current live point if viewing today
+        # IMPORTANT: Without live pricing from PEGASUS worker, unrealized_pnl = 0
+        # So current_equity will be realized-only, which is consistent with /status endpoint
         current_equity = starting_capital + total_realized + unrealized_pnl
         if today == now.strftime('%Y-%m-%d'):
             total_pnl = total_realized + unrealized_pnl
@@ -956,7 +965,8 @@ async def get_pegasus_intraday_equity(date: str = None):
                 "equity": round(current_equity, 2),
                 "cumulative_pnl": round(total_pnl, 2),
                 "open_positions": len(open_positions),
-                "unrealized_pnl": round(unrealized_pnl, 2)
+                "unrealized_pnl": round(unrealized_pnl, 2),
+                "note": "Realized P&L only" if unrealized_pnl == 0 and len(open_positions) > 0 else None
             })
 
         # Calculate high/low of day
