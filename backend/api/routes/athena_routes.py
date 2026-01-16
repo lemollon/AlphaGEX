@@ -1943,7 +1943,7 @@ async def get_athena_scan_activity_today():
 @router.get("/equity-curve")
 async def get_athena_equity_curve(days: int = 30):
     """
-    Get ATHENA equity curve data.
+    Get ATHENA equity curve data including unrealized P&L from open positions.
 
     Returns cumulative P&L over time for charting.
     Data comes from athena_positions (V2) or apache_positions (legacy).
@@ -1951,6 +1951,8 @@ async def get_athena_equity_curve(days: int = 30):
     CENTRAL_TZ = ZoneInfo("America/Chicago")
     starting_capital = 100000
     today = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
+    unrealized_pnl = 0.0
+    open_positions_count = 0
 
     try:
         conn = get_connection()
@@ -1970,6 +1972,17 @@ async def get_athena_equity_curve(days: int = 30):
                 ORDER BY trade_date
             """, (days,))
             rows = c.fetchall()
+
+            # Get open positions for unrealized P&L calculation
+            c.execute("""
+                SELECT position_id, spread_type, entry_debit, contracts,
+                       long_strike, short_strike, expiration
+                FROM athena_positions
+                WHERE status = 'open'
+            """)
+            open_positions = c.fetchall()
+            open_positions_count = len(open_positions)
+
         except Exception:
             # Fall back to legacy table
             c.execute("""
@@ -1984,8 +1997,40 @@ async def get_athena_equity_curve(days: int = 30):
                 ORDER BY trade_date
             """, (days,))
             rows = c.fetchall()
+            open_positions = []
+            open_positions_count = 0
 
         conn.close()
+
+        # Calculate unrealized P&L from open positions using MTM
+        if open_positions:
+            # Get current SPY price for estimation fallback
+            spy_price = None
+            try:
+                from data.unified_data_provider import get_price
+                spy_price = get_price("SPY")
+            except Exception:
+                pass
+
+            # Format positions for MTM calculation
+            mtm_positions = []
+            for pos in open_positions:
+                pos_id, spread_type, entry_debit, contracts, long_strike, short_strike, exp = pos
+                mtm_positions.append((
+                    pos_id,
+                    spread_type,
+                    float(entry_debit) if entry_debit else 0,
+                    int(contracts) if contracts else 1,
+                    float(long_strike) if long_strike else 0,
+                    float(short_strike) if short_strike else 0,
+                    0,  # max_profit placeholder
+                    float(entry_debit or 0) * 100,  # max_loss estimate
+                    str(exp) if exp else None
+                ))
+
+            pnl_result = _calculate_athena_unrealized_pnl(mtm_positions, spy_price)
+            unrealized_pnl = pnl_result['total_unrealized_pnl']
+            logger.debug(f"ATHENA equity-curve: unrealized=${unrealized_pnl:.2f} via {pnl_result.get('primary_method', 'unknown')}")
 
         # Build equity curve
         equity_curve = []
@@ -2002,23 +2047,38 @@ async def get_athena_equity_curve(days: int = 30):
                 "equity": round(starting_capital + running_pnl, 2),
             })
 
-        # Add today if not present
-        if equity_curve and equity_curve[-1]["date"] != today:
+        # Add today's entry with unrealized P&L from open positions
+        total_pnl_with_unrealized = running_pnl + unrealized_pnl
+        current_equity_with_unrealized = starting_capital + total_pnl_with_unrealized
+
+        # Always add today's data point if we have open positions or closed positions
+        if open_positions_count > 0 or rows:
+            # Remove duplicate today entry if exists
+            if equity_curve and equity_curve[-1]["date"] == today:
+                equity_curve.pop()
+
             equity_curve.append({
                 "date": today,
-                "cumulative_pnl": round(running_pnl, 2),
-                "daily_pnl": 0,
+                "cumulative_pnl": round(total_pnl_with_unrealized, 2),
+                "daily_pnl": round(unrealized_pnl, 2),
                 "trade_count": 0,
-                "equity": round(starting_capital + running_pnl, 2),
+                "equity": round(current_equity_with_unrealized, 2),
+                "realized_pnl": round(running_pnl, 2),
+                "unrealized_pnl": round(unrealized_pnl, 2),
+                "open_positions": open_positions_count
             })
 
         return {
             "success": True,
             "data": {
                 "starting_capital": starting_capital,
-                "current_equity": round(starting_capital + running_pnl, 2),
-                "total_pnl": round(running_pnl, 2),
+                "current_equity": round(current_equity_with_unrealized, 2),
+                "total_pnl": round(total_pnl_with_unrealized, 2),
+                "realized_pnl": round(running_pnl, 2),
+                "unrealized_pnl": round(unrealized_pnl, 2),
                 "equity_curve": equity_curve,
+                "open_positions_count": open_positions_count,
+                "closed_positions_count": len(rows) if rows else 0
             }
         }
     except Exception as e:
