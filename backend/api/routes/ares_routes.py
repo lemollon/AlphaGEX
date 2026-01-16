@@ -42,6 +42,20 @@ except ImportError:
 router = APIRouter(prefix="/api/ares", tags=["ARES"])
 logger = logging.getLogger(__name__)
 
+# Import mark-to-market utility for real option pricing
+MTM_AVAILABLE = False
+try:
+    from trading.mark_to_market import (
+        calculate_ic_mark_to_market,
+        build_occ_symbol,
+        get_option_quotes_batch,
+        clear_quote_cache
+    )
+    MTM_AVAILABLE = True
+    logger.info("Mark-to-market utility loaded for ARES")
+except ImportError as e:
+    logger.debug(f"Mark-to-market import failed: {e}")
+
 
 def _resolve_query_param(param, default=None):
     """
@@ -309,15 +323,13 @@ def _calculate_live_unrealized_pnl() -> dict:
     """
     Calculate live unrealized P&L from open positions in AlphaGEX database.
 
+    Uses mark-to-market pricing by fetching real option quotes from Tradier.
+    Falls back to estimation based on underlying price if quotes unavailable.
+
     For Iron Condors:
     - Entry credit = what we received when opening
-    - Current value = what it would cost to close now
+    - Current value = what it would cost to close now (from real quotes or estimated)
     - Unrealized P&L = Entry credit - Current value (for credit spreads)
-
-    We estimate current value based on:
-    - Current underlying price
-    - Distance from short strikes
-    - Time to expiration
 
     Returns dict with position details and total unrealized P&L.
     """
@@ -327,7 +339,10 @@ def _calculate_live_unrealized_pnl() -> dict:
         'positions': [],
         'total_unrealized_pnl': 0,
         'total_open_credit': 0,
-        'error': None
+        'error': None,
+        'pricing_method': 'estimation',
+        'mtm_success_count': 0,
+        'mtm_fail_count': 0
     }
 
     try:
@@ -420,47 +435,67 @@ def _calculate_live_unrealized_pnl() -> dict:
             call_short = float(call_short)
             call_long = float(call_long)
 
-            # Calculate estimated current value of Iron Condor
-            # For 0DTE, the value depends heavily on where price is relative to strikes
+            # Try mark-to-market pricing first
+            mtm_success = False
+            pricing_method = 'estimation'
+            leg_prices = None
 
-            # Check if price is in the "safe zone" (between short strikes)
-            in_safe_zone = put_short < current_price < call_short
+            if MTM_AVAILABLE and expiration:
+                try:
+                    exp_str = expiration.strftime('%Y-%m-%d') if hasattr(expiration, 'strftime') else str(expiration)
+                    mtm = calculate_ic_mark_to_market(
+                        underlying='SPY',
+                        expiration=exp_str,
+                        put_short_strike=put_short,
+                        put_long_strike=put_long,
+                        call_short_strike=call_short,
+                        call_long_strike=call_long,
+                        contracts=contracts,
+                        entry_credit=entry_credit,
+                        use_cache=True
+                    )
 
-            if in_safe_zone:
-                # Price between short strikes - position is profitable
-                # The further from strikes, the more profitable
-                put_distance = current_price - put_short
-                call_distance = call_short - current_price
-                min_distance = min(put_distance, call_distance)
+                    if mtm['success']:
+                        unrealized_pnl = mtm['unrealized_pnl']
+                        mtm_success = True
+                        pricing_method = 'mark_to_market'
+                        leg_prices = mtm.get('leg_prices')
+                        result['mtm_success_count'] += 1
+                    else:
+                        result['mtm_fail_count'] += 1
+                        logger.debug(f"MTM failed for {pos_id}: {mtm.get('error')}")
+                except Exception as e:
+                    result['mtm_fail_count'] += 1
+                    logger.debug(f"MTM exception for {pos_id}: {e}")
 
-                # Estimate: if well inside strikes, approaching max profit
-                # If close to a strike, less profit
-                half_width = spread_width / 2
-                safety_ratio = min(min_distance / half_width, 1.0)
+            # Fallback to estimation if MTM failed
+            if not mtm_success:
+                # Check if price is in the "safe zone" (between short strikes)
+                in_safe_zone = put_short < current_price < call_short
 
-                # Estimated current value (what we'd pay to close)
-                # At max profit (expiration, in safe zone) = $0 to close
-                # Current estimate based on safety ratio
-                estimated_close_cost = entry_credit * (1 - safety_ratio * 0.8)
-                unrealized_pnl = (entry_credit - estimated_close_cost) * 100 * contracts
-
-            else:
-                # Price outside safe zone - position is at risk
-                if current_price <= put_short:
-                    # Below put short - put spread is in trouble
-                    intrusion = put_short - current_price
-                    max_intrusion = spread_width
-                    loss_ratio = min(intrusion / max_intrusion, 1.0)
-                    # Loss = spread_width - credit (max loss) * loss_ratio
-                    max_loss_per_contract = (spread_width - entry_credit) * 100
-                    unrealized_pnl = -max_loss_per_contract * loss_ratio * contracts
+                if in_safe_zone:
+                    put_distance = current_price - put_short
+                    call_distance = call_short - current_price
+                    min_distance = min(put_distance, call_distance)
+                    half_width = spread_width / 2
+                    safety_ratio = min(min_distance / half_width, 1.0)
+                    estimated_close_cost = entry_credit * (1 - safety_ratio * 0.8)
+                    unrealized_pnl = (entry_credit - estimated_close_cost) * 100 * contracts
                 else:
-                    # Above call short - call spread is in trouble
-                    intrusion = current_price - call_short
-                    max_intrusion = spread_width
-                    loss_ratio = min(intrusion / max_intrusion, 1.0)
-                    max_loss_per_contract = (spread_width - entry_credit) * 100
-                    unrealized_pnl = -max_loss_per_contract * loss_ratio * contracts
+                    if current_price <= put_short:
+                        intrusion = put_short - current_price
+                        max_intrusion = spread_width
+                        loss_ratio = min(intrusion / max_intrusion, 1.0)
+                        max_loss_per_contract = (spread_width - entry_credit) * 100
+                        unrealized_pnl = -max_loss_per_contract * loss_ratio * contracts
+                    else:
+                        intrusion = current_price - call_short
+                        max_intrusion = spread_width
+                        loss_ratio = min(intrusion / max_intrusion, 1.0)
+                        max_loss_per_contract = (spread_width - entry_credit) * 100
+                        unrealized_pnl = -max_loss_per_contract * loss_ratio * contracts
+
+            in_safe_zone = put_short < current_price < call_short
 
             position_data = {
                 'position_id': pos_id,
@@ -479,7 +514,9 @@ def _calculate_live_unrealized_pnl() -> dict:
                 'in_safe_zone': in_safe_zone,
                 'unrealized_pnl': round(unrealized_pnl, 2),
                 'max_profit': round(entry_credit * 100 * contracts, 2),
-                'max_loss': round((spread_width - entry_credit) * 100 * contracts, 2)
+                'max_loss': round((spread_width - entry_credit) * 100 * contracts, 2),
+                'pricing_method': pricing_method,
+                'leg_prices': leg_prices
             }
 
             result['positions'].append(position_data)
@@ -490,6 +527,15 @@ def _calculate_live_unrealized_pnl() -> dict:
         result['total_unrealized_pnl'] = round(total_unrealized, 2)
         result['total_open_credit'] = round(total_credit, 2)
         result['position_count'] = len(rows)
+
+        # Set overall pricing method
+        if result['mtm_success_count'] > 0:
+            if result['mtm_fail_count'] == 0:
+                result['pricing_method'] = 'mark_to_market'
+            else:
+                result['pricing_method'] = 'mixed'
+        else:
+            result['pricing_method'] = 'estimation'
 
         return result
 

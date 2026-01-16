@@ -26,6 +26,20 @@ except ImportError:
 router = APIRouter(prefix="/api/pegasus", tags=["PEGASUS"])
 logger = logging.getLogger(__name__)
 
+# Import mark-to-market utility for real option pricing
+MTM_AVAILABLE = False
+try:
+    from trading.mark_to_market import (
+        calculate_ic_mark_to_market,
+        build_occ_symbol,
+        get_option_quotes_batch,
+        clear_quote_cache
+    )
+    MTM_AVAILABLE = True
+    logger.info("Mark-to-market utility loaded for PEGASUS")
+except ImportError as e:
+    logger.debug(f"Mark-to-market import failed: {e}")
+
 # Try to import Tradier for account balance (same pattern as ARES)
 TradierDataFetcher = None
 TRADIER_AVAILABLE = False
@@ -68,6 +82,154 @@ def _resolve_query_param(param, default=None):
         return param.default if param.default is not None else default
     # Otherwise return the value as-is
     return param
+
+
+def _calculate_pegasus_unrealized_pnl(positions: list) -> dict:
+    """
+    Calculate unrealized P&L for PEGASUS positions using mark-to-market pricing.
+
+    Fetches real option quotes from Tradier and calculates actual cost to close
+    each position. Falls back to estimation if quotes unavailable.
+
+    Args:
+        positions: List of position tuples from database query with columns:
+                   (position_id, total_credit, contracts, spread_width,
+                    put_short_strike, put_long_strike, call_short_strike, call_long_strike,
+                    expiration)
+
+    Returns:
+        Dict with:
+        - total_unrealized_pnl: float
+        - positions: list of position details with individual P&L
+        - method: 'mark_to_market' or 'estimation'
+        - pricing_source: description of data source
+    """
+    result = {
+        'total_unrealized_pnl': 0,
+        'positions': [],
+        'method': 'estimation',
+        'pricing_source': 'estimated',
+        'mtm_success_count': 0,
+        'mtm_fail_count': 0
+    }
+
+    if not positions:
+        return result
+
+    total_unrealized = 0
+
+    for pos in positions:
+        pos_id, total_credit, contracts, spread_width, put_short, put_long, call_short, call_long, expiration = pos
+        total_credit = float(total_credit or 0)
+        contracts = int(contracts or 1)
+        spread_width = float(spread_width or 10)
+        put_short = float(put_short or 0)
+        put_long = float(put_long or 0)
+        call_short = float(call_short or 0)
+        call_long = float(call_long or 0)
+
+        pos_result = {
+            'position_id': pos_id,
+            'unrealized_pnl': 0,
+            'method': 'estimation',
+            'current_value': None
+        }
+
+        # Try mark-to-market first
+        if MTM_AVAILABLE and expiration:
+            try:
+                exp_str = expiration.strftime('%Y-%m-%d') if hasattr(expiration, 'strftime') else str(expiration)
+                mtm = calculate_ic_mark_to_market(
+                    underlying='SPX',
+                    expiration=exp_str,
+                    put_short_strike=put_short,
+                    put_long_strike=put_long,
+                    call_short_strike=call_short,
+                    call_long_strike=call_long,
+                    contracts=contracts,
+                    entry_credit=total_credit,
+                    use_cache=True
+                )
+
+                if mtm['success']:
+                    pos_result['unrealized_pnl'] = mtm['unrealized_pnl']
+                    pos_result['current_value'] = mtm['current_value']
+                    pos_result['method'] = 'mark_to_market'
+                    pos_result['leg_prices'] = mtm.get('leg_prices')
+                    result['mtm_success_count'] += 1
+                    total_unrealized += mtm['unrealized_pnl']
+                    result['positions'].append(pos_result)
+                    continue
+                else:
+                    result['mtm_fail_count'] += 1
+                    logger.debug(f"MTM failed for {pos_id}: {mtm.get('error')}")
+            except Exception as e:
+                result['mtm_fail_count'] += 1
+                logger.debug(f"MTM exception for {pos_id}: {e}")
+
+        # Fallback to estimation based on underlying price
+        try:
+            from data.unified_data_provider import get_price
+            spx_price = get_price("SPX")
+            if not spx_price or spx_price <= 0:
+                spy_price = get_price("SPY")
+                if spy_price and spy_price > 0:
+                    spx_price = spy_price * 10
+        except Exception:
+            spx_price = None
+
+        if not spx_price or spx_price <= 0:
+            # Try Tradier direct
+            try:
+                import os
+                from data.tradier_data_fetcher import TradierDataFetcher as TDF
+                api_key = os.environ.get('TRADIER_API_KEY') or os.environ.get('TRADIER_SANDBOX_API_KEY')
+                if api_key:
+                    tradier = TDF(api_key=api_key, sandbox='SANDBOX' in str(os.environ.get('TRADIER_SANDBOX_API_KEY', '')))
+                    quote = tradier.get_quote('SPX')
+                    if quote and quote.get('last'):
+                        spx_price = float(quote['last'])
+            except Exception:
+                pass
+
+        if spx_price and spx_price > 0:
+            # Estimate IC value based on underlying price
+            if put_short < spx_price < call_short:
+                # Safe zone
+                put_dist = (spx_price - put_short) / spread_width
+                call_dist = (call_short - spx_price) / spread_width
+                factor = min(put_dist, call_dist) / 2
+                current_value = total_credit * max(0.1, 0.5 - factor * 0.3)
+            elif spx_price <= put_short:
+                intrinsic = put_short - spx_price
+                current_value = min(spread_width, intrinsic + total_credit * 0.2)
+            else:
+                intrinsic = spx_price - call_short
+                current_value = min(spread_width, intrinsic + total_credit * 0.2)
+
+            pos_unrealized = (total_credit - current_value) * 100 * contracts
+            pos_result['unrealized_pnl'] = round(pos_unrealized, 2)
+            pos_result['current_value'] = round(current_value, 4)
+            pos_result['underlying_price'] = spx_price
+            total_unrealized += pos_unrealized
+
+        result['positions'].append(pos_result)
+
+    result['total_unrealized_pnl'] = round(total_unrealized, 2)
+
+    # Set method based on success rate
+    if result['mtm_success_count'] > 0:
+        if result['mtm_fail_count'] == 0:
+            result['method'] = 'mark_to_market'
+            result['pricing_source'] = 'Tradier real-time option quotes'
+        else:
+            result['method'] = 'mixed'
+            result['pricing_source'] = f"MTM: {result['mtm_success_count']}, estimated: {result['mtm_fail_count']}"
+    else:
+        result['method'] = 'estimation'
+        result['pricing_source'] = 'estimated from underlying price'
+
+    return result
 
 
 # Try to import PEGASUS trader
@@ -885,82 +1047,29 @@ async def get_pegasus_intraday_equity(date: str = None):
         today_realized = float(today_row[0]) if today_row and today_row[0] else 0
         today_closed_count = int(today_row[1]) if today_row and today_row[1] else 0
 
-        # Calculate unrealized P&L from open positions using live SPX price
+        # Calculate unrealized P&L from open positions using mark-to-market pricing
         unrealized_pnl = 0
         open_positions = []
-        spx_price = None
-
-        # Get current SPX price for unrealized P&L calculation
-        try:
-            from data.unified_data_provider import get_price
-            spx_price = get_price("SPX")
-            if not spx_price or spx_price <= 0:
-                spy_price = get_price("SPY")
-                if spy_price and spy_price > 0:
-                    spx_price = spy_price * 10
-        except Exception:
-            pass
-
-        # Fallback to Tradier direct
-        if not spx_price or spx_price <= 0:
-            try:
-                from data.tradier_data_fetcher import TradierDataFetcher
-                import os
-                api_key = os.environ.get('TRADIER_API_KEY') or os.environ.get('TRADIER_SANDBOX_API_KEY')
-                if api_key:
-                    tradier = TradierDataFetcher(api_key=api_key, sandbox='SANDBOX' in str(os.environ.get('TRADIER_SANDBOX_API_KEY', '')))
-                    for symbol in ['SPX', 'SPY']:
-                        quote = tradier.get_quote(symbol)
-                        if quote and quote.get('last'):
-                            price = float(quote['last'])
-                            if price > 0:
-                                spx_price = price if symbol == 'SPX' else price * 10
-                                break
-            except Exception as e:
-                logger.debug(f"Tradier price fetch failed: {e}")
+        pricing_method = 'estimation'
 
         try:
+            # Query positions with all fields needed for MTM calculation
             cursor.execute("""
                 SELECT position_id, total_credit, contracts, spread_width,
-                       put_short_strike, call_short_strike
+                       put_short_strike, put_long_strike, call_short_strike, call_long_strike,
+                       expiration
                 FROM pegasus_positions
                 WHERE status = 'open'
             """)
             open_rows = cursor.fetchall()
 
-            for row in open_rows:
-                pos_id, total_credit, contracts, spread_width, put_short, call_short = row
-                credit_val = float(total_credit) if total_credit else 0
-                num_contracts = int(contracts) if contracts else 1
-                spread_w = float(spread_width) if spread_width else 10
-                put_short = float(put_short) if put_short else 0
-                call_short = float(call_short) if call_short else 0
-
-                current_unrealized = 0
-                if spx_price and spx_price > 0 and put_short and call_short:
-                    # Estimate current IC value based on where SPX is relative to strikes
-                    if put_short < spx_price < call_short:
-                        # Safe zone - IC worth fraction of credit
-                        put_dist = (spx_price - put_short) / spread_w
-                        call_dist = (call_short - spx_price) / spread_w
-                        factor = min(put_dist, call_dist) / 2
-                        current_value = credit_val * max(0.1, 0.5 - factor * 0.3)
-                    elif spx_price <= put_short:
-                        # Below put short - losing money
-                        intrinsic = put_short - spx_price
-                        current_value = min(spread_w, intrinsic + credit_val * 0.2)
-                    else:
-                        # Above call short - losing money
-                        intrinsic = spx_price - call_short
-                        current_value = min(spread_w, intrinsic + credit_val * 0.2)
-
-                    current_unrealized = (credit_val - current_value) * 100 * num_contracts
-
-                open_positions.append({
-                    "position_id": pos_id,
-                    "unrealized_pnl": round(current_unrealized, 2)
-                })
-                unrealized_pnl += current_unrealized
+            if open_rows:
+                # Use the MTM helper function for real option pricing
+                mtm_result = _calculate_pegasus_unrealized_pnl(open_rows)
+                unrealized_pnl = mtm_result['total_unrealized_pnl']
+                open_positions = mtm_result['positions']
+                pricing_method = mtm_result['method']
+                logger.debug(f"PEGASUS intraday: unrealized=${unrealized_pnl:.2f} via {pricing_method}")
         except Exception as e:
             logger.warning(f"Error calculating unrealized P&L: {e}")
 
@@ -1105,79 +1214,25 @@ async def save_pegasus_equity_snapshot():
         row = cursor.fetchone()
         realized_pnl = float(row[0]) if row and row[0] else 0
 
-        # Get open positions and calculate unrealized P&L
+        # Get open positions and calculate unrealized P&L using mark-to-market
         cursor.execute("""
             SELECT position_id, total_credit, contracts, spread_width,
-                   put_short_strike, call_short_strike
+                   put_short_strike, put_long_strike, call_short_strike, call_long_strike,
+                   expiration
             FROM pegasus_positions WHERE status = 'open'
         """)
         open_positions = cursor.fetchall()
         open_count = len(open_positions)
 
-        # Get current SPX price for unrealized P&L calculation
+        # Calculate unrealized P&L using MTM helper
         unrealized_pnl = 0
-        spx_price = None
+        pricing_method = 'estimation'
 
-        # Try to get SPX price from multiple sources
-        try:
-            from data.unified_data_provider import get_price
-            spx_price = get_price("SPX")
-            if not spx_price or spx_price <= 0:
-                spy_price = get_price("SPY")
-                if spy_price and spy_price > 0:
-                    spx_price = spy_price * 10
-        except Exception:
-            pass
-
-        # Fallback to Tradier direct
-        if not spx_price or spx_price <= 0:
-            try:
-                from data.tradier_data_fetcher import TradierDataFetcher
-                import os
-                api_key = os.environ.get('TRADIER_API_KEY') or os.environ.get('TRADIER_SANDBOX_API_KEY')
-                if api_key:
-                    tradier = TradierDataFetcher(api_key=api_key, sandbox='SANDBOX' in str(os.environ.get('TRADIER_SANDBOX_API_KEY', '')))
-                    for symbol in ['SPX', 'SPY']:
-                        quote = tradier.get_quote(symbol)
-                        if quote and quote.get('last'):
-                            price = float(quote['last'])
-                            if price > 0:
-                                spx_price = price if symbol == 'SPX' else price * 10
-                                break
-            except Exception as e:
-                logger.debug(f"Tradier price fetch failed: {e}")
-
-        # Calculate unrealized P&L if we have price
-        if spx_price and spx_price > 0 and open_positions:
-            for pos in open_positions:
-                pos_id, total_credit, contracts, spread_width, put_short, call_short = pos
-                total_credit = float(total_credit or 0)
-                contracts = int(contracts or 0)
-                spread_width = float(spread_width or 10)
-                put_short = float(put_short or 0)
-                call_short = float(call_short or 0)
-
-                # Estimate current IC value based on where SPX is relative to strikes
-                if put_short < spx_price < call_short:
-                    # Safe zone - IC worth fraction of credit
-                    put_dist = (spx_price - put_short) / spread_width
-                    call_dist = (call_short - spx_price) / spread_width
-                    factor = min(put_dist, call_dist) / 2
-                    current_value = total_credit * max(0.1, 0.5 - factor * 0.3)
-                elif spx_price <= put_short:
-                    # Below put short - losing money
-                    intrinsic = put_short - spx_price
-                    current_value = min(spread_width, intrinsic + total_credit * 0.2)
-                else:
-                    # Above call short - losing money
-                    intrinsic = spx_price - call_short
-                    current_value = min(spread_width, intrinsic + total_credit * 0.2)
-
-                # Unrealized = (credit received - cost to close) * 100 * contracts
-                pos_unrealized = (total_credit - current_value) * 100 * contracts
-                unrealized_pnl += pos_unrealized
-
-            logger.debug(f"Calculated unrealized P&L: ${unrealized_pnl:.2f} using SPX ${spx_price:.2f}")
+        if open_positions:
+            mtm_result = _calculate_pegasus_unrealized_pnl(open_positions)
+            unrealized_pnl = mtm_result['total_unrealized_pnl']
+            pricing_method = mtm_result['method']
+            logger.debug(f"PEGASUS snapshot: unrealized=${unrealized_pnl:.2f} via {pricing_method}")
 
         current_equity = starting_capital + realized_pnl + unrealized_pnl
 

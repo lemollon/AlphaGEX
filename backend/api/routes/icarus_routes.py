@@ -40,8 +40,122 @@ logger = logging.getLogger(__name__)
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 
+# Import mark-to-market module for real option pricing
+MTM_AVAILABLE = False
+try:
+    from trading.mark_to_market import (
+        calculate_spread_mark_to_market,
+        build_occ_symbol,
+        get_option_quotes_batch,
+        clear_quote_cache
+    )
+    MTM_AVAILABLE = True
+    logger.debug("ICARUS: Mark-to-market module loaded successfully")
+except ImportError as e:
+    logger.debug(f"ICARUS: Mark-to-market import failed (estimation fallback will be used): {e}")
+
 # Flag to track if database schema has been initialized
 _schema_initialized = False
+
+
+def _calculate_icarus_unrealized_pnl(positions: list, spy_price: float = None) -> dict:
+    """
+    Calculate unrealized P&L for ICARUS open positions using real option quotes.
+
+    ICARUS trades aggressive directional spreads (Bull Call / Bear Put) on SPY.
+
+    Args:
+        positions: List of position tuples from DB query with fields:
+                   (position_id, spread_type, entry_debit, contracts,
+                    long_strike, short_strike, max_profit, max_loss, expiration)
+        spy_price: Current SPY price for estimation fallback
+
+    Returns:
+        Dict with total_unrealized_pnl, position_details, and method used
+    """
+    total_unrealized = 0.0
+    position_details = []
+    mtm_success_count = 0
+    estimation_count = 0
+
+    for pos in positions:
+        pos_id, spread_type, entry_debit, contracts, long_strike, short_strike, max_profit, max_loss, expiration = pos
+        entry_debit = float(entry_debit or 0)
+        contracts = int(contracts or 1)
+        long_strike = float(long_strike or 0)
+        short_strike = float(short_strike or 0)
+        max_profit = float(max_profit or 0)
+        max_loss = float(max_loss or entry_debit * 100)
+        spread_type_upper = (spread_type or '').upper()
+        spread_width = abs(short_strike - long_strike)
+
+        pos_unrealized = 0.0
+        method = 'estimation'
+
+        # Try mark-to-market first using real option quotes
+        if MTM_AVAILABLE and expiration:
+            try:
+                # Format expiration as string
+                exp_str = str(expiration) if not isinstance(expiration, str) else expiration
+
+                mtm_result = calculate_spread_mark_to_market(
+                    underlying='SPY',
+                    expiration=exp_str,
+                    long_strike=long_strike,
+                    short_strike=short_strike,
+                    spread_type=spread_type,  # e.g., 'BULL_CALL', 'BEAR_PUT'
+                    contracts=contracts,
+                    entry_debit=entry_debit,
+                    use_cache=True
+                )
+
+                if mtm_result.get('success') and mtm_result.get('unrealized_pnl') is not None:
+                    pos_unrealized = mtm_result['unrealized_pnl']
+                    method = 'mark_to_market'
+                    mtm_success_count += 1
+                    logger.debug(f"ICARUS MTM: {pos_id} unrealized=${pos_unrealized:.2f}")
+            except Exception as e:
+                logger.debug(f"ICARUS MTM failed for {pos_id}: {e}")
+
+        # Fallback to estimation if MTM failed
+        if method == 'estimation' and spy_price and spy_price > 0 and long_strike and short_strike:
+            estimation_count += 1
+            # Calculate current spread value based on type and price
+            if 'BULL' in spread_type_upper or 'CALL' in spread_type_upper:
+                # Bull spread profits when price goes up
+                if spy_price >= short_strike:
+                    current_value = spread_width
+                elif spy_price <= long_strike:
+                    current_value = 0
+                else:
+                    current_value = max(0, spy_price - long_strike)
+            else:
+                # Bear spread profits when price goes down
+                if spy_price <= short_strike:
+                    current_value = spread_width
+                elif spy_price >= long_strike:
+                    current_value = 0
+                else:
+                    current_value = max(0, long_strike - spy_price)
+
+            pos_unrealized = (current_value - entry_debit) * 100 * contracts
+            pos_unrealized = max(-max_loss, min(max_profit * contracts, pos_unrealized))
+
+        total_unrealized += pos_unrealized
+        position_details.append({
+            'position_id': pos_id,
+            'spread_type': spread_type,
+            'unrealized_pnl': round(pos_unrealized, 2),
+            'method': method
+        })
+
+    return {
+        'total_unrealized_pnl': round(total_unrealized, 2),
+        'position_details': position_details,
+        'mtm_count': mtm_success_count,
+        'estimation_count': estimation_count,
+        'primary_method': 'mark_to_market' if mtm_success_count > estimation_count else 'estimation'
+    }
 
 
 def _ensure_icarus_schema():
@@ -1215,12 +1329,12 @@ async def get_icarus_intraday_equity(date: str = None):
         today_realized = float(today_row[0]) if today_row and today_row[0] else 0
         today_closed_count = int(today_row[1]) if today_row and today_row[1] else 0
 
-        # Calculate unrealized P&L from open positions using live SPY price
+        # Calculate unrealized P&L from open positions using real option quotes (MTM)
         unrealized_pnl = 0
         open_positions = []
         spy_price = None
 
-        # Get current SPY price for unrealized P&L calculation
+        # Get current SPY price for estimation fallback
         try:
             from data.unified_data_provider import get_price
             spy_price = get_price("SPY")
@@ -1248,55 +1362,22 @@ async def get_icarus_intraday_equity(date: str = None):
                 logger.debug(f"Tradier price fetch failed: {e}")
 
         try:
+            # Query includes expiration for MTM pricing
             cursor.execute("""
                 SELECT position_id, spread_type, entry_debit, contracts,
-                       long_strike, short_strike, max_profit, max_loss
+                       long_strike, short_strike, max_profit, max_loss, expiration
                 FROM icarus_positions
                 WHERE status = 'open'
             """)
             open_rows = cursor.fetchall()
 
-            for row in open_rows:
-                pos_id, spread_type, entry_debit, contracts, long_strike, short_strike, max_profit, max_loss = row
-                entry_debit = float(entry_debit or 0)
-                num_contracts = int(contracts) if contracts else 1
-                long_strike = float(long_strike or 0)
-                short_strike = float(short_strike or 0)
-                max_profit_val = float(max_profit or 0)
-                max_loss_val = float(max_loss or entry_debit * 100)
-
-                spread_type_upper = (spread_type or '').upper()
-                spread_width = abs(short_strike - long_strike)
-
-                current_unrealized = 0
-                if spy_price and spy_price > 0 and long_strike and short_strike:
-                    # Calculate current spread value based on type and price
-                    if 'BULL' in spread_type_upper or 'CALL' in spread_type_upper:
-                        # Bull spread profits when price goes up
-                        if spy_price >= short_strike:
-                            current_value = spread_width
-                        elif spy_price <= long_strike:
-                            current_value = 0
-                        else:
-                            current_value = max(0, spy_price - long_strike)
-                    else:
-                        # Bear spread profits when price goes down
-                        if spy_price <= short_strike:
-                            current_value = spread_width
-                        elif spy_price >= long_strike:
-                            current_value = 0
-                        else:
-                            current_value = max(0, long_strike - spy_price)
-
-                    pos_unrealized = (current_value - entry_debit) * 100 * num_contracts
-                    current_unrealized = max(-max_loss_val, min(max_profit_val * num_contracts, pos_unrealized))
-
-                open_positions.append({
-                    "position_id": pos_id,
-                    "spread_type": spread_type,
-                    "unrealized_pnl": round(current_unrealized, 2)
-                })
-                unrealized_pnl += current_unrealized
+            # Use MTM helper function for accurate unrealized P&L
+            if open_rows:
+                pnl_result = _calculate_icarus_unrealized_pnl(open_rows, spy_price)
+                unrealized_pnl = pnl_result['total_unrealized_pnl']
+                open_positions = pnl_result['position_details']
+                logger.debug(f"ICARUS intraday: unrealized=${unrealized_pnl:.2f} "
+                           f"(MTM: {pnl_result['mtm_count']}, Est: {pnl_result['estimation_count']})")
         except Exception as e:
             logger.debug(f"Error calculating unrealized P&L: {e}")
 
@@ -1438,20 +1519,21 @@ async def save_icarus_equity_snapshot():
         realized_pnl = float(row[0]) if row and row[0] else 0
 
         # Get open positions with spread info for unrealized P&L calculation
+        # Include expiration for MTM pricing
         cursor.execute("""
             SELECT position_id, spread_type, entry_debit, contracts,
-                   long_strike, short_strike, max_profit, max_loss
+                   long_strike, short_strike, max_profit, max_loss, expiration
             FROM icarus_positions
             WHERE status = 'open'
         """)
         open_positions = cursor.fetchall()
         open_count = len(open_positions)
 
-        # Get current SPY price for unrealized P&L calculation
+        # Calculate unrealized P&L using MTM with estimation fallback
         unrealized_pnl = 0
         spy_price = None
 
-        # Try to get SPY price from multiple sources
+        # Get SPY price for estimation fallback
         try:
             from data.unified_data_provider import get_price
             spy_price = get_price("SPY")
@@ -1478,51 +1560,12 @@ async def save_icarus_equity_snapshot():
             except Exception as e:
                 logger.debug(f"Tradier price fetch failed: {e}")
 
-        # Calculate unrealized P&L if we have price
-        if spy_price and spy_price > 0 and open_positions:
-            for pos in open_positions:
-                pos_id, spread_type, entry_debit, contracts, long_strike, short_strike, max_profit, max_loss = pos
-                entry_debit = float(entry_debit or 0)
-                contracts = int(contracts or 1)
-                long_strike = float(long_strike or 0)
-                short_strike = float(short_strike or 0)
-                max_profit = float(max_profit or 0)
-                max_loss = float(max_loss or entry_debit * 100)
-
-                spread_type_upper = (spread_type or '').upper()
-                spread_width = abs(short_strike - long_strike)
-
-                # Calculate current spread value based on type and price
-                if 'BULL' in spread_type_upper or 'CALL' in spread_type_upper:
-                    # Bull spread profits when price goes up
-                    if spy_price >= short_strike:
-                        # Max profit zone
-                        current_value = spread_width
-                    elif spy_price <= long_strike:
-                        # Max loss zone - spread worthless
-                        current_value = 0
-                    else:
-                        # In between - partial value
-                        current_value = max(0, spy_price - long_strike)
-                else:
-                    # Bear spread profits when price goes down
-                    if spy_price <= short_strike:
-                        # Max profit zone
-                        current_value = spread_width
-                    elif spy_price >= long_strike:
-                        # Max loss zone - spread worthless
-                        current_value = 0
-                    else:
-                        # In between - partial value
-                        current_value = max(0, long_strike - spy_price)
-
-                # Unrealized = (current_value - entry_debit) * 100 * contracts
-                pos_unrealized = (current_value - entry_debit) * 100 * contracts
-                # Cap at max profit/loss
-                pos_unrealized = max(-max_loss, min(max_profit * contracts, pos_unrealized))
-                unrealized_pnl += pos_unrealized
-
-            logger.debug(f"ICARUS: Calculated unrealized P&L: ${unrealized_pnl:.2f} using SPY ${spy_price:.2f}")
+        # Use MTM helper function for accurate unrealized P&L
+        if open_positions:
+            pnl_result = _calculate_icarus_unrealized_pnl(open_positions, spy_price)
+            unrealized_pnl = pnl_result['total_unrealized_pnl']
+            logger.debug(f"ICARUS snapshot: unrealized=${unrealized_pnl:.2f} "
+                       f"(MTM: {pnl_result['mtm_count']}, Est: {pnl_result['estimation_count']})")
 
         current_equity = starting_capital + realized_pnl + unrealized_pnl
 
