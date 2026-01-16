@@ -175,15 +175,24 @@ def _calculate_titan_unrealized_pnl(positions: list) -> dict:
             spx_price = None
 
         if not spx_price or spx_price <= 0:
+            # SPX quotes require Tradier PRODUCTION API - sandbox doesn't have SPX
             try:
                 import os
                 from data.tradier_data_fetcher import TradierDataFetcher as TDF
-                api_key = os.environ.get('TRADIER_API_KEY') or os.environ.get('TRADIER_SANDBOX_API_KEY')
-                if api_key:
-                    tradier = TDF(api_key=api_key, sandbox='SANDBOX' in str(os.environ.get('TRADIER_SANDBOX_API_KEY', '')))
+                prod_key = os.environ.get('TRADIER_API_KEY')
+                if prod_key:
+                    tradier = TDF(api_key=prod_key, sandbox=False)
                     quote = tradier.get_quote('SPX')
                     if quote and quote.get('last'):
                         spx_price = float(quote['last'])
+                # Fallback: Try SPY * 10 from sandbox if production not available
+                if (not spx_price or spx_price <= 0):
+                    sandbox_key = os.environ.get('TRADIER_SANDBOX_API_KEY')
+                    if sandbox_key:
+                        tradier = TDF(api_key=sandbox_key, sandbox=True)
+                        quote = tradier.get_quote('SPY')
+                        if quote and quote.get('last'):
+                            spx_price = float(quote['last']) * 10
             except Exception:
                 pass
 
