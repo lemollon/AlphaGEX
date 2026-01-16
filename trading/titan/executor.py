@@ -688,20 +688,36 @@ class OrderExecutor:
                 logger.debug(f"Unified data provider failed: {e}")
 
         # Try Tradier directly as fallback
+        # NOTE: SPX quotes require Tradier PRODUCTION API - sandbox doesn't have SPX
         try:
             from data.tradier_data_fetcher import TradierDataFetcher
             import os
-            api_key = os.environ.get('TRADIER_API_KEY') or os.environ.get('TRADIER_SANDBOX_API_KEY')
-            if api_key:
-                tradier = TradierDataFetcher(api_key=api_key, sandbox='SANDBOX' in (os.environ.get('TRADIER_SANDBOX_API_KEY') or ''))
+            # Prefer production API for SPX quotes
+            prod_key = os.environ.get('TRADIER_API_KEY')
+            sandbox_key = os.environ.get('TRADIER_SANDBOX_API_KEY')
+
+            # Try production first (required for SPX)
+            if prod_key:
+                tradier = TradierDataFetcher(api_key=prod_key, sandbox=False)
                 for symbol in ['SPX', 'SPY']:
                     quote = tradier.get_quote(symbol)
                     if quote and quote.get('last'):
                         price = float(quote['last'])
                         if price > 0:
                             result = price if symbol == 'SPX' else price * 10
-                            logger.debug(f"Got {symbol} price from Tradier: ${result:.2f}")
+                            logger.debug(f"Got {symbol} price from Tradier PRODUCTION: ${result:.2f}")
                             return result
+
+            # Fallback to sandbox for SPY only (SPX not available in sandbox)
+            if sandbox_key:
+                tradier = TradierDataFetcher(api_key=sandbox_key, sandbox=True)
+                quote = tradier.get_quote('SPY')
+                if quote and quote.get('last'):
+                    price = float(quote['last'])
+                    if price > 0:
+                        result = price * 10
+                        logger.debug(f"Got SPY price from Tradier SANDBOX: ${result:.2f} (SPX estimated)")
+                        return result
         except Exception as e:
             logger.debug(f"Tradier direct fetch failed: {e}")
 
