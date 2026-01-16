@@ -562,22 +562,11 @@ class ARESTrader(MathOptimizerMixin):
                 print(f"[ARES DEBUG] ❌ Scan logging returned None - check database!")
                 logger.warning("[ARES] Scan logging returned None - possible DB issue")
 
-            # Store Oracle prediction for NON-TRADED scans to provide visibility
-            # This enables the Oracle Knowledge Base to show all bot interactions,
-            # not just executed trades. Critical for debugging "why no trades?"
-            if outcome != ScanOutcome.TRADED and (oracle_data or (signal and oracle_win_probability > 0)):
-                try:
-                    market_data_for_oracle = context.get('market_data', {})
-                    if context.get('gex_data'):
-                        market_data_for_oracle.update(context['gex_data'])
-                    self._store_oracle_prediction_for_scan(
-                        signal=signal,
-                        oracle_data=oracle_data,
-                        market_data=market_data_for_oracle,
-                        decision=decision
-                    )
-                except Exception as oracle_store_err:
-                    logger.debug(f"[ARES] Oracle scan prediction storage skipped: {oracle_store_err}")
+            # Migration 023 (Option C): NO LONGER store Oracle predictions for non-traded scans.
+            # Predictions are ONLY stored when a position is actually opened.
+            # This ensures 1:1 prediction-to-position mapping for accurate feedback loop.
+            # Scan activity is still logged to ares_scan_activity for debugging visibility.
+            # (Removed call to _store_oracle_prediction_for_scan)
 
         except Exception as e:
             print(f"[ARES DEBUG] ❌ EXCEPTION in _log_scan_activity: {e}")
@@ -832,7 +821,12 @@ class ARESTrader(MathOptimizerMixin):
         return closed_count, total_pnl
 
     def _record_oracle_outcome(self, pos: IronCondorPosition, close_reason: str, pnl: float):
-        """Record trade outcome to Oracle for ML feedback loop"""
+        """
+        Record trade outcome to Oracle for ML feedback loop.
+
+        Migration 023: Enhanced to pass prediction_id and outcome_type for
+        accurate feedback loop tracking.
+        """
         if not ORACLE_AVAILABLE:
             return
 
@@ -843,22 +837,31 @@ class ARESTrader(MathOptimizerMixin):
             if pnl > 0:
                 if 'PROFIT_TARGET' in close_reason or 'MAX_PROFIT' in close_reason:
                     outcome = OracleTradeOutcome.MAX_PROFIT
+                    outcome_type = 'MAX_PROFIT'
                 else:
                     outcome = OracleTradeOutcome.PARTIAL_PROFIT
+                    outcome_type = 'PARTIAL_PROFIT'
             else:
                 if 'STOP_LOSS' in close_reason:
                     outcome = OracleTradeOutcome.LOSS
+                    outcome_type = 'STOP_LOSS'
                 elif 'CALL' in close_reason.upper() and 'BREACH' in close_reason.upper():
                     outcome = OracleTradeOutcome.CALL_BREACHED
+                    outcome_type = 'CALL_BREACHED'
                 elif 'PUT' in close_reason.upper() and 'BREACH' in close_reason.upper():
                     outcome = OracleTradeOutcome.PUT_BREACHED
+                    outcome_type = 'PUT_BREACHED'
                 else:
                     outcome = OracleTradeOutcome.LOSS
+                    outcome_type = 'LOSS'
 
             # Get trade date from position
             trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
 
-            # Record to Oracle
+            # Migration 023: Get prediction_id from database for accurate linking
+            prediction_id = self.db.get_oracle_prediction_id(pos.position_id)
+
+            # Record to Oracle with enhanced feedback loop data
             success = oracle.update_outcome(
                 trade_date=trade_date,
                 bot_name=OracleBotName.ARES,
@@ -866,10 +869,12 @@ class ARESTrader(MathOptimizerMixin):
                 actual_pnl=pnl,
                 put_strike=pos.put_short_strike if hasattr(pos, 'put_short_strike') else None,
                 call_strike=pos.call_short_strike if hasattr(pos, 'call_short_strike') else None,
+                prediction_id=prediction_id,  # Migration 023: Direct linking
+                outcome_type=outcome_type,  # Migration 023: Specific outcome classification
             )
 
             if success:
-                logger.info(f"ARES: Recorded outcome to Oracle - {outcome.value}, P&L=${pnl:.2f}")
+                logger.info(f"ARES: Recorded outcome to Oracle - {outcome.value}, P&L=${pnl:.2f}, prediction_id={prediction_id}")
             else:
                 logger.warning(f"ARES: Failed to record outcome to Oracle")
 
@@ -986,19 +991,24 @@ class ARESTrader(MathOptimizerMixin):
         except Exception as e:
             logger.warning(f"ARES: Learning Memory outcome recording failed: {e}")
 
-    def _store_oracle_prediction(self, signal, position: IronCondorPosition):
+    def _store_oracle_prediction(self, signal, position: IronCondorPosition) -> int | None:
         """
-        Store Oracle prediction to database BEFORE trade execution.
+        Store Oracle prediction to database AFTER position opens.
+
+        Migration 023 (Option C): This is called ONLY when a position is opened,
+        not during every scan. This ensures 1:1 prediction-to-position mapping.
 
         This is CRITICAL for the ML feedback loop:
         1. store_prediction() creates the record in oracle_predictions table
-        2. After trade closes, update_outcome() updates that record with actual results
-        3. Oracle uses this data for continuous model improvement
+        2. We link the prediction to this position via position_id
+        3. After trade closes, update_outcome() updates that record with actual results
+        4. Oracle uses this data for continuous model improvement
 
-        Without this call, update_outcome() has no record to update!
+        Returns:
+            int: The oracle_prediction_id for linking, or None if storage failed
         """
         if not ORACLE_AVAILABLE:
-            return
+            return None
 
         try:
             oracle = OracleAdvisor()
@@ -1047,19 +1057,33 @@ class ARESTrader(MathOptimizerMixin):
                 probabilities=getattr(signal, 'oracle_probabilities', {}),
             )
 
-            # Store to database
+            # Store to database with position_id and strategy_recommendation (Migration 023)
             trade_date = position.expiration if hasattr(position, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
-            success = oracle.store_prediction(prediction, context, trade_date)
+            prediction_id = oracle.store_prediction(
+                prediction,
+                context,
+                trade_date,
+                position_id=position.position_id,  # Migration 023: Link to specific position
+                strategy_recommendation='IRON_CONDOR'  # Migration 023: ARES uses Iron Condor strategy
+            )
 
-            if success:
+            if prediction_id and isinstance(prediction_id, int):
+                logger.info(f"ARES: Oracle prediction stored for {trade_date} (id={prediction_id}, Win Prob: {prediction.win_probability:.0%})")
+                # Update position in database with the oracle_prediction_id
+                self.db.update_oracle_prediction_id(position.position_id, prediction_id)
+                return prediction_id
+            elif prediction_id:  # True (backward compatibility)
                 logger.info(f"ARES: Oracle prediction stored for {trade_date} (Win Prob: {prediction.win_probability:.0%})")
+                return None
             else:
                 logger.warning(f"ARES: Failed to store Oracle prediction for {trade_date}")
+                return None
 
         except Exception as e:
             logger.warning(f"ARES: Oracle prediction storage failed: {e}")
             import traceback
             traceback.print_exc()
+            return None
 
     def _store_oracle_prediction_for_scan(
         self,

@@ -165,6 +165,8 @@ class TITANDatabase:
             ("oracle_advice", "VARCHAR(20)"),
             ("oracle_top_factors", "TEXT"),
             ("oracle_use_gex_walls", "BOOLEAN DEFAULT FALSE"),
+            # Migration 023: Feedback loop enhancements
+            ("oracle_prediction_id", "INTEGER"),  # Links to oracle_predictions.id
         ]
 
         for col_name, col_type in columns_to_add:
@@ -175,6 +177,49 @@ class TITANDatabase:
                 """)
             except Exception:
                 pass  # Column might already exist
+
+    def update_oracle_prediction_id(self, position_id: str, oracle_prediction_id: int) -> bool:
+        """
+        Update the oracle_prediction_id for a position after Oracle prediction is stored.
+
+        Migration 023: This links the position to the specific oracle prediction for
+        accurate outcome tracking in the feedback loop.
+        """
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    UPDATE titan_positions
+                    SET oracle_prediction_id = %s,
+                        updated_at = NOW()
+                    WHERE position_id = %s
+                """, (oracle_prediction_id, position_id))
+                conn.commit()
+                if c.rowcount > 0:
+                    logger.info(f"{self.bot_name}: Linked position {position_id} to oracle_prediction_id={oracle_prediction_id}")
+                    return True
+                else:
+                    logger.warning(f"{self.bot_name}: No position found to update: {position_id}")
+                    return False
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to update oracle_prediction_id: {e}")
+            return False
+
+    def get_oracle_prediction_id(self, position_id: str) -> int | None:
+        """Get the oracle_prediction_id for a position (for outcome recording)."""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    SELECT oracle_prediction_id
+                    FROM titan_positions
+                    WHERE position_id = %s
+                """, (position_id,))
+                row = c.fetchone()
+                return row[0] if row else None
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to get oracle_prediction_id: {e}")
+            return None
 
     def get_open_positions(self) -> List[IronCondorPosition]:
         """Get all open positions with FULL context"""

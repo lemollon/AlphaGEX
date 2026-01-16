@@ -404,7 +404,12 @@ class TITANTrader(MathOptimizerMixin):
         return closed, total_pnl
 
     def _record_oracle_outcome(self, pos: IronCondorPosition, close_reason: str, pnl: float):
-        """Record trade outcome to Oracle for ML feedback loop"""
+        """
+        Record trade outcome to Oracle for ML feedback loop.
+
+        Migration 023: Enhanced to pass prediction_id and outcome_type for
+        accurate feedback loop tracking.
+        """
         if not ORACLE_AVAILABLE:
             return
 
@@ -415,21 +420,30 @@ class TITANTrader(MathOptimizerMixin):
             if pnl > 0:
                 if 'PROFIT' in close_reason or 'MAX_PROFIT' in close_reason:
                     outcome = OracleTradeOutcome.MAX_PROFIT
+                    outcome_type = 'MAX_PROFIT'
                 else:
                     outcome = OracleTradeOutcome.PARTIAL_PROFIT
+                    outcome_type = 'PARTIAL_PROFIT'
             else:
                 if 'STOP_LOSS' in close_reason:
                     outcome = OracleTradeOutcome.LOSS
+                    outcome_type = 'STOP_LOSS'
                 elif 'CALL' in close_reason.upper() and 'BREACH' in close_reason.upper():
                     outcome = OracleTradeOutcome.CALL_BREACHED
+                    outcome_type = 'CALL_BREACHED'
                 elif 'PUT' in close_reason.upper() and 'BREACH' in close_reason.upper():
                     outcome = OracleTradeOutcome.PUT_BREACHED
+                    outcome_type = 'PUT_BREACHED'
                 else:
                     outcome = OracleTradeOutcome.LOSS
+                    outcome_type = 'LOSS'
 
             trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
 
-            # Record to Oracle using TITAN bot name for proper tracking
+            # Migration 023: Get prediction_id from database for accurate linking
+            prediction_id = self.db.get_oracle_prediction_id(pos.position_id)
+
+            # Record to Oracle using TITAN bot name with enhanced feedback data
             success = oracle.update_outcome(
                 trade_date=trade_date,
                 bot_name=OracleBotName.TITAN,
@@ -437,10 +451,12 @@ class TITANTrader(MathOptimizerMixin):
                 actual_pnl=pnl,
                 put_strike=pos.put_short_strike if hasattr(pos, 'put_short_strike') else None,
                 call_strike=pos.call_short_strike if hasattr(pos, 'call_short_strike') else None,
+                prediction_id=prediction_id,  # Migration 023: Direct linking
+                outcome_type=outcome_type,  # Migration 023: Specific outcome classification
             )
 
             if success:
-                logger.info(f"TITAN: Recorded outcome to Oracle - {outcome.value}, P&L=${pnl:.2f}")
+                logger.info(f"TITAN: Recorded outcome to Oracle - {outcome.value}, P&L=${pnl:.2f}, prediction_id={prediction_id}")
             else:
                 logger.warning(f"TITAN: Failed to record outcome to Oracle")
 
@@ -544,10 +560,18 @@ class TITANTrader(MathOptimizerMixin):
         except Exception as e:
             logger.warning(f"TITAN: Learning Memory outcome recording failed: {e}")
 
-    def _store_oracle_prediction(self, signal, position: IronCondorPosition):
-        """Store Oracle prediction to database BEFORE trade execution."""
+    def _store_oracle_prediction(self, signal, position: IronCondorPosition) -> int | None:
+        """
+        Store Oracle prediction to database AFTER position opens.
+
+        Migration 023 (Option C): This is called ONLY when a position is opened,
+        not during every scan. This ensures 1:1 prediction-to-position mapping.
+
+        Returns:
+            int: The oracle_prediction_id for linking, or None if storage failed
+        """
         if not ORACLE_AVAILABLE:
-            return
+            return None
 
         try:
             oracle = OracleAdvisor()
@@ -595,18 +619,33 @@ class TITANTrader(MathOptimizerMixin):
                 probabilities=getattr(signal, 'oracle_probabilities', {}),
             )
 
+            # Store to database with position_id and strategy_recommendation (Migration 023)
             trade_date = position.expiration if hasattr(position, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
-            success = oracle.store_prediction(prediction, context, trade_date)
+            prediction_id = oracle.store_prediction(
+                prediction,
+                context,
+                trade_date,
+                position_id=position.position_id,  # Migration 023: Link to specific position
+                strategy_recommendation='IRON_CONDOR'  # Migration 023: TITAN uses Iron Condor strategy
+            )
 
-            if success:
+            if prediction_id and isinstance(prediction_id, int):
+                logger.info(f"TITAN: Oracle prediction stored for {trade_date} (id={prediction_id}, Win Prob: {prediction.win_probability:.0%})")
+                # Update position in database with the oracle_prediction_id
+                self.db.update_oracle_prediction_id(position.position_id, prediction_id)
+                return prediction_id
+            elif prediction_id:  # True (backward compatibility)
                 logger.info(f"TITAN: Oracle prediction stored for {trade_date} (Win Prob: {prediction.win_probability:.0%})")
+                return None
             else:
                 logger.warning(f"TITAN: Failed to store Oracle prediction for {trade_date}")
+                return None
 
         except Exception as e:
             logger.warning(f"TITAN: Oracle prediction storage failed: {e}")
             import traceback
             traceback.print_exc()
+            return None
 
     def _get_force_exit_time(self, now: datetime, today: str) -> datetime:
         """
