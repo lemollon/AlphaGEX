@@ -5,6 +5,7 @@ Trading Events Routes - Auto-detected events for equity curve visualization
 from fastapi import APIRouter, HTTPException
 from datetime import datetime, timedelta
 from typing import Optional, List
+from zoneinfo import ZoneInfo
 import json
 import logging
 
@@ -15,6 +16,21 @@ try:
     from database_adapter import get_connection
 except ImportError:
     from ...database_adapter import get_connection
+
+# Import MTM functions for unrealized P&L calculation
+MTM_IC_AVAILABLE = False
+MTM_SPREAD_AVAILABLE = False
+try:
+    from core.mark_to_market import calculate_ic_mark_to_market
+    MTM_IC_AVAILABLE = True
+except ImportError:
+    calculate_ic_mark_to_market = None
+
+try:
+    from core.mark_to_market import calculate_spread_mark_to_market
+    MTM_SPREAD_AVAILABLE = True
+except ImportError:
+    calculate_spread_mark_to_market = None
 
 router = APIRouter(prefix="/api/events", tags=["Events"])
 
@@ -571,6 +587,96 @@ def sync_events(days: int = 90, bot_filter: str = None) -> dict:
     }
 
 
+def _calculate_bot_unrealized_pnl(cursor, bot_filter: str = None) -> float:
+    """
+    Calculate unrealized P&L from open positions for a specific bot.
+
+    Uses MTM (mark-to-market) pricing when available, falls back to estimation.
+    Handles both Iron Condor bots (ARES, TITAN, PEGASUS) and Directional bots (ATHENA, ICARUS).
+    """
+    if not bot_filter:
+        return 0.0
+
+    bot_filter_upper = bot_filter.upper()
+    unrealized_pnl = 0.0
+
+    # Bot-specific table and position structure mapping
+    ic_bots = {'ARES': ('ares_positions', 'SPY'),
+               'TITAN': ('titan_positions', 'SPX'),
+               'PEGASUS': ('pegasus_positions', 'SPX')}
+
+    directional_bots = {'ATHENA': ('athena_positions', 'SPY'),
+                        'ICARUS': ('icarus_positions', 'SPY')}
+
+    try:
+        if bot_filter_upper in ic_bots:
+            # Iron Condor bots
+            table_name, underlying = ic_bots[bot_filter_upper]
+            cursor.execute(f'''
+                SELECT position_id, total_credit, contracts,
+                       put_long_strike, put_short_strike,
+                       call_short_strike, call_long_strike, expiration
+                FROM {table_name}
+                WHERE status = 'open'
+            ''')
+            open_positions = cursor.fetchall()
+
+            if open_positions and MTM_IC_AVAILABLE and calculate_ic_mark_to_market:
+                for pos in open_positions:
+                    pos_id, total_credit, contracts, pl, ps, cs, cl, exp = pos
+                    try:
+                        exp_str = exp.strftime('%Y-%m-%d') if hasattr(exp, 'strftime') else str(exp)
+                        mtm_result = calculate_ic_mark_to_market(
+                            underlying=underlying,
+                            expiration=exp_str,
+                            put_short_strike=float(ps) if ps else 0,
+                            put_long_strike=float(pl) if pl else 0,
+                            call_short_strike=float(cs) if cs else 0,
+                            call_long_strike=float(cl) if cl else 0,
+                            contracts=int(contracts) if contracts else 1,
+                            entry_credit=float(total_credit) if total_credit else 0
+                        )
+                        if mtm_result and mtm_result.get('success'):
+                            unrealized_pnl += mtm_result.get('unrealized_pnl', 0) or 0
+                    except Exception as e:
+                        logger.debug(f"MTM calculation failed for {bot_filter_upper} position {pos_id}: {e}")
+
+        elif bot_filter_upper in directional_bots:
+            # Directional spread bots
+            table_name, underlying = directional_bots[bot_filter_upper]
+            cursor.execute(f'''
+                SELECT position_id, spread_type, entry_debit, contracts,
+                       long_strike, short_strike, expiration
+                FROM {table_name}
+                WHERE status = 'open'
+            ''')
+            open_positions = cursor.fetchall()
+
+            if open_positions and MTM_SPREAD_AVAILABLE and calculate_spread_mark_to_market:
+                for pos in open_positions:
+                    pos_id, spread_type, entry_debit, contracts, long_strike, short_strike, exp = pos
+                    try:
+                        exp_str = exp.strftime('%Y-%m-%d') if hasattr(exp, 'strftime') else str(exp)
+                        mtm_result = calculate_spread_mark_to_market(
+                            underlying=underlying,
+                            expiration=exp_str,
+                            spread_type=spread_type or 'CALL',
+                            long_strike=float(long_strike) if long_strike else 0,
+                            short_strike=float(short_strike) if short_strike else 0,
+                            contracts=int(contracts) if contracts else 1,
+                            entry_debit=float(entry_debit) if entry_debit else 0
+                        )
+                        if mtm_result and mtm_result.get('success'):
+                            unrealized_pnl += mtm_result.get('unrealized_pnl', 0) or 0
+                    except Exception as e:
+                        logger.debug(f"MTM calculation failed for {bot_filter_upper} position {pos_id}: {e}")
+
+    except Exception as e:
+        logger.warning(f"Error calculating unrealized P&L for {bot_filter}: {e}")
+
+    return unrealized_pnl
+
+
 def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str = 'daily') -> List[dict]:
     """
     Get equity curve data from trades, aggregated by timeframe.
@@ -674,6 +780,21 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
             rows = cursor.fetchall()
 
         if not rows:
+            # Even with no closed positions, check for open positions with unrealized P&L
+            unrealized_pnl = _calculate_bot_unrealized_pnl(cursor, bot_filter)
+            if unrealized_pnl != 0:
+                today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
+                equity = starting_capital + unrealized_pnl
+                return [{
+                    'date': today,
+                    'equity': round(equity, 2),
+                    'daily_pnl': round(unrealized_pnl, 2),
+                    'cumulative_pnl': round(unrealized_pnl, 2),
+                    'drawdown_pct': 0,
+                    'trade_count': 0,
+                    'unrealized_pnl': round(unrealized_pnl, 2),
+                    'open_positions': True
+                }]
             return []
 
         # Build equity curve
@@ -693,12 +814,45 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
 
             equity_curve.append({
                 'date': str(period_date),
-                'equity': equity,
-                'daily_pnl': daily_pnl,
-                'cumulative_pnl': cumulative_pnl,
-                'drawdown_pct': drawdown_pct,
+                'equity': round(equity, 2),
+                'daily_pnl': round(daily_pnl, 2),
+                'cumulative_pnl': round(cumulative_pnl, 2),
+                'drawdown_pct': round(drawdown_pct, 2),
                 'trade_count': trade_count
             })
+
+        # Add unrealized P&L from open positions to current day
+        today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
+        unrealized_pnl = _calculate_bot_unrealized_pnl(cursor, bot_filter)
+
+        if unrealized_pnl != 0 or (equity_curve and equity_curve[-1]['date'] != today):
+            total_pnl_with_unrealized = cumulative_pnl + unrealized_pnl
+            equity_with_unrealized = starting_capital + total_pnl_with_unrealized
+
+            if equity_with_unrealized > high_water_mark:
+                high_water_mark = equity_with_unrealized
+
+            drawdown_pct = ((high_water_mark - equity_with_unrealized) / high_water_mark * 100) if high_water_mark > 0 else 0
+
+            # Update or add today's entry
+            if equity_curve and equity_curve[-1]['date'] == today:
+                # Update existing today entry with unrealized
+                equity_curve[-1]['equity'] = round(equity_with_unrealized, 2)
+                equity_curve[-1]['cumulative_pnl'] = round(total_pnl_with_unrealized, 2)
+                equity_curve[-1]['drawdown_pct'] = round(drawdown_pct, 2)
+                equity_curve[-1]['unrealized_pnl'] = round(unrealized_pnl, 2)
+            else:
+                # Add new today entry
+                equity_curve.append({
+                    'date': today,
+                    'equity': round(equity_with_unrealized, 2),
+                    'daily_pnl': round(unrealized_pnl, 2),
+                    'cumulative_pnl': round(total_pnl_with_unrealized, 2),
+                    'drawdown_pct': round(drawdown_pct, 2),
+                    'trade_count': 0,
+                    'unrealized_pnl': round(unrealized_pnl, 2),
+                    'open_positions': True
+                })
 
         return equity_curve
 
