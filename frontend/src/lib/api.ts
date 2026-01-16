@@ -1058,6 +1058,9 @@ export const apiClient = {
   getSolomonEnhancedCorrelations: () => api.get('/api/solomon/enhanced/correlations'),
   getSolomonEnhancedTimeAnalysis: (bot: string) => api.get(`/api/solomon/enhanced/time-analysis/${bot}`),
   getSolomonWeekendPrecheck: () => api.get('/api/solomon/enhanced/weekend-precheck'),
+  // Migration 023: Strategy-level analysis endpoints
+  getSolomonStrategyAnalysis: (days: number = 30) => api.get('/api/solomon/strategy-analysis', { params: { days } }),
+  getSolomonOracleAccuracy: (days: number = 30) => api.get('/api/solomon/oracle-accuracy', { params: { days } }),
   activateSolomonKillswitch: (botName: string, data: { reason: string; duration_hours?: number; user?: string }) =>
     api.post(`/api/solomon/killswitch/${botName}/activate`, data),
   deactivateSolomonKillswitch: (botName: string, data: { user?: string }) =>

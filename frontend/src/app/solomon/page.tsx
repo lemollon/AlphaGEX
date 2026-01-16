@@ -1086,8 +1086,8 @@ export default function SolomonPage() {
         apiClient.getSolomonEnhancedCorrelations(),
         apiClient.getSolomonEnhancedTimeAnalysis(bot),
         // Migration 023: Fetch strategy analysis
-        apiClient.get('/solomon/strategy-analysis'),
-        apiClient.get('/solomon/oracle-accuracy')
+        apiClient.getSolomonStrategyAnalysis(),
+        apiClient.getSolomonOracleAccuracy()
       ])
       setDailyDigest(digestRes.data)
       setCorrelations(corrRes.data)
