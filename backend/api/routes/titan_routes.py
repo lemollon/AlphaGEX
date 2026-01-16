@@ -847,26 +847,76 @@ async def get_titan_intraday_equity(date: str = None):
         today_realized = float(today_row[0]) if today_row and today_row[0] else 0
         today_closed_count = int(today_row[1]) if today_row and today_row[1] else 0
 
-        # Calculate unrealized P&L from open positions
+        # Calculate unrealized P&L from open positions using live SPX price
         unrealized_pnl = 0
         open_positions = []
+        spx_price = None
+
+        # Get current SPX price for unrealized P&L calculation
+        try:
+            from data.unified_data_provider import get_price
+            spx_price = get_price("SPX")
+            if not spx_price or spx_price <= 0:
+                spy_price = get_price("SPY")
+                if spy_price and spy_price > 0:
+                    spx_price = spy_price * 10
+        except Exception:
+            pass
+
+        # Fallback to Tradier direct
+        if not spx_price or spx_price <= 0:
+            try:
+                from data.tradier_data_fetcher import TradierDataFetcher
+                import os
+                api_key = os.environ.get('TRADIER_API_KEY') or os.environ.get('TRADIER_SANDBOX_API_KEY')
+                if api_key:
+                    tradier = TradierDataFetcher(api_key=api_key, sandbox='SANDBOX' in str(os.environ.get('TRADIER_SANDBOX_API_KEY', '')))
+                    for symbol in ['SPX', 'SPY']:
+                        quote = tradier.get_quote(symbol)
+                        if quote and quote.get('last'):
+                            price = float(quote['last'])
+                            if price > 0:
+                                spx_price = price if symbol == 'SPX' else price * 10
+                                break
+            except Exception as e:
+                logger.debug(f"Tradier price fetch failed: {e}")
+
         try:
             cursor.execute("""
-                SELECT position_id, entry_credit, contracts,
-                       call_short_strike, call_long_strike, put_short_strike, put_long_strike
+                SELECT position_id, entry_credit, contracts, spread_width,
+                       put_short_strike, call_short_strike
                 FROM titan_positions
                 WHERE status = 'open'
             """)
             open_rows = cursor.fetchall()
 
             for row in open_rows:
-                pos_id, entry_credit, contracts, cs_strike, cl_strike, ps_strike, pl_strike = row
+                pos_id, entry_credit, contracts, spread_width, put_short, call_short = row
                 entry_val = float(entry_credit) if entry_credit else 0
                 num_contracts = int(contracts) if contracts else 1
+                spread_w = float(spread_width) if spread_width else 10
+                put_short = float(put_short) if put_short else 0
+                call_short = float(call_short) if call_short else 0
 
-                # Estimate current value (simplified - assume 50% decay)
-                max_profit = entry_val * 100 * num_contracts
-                current_unrealized = max_profit * 0.5
+                current_unrealized = 0
+                if spx_price and spx_price > 0 and put_short and call_short:
+                    # Estimate current IC value based on where SPX is relative to strikes
+                    if put_short < spx_price < call_short:
+                        # Safe zone - IC worth fraction of credit
+                        put_dist = (spx_price - put_short) / spread_w
+                        call_dist = (call_short - spx_price) / spread_w
+                        factor = min(put_dist, call_dist) / 2
+                        current_value = entry_val * max(0.1, 0.5 - factor * 0.3)
+                    elif spx_price <= put_short:
+                        # Below put short - losing money
+                        intrinsic = put_short - spx_price
+                        current_value = min(spread_w, intrinsic + entry_val * 0.2)
+                    else:
+                        # Above call short - losing money
+                        intrinsic = spx_price - call_short
+                        current_value = min(spread_w, intrinsic + entry_val * 0.2)
+
+                    current_unrealized = (entry_val - current_value) * 100 * num_contracts
 
                 open_positions.append({
                     "position_id": pos_id,

@@ -1956,44 +1956,88 @@ async def get_athena_intraday_equity(date: str = None):
         today_realized = float(today_row[0]) if today_row and today_row[0] else 0
         today_closed_count = int(today_row[1]) if today_row and today_row[1] else 0
 
-        # Calculate unrealized P&L from open positions
+        # Calculate unrealized P&L from open positions using live SPY price
         unrealized_pnl = 0
         open_positions = []
+        spy_price = None
+
+        # Get current SPY price for unrealized P&L calculation
+        try:
+            from data.unified_data_provider import get_price
+            spy_price = get_price("SPY")
+            if not spy_price or spy_price <= 0:
+                spx_price = get_price("SPX")
+                if spx_price and spx_price > 0:
+                    spy_price = spx_price / 10
+        except Exception:
+            pass
+
+        # Fallback to Tradier direct
+        if not spy_price or spy_price <= 0:
+            try:
+                from data.tradier_data_fetcher import TradierDataFetcher
+                import os
+                api_key = os.environ.get('TRADIER_API_KEY') or os.environ.get('TRADIER_SANDBOX_API_KEY')
+                if api_key:
+                    tradier = TradierDataFetcher(api_key=api_key, sandbox='SANDBOX' in str(os.environ.get('TRADIER_SANDBOX_API_KEY', '')))
+                    quote = tradier.get_quote('SPY')
+                    if quote and quote.get('last'):
+                        price = float(quote['last'])
+                        if price > 0:
+                            spy_price = price
+            except Exception as e:
+                logger.debug(f"Tradier price fetch failed: {e}")
+
         try:
             cursor.execute("""
-                SELECT position_id, spread_type, entry_price, contracts,
-                       long_strike, short_strike, entry_time
+                SELECT position_id, spread_type, entry_debit, contracts,
+                       long_strike, short_strike, max_profit, max_loss
                 FROM athena_positions
                 WHERE status = 'open'
             """)
             open_rows = cursor.fetchall()
 
-            if open_rows:
-                # Get current SPY price for mark-to-market
-                try:
-                    from data.unified_data_provider import UnifiedDataProvider
-                    provider = UnifiedDataProvider()
-                    spy_data = provider.get_stock_data("SPY")
-                    spy_price = spy_data.get('last_price', 0) if spy_data else 0
-                except Exception:
-                    spy_price = 0
+            for row in open_rows:
+                pos_id, spread_type, entry_debit, contracts, long_strike, short_strike, max_profit, max_loss = row
+                entry_debit = float(entry_debit or 0)
+                num_contracts = int(contracts) if contracts else 1
+                long_strike = float(long_strike or 0)
+                short_strike = float(short_strike or 0)
+                max_profit_val = float(max_profit or 0)
+                max_loss_val = float(max_loss or entry_debit * 100)
 
-                for row in open_rows:
-                    pos_id, spread_type, entry_price, contracts, long_strike, short_strike, entry_time = row
-                    entry_val = float(entry_price) if entry_price else 0
-                    num_contracts = int(contracts) if contracts else 1
+                spread_type_upper = (spread_type or '').upper()
+                spread_width = abs(short_strike - long_strike)
 
-                    # Estimate current value (simplified - assume 50% decay towards max loss/profit)
-                    spread_width = abs(float(short_strike or 0) - float(long_strike or 0))
-                    max_profit = entry_val * 100 * num_contracts
-                    current_unrealized = max_profit * 0.5  # Simple estimate
+                current_unrealized = 0
+                if spy_price and spy_price > 0 and long_strike and short_strike:
+                    # Calculate current spread value based on type and price
+                    if 'BULL' in spread_type_upper or 'CALL' in spread_type_upper:
+                        # Bull spread profits when price goes up
+                        if spy_price >= short_strike:
+                            current_value = spread_width
+                        elif spy_price <= long_strike:
+                            current_value = 0
+                        else:
+                            current_value = max(0, spy_price - long_strike)
+                    else:
+                        # Bear spread profits when price goes down
+                        if spy_price <= short_strike:
+                            current_value = spread_width
+                        elif spy_price >= long_strike:
+                            current_value = 0
+                        else:
+                            current_value = max(0, long_strike - spy_price)
 
-                    open_positions.append({
-                        "position_id": pos_id,
-                        "spread_type": spread_type,
-                        "unrealized_pnl": round(current_unrealized, 2)
-                    })
-                    unrealized_pnl += current_unrealized
+                    pos_unrealized = (current_value - entry_debit) * 100 * num_contracts
+                    current_unrealized = max(-max_loss_val, min(max_profit_val * num_contracts, pos_unrealized))
+
+                open_positions.append({
+                    "position_id": pos_id,
+                    "spread_type": spread_type,
+                    "unrealized_pnl": round(current_unrealized, 2)
+                })
+                unrealized_pnl += current_unrealized
         except Exception as e:
             logger.debug(f"Error calculating unrealized P&L: {e}")
 
