@@ -70,18 +70,6 @@ try:
 except ImportError:
     ALERTS_AVAILABLE = False
 
-# Circuit breaker for risk management - NOW INTEGRATED!
-try:
-    from trading.circuit_breaker import (
-        get_circuit_breaker,
-        is_trading_enabled,
-        record_trade_pnl,
-        CircuitBreakerState
-    )
-    CIRCUIT_BREAKER_AVAILABLE = True
-except ImportError:
-    CIRCUIT_BREAKER_AVAILABLE = False
-
 # Risk management utilities - NOW INTEGRATED!
 try:
     from trading.risk_management import (
@@ -1001,45 +989,17 @@ class SPXWheelTrader(MathOptimizerMixin):
         """
         Check if we should trade based on market conditions.
 
-        NOW IMPLEMENTS ALL THE MISSING CHECKS:
-        - Circuit breaker check (NOW INTEGRATED!)
-        - VIX filter (was working)
-        - Market open check (was partial)
-        - Earnings check (WAS NOT IMPLEMENTED!)
-        - FOMC check (WAS NOT IMPLEMENTED!)
+        Checks:
+        - VIX filter
+        - Market open check
+        - Earnings check
+        - FOMC check
 
         Returns:
             (can_trade, reason) - tuple of bool and explanation
         """
         spot = self._get_spx_price() or 0
         vix = self._get_vix()
-
-        # =========================================================================
-        # CIRCUIT BREAKER CHECK - FIRST LINE OF DEFENSE
-        # =========================================================================
-        if CIRCUIT_BREAKER_AVAILABLE:
-            open_positions = self._get_open_positions()
-            balance = self._get_account_balance()
-            margin_used = balance.get('margin_used', 0)
-
-            can_trade, cb_reason = is_trading_enabled(
-                current_positions=len(open_positions),
-                margin_used=margin_used
-            )
-
-            if not can_trade:
-                reason = f"Circuit breaker: {cb_reason}"
-                print(f"  🛑 {reason}")
-                self._log_decision(
-                    decision_type="NO_TRADE",
-                    action="BLOCKED",
-                    what="NO TRADE - Circuit breaker active",
-                    why=f"Circuit breaker prevented trading. {cb_reason}",
-                    how="Checked circuit breaker status. Trading blocked for risk management.",
-                    spot_price=spot,
-                    vix=vix
-                )
-                return False, reason
 
         # =========================================================================
         # MATH OPTIMIZER: HMM REGIME CHECK - Bayesian market regime detection
@@ -1450,23 +1410,10 @@ class SPXWheelTrader(MathOptimizerMixin):
         Check if we can open a new position.
 
         Verifies:
-        1. Circuit breaker allows trading
-        2. Not at max position limit
-        3. Have enough buying power / margin (using risk_management module)
+        1. Not at max position limit
+        2. Have enough buying power / margin (using risk_management module)
         """
         open_positions = self._get_open_positions()
-
-        # Check circuit breaker first
-        if CIRCUIT_BREAKER_AVAILABLE:
-            cb = get_circuit_breaker(capital=self.initial_capital)
-            balance = self._get_account_balance()
-            can_trade, reason = cb.can_trade(
-                current_positions=len(open_positions),
-                margin_used=balance.get('margin_used', 0)
-            )
-            if not can_trade:
-                print(f"  Cannot open: Circuit breaker - {reason}")
-                return False
 
         # Check position limit
         if len(open_positions) >= self.params.max_open_positions:
@@ -1742,11 +1689,6 @@ class SPXWheelTrader(MathOptimizerMixin):
 
                     print(f"CLOSED: {pos['option_ticker']} | P&L: ${total_pnl:.2f}")
 
-                    # Record P&L to circuit breaker for daily loss tracking
-                    if CIRCUIT_BREAKER_AVAILABLE:
-                        record_trade_pnl(total_pnl)
-                        logger.info(f"Recorded P&L ${total_pnl:.2f} to circuit breaker")
-
                     # Log expiration decision with COMPLETE trade data
                     outcome = "WIN (OTM)" if settlement_pnl >= 0 else "LOSS (ITM)"
                     exp_date_str = pos['expiration'].strftime('%Y-%m-%d') if hasattr(pos['expiration'], 'strftime') else str(pos['expiration'])
@@ -1899,11 +1841,6 @@ class SPXWheelTrader(MathOptimizerMixin):
 
             conn.commit()
             conn.close()
-
-            # Record P&L to circuit breaker for daily loss tracking
-            if CIRCUIT_BREAKER_AVAILABLE:
-                record_trade_pnl(pnl)
-                logger.info(f"Recorded P&L ${pnl:.2f} to circuit breaker (reason: {reason})")
 
             # MATH OPTIMIZER: Record outcome for Thompson Sampling
             if MATH_OPTIMIZER_AVAILABLE and hasattr(self, 'math_record_outcome'):

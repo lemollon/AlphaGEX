@@ -20,13 +20,6 @@ from .executor import OrderExecutor
 
 logger = logging.getLogger(__name__)
 
-try:
-    from trading.circuit_breaker import is_trading_enabled, record_trade_pnl
-    CIRCUIT_BREAKER_AVAILABLE = True
-except ImportError:
-    CIRCUIT_BREAKER_AVAILABLE = False
-    is_trading_enabled = None
-
 # Scan activity logging
 try:
     from trading.scan_activity_logger import log_titan_scan, ScanOutcome, CheckResult
@@ -324,14 +317,6 @@ class TITANTrader(MathOptimizerMixin):
                 minutes_remaining = (cooldown - (now - last_trade)).seconds // 60
                 return False, f"Cooldown: {minutes_remaining}min remaining"
 
-        if CIRCUIT_BREAKER_AVAILABLE and is_trading_enabled:
-            try:
-                can, cb_reason = is_trading_enabled(self.db.get_position_count(), 0)
-                if not can:
-                    return False, f"Circuit breaker: {cb_reason}"
-            except Exception as e:
-                logger.warning(f"[TITAN] Circuit breaker check failed: {e}")
-
         return True, "Ready"
 
     def _manage_positions(self) -> tuple[int, float]:
@@ -369,12 +354,6 @@ class TITANTrader(MathOptimizerMixin):
                         logger.error(f"CRITICAL: Position {pos.position_id} closed but DB update failed!")
                     closed += 1
                     total_pnl += pnl
-
-                    if CIRCUIT_BREAKER_AVAILABLE and record_trade_pnl:
-                        try:
-                            record_trade_pnl(pnl)
-                        except Exception as e:
-                            logger.warning(f"[TITAN] Failed to record P&L to circuit breaker: {e}")
 
                     # Record outcome to Oracle for ML feedback
                     self._record_oracle_outcome(pos, reason, pnl)
