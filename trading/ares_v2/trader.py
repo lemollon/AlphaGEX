@@ -25,14 +25,6 @@ from .executor import OrderExecutor
 
 logger = logging.getLogger(__name__)
 
-# Circuit breaker
-try:
-    from trading.circuit_breaker import is_trading_enabled, record_trade_pnl
-    CIRCUIT_BREAKER_AVAILABLE = True
-except ImportError:
-    CIRCUIT_BREAKER_AVAILABLE = False
-    is_trading_enabled = None
-
 # Market calendar for holiday checking
 try:
     from trading.market_calendar import MarketCalendar
@@ -232,7 +224,7 @@ class ARESTrader(MathOptimizerMixin):
                 result['action'] = 'closed'
                 self.db.log("INFO", f"Closed {closed_count} position(s), P&L: ${close_pnl:.2f}")
 
-            # Step 2: Check basic trading conditions (time window, weekend, circuit breaker)
+            # Step 2: Check basic trading conditions (time window, weekend, holidays)
             can_trade, reason = self._check_basic_conditions(now)
             if not can_trade:
                 if result['action'] == 'none':
@@ -594,7 +586,7 @@ class ARESTrader(MathOptimizerMixin):
                 logger.error(f"[ARES] FALLBACK logging failed: {fallback_err}")
 
     def _check_basic_conditions(self, now: datetime) -> tuple[bool, str]:
-        """Check basic trading conditions (time window, weekend, holidays, circuit breaker)"""
+        """Check basic trading conditions (time window, weekend, holidays)"""
         # Weekend check
         if now.weekday() >= 5:
             return False, "Weekend"
@@ -615,19 +607,6 @@ class ARESTrader(MathOptimizerMixin):
             return False, f"Before trading window ({self.config.entry_start})"
         if now > end_time:
             return False, f"After trading window ({self.config.entry_end})"
-
-        # Circuit breaker
-        if CIRCUIT_BREAKER_AVAILABLE and is_trading_enabled:
-            try:
-                open_count = self.db.get_position_count()
-                can_trade, cb_reason = is_trading_enabled(
-                    current_positions=open_count,
-                    margin_used=0
-                )
-                if not can_trade:
-                    return False, f"Circuit breaker: {cb_reason}"
-            except Exception as e:
-                logger.warning(f"Circuit breaker check failed: {e}")
 
         return True, "Ready"
 
@@ -784,12 +763,6 @@ class ARESTrader(MathOptimizerMixin):
                         # Still count it as closed since Tradier position is closed
                     closed_count += 1
                     total_pnl += pnl
-
-                    if CIRCUIT_BREAKER_AVAILABLE and record_trade_pnl:
-                        try:
-                            record_trade_pnl(pnl)
-                        except Exception as e:
-                            logger.warning(f"[ARES] Failed to record P&L to circuit breaker: {e}")
 
                     # Record outcome to Oracle for ML feedback loop
                     self._record_oracle_outcome(pos, reason, pnl)

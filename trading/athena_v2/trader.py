@@ -26,14 +26,6 @@ from .executor import OrderExecutor
 
 logger = logging.getLogger(__name__)
 
-# Circuit breaker import
-try:
-    from trading.circuit_breaker import is_trading_enabled, record_trade_pnl
-    CIRCUIT_BREAKER_AVAILABLE = True
-except ImportError:
-    CIRCUIT_BREAKER_AVAILABLE = False
-    is_trading_enabled = None
-
 # Scan activity logging
 try:
     from trading.scan_activity_logger import log_athena_scan, ScanOutcome, CheckResult
@@ -333,18 +325,6 @@ class ATHENATrader(MathOptimizerMixin):
         if open_count >= self.config.max_open_positions:
             return False, f"Max positions ({self.config.max_open_positions})"
 
-        # Circuit breaker
-        if CIRCUIT_BREAKER_AVAILABLE and is_trading_enabled:
-            try:
-                can_trade, cb_reason = is_trading_enabled(
-                    current_positions=open_count,
-                    margin_used=0
-                )
-                if not can_trade:
-                    return False, f"Circuit breaker: {cb_reason}"
-            except Exception as e:
-                logger.warning(f"Circuit breaker check failed: {e}")
-
         return True, "Ready"
 
     def _manage_positions(self) -> tuple[int, float]:
@@ -400,13 +380,6 @@ class ATHENATrader(MathOptimizerMixin):
                             pnl,
                             reason
                         )
-
-                    # Record to circuit breaker
-                    if CIRCUIT_BREAKER_AVAILABLE and record_trade_pnl:
-                        try:
-                            record_trade_pnl(pnl)
-                        except Exception as e:
-                            logger.warning(f"[ATHENA] Failed to record P&L to circuit breaker: {e}")
 
                     # MATH OPTIMIZER: Record outcome for Thompson Sampling
                     if MATH_OPTIMIZER_AVAILABLE and hasattr(self, 'math_record_outcome'):
