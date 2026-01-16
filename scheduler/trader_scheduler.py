@@ -177,11 +177,12 @@ except ImportError:
     AUTO_VALIDATION_AVAILABLE = False
     get_auto_validation_system = None
 
-# Import OracleAdvisor for PHOENIX signal generation
+# Import OracleAdvisor for PHOENIX signal generation and feedback loop
 try:
     from quant.oracle_advisor import (
         OracleAdvisor, MarketContext as OracleMarketContext, GEXRegime, TradingAdvice,
-        BotName as OracleBotName, TradeOutcome  # Issue #2: PHOENIX feedback loop
+        BotName as OracleBotName, TradeOutcome,  # Issue #2: PHOENIX feedback loop
+        auto_train as oracle_auto_train  # Migration 023: Feedback loop integration
     )
     ORACLE_AVAILABLE = True
 except ImportError:
@@ -190,6 +191,16 @@ except ImportError:
     OracleMarketContext = None
     GEXRegime = None
     TradingAdvice = None
+    oracle_auto_train = None
+
+# Import Solomon Enhanced for strategy-level feedback
+try:
+    from quant.solomon_enhancements import get_solomon_enhanced, SolomonEnhanced
+    SOLOMON_ENHANCED_AVAILABLE = True
+except ImportError:
+    SOLOMON_ENHANCED_AVAILABLE = False
+    get_solomon_enhanced = None
+    SolomonEnhanced = None
     OracleBotName = None
     TradeOutcome = None
     print("Warning: OracleAdvisor not available for PHOENIX.")
@@ -1894,12 +1905,15 @@ class AutonomousTraderScheduler:
         """
         SOLOMON (Feedback Loop Intelligence) - runs DAILY at 4:00 PM CT
 
+        Migration 023: Enhanced with Oracle-Solomon integration for complete feedback loop.
+
         Orchestrates the autonomous feedback loop for all trading bots:
-        - Collects trade outcomes from ARES, ATHENA, ATLAS, PHOENIX
-        - Analyzes performance and detects degradation
-        - Creates proposals for parameter adjustments
-        - Validates proposals via A/B testing (min 7 days, 20 trades, 5% improvement)
-        - Auto-applies PROVEN improvements - no manual intervention required
+        1. Trains Oracle from new trade outcomes (auto_train)
+        2. Runs Solomon feedback loop (parameter proposals, A/B testing)
+        3. Analyzes strategy-level performance (IC vs Directional)
+        4. Tracks Oracle recommendation accuracy
+
+        Bots: ARES, ATHENA, TITAN, PEGASUS, ICARUS
 
         "Iron sharpens iron, and one man sharpens another" - Proverbs 27:17
         """
@@ -1913,9 +1927,33 @@ class AutonomousTraderScheduler:
             return
 
         try:
-            logger.info("SOLOMON: Running daily feedback loop analysis...")
+            # ================================================================
+            # STEP 1: Train Oracle from new trade outcomes
+            # Migration 023: Oracle learns from outcomes before Solomon analyzes
+            # ================================================================
+            if ORACLE_AVAILABLE and oracle_auto_train:
+                logger.info("SOLOMON: Step 1 - Training Oracle from new outcomes...")
+                try:
+                    train_result = oracle_auto_train(threshold_outcomes=10)  # Lower threshold for daily runs
+                    if train_result.get('triggered'):
+                        logger.info(f"  Oracle training triggered: {train_result.get('reason')}")
+                        if train_result.get('success'):
+                            metrics = train_result.get('training_metrics')
+                            if metrics:
+                                logger.info(f"  Training metrics: accuracy={metrics.get('accuracy', 'N/A')}, samples={metrics.get('samples', 'N/A')}")
+                        else:
+                            logger.warning(f"  Oracle training failed: {train_result.get('error', 'Unknown error')}")
+                    else:
+                        logger.info(f"  Oracle training skipped: {train_result.get('reason')}")
+                except Exception as e:
+                    logger.warning(f"  Oracle auto_train failed: {e}")
+            else:
+                logger.info("SOLOMON: Step 1 - Oracle training skipped (not available)")
 
-            # Run the feedback loop
+            # ================================================================
+            # STEP 2: Run Solomon feedback loop
+            # ================================================================
+            logger.info("SOLOMON: Step 2 - Running feedback loop analysis...")
             result = run_feedback_loop()
 
             if result.success:
@@ -1941,13 +1979,50 @@ class AutonomousTraderScheduler:
                 for error in result.errors:
                     logger.error(f"  Error: {error}")
 
-            # Save heartbeat
+            # ================================================================
+            # STEP 3: Analyze strategy-level performance (Migration 023)
+            # ================================================================
+            strategy_analysis = None
+            oracle_accuracy = None
+
+            if SOLOMON_ENHANCED_AVAILABLE and get_solomon_enhanced:
+                logger.info("SOLOMON: Step 3 - Analyzing strategy-level performance...")
+                try:
+                    enhanced = get_solomon_enhanced()
+
+                    # Get IC vs Directional analysis
+                    strategy_analysis = enhanced.get_strategy_analysis(days=30)
+                    if strategy_analysis.get('status') == 'analyzed':
+                        ic = strategy_analysis.get('iron_condor', {})
+                        dir_data = strategy_analysis.get('directional', {})
+                        logger.info(f"  IC Performance: {ic.get('trades', 0)} trades, {ic.get('win_rate', 0):.1f}% win rate, ${ic.get('total_pnl', 0):.2f} P&L")
+                        logger.info(f"  Directional Performance: {dir_data.get('trades', 0)} trades, {dir_data.get('win_rate', 0):.1f}% win rate, ${dir_data.get('total_pnl', 0):.2f} P&L")
+
+                        rec = strategy_analysis.get('recommendation', '')
+                        if rec:
+                            logger.info(f"  Strategy Recommendation: {rec}")
+
+                    # Get Oracle accuracy
+                    oracle_accuracy = enhanced.get_oracle_accuracy(days=30)
+                    if oracle_accuracy.get('status') == 'analyzed':
+                        summary = oracle_accuracy.get('summary', '')
+                        if summary:
+                            logger.info(f"  Oracle Accuracy: {summary}")
+
+                except Exception as e:
+                    logger.warning(f"  Strategy analysis failed: {e}")
+            else:
+                logger.info("SOLOMON: Step 3 - Strategy analysis skipped (Solomon Enhanced not available)")
+
+            # Save heartbeat with enhanced data
             self._save_heartbeat('SOLOMON', 'FEEDBACK_LOOP_COMPLETE', {
                 'run_id': result.run_id,
                 'success': result.success,
                 'proposals_created': len(result.proposals_created),
                 'proposals_applied': len(result.proposals_applied) if hasattr(result, 'proposals_applied') else 0,
-                'alerts_raised': len(result.alerts_raised)
+                'alerts_raised': len(result.alerts_raised),
+                'strategy_analysis': strategy_analysis.get('recommendation') if strategy_analysis else None,
+                'oracle_accuracy': oracle_accuracy.get('summary') if oracle_accuracy else None
             })
 
             logger.info(f"SOLOMON: Next run tomorrow at 4:00 PM CT")

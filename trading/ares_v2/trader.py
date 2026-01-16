@@ -796,7 +796,10 @@ class ARESTrader(MathOptimizerMixin):
 
                     # Record outcome to Solomon Enhanced for feedback loops
                     trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
-                    self._record_solomon_outcome(pnl, trade_date)
+                    # Migration 023: Pass outcome_type and oracle_prediction_id for feedback loop
+                    outcome_type = self._determine_outcome_type(reason, pnl)
+                    prediction_id = self.db.get_oracle_prediction_id(pos.position_id)
+                    self._record_solomon_outcome(pnl, trade_date, outcome_type, prediction_id)
 
                     # Record outcome to Thompson Sampling for capital allocation
                     self._record_thompson_outcome(pnl)
@@ -881,14 +884,23 @@ class ARESTrader(MathOptimizerMixin):
         except Exception as e:
             logger.warning(f"ARES: Oracle outcome recording failed: {e}")
 
-    def _record_solomon_outcome(self, pnl: float, trade_date: str):
+    def _record_solomon_outcome(
+        self,
+        pnl: float,
+        trade_date: str,
+        outcome_type: str = None,
+        oracle_prediction_id: int = None
+    ):
         """
         Record trade outcome to Solomon Enhanced for feedback loop tracking.
+
+        Migration 023: Enhanced to pass strategy-level data for feedback loop analysis.
 
         This updates:
         - Consecutive loss tracking (triggers kill if threshold reached)
         - Daily P&L monitoring (triggers kill if max loss reached)
         - Performance tracking for version comparison
+        - Strategy-level analysis (IC effectiveness)
         """
         if not SOLOMON_ENHANCED_AVAILABLE or not get_solomon_enhanced:
             return
@@ -900,7 +912,11 @@ class ARESTrader(MathOptimizerMixin):
                 pnl=pnl,
                 trade_date=trade_date,
                 capital_base=getattr(self, 'config', {}).get('capital', 100000.0)
-                if hasattr(self.config, 'get') else 100000.0
+                if hasattr(self.config, 'get') else 100000.0,
+                # Migration 023: Enhanced feedback loop parameters
+                outcome_type=outcome_type,
+                strategy_type='IRON_CONDOR',  # ARES is an Iron Condor bot
+                oracle_prediction_id=oracle_prediction_id
             )
 
             if alerts:
@@ -911,6 +927,30 @@ class ARESTrader(MathOptimizerMixin):
 
         except Exception as e:
             logger.warning(f"ARES: Solomon outcome recording failed: {e}")
+
+    def _determine_outcome_type(self, close_reason: str, pnl: float) -> str:
+        """
+        Determine outcome type from close reason and P&L.
+
+        Migration 023: Helper for feedback loop outcome classification.
+
+        Returns:
+            str: Outcome type (MAX_PROFIT, PARTIAL_PROFIT, STOP_LOSS, CALL_BREACHED, PUT_BREACHED, LOSS)
+        """
+        if pnl > 0:
+            if 'PROFIT_TARGET' in close_reason or 'MAX_PROFIT' in close_reason or 'EXPIRED_PROFIT' in close_reason:
+                return 'MAX_PROFIT'
+            else:
+                return 'PARTIAL_PROFIT'
+        else:
+            if 'STOP_LOSS' in close_reason:
+                return 'STOP_LOSS'
+            elif 'CALL' in close_reason.upper() and 'BREACH' in close_reason.upper():
+                return 'CALL_BREACHED'
+            elif 'PUT' in close_reason.upper() and 'BREACH' in close_reason.upper():
+                return 'PUT_BREACHED'
+            else:
+                return 'LOSS'
 
     def _record_thompson_outcome(self, pnl: float):
         """
@@ -1505,7 +1545,10 @@ class ARESTrader(MathOptimizerMixin):
                 self._record_oracle_outcome(pos, reason, pnl)
                 # Record outcome to Solomon Enhanced for feedback loops
                 trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
-                self._record_solomon_outcome(pnl, trade_date)
+                # Migration 023: Pass outcome_type and oracle_prediction_id for feedback loop
+                outcome_type = self._determine_outcome_type(reason, pnl)
+                prediction_id = self.db.get_oracle_prediction_id(pos.position_id)
+                self._record_solomon_outcome(pnl, trade_date, outcome_type, prediction_id)
                 # Record outcome to Thompson Sampling for capital allocation
                 self._record_thompson_outcome(pnl)
                 # Record outcome to Learning Memory for self-improvement
@@ -1586,7 +1629,10 @@ class ARESTrader(MathOptimizerMixin):
 
                     # Record outcome to Solomon Enhanced for feedback loops
                     trade_date = pos.expiration if hasattr(pos, 'expiration') else datetime.now(CENTRAL_TZ).strftime("%Y-%m-%d")
-                    self._record_solomon_outcome(final_pnl, trade_date)
+                    # Migration 023: Pass outcome_type and oracle_prediction_id for feedback loop
+                    outcome_type = self._determine_outcome_type(close_reason, final_pnl)
+                    prediction_id = self.db.get_oracle_prediction_id(pos.position_id)
+                    self._record_solomon_outcome(final_pnl, trade_date, outcome_type, prediction_id)
 
                     # Record outcome to Thompson Sampling for capital allocation
                     self._record_thompson_outcome(final_pnl)

@@ -36,6 +36,44 @@ class TestSolomonEndpoints:
         response = test_client.get("/api/solomon/status")
         assert response.status_code in [200, 404, 500]
 
+    # =========================================================================
+    # Migration 023: Strategy Analysis Endpoints
+    # =========================================================================
+
+    def test_solomon_strategy_analysis(self, test_client):
+        """Test Solomon strategy analysis endpoint (Migration 023)"""
+        if test_client is None:
+            pytest.skip("Test client not available")
+        response = test_client.get("/api/solomon/strategy-analysis")
+        assert response.status_code in [200, 500]
+        if response.status_code == 200:
+            data = response.json()
+            assert 'success' in data or 'status' in data
+
+    def test_solomon_strategy_analysis_with_days(self, test_client):
+        """Test Solomon strategy analysis with custom days parameter"""
+        if test_client is None:
+            pytest.skip("Test client not available")
+        response = test_client.get("/api/solomon/strategy-analysis?days=7")
+        assert response.status_code in [200, 500]
+
+    def test_solomon_oracle_accuracy(self, test_client):
+        """Test Solomon Oracle accuracy endpoint (Migration 023)"""
+        if test_client is None:
+            pytest.skip("Test client not available")
+        response = test_client.get("/api/solomon/oracle-accuracy")
+        assert response.status_code in [200, 500]
+        if response.status_code == 200:
+            data = response.json()
+            assert 'success' in data or 'status' in data
+
+    def test_solomon_oracle_accuracy_with_days(self, test_client):
+        """Test Solomon Oracle accuracy with custom days parameter"""
+        if test_client is None:
+            pytest.skip("Test client not available")
+        response = test_client.get("/api/solomon/oracle-accuracy?days=14")
+        assert response.status_code in [200, 500]
+
     def test_solomon_analysis(self, test_client):
         """Test Solomon analysis"""
         if test_client is None:

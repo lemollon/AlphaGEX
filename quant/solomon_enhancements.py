@@ -731,7 +731,9 @@ class CrossBotAnalyzer:
 
     def get_all_correlations(self, days: int = 30) -> List[CrossBotCorrelation]:
         """Get correlations between all bot pairs"""
-        bots = ['ARES', 'ATHENA', 'PEGASUS', 'PHOENIX']
+        # Migration 023: Updated bot list to match actual trading bots
+        # IC bots: ARES, TITAN, PEGASUS | Directional bots: ATHENA, ICARUS
+        bots = ['ARES', 'ATHENA', 'TITAN', 'PEGASUS', 'ICARUS']
         correlations = []
 
         for i, bot_a in enumerate(bots):
@@ -1079,8 +1081,9 @@ class WeekendPreChecker:
         upcoming_events = self._get_upcoming_events()
 
         # Analyze each bot
+        # Migration 023: Updated bot list to include TITAN and ICARUS
         bot_recommendations = {}
-        for bot in ['ARES', 'ATHENA', 'PEGASUS', 'PHOENIX']:
+        for bot in ['ARES', 'ATHENA', 'TITAN', 'PEGASUS', 'ICARUS']:
             bot_recommendations[bot] = self._analyze_bot_readiness(bot)
 
         # Overall risk assessment
@@ -1235,7 +1238,8 @@ class DailyDigestGenerator:
         total_trades = 0
         total_wins = 0
 
-        for bot in ['ARES', 'ATHENA', 'PEGASUS', 'PHOENIX']:
+        # Migration 023: Updated bot list to include TITAN and ICARUS
+        for bot in ['ARES', 'ATHENA', 'TITAN', 'PEGASUS', 'ICARUS']:
             bot_stats = self._get_bot_daily_stats(bot, for_date)
             digest['bots'][bot] = bot_stats
 
@@ -1868,10 +1872,20 @@ class SolomonEnhanced:
         bot_name: str,
         pnl: float,
         trade_date: str,
-        capital_base: float = 100000.0
+        capital_base: float = 100000.0,
+        # Migration 023: New feedback loop parameters
+        outcome_type: str = None,  # MAX_PROFIT, CALL_BREACHED, PUT_BREACHED, WIN, LOSS
+        oracle_advice: str = None,  # TRADE_FULL, TRADE_REDUCED, SKIP_TODAY
+        strategy_type: str = None,  # IRON_CONDOR, DIRECTIONAL
+        oracle_prediction_id: int = None,  # Link to oracle_predictions
+        direction_predicted: str = None,  # BULLISH, BEARISH (for directional)
+        direction_correct: bool = None  # Was direction right?
     ) -> List[Dict]:
         """
         Record a trade outcome and check all triggers.
+
+        Migration 023: Enhanced to track strategy-level performance and
+        link to Oracle predictions for accurate feedback loop.
 
         Returns list of any alerts triggered.
         """
@@ -1891,7 +1905,91 @@ class SolomonEnhanced:
         if daily_alert:
             alerts.append(daily_alert)
 
+        # Migration 023: Record enhanced feedback data to solomon_performance
+        self._record_enhanced_outcome(
+            bot_name=bot_name,
+            pnl=pnl,
+            trade_date=trade_date,
+            outcome_type=outcome_type,
+            oracle_advice=oracle_advice,
+            strategy_type=strategy_type,
+            oracle_prediction_id=oracle_prediction_id,
+            direction_predicted=direction_predicted,
+            direction_correct=direction_correct
+        )
+
         return alerts
+
+    def _record_enhanced_outcome(
+        self,
+        bot_name: str,
+        pnl: float,
+        trade_date: str,
+        outcome_type: str = None,
+        oracle_advice: str = None,
+        strategy_type: str = None,
+        oracle_prediction_id: int = None,
+        direction_predicted: str = None,
+        direction_correct: bool = None
+    ):
+        """
+        Record enhanced outcome data to solomon_performance table.
+
+        Migration 023: This data enables strategy-level analysis of
+        Iron Condor vs Directional effectiveness.
+        """
+        if not DB_AVAILABLE:
+            return
+
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Infer strategy_type from bot_name if not provided
+            if not strategy_type:
+                if bot_name in ['ATHENA', 'ICARUS']:
+                    strategy_type = 'DIRECTIONAL'
+                else:
+                    strategy_type = 'IRON_CONDOR'
+
+            # Insert or update solomon_performance with enhanced data
+            cursor.execute("""
+                INSERT INTO solomon_performance (
+                    bot_name, trade_date, pnl, is_win,
+                    strategy_type, outcome_type, oracle_advice,
+                    oracle_prediction_id, direction_taken, direction_correct,
+                    created_at
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                ON CONFLICT (bot_name, trade_date) DO UPDATE SET
+                    pnl = EXCLUDED.pnl,
+                    is_win = EXCLUDED.is_win,
+                    strategy_type = COALESCE(EXCLUDED.strategy_type, solomon_performance.strategy_type),
+                    outcome_type = COALESCE(EXCLUDED.outcome_type, solomon_performance.outcome_type),
+                    oracle_advice = COALESCE(EXCLUDED.oracle_advice, solomon_performance.oracle_advice),
+                    oracle_prediction_id = COALESCE(EXCLUDED.oracle_prediction_id, solomon_performance.oracle_prediction_id),
+                    direction_taken = COALESCE(EXCLUDED.direction_taken, solomon_performance.direction_taken),
+                    direction_correct = COALESCE(EXCLUDED.direction_correct, solomon_performance.direction_correct),
+                    updated_at = NOW()
+            """, (
+                bot_name,
+                trade_date,
+                pnl,
+                pnl > 0,  # is_win
+                strategy_type,
+                outcome_type,
+                oracle_advice,
+                oracle_prediction_id,
+                direction_predicted,
+                direction_correct
+            ))
+
+            conn.commit()
+            conn.close()
+
+            logger.debug(f"Solomon: Enhanced outcome recorded for {bot_name} on {trade_date}")
+
+        except Exception as e:
+            logger.warning(f"Solomon: Failed to record enhanced outcome: {e}")
 
     def get_comprehensive_analysis(self, bot_name: str) -> Dict:
         """Get comprehensive analysis for a bot"""
@@ -1926,6 +2024,204 @@ class SolomonEnhanced:
             'diversification_score': 1 - (sum(abs(c.correlation) for c in correlations) / len(correlations)) if correlations else 0,
             'recommendation': 'Consider reducing positions when highly correlated bots both signal' if high_corr else 'Good diversification'
         }
+
+    # =========================================================================
+    # STRATEGY ANALYSIS (Migration 023)
+    # =========================================================================
+
+    # Bot strategy configurations - defines goals for each bot
+    BOT_STRATEGY_CONFIGS = {
+        # Iron Condor bots - want price stability (price stays between strikes)
+        'ARES': {'strategy_type': 'IRON_CONDOR', 'goal': 'stability', 'symbol': 'SPY'},
+        'TITAN': {'strategy_type': 'IRON_CONDOR', 'goal': 'stability', 'symbol': 'SPX'},
+        'PEGASUS': {'strategy_type': 'IRON_CONDOR', 'goal': 'stability', 'symbol': 'SPX'},
+        # Directional bots - want price movement in predicted direction
+        'ATHENA': {'strategy_type': 'DIRECTIONAL', 'goal': 'movement', 'symbol': 'SPY'},
+        'ICARUS': {'strategy_type': 'DIRECTIONAL', 'goal': 'movement', 'symbol': 'SPY'},
+    }
+
+    def get_strategy_analysis(self, days: int = 30) -> Dict:
+        """
+        Analyze performance by strategy type (Iron Condor vs Directional).
+
+        Migration 023: This enables Solomon to understand which strategy works
+        best in different market conditions and provide insights to Oracle.
+        """
+        if not DB_AVAILABLE:
+            return {'status': 'database_unavailable'}
+
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Get Iron Condor performance
+            cursor.execute("""
+                SELECT
+                    COUNT(*) as trades,
+                    SUM(CASE WHEN is_win THEN 1 ELSE 0 END) as wins,
+                    SUM(pnl) as total_pnl,
+                    AVG(pnl) as avg_pnl
+                FROM solomon_performance
+                WHERE strategy_type = 'IRON_CONDOR'
+                    AND trade_date >= CURRENT_DATE - INTERVAL '%s days'
+            """, (days,))
+            ic_row = cursor.fetchone()
+
+            # Get Directional performance
+            cursor.execute("""
+                SELECT
+                    COUNT(*) as trades,
+                    SUM(CASE WHEN is_win THEN 1 ELSE 0 END) as wins,
+                    SUM(pnl) as total_pnl,
+                    AVG(pnl) as avg_pnl,
+                    SUM(CASE WHEN direction_correct THEN 1 ELSE 0 END) as direction_correct
+                FROM solomon_performance
+                WHERE strategy_type = 'DIRECTIONAL'
+                    AND trade_date >= CURRENT_DATE - INTERVAL '%s days'
+            """, (days,))
+            dir_row = cursor.fetchone()
+
+            conn.close()
+
+            ic_trades = ic_row[0] or 0
+            dir_trades = dir_row[0] or 0
+
+            return {
+                'status': 'analyzed',
+                'period_days': days,
+                'iron_condor': {
+                    'trades': ic_trades,
+                    'wins': ic_row[1] or 0,
+                    'win_rate': (ic_row[1] / ic_trades * 100) if ic_trades > 0 else 0,
+                    'total_pnl': float(ic_row[2] or 0),
+                    'avg_pnl': float(ic_row[3] or 0),
+                    'bots': ['ARES', 'TITAN', 'PEGASUS']
+                },
+                'directional': {
+                    'trades': dir_trades,
+                    'wins': dir_row[1] or 0,
+                    'win_rate': (dir_row[1] / dir_trades * 100) if dir_trades > 0 else 0,
+                    'total_pnl': float(dir_row[2] or 0),
+                    'avg_pnl': float(dir_row[3] or 0),
+                    'direction_accuracy': (dir_row[4] / dir_trades * 100) if dir_trades > 0 else 0,
+                    'bots': ['ATHENA', 'ICARUS']
+                },
+                'recommendation': self._generate_strategy_recommendation(ic_row, dir_row, ic_trades, dir_trades)
+            }
+
+        except Exception as e:
+            logger.error(f"Solomon: Failed to analyze strategies: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def _generate_strategy_recommendation(self, ic_row, dir_row, ic_trades: int, dir_trades: int) -> str:
+        """Generate a recommendation based on strategy performance comparison."""
+        if ic_trades < 5 and dir_trades < 5:
+            return "Insufficient data - need at least 5 trades per strategy for meaningful analysis"
+
+        ic_win_rate = (ic_row[1] / ic_trades * 100) if ic_trades > 0 else 0
+        dir_win_rate = (dir_row[1] / dir_trades * 100) if dir_trades > 0 else 0
+
+        ic_avg_pnl = float(ic_row[3] or 0)
+        dir_avg_pnl = float(dir_row[3] or 0)
+
+        if ic_win_rate > dir_win_rate + 10 and ic_avg_pnl > dir_avg_pnl:
+            return "Iron Condor strategy outperforming - consider increasing IC allocation"
+        elif dir_win_rate > ic_win_rate + 10 and dir_avg_pnl > ic_avg_pnl:
+            return "Directional strategy outperforming - market may be trending"
+        elif ic_win_rate > 60 and dir_win_rate > 60:
+            return "Both strategies performing well - maintain current allocation"
+        elif ic_win_rate < 45 and dir_win_rate < 45:
+            return "Both strategies underperforming - consider reducing position sizes"
+        else:
+            return "Strategies performing similarly - no allocation change recommended"
+
+    def get_oracle_accuracy(self, days: int = 30) -> Dict:
+        """
+        Analyze Oracle recommendation accuracy by strategy type.
+
+        Migration 023: This measures how well Oracle's advice correlates with outcomes.
+        """
+        if not DB_AVAILABLE:
+            return {'status': 'database_unavailable'}
+
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Analyze Oracle advice accuracy
+            cursor.execute("""
+                SELECT
+                    oracle_advice,
+                    strategy_type,
+                    COUNT(*) as trades,
+                    SUM(CASE WHEN is_win THEN 1 ELSE 0 END) as wins,
+                    AVG(pnl) as avg_pnl
+                FROM solomon_performance
+                WHERE oracle_advice IS NOT NULL
+                    AND trade_date >= CURRENT_DATE - INTERVAL '%s days'
+                GROUP BY oracle_advice, strategy_type
+                ORDER BY oracle_advice, strategy_type
+            """, (days,))
+
+            rows = cursor.fetchall()
+            conn.close()
+
+            advice_analysis = {}
+            for row in rows:
+                advice = row[0]
+                strategy = row[1]
+                if advice not in advice_analysis:
+                    advice_analysis[advice] = {}
+                advice_analysis[advice][strategy] = {
+                    'trades': row[2],
+                    'wins': row[3],
+                    'win_rate': (row[3] / row[2] * 100) if row[2] > 0 else 0,
+                    'avg_pnl': float(row[4] or 0)
+                }
+
+            return {
+                'status': 'analyzed',
+                'period_days': days,
+                'by_advice': advice_analysis,
+                'summary': self._generate_oracle_accuracy_summary(advice_analysis)
+            }
+
+        except Exception as e:
+            logger.error(f"Solomon: Failed to analyze Oracle accuracy: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def _generate_oracle_accuracy_summary(self, advice_analysis: Dict) -> Dict:
+        """Generate summary of Oracle accuracy."""
+        summary = {
+            'trade_full_effective': False,
+            'trade_reduced_effective': False,
+            'skip_followed': False,
+            'recommendations': []
+        }
+
+        if 'TRADE_FULL' in advice_analysis:
+            full_trades = advice_analysis['TRADE_FULL']
+            total_full_wins = sum(s.get('wins', 0) for s in full_trades.values())
+            total_full_trades = sum(s.get('trades', 0) for s in full_trades.values())
+            if total_full_trades > 0:
+                full_win_rate = total_full_wins / total_full_trades * 100
+                summary['trade_full_effective'] = full_win_rate > 50
+                if full_win_rate < 45:
+                    summary['recommendations'].append("TRADE_FULL signals underperforming - review confidence thresholds")
+
+        if 'TRADE_REDUCED' in advice_analysis:
+            reduced_trades = advice_analysis['TRADE_REDUCED']
+            total_reduced_wins = sum(s.get('wins', 0) for s in reduced_trades.values())
+            total_reduced_trades = sum(s.get('trades', 0) for s in reduced_trades.values())
+            if total_reduced_trades > 0:
+                reduced_win_rate = total_reduced_wins / total_reduced_trades * 100
+                summary['trade_reduced_effective'] = reduced_win_rate > 40
+
+        return summary
+
+    def get_bot_strategy_config(self, bot_name: str) -> Dict:
+        """Get strategy configuration for a specific bot."""
+        return self.BOT_STRATEGY_CONFIGS.get(bot_name, {'strategy_type': 'UNKNOWN', 'goal': 'unknown'})
 
     # =========================================================================
     # PROPOSAL VALIDATION WORKFLOW
