@@ -568,9 +568,13 @@ async def get_icarus_status():
         # Calculate current_equity = starting_capital + realized + unrealized (matches equity curve)
         starting_capital = 100000
         total_pnl = status.get('total_pnl', 0)
-        unrealized_pnl = status.get('unrealized_pnl', 0)
+        unrealized_pnl = status.get('unrealized_pnl')  # Can be None if no live pricing
         status['starting_capital'] = starting_capital
-        status['current_equity'] = round(starting_capital + total_pnl + unrealized_pnl, 2)
+        # Only include unrealized in equity if we have live pricing
+        if unrealized_pnl is not None:
+            status['current_equity'] = round(starting_capital + total_pnl + unrealized_pnl, 2)
+        else:
+            status['current_equity'] = round(starting_capital + total_pnl, 2)
 
         return {
             "success": True,
