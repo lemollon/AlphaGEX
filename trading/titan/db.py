@@ -425,6 +425,43 @@ class TITANDatabase:
         except Exception:
             return 0
 
+    def get_trading_stats(self) -> dict:
+        """Get overall trading statistics for TITAN.
+
+        Returns dict with:
+        - trade_count: total closed trades
+        - total_pnl: sum of realized P&L from closed trades
+        - win_count: number of winning trades
+        - win_rate: percentage of winning trades
+        """
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    SELECT
+                        COUNT(*) as trade_count,
+                        COALESCE(SUM(realized_pnl), 0) as total_pnl,
+                        SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as win_count
+                    FROM titan_positions
+                    WHERE status IN ('closed', 'expired')
+                """)
+                row = c.fetchone()
+                if row:
+                    trade_count = row[0] or 0
+                    total_pnl = float(row[1] or 0)
+                    win_count = row[2] or 0
+                    win_rate = round((win_count / trade_count) * 100, 1) if trade_count > 0 else 0
+                    return {
+                        'trade_count': trade_count,
+                        'total_pnl': total_pnl,
+                        'win_count': win_count,
+                        'win_rate': win_rate
+                    }
+        except Exception as e:
+            logger.debug(f"Failed to get trading stats: {e}")
+
+        return {'trade_count': 0, 'total_pnl': 0, 'win_count': 0, 'win_rate': 0}
+
     def get_last_trade_time(self) -> Optional[datetime]:
         """Get the time of the last completed trade (for cooldown checking).
 
