@@ -889,18 +889,18 @@ async def get_titan_equity_curve(days: int = 30):
                     # Get current market value of the iron condor
                     exp_str = exp.strftime('%Y-%m-%d') if hasattr(exp, 'strftime') else str(exp)
                     mtm_result = calculate_ic_mark_to_market(
-                        symbol='SPX',
-                        put_long=float(pl),
-                        put_short=float(ps),
-                        call_short=float(cs),
-                        call_long=float(cl),
+                        underlying='SPX',
                         expiration=exp_str,
-                        contracts=int(contracts)
+                        put_short_strike=float(ps),
+                        put_long_strike=float(pl),
+                        call_short_strike=float(cs),
+                        call_long_strike=float(cl),
+                        contracts=int(contracts),
+                        entry_credit=float(total_credit)
                     )
                     if mtm_result and mtm_result.get('success'):
-                        current_value = mtm_result.get('current_value', 0)
-                        # P&L = (credit received - current value) * 100 * contracts
-                        pos_pnl = (float(total_credit) - current_value) * 100 * int(contracts)
+                        # unrealized_pnl is already calculated by the MTM function
+                        pos_pnl = mtm_result.get('unrealized_pnl', 0) or 0
                         unrealized_pnl += pos_pnl
                 except Exception as e:
                     logger.debug(f"MTM calculation failed for {pos_id}: {e}")
