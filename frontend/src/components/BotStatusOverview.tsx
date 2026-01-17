@@ -75,7 +75,9 @@ const BotStatusCard = memo(function BotStatusCard({ name, icon, href, status, li
   const hasOpenPositions = openPositionsCount > 0
 
   // Get P&L values - handle both response formats
-  const totalPnL = livePnL?.total_unrealized_pnl || livePnL?.unrealized_pnl || status?.unrealized_pnl || status?.total_pnl || 0
+  // IMPORTANT: Do NOT fall back to total_pnl for unrealized - that's realized P&L!
+  // When no open positions exist, unrealized should be 0, not the total realized P&L
+  const totalPnL = livePnL?.total_unrealized_pnl ?? livePnL?.unrealized_pnl ?? status?.unrealized_pnl ?? 0
   const todayPnL = livePnL?.today_pnl || status?.today_pnl || 0
 
   // PERFORMANCE FIX: Use moved constant instead of creating new object every render
