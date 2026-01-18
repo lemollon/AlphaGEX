@@ -441,6 +441,13 @@ The following systems were removed in favor of **Oracle as the sole decision aut
 - **Status**: Removed from ARES, ICARUS traders
 - **Note**: Oracle now decides trade frequency
 
+### LangChain AI System (REMOVED)
+- **Old Files**: `ai/langchain_*.py`, `ai/ai_trade_advisor.py`, `ai/ai_trade_recommendations.py`, `ai/ai_strategy_optimizer.py`, `ai/autonomous_ai_reasoning.py`
+- **Reason**: Unnecessary abstraction layer - GEXIS provides all AI capabilities via direct Anthropic SDK
+- **Replacement**: GEXIS AI assistant (`ai/gexis_*.py`) - 9 modules, 17 tools
+- **API behavior**: `/api/ai/optimize-strategy`, `/api/ai/trade-advice`, `/api/optimizer/*` return 503 with redirect to GEXIS
+- **Dependencies removed**: `langchain`, `langchain-anthropic`, `langchain-community`, `langchain-core`
+
 ---
 
 ## Dashboard Features
@@ -872,7 +879,6 @@ When the user says any of these, ensure full end-to-end implementation:
 - Some incomplete function implementations
 - Test coverage gaps in AI modules and route handlers
 - **PHOENIX/ATLAS lack full API integration**: No dedicated route files
-- **LangChain deprecated import**: `ai/langchain_intelligence.py` uses deprecated `LLMChain`
 - **Legacy Flask dashboard**: `dashboard/app.py` still exists but unused
 
 ### Critical Files (Handle with Care)

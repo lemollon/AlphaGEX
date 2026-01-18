@@ -45,10 +45,6 @@ python-multipart>=0.0.18
 pywebpush>=1.14.0
 py-vapid>=1.9.0
 
-# LangChain dependencies (aligned to 0.3.x)
+# AI dependencies (Anthropic direct SDK - LangChain removed)
 anthropic>=0.40.0
-langchain>=0.3.0
-langchain-anthropic>=0.3.0
-langchain-community>=0.3.27
-langchain-core>=0.3.81
 pydantic>=2.7.4,<3.0.0
