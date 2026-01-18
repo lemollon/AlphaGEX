@@ -6,9 +6,10 @@ Tests cover:
 2. Position Stop Loss
 3. Idempotency Keys
 4. Database Transactions
-5. Circuit Breaker (consecutive losses)
-6. API Authentication
-7. Pydantic Models
+5. API Authentication
+6. Pydantic Models
+
+Note: Circuit Breaker tests removed - module deprecated in favor of Solomon Enhancements
 """
 
 import pytest
@@ -297,100 +298,6 @@ class TestIdempotency:
 
 
 # =============================================================================
-# Test Circuit Breaker (Consecutive Losses)
-# =============================================================================
-
-class TestCircuitBreakerConsecutiveLosses:
-    """Tests for consecutive loss protection in circuit_breaker.py"""
-
-    def test_consecutive_loss_tracking(self):
-        """Should track consecutive losses"""
-        from trading.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
-
-        config = CircuitBreakerConfig(max_consecutive_losses=3)
-        cb = CircuitBreaker(config=config, capital=100000)
-
-        # Record 2 losses
-        cb.record_pnl(-100.0)
-        assert cb.consecutive_losses == 1
-
-        cb.record_pnl(-150.0)
-        assert cb.consecutive_losses == 2
-
-    def test_consecutive_loss_reset_on_win(self):
-        """Winning trade should reset consecutive losses"""
-        from trading.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
-
-        config = CircuitBreakerConfig(max_consecutive_losses=3)
-        cb = CircuitBreaker(config=config, capital=100000)
-
-        # Record 2 losses then a win
-        cb.record_pnl(-100.0)
-        cb.record_pnl(-150.0)
-        assert cb.consecutive_losses == 2
-
-        cb.record_pnl(200.0)  # Win
-        assert cb.consecutive_losses == 0
-
-    def test_consecutive_loss_limit_trips_breaker(self):
-        """Hitting consecutive loss limit should trip breaker"""
-        from trading.circuit_breaker import CircuitBreaker, CircuitBreakerConfig, CircuitBreakerState
-
-        config = CircuitBreakerConfig(
-            max_consecutive_losses=3,
-            consecutive_loss_cooldown_hours=1.0,
-            max_daily_loss_pct=50.0,  # Set high to avoid triggering before consecutive loss limit
-            max_daily_loss_dollars=50000.0  # High limit to not trigger
-        )
-        cb = CircuitBreaker(config=config, capital=100000)
-
-        # Record 3 losses (small to avoid daily loss limit)
-        cb.record_pnl(-50.0)
-        cb.record_pnl(-50.0)
-        cb.record_pnl(-50.0)
-
-        assert cb.consecutive_losses == 3
-        assert cb.state == CircuitBreakerState.TRIPPED
-        # The breaker trips due to consecutive losses which sets cooldown
-        assert cb.trip_reason is not None and "consecutive" in cb.trip_reason.lower()
-
-    def test_cooldown_prevents_trading(self):
-        """Should not allow trading during cooldown"""
-        from trading.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
-
-        config = CircuitBreakerConfig(
-            max_consecutive_losses=2,
-            consecutive_loss_cooldown_hours=24.0,
-            max_daily_loss_pct=50.0,  # High to avoid triggering
-            max_daily_loss_dollars=50000.0
-        )
-        cb = CircuitBreaker(config=config, capital=100000)
-
-        # Trip the breaker with consecutive losses
-        cb.record_pnl(-50.0)
-        cb.record_pnl(-50.0)
-
-        can_trade, reason = cb.can_trade()
-        assert can_trade is False
-        assert "cooldown" in reason.lower() or "TRIPPED" in reason
-
-    def test_status_includes_consecutive_loss_info(self):
-        """Status should include consecutive loss info"""
-        from trading.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
-
-        config = CircuitBreakerConfig(max_consecutive_losses=5)
-        cb = CircuitBreaker(config=config, capital=100000)
-
-        cb.record_pnl(-100.0)
-        cb.record_pnl(-100.0)
-
-        status = cb.get_status()
-        assert 'consecutive_losses' in status
-        assert status['consecutive_losses'] == 2
-        assert status['max_consecutive_losses'] == 5
-
-
-# =============================================================================
 # Test Pydantic Models
 # =============================================================================
 
@@ -593,37 +500,6 @@ class TestIntegration:
         result = manager.get_result(key)
         assert result is not None
         assert result["position_id"] == "IC-001"
-
-    def test_circuit_breaker_with_stop_loss(self):
-        """Test circuit breaker integration with stop loss"""
-        from trading.circuit_breaker import CircuitBreaker, CircuitBreakerConfig
-        from trading.position_stop_loss import (
-            PositionStopLossManager,
-            create_iron_condor_stop_config
-        )
-
-        # Setup circuit breaker
-        cb_config = CircuitBreakerConfig(max_consecutive_losses=3)
-        cb = CircuitBreaker(config=cb_config, capital=100000)
-
-        # Setup stop loss manager
-        sl_config = create_iron_condor_stop_config(premium_multiple=2.0)
-        sl_manager = PositionStopLossManager(default_config=sl_config)
-
-        # Simulate position with stop loss
-        sl_manager.register_position(
-            position_id="TEST-IC",
-            entry_price=250.0,
-            premium_received=2.50
-        )
-
-        # Check stop loss triggered
-        triggered, reason = sl_manager.check_stop_loss("TEST-IC", -500.0)
-        assert triggered is True
-
-        # Record the loss in circuit breaker
-        cb.record_pnl(-500.0)
-        assert cb.consecutive_losses == 1
 
     def test_data_validation_blocks_stale_data(self):
         """Test that stale data is blocked from trading"""

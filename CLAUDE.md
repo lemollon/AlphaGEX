@@ -409,25 +409,25 @@ J.A.R.V.I.S.-style AI chatbot providing decision support throughout the platform
 
 ---
 
-## Deprecated Systems (January 2025)
+## Removed Legacy Systems (January 2025)
 
-The following systems have been deprecated in favor of **Oracle as the sole decision authority**:
+The following systems were removed in favor of **Oracle as the sole decision authority**:
 
-### Circuit Breaker → Solomon Enhancements
-- **Old**: `trading/circuit_breaker.py`
-- **New**: `quant/solomon_enhancements.py`
+### Circuit Breaker (REMOVED)
+- **Old File**: `trading/circuit_breaker.py` - **DELETED**
+- **Replacement**: `quant/solomon_enhancements.py`
+- **Migration**: Use `get_solomon_enhanced()` for risk checks
 - **Reason**: Solomon provides all CircuitBreaker functionality PLUS consecutive loss monitoring, daily loss monitoring, cross-bot correlation tracking, and A/B testing
 
-### Ensemble Strategy (DEAD CODE)
-- **File**: `quant/ensemble_strategy.py`
-- **Status**: All methods return None/neutral values
+### Ensemble Strategy (REMOVED)
+- **Old File**: `quant/ensemble_strategy.py` - **DELETED**
 - **Reason**: "Oracle is god" - weighted voting replaced by Oracle sole authority
-- **API stubs still exist**: `/api/quant/ensemble` endpoints return stub data
+- **API behavior**: `/api/quant/ensemble` endpoints return unavailable status
 
-### ML Regime Classifier (DISABLED)
-- **File**: `quant/ml_regime_classifier.py`
-- **Status**: File exists but training disabled in scheduler
-- **Reason**: "Only blocked trades unnecessarily" - Oracle handles regime decisions
+### ML Regime Classifier (REMOVED)
+- **Old File**: `quant/ml_regime_classifier.py` - **DELETED**
+- **Reason**: "Only blocked trades unnecessarily" - Oracle handles all regime decisions
+- **API behavior**: Routes gracefully handle module absence
 
 ### GEX Directional ML (REMOVED)
 - **Status**: Removed from all bot signal files
@@ -871,7 +871,6 @@ When the user says any of these, ensure full end-to-end implementation:
 - Bare except clauses (89 instances) - Could be more specific
 - Some incomplete function implementations
 - Test coverage gaps in AI modules and route handlers
-- **Deprecated code still in codebase**: `circuit_breaker.py`, `ensemble_strategy.py`, `ml_regime_classifier.py`
 - **PHOENIX/ATLAS lack full API integration**: No dedicated route files
 - **LangChain deprecated import**: `ai/langchain_intelligence.py` uses deprecated `LLMChain`
 - **Legacy Flask dashboard**: `dashboard/app.py` still exists but unused
