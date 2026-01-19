@@ -51,6 +51,7 @@ export { default as RiskMetrics } from './RiskMetrics'
 export { default as PerformanceComparison } from './PerformanceComparison'
 export { default as PresetPerformanceChart } from './PresetPerformanceChart'
 export { default as UnrealizedPnLCard } from './UnrealizedPnLCard'
+export { default as HedgeSignalCard } from './HedgeSignalCard'
 
 // Activity & Timeline
 export { default as ActivityTimeline } from './ActivityTimeline'
