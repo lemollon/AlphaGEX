@@ -1,17 +1,18 @@
 'use client'
 
 /**
- * GEX ML Models Dashboard
+ * ORION - GEX Probability Models Dashboard
  *
- * Displays status and controls for the GEX Probability Models used by
- * ARGUS (0DTE Gamma) and HYPERION (Weekly Gamma) visualizations.
+ * Named after the mighty hunter constellation, ORION provides the ML-powered
+ * probability predictions that guide ARGUS (0DTE) and HYPERION (Weekly) gamma
+ * visualizations.
  *
  * Features:
  * - Model status (trained/not trained, staleness)
- * - Training data availability check
- * - Sub-model status (5 models)
- * - Training controls
- * - Test prediction interface
+ * - Training data availability check (gex_structure_daily + gex_history fallback)
+ * - Sub-model status (5 XGBoost models)
+ * - Manual and scheduled training controls
+ * - Auto-training: Every Sunday at 6:00 PM CT
  */
 
 import { useState, useEffect, useCallback } from 'react'
@@ -173,9 +174,9 @@ export default function GexMLPage() {
           <div className="flex items-center gap-3">
             <Brain className="w-8 h-8 text-purple-400" />
             <div>
-              <h1 className="text-2xl font-bold">GEX ML Models</h1>
+              <h1 className="text-2xl font-bold">ORION</h1>
               <p className="text-gray-400 text-sm">
-                Probability models for ARGUS and HYPERION gamma visualization
+                GEX Probability Models for ARGUS and HYPERION
               </p>
             </div>
           </div>
