@@ -3743,3 +3743,74 @@ async def reset_ares_data(confirm: bool = False):
     except Exception as e:
         logger.error(f"Error resetting ARES data: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/diagnostics")
+async def get_ares_diagnostics():
+    """
+    Get ARES diagnostic information including execution capability.
+
+    This endpoint checks if ARES can actually execute trades in Tradier sandbox.
+    Critical for verifying the bot is properly configured.
+    """
+    from unified_config import APIConfig
+
+    ares = get_ares_instance()
+
+    # Check environment variables
+    sandbox_key_set = bool(APIConfig.TRADIER_SANDBOX_API_KEY)
+    sandbox_account_set = bool(APIConfig.TRADIER_SANDBOX_ACCOUNT_ID)
+    credentials_configured = sandbox_key_set and sandbox_account_set
+
+    # Check Tradier connectivity
+    tradier_balance = _get_tradier_account_balance()
+    tradier_connected = tradier_balance.get('connected', False)
+
+    # Get execution status from ARES instance if running
+    execution_status = None
+    if ares and hasattr(ares, 'executor') and hasattr(ares.executor, 'get_execution_status'):
+        execution_status = ares.executor.get_execution_status()
+
+    # Build diagnostic result
+    can_execute = False
+    issues = []
+
+    if not credentials_configured:
+        if not sandbox_key_set:
+            issues.append("TRADIER_SANDBOX_API_KEY environment variable not set")
+        if not sandbox_account_set:
+            issues.append("TRADIER_SANDBOX_ACCOUNT_ID environment variable not set")
+
+    if not tradier_connected:
+        issues.append(f"Tradier API not connected: {tradier_balance.get('error', 'Unknown error')}")
+
+    if execution_status:
+        if not execution_status.get('can_execute'):
+            if execution_status.get('init_error'):
+                issues.append(f"Executor init error: {execution_status['init_error']}")
+            else:
+                issues.append("Executor cannot execute trades (tradier not initialized)")
+        else:
+            can_execute = True
+    elif ares is None:
+        issues.append("ARES trader not running in this process - cannot verify execution capability")
+        # If credentials are configured and Tradier is connected, likely can execute when running
+        if credentials_configured and tradier_connected:
+            can_execute = True  # Optimistic - will work when worker starts
+
+    return {
+        "success": True,
+        "data": {
+            "can_execute_trades": can_execute,
+            "credentials_configured": credentials_configured,
+            "tradier_connected": tradier_connected,
+            "tradier_sandbox": tradier_balance.get('sandbox', False),
+            "tradier_account_id": tradier_balance.get('account_id'),
+            "tradier_balance": tradier_balance.get('total_equity', 0) if tradier_connected else None,
+            "ares_running": ares is not None,
+            "execution_status": execution_status,
+            "issues": issues if issues else None,
+            "status": "READY" if can_execute and not issues else "NOT_READY",
+            "message": "ARES is ready to execute trades in Tradier sandbox" if can_execute and not issues else f"ARES cannot execute trades: {'; '.join(issues)}"
+        }
+    }

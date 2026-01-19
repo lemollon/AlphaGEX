@@ -1490,6 +1490,9 @@ class ARESTrader(MathOptimizerMixin):
                 pnl = (pos.total_credit - current_value) * 100 * pos.contracts
                 unrealized_pnl += pnl
 
+        # Get execution capability status
+        execution_status = self.executor.get_execution_status() if hasattr(self.executor, 'get_execution_status') else {}
+
         return {
             'bot_name': 'ARES',
             'version': 'V2',
@@ -1503,6 +1506,9 @@ class ARESTrader(MathOptimizerMixin):
             'unrealized_pnl': unrealized_pnl if has_live_pricing else None,
             'has_live_pricing': has_live_pricing,
             'positions': [p.to_dict() for p in positions],
+            # Execution capability - CRITICAL for knowing if trades can actually execute
+            'can_execute_trades': execution_status.get('can_execute', False),
+            'execution_error': execution_status.get('init_error'),
         }
 
     def get_positions(self) -> List[IronCondorPosition]:
