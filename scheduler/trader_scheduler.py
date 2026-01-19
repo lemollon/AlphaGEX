@@ -167,6 +167,15 @@ except ImportError:
     GEXDirectionalPredictor = None
     print("Warning: GEXDirectionalPredictor not available. Directional ML training will be disabled.")
 
+# Import GEX Probability Models for ARGUS/HYPERION ML training
+try:
+    from quant.gex_probability_models import GEXSignalGenerator
+    GEX_PROBABILITY_MODELS_AVAILABLE = True
+except ImportError:
+    GEX_PROBABILITY_MODELS_AVAILABLE = False
+    GEXSignalGenerator = None
+    print("Warning: GEXSignalGenerator not available. GEX ML training will be disabled.")
+
 # Import Auto-Validation System for ML model health monitoring and auto-retrain
 try:
     from quant.auto_validation_system import (
@@ -2193,6 +2202,116 @@ class AutonomousTraderScheduler:
         logger.info(f"QUANT: Next training scheduled for next Sunday at 5:00 PM CT")
         logger.info(f"=" * 80)
 
+    def scheduled_gex_ml_training_logic(self):
+        """
+        GEX ML (Probability Models) - runs WEEKLY on Sunday at 6:00 PM CT
+
+        Retrains the 5 GEX probability models used by ARGUS and HYPERION:
+        1. Direction Probability (UP/DOWN/FLAT classification)
+        2. Flip Gravity (probability of moving toward flip point)
+        3. Magnet Attraction (probability of reaching magnets)
+        4. Volatility Estimate (expected price range)
+        5. Pin Zone Behavior (probability of staying pinned)
+
+        Training runs after market close on Sunday to have fresh models for the week.
+        Models are saved to database for persistence across deploys.
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"GEX ML (Probability Models) triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not GEX_PROBABILITY_MODELS_AVAILABLE:
+            logger.warning("GEX ML: GEXSignalGenerator not available - skipping")
+            return
+
+        try:
+            # Initialize generator
+            generator = GEXSignalGenerator()
+
+            # Check if retraining is needed (models older than 7 days)
+            needs_training = True
+            if generator.is_trained:
+                try:
+                    # Check staleness
+                    conn = get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        SELECT created_at FROM ml_models
+                        WHERE model_name = 'gex_signal_generator'
+                        ORDER BY version DESC LIMIT 1
+                    """)
+                    row = cursor.fetchone()
+                    conn.close()
+
+                    if row:
+                        last_trained = row[0]
+                        hours_since = (now.replace(tzinfo=None) - last_trained).total_seconds() / 3600
+                        if hours_since < 168:  # Less than 7 days
+                            logger.info(f"GEX ML: Models trained {hours_since:.1f} hours ago - still fresh")
+                            needs_training = False
+                        else:
+                            logger.info(f"GEX ML: Models are {hours_since:.1f} hours old - retraining")
+                except Exception as e:
+                    logger.warning(f"GEX ML: Could not check staleness: {e}")
+
+            if not needs_training:
+                logger.info("GEX ML: Skipping training - models are fresh")
+                self._save_heartbeat('GEX_ML', 'SKIPPED', {'reason': 'models_fresh'})
+                return
+
+            # Train models
+            logger.info("GEX ML: Starting training on SPX and SPY data...")
+            results = generator.train(
+                symbols=['SPX', 'SPY'],
+                start_date='2020-01-01',
+                end_date=None  # Up to present
+            )
+
+            if results and generator.is_trained:
+                # Save to database for persistence
+                generator.save_to_db(
+                    metrics=results if isinstance(results, dict) else None,
+                    training_records=results.get('total_records') if isinstance(results, dict) else None
+                )
+
+                logger.info(f"  ✅ GEX ML training completed successfully")
+                if isinstance(results, dict):
+                    logger.info(f"     Training records: {results.get('total_records', 'N/A')}")
+                    for model_name, metrics in results.get('model_metrics', {}).items():
+                        if isinstance(metrics, dict) and 'accuracy' in metrics:
+                            logger.info(f"     {model_name}: {metrics['accuracy']:.2%} accuracy")
+
+                self._record_training_history(
+                    model_name='GEX_PROBABILITY_MODELS',
+                    status='COMPLETED',
+                    accuracy_after=results.get('model_metrics', {}).get('direction', {}).get('accuracy', 0) * 100 if isinstance(results, dict) else None,
+                    training_samples=results.get('total_records') if isinstance(results, dict) else None,
+                    triggered_by='SCHEDULED'
+                )
+
+                self._save_heartbeat('GEX_ML', 'TRAINING_COMPLETE', {
+                    'models_trained': 5,
+                    'results': results if isinstance(results, dict) else {}
+                })
+            else:
+                logger.warning("  ⚠️ GEX ML training returned no result or models not trained")
+                self._save_heartbeat('GEX_ML', 'TRAINING_FAILED', {'reason': 'no_result'})
+
+        except Exception as e:
+            logger.error(f"  ❌ GEX ML training failed: {e}")
+            logger.error(traceback.format_exc())
+            self._record_training_history(
+                model_name='GEX_PROBABILITY_MODELS',
+                status='FAILED',
+                triggered_by='SCHEDULED',
+                error=str(e)
+            )
+            self._save_heartbeat('GEX_ML', 'TRAINING_FAILED', {'error': str(e)})
+
+        logger.info(f"GEX ML: Next training scheduled for next Sunday at 6:00 PM CT")
+        logger.info(f"=" * 80)
+
     def scheduled_validation_logic(self):
         """
         AUTO-VALIDATION (ML Health Check) - runs WEEKLY on Saturday at 6:00 PM CT
@@ -2846,6 +2965,30 @@ class AutonomousTraderScheduler:
             logger.warning("⚠️ QUANT not available - ML model training disabled")
 
         # =================================================================
+        # GEX ML (Probability Models for ARGUS/HYPERION)
+        # =================================================================
+        # Trains the 5 XGBoost models used for strike probability calculations:
+        # - Direction, Flip Gravity, Magnet Attraction, Volatility, Pin Zone
+        # Training at 6:00 PM CT (after QUANT training at 5:00 PM)
+        # =================================================================
+        if GEX_PROBABILITY_MODELS_AVAILABLE:
+            self.scheduler.add_job(
+                self.scheduled_gex_ml_training_logic,
+                trigger=CronTrigger(
+                    hour=18,       # 6:00 PM CT - after QUANT training
+                    minute=0,
+                    day_of_week='sun',  # Every Sunday
+                    timezone='America/Chicago'
+                ),
+                id='gex_ml_training',
+                name='GEX ML - Weekly Probability Models Training',
+                replace_existing=True
+            )
+            logger.info("✅ GEX ML job scheduled (WEEKLY on Sunday at 6:00 PM CT)")
+        else:
+            logger.warning("⚠️ GEX ML not available - probability models training disabled")
+
+        # =================================================================
         # AUTO-VALIDATION JOB: ML Model Health Check - runs WEEKLY on Saturday
         # Validates ALL 11 ML models using walk-forward validation:
         # - Checks in-sample vs out-of-sample accuracy
@@ -3131,6 +3274,14 @@ class AutonomousTraderScheduler:
             'regime_classifier_available': REGIME_CLASSIFIER_AVAILABLE,
             'gex_directional_available': GEX_DIRECTIONAL_AVAILABLE,
             'schedule': 'Sunday 5:00 PM CT (weekly)'
+        }
+
+        # Add GEX ML training availability info
+        status['gex_ml_training'] = {
+            'available': GEX_PROBABILITY_MODELS_AVAILABLE,
+            'schedule': 'Sunday 6:00 PM CT (weekly)',
+            'models': ['direction', 'flip_gravity', 'magnet_attraction', 'volatility', 'pin_zone'],
+            'used_by': ['ARGUS', 'HYPERION']
         }
 
         return status

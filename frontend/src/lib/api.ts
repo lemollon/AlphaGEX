@@ -551,6 +551,23 @@ export const apiClient = {
     trade_id?: string
   }) => api.post('/api/ml/score-and-log', null, { params: data }),
 
+  // GEX ML MODELS - For ARGUS/HYPERION
+  getGexModelsStatus: () => api.get('/api/ml/gex-models/status'),
+  getGexModelsDataStatus: () => api.get('/api/ml/gex-models/data-status'),
+  trainGexModels: (data: {
+    symbols?: string[]
+    start_date?: string
+    end_date?: string
+  } = {}) => api.post('/api/ml/gex-models/train', null, { params: data }),
+  getGexModelsPrediction: (data: {
+    spot_price: number
+    net_gamma: number
+    total_gamma: number
+    flip_point?: number
+    vix?: number
+    magnets?: Array<{ strike: number; gamma: number }>
+  }) => api.post('/api/ml/gex-models/predict', null, { params: data }),
+
   // PROMETHEUS - Standalone ML System for SPX Wheel
   getPrometheusStatus: () => api.get('/api/prometheus/status'),
   trainPrometheus: (minSamples: number = 30, calibrate: boolean = true) =>
@@ -1045,12 +1062,29 @@ export const apiClient = {
   getArgusStrikeTrends: () => api.get('/api/argus/strike-trends'),
   getArgusGammaFlips: () => api.get('/api/argus/gamma-flips'),
 
-  // HYPERION - Weekly Gamma visualization for stocks/ETFs
+  // HYPERION - Weekly Gamma visualization for stocks/ETFs (Enhanced)
   getHyperionGamma: (symbol?: string, expiration?: string) =>
     api.get('/api/hyperion/gamma', { params: { symbol, expiration } }),
   getHyperionExpirations: (symbol?: string, weeks?: number) =>
     api.get('/api/hyperion/expirations', { params: { symbol, weeks } }),
   getHyperionSymbols: () => api.get('/api/hyperion/symbols'),
+  // New enhanced endpoints (matching ARGUS feature parity)
+  getHyperionAlerts: (symbol?: string, limit?: number, acknowledged?: boolean) =>
+    api.get('/api/hyperion/alerts', { params: { symbol, limit, acknowledged } }),
+  acknowledgeHyperionAlert: (alertId: number) =>
+    api.post(`/api/hyperion/alerts/${alertId}/acknowledge`),
+  getHyperionPatterns: (symbol?: string, days?: number, minSimilarity?: number) =>
+    api.get('/api/hyperion/patterns', { params: { symbol, days, min_similarity: minSimilarity } }),
+  getHyperionStrikeTrends: (symbol?: string, date?: string) =>
+    api.get('/api/hyperion/strike-trends', { params: { symbol, date_str: date } }),
+  getHyperionGammaFlips: (symbol?: string, minutes?: number) =>
+    api.get('/api/hyperion/gamma-flips', { params: { symbol, minutes } }),
+  getHyperionDangerZoneLogs: (symbol?: string, limit?: number, activeOnly?: boolean) =>
+    api.get('/api/hyperion/danger-zones/log', { params: { symbol, limit, active_only: activeOnly } }),
+  getHyperionContext: (symbol?: string) =>
+    api.get('/api/hyperion/context', { params: { symbol } }),
+  getHyperionAccuracy: (symbol?: string) =>
+    api.get('/api/hyperion/accuracy', { params: { symbol } }),
 
   // SOLOMON - Feedback Loop Intelligence System
   getSolomonDashboard: () => api.get('/api/solomon/dashboard'),

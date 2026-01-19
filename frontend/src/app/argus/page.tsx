@@ -52,6 +52,7 @@ import {
   Sun
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
+import OrionStatusBadge from '@/components/OrionStatusBadge'
 import { apiClient } from '@/lib/api'
 
 // Types
@@ -526,7 +527,8 @@ export default function ArgusPage() {
   }, [selectedSymbol])
 
   // EMA smoothing for maxGamma to prevent scale jumping
-  const EMA_ALPHA = 0.3  // 30% new value, 70% previous - same as backend EM smoothing
+  // Lower alpha = smoother transitions, reduces visual jumpiness
+  const EMA_ALPHA = 0.15  // 15% new value, 85% previous - smoother for UI stability
   const rawMaxGamma = gammaData?.strikes && gammaData.strikes.length > 0
     ? Math.max(...gammaData.strikes.map(s => Math.abs(s.net_gamma || 0)), 1)
     : 1
@@ -1329,18 +1331,28 @@ export default function ArgusPage() {
   // maxGamma is smoothed via useEffect declared above, before early returns
   const maxGamma = smoothedMaxGamma
 
-  // Calculate maxGamma for tomorrow's data (independent scale)
-  const tomorrowMaxGamma = tomorrowGammaData?.strikes && tomorrowGammaData.strikes.length > 0
-    ? Math.max(...tomorrowGammaData.strikes.map(s => Math.abs(s.net_gamma || 0)), 1)
-    : 1
-
-  const highPriorityAlerts = alerts.filter(a => a.priority === 'HIGH' || a.priority === 'MEDIUM')
+  // Memoize filtered alerts to prevent re-renders
+  const highPriorityAlerts = useMemo(() =>
+    alerts.filter(a => a.priority === 'HIGH' || a.priority === 'MEDIUM'),
+    [alerts]
+  )
 
   // Danger zones for MAIN DISPLAY - use ONLY current snapshot (real-time, not stale)
   // Event Log shows history with timestamps separately
-  const buildingZones = gammaData?.danger_zones?.filter(d => d.danger_type === 'BUILDING') || []
-  const collapsingZones = gammaData?.danger_zones?.filter(d => d.danger_type === 'COLLAPSING') || []
-  const spikeZones = gammaData?.danger_zones?.filter(d => d.danger_type === 'SPIKE') || []
+  // Memoize danger zone filtering to prevent unnecessary recalculations
+  const { buildingZones, collapsingZones, spikeZones } = useMemo(() => ({
+    buildingZones: gammaData?.danger_zones?.filter(d => d.danger_type === 'BUILDING') || [],
+    collapsingZones: gammaData?.danger_zones?.filter(d => d.danger_type === 'COLLAPSING') || [],
+    spikeZones: gammaData?.danger_zones?.filter(d => d.danger_type === 'SPIKE') || []
+  }), [gammaData?.danger_zones])
+
+  // Memoize tomorrow's max gamma calculation
+  const tomorrowMaxGammaMemo = useMemo(() =>
+    tomorrowGammaData?.strikes && tomorrowGammaData.strikes.length > 0
+      ? Math.max(...tomorrowGammaData.strikes.map(s => Math.abs(s.net_gamma || 0)), 1)
+      : 1,
+    [tomorrowGammaData?.strikes]
+  )
 
   return (
     <div className="min-h-screen bg-background">
@@ -1357,6 +1369,9 @@ export default function ArgusPage() {
               <h1 className="text-2xl font-bold text-white">ARGUS</h1>
               <p className="text-gray-400 text-sm">0DTE Gamma Intelligence</p>
             </div>
+
+            {/* ORION ML Status */}
+            <OrionStatusBadge />
 
             {/* Symbol Selector */}
             <div className="relative">

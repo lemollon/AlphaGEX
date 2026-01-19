@@ -1501,3 +1501,304 @@ async def get_bot_ml_status():
             "success": False,
             "error": str(e)
         }
+
+
+# ============================================================================
+# GEX PROBABILITY MODELS - For ARGUS/HYPERION
+# ============================================================================
+
+@router.get("/gex-models/status")
+async def get_gex_models_status():
+    """
+    Get status of GEX Probability Models used by ARGUS and HYPERION.
+
+    Returns:
+        - is_trained: Whether models are loaded and ready
+        - model_info: Metadata about the trained model
+        - staleness_hours: Hours since last training
+        - needs_retraining: Whether models need retraining
+        - sub_models: Status of all 5 sub-models
+    """
+    try:
+        from quant.gex_probability_models import GEXProbabilityModels
+        from quant.model_persistence import get_model_info, MODEL_GEX_PROBABILITY
+
+        models = GEXProbabilityModels()
+
+        # Get model info from persistence layer
+        model_info = get_model_info(MODEL_GEX_PROBABILITY)
+
+        # Build response
+        response = {
+            "is_trained": models.is_trained,
+            "model_info": model_info,
+            "staleness_hours": models.get_model_staleness_hours(),
+            "needs_retraining": models.needs_retraining(),
+            "sub_models": {
+                "direction": models._generator.direction_model.is_trained if models._generator else False,
+                "flip_gravity": models._generator.flip_gravity_model.is_trained if models._generator else False,
+                "magnet_attraction": models._generator.magnet_attraction_model.is_trained if models._generator else False,
+                "volatility": models._generator.volatility_model.is_trained if models._generator else False,
+                "pin_zone": models._generator.pin_zone_model.is_trained if models._generator else False
+            },
+            "usage": {
+                "argus": "60% ML + 40% distance-weighted probability",
+                "hyperion": "60% ML + 40% distance-weighted probability"
+            }
+        }
+
+        return {"success": True, "data": response}
+
+    except Exception as e:
+        logger.error(f"GEX models status error: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "data": {
+                "is_trained": False,
+                "model_info": None,
+                "staleness_hours": None,
+                "needs_retraining": True,
+                "sub_models": {}
+            }
+        }
+
+
+@router.post("/gex-models/train")
+async def train_gex_models(
+    symbols: List[str] = ["SPX", "SPY"],
+    start_date: str = "2020-01-01",
+    end_date: str = None
+):
+    """
+    Trigger training of GEX Probability Models.
+
+    This trains all 5 models:
+    1. Direction Probability (UP/DOWN/FLAT)
+    2. Flip Gravity (probability price moves toward flip point)
+    3. Magnet Attraction (probability price reaches nearest magnet)
+    4. Volatility Estimate (expected price range)
+    5. Pin Zone Behavior (probability of staying between magnets)
+
+    Args:
+        symbols: List of symbols to train on (default: SPX, SPY)
+        start_date: Training data start date
+        end_date: Training data end date (default: today)
+
+    Returns:
+        Training results and metrics
+    """
+    try:
+        from quant.gex_probability_models import GEXSignalGenerator
+
+        generator = GEXSignalGenerator()
+
+        # Train models
+        logger.info(f"Starting GEX model training: symbols={symbols}, start={start_date}, end={end_date}")
+        results = generator.train(
+            symbols=symbols,
+            start_date=start_date,
+            end_date=end_date
+        )
+
+        # Save to database for persistence
+        generator.save_to_db(
+            metrics=results if isinstance(results, dict) else None,
+            training_records=results.get('total_records') if isinstance(results, dict) else None
+        )
+
+        logger.info("GEX model training complete, saved to database")
+
+        return {
+            "success": True,
+            "message": "GEX models trained and saved successfully",
+            "data": {
+                "training_results": results,
+                "saved_to_db": True
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"GEX model training error: {e}")
+        import traceback
+        return {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
+
+@router.post("/gex-models/predict")
+async def predict_with_gex_models(
+    spot_price: float,
+    net_gamma: float,
+    total_gamma: float,
+    flip_point: float = None,
+    vix: float = 20,
+    magnets: List[dict] = None
+):
+    """
+    Get prediction from GEX Probability Models.
+
+    Args:
+        spot_price: Current spot price
+        net_gamma: Net gamma at spot
+        total_gamma: Total absolute gamma
+        flip_point: Gamma flip point (optional)
+        vix: Current VIX level
+        magnets: List of magnet strikes with gamma
+
+    Returns:
+        Combined prediction from all 5 models
+    """
+    try:
+        from quant.gex_probability_models import GEXProbabilityModels
+
+        models = GEXProbabilityModels()
+
+        if not models.is_trained:
+            return {
+                "success": False,
+                "error": "Models not trained. Run /api/ml/gex-models/train first."
+            }
+
+        # Build gamma structure
+        gamma_structure = {
+            'net_gamma': net_gamma,
+            'total_gamma': total_gamma,
+            'flip_point': flip_point or spot_price,
+            'magnets': magnets or [],
+            'vix': vix,
+            'gamma_regime': 'POSITIVE' if net_gamma > 0 else 'NEGATIVE',
+            'expected_move': spot_price * 0.01,
+            'spot_price': spot_price
+        }
+
+        # Get combined prediction
+        signal = models.predict_combined(spot_price, gamma_structure)
+
+        if signal:
+            return {
+                "success": True,
+                "data": {
+                    "direction": signal.direction_prediction,
+                    "direction_confidence": signal.direction_confidence,
+                    "flip_gravity_prob": signal.flip_gravity_prob,
+                    "magnet_attraction_prob": signal.magnet_attraction_prob,
+                    "expected_volatility_pct": signal.expected_volatility_pct,
+                    "pin_zone_prob": signal.pin_zone_prob,
+                    "overall_conviction": signal.overall_conviction,
+                    "trade_recommendation": signal.trade_recommendation
+                }
+            }
+        else:
+            return {
+                "success": False,
+                "error": "Prediction failed"
+            }
+
+    except Exception as e:
+        logger.error(f"GEX model prediction error: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+@router.get("/gex-models/data-status")
+async def get_gex_training_data_status():
+    """
+    Check availability of GEX training data in database.
+
+    Returns:
+        - gex_structure_daily: Record count and date range (primary source)
+        - gex_history: Record count and date range (fallback source)
+        - vix_daily: Record count and date range
+        - readiness: Whether enough data exists for training
+    """
+    try:
+        from database_adapter import get_connection
+
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Check gex_structure_daily (primary source)
+        cursor.execute("""
+            SELECT COUNT(*), MIN(trade_date), MAX(trade_date)
+            FROM gex_structure_daily
+        """)
+        gex_row = cursor.fetchone()
+        gex_count = gex_row[0] if gex_row else 0
+        gex_min = str(gex_row[1]) if gex_row and gex_row[1] else None
+        gex_max = str(gex_row[2]) if gex_row and gex_row[2] else None
+
+        # Check gex_history (fallback source) - count distinct days
+        cursor.execute("""
+            SELECT COUNT(DISTINCT DATE(timestamp)), MIN(DATE(timestamp)), MAX(DATE(timestamp))
+            FROM gex_history
+        """)
+        hist_row = cursor.fetchone()
+        hist_days = hist_row[0] if hist_row else 0
+        hist_min = str(hist_row[1]) if hist_row and hist_row[1] else None
+        hist_max = str(hist_row[2]) if hist_row and hist_row[2] else None
+
+        # Also get total snapshots in gex_history
+        cursor.execute("SELECT COUNT(*) FROM gex_history")
+        hist_snapshots = cursor.fetchone()[0] or 0
+
+        # Check vix_daily
+        cursor.execute("""
+            SELECT COUNT(*), MIN(trade_date), MAX(trade_date)
+            FROM vix_daily
+        """)
+        vix_row = cursor.fetchone()
+        vix_count = vix_row[0] if vix_row else 0
+        vix_min = str(vix_row[1]) if vix_row and vix_row[1] else None
+        vix_max = str(vix_row[2]) if vix_row and vix_row[2] else None
+
+        conn.close()
+
+        # Determine readiness - can use either gex_structure_daily or gex_history
+        min_records = 100
+        usable_records = gex_count if gex_count > 0 else hist_days
+        is_ready = usable_records >= min_records
+        data_source = "gex_structure_daily" if gex_count > 0 else ("gex_history" if hist_days > 0 else "none")
+
+        return {
+            "success": True,
+            "data": {
+                "gex_structure_daily": {
+                    "count": gex_count,
+                    "date_range": f"{gex_min} to {gex_max}" if gex_min else "No data",
+                    "has_data": gex_count > 0,
+                    "is_primary": True
+                },
+                "gex_history": {
+                    "unique_days": hist_days,
+                    "total_snapshots": hist_snapshots,
+                    "date_range": f"{hist_min} to {hist_max}" if hist_min else "No data",
+                    "has_data": hist_days > 0,
+                    "is_fallback": True,
+                    "note": "Used when gex_structure_daily is empty"
+                },
+                "vix_daily": {
+                    "count": vix_count,
+                    "date_range": f"{vix_min} to {vix_max}" if vix_min else "No data",
+                    "has_data": vix_count > 0
+                },
+                "readiness": {
+                    "is_ready": is_ready,
+                    "data_source": data_source,
+                    "usable_records": usable_records,
+                    "min_records_needed": min_records,
+                    "message": f"Ready for training using {data_source}" if is_ready else f"Need at least {min_records} records (have {usable_records})"
+                }
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"GEX data status error: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
