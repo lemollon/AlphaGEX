@@ -52,6 +52,7 @@ import {
   Sun
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
+import OrionStatusBadge from '@/components/OrionStatusBadge'
 import { apiClient } from '@/lib/api'
 
 // Types
@@ -1368,6 +1369,9 @@ export default function ArgusPage() {
               <h1 className="text-2xl font-bold text-white">ARGUS</h1>
               <p className="text-gray-400 text-sm">0DTE Gamma Intelligence</p>
             </div>
+
+            {/* ORION ML Status */}
+            <OrionStatusBadge />
 
             {/* Symbol Selector */}
             <div className="relative">

@@ -45,6 +45,7 @@ import {
   AlertCircle
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
+import OrionStatusBadge from '@/components/OrionStatusBadge'
 import { apiClient } from '@/lib/api'
 
 // Types
@@ -497,6 +498,9 @@ export default function HyperionPage() {
               <h1 className="text-2xl font-bold text-white">HYPERION</h1>
               <p className="text-gray-400 text-sm">Weekly Gamma Intelligence</p>
             </div>
+
+            {/* ORION ML Status */}
+            <OrionStatusBadge />
 
             {/* Symbol Selector */}
             <div className="relative">
