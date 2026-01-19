@@ -1,14 +1,20 @@
 'use client'
 
 /**
- * HYPERION (Weekly Gamma) - Weekly Options Gamma Visualization
+ * HYPERION (Weekly Gamma) - Weekly Options Gamma Visualization (Enhanced)
  * Named after the Titan of Watchfulness - watching longer-term gamma setups
  *
  * HYPERION focuses on weekly options for stocks/ETFs that don't have 0DTE,
  * providing gamma visualization for weekly expirations.
+ *
+ * Enhanced Features (matching ARGUS):
+ * - Market structure panel (9 signals)
+ * - Alerts system
+ * - Pattern matching
+ * - Strike trends
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import {
   Eye,
   RefreshCw,
@@ -18,6 +24,7 @@ import {
   Target,
   Zap,
   ChevronDown,
+  ChevronUp,
   Clock,
   Info,
   Activity,
@@ -27,7 +34,15 @@ import {
   CheckCircle2,
   Calendar,
   BarChart3,
-  Brain
+  Brain,
+  Bell,
+  LayoutGrid,
+  GitCompare,
+  ArrowRight,
+  ArrowUp,
+  ArrowDown,
+  Minus,
+  AlertCircle
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
@@ -70,20 +85,75 @@ interface DangerZone {
   roc_5min: number
 }
 
+interface MarketStructure {
+  flip_point: {
+    current: number | null
+    prior: number | null
+    direction: string
+    implication: string
+  }
+  bounds: {
+    current_upper: number
+    current_lower: number
+    direction: string
+    implication: string
+  }
+  width: {
+    current_width: number
+    direction: string
+    implication: string
+  }
+  walls: {
+    current_call_wall: number | null
+    current_put_wall: number | null
+    implication: string
+  }
+  vix_regime: {
+    vix: number
+    regime: string
+    implication: string
+  }
+  gamma_regime: {
+    current_regime: string
+    alignment: string
+    implication: string
+  }
+  gex_momentum: {
+    direction: string
+    conviction: string
+    implication: string
+  }
+  wall_break: {
+    call_wall_risk: string
+    put_wall_risk: string
+    implication: string
+  }
+  combined: {
+    signal: string
+    bias: string
+    confidence: string
+    strategy: string
+    warnings: string[]
+  }
+}
+
+interface Alert {
+  id: number
+  alert_type: string
+  strike: number | null
+  message: string
+  priority: string
+  spot_price: number
+  triggered_at: string
+  acknowledged: boolean
+}
+
 interface GammaData {
   symbol: string
   expiration_date: string
   snapshot_time: string
   spot_price: number
   expected_move: number
-  expected_move_change?: {
-    current: number
-    prior_day: number | null
-    signal: string
-    sentiment: string
-    interpretation: string
-    pct_change_prior: number
-  }
   vix: number
   total_net_gamma: number
   gamma_regime: string
@@ -91,9 +161,7 @@ interface GammaData {
   market_status: string
   is_mock: boolean
   is_cached?: boolean
-  cache_age_seconds?: number
   fetched_at: string
-  data_timestamp?: string
   strikes: StrikeData[]
   magnets: Magnet[]
   likely_pin: number | null
@@ -108,7 +176,7 @@ interface GammaData {
     message?: string
     trade_idea?: string
   }
-  is_stale?: boolean
+  market_structure?: MarketStructure | null
 }
 
 interface ExpirationInfo {
@@ -160,6 +228,13 @@ export default function HyperionPage() {
   const [expirations, setExpirations] = useState<ExpirationInfo[]>([])
   const [selectedExpiration, setSelectedExpiration] = useState<string>('')
 
+  // Panel expansion state
+  const [alertsExpanded, setAlertsExpanded] = useState(true)
+  const [marketStructureExpanded, setMarketStructureExpanded] = useState(true)
+
+  // Alerts state
+  const [alerts, setAlerts] = useState<Alert[]>([])
+
   // Refs for polling and initial load tracking
   const pollRef = useRef<NodeJS.Timeout | null>(null)
   const initialLoadRef = useRef(true)
@@ -182,11 +257,9 @@ export default function HyperionPage() {
   // Fetch gamma data
   const fetchGammaData = useCallback(async (expiration?: string) => {
     try {
-      // Only show loading on initial load, not on refresh
       if (initialLoadRef.current) {
         setLoading(true)
       }
-      // Use dedicated HYPERION endpoint for weekly options
       const exp = expiration || selectedExpiration || undefined
       const response = await apiClient.getHyperionGamma(selectedSymbol, exp)
 
@@ -204,28 +277,36 @@ export default function HyperionPage() {
     }
   }, [selectedSymbol, selectedExpiration])
 
-  // Track if we're doing a fresh symbol load (need to force new expiration)
+  // Fetch alerts
+  const fetchAlerts = useCallback(async () => {
+    try {
+      const response = await apiClient.getHyperionAlerts(selectedSymbol, 20, false)
+      if (response.data?.success && response.data?.data?.alerts) {
+        setAlerts(response.data.data.alerts)
+      }
+    } catch (err) {
+      console.error('[HYPERION] Error fetching alerts:', err)
+    }
+  }, [selectedSymbol])
+
+  // Track if we're doing a fresh symbol load
   const symbolChangeRef = useRef<string | null>(null)
 
   // Fetch available expirations for the selected symbol
   const fetchExpirations = useCallback(async () => {
     try {
-      // Track which symbol this fetch is for to prevent stale updates
       const fetchSymbol = selectedSymbol
       symbolChangeRef.current = fetchSymbol
 
       const response = await apiClient.getHyperionExpirations(selectedSymbol, 4)
 
-      // Verify we're still on the same symbol (user might have switched)
       if (symbolChangeRef.current !== fetchSymbol) {
-        console.log('[HYPERION] Symbol changed during fetch, ignoring stale response')
         return
       }
 
       if (response.data?.success && response.data?.data?.expirations) {
         const exps = response.data.data.expirations as ExpirationInfo[]
         setExpirations(exps)
-        // Always set the first expiration to ensure fresh data for new symbol
         if (exps.length > 0) {
           setSelectedExpiration(exps[0].date)
         }
@@ -251,7 +332,6 @@ export default function HyperionPage() {
         }
 
         setExpirations(mockExpirations)
-        // Always set the first expiration to ensure fresh data for new symbol
         if (mockExpirations.length > 0) {
           setSelectedExpiration(mockExpirations[0].date)
         }
@@ -266,6 +346,7 @@ export default function HyperionPage() {
     setGammaData(null)
     setError(null)
     setSelectedExpiration('')
+    setAlerts([])
     initialLoadRef.current = true
     fetchExpirations()
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -275,17 +356,19 @@ export default function HyperionPage() {
   useEffect(() => {
     if (selectedExpiration) {
       fetchGammaData(selectedExpiration)
+      fetchAlerts()
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedExpiration, selectedSymbol])
 
-  // Auto-refresh polling - recreate interval when symbol/expiration changes to avoid stale closures
+  // Auto-refresh polling
   useEffect(() => {
     if (pollRef.current) clearInterval(pollRef.current)
 
     if (autoRefresh && selectedExpiration) {
       pollRef.current = setInterval(() => {
         fetchGammaData(selectedExpiration)
+        fetchAlerts()
       }, 30000) // 30 second refresh for weekly data
     }
 
@@ -316,15 +399,18 @@ export default function HyperionPage() {
     return Math.max(4, Math.min(160, (Math.abs(value) / maxValue) * 160))
   }
 
-  // Filter symbols by search
-  const filteredSymbols = WEEKLY_SYMBOLS.filter(s =>
-    s.symbol.toLowerCase().includes(symbolSearch.toLowerCase()) ||
-    s.name.toLowerCase().includes(symbolSearch.toLowerCase()) ||
-    s.sector.toLowerCase().includes(symbolSearch.toLowerCase())
+  // Memoize filtered symbols
+  const filteredSymbols = useMemo(() =>
+    WEEKLY_SYMBOLS.filter(s =>
+      s.symbol.toLowerCase().includes(symbolSearch.toLowerCase()) ||
+      s.name.toLowerCase().includes(symbolSearch.toLowerCase()) ||
+      s.sector.toLowerCase().includes(symbolSearch.toLowerCase())
+    ),
+    [symbolSearch]
   )
 
-  // Get strikes around spot price (limit to ~15 strikes)
-  const getFilteredStrikes = () => {
+  // Memoize filtered strikes
+  const filteredStrikes = useMemo(() => {
     if (!gammaData?.strikes?.length) return []
 
     const sorted = [...gammaData.strikes].sort((a, b) => a.strike - b.strike)
@@ -333,9 +419,20 @@ export default function HyperionPage() {
     const endIdx = Math.min(sorted.length, spotIdx + 8)
 
     return sorted.slice(startIdx, endIdx)
-  }
+  }, [gammaData?.strikes, gammaData?.spot_price])
 
-  const filteredStrikes = getFilteredStrikes()
+  // Memoize danger zone filtering
+  const { buildingZones, collapsingZones, spikeZones } = useMemo(() => ({
+    buildingZones: gammaData?.danger_zones?.filter(d => d.danger_type === 'BUILDING') || [],
+    collapsingZones: gammaData?.danger_zones?.filter(d => d.danger_type === 'COLLAPSING') || [],
+    spikeZones: gammaData?.danger_zones?.filter(d => d.danger_type === 'SPIKE') || []
+  }), [gammaData?.danger_zones])
+
+  // Memoize high priority alerts
+  const highPriorityAlerts = useMemo(() =>
+    alerts.filter(a => a.priority === 'HIGH' || a.priority === 'MEDIUM'),
+    [alerts]
+  )
 
   // Get max gamma for bar scaling
   const maxGamma = filteredStrikes.length
@@ -357,6 +454,32 @@ export default function HyperionPage() {
       return `${gammaData.symbol} is in a NEGATIVE gamma regime, indicating potential for amplified moves. Dealers are short gamma and will hedge in the same direction as price moves. Watch for breakouts beyond expected move.`
     }
     return `${gammaData.symbol} is in a NEUTRAL gamma regime. Market makers have balanced exposure. Price action likely to be choppy without strong directional bias.`
+  }
+
+  // Get signal color and icon
+  const getSignalDisplay = (direction: string) => {
+    switch (direction) {
+      case 'RISING':
+      case 'SHIFTED_UP':
+      case 'WIDENING':
+      case 'EXPANDING':
+      case 'STRONG_BULLISH':
+      case 'BULLISH':
+        return { color: 'text-emerald-400', icon: <ArrowUp className="w-4 h-4" />, bg: 'bg-emerald-500/20' }
+      case 'FALLING':
+      case 'SHIFTED_DOWN':
+      case 'NARROWING':
+      case 'CONTRACTING':
+      case 'STRONG_BEARISH':
+      case 'BEARISH':
+        return { color: 'text-rose-400', icon: <ArrowDown className="w-4 h-4" />, bg: 'bg-rose-500/20' }
+      case 'HIGH':
+        return { color: 'text-red-400', icon: <AlertCircle className="w-4 h-4" />, bg: 'bg-red-500/20' }
+      case 'ELEVATED':
+        return { color: 'text-orange-400', icon: <AlertTriangle className="w-4 h-4" />, bg: 'bg-orange-500/20' }
+      default:
+        return { color: 'text-gray-400', icon: <Minus className="w-4 h-4" />, bg: 'bg-gray-500/20' }
+    }
   }
 
   return (
@@ -551,6 +674,211 @@ export default function HyperionPage() {
               </div>
             </div>
 
+            {/* Alerts Banner (if any high priority alerts) */}
+            {highPriorityAlerts.length > 0 && (
+              <div className="mb-6">
+                <div
+                  className="bg-gradient-to-r from-red-900/40 to-orange-900/40 border border-red-500/30 rounded-xl p-4 cursor-pointer"
+                  onClick={() => setAlertsExpanded(!alertsExpanded)}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <Bell className="w-5 h-5 text-red-400" />
+                      <span className="font-bold text-white">Active Alerts</span>
+                      <span className="px-2 py-0.5 bg-red-500/20 text-red-400 text-xs rounded-full">
+                        {highPriorityAlerts.length}
+                      </span>
+                    </div>
+                    {alertsExpanded ? <ChevronUp className="w-5 h-5 text-gray-400" /> : <ChevronDown className="w-5 h-5 text-gray-400" />}
+                  </div>
+                  {alertsExpanded && (
+                    <div className="mt-4 space-y-2">
+                      {highPriorityAlerts.slice(0, 5).map((alert) => (
+                        <div key={alert.id} className="flex items-center justify-between p-2 bg-gray-900/50 rounded-lg">
+                          <div className="flex items-center gap-2">
+                            <span className={`px-2 py-0.5 text-xs rounded ${
+                              alert.priority === 'HIGH' ? 'bg-red-500/20 text-red-400' : 'bg-orange-500/20 text-orange-400'
+                            }`}>
+                              {alert.priority}
+                            </span>
+                            <span className="text-sm text-gray-300">{alert.message}</span>
+                          </div>
+                          <span className="text-xs text-gray-500">
+                            {new Date(alert.triggered_at).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Market Structure Panel */}
+            {gammaData.market_structure && (
+              <div className="mb-6">
+                <div
+                  className="bg-gray-800/50 border border-purple-500/30 rounded-xl cursor-pointer"
+                  onClick={() => setMarketStructureExpanded(!marketStructureExpanded)}
+                >
+                  <div className="p-4 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <LayoutGrid className="w-5 h-5 text-purple-400" />
+                      <span className="font-bold text-white">Market Structure Signals</span>
+                      {gammaData.market_structure.combined && (
+                        <span className={`px-2 py-0.5 text-xs rounded ${
+                          gammaData.market_structure.combined.bias === 'BULLISH' ? 'bg-emerald-500/20 text-emerald-400' :
+                          gammaData.market_structure.combined.bias === 'BEARISH' ? 'bg-rose-500/20 text-rose-400' :
+                          'bg-gray-500/20 text-gray-400'
+                        }`}>
+                          {gammaData.market_structure.combined.signal}
+                        </span>
+                      )}
+                    </div>
+                    {marketStructureExpanded ? <ChevronUp className="w-5 h-5 text-gray-400" /> : <ChevronDown className="w-5 h-5 text-gray-400" />}
+                  </div>
+
+                  {marketStructureExpanded && (
+                    <div className="px-4 pb-4">
+                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+                        {/* VIX Regime */}
+                        <div className="p-3 bg-gray-900/50 rounded-lg">
+                          <div className="text-xs text-gray-500 mb-1">VIX Regime</div>
+                          <div className={`font-bold ${
+                            gammaData.market_structure.vix_regime.regime === 'LOW' ? 'text-emerald-400' :
+                            gammaData.market_structure.vix_regime.regime === 'NORMAL' ? 'text-blue-400' :
+                            gammaData.market_structure.vix_regime.regime === 'ELEVATED' ? 'text-orange-400' :
+                            'text-red-400'
+                          }`}>
+                            {gammaData.market_structure.vix_regime.regime}
+                          </div>
+                          <div className="text-xs text-gray-500 mt-1">{gammaData.market_structure.vix_regime.vix?.toFixed(1)}</div>
+                        </div>
+
+                        {/* Gamma Regime */}
+                        <div className="p-3 bg-gray-900/50 rounded-lg">
+                          <div className="text-xs text-gray-500 mb-1">Gamma Alignment</div>
+                          <div className={`font-bold ${
+                            gammaData.market_structure.gamma_regime.alignment === 'MEAN_REVERSION' ? 'text-emerald-400' :
+                            gammaData.market_structure.gamma_regime.alignment === 'MOMENTUM' ? 'text-rose-400' :
+                            'text-gray-400'
+                          }`}>
+                            {gammaData.market_structure.gamma_regime.alignment}
+                          </div>
+                        </div>
+
+                        {/* Flip Point */}
+                        {gammaData.market_structure.flip_point.direction !== 'UNKNOWN' && (
+                          <div className="p-3 bg-gray-900/50 rounded-lg">
+                            <div className="text-xs text-gray-500 mb-1">Flip Point</div>
+                            <div className="flex items-center gap-1">
+                              {getSignalDisplay(gammaData.market_structure.flip_point.direction).icon}
+                              <span className={`font-bold ${getSignalDisplay(gammaData.market_structure.flip_point.direction).color}`}>
+                                {gammaData.market_structure.flip_point.direction}
+                              </span>
+                            </div>
+                            {gammaData.market_structure.flip_point.current && (
+                              <div className="text-xs text-gray-500 mt-1">${gammaData.market_structure.flip_point.current.toFixed(2)}</div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Bounds */}
+                        {gammaData.market_structure.bounds.direction !== 'UNKNOWN' && (
+                          <div className="p-3 bg-gray-900/50 rounded-lg">
+                            <div className="text-xs text-gray-500 mb-1">Bounds</div>
+                            <div className="flex items-center gap-1">
+                              {getSignalDisplay(gammaData.market_structure.bounds.direction).icon}
+                              <span className={`font-bold ${getSignalDisplay(gammaData.market_structure.bounds.direction).color}`}>
+                                {gammaData.market_structure.bounds.direction}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Width */}
+                        {gammaData.market_structure.width.direction !== 'UNKNOWN' && (
+                          <div className="p-3 bg-gray-900/50 rounded-lg">
+                            <div className="text-xs text-gray-500 mb-1">Range Width</div>
+                            <div className="flex items-center gap-1">
+                              {getSignalDisplay(gammaData.market_structure.width.direction).icon}
+                              <span className={`font-bold ${getSignalDisplay(gammaData.market_structure.width.direction).color}`}>
+                                {gammaData.market_structure.width.direction}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Walls */}
+                        {gammaData.market_structure.walls.current_call_wall && (
+                          <div className="p-3 bg-gray-900/50 rounded-lg">
+                            <div className="text-xs text-gray-500 mb-1">Gamma Walls</div>
+                            <div className="text-xs">
+                              <span className="text-emerald-400">C: ${gammaData.market_structure.walls.current_call_wall?.toFixed(0)}</span>
+                              {' / '}
+                              <span className="text-rose-400">P: ${gammaData.market_structure.walls.current_put_wall?.toFixed(0)}</span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Wall Break Risk */}
+                        {(gammaData.market_structure.wall_break.call_wall_risk === 'HIGH' ||
+                          gammaData.market_structure.wall_break.put_wall_risk === 'HIGH') && (
+                          <div className="p-3 bg-red-900/30 border border-red-500/30 rounded-lg">
+                            <div className="text-xs text-gray-500 mb-1">Wall Break Risk</div>
+                            <div className="flex items-center gap-1">
+                              <AlertCircle className="w-4 h-4 text-red-400" />
+                              <span className="font-bold text-red-400">HIGH</span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* GEX Momentum */}
+                        {gammaData.market_structure.gex_momentum.direction !== 'UNKNOWN' && (
+                          <div className="p-3 bg-gray-900/50 rounded-lg">
+                            <div className="text-xs text-gray-500 mb-1">GEX Momentum</div>
+                            <div className="flex items-center gap-1">
+                              {getSignalDisplay(gammaData.market_structure.gex_momentum.direction).icon}
+                              <span className={`font-bold ${getSignalDisplay(gammaData.market_structure.gex_momentum.direction).color}`}>
+                                {gammaData.market_structure.gex_momentum.direction}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Combined Strategy */}
+                      {gammaData.market_structure.combined && (
+                        <div className="mt-4 p-3 bg-purple-500/10 border border-purple-500/30 rounded-lg">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Brain className="w-4 h-4 text-purple-400" />
+                            <span className="text-sm font-medium text-purple-400">Suggested Strategy</span>
+                            <span className={`px-2 py-0.5 text-xs rounded ${
+                              gammaData.market_structure.combined.confidence === 'HIGH' ? 'bg-emerald-500/20 text-emerald-400' :
+                              gammaData.market_structure.combined.confidence === 'MEDIUM' ? 'bg-yellow-500/20 text-yellow-400' :
+                              'bg-gray-500/20 text-gray-400'
+                            }`}>
+                              {gammaData.market_structure.combined.confidence} Confidence
+                            </span>
+                          </div>
+                          <p className="text-sm text-gray-300">{gammaData.market_structure.combined.strategy}</p>
+                          {gammaData.market_structure.combined.warnings?.length > 0 && (
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {gammaData.market_structure.combined.warnings.map((w, i) => (
+                                <span key={i} className="px-2 py-0.5 bg-red-500/20 text-red-400 text-xs rounded">
+                                  {w}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* AI Analysis Banner */}
             <div className="bg-gradient-to-r from-purple-900/40 to-blue-900/40 border border-purple-500/30 rounded-xl p-5 mb-6">
               <div className="flex items-start gap-4">
@@ -598,11 +926,11 @@ export default function HyperionPage() {
                       </div>
                       <div className="flex items-center gap-1.5">
                         <div className="w-3 h-3 rounded bg-emerald-500"></div>
-                        <span className="text-gray-400">+γ</span>
+                        <span className="text-gray-400">+gamma</span>
                       </div>
                       <div className="flex items-center gap-1.5">
                         <div className="w-3 h-3 rounded bg-rose-500"></div>
-                        <span className="text-gray-400">-γ</span>
+                        <span className="text-gray-400">-gamma</span>
                       </div>
                     </div>
                   </div>
@@ -724,15 +1052,11 @@ export default function HyperionPage() {
                               </span>
                             </td>
                             <td className={`py-2 px-2 text-right font-mono text-xs ${
-                              (() => {
-                                const dist = ((strike.strike - gammaData.spot_price) / gammaData.spot_price * 100)
-                                return dist > 0 ? 'text-emerald-400' : dist < 0 ? 'text-rose-400' : 'text-gray-500'
-                              })()
+                              ((strike.strike - gammaData.spot_price) / gammaData.spot_price * 100) > 0 ? 'text-emerald-400' :
+                              ((strike.strike - gammaData.spot_price) / gammaData.spot_price * 100) < 0 ? 'text-rose-400' : 'text-gray-500'
                             }`}>
-                              {(() => {
-                                const dist = ((strike.strike - gammaData.spot_price) / gammaData.spot_price * 100)
-                                return `${dist > 0 ? '+' : ''}${dist.toFixed(2)}%`
-                              })()}
+                              {((strike.strike - gammaData.spot_price) / gammaData.spot_price * 100) > 0 ? '+' : ''}
+                              {((strike.strike - gammaData.spot_price) / gammaData.spot_price * 100).toFixed(2)}%
                             </td>
                             <td className={`py-2 px-2 text-right font-mono ${
                               strike.net_gamma > 0 ? 'text-emerald-400' : 'text-rose-400'
@@ -868,7 +1192,7 @@ export default function HyperionPage() {
                   </div>
                 )}
 
-                {/* Pinning Status Card - Show when gamma is stable */}
+                {/* Pinning Status Card */}
                 {gammaData.pinning_status?.is_pinning && (
                   <div className="bg-gray-800/50 border border-emerald-500/30 rounded-xl p-5">
                     <div className="flex items-center justify-between mb-4">
