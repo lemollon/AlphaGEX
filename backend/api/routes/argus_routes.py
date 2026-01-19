@@ -3295,3 +3295,643 @@ async def get_expirations():
     except Exception as e:
         logger.error(f"Error getting expirations: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== TRADE SETUP DETECTOR ====================
+
+@router.get("/trade-setups")
+async def get_trade_setups(symbol: str = Query(default="SPY")):
+    """
+    Detect high-probability trade setups based on current gamma structure.
+
+    Identifies:
+    - IC_SAFE_ZONE: Price pinned between strong magnets (ideal for Iron Condors)
+    - BREAKOUT_WARNING: Gamma collapsing at walls (avoid new positions)
+    - FADE_THE_MOVE: Price overextended from flip in positive gamma (mean reversion)
+    - MOMENTUM_PLAY: Strong directional gamma with wall break imminent
+    - PIN_SETUP: High probability of pinning to specific strike
+
+    Returns actionable trade setups with confidence scores.
+    """
+    engine = get_engine()
+    if not engine:
+        raise HTTPException(status_code=503, detail="ARGUS engine not available")
+
+    try:
+        # Get current gamma snapshot
+        snapshot = engine.get_gamma_snapshot(symbol)
+        if not snapshot or 'strikes' not in snapshot:
+            return {"success": True, "data": {"setups": [], "message": "No gamma data available"}}
+
+        spot_price = snapshot.get('spot_price', 0)
+        flip_point = snapshot.get('flip_point', spot_price)
+        gamma_regime = snapshot.get('gamma_regime', 'NEUTRAL')
+        expected_move = snapshot.get('expected_move', 0)
+        vix = snapshot.get('vix', 20)
+
+        # Find key levels
+        strikes = snapshot.get('strikes', [])
+        call_wall = None
+        put_wall = None
+        max_call_gamma = 0
+        max_put_gamma = 0
+
+        for s in strikes:
+            strike = s.get('strike', 0)
+            net_gamma = s.get('net_gamma', 0)
+            if strike > spot_price and net_gamma > max_call_gamma:
+                max_call_gamma = net_gamma
+                call_wall = strike
+            elif strike < spot_price and abs(net_gamma) > max_put_gamma:
+                max_put_gamma = abs(net_gamma)
+                put_wall = strike
+
+        setups = []
+
+        # Calculate distances
+        dist_to_flip_pct = abs(spot_price - flip_point) / spot_price * 100 if spot_price > 0 else 0
+        dist_to_call_wall_pct = abs(call_wall - spot_price) / spot_price * 100 if call_wall and spot_price > 0 else 999
+        dist_to_put_wall_pct = abs(spot_price - put_wall) / spot_price * 100 if put_wall and spot_price > 0 else 999
+
+        # IC_SAFE_ZONE: Price between walls with positive gamma
+        if gamma_regime == 'POSITIVE' and dist_to_call_wall_pct > 0.5 and dist_to_put_wall_pct > 0.5:
+            confidence = min(95, 70 + (min(dist_to_call_wall_pct, dist_to_put_wall_pct) * 10))
+            setups.append({
+                'setup_type': 'IC_SAFE_ZONE',
+                'name': 'Iron Condor Safe Zone',
+                'description': f'Price pinned between walls. Positive gamma dampens moves.',
+                'confidence': round(confidence),
+                'action': 'SELL_IRON_CONDOR',
+                'details': {
+                    'call_wall': call_wall,
+                    'put_wall': put_wall,
+                    'gamma_regime': gamma_regime,
+                    'suggested_short_call': call_wall,
+                    'suggested_short_put': put_wall
+                },
+                'risk_level': 'LOW' if vix < 20 else 'MEDIUM'
+            })
+
+        # BREAKOUT_WARNING: Near wall with negative gamma
+        if gamma_regime == 'NEGATIVE' and (dist_to_call_wall_pct < 0.3 or dist_to_put_wall_pct < 0.3):
+            wall_type = 'CALL' if dist_to_call_wall_pct < dist_to_put_wall_pct else 'PUT'
+            confidence = min(90, 60 + ((0.5 - min(dist_to_call_wall_pct, dist_to_put_wall_pct)) * 100))
+            setups.append({
+                'setup_type': 'BREAKOUT_WARNING',
+                'name': f'{wall_type} Wall Break Imminent',
+                'description': f'Price near {wall_type.lower()} wall with negative gamma. Breakout likely.',
+                'confidence': round(confidence),
+                'action': 'AVOID_NEW_IC' if wall_type == 'CALL' else 'AVOID_NEW_IC',
+                'details': {
+                    'wall_type': wall_type,
+                    'distance_to_wall_pct': round(min(dist_to_call_wall_pct, dist_to_put_wall_pct), 2),
+                    'gamma_regime': gamma_regime
+                },
+                'risk_level': 'HIGH'
+            })
+
+        # FADE_THE_MOVE: Overextended from flip in positive gamma
+        if gamma_regime == 'POSITIVE' and dist_to_flip_pct > 0.5:
+            direction = 'DOWN' if spot_price > flip_point else 'UP'
+            confidence = min(85, 50 + (dist_to_flip_pct * 20))
+            setups.append({
+                'setup_type': 'FADE_THE_MOVE',
+                'name': f'Fade to Flip Point ({direction})',
+                'description': f'Price {dist_to_flip_pct:.1f}% from flip. Positive gamma pulls back.',
+                'confidence': round(confidence),
+                'action': f'DIRECTIONAL_{direction}',
+                'details': {
+                    'flip_point': flip_point,
+                    'current_price': spot_price,
+                    'expected_move_to_flip': round(flip_point - spot_price, 2),
+                    'gamma_regime': gamma_regime
+                },
+                'risk_level': 'MEDIUM'
+            })
+
+        # PIN_SETUP: High magnet attraction
+        top_magnets = sorted(strikes, key=lambda x: abs(x.get('net_gamma', 0)), reverse=True)[:3]
+        for magnet in top_magnets:
+            strike = magnet.get('strike', 0)
+            probability = magnet.get('probability', 0)
+            if probability > 0.6 and abs(strike - spot_price) / spot_price * 100 < 1.0:
+                setups.append({
+                    'setup_type': 'PIN_SETUP',
+                    'name': f'Pin to {strike}',
+                    'description': f'{probability*100:.0f}% probability of pinning to {strike}',
+                    'confidence': round(probability * 100),
+                    'action': 'SELL_STRADDLE' if probability > 0.75 else 'SELL_STRANGLE',
+                    'details': {
+                        'pin_strike': strike,
+                        'probability': round(probability, 2),
+                        'distance_pct': round(abs(strike - spot_price) / spot_price * 100, 2)
+                    },
+                    'risk_level': 'MEDIUM' if probability > 0.7 else 'HIGH'
+                })
+
+        # Sort by confidence
+        setups.sort(key=lambda x: x['confidence'], reverse=True)
+
+        return {
+            "success": True,
+            "data": {
+                "setups": setups[:5],  # Top 5 setups
+                "market_context": {
+                    "spot_price": spot_price,
+                    "flip_point": flip_point,
+                    "gamma_regime": gamma_regime,
+                    "vix": vix,
+                    "expected_move": expected_move
+                },
+                "timestamp": format_central_timestamp()
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error detecting trade setups: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== OPTIMAL STRIKE RECOMMENDATIONS ====================
+
+@router.get("/optimal-strikes")
+async def get_optimal_strikes(
+    symbol: str = Query(default="SPY"),
+    strategy: str = Query(default="iron_condor", description="Strategy: iron_condor, put_spread, call_spread")
+):
+    """
+    Recommend optimal strikes based on current gamma structure.
+
+    For Iron Condors:
+    - Short put at strongest put wall (support)
+    - Short call at strongest call wall (resistance)
+    - Wings based on expected move
+
+    Returns strike recommendations with probability of profit.
+    """
+    engine = get_engine()
+    if not engine:
+        raise HTTPException(status_code=503, detail="ARGUS engine not available")
+
+    try:
+        snapshot = engine.get_gamma_snapshot(symbol)
+        if not snapshot or 'strikes' not in snapshot:
+            return {"success": True, "data": {"recommendations": [], "message": "No gamma data available"}}
+
+        spot_price = snapshot.get('spot_price', 0)
+        expected_move = snapshot.get('expected_move', 0)
+        vix = snapshot.get('vix', 20)
+        gamma_regime = snapshot.get('gamma_regime', 'NEUTRAL')
+        strikes = snapshot.get('strikes', [])
+
+        # Find walls and magnets
+        call_strikes = [s for s in strikes if s.get('strike', 0) > spot_price]
+        put_strikes = [s for s in strikes if s.get('strike', 0) < spot_price]
+
+        # Sort by gamma strength
+        call_strikes.sort(key=lambda x: x.get('net_gamma', 0), reverse=True)
+        put_strikes.sort(key=lambda x: abs(x.get('net_gamma', 0)), reverse=True)
+
+        recommendations = []
+
+        if strategy == 'iron_condor':
+            # Find optimal short strikes (strongest walls)
+            short_call = call_strikes[0]['strike'] if call_strikes else spot_price + expected_move
+            short_put = put_strikes[0]['strike'] if put_strikes else spot_price - expected_move
+
+            # Calculate probabilities
+            short_call_prob = call_strikes[0].get('probability', 0.5) if call_strikes else 0.5
+            short_put_prob = put_strikes[0].get('probability', 0.5) if put_strikes else 0.5
+
+            # Wings at ~1.5x expected move or next strikes
+            long_call = short_call + max(5, expected_move * 0.5)
+            long_put = short_put - max(5, expected_move * 0.5)
+
+            # Round to standard strikes
+            long_call = round(long_call)
+            long_put = round(long_put)
+
+            # Calculate overall probability of profit
+            pop = (1 - short_call_prob) * (1 - short_put_prob) * 100
+
+            recommendations.append({
+                'strategy': 'IRON_CONDOR',
+                'legs': {
+                    'short_put': short_put,
+                    'long_put': long_put,
+                    'short_call': short_call,
+                    'long_call': long_call
+                },
+                'width': {
+                    'put_spread': short_put - long_put,
+                    'call_spread': long_call - short_call
+                },
+                'probability_of_profit': round(pop, 1),
+                'gamma_support': {
+                    'short_put_wall_strength': round(abs(put_strikes[0].get('net_gamma', 0)) if put_strikes else 0, 0),
+                    'short_call_wall_strength': round(call_strikes[0].get('net_gamma', 0) if call_strikes else 0, 0)
+                },
+                'risk_assessment': {
+                    'gamma_regime': gamma_regime,
+                    'vix_level': vix,
+                    'recommendation': 'FAVORABLE' if gamma_regime == 'POSITIVE' and vix < 25 else 'CAUTION' if gamma_regime == 'NEGATIVE' else 'NEUTRAL'
+                }
+            })
+
+        elif strategy == 'put_spread':
+            if put_strikes:
+                short_put = put_strikes[0]['strike']
+                long_put = short_put - max(5, expected_move * 0.3)
+                pop = (1 - put_strikes[0].get('probability', 0.5)) * 100
+
+                recommendations.append({
+                    'strategy': 'PUT_CREDIT_SPREAD',
+                    'legs': {
+                        'short_put': short_put,
+                        'long_put': round(long_put)
+                    },
+                    'width': short_put - round(long_put),
+                    'probability_of_profit': round(pop, 1),
+                    'wall_strength': round(abs(put_strikes[0].get('net_gamma', 0)), 0)
+                })
+
+        elif strategy == 'call_spread':
+            if call_strikes:
+                short_call = call_strikes[0]['strike']
+                long_call = short_call + max(5, expected_move * 0.3)
+                pop = (1 - call_strikes[0].get('probability', 0.5)) * 100
+
+                recommendations.append({
+                    'strategy': 'CALL_CREDIT_SPREAD',
+                    'legs': {
+                        'short_call': short_call,
+                        'long_call': round(long_call)
+                    },
+                    'width': round(long_call) - short_call,
+                    'probability_of_profit': round(pop, 1),
+                    'wall_strength': round(call_strikes[0].get('net_gamma', 0), 0)
+                })
+
+        return {
+            "success": True,
+            "data": {
+                "recommendations": recommendations,
+                "market_context": {
+                    "spot_price": spot_price,
+                    "expected_move": expected_move,
+                    "expected_range": {
+                        "low": round(spot_price - expected_move, 2),
+                        "high": round(spot_price + expected_move, 2)
+                    },
+                    "vix": vix,
+                    "gamma_regime": gamma_regime
+                },
+                "timestamp": format_central_timestamp()
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting optimal strikes: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== HISTORICAL PATTERN OUTCOMES ====================
+
+@router.get("/pattern-outcomes")
+async def get_pattern_outcomes(symbol: str = Query(default="SPY")):
+    """
+    Match current gamma pattern to historical patterns and show outcomes.
+
+    Returns:
+    - Number of similar historical days
+    - Win rate (stayed in expected range)
+    - Average move
+    - Best/worst outcomes
+    """
+    engine = get_engine()
+    if not engine:
+        raise HTTPException(status_code=503, detail="ARGUS engine not available")
+
+    try:
+        # Get current pattern
+        snapshot = engine.get_gamma_snapshot(symbol)
+        if not snapshot:
+            return {"success": True, "data": {"matches": [], "message": "No gamma data available"}}
+
+        current_regime = snapshot.get('gamma_regime', 'NEUTRAL')
+        current_vix = snapshot.get('vix', 20)
+        spot_price = snapshot.get('spot_price', 0)
+        flip_point = snapshot.get('flip_point', spot_price)
+        dist_to_flip = abs(spot_price - flip_point) / spot_price * 100 if spot_price > 0 else 0
+
+        # Query historical data from database
+        conn = get_connection()
+        if not conn:
+            return {"success": True, "data": {"matches": [], "message": "Database not available"}}
+
+        cursor = conn.cursor()
+
+        # Find similar historical patterns
+        cursor.execute("""
+            SELECT
+                trade_date,
+                spot_open,
+                spot_close,
+                spot_high,
+                spot_low,
+                net_gamma,
+                flip_point,
+                ABS(spot_close - spot_open) / spot_open * 100 as move_pct,
+                (spot_high - spot_low) / spot_open * 100 as range_pct,
+                CASE WHEN net_gamma > 0 THEN 'POSITIVE' ELSE 'NEGATIVE' END as regime
+            FROM gex_structure_daily
+            WHERE symbol = %s
+            AND ABS(
+                CASE WHEN net_gamma > 0 THEN 1 ELSE -1 END -
+                CASE WHEN %s = 'POSITIVE' THEN 1 ELSE -1 END
+            ) = 0
+            ORDER BY trade_date DESC
+            LIMIT 100
+        """, (symbol, current_regime))
+
+        rows = cursor.fetchall()
+        conn.close()
+
+        if not rows:
+            # Try gex_history fallback
+            return {
+                "success": True,
+                "data": {
+                    "current_pattern": {
+                        "gamma_regime": current_regime,
+                        "vix": current_vix,
+                        "dist_to_flip_pct": round(dist_to_flip, 2)
+                    },
+                    "matches": [],
+                    "statistics": None,
+                    "message": "Insufficient historical data for pattern matching"
+                }
+            }
+
+        # Calculate statistics
+        moves = [abs(r[7]) for r in rows if r[7] is not None]
+        ranges = [r[8] for r in rows if r[8] is not None]
+
+        # Determine "win" = stayed within expected move (1.5% for 0DTE)
+        expected_range = 1.5  # Typical 0DTE expected move %
+        wins = sum(1 for m in moves if m <= expected_range)
+        win_rate = wins / len(moves) * 100 if moves else 0
+
+        statistics = {
+            "total_matches": len(rows),
+            "win_rate": round(win_rate, 1),
+            "avg_move_pct": round(sum(moves) / len(moves), 2) if moves else 0,
+            "max_move_pct": round(max(moves), 2) if moves else 0,
+            "min_move_pct": round(min(moves), 2) if moves else 0,
+            "avg_range_pct": round(sum(ranges) / len(ranges), 2) if ranges else 0
+        }
+
+        # Sample matches for display
+        sample_matches = []
+        for r in rows[:10]:
+            sample_matches.append({
+                "date": str(r[0]),
+                "open": float(r[1]) if r[1] else 0,
+                "close": float(r[2]) if r[2] else 0,
+                "move_pct": round(float(r[7]), 2) if r[7] else 0,
+                "range_pct": round(float(r[8]), 2) if r[8] else 0,
+                "regime": r[9]
+            })
+
+        return {
+            "success": True,
+            "data": {
+                "current_pattern": {
+                    "gamma_regime": current_regime,
+                    "vix": current_vix,
+                    "dist_to_flip_pct": round(dist_to_flip, 2)
+                },
+                "statistics": statistics,
+                "interpretation": f"In {current_regime} gamma with similar conditions, price stayed in range {win_rate:.0f}% of the time with avg move of {statistics['avg_move_pct']:.1f}%",
+                "sample_matches": sample_matches,
+                "timestamp": format_central_timestamp()
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting pattern outcomes: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== PIN ACCURACY TRACKER ====================
+
+@router.get("/pin-accuracy")
+async def get_pin_accuracy(symbol: str = Query(default="SPY"), days: int = Query(default=30)):
+    """
+    Track accuracy of pin strike predictions over time.
+
+    Measures:
+    - How often the predicted pin strike was hit
+    - Average distance from predicted pin to actual close
+    - Accuracy by gamma regime
+    """
+    try:
+        conn = get_connection()
+        if not conn:
+            return {"success": True, "data": {"accuracy": None, "message": "Database not available"}}
+
+        cursor = conn.cursor()
+
+        # Query prediction accuracy from stored predictions
+        cursor.execute("""
+            SELECT
+                COUNT(*) as total_predictions,
+                SUM(CASE WHEN ABS(predicted_pin - actual_close) / actual_close * 100 < 0.5 THEN 1 ELSE 0 END) as hits_05pct,
+                SUM(CASE WHEN ABS(predicted_pin - actual_close) / actual_close * 100 < 1.0 THEN 1 ELSE 0 END) as hits_1pct,
+                AVG(ABS(predicted_pin - actual_close) / actual_close * 100) as avg_distance_pct,
+                gamma_regime
+            FROM argus_pin_predictions
+            WHERE symbol = %s
+            AND prediction_date >= CURRENT_DATE - INTERVAL '%s days'
+            GROUP BY gamma_regime
+        """, (symbol, days))
+
+        rows = cursor.fetchall()
+
+        if not rows:
+            # If no prediction table, return placeholder
+            cursor.execute("""
+                SELECT COUNT(*) FROM information_schema.tables
+                WHERE table_name = 'argus_pin_predictions'
+            """)
+            table_exists = cursor.fetchone()[0] > 0
+
+            conn.close()
+
+            if not table_exists:
+                return {
+                    "success": True,
+                    "data": {
+                        "accuracy": None,
+                        "message": "Pin prediction tracking not yet initialized. Predictions will be tracked going forward.",
+                        "setup_required": True
+                    }
+                }
+
+            return {
+                "success": True,
+                "data": {
+                    "accuracy": None,
+                    "message": f"No predictions in last {days} days",
+                    "days_analyzed": days
+                }
+            }
+
+        # Aggregate results
+        total = sum(r[0] for r in rows)
+        hits_05 = sum(r[1] or 0 for r in rows)
+        hits_1 = sum(r[2] or 0 for r in rows)
+
+        by_regime = {}
+        for r in rows:
+            regime = r[4] or 'UNKNOWN'
+            by_regime[regime] = {
+                "predictions": r[0],
+                "accuracy_05pct": round((r[1] or 0) / r[0] * 100, 1) if r[0] > 0 else 0,
+                "accuracy_1pct": round((r[2] or 0) / r[0] * 100, 1) if r[0] > 0 else 0,
+                "avg_distance_pct": round(float(r[3] or 0), 2)
+            }
+
+        conn.close()
+
+        return {
+            "success": True,
+            "data": {
+                "accuracy": {
+                    "total_predictions": total,
+                    "accuracy_within_05pct": round(hits_05 / total * 100, 1) if total > 0 else 0,
+                    "accuracy_within_1pct": round(hits_1 / total * 100, 1) if total > 0 else 0,
+                    "by_regime": by_regime
+                },
+                "days_analyzed": days,
+                "symbol": symbol,
+                "timestamp": format_central_timestamp()
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting pin accuracy: {e}")
+        # Return graceful fallback
+        return {
+            "success": True,
+            "data": {
+                "accuracy": None,
+                "message": "Pin accuracy tracking initializing",
+                "error": str(e)
+            }
+        }
+
+
+# ==================== INTRADAY GAMMA DECAY ====================
+
+@router.get("/gamma-decay")
+async def get_gamma_decay(symbol: str = Query(default="SPY")):
+    """
+    Show how gamma changes throughout the trading day.
+
+    Critical for 0DTE trading:
+    - Gamma increases exponentially as expiration approaches
+    - Morning: Lower gamma, wider ranges
+    - Afternoon: Higher gamma, tighter pinning
+    - Last hour: Gamma explosion, maximum pinning effect
+    """
+    engine = get_engine()
+    if not engine:
+        raise HTTPException(status_code=503, detail="ARGUS engine not available")
+
+    try:
+        # Get intraday gamma history
+        conn = get_connection()
+        if not conn:
+            return {"success": True, "data": {"decay_curve": [], "message": "Database not available"}}
+
+        cursor = conn.cursor()
+
+        # Query today's gamma snapshots by hour
+        cursor.execute("""
+            SELECT
+                EXTRACT(HOUR FROM timestamp) as hour,
+                AVG(ABS(net_gex)) as avg_gamma,
+                MAX(ABS(net_gex)) as max_gamma,
+                AVG(ABS(flip_point - spot_price) / spot_price * 100) as avg_dist_to_flip
+            FROM gex_history
+            WHERE symbol = %s
+            AND DATE(timestamp) = CURRENT_DATE
+            GROUP BY EXTRACT(HOUR FROM timestamp)
+            ORDER BY hour
+        """, (symbol,))
+
+        today_data = cursor.fetchall()
+
+        # Also get historical average by hour (for comparison)
+        cursor.execute("""
+            SELECT
+                EXTRACT(HOUR FROM timestamp) as hour,
+                AVG(ABS(net_gex)) as avg_gamma
+            FROM gex_history
+            WHERE symbol = %s
+            AND timestamp >= CURRENT_DATE - INTERVAL '30 days'
+            GROUP BY EXTRACT(HOUR FROM timestamp)
+            ORDER BY hour
+        """, (symbol,))
+
+        historical_avg = {int(r[0]): float(r[1] or 0) for r in cursor.fetchall()}
+        conn.close()
+
+        # Build decay curve
+        decay_curve = []
+        for r in today_data:
+            hour = int(r[0])
+            if 8 <= hour <= 16:  # Market hours CT
+                decay_curve.append({
+                    "hour": hour,
+                    "time_label": f"{hour}:00 CT",
+                    "gamma": round(float(r[1] or 0), 0),
+                    "max_gamma": round(float(r[2] or 0), 0),
+                    "dist_to_flip_pct": round(float(r[3] or 0), 2),
+                    "historical_avg": round(historical_avg.get(hour, 0), 0),
+                    "vs_historical": "HIGHER" if float(r[1] or 0) > historical_avg.get(hour, 0) * 1.1 else "LOWER" if float(r[1] or 0) < historical_avg.get(hour, 0) * 0.9 else "NORMAL"
+                })
+
+        # Add trading implications
+        current_hour = get_central_time().hour
+        implications = []
+
+        if current_hour < 10:
+            implications.append("MORNING: Lower gamma = wider expected range. Good for directional plays.")
+        elif current_hour < 14:
+            implications.append("MIDDAY: Moderate gamma. Balanced risk/reward for spreads.")
+        elif current_hour < 15:
+            implications.append("AFTERNOON: Rising gamma. Tighter ranges, stronger pinning.")
+        else:
+            implications.append("FINAL HOUR: Maximum gamma. Extreme pinning. Avoid new positions unless confident in pin.")
+
+        return {
+            "success": True,
+            "data": {
+                "decay_curve": decay_curve,
+                "current_hour": current_hour,
+                "trading_implications": implications,
+                "gamma_phases": {
+                    "morning": {"hours": "8:30-10:00", "gamma_level": "LOW", "strategy": "Directional or wide IC"},
+                    "midday": {"hours": "10:00-14:00", "gamma_level": "MODERATE", "strategy": "Standard IC"},
+                    "afternoon": {"hours": "14:00-15:00", "gamma_level": "HIGH", "strategy": "Tight IC or avoid"},
+                    "final_hour": {"hours": "15:00-16:00", "gamma_level": "EXTREME", "strategy": "Exit or pin plays only"}
+                },
+                "timestamp": format_central_timestamp()
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting gamma decay: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
