@@ -383,8 +383,8 @@ XGBoost-based ML system that feeds probability predictions into Oracle.
 - **Files**: `backend/api/routes/ml_routes.py` (SAGE endpoints)
 - **Dashboard**: `/sage` page with 6 tabs (Overview, Predictions, Features, Performance, Decision Logs, Training)
 
-### GEX Probability Models - Strike Probability for ARGUS/HYPERION
-XGBoost-based ML system for calculating strike-level probabilities in gamma visualizations.
+### ORION - GEX Probability Models for ARGUS/HYPERION
+Named after the mighty hunter constellation, ORION provides ML-powered probability predictions that guide ARGUS (0DTE) and HYPERION (Weekly) gamma visualizations.
 
 - **Model**: 5 XGBoost sub-models (classifiers and regressors)
 - **Sub-Models**:
@@ -395,20 +395,27 @@ XGBoost-based ML system for calculating strike-level probabilities in gamma visu
   5. **Pin Zone Behavior** - Probability of staying pinned between magnets
 - **Integration**: Hybrid probability calculation: `combined = (0.6 × ML_prob) + (0.4 × distance_prob)`
 - **Auto-Loading**: Models auto-load from PostgreSQL on initialization (singleton pattern)
+- **Auto-Training**: Every Sunday at 6:00 PM CT (after QUANT training at 5 PM)
+  - Only retrains if models older than 7 days
+  - Trains on SPX and SPY historical data
+  - Saves to database for persistence across deploys
 - **Fallback**: When models not trained, uses 100% distance-based probability
+- **Data Sources**:
+  - Primary: `gex_structure_daily` table
+  - Fallback: `gex_history` table (aggregates intraday snapshots)
 - **Files**:
   - Core: `quant/gex_probability_models.py` (GEXProbabilityModels, GEXSignalGenerator)
   - Shared Engine: `core/shared_gamma_engine.py` (calculate_probability_hybrid)
   - ARGUS Engine: `core/argus_engine.py` (gamma_structure building)
-  - Training Script: `scripts/train_gex_probability_models.py`
+  - Scheduler: `scheduler/trader_scheduler.py` (scheduled_gex_ml_training_logic)
 - **API Endpoints**:
   ```
   GET  /api/ml/gex-models/status      # Model status, staleness, sub-model states
   POST /api/ml/gex-models/train       # Trigger training on GEX historical data
   POST /api/ml/gex-models/predict     # Get combined prediction
-  GET  /api/ml/gex-models/data-status # Training data availability
+  GET  /api/ml/gex-models/data-status # Training data availability (both sources)
   ```
-- **Dashboard**: `/gex-ml` page with model status, training controls, integration info
+- **Dashboard**: `/gex-ml` - ORION page with model status, training controls, auto-schedule info
 
 ### GEXIS - AI Trading Assistant
 J.A.R.V.I.S.-style AI chatbot providing decision support throughout the platform (~5.2K lines).
@@ -518,7 +525,7 @@ Named after the "all-seeing" giant with 100 eyes from Greek mythology. ARGUS pro
 - Pin strike prediction with ML-enhanced probability
 - Magnet identification (high gamma attractors)
 - Gamma regime tracking (POSITIVE/NEGATIVE/NEUTRAL)
-- **ML Integration**: Uses GEX Probability Models for hybrid probability (60% ML + 40% distance)
+- **ML Integration**: Uses ORION (GEX Probability Models) for hybrid probability (60% ML + 40% distance)
 
 **Market Structure Panel** (9 signals comparing today vs prior day):
 
