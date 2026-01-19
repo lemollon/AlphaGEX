@@ -216,15 +216,35 @@ class OrderExecutor:
     def __init__(self, config: ARESConfig, db=None):
         self.config = config
         self.tradier = None
+        self.tradier_init_error = None  # Track initialization error for status reporting
         self.db = db  # Optional DB reference for orphaned order tracking
 
         if TRADIER_AVAILABLE and config.mode == TradingMode.LIVE:
-            try:
-                # ARES uses SANDBOX Tradier account (not production)
-                self.tradier = TradierDataFetcher(sandbox=True)
-                logger.info("ARES OrderExecutor: Tradier initialized for LIVE trading (SANDBOX account)")
-            except Exception as e:
-                logger.error(f"Tradier init failed: {e}")
+            # CRITICAL: Check for sandbox credentials BEFORE attempting init
+            # This prevents silent failures where trades never execute
+            from unified_config import APIConfig
+            sandbox_key = APIConfig.TRADIER_SANDBOX_API_KEY
+            sandbox_account = APIConfig.TRADIER_SANDBOX_ACCOUNT_ID
+
+            if not sandbox_key or not sandbox_account:
+                missing = []
+                if not sandbox_key:
+                    missing.append("TRADIER_SANDBOX_API_KEY")
+                if not sandbox_account:
+                    missing.append("TRADIER_SANDBOX_ACCOUNT_ID")
+                self.tradier_init_error = f"Missing credentials: {', '.join(missing)}"
+                logger.error(f"ARES OrderExecutor: CANNOT EXECUTE TRADES - {self.tradier_init_error}")
+                logger.error("ARES OrderExecutor: Set these environment variables to enable sandbox trading")
+            else:
+                try:
+                    # ARES uses SANDBOX Tradier account (not production)
+                    self.tradier = TradierDataFetcher(sandbox=True)
+                    logger.info("ARES OrderExecutor: Tradier initialized for LIVE trading (SANDBOX account)")
+                    logger.info(f"ARES OrderExecutor: Account ID {sandbox_account[:4]}...{sandbox_account[-4:] if len(sandbox_account) > 8 else ''}")
+                except Exception as e:
+                    self.tradier_init_error = str(e)
+                    logger.error(f"ARES OrderExecutor: Tradier init failed - {e}")
+                    logger.error("ARES OrderExecutor: Trades will NOT execute until this is resolved")
 
         # Position Management Agent - tracks entry conditions for exit timing
         self.position_mgmt = None
@@ -234,6 +254,20 @@ class OrderExecutor:
                 logger.info("ARES OrderExecutor: Position Management Agent initialized")
             except Exception as e:
                 logger.debug(f"Position Management Agent init failed: {e}")
+
+    @property
+    def can_execute_trades(self) -> bool:
+        """Check if executor can actually place trades in Tradier."""
+        return self.tradier is not None
+
+    def get_execution_status(self) -> dict:
+        """Get detailed execution capability status for monitoring."""
+        return {
+            "can_execute": self.can_execute_trades,
+            "tradier_initialized": self.tradier is not None,
+            "init_error": self.tradier_init_error,
+            "mode": self.config.mode.value if hasattr(self.config.mode, 'value') else str(self.config.mode),
+        }
 
     def _send_orphaned_order_alert(
         self,

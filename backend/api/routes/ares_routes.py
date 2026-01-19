@@ -1168,17 +1168,47 @@ async def get_ares_status():
         status['trading_window_status'] = trading_window_status
         status['trading_window_end'] = entry_end
         status['current_time'] = current_time_str
+
+        # CRITICAL FIX: Query database for total realized P&L from closed positions
+        # The trader's get_status() doesn't include total_pnl, causing portfolio sync issues
+        db_total_pnl = 0
+        db_trade_count = 0
+        db_win_count = 0
+        db_open_count = 0
+        db_closed_count = 0
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT
+                    COUNT(*) as total,
+                    SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_count,
+                    SUM(CASE WHEN status IN ('closed', 'expired') THEN 1 ELSE 0 END) as closed_count,
+                    SUM(CASE WHEN status IN ('closed', 'expired') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                    COALESCE(SUM(CASE WHEN status IN ('closed', 'expired') THEN realized_pnl ELSE 0 END), 0) as total_pnl
+                FROM ares_positions
+            ''')
+            row = cursor.fetchone()
+            conn.close()
+            if row:
+                db_trade_count = row[0] or 0
+                db_open_count = row[1] or 0
+                db_closed_count = row[2] or 0
+                db_win_count = row[3] or 0
+                db_total_pnl = float(row[4] or 0)
+        except Exception as db_err:
+            logger.debug(f"Could not read ARES stats from database: {db_err}")
+
+        # Use database values for accurate P&L tracking
+        status['total_pnl'] = db_total_pnl
+        status['trade_count'] = db_trade_count
+        status['win_rate'] = round((db_win_count / db_closed_count) * 100, 1) if db_closed_count > 0 else 0
+        status['open_positions'] = db_open_count
+        status['closed_positions'] = db_closed_count
+
         # Ensure capital fields exist
         if 'capital' not in status:
             status['capital'] = 100000
-        if 'total_pnl' not in status:
-            status['total_pnl'] = 0
-        if 'trade_count' not in status:
-            status['trade_count'] = 0
-        if 'win_rate' not in status:
-            status['win_rate'] = 0
-        if 'open_positions' not in status:
-            status['open_positions'] = 0
 
         # Add Tradier connection status (required by frontend)
         # ALWAYS fetch Tradier balance and positions to ensure we have real data
@@ -1517,12 +1547,10 @@ async def get_ares_equity_curve(days: int = 30):
     """
     ares = get_ares_instance()
 
-    # Get starting capital from Tradier balance when available
-    tradier_balance = _get_tradier_account_balance()
-    if tradier_balance.get('connected') and tradier_balance.get('total_equity', 0) > 0:
-        starting_capital = round(tradier_balance['total_equity'], 2)
-    else:
-        starting_capital = 100000  # Default fallback
+    # CRITICAL FIX: Use fixed starting capital for equity curve calculations
+    # Previously used Tradier balance which already includes realized P&L, causing double-counting
+    # The equity curve should show: starting_capital + cumulative_realized_pnl + unrealized_pnl
+    starting_capital = 100000
 
     today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
     unrealized_pnl = 0.0
@@ -3715,3 +3743,74 @@ async def reset_ares_data(confirm: bool = False):
     except Exception as e:
         logger.error(f"Error resetting ARES data: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/diagnostics")
+async def get_ares_diagnostics():
+    """
+    Get ARES diagnostic information including execution capability.
+
+    This endpoint checks if ARES can actually execute trades in Tradier sandbox.
+    Critical for verifying the bot is properly configured.
+    """
+    from unified_config import APIConfig
+
+    ares = get_ares_instance()
+
+    # Check environment variables
+    sandbox_key_set = bool(APIConfig.TRADIER_SANDBOX_API_KEY)
+    sandbox_account_set = bool(APIConfig.TRADIER_SANDBOX_ACCOUNT_ID)
+    credentials_configured = sandbox_key_set and sandbox_account_set
+
+    # Check Tradier connectivity
+    tradier_balance = _get_tradier_account_balance()
+    tradier_connected = tradier_balance.get('connected', False)
+
+    # Get execution status from ARES instance if running
+    execution_status = None
+    if ares and hasattr(ares, 'executor') and hasattr(ares.executor, 'get_execution_status'):
+        execution_status = ares.executor.get_execution_status()
+
+    # Build diagnostic result
+    can_execute = False
+    issues = []
+
+    if not credentials_configured:
+        if not sandbox_key_set:
+            issues.append("TRADIER_SANDBOX_API_KEY environment variable not set")
+        if not sandbox_account_set:
+            issues.append("TRADIER_SANDBOX_ACCOUNT_ID environment variable not set")
+
+    if not tradier_connected:
+        issues.append(f"Tradier API not connected: {tradier_balance.get('error', 'Unknown error')}")
+
+    if execution_status:
+        if not execution_status.get('can_execute'):
+            if execution_status.get('init_error'):
+                issues.append(f"Executor init error: {execution_status['init_error']}")
+            else:
+                issues.append("Executor cannot execute trades (tradier not initialized)")
+        else:
+            can_execute = True
+    elif ares is None:
+        issues.append("ARES trader not running in this process - cannot verify execution capability")
+        # If credentials are configured and Tradier is connected, likely can execute when running
+        if credentials_configured and tradier_connected:
+            can_execute = True  # Optimistic - will work when worker starts
+
+    return {
+        "success": True,
+        "data": {
+            "can_execute_trades": can_execute,
+            "credentials_configured": credentials_configured,
+            "tradier_connected": tradier_connected,
+            "tradier_sandbox": tradier_balance.get('sandbox', False),
+            "tradier_account_id": tradier_balance.get('account_id'),
+            "tradier_balance": tradier_balance.get('total_equity', 0) if tradier_connected else None,
+            "ares_running": ares is not None,
+            "execution_status": execution_status,
+            "issues": issues if issues else None,
+            "status": "READY" if can_execute and not issues else "NOT_READY",
+            "message": "ARES is ready to execute trades in Tradier sandbox" if can_execute and not issues else f"ARES cannot execute trades: {'; '.join(issues)}"
+        }
+    }

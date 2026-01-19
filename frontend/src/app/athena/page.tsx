@@ -87,14 +87,37 @@ interface SpreadPosition {
   max_profit: number
   max_loss: number
   spot_at_entry: number
+  vix_at_entry?: number
   gex_regime: string
+  // Oracle audit trail
   oracle_confidence: number
+  oracle_win_probability?: number
+  oracle_advice?: string
+  oracle_reasoning?: string
+  oracle_top_factors?: string
+  // GEX context
+  flip_point?: number
+  net_gex?: number
+  put_wall?: number
+  call_wall?: number
   status: string
   exit_price?: number
   exit_reason?: string
   realized_pnl?: number
   created_at: string
   exit_time?: string
+}
+
+// Helper to parse Oracle top factors
+function parseOracleTopFactors(factorsJson: string | undefined): Array<{factor: string, impact: number}> {
+  if (!factorsJson) return []
+  try {
+    const parsed = JSON.parse(factorsJson)
+    if (Array.isArray(parsed)) return parsed
+    return []
+  } catch {
+    return []
+  }
 }
 
 // ==============================================================================
@@ -155,6 +178,7 @@ function PositionCard({ position, isOpen }: { position: SpreadPosition; isOpen: 
   const isBullish = position.spread_type?.includes('BULL')
   const pnl = isOpen ? 0 : (position.realized_pnl || 0)
   const pnlColor = pnl >= 0 ? 'text-green-400' : 'text-red-400'
+  const topFactors = parseOracleTopFactors(position.oracle_top_factors)
 
   return (
     <div className={`bg-gray-800/50 rounded-lg border ${isOpen ? 'border-cyan-500/30' : 'border-gray-700'} overflow-hidden`}>
@@ -195,6 +219,97 @@ function PositionCard({ position, isOpen }: { position: SpreadPosition; isOpen: 
 
       {expanded && (
         <div className="border-t border-gray-700 p-4 space-y-4">
+          {/* Oracle Decision - WHY this trade */}
+          <div className="bg-purple-500/10 border border-purple-500/30 rounded-lg p-3">
+            <div className="flex items-center gap-2 mb-2">
+              <Zap className="w-4 h-4 text-purple-400" />
+              <span className="text-purple-400 font-medium text-sm">Oracle Decision</span>
+            </div>
+            <div className="grid grid-cols-3 gap-3 text-xs">
+              <div>
+                <span className="text-gray-500 block">Confidence</span>
+                <span className={`font-bold ${(position.oracle_confidence || 0) >= 70 ? 'text-green-400' : 'text-yellow-400'}`}>
+                  {position.oracle_confidence?.toFixed(0) || 0}%
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-500 block">Win Probability</span>
+                <span className={`font-bold ${(position.oracle_win_probability || 0) >= 0.50 ? 'text-green-400' : 'text-red-400'}`}>
+                  {((position.oracle_win_probability || 0) * 100).toFixed(0)}%
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-500 block">Advice</span>
+                <span className={`font-bold ${position.oracle_advice === 'ENTER' ? 'text-green-400' : 'text-yellow-400'}`}>
+                  {position.oracle_advice || 'N/A'}
+                </span>
+              </div>
+            </div>
+            {position.oracle_reasoning && (
+              <div className="mt-3 pt-3 border-t border-purple-500/20">
+                <span className="text-gray-500 text-xs">Reasoning:</span>
+                <p className="text-gray-300 text-sm mt-1">{position.oracle_reasoning}</p>
+              </div>
+            )}
+            {topFactors.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-purple-500/20">
+                <span className="text-gray-500 text-xs">Top Factors:</span>
+                <div className="mt-1 space-y-1">
+                  {topFactors.slice(0, 3).map((f, i) => (
+                    <div key={i} className="flex justify-between text-xs">
+                      <span className="text-gray-400">{f.factor}</span>
+                      <span className="text-purple-300">{f.impact.toFixed(3)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* GEX Context - Market conditions */}
+          <div className="bg-gray-800/50 rounded-lg p-3">
+            <div className="flex items-center gap-2 mb-2">
+              <Shield className="w-4 h-4 text-red-400" />
+              <span className="text-gray-400 font-medium text-sm">Market Context at Entry</span>
+            </div>
+            <div className="grid grid-cols-3 gap-3 text-xs">
+              <div>
+                <span className="text-gray-500 block">GEX Regime</span>
+                <span className={`font-bold ${
+                  position.gex_regime === 'POSITIVE' ? 'text-green-400' :
+                  position.gex_regime === 'NEGATIVE' ? 'text-red-400' : 'text-yellow-400'
+                }`}>
+                  {position.gex_regime || 'NEUTRAL'}
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-500 block">Flip Point</span>
+                <span className="text-white font-bold">${position.flip_point?.toFixed(0) || 'N/A'}</span>
+              </div>
+              <div>
+                <span className="text-gray-500 block">Net GEX</span>
+                <span className={`font-bold ${(position.net_gex || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {position.net_gex ? ((position.net_gex) / 1e9).toFixed(2) + 'B' : 'N/A'}
+                </span>
+              </div>
+              <div>
+                <span className="text-gray-500 block">Put Wall</span>
+                <span className="text-orange-400 font-bold">${position.put_wall?.toFixed(0) || 'N/A'}</span>
+              </div>
+              <div>
+                <span className="text-gray-500 block">Call Wall</span>
+                <span className="text-cyan-400 font-bold">${position.call_wall?.toFixed(0) || 'N/A'}</span>
+              </div>
+              <div>
+                <span className="text-gray-500 block">VIX</span>
+                <span className={`font-bold ${(position.vix_at_entry || 0) > 22 ? 'text-red-400' : 'text-green-400'}`}>
+                  {position.vix_at_entry?.toFixed(1) || 'N/A'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Position Details */}
           <div className="bg-gray-800/50 rounded-lg p-3">
             <div className="flex items-center gap-2 mb-2">
               <Target className="w-4 h-4 text-cyan-400" />
@@ -218,16 +333,17 @@ function PositionCard({ position, isOpen }: { position: SpreadPosition; isOpen: 
                 <span className="text-white font-bold">${position.spot_at_entry?.toFixed(2)}</span>
               </div>
               <div>
-                <span className="text-gray-500 block">GEX Regime</span>
-                <span className="text-white font-bold">{position.gex_regime || 'N/A'}</span>
+                <span className="text-gray-500 block">Contracts</span>
+                <span className="text-white font-bold">{position.contracts}</span>
               </div>
               <div>
-                <span className="text-gray-500 block">Oracle Conf.</span>
-                <span className="text-white font-bold">{position.oracle_confidence?.toFixed(0)}%</span>
+                <span className="text-gray-500 block">0DTE</span>
+                <span className="text-white font-bold">{position.is_0dte ? 'Yes' : 'No'}</span>
               </div>
             </div>
           </div>
 
+          {/* Close Details */}
           {!isOpen && position.exit_reason && (
             <div className="bg-gray-800/50 rounded-lg p-3">
               <div className="flex items-center gap-2 mb-2">
@@ -354,6 +470,39 @@ export default function AthenaPage() {
             isRefreshing={statusLoading}
             scanIntervalMinutes={status?.scan_interval_minutes || 5}
           />
+
+          {/* ATHENA vs ICARUS Comparison Banner */}
+          <div className="bg-cyan-900/20 border border-cyan-500/30 rounded-lg p-4">
+            <div className="flex items-start gap-3">
+              <Shield className="w-5 h-5 text-cyan-400 mt-0.5 flex-shrink-0" />
+              <div className="flex-1">
+                <h3 className="text-cyan-400 font-semibold">ATHENA vs ICARUS: Conservative Parameters</h3>
+                <p className="text-gray-400 text-sm mt-1">ATHENA uses more conservative settings for steady, consistent returns.</p>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm">
+                  <div>
+                    <span className="text-gray-500">Risk/Trade:</span>
+                    <span className="text-cyan-400 ml-2">2%</span>
+                    <span className="text-gray-600 ml-1">(vs 3%)</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">Spread Width:</span>
+                    <span className="text-cyan-400 ml-2">$2</span>
+                    <span className="text-gray-600 ml-1">(vs $3)</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">Min Win Prob:</span>
+                    <span className="text-cyan-400 ml-2">50%</span>
+                    <span className="text-gray-600 ml-1">(vs 48%)</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">Wall Filter:</span>
+                    <span className="text-cyan-400 ml-2">1.0%</span>
+                    <span className="text-gray-600 ml-1">(vs 2.0%)</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
 
           {/* Quick Stats */}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">

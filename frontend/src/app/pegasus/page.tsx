@@ -319,7 +319,7 @@ function PositionCard({ position, isOpen }: { position: IronCondorPosition; isOp
               {isOpen ? (
                 <div>
                   <div className="text-sm text-gray-400">Premium</div>
-                  <div className="text-green-400 font-bold">${position.premium_collected.toFixed(0)}</div>
+                  <div className="text-green-400 font-bold">${position.premium_collected?.toFixed(0) || 0}</div>
                 </div>
               ) : (
                 <div className={`text-xl font-bold ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
@@ -603,6 +603,39 @@ export default function PegasusPage() {
               </div>
             </div>
           )}
+
+          {/* PEGASUS vs TITAN Comparison Banner */}
+          <div className="bg-blue-900/20 border border-blue-500/30 rounded-lg p-4">
+            <div className="flex items-start gap-3">
+              <Shield className="w-5 h-5 text-blue-400 mt-0.5 flex-shrink-0" />
+              <div className="flex-1">
+                <h3 className="text-blue-400 font-semibold">PEGASUS vs TITAN: Conservative Parameters</h3>
+                <p className="text-gray-400 text-sm mt-1">PEGASUS uses standard SPX Iron Condor settings for consistent, steady returns.</p>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-3 text-sm">
+                  <div>
+                    <span className="text-gray-500">Risk/Trade:</span>
+                    <span className="text-blue-400 ml-2">10%</span>
+                    <span className="text-gray-600 ml-1">(vs 15%)</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">Min Win Prob:</span>
+                    <span className="text-blue-400 ml-2">50%</span>
+                    <span className="text-gray-600 ml-1">(vs 40%)</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">VIX Skip:</span>
+                    <span className="text-blue-400 ml-2">32</span>
+                    <span className="text-gray-600 ml-1">(vs 40)</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">Spread Width:</span>
+                    <span className="text-blue-400 ml-2">$10</span>
+                    <span className="text-gray-600 ml-1">(vs $12)</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
 
           {/* Quick Stats */}
           <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
