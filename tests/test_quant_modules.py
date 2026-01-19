@@ -2,10 +2,11 @@
 Tests for AlphaGEX Quant Modules
 
 Tests:
-1. ML Regime Classifier
-2. Walk-Forward Optimizer
-3. Ensemble Strategy Weighting
-4. Monte Carlo Kelly Stress Testing
+1. Walk-Forward Optimizer
+2. Monte Carlo Kelly Stress Testing
+
+Note: ML Regime Classifier and Ensemble Strategy tests removed - modules deprecated.
+Oracle is now the sole decision authority.
 
 Run with: pytest tests/test_quant_modules.py -v
 """
@@ -14,100 +15,6 @@ import pytest
 import numpy as np
 import pandas as pd
 from datetime import datetime, timedelta
-
-
-class TestMLRegimeClassifier:
-    """Tests for ML Regime Classifier"""
-
-    def test_classifier_initialization(self):
-        """Test classifier can be initialized"""
-        from quant.ml_regime_classifier import MLRegimeClassifier
-        classifier = MLRegimeClassifier("SPY")
-        assert classifier.symbol == "SPY"
-        assert classifier.is_trained is False or classifier.is_trained is True
-
-    def test_rule_based_label_sell_premium(self):
-        """Test rule-based labeling for SELL_PREMIUM scenario"""
-        from quant.ml_regime_classifier import MLRegimeClassifier, MLRegimeAction
-        classifier = MLRegimeClassifier("SPY")
-
-        # High IV, positive GEX, range-bound -> SELL_PREMIUM
-        label = classifier._rule_based_label(
-            gex_normalized=1.0,
-            gex_percentile=70,  # Positive
-            vix=25,
-            iv_rank=75,  # High IV
-            iv_hv_ratio=1.3,
-            distance_to_flip=0.0,
-            momentum_4h=0.1,  # Range-bound
-            above_20ma=True
-        )
-        assert label == MLRegimeAction.SELL_PREMIUM.value
-
-    def test_rule_based_label_buy_calls(self):
-        """Test rule-based labeling for BUY_CALLS scenario"""
-        from quant.ml_regime_classifier import MLRegimeClassifier, MLRegimeAction
-        classifier = MLRegimeClassifier("SPY")
-
-        # Negative GEX, below flip, positive momentum -> BUY_CALLS
-        label = classifier._rule_based_label(
-            gex_normalized=0.5,
-            gex_percentile=20,  # Negative
-            vix=28,
-            iv_rank=50,
-            iv_hv_ratio=1.0,
-            distance_to_flip=-1.5,  # Below flip
-            momentum_4h=0.5,  # Positive momentum
-            above_20ma=True
-        )
-        assert label == MLRegimeAction.BUY_CALLS.value
-
-    def test_rule_based_label_buy_puts(self):
-        """Test rule-based labeling for BUY_PUTS scenario"""
-        from quant.ml_regime_classifier import MLRegimeClassifier, MLRegimeAction
-        classifier = MLRegimeClassifier("SPY")
-
-        # Negative GEX, above flip, negative momentum -> BUY_PUTS
-        label = classifier._rule_based_label(
-            gex_normalized=0.5,
-            gex_percentile=20,  # Negative
-            vix=25,
-            iv_rank=50,
-            iv_hv_ratio=1.0,
-            distance_to_flip=1.5,  # Above flip
-            momentum_4h=-0.5,  # Negative momentum
-            above_20ma=False
-        )
-        assert label == MLRegimeAction.BUY_PUTS.value
-
-    def test_training_creates_model(self):
-        """Test that training creates a usable model"""
-        from quant.ml_regime_classifier import MLRegimeClassifier
-        classifier = MLRegimeClassifier("TEST")
-
-        # Train from rules (bootstrap)
-        metrics = classifier._train_from_rules(lookback_days=90)
-
-        assert classifier.is_trained is True
-        assert classifier.model is not None
-        assert metrics.accuracy > 0
-        assert metrics.f1 > 0
-
-    def test_prediction_returns_valid_result(self):
-        """Test that prediction returns valid MLPrediction"""
-        from quant.ml_regime_classifier import get_ml_regime_prediction
-
-        prediction = get_ml_regime_prediction(
-            symbol="SPY",
-            gex_percentile=30,
-            iv_rank=70,
-            distance_to_flip=-1.0,
-            momentum_4h=0.3
-        )
-
-        assert prediction.confidence >= 0 and prediction.confidence <= 100
-        assert prediction.predicted_action is not None
-        assert 'model_version' in dir(prediction)
 
 
 class TestWalkForwardOptimizer:
@@ -179,86 +86,6 @@ class TestWalkForwardOptimizer:
         assert 'oos_avg_win_rate' in dict_result
         assert 'degradation_pct' in dict_result
         assert 'is_robust' in dict_result
-
-
-class TestEnsembleStrategy:
-    """Tests for Ensemble Strategy Weighting"""
-
-    def test_signal_combination_bullish(self):
-        """Test that bullish signals combine correctly"""
-        from quant.ensemble_strategy import (
-            EnsembleStrategyWeighter,
-            IndividualSignal,
-            StrategySignal
-        )
-
-        weighter = EnsembleStrategyWeighter("SPY")
-
-        # All bullish signals
-        signals = [
-            IndividualSignal("GEX", StrategySignal.STRONG_BUY, 80, 0.3, "test"),
-            IndividualSignal("ML", StrategySignal.BUY, 70, 0.3, "test"),
-            IndividualSignal("RSI", StrategySignal.BUY, 65, 0.2, "test"),
-        ]
-
-        ensemble = weighter.combine_signals(signals)
-
-        assert ensemble.final_signal in [StrategySignal.STRONG_BUY, StrategySignal.BUY]
-        assert ensemble.bullish_weight > ensemble.bearish_weight
-        assert ensemble.bullish_weight > ensemble.neutral_weight
-
-    def test_signal_combination_mixed(self):
-        """Test that mixed signals result in reduced confidence"""
-        from quant.ensemble_strategy import (
-            EnsembleStrategyWeighter,
-            IndividualSignal,
-            StrategySignal
-        )
-
-        weighter = EnsembleStrategyWeighter("SPY")
-
-        # Mixed signals
-        signals = [
-            IndividualSignal("GEX", StrategySignal.BUY, 70, 0.3, "test"),
-            IndividualSignal("ML", StrategySignal.SELL, 65, 0.3, "test"),
-            IndividualSignal("RSI", StrategySignal.NEUTRAL, 50, 0.3, "test"),
-        ]
-
-        ensemble = weighter.combine_signals(signals)
-
-        # With mixed signals, should have lower confidence or be neutral
-        assert ensemble.confidence < 80  # Lower confidence due to disagreement
-
-    def test_should_trade_threshold(self):
-        """Test that should_trade respects confidence threshold"""
-        from quant.ensemble_strategy import EnsembleStrategyWeighter
-
-        weighter = EnsembleStrategyWeighter("SPY")
-
-        # Low confidence GEX data
-        signal = weighter.get_ensemble_signal(
-            gex_data={'recommended_action': 'BUY_CALLS', 'confidence': 40}
-        )
-
-        # Should not trade with only one low-confidence signal
-        assert signal.should_trade is False or signal.confidence < 60
-
-    def test_strategy_performance_weight_calculation(self):
-        """Test that strategy weights are calculated based on performance"""
-        from quant.ensemble_strategy import StrategyPerformance
-
-        perf = StrategyPerformance("TEST")
-
-        # Record some trades
-        for _ in range(10):
-            perf.record_trade(5.0, "POSITIVE_GAMMA")  # Wins
-        for _ in range(5):
-            perf.record_trade(-3.0, "POSITIVE_GAMMA")  # Losses
-
-        assert perf.win_rate == pytest.approx(66.67, rel=0.1)
-
-        weight = perf.calculate_weight("POSITIVE_GAMMA")
-        assert weight > 0.5  # Winning strategy should have higher weight
 
 
 class TestMonteCarloKelly:
@@ -397,37 +224,6 @@ class TestMonteCarloKelly:
 
 class TestQuantIntegration:
     """Integration tests for quant modules working together"""
-
-    def test_ml_prediction_to_ensemble(self):
-        """Test ML prediction integrates with ensemble weighter"""
-        from quant.ml_regime_classifier import get_ml_regime_prediction
-        from quant.ensemble_strategy import get_ensemble_signal
-
-        # Get ML prediction
-        ml_pred = get_ml_regime_prediction(
-            symbol="SPY",
-            gex_percentile=25,
-            iv_rank=70,
-            distance_to_flip=-1.0
-        )
-
-        # Use in ensemble
-        ensemble = get_ensemble_signal(
-            symbol="SPY",
-            gex_data={
-                'recommended_action': 'BUY_CALLS',
-                'confidence': 75
-            },
-            ml_prediction={
-                'predicted_action': ml_pred.predicted_action.value,
-                'confidence': ml_pred.confidence,
-                'is_trained': ml_pred.is_trained
-            }
-        )
-
-        # Should return valid ensemble signal
-        assert ensemble.final_signal is not None
-        assert len(ensemble.component_signals) > 0
 
     def test_kelly_with_strategy_stats(self):
         """Test Kelly calculation with simulated strategy stats"""

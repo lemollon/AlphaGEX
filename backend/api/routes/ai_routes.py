@@ -813,7 +813,7 @@ async def optimize_strategy(request: dict):
     except ImportError as e:
         raise HTTPException(
             status_code=503,
-            detail="AI Strategy Optimizer requires langchain. Install with: pip install langchain langchain-anthropic"
+            detail="AI Strategy Optimizer has been removed. Use GEXIS AI assistant (/api/ai/gexis) for trade analysis."
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -840,7 +840,7 @@ async def analyze_all_strategies(api_key: str = None):
     except ImportError as e:
         raise HTTPException(
             status_code=503,
-            detail="AI Strategy Optimizer requires langchain. Install with: pip install langchain langchain-anthropic"
+            detail="AI Strategy Optimizer has been removed. Use GEXIS AI assistant (/api/ai/gexis) for trade analysis."
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -877,6 +877,11 @@ async def get_trade_advice(signal_data: dict):
             "advice": result
         }
 
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="Smart Trade Advisor has been removed. Use GEXIS AI assistant (/api/ai/gexis) for trade analysis."
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -908,6 +913,11 @@ async def provide_ai_feedback(feedback: dict):
             "feedback": result
         }
 
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="Smart Trade Advisor has been removed. Use GEXIS AI assistant (/api/ai/gexis) for trade analysis."
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -928,6 +938,11 @@ async def get_learning_insights():
             "insights": insights
         }
 
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="Smart Trade Advisor has been removed. Use GEXIS AI assistant (/api/ai/gexis) for trade analysis."
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -948,6 +963,11 @@ async def get_ai_track_record(days: int = 30):
             "track_record": track_record
         }
 
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="Smart Trade Advisor has been removed. Use GEXIS AI assistant (/api/ai/gexis) for trade analysis."
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -76,6 +76,7 @@ interface LiveRecommendation {
 export default function StrategyOptimizer() {
   const [loading, setLoading] = useState(true)
   const [selectedStrategy, setSelectedStrategy] = useState<string>('all')
+  const [serviceUnavailable, setServiceUnavailable] = useState(false)
 
   // Data states
   const [strikePerformance, setStrikePerformance] = useState<StrikePerformanceData[]>([])
@@ -95,6 +96,7 @@ export default function StrategyOptimizer() {
     const fetchOptimizerData = async () => {
       try {
         setLoading(true)
+        setServiceUnavailable(false)
 
         // Fetch all data in parallel using apiClient
         const strategyParam = selectedStrategy === 'all' ? undefined : selectedStrategy
@@ -105,6 +107,16 @@ export default function StrategyOptimizer() {
           apiClient.getGreeksPerformance(strategyParam),
           apiClient.getBestCombinations(strategyParam),
         ])
+
+        // Check if any request returned 503 (service unavailable)
+        const hasUnavailable = results.some(r =>
+          r.status === 'rejected' && r.reason?.response?.status === 503
+        )
+        if (hasUnavailable) {
+          setServiceUnavailable(true)
+          setLoading(false)
+          return
+        }
 
         // Extract successful results
         const [strikeRes, dteRes, regimeRes, greeksRes, combosRes] = results.map(result =>
@@ -181,6 +193,36 @@ export default function StrategyOptimizer() {
   const bestRegime = regimePerformance.length > 0
     ? regimePerformance.reduce((prev, current) => (prev.win_rate > current.win_rate) ? prev : current)
     : null
+
+  // Service unavailable UI
+  if (serviceUnavailable) {
+    return (
+      <div className="min-h-screen">
+        <Navigation />
+        <main className="pt-24 transition-all duration-300">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <div className="card text-center py-12">
+              <AlertCircle className="w-16 h-16 text-warning mx-auto mb-4" />
+              <h1 className="text-2xl font-bold text-text-primary mb-2">Strategy Optimizer Removed</h1>
+              <p className="text-text-secondary mb-4">
+                This feature has been consolidated into the GEXIS AI assistant.
+              </p>
+              <p className="text-text-muted text-sm mb-6">
+                Use GEXIS for trade analysis, strategy recommendations, and optimization insights.
+              </p>
+              <a
+                href="/gexis"
+                className="inline-flex items-center gap-2 px-6 py-3 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors"
+              >
+                <Brain className="w-5 h-5" />
+                Open GEXIS AI Assistant
+              </a>
+            </div>
+          </div>
+        </main>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen">

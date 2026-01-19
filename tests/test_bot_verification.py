@@ -460,17 +460,6 @@ def test_quant_modules():
     except Exception as e:
         print(f"  ⚠️ Monte Carlo Kelly: {e}")
 
-    # Test Ensemble
-    try:
-        from quant.ensemble_strategy import EnsembleStrategyWeighter
-        ensemble = EnsembleStrategyWeighter()
-        print(f"  ✅ Ensemble Weighter: Loaded")
-        modules_loaded += 1
-    except ImportError as e:
-        print(f"  ⚠️ Ensemble Weighter: {e}")
-    except Exception as e:
-        print(f"  ⚠️ Ensemble Weighter: {e}")
-
     # Test Walk-Forward
     try:
         from quant.walk_forward_optimizer import WalkForwardOptimizer
@@ -482,18 +471,8 @@ def test_quant_modules():
     except Exception as e:
         print(f"  ⚠️ Walk-Forward Optimizer: {e}")
 
-    # Test ML Regime
-    try:
-        from quant.ml_regime_classifier import MLRegimeClassifier
-        ml_regime = MLRegimeClassifier()
-        print(f"  ✅ ML Regime Classifier: Loaded")
-        modules_loaded += 1
-    except ImportError as e:
-        print(f"  ⚠️ ML Regime Classifier: {e}")
-    except Exception as e:
-        print(f"  ⚠️ ML Regime Classifier: {e}")
-
-    print(f"\n  Loaded: {modules_loaded}/4 quant modules")
+    # Note: ensemble_strategy and ml_regime_classifier removed - Oracle is sole authority
+    print(f"\n  Loaded: {modules_loaded}/2 quant modules")
     print("\n✅ QUANT MODULES: PASSED")
     return True
 

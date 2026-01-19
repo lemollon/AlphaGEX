@@ -46,8 +46,8 @@ async def optimize_strategy(strategy_name: str):
         raise
     except ImportError as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Optimizer dependencies not installed: {str(e)}. Run: pip install langchain-anthropic"
+            status_code=503,
+            detail="Strategy optimizer has been removed. Use GEXIS AI assistant (/api/ai/gexis) for trade analysis."
         )
     except Exception as e:
         logger.error(f" Error in strategy optimizer: {str(e)}")
@@ -86,8 +86,8 @@ async def optimize_all_strategies():
         raise
     except ImportError as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Optimizer dependencies not installed: {str(e)}. Run: pip install langchain-anthropic"
+            status_code=503,
+            detail="Strategy optimizer has been removed. Use GEXIS AI assistant (/api/ai/gexis) for trade analysis."
         )
     except Exception as e:
         logger.error(f" Error in strategy optimizer: {str(e)}")
@@ -126,8 +126,8 @@ async def get_trade_recommendation(request: dict):
         raise
     except ImportError as e:
         raise HTTPException(
-            status_code=500,
-            detail=f"Optimizer dependencies not installed: {str(e)}. Run: pip install langchain-anthropic"
+            status_code=503,
+            detail="Strategy optimizer has been removed. Use GEXIS AI assistant (/api/ai/gexis) for trade analysis."
         )
     except Exception as e:
         logger.error(f" Error getting trade recommendation: {str(e)}")

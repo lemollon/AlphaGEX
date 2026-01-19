@@ -361,25 +361,6 @@ class TestGap10EquityCompoundScaler:
 
 
 # =============================================================================
-# ENSEMBLE INTEGRATION TESTS
-# =============================================================================
-
-class TestEnsembleIntegration:
-    """Tests for Ensemble integration (Option B)"""
-
-    def test_dynamic_weight_updater_import(self):
-        """Test that DynamicEnsembleWeightUpdater can be imported"""
-        from quant.ensemble_strategy import DynamicEnsembleWeightUpdater
-        assert DynamicEnsembleWeightUpdater is not None
-
-    def test_ensemble_weighter_import(self):
-        """Test that EnsembleStrategyWeighter can be imported"""
-        from quant.ensemble_strategy import EnsembleStrategyWeighter, get_ensemble_weighter
-        assert EnsembleStrategyWeighter is not None
-        assert get_ensemble_weighter is not None
-
-
-# =============================================================================
 # ORACLE OMEGA MODE TESTS
 # =============================================================================
 
@@ -453,32 +434,6 @@ class TestOmegaMixin:
         # Should return True by default (no kill switch active)
         result = bot.omega_can_trade()
         assert isinstance(result, bool)
-
-
-# =============================================================================
-# CIRCUIT BREAKER DEPRECATION TESTS
-# =============================================================================
-
-class TestCircuitBreakerDeprecation:
-    """Tests for CircuitBreaker deprecation"""
-
-    def test_circuit_breaker_deprecation_warning(self):
-        """Test that importing CircuitBreaker shows deprecation warning"""
-        import warnings
-
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-
-            # This import should trigger a deprecation warning
-            from trading.circuit_breaker import CircuitBreaker
-
-            # Find deprecation warnings
-            deprecation_warnings = [
-                x for x in w if issubclass(x.category, DeprecationWarning)
-            ]
-
-            # Should have at least one deprecation warning
-            assert len(deprecation_warnings) >= 1
 
 
 # =============================================================================
