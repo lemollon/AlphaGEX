@@ -383,6 +383,33 @@ XGBoost-based ML system that feeds probability predictions into Oracle.
 - **Files**: `backend/api/routes/ml_routes.py` (SAGE endpoints)
 - **Dashboard**: `/sage` page with 6 tabs (Overview, Predictions, Features, Performance, Decision Logs, Training)
 
+### GEX Probability Models - Strike Probability for ARGUS/HYPERION
+XGBoost-based ML system for calculating strike-level probabilities in gamma visualizations.
+
+- **Model**: 5 XGBoost sub-models (classifiers and regressors)
+- **Sub-Models**:
+  1. **Direction Probability** - UP/DOWN/FLAT classification
+  2. **Flip Gravity** - Probability price moves toward flip point
+  3. **Magnet Attraction** - Probability price reaches nearest magnet (used for strike probabilities)
+  4. **Volatility Estimate** - Expected price range prediction
+  5. **Pin Zone Behavior** - Probability of staying pinned between magnets
+- **Integration**: Hybrid probability calculation: `combined = (0.6 × ML_prob) + (0.4 × distance_prob)`
+- **Auto-Loading**: Models auto-load from PostgreSQL on initialization (singleton pattern)
+- **Fallback**: When models not trained, uses 100% distance-based probability
+- **Files**:
+  - Core: `quant/gex_probability_models.py` (GEXProbabilityModels, GEXSignalGenerator)
+  - Shared Engine: `core/shared_gamma_engine.py` (calculate_probability_hybrid)
+  - ARGUS Engine: `core/argus_engine.py` (gamma_structure building)
+  - Training Script: `scripts/train_gex_probability_models.py`
+- **API Endpoints**:
+  ```
+  GET  /api/ml/gex-models/status      # Model status, staleness, sub-model states
+  POST /api/ml/gex-models/train       # Trigger training on GEX historical data
+  POST /api/ml/gex-models/predict     # Get combined prediction
+  GET  /api/ml/gex-models/data-status # Training data availability
+  ```
+- **Dashboard**: `/gex-ml` page with model status, training controls, integration info
+
 ### GEXIS - AI Trading Assistant
 J.A.R.V.I.S.-style AI chatbot providing decision support throughout the platform (~5.2K lines).
 
@@ -488,9 +515,10 @@ Named after the "all-seeing" giant with 100 eyes from Greek mythology. ARGUS pro
 **Core Features**:
 - Real-time gamma visualization with per-strike data
 - Danger zone detection (BUILDING/COLLAPSING/SPIKE gamma)
-- Pin strike prediction with probability
+- Pin strike prediction with ML-enhanced probability
 - Magnet identification (high gamma attractors)
 - Gamma regime tracking (POSITIVE/NEGATIVE/NEUTRAL)
+- **ML Integration**: Uses GEX Probability Models for hybrid probability (60% ML + 40% distance)
 
 **Market Structure Panel** (9 signals comparing today vs prior day):
 
