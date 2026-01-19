@@ -63,6 +63,15 @@ interface DataStatus {
     count: number
     date_range: string
     has_data: boolean
+    is_primary?: boolean
+  }
+  gex_history?: {
+    unique_days: number
+    total_snapshots: number
+    date_range: string
+    has_data: boolean
+    is_fallback?: boolean
+    note?: string
   }
   vix_daily: {
     count: number
@@ -71,6 +80,8 @@ interface DataStatus {
   }
   readiness: {
     is_ready: boolean
+    data_source?: string
+    usable_records?: number
     min_records_needed: number
     message: string
   }
@@ -268,14 +279,41 @@ export default function GexMLPage() {
               </div>
             </div>
 
+            {/* Data Source Indicator */}
+            {dataStatus?.readiness?.data_source && (
+              <div className={`mb-4 p-2 rounded-lg text-xs flex items-center gap-2 ${
+                dataStatus.readiness.data_source === 'gex_structure_daily'
+                  ? 'bg-emerald-500/10 text-emerald-400'
+                  : dataStatus.readiness.data_source === 'gex_history'
+                  ? 'bg-blue-500/10 text-blue-400'
+                  : 'bg-gray-700/50 text-gray-400'
+              }`}>
+                <Database className="w-3 h-3" />
+                <span>
+                  Will use: <strong>{dataStatus.readiness.data_source}</strong>
+                  {dataStatus.readiness.usable_records !== undefined && (
+                    <span className="ml-1">({dataStatus.readiness.usable_records.toLocaleString()} records)</span>
+                  )}
+                </span>
+              </div>
+            )}
+
             <div className="space-y-4">
-              <div className="p-3 bg-gray-700/30 rounded-lg">
+              {/* Primary: gex_structure_daily */}
+              <div className={`p-3 rounded-lg ${
+                dataStatus?.readiness?.data_source === 'gex_structure_daily'
+                  ? 'bg-emerald-500/10 border border-emerald-500/30'
+                  : 'bg-gray-700/30'
+              }`}>
                 <div className="flex justify-between items-center mb-1">
-                  <span className="text-sm font-medium">GEX Structure Data</span>
+                  <span className="text-sm font-medium flex items-center gap-2">
+                    GEX Structure Daily
+                    <span className="text-[10px] px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded">PRIMARY</span>
+                  </span>
                   {dataStatus?.gex_structure_daily?.has_data ? (
                     <CheckCircle className="w-4 h-4 text-emerald-400" />
                   ) : (
-                    <XCircle className="w-4 h-4 text-red-400" />
+                    <XCircle className="w-4 h-4 text-gray-500" />
                   )}
                 </div>
                 <div className="text-xs text-gray-400">
@@ -286,6 +324,40 @@ export default function GexMLPage() {
                 </div>
               </div>
 
+              {/* Fallback: gex_history */}
+              <div className={`p-3 rounded-lg ${
+                dataStatus?.readiness?.data_source === 'gex_history'
+                  ? 'bg-blue-500/10 border border-blue-500/30'
+                  : 'bg-gray-700/30'
+              }`}>
+                <div className="flex justify-between items-center mb-1">
+                  <span className="text-sm font-medium flex items-center gap-2">
+                    GEX History
+                    <span className="text-[10px] px-1.5 py-0.5 bg-blue-500/20 text-blue-400 rounded">FALLBACK</span>
+                  </span>
+                  {dataStatus?.gex_history?.has_data ? (
+                    <CheckCircle className="w-4 h-4 text-emerald-400" />
+                  ) : (
+                    <XCircle className="w-4 h-4 text-gray-500" />
+                  )}
+                </div>
+                <div className="text-xs text-gray-400">
+                  {dataStatus?.gex_history?.unique_days?.toLocaleString() || 0} unique days
+                  {dataStatus?.gex_history?.total_snapshots !== undefined && (
+                    <span className="text-gray-500"> ({dataStatus.gex_history.total_snapshots.toLocaleString()} snapshots)</span>
+                  )}
+                </div>
+                <div className="text-xs text-gray-500">
+                  {dataStatus?.gex_history?.date_range || 'No data'}
+                </div>
+                {dataStatus?.gex_history?.note && (
+                  <div className="text-[10px] text-gray-600 mt-1 italic">
+                    {dataStatus.gex_history.note}
+                  </div>
+                )}
+              </div>
+
+              {/* VIX Data */}
               <div className="p-3 bg-gray-700/30 rounded-lg">
                 <div className="flex justify-between items-center mb-1">
                   <span className="text-sm font-medium">VIX Data</span>

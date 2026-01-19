@@ -117,6 +117,178 @@ def get_connection():
     )
 
 
+def load_gex_from_history_fallback(
+    symbols: List[str] = ['SPX', 'SPY'],
+    start_date: str = '2020-01-01',
+    end_date: str = None
+) -> pd.DataFrame:
+    """
+    Fallback: Load and aggregate GEX data from gex_history table.
+
+    Used when gex_structure_daily is empty but gex_history has real-time snapshots.
+    Aggregates intraday snapshots into daily structure for ML training.
+    """
+    if end_date is None:
+        end_date = datetime.now().strftime('%Y-%m-%d')
+
+    conn = get_connection()
+
+    # Check if gex_history has data
+    check_query = """
+        SELECT COUNT(*) FROM gex_history
+        WHERE symbol = ANY(%s)
+        AND DATE(timestamp) >= %s
+        AND DATE(timestamp) <= %s
+    """
+    cursor = conn.cursor()
+    cursor.execute(check_query, (symbols, start_date, end_date))
+    count = cursor.fetchone()[0]
+
+    if count == 0:
+        logger.warning("No data in gex_history table either")
+        conn.close()
+        return pd.DataFrame()
+
+    logger.info(f"Loading {count} records from gex_history (fallback mode)")
+
+    # Aggregate gex_history to daily structure
+    query = """
+        SELECT
+            DATE(h.timestamp) as trade_date,
+            h.symbol,
+            -- Use first and last of day for OHLC approximation
+            FIRST_VALUE(h.spot_price) OVER (PARTITION BY DATE(h.timestamp), h.symbol ORDER BY h.timestamp) as spot_open,
+            MAX(h.spot_price) OVER (PARTITION BY DATE(h.timestamp), h.symbol) as spot_high,
+            MIN(h.spot_price) OVER (PARTITION BY DATE(h.timestamp), h.symbol) as spot_low,
+            LAST_VALUE(h.spot_price) OVER (PARTITION BY DATE(h.timestamp), h.symbol ORDER BY h.timestamp
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as spot_close,
+            -- Average gamma for the day
+            AVG(h.net_gex) as net_gamma,
+            -- Walls from last snapshot of day
+            LAST_VALUE(h.flip_point) OVER (PARTITION BY DATE(h.timestamp), h.symbol ORDER BY h.timestamp
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as flip_point,
+            LAST_VALUE(h.call_wall) OVER (PARTITION BY DATE(h.timestamp), h.symbol ORDER BY h.timestamp
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as call_wall,
+            LAST_VALUE(h.put_wall) OVER (PARTITION BY DATE(h.timestamp), h.symbol ORDER BY h.timestamp
+                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as put_wall,
+            -- VIX from vix_daily if available
+            v.vix_open,
+            v.vix_close
+        FROM gex_history h
+        LEFT JOIN vix_daily v ON DATE(h.timestamp) = v.trade_date
+        WHERE h.symbol = ANY(%s)
+          AND DATE(h.timestamp) >= %s
+          AND DATE(h.timestamp) <= %s
+        ORDER BY trade_date, symbol
+    """
+
+    # Use a simpler aggregation query that works better
+    simple_query = """
+        WITH daily_agg AS (
+            SELECT
+                DATE(timestamp) as trade_date,
+                symbol,
+                MIN(spot_price) as spot_low,
+                MAX(spot_price) as spot_high,
+                AVG(net_gex) as net_gamma,
+                AVG(flip_point) as flip_point,
+                AVG(call_wall) as call_wall,
+                AVG(put_wall) as put_wall,
+                COUNT(*) as snapshot_count
+            FROM gex_history
+            WHERE symbol = ANY(%s)
+              AND DATE(timestamp) >= %s
+              AND DATE(timestamp) <= %s
+            GROUP BY DATE(timestamp), symbol
+        ),
+        first_last AS (
+            SELECT DISTINCT ON (DATE(timestamp), symbol)
+                DATE(timestamp) as trade_date,
+                symbol,
+                FIRST_VALUE(spot_price) OVER w as spot_open,
+                LAST_VALUE(spot_price) OVER w as spot_close
+            FROM gex_history
+            WHERE symbol = ANY(%s)
+              AND DATE(timestamp) >= %s
+              AND DATE(timestamp) <= %s
+            WINDOW w AS (PARTITION BY DATE(timestamp), symbol ORDER BY timestamp
+                         ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING)
+        )
+        SELECT
+            d.trade_date,
+            d.symbol,
+            f.spot_open,
+            d.spot_high,
+            d.spot_low,
+            f.spot_close,
+            d.net_gamma,
+            d.net_gamma * 0.6 as total_call_gamma,  -- Approximation
+            d.net_gamma * 0.4 as total_put_gamma,   -- Approximation
+            d.flip_point,
+            d.call_wall as magnet_1_strike,  -- Use call wall as magnet 1
+            d.net_gamma as magnet_1_gamma,
+            d.put_wall as magnet_2_strike,   -- Use put wall as magnet 2
+            d.net_gamma * 0.5 as magnet_2_gamma,
+            NULL as magnet_3_strike,
+            NULL as magnet_3_gamma,
+            d.call_wall,
+            d.put_wall,
+            CASE WHEN d.net_gamma > 0 THEN d.net_gamma ELSE 0 END as gamma_above_spot,
+            CASE WHEN d.net_gamma < 0 THEN ABS(d.net_gamma) ELSE 0 END as gamma_below_spot,
+            CASE WHEN d.net_gamma != 0
+                 THEN (d.net_gamma / ABS(d.net_gamma)) * 100
+                 ELSE 0 END as gamma_imbalance_pct,
+            1 as num_magnets_above,
+            1 as num_magnets_below,
+            d.call_wall as nearest_magnet_strike,
+            CASE WHEN f.spot_open > 0
+                 THEN ABS(d.call_wall - f.spot_open) / f.spot_open * 100
+                 ELSE 0 END as nearest_magnet_distance_pct,
+            CASE WHEN f.spot_open > 0 AND d.flip_point > 0
+                 THEN ABS(f.spot_open - d.flip_point) / f.spot_open * 100
+                 ELSE 0 END as open_to_flip_distance_pct,
+            FALSE as open_in_pin_zone,
+            CASE WHEN f.spot_open > 0
+                 THEN (f.spot_close - f.spot_open) / f.spot_open * 100
+                 ELSE 0 END as price_change_pct,
+            CASE WHEN f.spot_open > 0
+                 THEN (d.spot_high - d.spot_low) / f.spot_open * 100
+                 ELSE 0 END as price_range_pct,
+            CASE WHEN f.spot_close > 0 AND d.flip_point > 0
+                 THEN ABS(f.spot_close - d.flip_point) / f.spot_close * 100
+                 ELSE 0 END as close_distance_to_flip_pct,
+            CASE WHEN f.spot_close > 0 AND d.call_wall > 0
+                 THEN ABS(f.spot_close - d.call_wall) / f.spot_close * 100
+                 ELSE 0 END as close_distance_to_magnet1_pct,
+            CASE WHEN f.spot_close > 0 AND d.put_wall > 0
+                 THEN ABS(f.spot_close - d.put_wall) / f.spot_close * 100
+                 ELSE 0 END as close_distance_to_magnet2_pct,
+            v.vix_open,
+            v.vix_close
+        FROM daily_agg d
+        JOIN first_last f ON d.trade_date = f.trade_date AND d.symbol = f.symbol
+        LEFT JOIN vix_daily v ON d.trade_date = v.trade_date
+        ORDER BY d.trade_date, d.symbol
+    """
+
+    df = pd.read_sql(simple_query, conn, params=(
+        symbols, start_date, end_date,
+        symbols, start_date, end_date
+    ))
+    conn.close()
+
+    # Convert decimals to float
+    for col in df.columns:
+        if df[col].dtype == object:
+            try:
+                df[col] = df[col].astype(float)
+            except (ValueError, TypeError):
+                pass
+
+    logger.info(f"Aggregated {len(df)} daily records from gex_history")
+    return df
+
+
 def load_gex_structure_data(
     symbols: List[str] = ['SPX', 'SPY'],
     start_date: str = '2020-01-01',
@@ -126,6 +298,7 @@ def load_gex_structure_data(
     Load pre-computed GEX structure data from database.
 
     Returns DataFrame with all features needed for ML training.
+    Falls back to gex_history table if gex_structure_daily is empty.
     """
     if end_date is None:
         end_date = datetime.now().strftime('%Y-%m-%d')
@@ -178,6 +351,16 @@ def load_gex_structure_data(
 
     df = pd.read_sql(query, conn, params=(symbols, start_date, end_date))
     conn.close()
+
+    # If gex_structure_daily is empty, try gex_history fallback
+    if len(df) == 0:
+        logger.info("gex_structure_daily is empty, trying gex_history fallback...")
+        df = load_gex_from_history_fallback(symbols, start_date, end_date)
+        if len(df) > 0:
+            logger.info(f"Successfully loaded {len(df)} records from gex_history fallback")
+        else:
+            logger.warning("No data found in either gex_structure_daily or gex_history")
+        return df
 
     # Convert decimals to float
     for col in df.columns:

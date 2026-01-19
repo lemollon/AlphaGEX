@@ -1711,7 +1711,8 @@ async def get_gex_training_data_status():
     Check availability of GEX training data in database.
 
     Returns:
-        - gex_structure_daily: Record count and date range
+        - gex_structure_daily: Record count and date range (primary source)
+        - gex_history: Record count and date range (fallback source)
         - vix_daily: Record count and date range
         - readiness: Whether enough data exists for training
     """
@@ -1721,7 +1722,7 @@ async def get_gex_training_data_status():
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Check gex_structure_daily
+        # Check gex_structure_daily (primary source)
         cursor.execute("""
             SELECT COUNT(*), MIN(trade_date), MAX(trade_date)
             FROM gex_structure_daily
@@ -1730,6 +1731,20 @@ async def get_gex_training_data_status():
         gex_count = gex_row[0] if gex_row else 0
         gex_min = str(gex_row[1]) if gex_row and gex_row[1] else None
         gex_max = str(gex_row[2]) if gex_row and gex_row[2] else None
+
+        # Check gex_history (fallback source) - count distinct days
+        cursor.execute("""
+            SELECT COUNT(DISTINCT DATE(timestamp)), MIN(DATE(timestamp)), MAX(DATE(timestamp))
+            FROM gex_history
+        """)
+        hist_row = cursor.fetchone()
+        hist_days = hist_row[0] if hist_row else 0
+        hist_min = str(hist_row[1]) if hist_row and hist_row[1] else None
+        hist_max = str(hist_row[2]) if hist_row and hist_row[2] else None
+
+        # Also get total snapshots in gex_history
+        cursor.execute("SELECT COUNT(*) FROM gex_history")
+        hist_snapshots = cursor.fetchone()[0] or 0
 
         # Check vix_daily
         cursor.execute("""
@@ -1743,9 +1758,11 @@ async def get_gex_training_data_status():
 
         conn.close()
 
-        # Determine readiness
+        # Determine readiness - can use either gex_structure_daily or gex_history
         min_records = 100
-        is_ready = gex_count >= min_records
+        usable_records = gex_count if gex_count > 0 else hist_days
+        is_ready = usable_records >= min_records
+        data_source = "gex_structure_daily" if gex_count > 0 else ("gex_history" if hist_days > 0 else "none")
 
         return {
             "success": True,
@@ -1753,7 +1770,16 @@ async def get_gex_training_data_status():
                 "gex_structure_daily": {
                     "count": gex_count,
                     "date_range": f"{gex_min} to {gex_max}" if gex_min else "No data",
-                    "has_data": gex_count > 0
+                    "has_data": gex_count > 0,
+                    "is_primary": True
+                },
+                "gex_history": {
+                    "unique_days": hist_days,
+                    "total_snapshots": hist_snapshots,
+                    "date_range": f"{hist_min} to {hist_max}" if hist_min else "No data",
+                    "has_data": hist_days > 0,
+                    "is_fallback": True,
+                    "note": "Used when gex_structure_daily is empty"
                 },
                 "vix_daily": {
                     "count": vix_count,
@@ -1762,8 +1788,10 @@ async def get_gex_training_data_status():
                 },
                 "readiness": {
                     "is_ready": is_ready,
+                    "data_source": data_source,
+                    "usable_records": usable_records,
                     "min_records_needed": min_records,
-                    "message": "Ready for training" if is_ready else f"Need at least {min_records} GEX records"
+                    "message": f"Ready for training using {data_source}" if is_ready else f"Need at least {min_records} records (have {usable_records})"
                 }
             }
         }
