@@ -560,10 +560,47 @@ async def get_icarus_status():
         status['trading_window_end'] = entry_end
         status['current_time'] = current_time_str
 
+        # CRITICAL FIX: Query database for total realized P&L from closed positions
+        # The trader's get_status() doesn't include total_pnl, causing portfolio sync issues
+        db_total_pnl = 0
+        db_trade_count = 0
+        db_win_count = 0
+        db_open_count = 0
+        db_closed_count = 0
+        today = now.strftime('%Y-%m-%d')
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT
+                    COUNT(*) as total,
+                    SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_count,
+                    SUM(CASE WHEN status IN ('closed', 'expired') THEN 1 ELSE 0 END) as closed_count,
+                    SUM(CASE WHEN status IN ('closed', 'expired') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                    COALESCE(SUM(CASE WHEN status IN ('closed', 'expired') THEN realized_pnl ELSE 0 END), 0) as total_pnl
+                FROM icarus_positions
+            ''')
+            row = cursor.fetchone()
+            conn.close()
+            if row:
+                db_trade_count = row[0] or 0
+                db_open_count = row[1] or 0
+                db_closed_count = row[2] or 0
+                db_win_count = row[3] or 0
+                db_total_pnl = float(row[4] or 0)
+        except Exception as db_err:
+            logger.debug(f"Could not read ICARUS stats from database: {db_err}")
+
+        # Use database values for accurate P&L tracking
+        status['total_pnl'] = db_total_pnl
+        status['trade_count'] = db_trade_count
+        status['win_rate'] = round((db_win_count / db_closed_count) * 100, 1) if db_closed_count > 0 else 0
+        status['open_positions'] = db_open_count
+        status['closed_positions'] = db_closed_count
+
+        # Ensure capital fields exist
         if 'capital' not in status:
             status['capital'] = 100000
-        if 'total_pnl' not in status:
-            status['total_pnl'] = 0
 
         # Calculate current_equity = starting_capital + realized + unrealized (matches equity curve)
         starting_capital = 100000
