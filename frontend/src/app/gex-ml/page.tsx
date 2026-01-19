@@ -510,6 +510,18 @@ export default function GexMLPage() {
             </div>
           </div>
 
+          {/* Scheduled Training Info */}
+          <div className="mt-4 p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+            <div className="flex items-center gap-2 text-sm">
+              <Clock className="w-4 h-4 text-blue-400" />
+              <span className="text-blue-400 font-medium">Auto-Training Schedule:</span>
+              <span className="text-gray-300">Every Sunday at 6:00 PM CT</span>
+            </div>
+            <p className="text-xs text-gray-500 mt-1 ml-6">
+              Models automatically retrain weekly when older than 7 days. Training uses GEX data from SPX and SPY.
+            </p>
+          </div>
+
           {/* Training Result */}
           {trainingResult && (
             <div className="mt-4 p-4 bg-gray-700/30 rounded-lg">
