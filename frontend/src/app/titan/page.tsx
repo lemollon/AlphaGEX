@@ -321,7 +321,7 @@ function PositionCard({ position, isOpen }: { position: IronCondorPosition; isOp
               {isOpen ? (
                 <div>
                   <div className="text-sm text-gray-400">Premium</div>
-                  <div className="text-green-400 font-bold">${position.premium_collected.toFixed(0)}</div>
+                  <div className="text-green-400 font-bold">${position.premium_collected?.toFixed(0) || 0}</div>
                 </div>
               ) : (
                 <div className={`text-xl font-bold ${isPositive ? 'text-green-400' : 'text-red-400'}`}>
