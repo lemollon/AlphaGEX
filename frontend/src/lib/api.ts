@@ -551,6 +551,23 @@ export const apiClient = {
     trade_id?: string
   }) => api.post('/api/ml/score-and-log', null, { params: data }),
 
+  // GEX ML MODELS - For ARGUS/HYPERION
+  getGexModelsStatus: () => api.get('/api/ml/gex-models/status'),
+  getGexModelsDataStatus: () => api.get('/api/ml/gex-models/data-status'),
+  trainGexModels: (data: {
+    symbols?: string[]
+    start_date?: string
+    end_date?: string
+  } = {}) => api.post('/api/ml/gex-models/train', null, { params: data }),
+  getGexModelsPrediction: (data: {
+    spot_price: number
+    net_gamma: number
+    total_gamma: number
+    flip_point?: number
+    vix?: number
+    magnets?: Array<{ strike: number; gamma: number }>
+  }) => api.post('/api/ml/gex-models/predict', null, { params: data }),
+
   // PROMETHEUS - Standalone ML System for SPX Wheel
   getPrometheusStatus: () => api.get('/api/prometheus/status'),
   trainPrometheus: (minSamples: number = 30, calibrate: boolean = true) =>

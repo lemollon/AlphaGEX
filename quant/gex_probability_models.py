@@ -1275,6 +1275,229 @@ class GEXSignalGenerator:
             return False
 
 
+# ==============================================================================
+# WRAPPER CLASS FOR SHARED ENGINE INTEGRATION
+# ==============================================================================
+
+class GEXProbabilityModels:
+    """
+    Wrapper class for ARGUS/HYPERION integration.
+
+    Auto-loads trained models from database on initialization.
+    Provides simplified interface for probability predictions.
+
+    Usage:
+        models = GEXProbabilityModels()  # Auto-loads from DB
+        result = models.predict_magnet_attraction(strike, spot_price, gamma_structure)
+    """
+
+    _instance = None  # Singleton instance
+
+    def __new__(cls):
+        """Singleton pattern - only one instance loads models"""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+
+    def __init__(self):
+        if self._initialized:
+            return
+
+        self._generator = GEXSignalGenerator()
+        self._load_attempted = False
+        self._load_successful = False
+        self._last_load_time = None
+        self._model_info = None
+        self._initialized = True
+
+        # Attempt to load from database
+        self._try_load_from_db()
+
+    def _try_load_from_db(self) -> bool:
+        """Attempt to load models from database"""
+        if self._load_attempted:
+            return self._load_successful
+
+        self._load_attempted = True
+        try:
+            success = self._generator.load_from_db()
+            if success:
+                self._load_successful = True
+                self._last_load_time = datetime.now()
+                # Get model info
+                try:
+                    from quant.model_persistence import get_model_info, MODEL_GEX_PROBABILITY
+                    self._model_info = get_model_info(MODEL_GEX_PROBABILITY)
+                except:
+                    pass
+                logger.info("GEXProbabilityModels: Loaded trained models from database")
+            else:
+                logger.warning("GEXProbabilityModels: No trained models in database")
+            return success
+        except Exception as e:
+            logger.warning(f"GEXProbabilityModels: Failed to load from DB: {e}")
+            return False
+
+    @property
+    def is_trained(self) -> bool:
+        """Check if models are trained and ready"""
+        return self._generator.is_trained
+
+    @property
+    def model_info(self) -> Optional[Dict]:
+        """Get model metadata"""
+        return self._model_info
+
+    def predict_magnet_attraction(
+        self,
+        strike: float,
+        spot_price: float,
+        gamma_structure: Dict
+    ) -> Optional[Dict]:
+        """
+        Predict probability of price being attracted to a strike.
+
+        Args:
+            strike: Strike price to evaluate
+            spot_price: Current spot price
+            gamma_structure: Dict containing gamma data with keys:
+                - net_gamma: Total net gamma
+                - flip_point: Gamma flip point
+                - magnets: List of magnet strikes
+                - vix: Current VIX
+                - gamma_regime: 'POSITIVE', 'NEGATIVE', or 'NEUTRAL'
+
+        Returns:
+            Dict with 'probability' key (0-1), or None if not trained
+        """
+        if not self._generator.is_trained:
+            return None
+
+        try:
+            # Build features dict from gamma_structure
+            features = self._build_features(strike, spot_price, gamma_structure)
+
+            # Get magnet attraction prediction
+            prediction = self._generator.magnet_attraction_model.predict(features)
+
+            return {
+                'probability': prediction.confidence,
+                'prediction': prediction.prediction,
+                'model': 'magnet_attraction'
+            }
+
+        except Exception as e:
+            logger.debug(f"Magnet attraction prediction failed: {e}")
+            return None
+
+    def predict_combined(
+        self,
+        spot_price: float,
+        gamma_structure: Dict
+    ) -> Optional[CombinedSignal]:
+        """
+        Get combined signal from all 5 models.
+
+        Args:
+            spot_price: Current spot price
+            gamma_structure: Dict with gamma data
+
+        Returns:
+            CombinedSignal with direction, confidence, and recommendation
+        """
+        if not self._generator.is_trained:
+            return None
+
+        try:
+            features = self._build_features(spot_price, spot_price, gamma_structure)
+            return self._generator.predict(features)
+        except Exception as e:
+            logger.debug(f"Combined prediction failed: {e}")
+            return None
+
+    def _build_features(
+        self,
+        strike: float,
+        spot_price: float,
+        gamma_structure: Dict
+    ) -> Dict:
+        """Build feature dict for model prediction"""
+        net_gamma = gamma_structure.get('net_gamma', 0)
+        flip_point = gamma_structure.get('flip_point', spot_price)
+        vix = gamma_structure.get('vix', 20)
+        gamma_regime = gamma_structure.get('gamma_regime', 'NEUTRAL')
+        magnets = gamma_structure.get('magnets', [])
+        total_gamma = gamma_structure.get('total_gamma', abs(net_gamma) or 1)
+        expected_move = gamma_structure.get('expected_move', spot_price * 0.01)
+
+        # Find nearest magnet
+        nearest_magnet = None
+        nearest_distance = float('inf')
+        for m in magnets:
+            mag_strike = m.get('strike', m) if isinstance(m, dict) else m
+            dist = abs(mag_strike - spot_price)
+            if dist < nearest_distance:
+                nearest_distance = dist
+                nearest_magnet = mag_strike
+
+        # Calculate derived features
+        distance_to_flip = abs(spot_price - flip_point) / spot_price if flip_point else 0
+        magnet_distance = nearest_distance / spot_price if nearest_magnet else 0.1
+
+        return {
+            # Gamma features
+            'gamma_regime_positive': 1 if gamma_regime == 'POSITIVE' else 0,
+            'gamma_regime_negative': 1 if gamma_regime == 'NEGATIVE' else 0,
+            'net_gamma_normalized': net_gamma / total_gamma if total_gamma else 0,
+            'gamma_ratio_log': np.log1p(abs(net_gamma) / (total_gamma or 1)),
+
+            # Position features
+            'distance_to_flip': distance_to_flip,
+            'distance_to_flip_pct': distance_to_flip * 100,
+            'above_flip': 1 if spot_price > flip_point else 0,
+            'near_magnet': 1 if magnet_distance < 0.005 else 0,
+            'magnet_distance_normalized': magnet_distance,
+            'nearest_magnet_strike': nearest_magnet or spot_price,
+
+            # Volatility features
+            'vix_level': vix,
+            'vix_regime_high': 1 if vix > 25 else 0,
+            'expected_move_pct': (expected_move / spot_price * 100) if spot_price else 1,
+
+            # Pin zone features
+            'open_in_pin_zone': 1 if len(magnets) >= 2 else 0,
+            'pin_zone_width_pct': magnet_distance * 100,
+            'top_magnet_concentration': 0.5,  # Default
+
+            # Time features
+            'is_opex_week': 0,  # Would need date calculation
+            'day_of_week': datetime.now().weekday(),
+
+            # Price features
+            'spot_open': spot_price,
+            'spot_price': spot_price,
+            'strike': strike,
+        }
+
+    def get_model_staleness_hours(self) -> Optional[float]:
+        """Get hours since model was trained"""
+        if not self._model_info:
+            return None
+        try:
+            created_at = datetime.fromisoformat(self._model_info['created_at'].replace('Z', '+00:00'))
+            return (datetime.now(created_at.tzinfo) - created_at).total_seconds() / 3600
+        except:
+            return None
+
+    def needs_retraining(self, max_age_hours: float = 168) -> bool:
+        """Check if models need retraining (default: 7 days)"""
+        staleness = self.get_model_staleness_hours()
+        if staleness is None:
+            return True  # No model info means needs training
+        return staleness > max_age_hours
+
+
 def main():
     """Train all GEX probability models"""
     import argparse

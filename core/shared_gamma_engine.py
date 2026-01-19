@@ -431,6 +431,101 @@ class SharedGammaEngine:
 
     # ==================== Probability Calculations ====================
 
+    def get_ml_status(self) -> Dict:
+        """
+        Get ML model status for monitoring.
+
+        Returns:
+            Dict with is_trained, model_info, needs_retraining, staleness_hours
+        """
+        ml_models = self._get_ml_models()
+        if not ml_models:
+            return {
+                'is_trained': False,
+                'model_info': None,
+                'needs_retraining': True,
+                'staleness_hours': None,
+                'status': 'NOT_LOADED'
+            }
+
+        return {
+            'is_trained': ml_models.is_trained,
+            'model_info': ml_models.model_info,
+            'needs_retraining': ml_models.needs_retraining(),
+            'staleness_hours': ml_models.get_model_staleness_hours(),
+            'status': 'TRAINED' if ml_models.is_trained else 'NOT_TRAINED'
+        }
+
+    def build_gamma_structure(
+        self,
+        spot_price: float,
+        strikes: List[StrikeData],
+        flip_point: Optional[float] = None,
+        vix: float = 20.0,
+        expected_move: float = None
+    ) -> Dict:
+        """
+        Build gamma_structure dict for ML predictions from strike data.
+
+        Args:
+            spot_price: Current spot price
+            strikes: List of StrikeData objects
+            flip_point: Gamma flip point (calculated if not provided)
+            vix: Current VIX level
+            expected_move: Expected move in dollars
+
+        Returns:
+            Dict suitable for ML model predictions
+        """
+        if not strikes:
+            return {}
+
+        # Calculate total gamma
+        total_gamma = sum(abs(s.net_gamma) for s in strikes)
+
+        # Calculate net gamma (sum of all)
+        net_gamma = sum(s.net_gamma for s in strikes)
+
+        # Find magnets (top 3 by gamma magnitude)
+        sorted_strikes = sorted(strikes, key=lambda s: abs(s.net_gamma), reverse=True)
+        magnets = [{'strike': s.strike, 'gamma': s.net_gamma} for s in sorted_strikes[:3]]
+
+        # Calculate flip point if not provided
+        if flip_point is None:
+            # Find where gamma flips from positive to negative
+            positive_strikes = [s for s in strikes if s.net_gamma > 0]
+            negative_strikes = [s for s in strikes if s.net_gamma < 0]
+
+            if positive_strikes and negative_strikes:
+                pos_center = sum(s.strike for s in positive_strikes) / len(positive_strikes)
+                neg_center = sum(s.strike for s in negative_strikes) / len(negative_strikes)
+                flip_point = (pos_center + neg_center) / 2
+            else:
+                flip_point = spot_price
+
+        # Determine gamma regime
+        if net_gamma > total_gamma * 0.1:
+            gamma_regime = 'POSITIVE'
+        elif net_gamma < -total_gamma * 0.1:
+            gamma_regime = 'NEGATIVE'
+        else:
+            gamma_regime = 'NEUTRAL'
+
+        # Expected move default
+        if expected_move is None:
+            expected_move = spot_price * 0.01  # 1% default
+
+        return {
+            'net_gamma': net_gamma,
+            'total_gamma': total_gamma,
+            'flip_point': flip_point,
+            'magnets': magnets,
+            'vix': vix,
+            'gamma_regime': gamma_regime,
+            'expected_move': expected_move,
+            'spot_price': spot_price
+        }
+
     def calculate_probability_hybrid(self, strike: float, spot_price: float,
                                      net_gamma: float, total_gamma: float,
                                      expected_move: float,
@@ -444,7 +539,7 @@ class SharedGammaEngine:
             net_gamma: Net gamma at this strike
             total_gamma: Total absolute gamma across all strikes
             expected_move: Expected move in dollars
-            gamma_structure: Optional structure for ML model
+            gamma_structure: Optional structure for ML model (built automatically if not provided)
 
         Returns:
             Probability as percentage (0-100)
@@ -467,20 +562,44 @@ class SharedGammaEngine:
 
         # ML component (60% weight)
         ml_probability = distance_probability
+        ml_used = False
 
         ml_models = self._get_ml_models()
-        if ml_models and gamma_structure:
+        if ml_models and ml_models.is_trained:
+            # Build minimal gamma_structure if not provided
+            if gamma_structure is None:
+                gamma_structure = {
+                    'net_gamma': net_gamma,
+                    'total_gamma': total_gamma,
+                    'flip_point': spot_price,  # Default to spot if unknown
+                    'magnets': [{'strike': strike, 'gamma': net_gamma}],
+                    'vix': 20,  # Default VIX
+                    'gamma_regime': 'POSITIVE' if net_gamma > 0 else 'NEGATIVE',
+                    'expected_move': expected_move
+                }
+
             try:
                 ml_result = ml_models.predict_magnet_attraction(
                     strike, spot_price, gamma_structure
                 )
                 if ml_result and 'probability' in ml_result:
                     ml_probability = ml_result['probability'] * 100
+                    ml_used = True
             except Exception as e:
                 logger.debug(f"ML prediction failed, using distance only: {e}")
 
         # Combined probability
         combined = (0.6 * ml_probability) + (0.4 * distance_probability)
+
+        # Log ML usage for monitoring (every 100th call to avoid spam)
+        if hasattr(self, '_ml_call_count'):
+            self._ml_call_count += 1
+        else:
+            self._ml_call_count = 1
+
+        if self._ml_call_count % 100 == 0:
+            logger.info(f"ML probability: used={ml_used}, calls={self._ml_call_count}")
+
         return combined
 
     def calculate_expected_move(self, atm_call_price: float, atm_put_price: float,

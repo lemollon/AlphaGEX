@@ -405,6 +405,26 @@ class ArgusEngine:
         else:
             return GammaRegime.NEUTRAL.value
 
+    def get_ml_status(self) -> Dict:
+        """Get ML model status for monitoring"""
+        ml_models = self._get_ml_models()
+        if not ml_models:
+            return {
+                'is_trained': False,
+                'model_info': None,
+                'needs_retraining': True,
+                'staleness_hours': None,
+                'status': 'NOT_LOADED'
+            }
+
+        return {
+            'is_trained': ml_models.is_trained,
+            'model_info': ml_models.model_info,
+            'needs_retraining': ml_models.needs_retraining() if hasattr(ml_models, 'needs_retraining') else True,
+            'staleness_hours': ml_models.get_model_staleness_hours() if hasattr(ml_models, 'get_model_staleness_hours') else None,
+            'status': 'TRAINED' if ml_models.is_trained else 'NOT_TRAINED'
+        }
+
     def calculate_probability_hybrid(self, strike: float, spot_price: float,
                                      net_gamma: float, total_gamma: float,
                                      expected_move: float,
@@ -446,20 +466,41 @@ class ArgusEngine:
 
         # ML component (60% weight) - try to use ML models
         ml_probability = distance_probability  # Default to distance if no ML
+        ml_used = False
 
         ml_models = self._get_ml_models()
-        if ml_models and gamma_structure:
+        if ml_models and ml_models.is_trained:
+            # Build minimal gamma_structure if not provided
+            if gamma_structure is None:
+                gamma_structure = {
+                    'net_gamma': net_gamma,
+                    'total_gamma': total_gamma,
+                    'flip_point': spot_price,
+                    'magnets': [{'strike': strike, 'gamma': net_gamma}],
+                    'vix': 20,
+                    'gamma_regime': 'POSITIVE' if net_gamma > 0 else 'NEGATIVE',
+                    'expected_move': expected_move
+                }
+
             try:
                 ml_result = ml_models.predict_magnet_attraction(
                     strike, spot_price, gamma_structure
                 )
                 if ml_result and 'probability' in ml_result:
                     ml_probability = ml_result['probability'] * 100
+                    ml_used = True
             except Exception as e:
                 logger.debug(f"ML prediction failed, using distance only: {e}")
 
         # Combined probability
         combined = (0.6 * ml_probability) + (0.4 * distance_probability)
+
+        # Log ML usage periodically
+        if not hasattr(self, '_ml_call_count'):
+            self._ml_call_count = 0
+        self._ml_call_count += 1
+        if self._ml_call_count % 500 == 0:
+            logger.info(f"ARGUS ML probability: used={ml_used}, calls={self._ml_call_count}")
 
         return combined
 
@@ -934,14 +975,42 @@ class ArgusEngine:
         if expected_move == 0:
             expected_move = spot_price * 0.01  # 1% default
 
-        # Calculate probabilities for all strikes
+        # Build gamma_structure for ML predictions
+        # Find magnets early (top 3 by gamma magnitude)
+        sorted_by_gamma = sorted(strikes_data, key=lambda s: abs(s.net_gamma), reverse=True)
+        top_magnets = [{'strike': s.strike, 'gamma': s.net_gamma} for s in sorted_by_gamma[:3]]
+
+        # Calculate flip point (weighted average of positive/negative gamma centers)
+        positive_strikes = [s for s in strikes_data if s.net_gamma > 0]
+        negative_strikes = [s for s in strikes_data if s.net_gamma < 0]
+        if positive_strikes and negative_strikes:
+            pos_center = sum(s.strike * abs(s.net_gamma) for s in positive_strikes) / sum(abs(s.net_gamma) for s in positive_strikes)
+            neg_center = sum(s.strike * abs(s.net_gamma) for s in negative_strikes) / sum(abs(s.net_gamma) for s in negative_strikes)
+            flip_point = (pos_center + neg_center) / 2
+        else:
+            flip_point = spot_price
+
+        # Build gamma_structure for ML
+        gamma_structure = {
+            'net_gamma': total_net_gamma,
+            'total_gamma': total_gamma,
+            'flip_point': flip_point,
+            'magnets': top_magnets,
+            'vix': vix,
+            'gamma_regime': self.classify_gamma_regime(total_net_gamma),
+            'expected_move': expected_move,
+            'spot_price': spot_price
+        }
+
+        # Calculate probabilities for all strikes using gamma_structure
         for strike_data in strikes_data:
             strike_data.probability = self.calculate_probability_hybrid(
                 strike_data.strike,
                 spot_price,
                 strike_data.net_gamma,
                 total_gamma,
-                expected_move
+                expected_move,
+                gamma_structure  # Pass gamma_structure for ML predictions
             )
 
         # Normalize probabilities to sum to 100%

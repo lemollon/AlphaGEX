@@ -720,12 +720,51 @@ async def fetch_gamma_data(symbol: str, expiration: str) -> dict:
             if random.random() < 0.1:
                 persist_gamma_history(symbol, strike, net_gamma, timestamp, expiration)
 
-        # Calculate probabilities using shared engine
+        # Build gamma_structure for ML predictions before calculating probabilities
+        # Find magnets early (top 3 by gamma magnitude)
+        sorted_by_gamma = sorted(strikes, key=lambda s: abs(s['net_gamma']), reverse=True)
+        top_magnets = [{'strike': s['strike'], 'gamma': s['net_gamma']} for s in sorted_by_gamma[:3]]
+
+        # Calculate flip point (weighted average of positive/negative gamma centers)
+        positive_strikes = [s for s in strikes if s['net_gamma'] > 0]
+        negative_strikes = [s for s in strikes if s['net_gamma'] < 0]
+        if positive_strikes and negative_strikes:
+            pos_weight = sum(abs(s['net_gamma']) for s in positive_strikes)
+            neg_weight = sum(abs(s['net_gamma']) for s in negative_strikes)
+            pos_center = sum(s['strike'] * abs(s['net_gamma']) for s in positive_strikes) / pos_weight if pos_weight else spot_price
+            neg_center = sum(s['strike'] * abs(s['net_gamma']) for s in negative_strikes) / neg_weight if neg_weight else spot_price
+            flip_point = (pos_center + neg_center) / 2
+        else:
+            flip_point = spot_price
+
+        # Determine gamma regime
+        net_gamma_sum = sum(s['net_gamma'] for s in strikes)
+        if net_gamma_sum > total_gamma * 0.1:
+            gamma_regime = 'POSITIVE'
+        elif net_gamma_sum < -total_gamma * 0.1:
+            gamma_regime = 'NEGATIVE'
+        else:
+            gamma_regime = 'NEUTRAL'
+
+        # Build gamma_structure for ML
+        gamma_structure = {
+            'net_gamma': net_gamma_sum,
+            'total_gamma': total_gamma,
+            'flip_point': flip_point,
+            'magnets': top_magnets,
+            'vix': vix,
+            'gamma_regime': gamma_regime,
+            'expected_move': expected_move,
+            'spot_price': spot_price
+        }
+
+        # Calculate probabilities using shared engine with gamma_structure
         if engine:
             for s in strikes:
                 s['probability'] = engine.calculate_probability_hybrid(
                     s['strike'], spot_price, s['net_gamma'],
-                    total_gamma, expected_move
+                    total_gamma, expected_move,
+                    gamma_structure  # Pass gamma_structure for ML predictions
                 )
 
             # Normalize probabilities
