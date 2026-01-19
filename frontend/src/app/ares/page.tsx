@@ -31,6 +31,7 @@ import {
   TodayReportCard,
   LastScanSummary,
   UnrealizedPnLCard,
+  HedgeSignalCard,
 } from '@/components/trader'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
 import DriftStatusCard from '@/components/DriftStatusCard'
@@ -680,8 +681,18 @@ export default function AresPage() {
                   isValidating={livePnLValidating}
                 />
 
+                {/* Current Hedge Signal from VIX Dashboard */}
+                <HedgeSignalCard />
+
                 {/* Performance Drift - Backtest vs Live */}
                 <DriftStatusCard botName="ARES" />
+
+                {/* Equity Curve - Using Shared Component */}
+                <EquityCurveChart
+                  title="ARES Equity Curve"
+                  botFilter="ARES"
+                  showIntradayOption={true}
+                />
 
                 {/* Open Positions */}
                 <BotCard title="Open Positions" icon={<Crosshair className="h-5 w-5" />}>
@@ -695,13 +706,6 @@ export default function AresPage() {
                     </div>
                   )}
                 </BotCard>
-
-                {/* Equity Curve - Using Shared Component */}
-                <EquityCurveChart
-                  title="ARES Equity Curve"
-                  botFilter="ARES"
-                  showIntradayOption={true}
-                />
               </>
             )}
 

@@ -32,6 +32,7 @@ import {
   BotName,
   BotStatusBanner,
   UnrealizedPnLCard,
+  HedgeSignalCard,
 } from '@/components/trader'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
 import DriftStatusCard from '@/components/DriftStatusCard'
@@ -723,8 +724,18 @@ export default function PegasusPage() {
                   isValidating={livePnLValidating}
                 />
 
+                {/* VIX Hedge Signal */}
+                <HedgeSignalCard />
+
                 {/* Performance Drift - Backtest vs Live */}
                 <DriftStatusCard botName="PEGASUS" />
+
+                {/* Equity Curve - Using Shared Component */}
+                <EquityCurveChart
+                  title="PEGASUS Equity Curve"
+                  botFilter="PEGASUS"
+                  showIntradayOption={true}
+                />
 
                 {/* Open Positions */}
                 <BotCard title="Open Positions" icon={<Crosshair className="h-5 w-5" />}>
@@ -738,13 +749,6 @@ export default function PegasusPage() {
                     </div>
                   )}
                 </BotCard>
-
-                {/* Equity Curve - Using Shared Component */}
-                <EquityCurveChart
-                  title="PEGASUS Equity Curve"
-                  botFilter="PEGASUS"
-                  showIntradayOption={true}
-                />
               </>
             )}
 
