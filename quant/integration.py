@@ -1,12 +1,14 @@
 """
 Quant Module Integration with AlphaGEX
 
-This module integrates the four quant enhancements with the existing AlphaGEX system:
+This module integrates quant enhancements with the existing AlphaGEX system:
 
-1. ML Regime Classifier -> Enhances market_regime_classifier.py
-2. Walk-Forward Optimizer -> Validates backtest results
-3. Ensemble Strategy Weighting -> Improves strategy selection in autonomous_paper_trader.py
-4. Monte Carlo Kelly -> Safer position sizing in position_sizer.py
+1. Walk-Forward Optimizer -> Validates backtest results
+2. Monte Carlo Kelly -> Safer position sizing in position_sizer.py
+3. Oracle Advisor -> Primary decision maker (replaced ML Regime Classifier and Ensemble)
+
+Note: ML Regime Classifier and Ensemble Strategy were removed in January 2025.
+Oracle is now the sole decision authority for all trading bots.
 
 Usage:
     from quant.integration import QuantEnhancedTrader
@@ -15,7 +17,7 @@ Usage:
     recommendation = trader.get_enhanced_recommendation(market_data)
 
 Author: AlphaGEX Quant
-Date: 2025-12-03
+Date: 2025-12-03 (Updated: 2026-01)
 """
 
 import json
@@ -23,30 +25,73 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
-# Import quant modules
-from .ml_regime_classifier import (
-    MLRegimeClassifier,
-    get_ml_regime_prediction,
-    train_regime_classifier,
-    MLPrediction
-)
-from .walk_forward_optimizer import (
-    WalkForwardOptimizer,
-    run_walk_forward_validation,
-    WalkForwardResult
-)
-from .ensemble_strategy import (
-    EnsembleStrategyWeighter,
-    get_ensemble_signal,
-    EnsembleSignal,
-    StrategySignal
-)
-from .monte_carlo_kelly import (
-    MonteCarloKelly,
-    get_safe_position_size,
-    validate_current_sizing,
-    KellyStressTest
-)
+# Import quant modules - with graceful fallbacks for removed modules
+ML_REGIME_AVAILABLE = False
+ENSEMBLE_AVAILABLE = False
+
+# ML Regime Classifier - REMOVED, Oracle handles this now
+try:
+    from .ml_regime_classifier import (
+        MLRegimeClassifier,
+        get_ml_regime_prediction,
+        train_regime_classifier,
+        MLPrediction
+    )
+    ML_REGIME_AVAILABLE = True
+except ImportError:
+    # Stub classes for removed module
+    MLRegimeClassifier = None
+    MLPrediction = None
+    def get_ml_regime_prediction(*args, **kwargs):
+        return None
+    def train_regime_classifier(*args, **kwargs):
+        return None
+
+# Walk-Forward Optimizer (still active)
+try:
+    from .walk_forward_optimizer import (
+        WalkForwardOptimizer,
+        run_walk_forward_validation,
+        WalkForwardResult
+    )
+except ImportError:
+    WalkForwardOptimizer = None
+    WalkForwardResult = None
+    def run_walk_forward_validation(*args, **kwargs):
+        return None
+
+# Ensemble Strategy - REMOVED, Oracle is sole authority
+try:
+    from .ensemble_strategy import (
+        EnsembleStrategyWeighter,
+        get_ensemble_signal,
+        EnsembleSignal,
+        StrategySignal
+    )
+    ENSEMBLE_AVAILABLE = True
+except ImportError:
+    # Stub classes for removed module
+    EnsembleStrategyWeighter = None
+    EnsembleSignal = None
+    StrategySignal = None
+    def get_ensemble_signal(*args, **kwargs):
+        return None
+
+# Monte Carlo Kelly (still active)
+try:
+    from .monte_carlo_kelly import (
+        MonteCarloKelly,
+        get_safe_position_size,
+        validate_current_sizing,
+        KellyStressTest
+    )
+except ImportError:
+    MonteCarloKelly = None
+    KellyStressTest = None
+    def get_safe_position_size(*args, **kwargs):
+        return 0.02  # Default 2%
+    def validate_current_sizing(*args, **kwargs):
+        return True
 
 # Database
 try:
