@@ -460,7 +460,7 @@ class SignalGenerator:
 
         return round(debit, 2), round(max_profit, 2), round(max_loss, 2)
 
-    def generate_signal(self) -> Optional[TradeSignal]:
+    def generate_signal(self, oracle_data: Optional[Dict[str, Any]] = None) -> Optional[TradeSignal]:
         """
         Generate a trading signal.
 
@@ -468,6 +468,10 @@ class SignalGenerator:
         - 10% wall filter (much more room to trade)
         - 40% min win probability
         - 0.5 min R:R ratio
+
+        Args:
+            oracle_data: Pre-fetched Oracle advice (optional). If provided, uses this
+                        instead of making a new Oracle call for consistency.
         """
         # Step 1: Get GEX data
         gex_data = self.get_gex_data()
@@ -493,7 +497,12 @@ class SignalGenerator:
         ml_win_prob = ml_signal.get('win_probability', 0) if ml_signal else 0
 
         # Step 2b: Get Oracle advice (BACKUP SOURCE)
-        oracle = self.get_oracle_advice(gex_data)
+        # Use pre-fetched oracle_data if provided to avoid double Oracle calls
+        if oracle_data is not None:
+            oracle = oracle_data
+            logger.info(f"[ICARUS] Using pre-fetched Oracle data: advice={oracle.get('advice', 'UNKNOWN')}")
+        else:
+            oracle = self.get_oracle_advice(gex_data)
         oracle_direction = oracle.get('direction', 'FLAT') if oracle else 'FLAT'
         oracle_confidence = oracle.get('confidence', 0) if oracle else 0
         oracle_win_prob = oracle.get('win_probability', 0) if oracle else 0

@@ -657,11 +657,16 @@ class SignalGenerator:
 
         return None
 
-    def generate_signal(self) -> Optional[IronCondorSignal]:
+    def generate_signal(self, oracle_data: Optional[Dict[str, Any]] = None) -> Optional[IronCondorSignal]:
         """
         Generate an Iron Condor signal.
 
         This is the MAIN entry point for signal generation.
+
+        Args:
+            oracle_data: Pre-fetched Oracle advice (optional). If provided, uses this
+                        instead of making a new Oracle call. This ensures consistency
+                        between what's displayed in scan logs and what's used for trading.
 
         Returns signal with FULL context for audit trail:
         - Market data (spot, VIX, expected move)
@@ -728,7 +733,13 @@ class SignalGenerator:
         ml_confidence = ml_prediction.get('confidence', 0) if ml_prediction else 0
 
         # Step 2b: Get Oracle advice (BACKUP SOURCE)
-        oracle = self.get_oracle_advice(market_data)
+        # Use pre-fetched oracle_data if provided to avoid double Oracle calls
+        # This ensures consistency between scan logs display and trade decision
+        if oracle_data is not None:
+            oracle = oracle_data
+            logger.info(f"[ARES] Using pre-fetched Oracle data: advice={oracle.get('advice', 'UNKNOWN')}")
+        else:
+            oracle = self.get_oracle_advice(market_data)
         oracle_win_prob = oracle.get('win_probability', 0) if oracle else 0
         oracle_confidence = oracle.get('confidence', 0.7) if oracle else 0.7
         oracle_advice = oracle.get('advice', 'SKIP_TODAY') if oracle else 'SKIP_TODAY'

@@ -295,7 +295,8 @@ class ARESTrader(MathOptimizerMixin):
                         result['details']['ic_suitability'] = strategy_rec.ic_suitability
 
             # Step 6: Try to open new position
-            position, signal = self._try_new_entry_with_context()
+            # Pass early-fetched oracle_data to avoid double Oracle call (bug fix)
+            position, signal = self._try_new_entry_with_context(oracle_data=scan_context.get('oracle_data'))
             if position:
                 result['trade_opened'] = True
                 result['action'] = 'opened' if result['action'] == 'none' else 'both'
@@ -1354,8 +1355,13 @@ class ARESTrader(MathOptimizerMixin):
 
         return False, ""
 
-    def _try_new_entry_with_context(self) -> tuple[Optional[IronCondorPosition], Optional[Any]]:
-        """Try to open a new Iron Condor, returning both position and signal for logging"""
+    def _try_new_entry_with_context(self, oracle_data: dict = None) -> tuple[Optional[IronCondorPosition], Optional[Any]]:
+        """Try to open a new Iron Condor, returning both position and signal for logging
+
+        Args:
+            oracle_data: Pre-fetched Oracle advice from run_cycle(). Passed to generate_signal()
+                        to ensure consistency between scan logs and trade decision.
+        """
         from .signals import IronCondorSignal
 
         # MATH OPTIMIZER: Check regime before generating signal
@@ -1372,8 +1378,8 @@ class ARESTrader(MathOptimizerMixin):
             except Exception as e:
                 logger.debug(f"Regime check skipped: {e}")
 
-        # Generate signal
-        signal = self.signals.generate_signal()
+        # Generate signal - pass pre-fetched oracle_data to avoid double Oracle call
+        signal = self.signals.generate_signal(oracle_data=oracle_data)
         if not signal:
             self.db.log("INFO", "No valid signal generated")
             return None, None

@@ -575,8 +575,13 @@ class SignalGenerator:
             'max_loss': round(max_loss, 2),
         }
 
-    def generate_signal(self) -> Optional[IronCondorSignal]:
-        """Generate SPX Iron Condor signal with FULL Oracle/Kronos context"""
+    def generate_signal(self, oracle_data: Optional[Dict[str, Any]] = None) -> Optional[IronCondorSignal]:
+        """Generate SPX Iron Condor signal with FULL Oracle/Kronos context
+
+        Args:
+            oracle_data: Pre-fetched Oracle advice (optional). If provided, uses this
+                        instead of making a new Oracle call for consistency.
+        """
         market = self.get_market_data()
         if not market:
             return None
@@ -596,7 +601,12 @@ class SignalGenerator:
         ml_confidence = ml_prediction.get('confidence', 0) if ml_prediction else 0
 
         # Get Oracle advice (BACKUP SOURCE)
-        oracle = self.get_oracle_advice(market)
+        # Use pre-fetched oracle_data if provided to avoid double Oracle calls
+        if oracle_data is not None:
+            oracle = oracle_data
+            logger.info(f"[PEGASUS] Using pre-fetched Oracle data: advice={oracle.get('advice', 'UNKNOWN')}")
+        else:
+            oracle = self.get_oracle_advice(market)
         oracle_win_prob = oracle.get('win_probability', 0) if oracle else 0
         oracle_confidence = oracle.get('confidence', 0.7) if oracle else 0.7
 

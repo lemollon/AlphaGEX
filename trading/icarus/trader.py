@@ -261,7 +261,8 @@ class ICARUSTrader(MathOptimizerMixin):
             # Step 3: Look for new entry if we have capacity
             open_positions = self.db.get_open_positions()
             if len(open_positions) < self.config.max_open_positions:
-                position, signal = self._try_new_entry_with_context()
+                # Pass early-fetched oracle_data to avoid double Oracle call (bug fix)
+                position, signal = self._try_new_entry_with_context(oracle_data=scan_context.get('oracle_data'))
                 result['trades_opened'] = 1 if position else 0
                 if position:
                     result['action'] = 'opened'
@@ -791,8 +792,13 @@ class ICARUSTrader(MathOptimizerMixin):
 
         return False, ""
 
-    def _try_new_entry_with_context(self) -> tuple[Optional[SpreadPosition], Optional[Any]]:
-        """Try to open a new position, returning both position and signal."""
+    def _try_new_entry_with_context(self, oracle_data: dict = None) -> tuple[Optional[SpreadPosition], Optional[Any]]:
+        """Try to open a new position, returning both position and signal.
+
+        Args:
+            oracle_data: Pre-fetched Oracle advice from run_cycle(). Passed to generate_signal()
+                        to ensure consistency between scan logs and trade decision.
+        """
         from typing import Any
 
         # MATH OPTIMIZER: Check regime before generating signal
@@ -808,8 +814,8 @@ class ICARUSTrader(MathOptimizerMixin):
             except Exception as e:
                 logger.debug(f"Regime check skipped: {e}")
 
-        # Generate signal
-        signal = self.signals.generate_signal()
+        # Generate signal - pass pre-fetched oracle_data to avoid double Oracle call
+        signal = self.signals.generate_signal(oracle_data=oracle_data)
         if not signal:
             self.db.log("INFO", "No valid signal generated")
             return None, None
