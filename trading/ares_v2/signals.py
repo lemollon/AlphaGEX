@@ -633,7 +633,7 @@ class SignalGenerator:
                     'trend_direction': getattr(prediction, 'trend_direction', ''),
                     'trend_strength': getattr(prediction, 'trend_strength', 0),
                     'position_in_range_pct': getattr(prediction, 'position_in_range_pct', 50.0),
-                    'wall_filter_passed': getattr(prediction, 'wall_filter_passed', False),
+                    # wall_filter removed - not applicable to ARES Iron Condors
                 }
         except Exception as e:
             logger.warning(f"Oracle advice error: {e}")

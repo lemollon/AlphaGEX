@@ -218,13 +218,16 @@ class ICARUSTrader(MathOptimizerMixin):
             # CRITICAL: Fetch market data FIRST for ALL scans
             # This ensures we log comprehensive data even for skipped scans
             try:
+                # Use get_market_data() which includes expected_move (required for Oracle)
+                market_data = self.signals.get_market_data() if hasattr(self.signals, 'get_market_data') else None
                 gex_data = self.signals.get_gex_data()
+
                 if gex_data:
                     scan_context['market_data'] = {
                         'underlying_price': gex_data.get('spot_price', 0),
                         'symbol': self.config.ticker,
                         'vix': gex_data.get('vix', 0),
-                        'expected_move': gex_data.get('expected_move', 0),
+                        'expected_move': market_data.get('expected_move', 0) if market_data else 0,
                     }
                     scan_context['gex_data'] = {
                         'regime': gex_data.get('gex_regime', 'UNKNOWN'),
@@ -233,9 +236,9 @@ class ICARUSTrader(MathOptimizerMixin):
                         'put_wall': gex_data.get('put_wall', 0),
                         'flip_point': gex_data.get('flip_point', 0),
                     }
-                    # Also fetch Oracle advice for visibility
+                    # Fetch Oracle advice using FULL market_data (includes expected_move)
                     try:
-                        oracle_advice = self.signals.get_oracle_advice(gex_data)
+                        oracle_advice = self.signals.get_oracle_advice(market_data if market_data else gex_data)
                         if oracle_advice:
                             scan_context['oracle_data'] = oracle_advice
                     except Exception as e:
