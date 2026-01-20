@@ -30,7 +30,7 @@ import {
   ChevronUp,
   RefreshCw
 } from 'lucide-react'
-import { apiClient } from '@/lib/api'
+import { api } from '@/lib/api'
 
 // Types
 interface TradeSetup {
@@ -96,10 +96,9 @@ export function TradeSetupDetector({ symbol = 'SPY' }: { symbol?: string }) {
   useEffect(() => {
     const fetchSetup = async () => {
       try {
-        const res = await fetch(`/api/argus/trade-setups?symbol=${symbol}`)
-        const data = await res.json()
-        if (data.success) {
-          setSetup(data.data)
+        const response = await api.get(`/api/argus/trade-setups?symbol=${symbol}`)
+        if (response.data?.success) {
+          setSetup(response.data.data)
         }
       } catch (error) {
         console.error('Error fetching trade setup:', error)
@@ -222,10 +221,9 @@ export function OptimalStrikes({ symbol = 'SPY' }: { symbol?: string }) {
   useEffect(() => {
     const fetchStrikes = async () => {
       try {
-        const res = await fetch(`/api/argus/optimal-strikes?symbol=${symbol}`)
-        const data = await res.json()
-        if (data.success) {
-          setStrikes(data.data)
+        const response = await api.get(`/api/argus/optimal-strikes?symbol=${symbol}`)
+        if (response.data?.success) {
+          setStrikes(response.data.data)
         }
       } catch (error) {
         console.error('Error fetching optimal strikes:', error)
@@ -315,10 +313,9 @@ export function PatternOutcomes({ symbol = 'SPY' }: { symbol?: string }) {
   useEffect(() => {
     const fetchPatterns = async () => {
       try {
-        const res = await fetch(`/api/argus/pattern-outcomes?symbol=${symbol}`)
-        const data = await res.json()
-        if (data.success && data.data.patterns) {
-          setPatterns(data.data.patterns)
+        const response = await api.get(`/api/argus/pattern-outcomes?symbol=${symbol}`)
+        if (response.data?.success && response.data?.data?.patterns) {
+          setPatterns(response.data.data.patterns)
         }
       } catch (error) {
         console.error('Error fetching patterns:', error)
@@ -420,10 +417,9 @@ export function PinAccuracyTracker({ symbol = 'SPY' }: { symbol?: string }) {
   useEffect(() => {
     const fetchAccuracy = async () => {
       try {
-        const res = await fetch(`/api/argus/pin-accuracy?symbol=${symbol}`)
-        const data = await res.json()
-        if (data.success && data.data.accuracy_by_period) {
-          setAccuracy(data.data.accuracy_by_period)
+        const response = await api.get(`/api/argus/pin-accuracy?symbol=${symbol}`)
+        if (response.data?.success && response.data?.data?.accuracy_by_period) {
+          setAccuracy(response.data.data.accuracy_by_period)
         }
       } catch (error) {
         console.error('Error fetching pin accuracy:', error)
@@ -486,10 +482,9 @@ export function GammaDecayVisualization({ symbol = 'SPY' }: { symbol?: string })
   useEffect(() => {
     const fetchDecay = async () => {
       try {
-        const res = await fetch(`/api/argus/gamma-decay?symbol=${symbol}`)
-        const data = await res.json()
-        if (data.success) {
-          setDecay(data.data)
+        const response = await api.get(`/api/argus/gamma-decay?symbol=${symbol}`)
+        if (response.data?.success) {
+          setDecay(response.data.data)
         }
       } catch (error) {
         console.error('Error fetching gamma decay:', error)

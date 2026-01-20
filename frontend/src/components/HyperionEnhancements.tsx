@@ -31,6 +31,7 @@ import {
   Zap,
   Sun
 } from 'lucide-react'
+import { api } from '@/lib/api'
 
 // Types
 interface WeeklySetup {
@@ -102,10 +103,9 @@ export function WeeklySetupScanner({ symbol = 'AAPL' }: { symbol?: string }) {
   useEffect(() => {
     const fetchSetups = async () => {
       try {
-        const res = await fetch(`/api/hyperion/weekly-setups?symbol=${symbol}`)
-        const data = await res.json()
-        if (data.success && data.data.setups) {
-          setSetups(data.data.setups)
+        const response = await api.get(`/api/hyperion/weekly-setups?symbol=${symbol}`)
+        if (response.data?.success && response.data?.data?.setups) {
+          setSetups(response.data.data.setups)
         }
       } catch (error) {
         console.error('Error fetching weekly setups:', error)
@@ -232,10 +232,9 @@ export function GammaTrend({ symbol = 'AAPL', days = 5 }: { symbol?: string, day
   useEffect(() => {
     const fetchTrend = async () => {
       try {
-        const res = await fetch(`/api/hyperion/gamma-trend?symbol=${symbol}&days=${days}`)
-        const data = await res.json()
-        if (data.success) {
-          setTrend(data.data)
+        const response = await api.get(`/api/hyperion/gamma-trend?symbol=${symbol}&days=${days}`)
+        if (response.data?.success) {
+          setTrend(response.data.data)
         }
       } catch (error) {
         console.error('Error fetching gamma trend:', error)
@@ -363,10 +362,9 @@ export function OPEXAnalysisPanel({ symbol = 'AAPL' }: { symbol?: string }) {
   useEffect(() => {
     const fetchOpex = async () => {
       try {
-        const res = await fetch(`/api/hyperion/opex-analysis?symbol=${symbol}`)
-        const data = await res.json()
-        if (data.success) {
-          setOpex(data.data)
+        const response = await api.get(`/api/hyperion/opex-analysis?symbol=${symbol}`)
+        if (response.data?.success) {
+          setOpex(response.data.data)
         }
       } catch (error) {
         console.error('Error fetching OPEX analysis:', error)
