@@ -590,24 +590,35 @@ class SignalGenerator:
         use_ml_prediction = ml_prediction is not None and ml_win_prob > 0
         effective_win_prob = ml_win_prob if use_ml_prediction else oracle_win_prob
         confidence = ml_confidence if use_ml_prediction else oracle_confidence
-        prediction_source = "ARES_ML_ADVISOR" if use_ml_prediction else "ORACLE"
+        prediction_source = "TITAN_ML_ADVISOR" if use_ml_prediction else "ORACLE"
 
         # ============================================================
-        # ORACLE IS THE GOD: If Oracle says TRADE, we TRADE
-        # No min_win_probability threshold check - Oracle's word is final
+        # ML IS PRIMARY, ORACLE IS BACKUP
+        # Check ML's advice when ML is available, otherwise check Oracle
         # ============================================================
         oracle_says_trade = oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
-        ml_oracle_says_trade = oracle_says_trade
 
-        # Log Oracle decision
+        # BUG FIX: ML prediction has advice too - use it when ML is primary!
+        ml_advice = ml_prediction.get('advice', 'SKIP_TODAY') if ml_prediction else 'SKIP_TODAY'
+        ml_says_trade = ml_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
+
+        # Use ML's decision when it's the primary source, otherwise Oracle
+        if use_ml_prediction:
+            ml_oracle_says_trade = ml_says_trade
+            effective_advice = ml_advice
+        else:
+            ml_oracle_says_trade = oracle_says_trade
+            effective_advice = oracle_advice
+
+        # Log decision
         if ml_oracle_says_trade:
-            logger.info(f"[TITAN] ORACLE SAYS TRADE: {oracle_advice} - {prediction_source} = {effective_win_prob:.0%} win prob")
+            logger.info(f"[TITAN] {prediction_source} SAYS TRADE: {effective_advice} - win prob = {effective_win_prob:.0%}")
             # Check what VIX would have done (for logging only)
             can_trade, vix_reason = self.check_vix_filter(vix)
             if not can_trade:
-                logger.info(f"[TITAN] VIX would have blocked ({vix_reason}) but ORACLE SAYS TRADE - proceeding")
+                logger.info(f"[TITAN] VIX would have blocked ({vix_reason}) but {prediction_source} SAYS TRADE - proceeding")
         else:
-            logger.info(f"[TITAN SKIP] Oracle says {oracle_advice} - respecting Oracle's decision")
+            logger.info(f"[TITAN SKIP] {prediction_source} says {effective_advice} - respecting decision")
             return None
 
         # Log ML analysis FIRST (PRIMARY source)
@@ -751,9 +762,9 @@ class SignalGenerator:
             confidence=confidence,
             reasoning=reasoning,
             source=strikes.get('source', 'SD'),
-            # Oracle context (CRITICAL for audit)
-            oracle_win_probability=oracle['win_probability'] if oracle else 0,
-            oracle_advice=oracle['advice'] if oracle else '',
+            # ML/Oracle context (CRITICAL for audit)
+            oracle_win_probability=effective_win_prob,
+            oracle_advice=effective_advice,  # Use effective_advice (ML if available, else Oracle)
             oracle_confidence=oracle['confidence'] if oracle else 0,
             oracle_top_factors=oracle['top_factors'] if oracle else [],
             oracle_suggested_sd=oracle['suggested_sd_multiplier'] if oracle else self.config.sd_multiplier,
