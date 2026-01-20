@@ -506,13 +506,10 @@ class SignalGenerator:
         prediction_source = "ML_5_MODEL_ENSEMBLE" if use_ml_prediction else "ORACLE"
 
         # ============================================================
-        # ML IS PRIMARY, ORACLE IS BACKUP
-        # If ML has valid signal with good win probability, use it
-        # Otherwise fall back to Oracle's advice
+        # ORACLE IS THE GOD: If Oracle says TRADE, we TRADE
+        # No min_win_probability threshold check - Oracle's word is final
         # ============================================================
         oracle_says_trade = oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
-        # BUG FIX: ML doesn't have 'advice' field, so check win_probability >= 0.45 as "ML says trade"
-        ml_says_trade = use_ml_prediction and ml_win_prob >= 0.45 and ml_direction in ('BULLISH', 'BEARISH')
 
         # FLAT/NEUTRAL is NOT an excuse for blocking trades when Oracle says TRADE
         # Use Oracle's suitability scores to derive direction, fallback to GEX walls
@@ -540,18 +537,13 @@ class SignalGenerator:
                     effective_direction = "BULLISH"  # Default
                     logger.info(f"[ICARUS] Direction defaulted to BULLISH")
 
-        # Use ML's decision when it's available and valid, otherwise Oracle
-        # BUG FIX: Check ML says trade OR Oracle says trade (not just Oracle)
-        ml_oracle_says_trade = (ml_says_trade or oracle_says_trade) and effective_direction in ('BULLISH', 'BEARISH')
+        ml_oracle_says_trade = oracle_says_trade and effective_direction in ('BULLISH', 'BEARISH')
 
-        # Log decision
+        # Log Oracle decision
         if ml_oracle_says_trade:
-            if ml_says_trade:
-                logger.info(f"[ICARUS] ML SAYS TRADE: {prediction_source} = {effective_direction} @ {effective_win_prob:.0%}")
-            else:
-                logger.info(f"[ICARUS] ORACLE SAYS TRADE: {oracle_advice} - {effective_direction} @ {effective_win_prob:.0%}")
+            logger.info(f"[ICARUS] ORACLE SAYS TRADE: {oracle_advice} - {prediction_source} = {effective_direction} @ {effective_win_prob:.0%}")
         else:
-            logger.info(f"[ICARUS] {prediction_source} advice: {oracle_advice}, direction: {effective_direction} @ {effective_win_prob:.0%}")
+            logger.info(f"[ICARUS] Oracle advice: {oracle_advice}, direction: {effective_direction} @ {effective_win_prob:.0%}")
 
         # ============================================================
         # STEP 3: IF ML/ORACLE SAYS TRADE, BYPASS TRADITIONAL FILTERS

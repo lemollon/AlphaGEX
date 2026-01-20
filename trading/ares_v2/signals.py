@@ -740,34 +740,23 @@ class SignalGenerator:
         prediction_source = "ARES_ML_ADVISOR" if use_ml_prediction else "ORACLE"
 
         # ============================================================
-        # ML IS PRIMARY, ORACLE IS BACKUP
-        # Check ML's advice when ML is available, otherwise check Oracle
+        # ORACLE IS THE GOD: If Oracle says TRADE, we TRADE
+        # No min_win_probability threshold check - Oracle's word is final
         # ============================================================
         oracle_says_trade = oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
+        ml_oracle_says_trade = oracle_says_trade
 
-        # BUG FIX: ML prediction has advice too - use it when ML is primary!
-        ml_advice = ml_prediction.get('advice', 'SKIP_TODAY') if ml_prediction else 'SKIP_TODAY'
-        ml_says_trade = ml_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
-
-        # Use ML's decision when it's the primary source, otherwise Oracle
-        if use_ml_prediction:
-            ml_oracle_says_trade = ml_says_trade
-            effective_advice = ml_advice
-        else:
-            ml_oracle_says_trade = oracle_says_trade
-            effective_advice = oracle_advice
-
-        # Log decision
+        # Log Oracle decision
         if ml_oracle_says_trade:
-            logger.info(f"[ARES] {prediction_source} SAYS TRADE: {effective_advice} - win prob = {effective_win_prob:.0%}")
+            logger.info(f"[ARES] ORACLE SAYS TRADE: {oracle_advice} - {prediction_source} = {effective_win_prob:.0%} win prob")
         else:
-            logger.info(f"[ARES] {prediction_source} advice: {effective_advice}, win prob: {effective_win_prob:.0%}")
+            logger.info(f"[ARES] Oracle advice: {oracle_advice}, win prob: {effective_win_prob:.0%}")
 
         # ============================================================
-        # Step 3: ML/ORACLE SAYS NO TRADE - RESPECT THE DECISION
+        # Step 3: ORACLE SAYS NO TRADE - RESPECT ORACLE'S DECISION
         # ============================================================
         if not ml_oracle_says_trade:
-            logger.info(f"[ARES SKIP] {prediction_source} says {effective_advice} - respecting decision")
+            logger.info(f"[ARES SKIP] Oracle says {oracle_advice} - respecting Oracle's decision")
             return IronCondorSignal(
                 spot_price=spot,
                 vix=vix,
@@ -776,16 +765,16 @@ class SignalGenerator:
                 put_wall=market_data.get('put_wall', 0),
                 gex_regime=market_data.get('gex_regime', 'UNKNOWN'),
                 confidence=0,
-                reasoning=f"BLOCKED: {prediction_source} advice={effective_advice}, win_prob={effective_win_prob:.0%}",
-                source=f"BLOCKED_{prediction_source}_NO_TRADE",
-                oracle_win_probability=effective_win_prob,
-                oracle_advice=effective_advice,
+                reasoning=f"BLOCKED: Oracle advice={oracle_advice}, win_prob={effective_win_prob:.0%}",
+                source="BLOCKED_ORACLE_NO_TRADE",
+                oracle_win_probability=oracle_win_prob,
+                oracle_advice=oracle_advice,
             )
         else:
-            # ML/Oracle says trade - log that we're bypassing VIX filter if needed
+            # Oracle says trade - log that we're bypassing VIX filter if needed
             can_trade, vix_reason = self.check_vix_filter(vix)
             if not can_trade:
-                logger.info(f"[ARES] VIX would have blocked ({vix_reason}) but {prediction_source} SAYS TRADE - proceeding")
+                logger.info(f"[ARES] VIX would have blocked ({vix_reason}) but ORACLE SAYS TRADE - proceeding")
 
         # Log ML analysis FIRST (PRIMARY source)
         if ml_prediction:
@@ -837,9 +826,10 @@ class SignalGenerator:
                     logger.info(f"  Bot will use its own threshold: {self.config.min_win_probability:.1%}")
 
         # ============================================================
-        # ML/Oracle approved - proceed with trade
+        # ORACLE IS THE GOD - No threshold check needed
+        # If we reached here, Oracle said TRADE. We proceed.
         # ============================================================
-        logger.info(f"[ARES DECISION] {prediction_source} says {effective_advice} - proceeding with trade")
+        logger.info(f"[ARES DECISION] Oracle says {oracle_advice} - proceeding with trade")
         logger.info(f"[ARES] Using {prediction_source} win probability: {effective_win_prob:.1%}")
 
         # Use ML's suggested SD multiplier if available
@@ -934,10 +924,10 @@ class SignalGenerator:
             reasoning=reasoning,
             source=strikes.get('source', 'SD'),
 
-            # ML/Oracle context (FULL for audit)
-            # Use effective values from whichever source was PRIMARY (ML or Oracle)
+            # Oracle context (FULL for audit)
+            # BUG FIX: Use the oracle_advice variable from line 714 for consistency
             oracle_win_probability=win_probability,
-            oracle_advice=effective_advice,  # Use effective_advice (ML if available, else Oracle)
+            oracle_advice=oracle_advice,  # Use local var, not re-fetch with different default
             oracle_confidence=oracle.get('confidence', 0) if oracle else 0,
             oracle_top_factors=oracle.get('top_factors', []) if oracle else [],
             oracle_suggested_sd=oracle.get('suggested_sd_multiplier', 1.0) if oracle else 1.0,
@@ -946,5 +936,5 @@ class SignalGenerator:
         )
 
         logger.info(f"Signal: IC {strikes['put_long']}/{strikes['put_short']}-{strikes['call_short']}/{strikes['call_long']} @ ${pricing['total_credit']:.2f}")
-        logger.info(f"{prediction_source}: Win Prob={win_probability:.0%}, Advice={effective_advice}")
+        logger.info(f"Oracle: Win Prob={win_probability:.0%}, Advice={oracle_advice}")
         return signal
