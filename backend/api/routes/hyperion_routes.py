@@ -877,7 +877,7 @@ async def fetch_gamma_data(symbol: str, expiration: str) -> dict:
                         'pin_strike': likely_pin,
                         'distance_to_pin_pct': round(distance_pct, 2),
                         'message': f'PINNING near ${likely_pin}',
-                        'trade_idea': 'Iron Condor around pin may be favorable'
+                        'trade_idea': f'Iron Condor @ ${likely_pin} may be favorable'
                     }
 
         # Calculate market structure (9 signals)
@@ -1526,18 +1526,19 @@ async def get_hyperion_weekly_setups(
             # Premium Crush Setup (best 2-7 DTE with high gamma concentration)
             if 2 <= dte <= 7 and gamma_regime == 'POSITIVE' and gamma_concentration > 60:
                 iv_rank = 50 + random.randint(-20, 30)  # Would calculate from real IV data
+                pin_strike = magnets[0]['strike'] if magnets else round(spot_price)
                 setups.append({
                     'setup_type': 'PREMIUM_CRUSH',
                     'expiration': exp_date,
                     'dte': dte,
                     'symbol': symbol,
                     'description': f'High gamma concentration ({gamma_concentration:.0f}%) with positive regime',
-                    'trade_idea': 'Sell Iron Condor or Credit Spread around pin strike',
+                    'trade_idea': f'Sell Iron Condor @ ${pin_strike} or Credit Spread around pin',
                     'confidence': min(0.85, 0.5 + gamma_concentration / 200),
                     'metrics': {
                         'gamma_concentration': gamma_concentration,
                         'iv_rank': iv_rank,
-                        'pin_strike': magnets[0]['strike'] if magnets else spot_price,
+                        'pin_strike': pin_strike,
                         'regime': gamma_regime
                     },
                     'risk_level': 'LOW' if gamma_concentration > 70 else 'MEDIUM'
@@ -1551,34 +1552,43 @@ async def get_hyperion_weekly_setups(
                 wall_distance_pct = min(abs(call_wall - spot_price), abs(put_wall - spot_price)) / spot_price * 100
 
                 if wall_distance_pct < 2:
+                    # Determine which wall is closer and direction
+                    call_dist = abs(call_wall - spot_price)
+                    put_dist = abs(put_wall - spot_price)
+                    direction_bias = 'CALL' if call_dist < put_dist else 'PUT'
+                    target_strike = call_wall if direction_bias == 'CALL' else put_wall
                     setups.append({
                         'setup_type': 'DIRECTIONAL_BREAKOUT',
                         'expiration': exp_date,
                         'dte': dte,
                         'symbol': symbol,
-                        'description': f'Negative gamma with price near wall ({wall_distance_pct:.1f}%)',
-                        'trade_idea': 'Buy debit spread or straddle for breakout',
+                        'description': f'Negative gamma with price near {direction_bias.lower()} wall ({wall_distance_pct:.1f}%)',
+                        'trade_idea': f'Buy {direction_bias} debit spread @ ${target_strike} for breakout',
                         'confidence': 0.6 + (2 - wall_distance_pct) / 5,
                         'metrics': {
                             'call_wall': call_wall,
                             'put_wall': put_wall,
+                            'target_strike': target_strike,
                             'wall_distance_pct': wall_distance_pct,
-                            'direction_bias': 'CALL' if spot_price > (call_wall + put_wall) / 2 else 'PUT'
+                            'direction_bias': direction_bias
                         },
                         'risk_level': 'HIGH'
                     })
 
             # Calendar Play Setup (for longer DTEs)
             if dte >= 14 and i < len(expirations) - 1:
+                # Use top magnet strike or ATM
+                calendar_strike = magnets[0]['strike'] if magnets else round(spot_price)
                 setups.append({
                     'setup_type': 'CALENDAR_PLAY',
                     'expiration': exp_date,
                     'dte': dte,
                     'symbol': symbol,
                     'description': 'Gamma differential opportunity between expirations',
-                    'trade_idea': f'Calendar spread: Sell {exp_date}, Buy {expirations[i+1]["date"]}',
+                    'trade_idea': f'Calendar spread @ ${calendar_strike}: Sell {exp_date}, Buy {expirations[i+1]["date"]}',
                     'confidence': 0.55,
                     'metrics': {
+                        'strike': calendar_strike,
                         'front_dte': dte,
                         'back_dte': expirations[i+1]['dte'],
                         'spread_days': expirations[i+1]['dte'] - dte
