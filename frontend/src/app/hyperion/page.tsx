@@ -968,17 +968,18 @@ export default function HyperionPage() {
                       </div>
                     ))}
 
-                    {/* Spot Line */}
+                    {/* Spot Line - key forces re-render when spot_price changes */}
                     {filteredStrikes.length > 1 && (
                       <div
-                        className="absolute bottom-0 top-0 border-l-2 border-dashed border-emerald-400/60 z-10"
+                        key={`spot-line-${gammaData.spot_price.toFixed(2)}`}
+                        className="absolute bottom-0 top-0 border-l-2 border-dashed border-emerald-400/60 z-10 transition-all duration-500 ease-out"
                         style={{
                           left: `${((gammaData.spot_price - filteredStrikes[0].strike) /
                             (filteredStrikes[filteredStrikes.length - 1].strike - filteredStrikes[0].strike)) * 100}%`
                         }}
                       >
-                        <div className="absolute -top-1 left-1 text-[9px] text-emerald-400 font-bold bg-gray-900 px-1 rounded">
-                          SPOT
+                        <div className="absolute -top-1 left-1 text-[9px] text-emerald-400 font-bold bg-gray-900 px-1 rounded whitespace-nowrap">
+                          SPOT ${gammaData.spot_price.toFixed(2)}
                         </div>
                       </div>
                     )}
