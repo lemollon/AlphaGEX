@@ -691,7 +691,14 @@ export default function ArgusPage() {
       const tomorrowDate = getTomorrowExpiration()
       const response = await apiClient.getArgusGamma(selectedSymbol, tomorrowDate)
       if (response.data?.success && response.data?.data) {
-        setTomorrowGammaData(response.data.data)
+        const newData = response.data.data
+        // Skip error responses - only set valid gamma data with strikes
+        if (newData.data_unavailable || !newData.strikes) {
+          console.log('[ARGUS] Tomorrow data unavailable:', newData.message || 'No strikes data')
+          setTomorrowGammaData(null)
+          return
+        }
+        setTomorrowGammaData(newData)
       }
     } catch (err) {
       console.error('[ARGUS] Error fetching tomorrow gamma data:', err)
@@ -2484,11 +2491,11 @@ export default function ArgusPage() {
               {/* Chart */}
               <div className="relative h-52 flex items-end justify-center gap-1 border-b border-gray-700 mb-2">
                 {/* Tomorrow's bars (faded, behind today's) - aligned with today's strikes */}
-                {tomorrowGammaData && gammaData?.strikes && (
+                {tomorrowGammaData?.strikes && gammaData?.strikes && (
                   <div className="absolute inset-0 flex items-end justify-center gap-1 pointer-events-none">
                     {gammaData.strikes.map((todayStrike) => {
                       // Find matching strike in tomorrow's data
-                      const tomorrowStrike = tomorrowGammaData.strikes.find(s => s.strike === todayStrike.strike)
+                      const tomorrowStrike = tomorrowGammaData.strikes?.find(s => s.strike === todayStrike.strike)
                       return (
                         <div
                           key={`tomorrow-${todayStrike.strike}`}
