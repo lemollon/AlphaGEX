@@ -594,53 +594,54 @@ export default function ArgusPage() {
       if (response.data?.success && response.data?.data) {
         const newData = response.data.data
 
-        // If we receive mock data during market hours and have last live data, use last live data
-        if (newData.is_mock && isMarketOpen() && lastLiveDataRef.current) {
-          console.log('[ARGUS] Mock data received during market hours, using last live data')
-          // Keep displaying last live data but mark it as stale
-          setGammaData(prev => prev ? { ...prev, is_stale: true } : lastLiveDataRef.current ? { ...lastLiveDataRef.current, is_stale: true } : null)
-        } else {
-          // MERGE STRATEGY: Only update strikes that changed, preserving array reference stability
-          setGammaData(prev => {
-            if (!prev) return newData
+        // Handle data unavailable response (no mock data - show clear error)
+        if (newData.data_unavailable) {
+          console.log('[ARGUS] Data unavailable:', newData.reason, newData.message)
+          setError(newData.message || 'Data unavailable')
+          setGammaData(null)
+          return
+        }
 
-            // Guard against missing strikes array
-            if (!newData.strikes || !Array.isArray(newData.strikes)) {
-              return newData
-            }
+        // MERGE STRATEGY: Only update strikes that changed, preserving array reference stability
+        setGammaData(prev => {
+          if (!prev) return newData
 
-            // Create a map of previous strikes for quick lookup
-            const prevStrikesMap = new Map(prev.strikes?.map(s => [s.strike, s]) || [])
+          // Guard against missing strikes array
+          if (!newData.strikes || !Array.isArray(newData.strikes)) {
+            return newData
+          }
 
-            // Merge strikes: update existing, add new ones
-            const mergedStrikes = newData.strikes.map((newStrike: StrikeData) => {
-              const prevStrike = prevStrikesMap.get(newStrike.strike)
-              if (!prevStrike) return newStrike
+          // Create a map of previous strikes for quick lookup
+          const prevStrikesMap = new Map(prev.strikes?.map(s => [s.strike, s]) || [])
 
-              // Check if anything actually changed
-              const hasChanged =
-                prevStrike.net_gamma !== newStrike.net_gamma ||
-                prevStrike.probability !== newStrike.probability ||
-                prevStrike.is_magnet !== newStrike.is_magnet ||
-                prevStrike.is_pin !== newStrike.is_pin ||
-                prevStrike.is_danger !== newStrike.is_danger
+          // Merge strikes: update existing, add new ones
+          const mergedStrikes = newData.strikes.map((newStrike: StrikeData) => {
+            const prevStrike = prevStrikesMap.get(newStrike.strike)
+            if (!prevStrike) return newStrike
 
-              // Only return new object if something changed
-              return hasChanged ? newStrike : prevStrike
-            })
+            // Check if anything actually changed
+            const hasChanged =
+              prevStrike.net_gamma !== newStrike.net_gamma ||
+              prevStrike.probability !== newStrike.probability ||
+              prevStrike.is_magnet !== newStrike.is_magnet ||
+              prevStrike.is_pin !== newStrike.is_pin ||
+              prevStrike.is_danger !== newStrike.is_danger
 
-            // Update previous strikes ref for EOD tracking
-            newData.strikes.forEach((s: StrikeData) => {
-              previousStrikesRef.current.set(s.strike, s)
-            })
-
-            return { ...newData, strikes: mergedStrikes }
+            // Only return new object if something changed
+            return hasChanged ? newStrike : prevStrike
           })
 
-          // Store live data for fallback during market hours
-          if (!newData.is_mock) {
-            setLastLiveData(newData)
-          }
+          // Update previous strikes ref for EOD tracking
+          newData.strikes.forEach((s: StrikeData) => {
+            previousStrikesRef.current.set(s.strike, s)
+          })
+
+          return { ...newData, strikes: mergedStrikes }
+        })
+
+        // Store live data for fallback during market hours
+        if (!newData.is_mock) {
+          setLastLiveData(newData)
         }
 
         // Use backend's data_timestamp (when Tradier data was actually fetched)

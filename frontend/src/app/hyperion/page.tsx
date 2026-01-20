@@ -267,6 +267,15 @@ export default function HyperionPage() {
 
       if (response.data?.success && response.data?.data) {
         const newData = response.data.data
+
+        // Handle data unavailable response (no mock data - show clear error)
+        if (newData.data_unavailable) {
+          console.log('[HYPERION] Data unavailable:', newData.reason, newData.message)
+          setError(newData.message || 'Data unavailable')
+          setGammaData(null)
+          return
+        }
+
         setGammaData(newData)
         setLastUpdated(new Date(newData.fetched_at || new Date()))
         setError(null)

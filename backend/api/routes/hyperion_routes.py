@@ -582,8 +582,15 @@ async def fetch_gamma_data(symbol: str, expiration: str) -> dict:
     engine = get_shared_engine()
 
     if not tradier:
-        logger.warning("HYPERION: Tradier not available, using mock data")
-        return get_mock_gamma_data(symbol, expiration)
+        logger.warning("HYPERION: Tradier API not available")
+        return {
+            'symbol': symbol,
+            'expiration_date': expiration,
+            'data_unavailable': True,
+            'reason': 'Data provider unavailable',
+            'message': 'Tradier API is not configured or unavailable. Please check API credentials.',
+            'fetched_at': format_central_timestamp()
+        }
 
     try:
         # Get quote
@@ -599,7 +606,17 @@ async def fetch_gamma_data(symbol: str, expiration: str) -> dict:
         contracts = option_chain.chains.get(expiration, [])
 
         if len(contracts) == 0:
-            return get_mock_gamma_data(symbol, expiration, spot_price, vix)
+            logger.warning(f"HYPERION: No options data for {symbol} expiration {expiration}")
+            return {
+                'symbol': symbol,
+                'spot_price': spot_price,
+                'vix': vix,
+                'expiration_date': expiration,
+                'data_unavailable': True,
+                'reason': 'No options data',
+                'message': f'Options chain is empty for {symbol}. Market may be closed or expiration not available.',
+                'fetched_at': format_central_timestamp()
+            }
 
         # Build strike data
         options_by_key = {}
@@ -941,85 +958,14 @@ async def fetch_gamma_data(symbol: str, expiration: str) -> dict:
         logger.error(f"Error fetching HYPERION gamma data: {e}")
         import traceback
         traceback.print_exc()
-        return get_mock_gamma_data(symbol, expiration)
-
-
-def get_mock_gamma_data(symbol: str, expiration: str,
-                        spot: float = None, vix: float = None) -> dict:
-    """Return mock gamma data for development"""
-    if spot is None:
-        default_prices = {
-            'AAPL': 195.0, 'MSFT': 425.0, 'GOOGL': 175.0, 'AMZN': 195.0,
-            'NVDA': 140.0, 'META': 580.0, 'TSLA': 250.0, 'AMD': 145.0,
-            'NFLX': 900.0, 'XLF': 45.0, 'XLE': 90.0, 'GLD': 240.0,
-            'SLV': 28.0, 'TLT': 95.0
+        return {
+            'symbol': symbol,
+            'expiration_date': expiration,
+            'data_unavailable': True,
+            'reason': 'Fetch error',
+            'message': f'Error fetching gamma data: {str(e)}',
+            'fetched_at': format_central_timestamp()
         }
-        spot = default_prices.get(symbol, 100.0)
-
-    if vix is None:
-        vix = 18.0
-
-    strikes = []
-    base_strike = round(spot)
-    timestamp = datetime.now(CENTRAL_TZ)
-
-    for i in range(-10, 11):
-        strike = base_strike + i
-        distance = abs(i)
-
-        base_gamma = max(0, 0.05 - distance * 0.004) * 1e6
-        net_gamma = base_gamma * (1 + random.uniform(-0.3, 0.3))
-        if random.random() > 0.5:
-            net_gamma = -net_gamma
-
-        update_gamma_history(symbol, strike, net_gamma, timestamp)
-
-        strikes.append({
-            'strike': strike,
-            'net_gamma': net_gamma,
-            'call_gamma': abs(net_gamma) * 0.6,
-            'put_gamma': abs(net_gamma) * 0.4,
-            'probability': max(0, 20 - distance * 2),
-            'gamma_change_pct': 0,
-            'roc_1min': 0,
-            'roc_5min': 0,
-            'roc_30min': 0,
-            'roc_1hr': 0,
-            'roc_4hr': 0,
-            'roc_trading_day': 0,
-            'is_magnet': distance <= 1,
-            'magnet_rank': distance + 1 if distance <= 2 else None,
-            'is_pin': i == 0,
-            'is_danger': False,
-            'danger_type': None,
-            'gamma_flipped': False,
-            'flip_direction': None
-        })
-
-    strikes.sort(key=lambda s: s['strike'], reverse=True)
-
-    return {
-        'symbol': symbol,
-        'spot_price': spot,
-        'vix': vix,
-        'expiration_date': expiration,
-        'expected_move': spot * 0.02,
-        'total_net_gamma': sum(s['net_gamma'] for s in strikes),
-        'gamma_regime': 'POSITIVE' if sum(s['net_gamma'] for s in strikes) > 0 else 'NEGATIVE',
-        'regime_flipped': False,
-        'market_status': 'closed',
-        'strikes': strikes,
-        'magnets': [{'rank': i+1, 'strike': s['strike'], 'net_gamma': s['net_gamma'],
-                    'probability': s['probability']} for i, s in enumerate(strikes[:3])],
-        'likely_pin': base_strike,
-        'pin_probability': 25.0,
-        'danger_zones': [],
-        'gamma_flips': [],
-        'pinning_status': {'is_pinning': False},
-        'market_structure': None,
-        'is_mock': True,
-        'fetched_at': format_central_timestamp()
-    }
 
 
 # ==================== API ENDPOINTS ====================

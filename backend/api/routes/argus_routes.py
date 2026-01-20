@@ -327,12 +327,14 @@ async def fetch_gamma_data(symbol: str = "SPY", expiration: str = None) -> dict:
 
     tradier = get_tradier()
     if not tradier:
-        logger.warning("ARGUS: Tradier not available, using mock data")
-        # Get real prices for mock data
-        spot, vix = await get_real_prices()
-        result = get_mock_gamma_data(symbol, spot, vix)
-        # Don't cache mock data - allow retry on next request
-        return result
+        logger.warning("ARGUS: Tradier API not available")
+        return {
+            'symbol': symbol,
+            'data_unavailable': True,
+            'reason': 'Data provider unavailable',
+            'message': 'Tradier API is not configured or unavailable. Please check API credentials.',
+            'fetched_at': format_central_timestamp()
+        }
 
     try:
         # Get quote for symbol (synchronous method)
@@ -360,13 +362,19 @@ async def fetch_gamma_data(symbol: str = "SPY", expiration: str = None) -> dict:
         options_count = len(contracts)
         logger.info(f"ARGUS: Options chain fetched, {options_count} contracts for {expiration}")
 
-        # If no options (market closed/weekend), fall back to mock
+        # If no options (market closed/weekend), return unavailable status
         if options_count == 0:
-            logger.warning("ARGUS: No options data available (market likely closed), using mock data")
-            spot, vix_val = await get_real_prices()
-            result = get_mock_gamma_data(symbol, spot, vix_val)
-            # Don't cache mock data - allow retry on next request for live data
-            return result
+            logger.warning("ARGUS: No options data available (market likely closed)")
+            return {
+                'symbol': symbol,
+                'spot_price': spot_price,
+                'vix': vix,
+                'expiration': expiration,
+                'data_unavailable': True,
+                'reason': 'No options data',
+                'message': 'Options chain is empty. Market may be closed or no 0DTE expiration available.',
+                'fetched_at': format_central_timestamp()
+            }
 
         # Process chain into strike data using O(1) dictionary lookup instead of O(n²) nested loop
         # Build dictionaries keyed by (strike, option_type) for fast lookup
@@ -420,10 +428,13 @@ async def fetch_gamma_data(symbol: str = "SPY", expiration: str = None) -> dict:
 
     except Exception as e:
         logger.error(f"Error fetching gamma data: {e}")
-        spot, vix_val = await get_real_prices()
-        result = get_mock_gamma_data(symbol, spot, vix_val)
-        # Don't cache mock data on error - allow retry on next request
-        return result
+        return {
+            'symbol': symbol,
+            'data_unavailable': True,
+            'reason': 'Fetch error',
+            'message': f'Error fetching gamma data: {str(e)}',
+            'fetched_at': format_central_timestamp()
+        }
 
 
 async def get_real_prices() -> tuple:
@@ -450,57 +461,6 @@ async def get_real_prices() -> tuple:
     result = (spot, vix)
     set_cached(cache_key, result)
     return result
-
-
-def get_mock_gamma_data(symbol: str = "SPY", spot: float = None, vix: float = None) -> dict:
-    """Return mock gamma data for development/testing.
-    Uses randomization to simulate live updates - marked as is_mock=True.
-    """
-    import random
-
-    if spot is None:
-        spot = 600.0
-    if vix is None:
-        vix = 18.0
-
-    strikes = []
-    base_strike = round(spot)
-
-    for i in range(-5, 6):  # Fewer strikes, more realistic
-        strike = base_strike + i
-        distance = abs(i)
-
-        # Simulate gamma distribution (higher near ATM)
-        base_gamma = max(0, 0.05 - distance * 0.008)
-        call_gamma = base_gamma * (1 + random.uniform(-0.2, 0.2))
-        put_gamma = base_gamma * (1 + random.uniform(-0.2, 0.2))
-
-        # Simulate OI - realistic values
-        call_oi = int(max(500, 15000 - distance * 2000))
-        put_oi = int(max(500, 15000 - distance * 2000))
-
-        strikes.append({
-            'strike': strike,
-            'call_gamma': call_gamma,
-            'put_gamma': put_gamma,
-            'call_oi': call_oi,
-            'put_oi': put_oi,
-            'call_price': max(0.05, (spot - strike) + 2 if i < 0 else max(0.05, 2.0 - i * 0.4)),
-            'put_price': max(0.05, (strike - spot) + 2 if i > 0 else max(0.05, 2.0 + i * 0.4)),
-            'call_iv': 0.15 + abs(i) * 0.01,
-            'put_iv': 0.17 + abs(i) * 0.01,
-            'volume': int(max(100, 5000 - distance * 800))
-        })
-
-    return {
-        'symbol': symbol,
-        'spot_price': spot,
-        'vix': vix,
-        'expiration': date.today().strftime('%Y-%m-%d'),
-        'strikes': strikes,
-        'is_mock': True,  # Flag to indicate simulated data
-        'fetched_at': format_central_timestamp()  # Actual fetch timestamp (Central timezone)
-    }
 
 
 @router.get("/gamma")
