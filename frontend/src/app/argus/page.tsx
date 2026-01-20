@@ -53,6 +53,7 @@ import {
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import OrionStatusBadge from '@/components/OrionStatusBadge'
+import { ArgusEnhancedPanel } from '@/components/ArgusEnhancements'
 import { apiClient } from '@/lib/api'
 
 // Types
@@ -2239,6 +2240,11 @@ export default function ArgusPage() {
               </div>
             ) : null}
           </div>
+        </div>
+
+        {/* Enhanced Analysis Panel - NEW */}
+        <div className="mb-6">
+          <ArgusEnhancedPanel symbol="SPY" />
         </div>
 
         {/* Pattern Similarity Section - Enhanced with price details */}

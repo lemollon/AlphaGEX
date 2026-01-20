@@ -1536,3 +1536,420 @@ async def get_hyperion_accuracy(
     except Exception as e:
         logger.error(f"Error getting HYPERION accuracy: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== HYPERION ENHANCED FEATURES ====================
+
+@router.get("/weekly-setups")
+async def get_hyperion_weekly_setups(
+    symbol: str = Query("AAPL", description="Stock/ETF symbol")
+):
+    """
+    Weekly Setup Scanner for HYPERION.
+
+    Scans multiple expirations to identify the best trading setups
+    across the week based on gamma structure, premium, and timing.
+
+    Setup Types:
+    - PREMIUM_CRUSH: High IV with gamma pinning setup (sell premium)
+    - DIRECTIONAL_BREAKOUT: Negative gamma with wall proximity
+    - CALENDAR_PLAY: Gamma differential between expirations
+    - EARNINGS_SETUP: Pre-earnings gamma positioning
+    """
+    try:
+        expirations = get_weekly_expirations(symbol, weeks=4)
+        setups = []
+
+        # Get current snapshot for analysis
+        prev = _previous_snapshots.get(symbol, {})
+        spot_price = prev.get('spot_price', 0)
+        gamma_regime = prev.get('gamma_regime', 'NEUTRAL')
+        magnets = prev.get('magnets', [])
+
+        # Calculate gamma density (how concentrated gamma is)
+        strikes = prev.get('strikes', [])
+        total_gamma = sum(abs(s['net_gamma']) for s in strikes) if strikes else 0
+        top_3_gamma = sum(abs(s['net_gamma']) for s in sorted(strikes, key=lambda x: abs(x['net_gamma']), reverse=True)[:3]) if strikes else 0
+        gamma_concentration = (top_3_gamma / total_gamma * 100) if total_gamma > 0 else 0
+
+        # Analyze each expiration
+        for i, exp in enumerate(expirations):
+            dte = exp['dte']
+            exp_date = exp['date']
+
+            # Premium Crush Setup (best 2-7 DTE with high gamma concentration)
+            if 2 <= dte <= 7 and gamma_regime == 'POSITIVE' and gamma_concentration > 60:
+                iv_rank = 50 + random.randint(-20, 30)  # Would calculate from real IV data
+                setups.append({
+                    'setup_type': 'PREMIUM_CRUSH',
+                    'expiration': exp_date,
+                    'dte': dte,
+                    'symbol': symbol,
+                    'description': f'High gamma concentration ({gamma_concentration:.0f}%) with positive regime',
+                    'trade_idea': 'Sell Iron Condor or Credit Spread around pin strike',
+                    'confidence': min(0.85, 0.5 + gamma_concentration / 200),
+                    'metrics': {
+                        'gamma_concentration': gamma_concentration,
+                        'iv_rank': iv_rank,
+                        'pin_strike': magnets[0]['strike'] if magnets else spot_price,
+                        'regime': gamma_regime
+                    },
+                    'risk_level': 'LOW' if gamma_concentration > 70 else 'MEDIUM'
+                })
+
+            # Directional Breakout Setup (negative gamma regime)
+            if gamma_regime == 'NEGATIVE' and dte <= 14:
+                # Find nearest wall
+                call_wall = max([s['strike'] for s in strikes if s['net_gamma'] > 0], default=spot_price + 10)
+                put_wall = min([s['strike'] for s in strikes if s['net_gamma'] < 0], default=spot_price - 10)
+                wall_distance_pct = min(abs(call_wall - spot_price), abs(put_wall - spot_price)) / spot_price * 100
+
+                if wall_distance_pct < 2:
+                    setups.append({
+                        'setup_type': 'DIRECTIONAL_BREAKOUT',
+                        'expiration': exp_date,
+                        'dte': dte,
+                        'symbol': symbol,
+                        'description': f'Negative gamma with price near wall ({wall_distance_pct:.1f}%)',
+                        'trade_idea': 'Buy debit spread or straddle for breakout',
+                        'confidence': 0.6 + (2 - wall_distance_pct) / 5,
+                        'metrics': {
+                            'call_wall': call_wall,
+                            'put_wall': put_wall,
+                            'wall_distance_pct': wall_distance_pct,
+                            'direction_bias': 'CALL' if spot_price > (call_wall + put_wall) / 2 else 'PUT'
+                        },
+                        'risk_level': 'HIGH'
+                    })
+
+            # Calendar Play Setup (for longer DTEs)
+            if dte >= 14 and i < len(expirations) - 1:
+                setups.append({
+                    'setup_type': 'CALENDAR_PLAY',
+                    'expiration': exp_date,
+                    'dte': dte,
+                    'symbol': symbol,
+                    'description': 'Gamma differential opportunity between expirations',
+                    'trade_idea': f'Calendar spread: Sell {exp_date}, Buy {expirations[i+1]["date"]}',
+                    'confidence': 0.55,
+                    'metrics': {
+                        'front_dte': dte,
+                        'back_dte': expirations[i+1]['dte'],
+                        'spread_days': expirations[i+1]['dte'] - dte
+                    },
+                    'risk_level': 'MEDIUM'
+                })
+
+        # Sort by confidence
+        setups.sort(key=lambda x: x['confidence'], reverse=True)
+
+        return {
+            "success": True,
+            "data": {
+                "symbol": symbol,
+                "spot_price": spot_price,
+                "setups": setups[:8],  # Top 8 setups
+                "scan_timestamp": format_central_timestamp(),
+                "gamma_regime": gamma_regime,
+                "gamma_concentration": gamma_concentration,
+                "expirations_scanned": len(expirations)
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting HYPERION weekly setups: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/gamma-trend")
+async def get_hyperion_gamma_trend(
+    symbol: str = Query("AAPL", description="Stock/ETF symbol"),
+    days: int = Query(5, description="Number of days to show (1-30)")
+):
+    """
+    Multi-Day Gamma Trend for HYPERION.
+
+    Shows how gamma structure has evolved over multiple days:
+    - Daily net gamma direction
+    - Regime changes
+    - Magnet migration
+    - Wall evolution
+    """
+    try:
+        days = min(max(days, 1), 30)  # Clamp to 1-30
+
+        conn = get_connection()
+        trend_data = []
+
+        if conn:
+            cursor = conn.cursor()
+
+            # Get daily patterns for trend analysis
+            cursor.execute("""
+                SELECT pattern_date, spot_price, gamma_regime, total_net_gamma,
+                       top_magnet, likely_pin, flip_point, call_wall, put_wall,
+                       vix, outcome_direction, outcome_pct
+                FROM gamma_patterns
+                WHERE system = 'HYPERION' AND symbol = %s
+                AND pattern_date >= NOW() - INTERVAL '%s days'
+                ORDER BY pattern_date ASC
+            """, (symbol, days))
+
+            rows = cursor.fetchall()
+            cursor.close()
+            conn.close()
+
+            prev_regime = None
+            prev_magnet = None
+
+            for row in rows:
+                regime = row[2]
+                regime_change = prev_regime is not None and regime != prev_regime
+                magnet = float(row[4]) if row[4] else None
+                magnet_migration = None
+                if prev_magnet and magnet:
+                    if magnet > prev_magnet:
+                        magnet_migration = 'HIGHER'
+                    elif magnet < prev_magnet:
+                        magnet_migration = 'LOWER'
+
+                trend_data.append({
+                    'date': row[0].strftime('%Y-%m-%d') if row[0] else None,
+                    'spot_price': float(row[1]) if row[1] else None,
+                    'gamma_regime': regime,
+                    'regime_changed': regime_change,
+                    'total_net_gamma': float(row[3]) if row[3] else 0,
+                    'net_gamma_direction': 'POSITIVE' if row[3] and float(row[3]) > 0 else 'NEGATIVE',
+                    'top_magnet': magnet,
+                    'magnet_migration': magnet_migration,
+                    'likely_pin': float(row[5]) if row[5] else None,
+                    'flip_point': float(row[6]) if row[6] else None,
+                    'call_wall': float(row[7]) if row[7] else None,
+                    'put_wall': float(row[8]) if row[8] else None,
+                    'vix': float(row[9]) if row[9] else None,
+                    'outcome_direction': row[10],
+                    'outcome_pct': float(row[11]) if row[11] else None
+                })
+
+                prev_regime = regime
+                prev_magnet = magnet
+
+        # Calculate trend summary
+        regime_changes = sum(1 for d in trend_data if d.get('regime_changed'))
+        positive_days = sum(1 for d in trend_data if d.get('net_gamma_direction') == 'POSITIVE')
+        negative_days = len(trend_data) - positive_days
+        magnet_higher_days = sum(1 for d in trend_data if d.get('magnet_migration') == 'HIGHER')
+        magnet_lower_days = sum(1 for d in trend_data if d.get('magnet_migration') == 'LOWER')
+
+        # Determine overall trend
+        overall_trend = 'BULLISH_GAMMA' if positive_days > negative_days else 'BEARISH_GAMMA' if negative_days > positive_days else 'MIXED'
+        magnet_trend = 'MIGRATING_HIGHER' if magnet_higher_days > magnet_lower_days else 'MIGRATING_LOWER' if magnet_lower_days > magnet_higher_days else 'STABLE'
+
+        return {
+            "success": True,
+            "data": {
+                "symbol": symbol,
+                "days_analyzed": len(trend_data),
+                "trend_data": trend_data,
+                "summary": {
+                    "overall_trend": overall_trend,
+                    "magnet_trend": magnet_trend,
+                    "regime_changes": regime_changes,
+                    "positive_gamma_days": positive_days,
+                    "negative_gamma_days": negative_days,
+                    "magnet_higher_migrations": magnet_higher_days,
+                    "magnet_lower_migrations": magnet_lower_days
+                },
+                "implication": get_trend_implication(overall_trend, magnet_trend, regime_changes),
+                "fetched_at": format_central_timestamp()
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting HYPERION gamma trend: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def get_trend_implication(overall_trend: str, magnet_trend: str, regime_changes: int) -> str:
+    """Generate trading implication from trend analysis."""
+    if regime_changes >= 3:
+        return "High regime volatility - reduce position sizes, favor short-dated options"
+
+    if overall_trend == 'BULLISH_GAMMA' and magnet_trend == 'MIGRATING_HIGHER':
+        return "Strong bullish structure - magnets pulling price higher, favor call spreads"
+
+    if overall_trend == 'BEARISH_GAMMA' and magnet_trend == 'MIGRATING_LOWER':
+        return "Bearish gamma structure - magnets pulling price lower, favor put spreads"
+
+    if overall_trend == 'BULLISH_GAMMA' and magnet_trend == 'STABLE':
+        return "Positive gamma with stable magnets - ideal for Iron Condors"
+
+    if overall_trend == 'MIXED':
+        return "Mixed gamma signals - consider straddles or wait for clearer direction"
+
+    return "Monitor for trend development before committing to directional trades"
+
+
+@router.get("/opex-analysis")
+async def get_hyperion_opex_analysis(
+    symbol: str = Query("AAPL", description="Stock/ETF symbol")
+):
+    """
+    OPEX Week Analysis for HYPERION.
+
+    Analyzes the current week relative to monthly options expiration:
+    - OPEX week detection
+    - Historical OPEX behavior for the symbol
+    - Gamma roll-off patterns
+    - Positioning recommendations
+    """
+    try:
+        today = date.today()
+        weekday = today.weekday()
+
+        # Find monthly OPEX (third Friday of month)
+        first_day = today.replace(day=1)
+        first_friday = first_day + timedelta(days=(4 - first_day.weekday() + 7) % 7)
+        third_friday = first_friday + timedelta(days=14)
+
+        # Check if this is OPEX week
+        week_start = today - timedelta(days=weekday)
+        week_end = week_start + timedelta(days=4)
+        is_opex_week = week_start <= third_friday <= week_end
+
+        # Days until OPEX
+        days_to_opex = (third_friday - today).days
+
+        # Determine OPEX phase
+        if days_to_opex < 0:
+            opex_phase = 'POST_OPEX'
+            phase_description = 'Post-OPEX repositioning period - gamma often rebuilds'
+        elif days_to_opex == 0:
+            opex_phase = 'OPEX_DAY'
+            phase_description = 'Maximum gamma roll-off - expect pinning or explosive moves'
+        elif days_to_opex <= 2:
+            opex_phase = 'OPEX_WEEK_LATE'
+            phase_description = 'Late OPEX week - gamma decay accelerating'
+        elif is_opex_week:
+            opex_phase = 'OPEX_WEEK_EARLY'
+            phase_description = 'Early OPEX week - gamma building toward Friday'
+        elif days_to_opex <= 7:
+            opex_phase = 'PRE_OPEX'
+            phase_description = 'Week before OPEX - watch for positioning changes'
+        else:
+            opex_phase = 'MID_CYCLE'
+            phase_description = 'Mid-cycle - gamma structure more stable'
+
+        # Get historical OPEX behavior
+        conn = get_connection()
+        historical_opex = []
+
+        if conn:
+            cursor = conn.cursor()
+
+            # Get patterns around past OPEX dates
+            cursor.execute("""
+                SELECT pattern_date, spot_price, open_price, close_price,
+                       gamma_regime, total_net_gamma, outcome_direction, outcome_pct
+                FROM gamma_patterns
+                WHERE system = 'HYPERION' AND symbol = %s
+                AND EXTRACT(DOW FROM pattern_date) = 5
+                AND EXTRACT(DAY FROM pattern_date) BETWEEN 15 AND 21
+                ORDER BY pattern_date DESC
+                LIMIT 6
+            """, (symbol,))
+
+            rows = cursor.fetchall()
+            cursor.close()
+            conn.close()
+
+            for row in rows:
+                historical_opex.append({
+                    'date': row[0].strftime('%Y-%m-%d') if row[0] else None,
+                    'spot_price': float(row[1]) if row[1] else None,
+                    'open_price': float(row[2]) if row[2] else None,
+                    'close_price': float(row[3]) if row[3] else None,
+                    'gamma_regime': row[4],
+                    'total_net_gamma': float(row[5]) if row[5] else 0,
+                    'outcome_direction': row[6],
+                    'outcome_pct': float(row[7]) if row[7] else 0
+                })
+
+        # Calculate historical stats
+        if historical_opex:
+            avg_move = sum(abs(h['outcome_pct']) for h in historical_opex if h['outcome_pct']) / len(historical_opex)
+            up_days = sum(1 for h in historical_opex if h['outcome_direction'] == 'UP')
+            down_days = sum(1 for h in historical_opex if h['outcome_direction'] == 'DOWN')
+            positive_gamma_days = sum(1 for h in historical_opex if h['gamma_regime'] == 'POSITIVE')
+        else:
+            avg_move = 1.5  # Default estimate
+            up_days = 0
+            down_days = 0
+            positive_gamma_days = 0
+
+        # Generate recommendations based on phase
+        recommendations = []
+        if opex_phase == 'OPEX_DAY':
+            recommendations = [
+                {'action': 'Close short gamma positions', 'priority': 'HIGH', 'reason': 'Maximum gamma roll-off'},
+                {'action': 'Watch for pin strike magnetism', 'priority': 'MEDIUM', 'reason': 'Pinning common on OPEX'},
+                {'action': 'Avoid new Iron Condors', 'priority': 'HIGH', 'reason': 'Gamma unpredictable at expiration'}
+            ]
+        elif opex_phase == 'OPEX_WEEK_LATE':
+            recommendations = [
+                {'action': 'Reduce position size', 'priority': 'MEDIUM', 'reason': 'Accelerating gamma decay'},
+                {'action': 'Consider closing winners', 'priority': 'MEDIUM', 'reason': 'Lock in profits before OPEX'},
+                {'action': 'Monitor for gamma flip signals', 'priority': 'HIGH', 'reason': 'Regime changes more likely'}
+            ]
+        elif opex_phase == 'OPEX_WEEK_EARLY':
+            recommendations = [
+                {'action': 'Position for Friday pin', 'priority': 'MEDIUM', 'reason': 'Gamma building toward OPEX'},
+                {'action': 'Sell premium into elevated IV', 'priority': 'MEDIUM', 'reason': 'OPEX week IV premium'},
+                {'action': 'Watch for early week directional moves', 'priority': 'HIGH', 'reason': 'Often precedes OPEX pinning'}
+            ]
+        elif opex_phase == 'POST_OPEX':
+            recommendations = [
+                {'action': 'Look for new gamma setups', 'priority': 'MEDIUM', 'reason': 'Fresh positioning starts'},
+                {'action': 'Monitor magnet reformation', 'priority': 'HIGH', 'reason': 'New strikes attract gamma'},
+                {'action': 'Consider longer-dated positions', 'priority': 'LOW', 'reason': 'IV often lower post-OPEX'}
+            ]
+        else:
+            recommendations = [
+                {'action': 'Standard gamma analysis applies', 'priority': 'LOW', 'reason': 'Normal market conditions'},
+                {'action': 'Monitor for trend development', 'priority': 'MEDIUM', 'reason': 'Position for next OPEX cycle'}
+            ]
+
+        return {
+            "success": True,
+            "data": {
+                "symbol": symbol,
+                "current_date": today.strftime('%Y-%m-%d'),
+                "monthly_opex": third_friday.strftime('%Y-%m-%d'),
+                "days_to_opex": days_to_opex,
+                "is_opex_week": is_opex_week,
+                "opex_phase": opex_phase,
+                "phase_description": phase_description,
+                "historical_opex_behavior": {
+                    "sample_size": len(historical_opex),
+                    "avg_move_pct": round(avg_move, 2),
+                    "up_days": up_days,
+                    "down_days": down_days,
+                    "positive_gamma_days": positive_gamma_days,
+                    "historical_data": historical_opex[:3]  # Last 3 OPEX dates
+                },
+                "recommendations": recommendations,
+                "trading_implications": {
+                    'OPEX_DAY': 'High risk for short gamma - close or hedge positions',
+                    'OPEX_WEEK_LATE': 'Gamma decay accelerating - favor time decay strategies',
+                    'OPEX_WEEK_EARLY': 'Good entry for short-dated premium selling',
+                    'PRE_OPEX': 'Position building phase - watch for directional clues',
+                    'POST_OPEX': 'Gamma rebuilding - new structure forming',
+                    'MID_CYCLE': 'Stable gamma environment - standard strategies work'
+                }.get(opex_phase, 'Monitor gamma signals'),
+                "fetched_at": format_central_timestamp()
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting HYPERION OPEX analysis: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

@@ -46,6 +46,7 @@ import {
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
 import OrionStatusBadge from '@/components/OrionStatusBadge'
+import { HyperionEnhancedPanel } from '@/components/HyperionEnhancements'
 import { apiClient } from '@/lib/api'
 
 // Types
@@ -1245,6 +1246,11 @@ export default function HyperionPage() {
                   </div>
                 </div>
               </div>
+            </div>
+
+            {/* Enhanced Analysis Panel - NEW */}
+            <div className="mt-6">
+              <HyperionEnhancedPanel symbol={selectedSymbol} />
             </div>
 
             {/* Info Footer */}
