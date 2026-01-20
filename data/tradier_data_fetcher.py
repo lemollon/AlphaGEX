@@ -313,6 +313,25 @@ class TradierDataFetcher:
             return [date_list]
         return date_list or []
 
+    def get_option_quote(self, symbol: str) -> Optional[Dict]:
+        """
+        Get real-time quote for an option symbol.
+
+        Args:
+            symbol: Option OCC symbol (e.g., SPY260120C00600000)
+
+        Returns:
+            Quote data including bid, ask, last, volume, or None if not found
+        """
+        try:
+            quote = self.get_quote(symbol)
+            if quote and (quote.get('bid') or quote.get('ask') or quote.get('last')):
+                return quote
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to get option quote for {symbol}: {e}")
+            return None
+
     def get_option_chain(
         self,
         symbol: str,
