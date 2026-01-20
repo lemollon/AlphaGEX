@@ -208,7 +208,10 @@ class ARESTrader(MathOptimizerMixin):
             # CRITICAL: Fetch market data FIRST for ALL scans
             # This ensures we log comprehensive data even for skipped scans
             try:
+                # Use get_market_data() which includes expected_move (required for Oracle)
+                market_data = self.signals.get_market_data() if hasattr(self, 'signals') else None
                 gex_data = self.signals.get_gex_data() if hasattr(self, 'signals') else None
+
                 if not gex_data and hasattr(self, 'gex_calculator'):
                     gex_data = self.gex_calculator.calculate_gex(self.config.ticker)
                 if gex_data:
@@ -216,7 +219,7 @@ class ARESTrader(MathOptimizerMixin):
                         'underlying_price': gex_data.get('spot_price', gex_data.get('underlying_price', 0)),
                         'symbol': self.config.ticker,
                         'vix': gex_data.get('vix', 0),
-                        'expected_move': gex_data.get('expected_move', 0),
+                        'expected_move': market_data.get('expected_move', 0) if market_data else 0,
                     }
                     scan_context['gex_data'] = {
                         'regime': gex_data.get('gex_regime', gex_data.get('regime', 'UNKNOWN')),
@@ -225,10 +228,11 @@ class ARESTrader(MathOptimizerMixin):
                         'put_wall': gex_data.get('put_wall', gex_data.get('major_put_wall', 0)),
                         'flip_point': gex_data.get('flip_point', gex_data.get('gamma_flip', 0)),
                     }
-                    # Also fetch Oracle advice for visibility
+                    # Fetch Oracle advice using FULL market_data (includes expected_move)
+                    # This ensures Oracle gets the same data as generate_signal() uses
                     try:
                         if hasattr(self, 'signals') and hasattr(self.signals, 'get_oracle_advice'):
-                            oracle_advice = self.signals.get_oracle_advice(gex_data)
+                            oracle_advice = self.signals.get_oracle_advice(market_data if market_data else gex_data)
                             if oracle_advice:
                                 scan_context['oracle_data'] = oracle_advice
                     except Exception as e:
@@ -423,7 +427,6 @@ class ARESTrader(MathOptimizerMixin):
             trend_direction = ""
             trend_strength = 0
             position_in_range_pct = 50.0
-            wall_filter_passed = False
 
             if oracle_data:
                 oracle_advice = oracle_data.get('advice', oracle_data.get('recommendation', ''))
@@ -441,7 +444,7 @@ class ARESTrader(MathOptimizerMixin):
                 trend_direction = oracle_data.get('trend_direction', '')
                 trend_strength = oracle_data.get('trend_strength', 0)
                 position_in_range_pct = oracle_data.get('position_in_range_pct', 50.0)
-                wall_filter_passed = oracle_data.get('wall_filter_passed', False)
+                # wall_filter removed - not applicable to ARES Iron Condors (only for directional bots)
 
             # If we have a signal, use signal data (but don't override Oracle data with zeros)
             if signal:
@@ -567,7 +570,7 @@ class ARESTrader(MathOptimizerMixin):
                 trend_direction=trend_direction,
                 trend_strength=trend_strength,
                 position_in_range_pct=position_in_range_pct,
-                wall_filter_passed=wall_filter_passed,
+                # wall_filter removed - not applicable to ARES
                 **ml_kwargs,  # Include all ML analysis data
             )
             if scan_id:

@@ -209,7 +209,10 @@ class PEGASUSTrader(MathOptimizerMixin):
             # CRITICAL: Fetch market data FIRST for ALL scans
             # This ensures we log comprehensive data even for skipped scans
             try:
+                # Use get_market_data() which includes expected_move (required for Oracle)
+                market_data = self.signals.get_market_data() if hasattr(self, 'signals') else None
                 gex_data = self.signals.get_gex_data() if hasattr(self, 'signals') else None
+
                 if not gex_data and hasattr(self, 'gex_calculator'):
                     gex_data = self.gex_calculator.calculate_gex(self.config.ticker)
                 if gex_data:
@@ -217,7 +220,7 @@ class PEGASUSTrader(MathOptimizerMixin):
                         'underlying_price': gex_data.get('spot_price', gex_data.get('underlying_price', 0)),
                         'symbol': self.config.ticker,
                         'vix': gex_data.get('vix', 0),
-                        'expected_move': gex_data.get('expected_move', 0),
+                        'expected_move': market_data.get('expected_move', 0) if market_data else 0,
                     }
                     scan_context['gex_data'] = {
                         'regime': gex_data.get('gex_regime', gex_data.get('regime', 'UNKNOWN')),
@@ -226,10 +229,10 @@ class PEGASUSTrader(MathOptimizerMixin):
                         'put_wall': gex_data.get('put_wall', gex_data.get('major_put_wall', 0)),
                         'flip_point': gex_data.get('flip_point', gex_data.get('gamma_flip', 0)),
                     }
-                    # Also fetch Oracle advice for visibility
+                    # Fetch Oracle advice using FULL market_data (includes expected_move)
                     try:
                         if hasattr(self, 'signals') and hasattr(self.signals, 'get_oracle_advice'):
-                            oracle_advice = self.signals.get_oracle_advice(gex_data)
+                            oracle_advice = self.signals.get_oracle_advice(market_data if market_data else gex_data)
                             if oracle_advice:
                                 scan_context['oracle_data'] = oracle_advice
                     except Exception as e:
