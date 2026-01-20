@@ -1135,7 +1135,7 @@ export function useARESLivePnL(options?: SWRConfiguration) {
   return useSWR(
     'ares-live-pnl',
     fetchers.aresLivePnL,
-    { ...swrConfig, refreshInterval: 10 * 1000, ...options }  // 10 second refresh for live data
+    { ...swrConfig, refreshInterval: 30 * 1000, ...options }  // 30 second refresh to match other bots
   )
 }
 
