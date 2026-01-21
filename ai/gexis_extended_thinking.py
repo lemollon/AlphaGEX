@@ -12,11 +12,15 @@ Extended Thinking improves accuracy on complex decisions by 54%.
 import os
 import json
 import logging
+import re
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
+
+# Default model for extended thinking (can be overridden via env var)
+DEFAULT_EXTENDED_THINKING_MODEL = "claude-sonnet-4-5-20250514"
 
 # Central Time zone
 try:
@@ -98,9 +102,10 @@ Provide your analysis with:
 
         start_time = time.time()
 
-        # Use Extended Thinking
+        # Use Extended Thinking with configurable model
+        model = os.getenv("GEXIS_EXTENDED_THINKING_MODEL", DEFAULT_EXTENDED_THINKING_MODEL)
         response = client.messages.create(
-            model="claude-sonnet-4-5-20250514",  # Sonnet 4.5 with extended thinking
+            model=model,
             max_tokens=8000,
             thinking={
                 "type": "enabled",
@@ -124,13 +129,23 @@ Provide your analysis with:
             elif block.type == "text":
                 response_content = block.text
 
-        # Parse confidence from response
-        confidence = 0.7  # Default
-        if "confidence" in response_content.lower():
-            import re
-            match = re.search(r'(\d{1,3})%?\s*confidence', response_content.lower())
+        # Parse confidence from response with multiple pattern support
+        confidence = 0.7  # Default fallback
+        confidence_patterns = [
+            r'(\d{1,3})\s*%\s*confidence',      # "75% confidence"
+            r'confidence[:\s]+(\d{1,3})\s*%?',  # "confidence: 75%" or "confidence 75"
+            r'(\d{1,3})\s*(?:percent|%)\s*(?:confident|confidence)',  # "75 percent confident"
+            r'confidence\s*(?:level|of)\s*[:\s]*(\d{1,3})',  # "confidence level: 75"
+        ]
+        for pattern in confidence_patterns:
+            match = re.search(pattern, response_content.lower())
             if match:
-                confidence = int(match.group(1)) / 100
+                parsed_confidence = int(match.group(1))
+                if 0 <= parsed_confidence <= 100:
+                    confidence = parsed_confidence / 100
+                    break
+        else:
+            logger.debug("Could not extract confidence from response, using default 70%")
 
         # Extract factors
         factors = []

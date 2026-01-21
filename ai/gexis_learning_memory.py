@@ -14,6 +14,7 @@ import os
 import json
 import hashlib
 import logging
+import uuid
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List, Tuple
 from dataclasses import dataclass, field, asdict
@@ -73,6 +74,9 @@ class GEXISLearningMemory:
     and adjusts confidence based on historical performance.
     """
 
+    # Batch write threshold to reduce disk I/O
+    BATCH_WRITE_THRESHOLD = 10
+
     def __init__(self, storage_path: Optional[str] = None):
         """
         Initialize learning memory.
@@ -84,6 +88,7 @@ class GEXISLearningMemory:
         self.predictions: Dict[str, Prediction] = {}
         self.regime_accuracy: Dict[str, RegimeAccuracy] = {}
         self.prediction_type_accuracy: Dict[str, RegimeAccuracy] = {}
+        self._pending_writes = 0  # Track pending writes for batching
 
         # Load existing data if available
         if storage_path and os.path.exists(storage_path):
@@ -157,7 +162,8 @@ class GEXISLearningMemory:
             prediction_id for later outcome recording
         """
         now = datetime.now(CENTRAL_TZ)
-        prediction_id = f"pred_{now.strftime('%Y%m%d_%H%M%S')}_{hashlib.md5(prediction.encode()).hexdigest()[:6]}"
+        # Use UUID for uniqueness instead of short MD5 hash to prevent collisions
+        prediction_id = f"pred_{now.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:12]}"
 
         pred = Prediction(
             prediction_id=prediction_id,
@@ -172,7 +178,12 @@ class GEXISLearningMemory:
         )
 
         self.predictions[prediction_id] = pred
-        self._save_to_disk()
+        self._pending_writes += 1
+
+        # Batch writes to reduce disk I/O
+        if self._pending_writes >= self.BATCH_WRITE_THRESHOLD:
+            self._save_to_disk()
+            self._pending_writes = 0
 
         logger.info(f"Recorded prediction {prediction_id}: {prediction_type} = {prediction} ({confidence*100:.0f}% confidence)")
         return prediction_id
@@ -330,6 +341,12 @@ class GEXISLearningMemory:
                 for r in self.prediction_type_accuracy.values()
             }
         }
+
+    def flush(self) -> None:
+        """Force write any pending predictions to disk."""
+        if self._pending_writes > 0:
+            self._save_to_disk()
+            self._pending_writes = 0
 
     def _save_to_disk(self):
         """Save predictions to disk if storage path is set."""
