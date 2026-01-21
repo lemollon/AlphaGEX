@@ -19,6 +19,8 @@ import logging
 
 # US Eastern timezone for market hours
 ET = ZoneInfo("America/New_York")
+# Central Time zone for user-facing times (Texas)
+CT = ZoneInfo("America/Chicago")
 
 logger = logging.getLogger(__name__)
 
@@ -122,8 +124,8 @@ CALENDAR_2025 = [
 
 
 def get_upcoming_events(days_ahead: int = 7) -> List[Dict]:
-    """Get economic events in the next N days"""
-    today = datetime.now().date()
+    """Get economic events in the next N days (Central Time)"""
+    today = datetime.now(CT).date()
     upcoming = []
 
     for event in CALENDAR_2025:
@@ -554,8 +556,8 @@ def get_gexis_briefing() -> str:
     briefing_parts = []
     sections_failed = []  # Track which sections failed to fetch
 
-    # Header with time-based greeting
-    hour = datetime.now().hour
+    # Header with time-based greeting (Central Time)
+    hour = datetime.now(CT).hour
     if 5 <= hour < 12:
         greeting = "Good morning"
     elif 12 <= hour < 17:

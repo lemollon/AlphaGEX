@@ -864,8 +864,8 @@ When the user asks for data, you can fetch it in real-time.
     prompt += f"""
 
 CURRENT CONTEXT:
-- Current time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-- Day of week: {datetime.now().strftime('%A')}
+- Current time: {get_central_time().strftime('%Y-%m-%d %H:%M:%S')} CT
+- Day of week: {get_central_time().strftime('%A')}
 - Greeting: {get_gexis_greeting()}
 """
 
