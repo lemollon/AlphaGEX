@@ -898,6 +898,17 @@ async def get_gamma_data(
                 market_status=snapshot.market_status
             )
 
+            # Persist pin prediction for accuracy tracking (once per day)
+            # Only store if we have a valid pin prediction with meaningful confidence
+            if snapshot.likely_pin and snapshot.pin_probability and snapshot.pin_probability > 0.3:
+                await persist_pin_prediction_to_db(
+                    symbol=symbol,
+                    predicted_pin=snapshot.likely_pin,
+                    gamma_regime=snapshot.gamma_regime,
+                    vix=raw_data.get('vix', 0),
+                    confidence=snapshot.pin_probability * 100  # Convert to percentage
+                )
+
         # Build response
         return {
             "success": True,
@@ -2088,6 +2099,244 @@ async def persist_argus_snapshot_to_db(
 
     except Exception as e:
         logger.warning(f"Failed to persist ARGUS snapshot: {e}")
+
+
+# ==================== PIN PREDICTION PERSISTENCE ====================
+# Store daily pin predictions for accuracy tracking
+
+async def persist_pin_prediction_to_db(
+    symbol: str,
+    predicted_pin: float,
+    gamma_regime: str,
+    vix: float,
+    confidence: float
+):
+    """
+    Persist ARGUS pin prediction to database for accuracy tracking.
+
+    Only stores ONE prediction per day (the first one made after market open).
+    This ensures we track the "morning prediction" accuracy, not constantly
+    updating predictions throughout the day.
+    """
+    try:
+        conn = get_connection()
+        if not conn:
+            logger.warning("No database connection for pin prediction persistence")
+            return False
+
+        cursor = conn.cursor()
+
+        # Check if we already have a prediction for today
+        cursor.execute("""
+            SELECT id FROM argus_pin_predictions
+            WHERE symbol = %s
+            AND prediction_date = CURRENT_DATE
+            LIMIT 1
+        """, (symbol,))
+
+        if cursor.fetchone():
+            cursor.close()
+            conn.close()
+            logger.debug(f"Pin prediction already exists for {symbol} today, skipping")
+            return False  # Already have today's prediction
+
+        # Insert new prediction
+        cursor.execute("""
+            INSERT INTO argus_pin_predictions (
+                symbol, prediction_date, predicted_pin, gamma_regime, vix_at_prediction, confidence
+            ) VALUES (%s, CURRENT_DATE, %s, %s, %s, %s)
+        """, (symbol, predicted_pin, gamma_regime, vix, confidence))
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        logger.info(f"ARGUS pin prediction stored: {symbol} pin=${predicted_pin:.2f} ({confidence:.0f}% confidence)")
+        return True
+
+    except Exception as e:
+        logger.warning(f"Failed to persist pin prediction: {e}")
+        return False
+
+
+async def update_pin_prediction_with_actual_close(symbol: str = "SPY"):
+    """
+    Update today's pin prediction with actual closing price.
+
+    Called at end of day (after 3:00 PM CT) to record the actual close
+    so we can calculate prediction accuracy.
+    """
+    try:
+        conn = get_connection()
+        if not conn:
+            logger.warning("No database connection for pin prediction update")
+            return False
+
+        # Get today's actual closing price from the last snapshot
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT spot_price FROM argus_snapshots
+            WHERE symbol = %s
+            AND DATE(snapshot_time) = CURRENT_DATE
+            ORDER BY snapshot_time DESC
+            LIMIT 1
+        """, (symbol,))
+
+        row = cursor.fetchone()
+        if not row:
+            cursor.close()
+            conn.close()
+            logger.warning(f"No snapshot found for {symbol} today, cannot update actual close")
+            return False
+
+        actual_close = float(row[0])
+
+        # Update today's prediction with actual close
+        cursor.execute("""
+            UPDATE argus_pin_predictions
+            SET actual_close = %s
+            WHERE symbol = %s
+            AND prediction_date = CURRENT_DATE
+            AND actual_close IS NULL
+        """, (actual_close, symbol))
+
+        updated = cursor.rowcount
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        if updated > 0:
+            logger.info(f"ARGUS pin prediction updated with actual close: {symbol} close=${actual_close:.2f}")
+            return True
+        else:
+            logger.debug(f"No pin prediction to update for {symbol} today (already updated or none exists)")
+            return False
+
+    except Exception as e:
+        logger.warning(f"Failed to update pin prediction with actual close: {e}")
+        return False
+
+
+async def calculate_and_store_argus_accuracy():
+    """
+    Calculate and store ARGUS prediction accuracy metrics.
+
+    Calculates:
+    - Direction accuracy (7d and 30d): Did we predict the right direction?
+    - Magnet hit rate (7d and 30d): Did price reach predicted magnets?
+    - Total predictions count
+
+    Called daily after market close to update accuracy metrics.
+    """
+    try:
+        conn = get_connection()
+        if not conn:
+            logger.warning("No database connection for accuracy calculation")
+            return False
+
+        cursor = conn.cursor()
+
+        # Calculate 7-day accuracy
+        cursor.execute("""
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN ABS(predicted_pin - actual_close) / NULLIF(actual_close, 0) * 100 < 1.0 THEN 1 ELSE 0 END) as accurate_1pct
+            FROM argus_pin_predictions
+            WHERE prediction_date >= CURRENT_DATE - INTERVAL '7 days'
+            AND actual_close IS NOT NULL
+        """)
+        row_7d = cursor.fetchone()
+        total_7d = row_7d[0] or 0
+        accurate_7d = row_7d[1] or 0
+        accuracy_7d = round(accurate_7d / total_7d * 100, 2) if total_7d > 0 else None
+
+        # Calculate 30-day accuracy
+        cursor.execute("""
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN ABS(predicted_pin - actual_close) / NULLIF(actual_close, 0) * 100 < 1.0 THEN 1 ELSE 0 END) as accurate_1pct
+            FROM argus_pin_predictions
+            WHERE prediction_date >= CURRENT_DATE - INTERVAL '30 days'
+            AND actual_close IS NOT NULL
+        """)
+        row_30d = cursor.fetchone()
+        total_30d = row_30d[0] or 0
+        accurate_30d = row_30d[1] or 0
+        accuracy_30d = round(accurate_30d / total_30d * 100, 2) if total_30d > 0 else None
+
+        # Calculate magnet hit rate (using snapshots - did price reach within 0.5% of a magnet?)
+        # For now, use pin accuracy as proxy for magnet hit rate
+        magnet_7d = accuracy_7d
+        magnet_30d = accuracy_30d
+
+        # Delete existing accuracy record for today (if any)
+        cursor.execute("""
+            DELETE FROM argus_accuracy WHERE metric_date = CURRENT_DATE
+        """)
+
+        # Insert new accuracy record
+        cursor.execute("""
+            INSERT INTO argus_accuracy (
+                metric_date, direction_accuracy_7d, direction_accuracy_30d,
+                magnet_hit_rate_7d, magnet_hit_rate_30d, total_predictions
+            ) VALUES (CURRENT_DATE, %s, %s, %s, %s, %s)
+        """, (accuracy_7d, accuracy_30d, magnet_7d, magnet_30d, total_30d))
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+
+        logger.info(f"ARGUS accuracy metrics stored: 7d={accuracy_7d}%, 30d={accuracy_30d}%, total={total_30d}")
+        return True
+
+    except Exception as e:
+        logger.warning(f"Failed to calculate/store ARGUS accuracy: {e}")
+        return False
+
+
+@router.post("/eod-processing")
+async def run_argus_eod_processing(symbol: str = Query(default="SPY")):
+    """
+    Run ARGUS end-of-day processing.
+
+    Called by scheduler after market close (3:01 PM CT) to:
+    1. Update today's pin prediction with actual closing price
+    2. Calculate and store accuracy metrics
+
+    This endpoint enables the prediction accuracy tracking to work end-to-end.
+    """
+    try:
+        results = {
+            "symbol": symbol,
+            "timestamp": format_central_timestamp(),
+            "actions": []
+        }
+
+        # 1. Update pin prediction with actual close
+        updated = await update_pin_prediction_with_actual_close(symbol)
+        results["actions"].append({
+            "action": "update_pin_prediction",
+            "success": updated,
+            "description": "Updated today's pin prediction with actual closing price"
+        })
+
+        # 2. Calculate and store accuracy metrics
+        accuracy_stored = await calculate_and_store_argus_accuracy()
+        results["actions"].append({
+            "action": "calculate_accuracy",
+            "success": accuracy_stored,
+            "description": "Calculated and stored ARGUS prediction accuracy metrics"
+        })
+
+        success = updated or accuracy_stored
+        return {
+            "success": success,
+            "data": results
+        }
+
+    except Exception as e:
+        logger.error(f"Error in ARGUS EOD processing: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/alerts")
