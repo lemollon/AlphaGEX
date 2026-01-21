@@ -2637,7 +2637,7 @@ export default function ArgusPage() {
                 )}
 
                 {/* Today's bars (solid, on top) */}
-                {gammaData?.strikes.map((strike) => (
+                {safeArray(gammaData?.strikes).map((strike) => (
                   <div
                     key={strike.strike}
                     className="flex flex-col items-center group cursor-pointer z-10"
@@ -2742,7 +2742,7 @@ export default function ArgusPage() {
 
               {/* Strike Labels */}
               <div className="flex justify-center gap-1">
-                {gammaData?.strikes.map((strike) => (
+                {safeArray(gammaData?.strikes).map((strike) => (
                   <div
                     key={`label-${strike.strike}`}
                     className={`text-[11px] font-mono text-center ${
@@ -2869,7 +2869,7 @@ export default function ArgusPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {gammaData?.strikes.map((strike) => (
+                    {safeArray(gammaData?.strikes).map((strike) => (
                       <tr
                         key={strike.strike}
                         className={`border-b border-gray-700/50 hover:bg-gray-700/30 cursor-pointer ${
