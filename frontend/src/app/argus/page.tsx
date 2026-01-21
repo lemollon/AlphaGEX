@@ -1400,22 +1400,9 @@ export default function ArgusPage() {
     URL.revokeObjectURL(link.href)
   }
 
-  // Loading
-  if (loading && !gammaData) {
-    return (
-      <div className="min-h-screen bg-background">
-        <Navigation />
-        <main className="pt-24 px-4 max-w-7xl mx-auto">
-          <div className="flex items-center justify-center h-64">
-            <div className="text-center">
-              <RefreshCw className="w-10 h-10 text-purple-500 animate-spin mx-auto mb-4" />
-              <p className="text-gray-400">Loading ARGUS data...</p>
-            </div>
-          </div>
-        </main>
-      </div>
-    )
-  }
+  // =============================================================================
+  // HOOKS MUST BE BEFORE EARLY RETURNS - React rules of hooks
+  // =============================================================================
 
   // maxGamma is smoothed via useEffect declared above, before early returns
   const maxGamma = smoothedMaxGamma
@@ -1463,6 +1450,27 @@ export default function ArgusPage() {
       return 1
     }
   }, [tomorrowGammaData?.strikes])
+
+  // =============================================================================
+  // EARLY RETURN FOR LOADING - must be AFTER all hooks
+  // =============================================================================
+
+  // Loading
+  if (loading && !gammaData) {
+    return (
+      <div className="min-h-screen bg-background">
+        <Navigation />
+        <main className="pt-24 px-4 max-w-7xl mx-auto">
+          <div className="flex items-center justify-center h-64">
+            <div className="text-center">
+              <RefreshCw className="w-10 h-10 text-purple-500 animate-spin mx-auto mb-4" />
+              <p className="text-gray-400">Loading ARGUS data...</p>
+            </div>
+          </div>
+        </main>
+      </div>
+    )
+  }
 
   return (
     <div className="min-h-screen bg-background">
