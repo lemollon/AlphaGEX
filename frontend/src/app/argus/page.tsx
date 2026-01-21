@@ -1795,7 +1795,7 @@ export default function ArgusPage() {
                           ? 'bg-rose-600/50 text-rose-200'
                           : 'bg-gray-600/50 text-gray-200'
                       }`}>
-                        {gammaData.market_structure.combined.signal.replace(/_/g, ' ')}
+                        {(gammaData.market_structure.combined.signal || 'UNKNOWN').replace(/_/g, ' ')}
                       </span>
                     </div>
                     <p className={`text-base font-semibold mb-2 ${
@@ -1894,7 +1894,7 @@ export default function ArgusPage() {
                     {gammaData.market_structure.bounds.direction === 'SHIFTED_DOWN' && '↓'}
                     {gammaData.market_structure.bounds.direction === 'STABLE' && '→'}
                     {gammaData.market_structure.bounds.direction === 'MIXED' && '↔'}
-                    {' '}{gammaData.market_structure.bounds.direction.replace('_', ' ')}
+                    {' '}{(gammaData.market_structure.bounds.direction || 'UNKNOWN').replace('_', ' ')}
                   </span>
                 </div>
                 <div className="flex items-center gap-3 mb-2">
