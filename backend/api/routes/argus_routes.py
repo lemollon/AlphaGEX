@@ -330,6 +330,10 @@ async def fetch_gamma_data(symbol: str = "SPY", expiration: str = None) -> dict:
         logger.warning("ARGUS: Tradier API not available")
         return {
             'symbol': symbol,
+            'spot_price': 0,
+            'vix': 0,
+            'expiration': expiration or '',
+            'strikes': [],
             'data_unavailable': True,
             'reason': 'Data provider unavailable',
             'message': 'Tradier API is not configured or unavailable. Please check API credentials.',
@@ -370,6 +374,7 @@ async def fetch_gamma_data(symbol: str = "SPY", expiration: str = None) -> dict:
                 'spot_price': spot_price,
                 'vix': vix,
                 'expiration': expiration,
+                'strikes': [],
                 'data_unavailable': True,
                 'reason': 'No options data',
                 'message': 'Options chain is empty. Market may be closed or no 0DTE expiration available.',
@@ -430,6 +435,10 @@ async def fetch_gamma_data(symbol: str = "SPY", expiration: str = None) -> dict:
         logger.error(f"Error fetching gamma data: {e}")
         return {
             'symbol': symbol,
+            'spot_price': 0,
+            'vix': 0,
+            'expiration': expiration or '',
+            'strikes': [],
             'data_unavailable': True,
             'reason': 'Fetch error',
             'message': f'Error fetching gamma data: {str(e)}',
@@ -495,6 +504,19 @@ async def get_gamma_data(
 
         # Fetch raw data
         raw_data = await fetch_gamma_data(symbol, expiration)
+
+        # Check if data is unavailable (API error, market closed, etc.)
+        if raw_data.get('data_unavailable'):
+            logger.warning(f"ARGUS: Data unavailable - {raw_data.get('reason', 'unknown')}")
+            return {
+                "success": False,
+                "data_unavailable": True,
+                "reason": raw_data.get('reason', 'Data unavailable'),
+                "message": raw_data.get('message', 'Unable to fetch gamma data'),
+                "symbol": symbol,
+                "expiration_date": expiration,
+                "fetched_at": raw_data.get('fetched_at', format_central_timestamp())
+            }
 
         # CRITICAL: Only process through engine if data is FRESH (not cached)
         # Re-processing cached data causes ROC to become 0 because the same gamma values
@@ -1568,6 +1590,16 @@ async def get_probability_data():
         if not engine.previous_snapshot:
             # No data yet, fetch fresh
             raw_data = await fetch_gamma_data()
+
+            # Check if data is unavailable
+            if raw_data.get('data_unavailable'):
+                return {
+                    "success": False,
+                    "data_unavailable": True,
+                    "reason": raw_data.get('reason', 'Data unavailable'),
+                    "message": raw_data.get('message', 'Unable to fetch gamma data for probability calculation')
+                }
+
             snapshot = engine.process_options_chain(
                 raw_data,
                 raw_data['spot_price'],
@@ -2035,6 +2067,16 @@ async def generate_commentary(request: CommentaryRequest = None):
         # Get current snapshot
         if not engine.previous_snapshot:
             raw_data = await fetch_gamma_data()
+
+            # Check if data is unavailable
+            if raw_data.get('data_unavailable'):
+                return {
+                    "success": False,
+                    "data_unavailable": True,
+                    "reason": raw_data.get('reason', 'Data unavailable'),
+                    "message": raw_data.get('message', 'Unable to fetch gamma data for commentary generation')
+                }
+
             snapshot = engine.process_options_chain(
                 raw_data,
                 raw_data['spot_price'],

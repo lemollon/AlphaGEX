@@ -606,12 +606,23 @@ export default function ArgusPage() {
       }
       const expiration = day && day !== 'today' ? day.toLowerCase() : undefined
       const response = await apiClient.getArgusGamma(selectedSymbol, expiration)
+
+      // Handle data_unavailable response (API error, market closed, etc.)
+      // Backend returns { success: false, data_unavailable: true, message: ... }
+      if (response.data?.data_unavailable || response.data?.success === false) {
+        const errorMsg = response.data?.message || response.data?.reason || 'Data unavailable'
+        console.log('[ARGUS] Data unavailable:', response.data?.reason, errorMsg)
+        setError(errorMsg)
+        setGammaData(null)
+        return
+      }
+
       if (response.data?.success && response.data?.data) {
         const newData = response.data.data
 
-        // Handle data unavailable response (no mock data - show clear error)
+        // Also handle nested data_unavailable (backward compatibility)
         if (newData.data_unavailable) {
-          console.log('[ARGUS] Data unavailable:', newData.reason, newData.message)
+          console.log('[ARGUS] Data unavailable (nested):', newData.reason, newData.message)
           setError(newData.message || 'Data unavailable')
           setGammaData(null)
           return
@@ -705,11 +716,19 @@ export default function ArgusPage() {
     try {
       const tomorrowDate = getTomorrowExpiration()
       const response = await apiClient.getArgusGamma(selectedSymbol, tomorrowDate)
+
+      // Handle data_unavailable at root level (new backend response format)
+      if (response.data?.data_unavailable || response.data?.success === false) {
+        console.log('[ARGUS] Tomorrow data unavailable:', response.data?.message || 'No data')
+        setTomorrowGammaData(null)
+        return
+      }
+
       if (response.data?.success && response.data?.data) {
         const newData = response.data.data
         // Skip error responses - only set valid gamma data with strikes
         if (newData.data_unavailable || !newData.strikes) {
-          console.log('[ARGUS] Tomorrow data unavailable:', newData.message || 'No strikes data')
+          console.log('[ARGUS] Tomorrow data unavailable (nested):', newData.message || 'No strikes data')
           setTomorrowGammaData(null)
           return
         }
