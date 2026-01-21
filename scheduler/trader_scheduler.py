@@ -1916,6 +1916,65 @@ class AutonomousTraderScheduler:
             logger.info("ARGUS will retry next interval")
             logger.info(f"=" * 80)
 
+    def scheduled_argus_eod_logic(self):
+        """
+        ARGUS End-of-Day processing - runs daily at 3:01 PM CT
+
+        Updates pin prediction accuracy tracking:
+        1. Updates today's pin prediction with actual closing price
+        2. Calculates and stores ARGUS prediction accuracy metrics
+
+        This enables the pin accuracy tracking feature to work end-to-end.
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"ARGUS EOD triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        try:
+            # Call the ARGUS EOD processing endpoint via HTTP
+            import requests
+
+            # Try local FastAPI server first, then production
+            base_urls = [
+                "http://127.0.0.1:8000",
+                "https://alphagex-api.onrender.com"
+            ]
+
+            result = None
+            for base_url in base_urls:
+                try:
+                    response = requests.post(
+                        f"{base_url}/api/argus/eod-processing?symbol=SPY",
+                        timeout=60
+                    )
+                    if response.status_code == 200:
+                        result = response.json()
+                        logger.info(f"ARGUS EOD: Processing completed via {base_url}")
+                        break
+                except requests.exceptions.RequestException as e:
+                    logger.debug(f"ARGUS EOD: Could not reach {base_url}: {e}")
+                    continue
+
+            if result and result.get('success'):
+                data = result.get('data', {})
+                actions = data.get('actions', [])
+                for action in actions:
+                    status = "✓" if action.get('success') else "✗"
+                    logger.info(f"  {status} {action.get('action')}: {action.get('description')}")
+            else:
+                logger.warning("ARGUS EOD: Processing returned no result")
+
+            logger.info(f"ARGUS EOD processing completed")
+            logger.info(f"=" * 80)
+
+        except Exception as e:
+            error_msg = f"ERROR in ARGUS EOD processing: {str(e)}"
+            logger.error(error_msg)
+            logger.error(traceback.format_exc())
+            logger.info("ARGUS EOD will retry next trading day")
+            logger.info(f"=" * 80)
+
     def scheduled_vix_signal_logic(self):
         """
         VIX Hedge Signal generation - runs hourly during market hours
@@ -2890,6 +2949,25 @@ class AutonomousTraderScheduler:
             replace_existing=True
         )
         logger.info("✅ ARGUS job scheduled (every 5 min, checks market hours internally)")
+
+        # =================================================================
+        # ARGUS EOD JOB: Pin Prediction Accuracy Processing - runs at 3:01 PM CT
+        # Updates pin predictions with actual closing prices and calculates
+        # accuracy metrics for the pin accuracy tracking feature.
+        # =================================================================
+        self.scheduler.add_job(
+            self.scheduled_argus_eod_logic,
+            trigger=CronTrigger(
+                hour=15,       # 3:00 PM CT - after market close
+                minute=1,      # 3:01 PM CT - immediate post-close
+                day_of_week='mon-fri',
+                timezone='America/Chicago'
+            ),
+            id='argus_eod',
+            name='ARGUS - EOD Pin Accuracy Processing',
+            replace_existing=True
+        )
+        logger.info("✅ ARGUS EOD job scheduled (3:01 PM CT daily)")
 
         # =================================================================
         # VIX SIGNAL JOB: VIX Hedge Signal Generation - runs HOURLY during market hours
