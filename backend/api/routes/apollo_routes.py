@@ -26,6 +26,47 @@ router = APIRouter(prefix="/api/apollo", tags=["APOLLO"])
 
 
 # ============================================================================
+# TRADIER CLIENT HELPER
+# ============================================================================
+
+_apollo_tradier_instance = None
+
+
+def get_tradier():
+    """
+    Get Tradier data fetcher instance with proper credentials.
+    Uses same pattern as ARES - explicitly gets credentials from APIConfig.
+    """
+    global _apollo_tradier_instance
+
+    if _apollo_tradier_instance is not None:
+        return _apollo_tradier_instance
+
+    try:
+        from data.tradier_data_fetcher import TradierDataFetcher
+        from unified_config import APIConfig
+
+        # Try sandbox credentials first (for market data)
+        api_key = APIConfig.TRADIER_SANDBOX_API_KEY or APIConfig.TRADIER_API_KEY
+        account_id = APIConfig.TRADIER_SANDBOX_ACCOUNT_ID or APIConfig.TRADIER_ACCOUNT_ID
+
+        if api_key and account_id:
+            _apollo_tradier_instance = TradierDataFetcher(
+                api_key=api_key,
+                account_id=account_id,
+                sandbox=True
+            )
+            logger.info("APOLLO: Tradier initialized with credentials")
+            return _apollo_tradier_instance
+
+        logger.error("APOLLO: No Tradier credentials configured")
+        return None
+    except Exception as e:
+        logger.error(f"APOLLO: Failed to initialize Tradier: {e}")
+        return None
+
+
+# ============================================================================
 # REQUEST/RESPONSE MODELS
 # ============================================================================
 
@@ -698,9 +739,10 @@ async def get_model_performance():
 async def get_live_quote(symbol: str):
     """Get live quote from Tradier"""
     try:
-        from data.tradier_data_fetcher import TradierDataFetcher
+        tradier = get_tradier()
+        if not tradier:
+            raise HTTPException(status_code=503, detail="Tradier not available - check credentials")
 
-        tradier = TradierDataFetcher()
         quote = tradier.get_quote(symbol.upper())
 
         if not quote:
@@ -745,9 +787,9 @@ async def get_batch_quotes(symbols: str = "SPY,QQQ,AAPL,NVDA,TSLA,AMZN,META,GOOG
         List of quotes with price and change data
     """
     try:
-        from data.tradier_data_fetcher import TradierDataFetcher
-
-        tradier = TradierDataFetcher()
+        tradier = get_tradier()
+        if not tradier:
+            raise HTTPException(status_code=503, detail="Tradier not available - check credentials")
 
         # Make single API call with all symbols
         response = tradier._make_request('GET', 'markets/quotes', params={'symbols': symbols.upper()})
@@ -801,9 +843,9 @@ async def get_options_chain(
 ):
     """Get live options chain from Tradier"""
     try:
-        from data.tradier_data_fetcher import TradierDataFetcher
-
-        tradier = TradierDataFetcher()
+        tradier = get_tradier()
+        if not tradier:
+            raise HTTPException(status_code=503, detail="Tradier not available - check credentials")
 
         # Get expirations if not specified
         expirations = tradier.get_option_expirations(symbol.upper())

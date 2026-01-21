@@ -582,9 +582,11 @@ async def get_real_prices() -> tuple:
     # Get VIX directly using reliable vix_fetcher
     from data.vix_fetcher import get_vix_price
 
-    # Get SPY from Tradier
-    from data.tradier_data_fetcher import TradierDataFetcher
-    tradier = TradierDataFetcher()
+    # Get SPY from Tradier - use get_tradier() which handles credentials properly
+    tradier = get_tradier()
+    if not tradier:
+        raise ValueError("Tradier not available - check credentials")
+
     spy_quote = tradier.get_quote('SPY')
 
     if not spy_quote or not spy_quote.get('last'):

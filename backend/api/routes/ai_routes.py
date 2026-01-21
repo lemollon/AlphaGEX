@@ -242,7 +242,13 @@ async def execute_gexis_command(command: str, args: str = None) -> dict:
             # Fetch VIX data - use $VIX.X for Tradier (correct symbol format)
             try:
                 from data.tradier_data_fetcher import TradierDataFetcher
-                tradier = TradierDataFetcher()  # Respects TRADIER_SANDBOX env var
+                from unified_config import APIConfig
+                # Use explicit credentials like ARES does
+                api_key = APIConfig.TRADIER_SANDBOX_API_KEY or APIConfig.TRADIER_API_KEY
+                account_id = APIConfig.TRADIER_SANDBOX_ACCOUNT_ID or APIConfig.TRADIER_ACCOUNT_ID
+                if not api_key or not account_id:
+                    return {"type": "vix", "data": None, "error": "Tradier credentials not configured"}
+                tradier = TradierDataFetcher(api_key=api_key, account_id=account_id, sandbox=True)
                 vix_quote = tradier.get_quote('$VIX.X')
                 return {"type": "vix", "data": vix_quote}
             except Exception as e:
