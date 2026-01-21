@@ -79,19 +79,26 @@ class CommentaryRequest(BaseModel):
     force: bool = False
 
 
+# Initialize ARGUS database tables on module load
+# This runs once when the routes module is imported
+_tables_initialized = False
+
+
 # ==================== ROC HISTORY PERSISTENCE ====================
 # Persist gamma history to database for ROC calculation continuity
 
 _history_loaded: Dict[str, bool] = {}  # Track if we've loaded history from DB per symbol
 
 
-def ensure_gamma_history_table():
-    """Create the gamma history table if it doesn't exist"""
+def ensure_all_argus_tables():
+    """Create all Argus tables if they don't exist"""
     try:
         conn = get_connection()
         if not conn:
             return False
         cursor = conn.cursor()
+
+        # 1. argus_gamma_history - per-strike gamma tracking
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS argus_gamma_history (
                 id SERIAL PRIMARY KEY,
@@ -102,24 +109,137 @@ def ensure_gamma_history_table():
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
             )
         """)
-        # Create index for efficient lookups
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_argus_gamma_history_strike_time
             ON argus_gamma_history(symbol, strike, recorded_at DESC)
         """)
-        # Create index for cleanup queries
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_argus_gamma_history_recorded_at
             ON argus_gamma_history(recorded_at)
         """)
+
+        # 2. argus_snapshots - market structure snapshots
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS argus_snapshots (
+                id SERIAL PRIMARY KEY,
+                symbol VARCHAR(10) NOT NULL DEFAULT 'SPY',
+                expiration_date DATE,
+                snapshot_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                spot_price DECIMAL(10, 2),
+                expected_move DECIMAL(10, 4),
+                vix DECIMAL(6, 2),
+                total_net_gamma DECIMAL(20, 2),
+                gamma_regime VARCHAR(20),
+                previous_regime VARCHAR(20),
+                regime_flipped BOOLEAN DEFAULT FALSE,
+                market_status VARCHAR(20),
+                flip_point DECIMAL(10, 2),
+                call_wall DECIMAL(10, 2),
+                put_wall DECIMAL(10, 2),
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_argus_snapshots_symbol_time
+            ON argus_snapshots(symbol, snapshot_time DESC)
+        """)
+
+        # 3. argus_alerts - triggered alerts
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS argus_alerts (
+                id SERIAL PRIMARY KEY,
+                alert_type VARCHAR(50) NOT NULL,
+                strike DECIMAL(10, 2),
+                message TEXT,
+                priority VARCHAR(10) DEFAULT 'MEDIUM',
+                spot_price DECIMAL(10, 2),
+                old_value DECIMAL(20, 4),
+                new_value DECIMAL(20, 4),
+                triggered_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                acknowledged BOOLEAN DEFAULT FALSE,
+                acknowledged_at TIMESTAMP WITH TIME ZONE
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_argus_alerts_triggered_at
+            ON argus_alerts(triggered_at DESC)
+        """)
+
+        # 4. argus_danger_zone_logs - danger zone tracking
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS argus_danger_zone_logs (
+                id SERIAL PRIMARY KEY,
+                detected_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                expiration_date DATE,
+                strike DECIMAL(10, 2) NOT NULL,
+                danger_type VARCHAR(20) NOT NULL,
+                roc_1min DECIMAL(10, 4),
+                roc_5min DECIMAL(10, 4),
+                spot_price DECIMAL(10, 2),
+                distance_from_spot_pct DECIMAL(6, 2),
+                is_active BOOLEAN DEFAULT TRUE,
+                resolved_at TIMESTAMP WITH TIME ZONE
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_argus_danger_zone_detected_at
+            ON argus_danger_zone_logs(detected_at DESC)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_argus_danger_zone_active
+            ON argus_danger_zone_logs(is_active, strike)
+        """)
+
+        # 5. argus_pin_predictions - pin strike predictions for accuracy tracking
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS argus_pin_predictions (
+                id SERIAL PRIMARY KEY,
+                symbol VARCHAR(10) NOT NULL DEFAULT 'SPY',
+                prediction_date DATE NOT NULL,
+                predicted_pin DECIMAL(10, 2) NOT NULL,
+                actual_close DECIMAL(10, 2),
+                gamma_regime VARCHAR(20),
+                vix_at_prediction DECIMAL(6, 2),
+                confidence DECIMAL(5, 2),
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_argus_pin_predictions_date
+            ON argus_pin_predictions(symbol, prediction_date DESC)
+        """)
+
+        # 6. argus_accuracy - ML model accuracy metrics
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS argus_accuracy (
+                id SERIAL PRIMARY KEY,
+                metric_date DATE NOT NULL,
+                direction_accuracy_7d DECIMAL(5, 2),
+                direction_accuracy_30d DECIMAL(5, 2),
+                magnet_hit_rate_7d DECIMAL(5, 2),
+                magnet_hit_rate_30d DECIMAL(5, 2),
+                total_predictions INTEGER DEFAULT 0,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_argus_accuracy_date
+            ON argus_accuracy(metric_date DESC)
+        """)
+
         conn.commit()
         cursor.close()
         conn.close()
-        logger.info("ARGUS: Gamma history table ensured")
+        logger.info("ARGUS: All tables ensured (6 tables)")
         return True
     except Exception as e:
-        logger.error(f"Failed to create gamma history table: {e}")
+        logger.error(f"Failed to create ARGUS tables: {e}")
         return False
+
+
+def ensure_gamma_history_table():
+    """Create the gamma history table if it doesn't exist (backward compatible wrapper)"""
+    return ensure_all_argus_tables()
 
 
 def persist_gamma_history(engine, symbol: str = "SPY"):
@@ -268,9 +388,14 @@ def cleanup_old_gamma_history():
 
 def get_engine() -> Optional[ArgusEngine]:
     """Get the ARGUS engine instance"""
+    global _tables_initialized
     if not ARGUS_AVAILABLE:
         return None
     try:
+        # Ensure database tables exist on first call
+        if not _tables_initialized:
+            ensure_all_argus_tables()
+            _tables_initialized = True
         return get_argus_engine()
     except Exception as e:
         logger.error(f"Failed to get ARGUS engine: {e}")
@@ -3923,26 +4048,35 @@ async def get_pin_accuracy(symbol: str = Query(default="SPY"), days: int = Query
         hits_05 = sum(r[1] or 0 for r in rows)
         hits_1 = sum(r[2] or 0 for r in rows)
 
-        by_regime = {}
+        # Build accuracy_by_period array for frontend compatibility
+        # Frontend expects: { period, predictions, accurate_within_1_pct, accurate_within_0_5_pct, accuracy_rate, avg_distance }
+        accuracy_by_period = []
         for r in rows:
             regime = r[4] or 'UNKNOWN'
-            by_regime[regime] = {
-                "predictions": r[0],
-                "accuracy_05pct": round((r[1] or 0) / r[0] * 100, 1) if r[0] > 0 else 0,
-                "accuracy_1pct": round((r[2] or 0) / r[0] * 100, 1) if r[0] > 0 else 0,
-                "avg_distance_pct": round(float(r[3] or 0), 2)
-            }
+            preds = r[0] or 0
+            hits_05_regime = r[1] or 0
+            hits_1_regime = r[2] or 0
+            avg_dist = float(r[3] or 0)
+
+            accuracy_by_period.append({
+                "period": regime,
+                "predictions": preds,
+                "accurate_within_0_5_pct": hits_05_regime,
+                "accurate_within_1_pct": hits_1_regime,
+                "accuracy_rate": round(hits_1_regime / preds * 100, 1) if preds > 0 else 0,
+                "avg_distance": round(avg_dist, 2)
+            })
 
         conn.close()
 
         return {
             "success": True,
             "data": {
+                "accuracy_by_period": accuracy_by_period,
                 "accuracy": {
                     "total_predictions": total,
                     "accuracy_within_05pct": round(hits_05 / total * 100, 1) if total > 0 else 0,
-                    "accuracy_within_1pct": round(hits_1 / total * 100, 1) if total > 0 else 0,
-                    "by_regime": by_regime
+                    "accuracy_within_1pct": round(hits_1 / total * 100, 1) if total > 0 else 0
                 },
                 "days_analyzed": days,
                 "symbol": symbol,
@@ -3984,7 +4118,7 @@ async def get_gamma_decay(symbol: str = Query(default="SPY")):
         # Get intraday gamma history
         conn = get_connection()
         if not conn:
-            return {"success": True, "data": {"decay_curve": [], "message": "Database not available"}}
+            return {"success": True, "data": {"periods": [], "current_period": "", "decay_curve": [], "message": "Database not available"}}
 
         cursor = conn.cursor()
 
@@ -4019,19 +4153,43 @@ async def get_gamma_decay(symbol: str = Query(default="SPY")):
         historical_avg = {int(r[0]): float(r[1] or 0) for r in cursor.fetchall()}
         conn.close()
 
-        # Build decay curve
-        decay_curve = []
+        # Build periods array (frontend expects 'periods' not 'decay_curve')
+        # Frontend expects: { time_label, gamma_magnitude, regime, trading_implication }
+        periods = []
         for r in today_data:
             hour = int(r[0])
             if 8 <= hour <= 16:  # Market hours CT
-                decay_curve.append({
+                gamma_val = round(float(r[1] or 0), 0)
+                dist_to_flip = round(float(r[3] or 0), 2)
+
+                # Determine regime based on gamma magnitude and distance to flip
+                if gamma_val > historical_avg.get(hour, 0) * 1.2:
+                    regime = "POSITIVE"  # High gamma = strong pinning
+                elif gamma_val < historical_avg.get(hour, 0) * 0.8 or dist_to_flip > 1.0:
+                    regime = "NEGATIVE"  # Low gamma or far from flip = momentum
+                else:
+                    regime = "NEUTRAL"
+
+                # Determine trading implication for this specific hour
+                if hour < 10:
+                    implication = "Morning: Lower gamma, wider expected range. Good for directional plays."
+                elif hour < 14:
+                    implication = "Midday: Moderate gamma. Balanced risk/reward for spreads."
+                elif hour < 15:
+                    implication = "Afternoon: Rising gamma. Tighter ranges, stronger pinning."
+                else:
+                    implication = "Final hour: Maximum gamma. Extreme pinning. Exit or pin plays only."
+
+                periods.append({
                     "hour": hour,
-                    "time_label": f"{hour}:00 CT",
-                    "gamma": round(float(r[1] or 0), 0),
+                    "time_label": f"{hour}:00",
+                    "gamma_magnitude": gamma_val,
                     "max_gamma": round(float(r[2] or 0), 0),
-                    "dist_to_flip_pct": round(float(r[3] or 0), 2),
+                    "dist_to_flip_pct": dist_to_flip,
                     "historical_avg": round(historical_avg.get(hour, 0), 0),
-                    "vs_historical": "HIGHER" if float(r[1] or 0) > historical_avg.get(hour, 0) * 1.1 else "LOWER" if float(r[1] or 0) < historical_avg.get(hour, 0) * 0.9 else "NORMAL"
+                    "vs_historical": "HIGHER" if gamma_val > historical_avg.get(hour, 0) * 1.1 else "LOWER" if gamma_val < historical_avg.get(hour, 0) * 0.9 else "NORMAL",
+                    "regime": regime,
+                    "trading_implication": implication
                 })
 
         # Add trading implications
@@ -4047,11 +4205,16 @@ async def get_gamma_decay(symbol: str = Query(default="SPY")):
         else:
             implications.append("FINAL HOUR: Maximum gamma. Extreme pinning. Avoid new positions unless confident in pin.")
 
+        # Format current_period for frontend (expects "HH:00" format)
+        current_period = f"{current_hour}:00"
+
         return {
             "success": True,
             "data": {
-                "decay_curve": decay_curve,
-                "current_hour": current_hour,
+                "periods": periods,
+                "current_period": current_period,
+                "current_hour": current_hour,  # Keep for backward compatibility
+                "decay_curve": periods,  # Keep for backward compatibility
                 "trading_implications": implications,
                 "gamma_phases": {
                     "morning": {"hours": "8:30-10:00", "gamma_level": "LOW", "strategy": "Directional or wide IC"},
