@@ -284,7 +284,7 @@ export function OptimalStrikes({ symbol = 'SPY' }: { symbol?: string }) {
         <div>
           <div className="text-xs text-emerald-400 mb-2 uppercase tracking-wide">Call Side (Short)</div>
           <div className="space-y-2">
-            {strikes.calls.slice(0, 3).map((s, idx) => (
+            {Array.isArray(strikes.calls) && strikes.calls.slice(0, 3).map((s, idx) => (
               <StrikeRow key={idx} strike={s} color="bg-emerald-500/5" />
             ))}
           </div>
@@ -292,7 +292,7 @@ export function OptimalStrikes({ symbol = 'SPY' }: { symbol?: string }) {
         <div>
           <div className="text-xs text-rose-400 mb-2 uppercase tracking-wide">Put Side (Short)</div>
           <div className="space-y-2">
-            {strikes.puts.slice(0, 3).map((s, idx) => (
+            {Array.isArray(strikes.puts) && strikes.puts.slice(0, 3).map((s, idx) => (
               <StrikeRow key={idx} strike={s} color="bg-rose-500/5" />
             ))}
           </div>
@@ -314,7 +314,7 @@ export function PatternOutcomes({ symbol = 'SPY' }: { symbol?: string }) {
     const fetchPatterns = async () => {
       try {
         const response = await api.get(`/api/argus/pattern-outcomes?symbol=${symbol}`)
-        if (response.data?.success && response.data?.data?.patterns) {
+        if (response.data?.success && Array.isArray(response.data?.data?.patterns)) {
           setPatterns(response.data.data.patterns)
         }
       } catch (error) {
@@ -506,9 +506,9 @@ export function GammaDecayVisualization({ symbol = 'SPY' }: { symbol?: string })
     )
   }
 
-  if (!decay) return null
+  if (!decay || !Array.isArray(decay.periods) || decay.periods.length === 0) return null
 
-  const maxGamma = Math.max(...decay.periods.map(p => p.gamma_magnitude))
+  const maxGamma = Math.max(...decay.periods.map(p => p.gamma_magnitude), 1)
 
   return (
     <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700">
