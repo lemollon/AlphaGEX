@@ -874,7 +874,8 @@ export default function ArgusPage() {
       const response = await apiClient.getArgusPatterns()
       if (response.data?.success && response.data?.data) {
         // Patterns may be empty with a message - that's expected
-        setPatternMatches(response.data.data.patterns || [])
+        const patterns = response.data.data.patterns
+        setPatternMatches(Array.isArray(patterns) ? patterns : [])
       }
     } catch (err) {
       console.error('[ARGUS] Error fetching pattern matches:', err)
@@ -1043,7 +1044,7 @@ export default function ArgusPage() {
           : new Date()
         setLastUpdated(fetchedAt)
         // Set available times if returned
-        if (response.data.data.available_times) {
+        if (Array.isArray(response.data.data.available_times)) {
           setReplayTimes(response.data.data.available_times)
         }
       }
@@ -1795,7 +1796,7 @@ export default function ArgusPage() {
                           ? 'bg-rose-600/50 text-rose-200'
                           : 'bg-gray-600/50 text-gray-200'
                       }`}>
-                        {gammaData.market_structure.combined.signal.replace(/_/g, ' ')}
+                        {(gammaData.market_structure.combined.signal || 'UNKNOWN').replace(/_/g, ' ')}
                       </span>
                     </div>
                     <p className={`text-base font-semibold mb-2 ${
@@ -1894,7 +1895,7 @@ export default function ArgusPage() {
                     {gammaData.market_structure.bounds.direction === 'SHIFTED_DOWN' && '↓'}
                     {gammaData.market_structure.bounds.direction === 'STABLE' && '→'}
                     {gammaData.market_structure.bounds.direction === 'MIXED' && '↔'}
-                    {' '}{gammaData.market_structure.bounds.direction.replace('_', ' ')}
+                    {' '}{(gammaData.market_structure.bounds.direction || 'UNKNOWN').replace('_', ' ')}
                   </span>
                 </div>
                 <div className="flex items-center gap-3 mb-2">
@@ -2254,7 +2255,7 @@ export default function ArgusPage() {
           <div className="bg-gray-800/50 rounded-xl p-4">
             <div className="text-gray-500 text-xs mb-1">Top Magnet</div>
             <div className="text-xl font-bold text-yellow-400">
-              ${gammaData?.magnets[0]?.strike || '-'}
+              ${safeArray(gammaData?.magnets)[0]?.strike || '-'}
             </div>
           </div>
           <div className="bg-gray-800/50 rounded-xl p-4">
