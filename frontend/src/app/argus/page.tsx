@@ -2254,7 +2254,7 @@ export default function ArgusPage() {
           <div className="bg-gray-800/50 rounded-xl p-4">
             <div className="text-gray-500 text-xs mb-1">Top Magnet</div>
             <div className="text-xl font-bold text-yellow-400">
-              ${gammaData?.magnets[0]?.strike || '-'}
+              ${safeArray(gammaData?.magnets)[0]?.strike || '-'}
             </div>
           </div>
           <div className="bg-gray-800/50 rounded-xl p-4">
