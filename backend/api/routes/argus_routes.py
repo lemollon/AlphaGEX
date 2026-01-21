@@ -277,15 +277,58 @@ def get_engine() -> Optional[ArgusEngine]:
         return None
 
 
+# Store the last Tradier initialization error for diagnostic purposes
+_tradier_init_error: Optional[str] = None
+
+
 def get_tradier():
     """Get the Tradier data fetcher instance"""
+    global _tradier_init_error
+
     if not TRADIER_AVAILABLE or TradierDataFetcher is None:
+        _tradier_init_error = "TradierDataFetcher module not imported - check logs for import errors"
         return None
     try:
-        return TradierDataFetcher()
+        fetcher = TradierDataFetcher()
+        _tradier_init_error = None  # Clear error on success
+        return fetcher
+    except ValueError as e:
+        # Credential errors - this is the most common issue
+        _tradier_init_error = str(e)
+        logger.error(f"Tradier credential error: {e}")
+        return None
     except Exception as e:
+        _tradier_init_error = f"Unexpected error: {type(e).__name__}: {e}"
         logger.error(f"Failed to get Tradier fetcher: {e}")
         return None
+
+
+def get_tradier_status() -> dict:
+    """Get the status of Tradier data fetcher for diagnostics"""
+    import os
+
+    # Check if credentials are configured (without revealing values)
+    has_api_key = bool(os.getenv('TRADIER_API_KEY') or os.getenv('TRADIER_SANDBOX_API_KEY'))
+    has_account_id = bool(os.getenv('TRADIER_ACCOUNT_ID') or os.getenv('TRADIER_SANDBOX_ACCOUNT_ID'))
+    sandbox_mode = os.getenv('TRADIER_SANDBOX', 'true').lower() == 'true'
+
+    # Try to get a tradier instance
+    tradier = get_tradier()
+    is_connected = tradier is not None
+
+    return {
+        'module_available': TRADIER_AVAILABLE,
+        'api_key_configured': has_api_key,
+        'account_id_configured': has_account_id,
+        'sandbox_mode': sandbox_mode,
+        'is_connected': is_connected,
+        'last_error': _tradier_init_error if not is_connected else None,
+        'status': 'connected' if is_connected else 'disconnected',
+        'recommendation': None if is_connected else (
+            'Set TRADIER_API_KEY and TRADIER_ACCOUNT_ID environment variables. '
+            'For sandbox testing, also set TRADIER_SANDBOX_API_KEY and TRADIER_SANDBOX_ACCOUNT_ID.'
+        )
+    }
 
 
 def is_market_hours() -> bool:
@@ -327,7 +370,9 @@ async def fetch_gamma_data(symbol: str = "SPY", expiration: str = None) -> dict:
 
     tradier = get_tradier()
     if not tradier:
-        logger.warning("ARGUS: Tradier API not available")
+        # Get specific error for better diagnostics
+        error_detail = _tradier_init_error or 'Unknown initialization error'
+        logger.warning(f"ARGUS: Tradier API not available - {error_detail}")
         return {
             'symbol': symbol,
             'spot_price': 0,
@@ -336,7 +381,8 @@ async def fetch_gamma_data(symbol: str = "SPY", expiration: str = None) -> dict:
             'strikes': [],
             'data_unavailable': True,
             'reason': 'Data provider unavailable',
-            'message': 'Tradier API is not configured or unavailable. Please check API credentials.',
+            'message': f'Tradier API error: {error_detail}',
+            'error_detail': error_detail,
             'fetched_at': format_central_timestamp()
         }
 
@@ -3937,3 +3983,139 @@ async def get_gamma_decay(symbol: str = Query(default="SPY")):
     except Exception as e:
         logger.error(f"Error getting gamma decay: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== DATA SOURCE HEALTH CHECK ====================
+
+@router.get("/data-source-status")
+async def get_data_source_status():
+    """
+    Get the status of all data sources used by ARGUS.
+
+    Returns detailed status including:
+    - Tradier API connection status and any errors
+    - ARGUS engine availability
+    - VIX data source status
+    - Database connection status
+
+    This endpoint helps diagnose why data may be unavailable.
+    """
+    import os
+    from data.vix_fetcher import get_vix_price
+
+    result = {
+        "success": True,
+        "timestamp": format_central_timestamp(),
+        "data_sources": {}
+    }
+
+    # Check Tradier status
+    tradier_status = get_tradier_status()
+    result["data_sources"]["tradier"] = tradier_status
+
+    # Check ARGUS engine
+    engine = get_engine()
+    result["data_sources"]["argus_engine"] = {
+        "module_available": ARGUS_AVAILABLE,
+        "instance_available": engine is not None,
+        "status": "available" if engine else "unavailable"
+    }
+
+    # Check VIX data source
+    try:
+        vix = get_vix_price()
+        result["data_sources"]["vix"] = {
+            "status": "available" if vix and vix > 0 else "unavailable",
+            "last_value": vix if vix else None
+        }
+    except Exception as e:
+        result["data_sources"]["vix"] = {
+            "status": "error",
+            "error": str(e)
+        }
+
+    # Check database connection
+    try:
+        conn = get_connection()
+        if conn:
+            conn.close()
+            result["data_sources"]["database"] = {"status": "connected"}
+        else:
+            result["data_sources"]["database"] = {"status": "disconnected"}
+    except Exception as e:
+        result["data_sources"]["database"] = {
+            "status": "error",
+            "error": str(e)
+        }
+
+    # Overall status
+    all_ok = (
+        tradier_status.get("is_connected", False) and
+        engine is not None
+    )
+    result["overall_status"] = "healthy" if all_ok else "degraded"
+
+    if not all_ok:
+        issues = []
+        if not tradier_status.get("is_connected"):
+            issues.append(f"Tradier: {tradier_status.get('last_error', 'Not configured')}")
+        if not engine:
+            issues.append("ARGUS engine not available")
+        result["issues"] = issues
+
+    return result
+
+
+@router.get("/test-tradier-connection")
+async def test_tradier_connection():
+    """
+    Test the Tradier API connection by fetching a SPY quote.
+
+    This is a diagnostic endpoint to verify Tradier credentials are working.
+    """
+    tradier = get_tradier()
+
+    if not tradier:
+        return {
+            "success": False,
+            "connected": False,
+            "error": _tradier_init_error or "Tradier client not initialized",
+            "recommendation": "Check TRADIER_API_KEY and TRADIER_ACCOUNT_ID environment variables",
+            "timestamp": format_central_timestamp()
+        }
+
+    try:
+        # Try to fetch a quote
+        quote = tradier.get_quote("SPY")
+
+        if not quote:
+            return {
+                "success": False,
+                "connected": True,
+                "error": "Empty response from Tradier API",
+                "timestamp": format_central_timestamp()
+            }
+
+        price = quote.get("last") or quote.get("close", 0)
+
+        return {
+            "success": True,
+            "connected": True,
+            "mode": "SANDBOX" if tradier.sandbox else "PRODUCTION",
+            "test_quote": {
+                "symbol": "SPY",
+                "price": price,
+                "bid": quote.get("bid"),
+                "ask": quote.get("ask"),
+                "volume": quote.get("volume")
+            },
+            "timestamp": format_central_timestamp()
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "connected": True,
+            "error": f"API call failed: {str(e)}",
+            "timestamp": format_central_timestamp()
+        }
