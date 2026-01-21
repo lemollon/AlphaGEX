@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar('T')
 
+# Sentinel value to distinguish "not in cache" from "cached None"
+_CACHE_MISS = object()
+
 
 @dataclass
 class CacheEntry:
@@ -97,29 +100,30 @@ class GEXISCache:
         }
         self._created_at = datetime.now(timezone.utc)
 
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str, default: Any = None) -> Any:
         """
         Get a value from the cache.
 
         Args:
             key: Cache key
+            default: Value to return if key not found/expired
 
         Returns:
-            Cached value or None if not found/expired
+            Cached value or default if not found/expired
         """
         with self._lock:
             entry = self._cache.get(key)
 
             if entry is None:
                 self._stats['misses'] += 1
-                return None
+                return default
 
             if entry.is_expired:
                 del self._cache[key]
                 self._stats['misses'] += 1
                 self._stats['expirations'] += 1
                 logger.debug(f"Cache expired: {key}")
-                return None
+                return default
 
             entry.hit_count += 1
             self._stats['hits'] += 1
@@ -209,15 +213,16 @@ class GEXISCache:
             ttl: Time-to-live in seconds
 
         Returns:
-            Cached or computed value
+            Cached or computed value (may be None if factory returns None)
         """
-        value = self.get(key)
-        if value is not None:
+        # Use sentinel to distinguish cache miss from cached None
+        value = self.get(key, default=_CACHE_MISS)
+        if value is not _CACHE_MISS:
             return value
 
-        value = factory()
-        self.set(key, value, ttl)
-        return value
+        result = factory()
+        self.set(key, result, ttl)
+        return result
 
     def cached(
         self,
@@ -251,9 +256,9 @@ class GEXISCache:
                     parts = [key_prefix, func.__name__, arg_str, kwarg_str]
                     cache_key = ':'.join(p for p in parts if p)
 
-                # Try to get from cache
-                cached_value = self.get(cache_key)
-                if cached_value is not None:
+                # Try to get from cache (use sentinel to handle cached None)
+                cached_value = self.get(cache_key, default=_CACHE_MISS)
+                if cached_value is not _CACHE_MISS:
                     return cached_value
 
                 # Compute and cache

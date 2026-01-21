@@ -147,11 +147,27 @@ All previous context purged. Systems recalibrated.
 *Standing by for new directives.*`
 }
 
+// Cached AudioContext to prevent memory leak from creating new contexts
+let cachedAudioContext: AudioContext | null = null
+
+function getAudioContext(): AudioContext | null {
+  if (typeof window === 'undefined') return null
+  try {
+    if (!cachedAudioContext) {
+      cachedAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+    }
+    return cachedAudioContext
+  } catch {
+    return null
+  }
+}
+
 // Play notification sound
 function playNotificationSound() {
   try {
-    // Create a simple beep sound using Web Audio API
-    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+    const audioContext = getAudioContext()
+    if (!audioContext) return
+
     const oscillator = audioContext.createOscillator()
     const gainNode = audioContext.createGain()
 
@@ -165,7 +181,7 @@ function playNotificationSound() {
 
     oscillator.start(audioContext.currentTime)
     oscillator.stop(audioContext.currentTime + 0.2)
-  } catch (e) {
+  } catch {
     // Silently fail if audio not supported
   }
 }
@@ -194,21 +210,34 @@ export default function FloatingChatbot() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  // Initialize session ID
+  // Initialize session ID (with SSR/private browsing safety)
   useEffect(() => {
-    let storedSession = localStorage.getItem(SESSION_KEY)
-    if (!storedSession) {
-      storedSession = generateSessionId()
-      localStorage.setItem(SESSION_KEY, storedSession)
+    try {
+      let storedSession = localStorage?.getItem(SESSION_KEY)
+      if (!storedSession) {
+        storedSession = generateSessionId()
+        try {
+          localStorage?.setItem(SESSION_KEY, storedSession)
+        } catch {
+          // localStorage write failed (quota exceeded or private browsing)
+        }
+      }
+      setSessionId(storedSession)
+    } catch {
+      // localStorage not available - use generated session
+      setSessionId(generateSessionId())
     }
-    setSessionId(storedSession)
   }, [])
 
-  // Load sound preference
+  // Load sound preference (with SSR/private browsing safety)
   useEffect(() => {
-    const pref = localStorage.getItem(SOUND_PREF_KEY)
-    if (pref !== null) {
-      setSoundEnabled(pref === 'true')
+    try {
+      const pref = localStorage?.getItem(SOUND_PREF_KEY)
+      if (pref !== null) {
+        setSoundEnabled(pref === 'true')
+      }
+    } catch {
+      // localStorage not available - use default
     }
   }, [])
 
@@ -298,8 +327,23 @@ export default function FloatingChatbot() {
     localStorage.setItem(SOUND_PREF_KEY, String(newValue))
   }
 
+  // Maximum image size: 5MB
+  const MAX_IMAGE_SIZE = 5 * 1024 * 1024
+
   const handleImageSelect = useCallback((file: File) => {
     if (!file.type.startsWith('image/')) {
+      return
+    }
+
+    // Validate file size to prevent API timeouts and memory issues
+    if (file.size > MAX_IMAGE_SIZE) {
+      const sizeMB = (file.size / (1024 * 1024)).toFixed(1)
+      setMessages(prev => [...prev, {
+        id: Date.now().toString(),
+        role: 'assistant',
+        content: `Image too large (${sizeMB}MB). Maximum size is 5MB. Please select a smaller image.`,
+        timestamp: new Date()
+      }])
       return
     }
 
@@ -588,9 +632,14 @@ export default function FloatingChatbot() {
           throw new Error(`HTTP error! status: ${response.status}`)
         }
 
-        const reader = response.body?.getReader()
+        // Explicit null check for streaming support
+        if (!response.body) {
+          throw new Error('Streaming not supported - response body is null')
+        }
+
+        const reader = response.body.getReader()
         if (!reader) {
-          throw new Error('No reader available')
+          throw new Error('Failed to get stream reader - browser may not support ReadableStream')
         }
 
         const decoder = new TextDecoder()

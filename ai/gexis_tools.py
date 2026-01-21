@@ -14,7 +14,11 @@ import json
 import requests
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
+from zoneinfo import ZoneInfo
 import logging
+
+# US Eastern timezone for market hours
+ET = ZoneInfo("America/New_York")
 
 logger = logging.getLogger(__name__)
 
@@ -371,6 +375,21 @@ def request_bot_action(action: str, bot_name: str = "ares", session_id: str = "d
     if bot_name.lower() not in valid_bots:
         return {"error": f"Invalid bot. Valid bots: {', '.join(valid_bots)}"}
 
+    # Check for existing pending action
+    existing = PENDING_CONFIRMATIONS.get(session_id)
+    if existing:
+        # Check if existing action has expired
+        expires_at = datetime.fromisoformat(existing["expires_at"])
+        if datetime.now() < expires_at:
+            return {
+                "error": f"Pending action already exists: {existing['action'].upper()} {existing['bot'].upper()}. "
+                         f"Confirm or cancel it first, or wait for it to expire.",
+                "pending_action": existing
+            }
+        # Existing action expired, remove it
+        del PENDING_CONFIRMATIONS[session_id]
+        logger.info(f"Cleared expired pending action for session {session_id}")
+
     # Create confirmation request
     confirmation_id = f"{session_id}_{bot_name}_{action}_{datetime.now().timestamp()}"
     PENDING_CONFIRMATIONS[session_id] = {
@@ -504,19 +523,26 @@ def get_system_status() -> Dict:
 
 
 def is_market_open() -> bool:
-    """Check if US stock market is currently open."""
-    now = datetime.now()
-    # Simple check - weekday and between 9:30 AM - 4:00 PM ET
-    # Note: This doesn't account for holidays
-    if now.weekday() >= 5:  # Weekend
+    """Check if US stock market is currently open.
+
+    Uses proper ET timezone handling regardless of server timezone.
+    Note: Does not account for market holidays.
+    """
+    now_et = datetime.now(ET)
+
+    # Weekend check
+    if now_et.weekday() >= 5:
         return False
-    # Assuming server is in ET timezone
-    hour = now.hour
-    minute = now.minute
+
+    # Market hours: 9:30 AM - 4:00 PM ET
+    hour = now_et.hour
+    minute = now_et.minute
+
     if hour < 9 or (hour == 9 and minute < 30):
         return False
     if hour >= 16:
         return False
+
     return True
 
 
@@ -526,6 +552,7 @@ def get_gexis_briefing() -> str:
     Called when chat opens or /briefing command is used.
     """
     briefing_parts = []
+    sections_failed = []  # Track which sections failed to fetch
 
     # Header with time-based greeting
     hour = datetime.now().hour
@@ -571,8 +598,11 @@ def get_gexis_briefing() -> str:
             if vix:
                 vix_status = "ELEVATED - caution advised" if vix > 25 else "NORMAL" if vix > 15 else "LOW - premium reduced"
                 briefing_parts.append(f"  VIX: {vix:.2f} ({vix_status})")
-    except Exception:
-        pass
+        elif market and "error" in market:
+            sections_failed.append("market data")
+    except Exception as e:
+        logger.warning(f"Failed to fetch market data for briefing: {e}")
+        sections_failed.append("market data")
 
     # Get ARES status
     try:
@@ -584,8 +614,11 @@ def get_gexis_briefing() -> str:
             pnl = ares.get('total_pnl', 0)
             pnl_str = f"+${pnl:,.0f}" if pnl >= 0 else f"-${abs(pnl):,.0f}"
             briefing_parts.append(f"  Total P&L: {pnl_str}")
-    except Exception:
-        pass
+        elif ares and "error" in ares:
+            sections_failed.append("ARES status")
+    except Exception as e:
+        logger.warning(f"Failed to fetch ARES status for briefing: {e}")
+        sections_failed.append("ARES status")
 
     # Upcoming events (next 3 days)
     try:
@@ -597,8 +630,13 @@ def get_gexis_briefing() -> str:
                 day_str = "TODAY" if days == 0 else "TOMORROW" if days == 1 else f"in {days} days"
                 impact_marker = "!!" if event["impact"] == "HIGH" else "!" if event["impact"] == "MEDIUM" else ""
                 briefing_parts.append(f"  {impact_marker}{event['name']} - {event['date']} ({day_str})")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Failed to fetch upcoming events for briefing: {e}")
+        sections_failed.append("upcoming events")
+
+    # Add warning if any sections failed
+    if sections_failed:
+        briefing_parts.append(f"\n[Note: Could not fetch {', '.join(sections_failed)} - data may be incomplete]")
 
     # Trading recommendation
     if high_impact_today:

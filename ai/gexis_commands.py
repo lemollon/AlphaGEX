@@ -210,77 +210,51 @@ def get_strategy_performance(days: int = 30) -> Dict[str, Any]:
     try:
         from backend.utils.db import get_connection
     except ImportError:
-        # Return mock data for testing
-        return {
-            "ARES": {
-                "trades": 45,
-                "win_rate": 68.9,
-                "total_pnl": 2450.00,
-                "avg_pnl": 54.44,
-                "best_trade": 320.00,
-                "worst_trade": -180.00,
-                "avg_hold_minutes": 45
-            },
-            "ATHENA": {
-                "trades": 28,
-                "win_rate": 71.4,
-                "total_pnl": 1890.00,
-                "avg_pnl": 67.50,
-                "best_trade": 450.00,
-                "worst_trade": -120.00,
-                "avg_hold_minutes": 120
-            },
-            "ATLAS": {
-                "trades": 12,
-                "win_rate": 75.0,
-                "total_pnl": 980.00,
-                "avg_pnl": 81.67,
-                "best_trade": 280.00,
-                "worst_trade": -85.00,
-                "avg_hold_minutes": 240
-            }
-        }
+        logger.error("Database connection unavailable - cannot fetch strategy performance")
+        return {"error": "Database connection unavailable"}
 
     conn = get_connection()
-    c = conn.cursor()
+    try:
+        c = conn.cursor()
 
-    strategies = {}
-    for bot in ["ARES", "ATHENA", "PEGASUS", "PHOENIX"]:
-        try:
-            c.execute("""
-                SELECT
-                    COUNT(*) as trades,
-                    COUNT(CASE WHEN realized_pnl > 0 THEN 1 END) as wins,
-                    COALESCE(SUM(realized_pnl), 0) as total_pnl,
-                    COALESCE(AVG(realized_pnl), 0) as avg_pnl,
-                    COALESCE(MAX(realized_pnl), 0) as best_trade,
-                    COALESCE(MIN(realized_pnl), 0) as worst_trade,
-                    COALESCE(AVG(EXTRACT(EPOCH FROM (closed_at - opened_at)) / 60), 0) as avg_hold_minutes
-                FROM autonomous_positions
-                WHERE bot_name = %s
-                    AND status = 'closed'
-                    AND closed_at >= NOW() - INTERVAL '%s days'
-            """, (bot, days))
+        strategies = {}
+        for bot in ["ARES", "ATHENA", "PEGASUS", "PHOENIX"]:
+            try:
+                c.execute("""
+                    SELECT
+                        COUNT(*) as trades,
+                        COUNT(CASE WHEN realized_pnl > 0 THEN 1 END) as wins,
+                        COALESCE(SUM(realized_pnl), 0) as total_pnl,
+                        COALESCE(AVG(realized_pnl), 0) as avg_pnl,
+                        COALESCE(MAX(realized_pnl), 0) as best_trade,
+                        COALESCE(MIN(realized_pnl), 0) as worst_trade,
+                        COALESCE(AVG(EXTRACT(EPOCH FROM (closed_at - opened_at)) / 60), 0) as avg_hold_minutes
+                    FROM autonomous_positions
+                    WHERE bot_name = %s
+                        AND status = 'closed'
+                        AND closed_at >= NOW() - INTERVAL '%s days'
+                """, (bot, days))
 
-            row = c.fetchone()
-            if row and row[0] > 0:
-                strategies[bot] = {
-                    "trades": row[0],
-                    "win_rate": round(row[1] / row[0] * 100, 1) if row[0] > 0 else 0,
-                    "total_pnl": round(float(row[2]), 2),
-                    "avg_pnl": round(float(row[3]), 2),
-                    "best_trade": round(float(row[4]), 2),
-                    "worst_trade": round(float(row[5]), 2),
-                    "avg_hold_minutes": round(float(row[6]), 0)
-                }
-            else:
-                strategies[bot] = {"trades": 0, "win_rate": 0, "total_pnl": 0}
-        except Exception as e:
-            logger.error(f"Error fetching {bot} performance: {e}")
-            strategies[bot] = {"trades": 0, "win_rate": 0, "total_pnl": 0, "error": str(e)}
+                row = c.fetchone()
+                if row and row[0] > 0:
+                    strategies[bot] = {
+                        "trades": row[0],
+                        "win_rate": round(row[1] / row[0] * 100, 1) if row[0] > 0 else 0,
+                        "total_pnl": round(float(row[2]), 2),
+                        "avg_pnl": round(float(row[3]), 2),
+                        "best_trade": round(float(row[4]), 2),
+                        "worst_trade": round(float(row[5]), 2),
+                        "avg_hold_minutes": round(float(row[6]), 0)
+                    }
+                else:
+                    strategies[bot] = {"trades": 0, "win_rate": 0, "total_pnl": 0}
+            except Exception as e:
+                logger.error(f"Error fetching {bot} performance: {e}")
+                strategies[bot] = {"trades": 0, "win_rate": 0, "total_pnl": 0, "error": str(e)}
 
-    conn.close()
-    return strategies
+        return strategies
+    finally:
+        conn.close()
 
 
 @trace_command("strategy_performance")
@@ -539,25 +513,13 @@ def get_portfolio_risk() -> Dict[str, Any]:
     try:
         from backend.utils.db import get_connection
     except ImportError:
-        # Return mock data for testing
-        return {
-            "total_positions": 5,
-            "total_exposure": 15000.00,
-            "max_loss_potential": -1200.00,
-            "delta_exposure": 0.35,
-            "theta_daily": 45.00,
-            "positions_at_risk": 1,
-            "concentration": {
-                "SPY": 60,
-                "QQQ": 25,
-                "AAPL": 15
-            }
-        }
+        logger.error("Database connection unavailable - cannot fetch portfolio risk")
+        return {"error": "Database connection unavailable"}
 
     conn = get_connection()
-    c = conn.cursor()
-
     try:
+        c = conn.cursor()
+
         # Get open positions summary
         c.execute("""
             SELECT
@@ -587,8 +549,6 @@ def get_portfolio_risk() -> Dict[str, Any]:
             for sym_row in concentration_rows:
                 concentration[sym_row[0]] = round(sym_row[1] / total_positions * 100, 1)
 
-        conn.close()
-
         return {
             "total_positions": total_positions,
             "total_exposure": round(float(row[1]), 2) if row else 0,
@@ -599,8 +559,9 @@ def get_portfolio_risk() -> Dict[str, Any]:
 
     except Exception as e:
         logger.error(f"Error fetching portfolio risk: {e}")
-        conn.close()
         return {"error": str(e)}
+    finally:
+        conn.close()
 
 
 @trace_command("risk")
