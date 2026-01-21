@@ -493,14 +493,72 @@ except ImportError as e:
     logger.warning(f"Tradier data fetcher not available: {e}")
 
 
+# Cache Tradier instance
+_hyperion_tradier_instance = None
+
+
 def get_tradier():
-    """Get Tradier data fetcher instance"""
+    """
+    Get Tradier data fetcher instance.
+
+    Uses same pattern as ARES/ARGUS: explicitly gets credentials from APIConfig
+    and tries sandbox mode first (for market data), then production.
+    """
+    global _hyperion_tradier_instance
+
+    # Return cached instance if available
+    if _hyperion_tradier_instance is not None:
+        return _hyperion_tradier_instance
+
     if not TRADIER_AVAILABLE or TradierDataFetcher is None:
+        logger.warning("HYPERION: TradierDataFetcher module not available")
         return None
+
     try:
-        return TradierDataFetcher()
+        from unified_config import APIConfig
+
+        # Try sandbox credentials first (for market data)
+        sandbox_key = APIConfig.TRADIER_SANDBOX_API_KEY or APIConfig.TRADIER_API_KEY
+        sandbox_account = APIConfig.TRADIER_SANDBOX_ACCOUNT_ID or APIConfig.TRADIER_ACCOUNT_ID
+
+        if sandbox_key and sandbox_account:
+            try:
+                fetcher = TradierDataFetcher(
+                    api_key=sandbox_key,
+                    account_id=sandbox_account,
+                    sandbox=True
+                )
+                _hyperion_tradier_instance = fetcher
+                logger.info("HYPERION: Tradier initialized with SANDBOX credentials")
+                return fetcher
+            except Exception as e:
+                logger.warning(f"HYPERION: Sandbox credentials failed: {e}")
+
+        # Try production credentials
+        prod_key = APIConfig.TRADIER_PROD_API_KEY or APIConfig.TRADIER_API_KEY
+        prod_account = APIConfig.TRADIER_PROD_ACCOUNT_ID or APIConfig.TRADIER_ACCOUNT_ID
+
+        if prod_key and prod_account:
+            try:
+                fetcher = TradierDataFetcher(
+                    api_key=prod_key,
+                    account_id=prod_account,
+                    sandbox=False
+                )
+                _hyperion_tradier_instance = fetcher
+                logger.info("HYPERION: Tradier initialized with PRODUCTION credentials")
+                return fetcher
+            except Exception as e:
+                logger.warning(f"HYPERION: Production credentials failed: {e}")
+
+        logger.error("HYPERION: No valid Tradier credentials found")
+        return None
+
+    except ImportError as e:
+        logger.error(f"HYPERION: Failed to import unified_config: {e}")
+        return None
     except Exception as e:
-        logger.error(f"Failed to get Tradier fetcher: {e}")
+        logger.error(f"HYPERION: Failed to get Tradier fetcher: {e}")
         return None
 
 

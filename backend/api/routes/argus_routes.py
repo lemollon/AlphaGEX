@@ -279,48 +279,128 @@ def get_engine() -> Optional[ArgusEngine]:
 
 # Store the last Tradier initialization error for diagnostic purposes
 _tradier_init_error: Optional[str] = None
+# Cache the Tradier instance to avoid repeated initialization
+_tradier_instance: Optional[Any] = None
 
 
 def get_tradier():
-    """Get the Tradier data fetcher instance"""
-    global _tradier_init_error
+    """
+    Get the Tradier data fetcher instance.
+
+    Uses the same pattern as ARES: explicitly gets credentials from APIConfig
+    and tries sandbox mode first (for market data), then production.
+
+    This fixes the bug where ARGUS defaulted to production mode but credentials
+    might only be configured for sandbox.
+    """
+    global _tradier_init_error, _tradier_instance
+
+    # Return cached instance if available
+    if _tradier_instance is not None:
+        return _tradier_instance
 
     if not TRADIER_AVAILABLE or TradierDataFetcher is None:
         _tradier_init_error = "TradierDataFetcher module not imported - check logs for import errors"
         return None
+
     try:
-        fetcher = TradierDataFetcher()
-        _tradier_init_error = None  # Clear error on success
-        return fetcher
-    except ValueError as e:
-        # Credential errors - this is the most common issue
-        _tradier_init_error = str(e)
-        logger.error(f"Tradier credential error: {e}")
+        from unified_config import APIConfig
+
+        # Try sandbox credentials first (like ARES does for market data)
+        # Sandbox API still provides real market data for quotes/options
+        sandbox_key = APIConfig.TRADIER_SANDBOX_API_KEY or APIConfig.TRADIER_API_KEY
+        sandbox_account = APIConfig.TRADIER_SANDBOX_ACCOUNT_ID or APIConfig.TRADIER_ACCOUNT_ID
+
+        if sandbox_key and sandbox_account:
+            try:
+                fetcher = TradierDataFetcher(
+                    api_key=sandbox_key,
+                    account_id=sandbox_account,
+                    sandbox=True
+                )
+                _tradier_init_error = None
+                _tradier_instance = fetcher
+                logger.info("ARGUS: Tradier initialized with SANDBOX credentials")
+                return fetcher
+            except Exception as e:
+                logger.warning(f"ARGUS: Sandbox credentials failed: {e}")
+
+        # Try production credentials
+        prod_key = APIConfig.TRADIER_PROD_API_KEY or APIConfig.TRADIER_API_KEY
+        prod_account = APIConfig.TRADIER_PROD_ACCOUNT_ID or APIConfig.TRADIER_ACCOUNT_ID
+
+        if prod_key and prod_account:
+            try:
+                fetcher = TradierDataFetcher(
+                    api_key=prod_key,
+                    account_id=prod_account,
+                    sandbox=False
+                )
+                _tradier_init_error = None
+                _tradier_instance = fetcher
+                logger.info("ARGUS: Tradier initialized with PRODUCTION credentials")
+                return fetcher
+            except Exception as e:
+                logger.warning(f"ARGUS: Production credentials failed: {e}")
+
+        # No valid credentials found
+        _tradier_init_error = "No valid Tradier credentials found in APIConfig (checked TRADIER_SANDBOX_*, TRADIER_PROD_*, and TRADIER_*)"
+        logger.error(f"ARGUS: {_tradier_init_error}")
+        return None
+
+    except ImportError as e:
+        _tradier_init_error = f"Failed to import unified_config: {e}"
+        logger.error(f"ARGUS: {_tradier_init_error}")
         return None
     except Exception as e:
         _tradier_init_error = f"Unexpected error: {type(e).__name__}: {e}"
-        logger.error(f"Failed to get Tradier fetcher: {e}")
+        logger.error(f"ARGUS: Failed to get Tradier fetcher: {e}")
         return None
 
 
 def get_tradier_status() -> dict:
     """Get the status of Tradier data fetcher for diagnostics"""
-    import os
+    # Check credentials via APIConfig (same source get_tradier uses)
+    try:
+        from unified_config import APIConfig
+        credentials = {
+            'TRADIER_API_KEY': bool(APIConfig.TRADIER_API_KEY),
+            'TRADIER_ACCOUNT_ID': bool(APIConfig.TRADIER_ACCOUNT_ID),
+            'TRADIER_SANDBOX_API_KEY': bool(APIConfig.TRADIER_SANDBOX_API_KEY),
+            'TRADIER_SANDBOX_ACCOUNT_ID': bool(APIConfig.TRADIER_SANDBOX_ACCOUNT_ID),
+            'TRADIER_PROD_API_KEY': bool(APIConfig.TRADIER_PROD_API_KEY),
+            'TRADIER_PROD_ACCOUNT_ID': bool(APIConfig.TRADIER_PROD_ACCOUNT_ID),
+        }
+        default_sandbox_mode = APIConfig.TRADIER_SANDBOX
+    except ImportError:
+        import os
+        credentials = {
+            'TRADIER_API_KEY': bool(os.getenv('TRADIER_API_KEY')),
+            'TRADIER_ACCOUNT_ID': bool(os.getenv('TRADIER_ACCOUNT_ID')),
+            'TRADIER_SANDBOX_API_KEY': bool(os.getenv('TRADIER_SANDBOX_API_KEY')),
+            'TRADIER_SANDBOX_ACCOUNT_ID': bool(os.getenv('TRADIER_SANDBOX_ACCOUNT_ID')),
+            'TRADIER_PROD_API_KEY': bool(os.getenv('TRADIER_PROD_API_KEY')),
+            'TRADIER_PROD_ACCOUNT_ID': bool(os.getenv('TRADIER_PROD_ACCOUNT_ID')),
+        }
+        default_sandbox_mode = os.getenv('TRADIER_SANDBOX', 'false').lower() == 'true'
 
-    # Check if credentials are configured (without revealing values)
-    has_api_key = bool(os.getenv('TRADIER_API_KEY') or os.getenv('TRADIER_SANDBOX_API_KEY'))
-    has_account_id = bool(os.getenv('TRADIER_ACCOUNT_ID') or os.getenv('TRADIER_SANDBOX_ACCOUNT_ID'))
-    sandbox_mode = os.getenv('TRADIER_SANDBOX', 'true').lower() == 'true'
+    # Check if any valid credential pair exists
+    has_sandbox_creds = credentials['TRADIER_SANDBOX_API_KEY'] and credentials['TRADIER_SANDBOX_ACCOUNT_ID']
+    has_prod_creds = credentials['TRADIER_PROD_API_KEY'] and credentials['TRADIER_PROD_ACCOUNT_ID']
+    has_generic_creds = credentials['TRADIER_API_KEY'] and credentials['TRADIER_ACCOUNT_ID']
+    has_any_creds = has_sandbox_creds or has_prod_creds or has_generic_creds
 
     # Try to get a tradier instance
     tradier = get_tradier()
     is_connected = tradier is not None
+    active_mode = 'SANDBOX' if (tradier and tradier.sandbox) else ('PRODUCTION' if tradier else None)
 
     return {
         'module_available': TRADIER_AVAILABLE,
-        'api_key_configured': has_api_key,
-        'account_id_configured': has_account_id,
-        'sandbox_mode': sandbox_mode,
+        'credentials_configured': credentials,
+        'has_valid_credentials': has_any_creds,
+        'default_sandbox_mode': default_sandbox_mode,
+        'active_mode': active_mode,
         'is_connected': is_connected,
         'last_error': _tradier_init_error if not is_connected else None,
         'status': 'connected' if is_connected else 'disconnected',
