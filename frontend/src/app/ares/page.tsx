@@ -545,7 +545,8 @@ export default function AresPage() {
     }
   }
 
-  if (statusLoading) {
+  // Only show loading on initial load, not on background refresh
+  if (statusLoading && !statusData) {
     return (
       <>
         <Navigation />
