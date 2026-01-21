@@ -3139,12 +3139,12 @@ export default function ArgusPage() {
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2">
                           <Clock className="w-3 h-3 text-cyan-400" />
-                          <span className="text-xs text-cyan-400 font-medium">
-                            {new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          <span className="text-xs text-cyan-400 font-medium" suppressHydrationWarning>
+                            {new Date(entry.timestamp).toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit' })}
                           </span>
                         </div>
-                        <span className="text-[10px] text-gray-600">
-                          {new Date(entry.timestamp).toLocaleDateString()}
+                        <span className="text-[10px] text-gray-600" suppressHydrationWarning>
+                          {new Date(entry.timestamp).toLocaleDateString('en-US', { timeZone: 'America/Chicago' })}
                         </span>
                       </div>
 

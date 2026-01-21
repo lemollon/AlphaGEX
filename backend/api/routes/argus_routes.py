@@ -3544,7 +3544,8 @@ async def get_trade_setups(symbol: str = Query(default="SPY")):
         for magnet in top_magnets:
             strike = magnet.get('strike', 0)
             probability = magnet.get('probability', 0)
-            if probability > 0.6 and abs(strike - spot_price) / spot_price * 100 < 1.0:
+            # Guard against division by zero when spot_price is 0 or missing
+            if spot_price > 0 and probability > 0.6 and abs(strike - spot_price) / spot_price * 100 < 1.0:
                 setups.append({
                     'setup_type': 'PIN_SETUP',
                     'name': f'Pin to {strike}',
@@ -3554,7 +3555,7 @@ async def get_trade_setups(symbol: str = Query(default="SPY")):
                     'details': {
                         'pin_strike': strike,
                         'probability': round(probability, 2),
-                        'distance_pct': round(abs(strike - spot_price) / spot_price * 100, 2)
+                        'distance_pct': round(abs(strike - spot_price) / spot_price * 100, 2) if spot_price > 0 else 0
                     },
                     'risk_level': 'MEDIUM' if probability > 0.7 else 'HIGH'
                 })
@@ -3625,9 +3626,9 @@ async def get_optimal_strikes(
         recommendations = []
 
         if strategy == 'iron_condor':
-            # Find optimal short strikes (strongest walls)
-            short_call = call_strikes[0]['strike'] if call_strikes else spot_price + expected_move
-            short_put = put_strikes[0]['strike'] if put_strikes else spot_price - expected_move
+            # Find optimal short strikes (strongest walls) - use .get() to prevent KeyError
+            short_call = call_strikes[0].get('strike', spot_price + expected_move) if call_strikes else spot_price + expected_move
+            short_put = put_strikes[0].get('strike', spot_price - expected_move) if put_strikes else spot_price - expected_move
 
             # Calculate probabilities
             short_call_prob = call_strikes[0].get('probability', 0.5) if call_strikes else 0.5
