@@ -765,7 +765,7 @@ export default function ArgusPage() {
   const fetchDangerZoneLogs = useCallback(async () => {
     try {
       const response = await apiClient.getArgusDangerZoneLogs()
-      if (response.data?.success && response.data?.data?.logs) {
+      if (response.data?.success && Array.isArray(response.data?.data?.logs)) {
         setDangerZoneLogs(response.data.data.logs)
       }
     } catch (err) {
@@ -776,7 +776,7 @@ export default function ArgusPage() {
   const fetchExpirations = useCallback(async () => {
     try {
       const response = await apiClient.getArgusExpirations()
-      if (response.data?.success && response.data?.data?.expirations) {
+      if (response.data?.success && Array.isArray(response.data?.data?.expirations)) {
         setExpirations(response.data.data.expirations)
         const today = response.data.data.expirations.find((e: Expiration) => e.is_today)
         if (today) setActiveDay(today.day)
@@ -787,7 +787,7 @@ export default function ArgusPage() {
   const fetchAlerts = useCallback(async () => {
     try {
       const response = await apiClient.getArgusAlerts()
-      if (response.data?.success && response.data?.data?.alerts) {
+      if (response.data?.success && Array.isArray(response.data?.data?.alerts)) {
         setAlerts(response.data.data.alerts)
       }
     } catch (err) {}
@@ -832,7 +832,7 @@ export default function ArgusPage() {
   const fetchGammaFlips30m = useCallback(async () => {
     try {
       const response = await apiClient.getArgusGammaFlips()
-      if (response.data?.success && response.data?.data?.flips) {
+      if (response.data?.success && Array.isArray(response.data?.data?.flips)) {
         setGammaFlips30m(response.data.data.flips)
       }
     } catch (err) {
@@ -856,7 +856,7 @@ export default function ArgusPage() {
   const fetchBotPositions = useCallback(async () => {
     try {
       const response = await apiClient.getArgusBots()
-      if (response.data?.success && response.data?.data?.positions) {
+      if (response.data?.success && Array.isArray(response.data?.data?.positions)) {
         setBotPositions(response.data.data.positions)
       } else if (response.data?.success) {
         // No positions - that's okay, show empty state
