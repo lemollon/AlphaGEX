@@ -629,6 +629,7 @@ export default function ArgusPage() {
         }
 
         // MERGE STRATEGY: Only update strikes that changed, preserving array reference stability
+        // FIX: Added check to prevent unnecessary re-renders when data hasn't meaningfully changed
         setGammaData(prev => {
           if (!prev) return newData
 
@@ -640,10 +641,16 @@ export default function ArgusPage() {
           // Create a map of previous strikes for quick lookup
           const prevStrikesMap = new Map(prev.strikes?.map(s => [s.strike, s]) || [])
 
+          // Track if ANY strike actually changed
+          let anyStrikeChanged = false
+
           // Merge strikes: update existing, add new ones
           const mergedStrikes = newData.strikes.map((newStrike: StrikeData) => {
             const prevStrike = prevStrikesMap.get(newStrike.strike)
-            if (!prevStrike) return newStrike
+            if (!prevStrike) {
+              anyStrikeChanged = true
+              return newStrike
+            }
 
             // Check if anything actually changed
             const hasChanged =
@@ -653,9 +660,24 @@ export default function ArgusPage() {
               prevStrike.is_pin !== newStrike.is_pin ||
               prevStrike.is_danger !== newStrike.is_danger
 
+            if (hasChanged) anyStrikeChanged = true
+
             // Only return new object if something changed
             return hasChanged ? newStrike : prevStrike
           })
+
+          // Check if top-level data changed
+          const topLevelChanged =
+            prev.spot_price !== newData.spot_price ||
+            prev.gamma_regime !== newData.gamma_regime ||
+            prev.likely_pin !== newData.likely_pin ||
+            prev.expected_move !== newData.expected_move ||
+            prev.vix !== newData.vix
+
+          // FIX: If nothing changed, return prev to keep same reference
+          if (!anyStrikeChanged && !topLevelChanged) {
+            return prev
+          }
 
           // Update previous strikes ref for EOD tracking
           newData.strikes.forEach((s: StrikeData) => {
@@ -953,10 +975,15 @@ export default function ArgusPage() {
   }, [gammaData])
 
   // Effect to generate trade ideas when gamma data updates
+  // FIX: Use gammaData directly as dependency instead of callback refs to prevent cascade
+  // The callbacks already guard against null gammaData internally
   useEffect(() => {
-    generateTradeIdeas()
-    buildEMTrend()
-  }, [generateTradeIdeas, buildEMTrend])
+    if (gammaData) {
+      generateTradeIdeas()
+      buildEMTrend()
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gammaData?.symbol, gammaData?.spot_price, gammaData?.gamma_regime]) // Stable primitive deps
 
   // Calculate time to expiry (market close at 3:00 PM CT / 4:00 PM ET)
   useEffect(() => {
@@ -1394,19 +1421,35 @@ export default function ArgusPage() {
   const maxGamma = smoothedMaxGamma
 
   // Memoize filtered alerts to prevent re-renders
-  const highPriorityAlerts = useMemo(() =>
-    alerts.filter(a => a.priority === 'HIGH' || a.priority === 'MEDIUM'),
-    [alerts]
-  )
+  // FIX: Added try-catch for stability
+  const highPriorityAlerts = useMemo(() => {
+    try {
+      if (!alerts || !Array.isArray(alerts)) return []
+      return alerts.filter(a => a?.priority === 'HIGH' || a?.priority === 'MEDIUM')
+    } catch {
+      return []
+    }
+  }, [alerts])
 
   // Danger zones for MAIN DISPLAY - use ONLY current snapshot (real-time, not stale)
   // Event Log shows history with timestamps separately
   // Memoize danger zone filtering to prevent unnecessary recalculations
-  const { buildingZones, collapsingZones, spikeZones } = useMemo(() => ({
-    buildingZones: gammaData?.danger_zones?.filter(d => d.danger_type === 'BUILDING') || [],
-    collapsingZones: gammaData?.danger_zones?.filter(d => d.danger_type === 'COLLAPSING') || [],
-    spikeZones: gammaData?.danger_zones?.filter(d => d.danger_type === 'SPIKE') || []
-  }), [gammaData?.danger_zones])
+  // FIX: Added try-catch and null guards for stability
+  const { buildingZones, collapsingZones, spikeZones } = useMemo(() => {
+    try {
+      const zones = gammaData?.danger_zones
+      if (!zones || !Array.isArray(zones)) {
+        return { buildingZones: [], collapsingZones: [], spikeZones: [] }
+      }
+      return {
+        buildingZones: zones.filter(d => d?.danger_type === 'BUILDING'),
+        collapsingZones: zones.filter(d => d?.danger_type === 'COLLAPSING'),
+        spikeZones: zones.filter(d => d?.danger_type === 'SPIKE')
+      }
+    } catch {
+      return { buildingZones: [], collapsingZones: [], spikeZones: [] }
+    }
+  }, [gammaData?.danger_zones])
 
   // Memoize tomorrow's max gamma calculation
   const tomorrowMaxGammaMemo = useMemo(() => {
