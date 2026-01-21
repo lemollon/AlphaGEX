@@ -452,6 +452,21 @@ const AVAILABLE_SYMBOLS = [
   { symbol: 'DIA', name: 'Dow Jones ETF', supported: true },
 ]
 
+// =============================================================================
+// SAFE UTILITY FUNCTIONS - Prevent crashes from null/undefined values
+// =============================================================================
+
+/** Safe number formatting - prevents .toFixed() crashes on null/undefined */
+const safeFixed = (value: number | null | undefined, decimals: number = 2): string =>
+  (value ?? 0).toFixed(decimals)
+
+/** Safe array access - prevents .map()/.filter()/.slice() crashes on null/undefined arrays */
+const safeArray = <T,>(arr: T[] | null | undefined): T[] => arr || []
+
+/** Safe number for comparisons and arithmetic */
+const safeNum = (value: number | null | undefined, fallback: number = 0): number =>
+  value ?? fallback
+
 export default function ArgusPage() {
   const [gammaData, setGammaData] = useState<GammaData | null>(null)
   const [lastLiveData, setLastLiveData] = useState<GammaData | null>(null)  // Preserve last live data during market hours
@@ -832,10 +847,12 @@ export default function ArgusPage() {
 
     const ideas: TradeIdea[] = []
     const { spot_price, gamma_regime, magnets, likely_pin, expected_move, danger_zones } = gammaData
+    const safeMagnets = safeArray(magnets)
+    const safeDangerZones = safeArray(danger_zones)
 
     // Idea 1: Magnet Play
-    if (magnets[0] && Math.abs(magnets[0].strike - spot_price) > 0.5) {
-      const targetMagnet = magnets[0].strike
+    if (safeMagnets[0] && Math.abs(safeMagnets[0].strike - spot_price) > 0.5) {
+      const targetMagnet = safeMagnets[0].strike
       const isAbove = targetMagnet > spot_price
       ideas.push({
         id: 'magnet-play',
@@ -845,7 +862,7 @@ export default function ArgusPage() {
         target: targetMagnet,
         stop: isAbove ? spot_price - (targetMagnet - spot_price) * 0.5 : spot_price + (spot_price - targetMagnet) * 0.5,
         risk_reward: 2.0,
-        confidence: Math.min(magnets[0].probability, 85),
+        confidence: Math.min(safeNum(safeMagnets[0].probability), 85),
         rationale: `Price gravitating toward ${isAbove ? 'call' : 'put'} magnet at $${targetMagnet}. ${gamma_regime} gamma supports this move.`
       })
     }
@@ -860,13 +877,13 @@ export default function ArgusPage() {
         target: likely_pin,
         stop: likely_pin - expected_move * 1.5,
         risk_reward: 1.5,
-        confidence: gammaData.pin_probability,
+        confidence: safeNum(gammaData.pin_probability),
         rationale: `Max pain at $${likely_pin}. Iron Condor or credit spread around this strike could capture decay.`
       })
     }
 
     // Idea 3: Regime Play
-    if (gamma_regime === 'NEGATIVE' && danger_zones.length < 2) {
+    if (gamma_regime === 'NEGATIVE' && safeDangerZones.length < 2) {
       ideas.push({
         id: 'regime-momentum',
         setup_type: 'Negative Gamma Momentum',
@@ -1150,12 +1167,13 @@ export default function ArgusPage() {
   }
 
   // Helpers
-  const formatGamma = (value: number): string => {
-    const absValue = Math.abs(value)
-    if (absValue >= 1e9) return `${(value / 1e9).toFixed(1)}B`
-    if (absValue >= 1e6) return `${(value / 1e6).toFixed(1)}M`
-    if (absValue >= 1e3) return `${(value / 1e3).toFixed(1)}K`
-    return value.toFixed(0)
+  const formatGamma = (value: number | null | undefined): string => {
+    const safeValue = safeNum(value)
+    const absValue = Math.abs(safeValue)
+    if (absValue >= 1e9) return `${(safeValue / 1e9).toFixed(1)}B`
+    if (absValue >= 1e6) return `${(safeValue / 1e6).toFixed(1)}M`
+    if (absValue >= 1e3) return `${(safeValue / 1e3).toFixed(1)}K`
+    return safeValue.toFixed(0)
   }
 
   // Download logs to CSV/Excel
@@ -1186,10 +1204,10 @@ export default function ArgusPage() {
       new Date(log.detected_at).toLocaleString('en-US', { timeZone: 'America/Chicago' }),
       `$${log.strike}`,
       log.danger_type,
-      `${log.roc_1min.toFixed(1)}%`,
-      `${log.roc_5min.toFixed(1)}%`,
-      log.spot_price ? `$${log.spot_price.toFixed(2)}` : '-',
-      `${log.distance_from_spot_pct.toFixed(2)}%`,
+      `${safeFixed(log.roc_1min, 1)}%`,
+      `${safeFixed(log.roc_5min, 1)}%`,
+      log.spot_price ? `$${safeFixed(log.spot_price)}` : '-',
+      `${safeFixed(log.distance_from_spot_pct)}%`,
       log.is_active ? 'Active' : 'Resolved',
       log.resolved_at ? new Date(log.resolved_at).toLocaleString('en-US', { timeZone: 'America/Chicago' }) : '-'
     ])
@@ -1222,8 +1240,9 @@ export default function ArgusPage() {
     if (!gammaData) return "Loading market analysis..."
 
     const { spot_price, gamma_regime, magnets, likely_pin, danger_zones, vix } = gammaData
-    const topMagnet = magnets[0]
-    const dangerCount = danger_zones?.length || 0
+    const safeMagnets = safeArray(magnets)
+    const topMagnet = safeMagnets[0]
+    const dangerCount = safeArray(danger_zones).length
 
     let insight = ""
 
@@ -1235,9 +1254,9 @@ export default function ArgusPage() {
       insight = `Market is in NEUTRAL gamma regime near the flip point. Watch for directional breaks. `
     }
 
-    if (topMagnet) {
+    if (topMagnet && spot_price) {
       const distance = ((topMagnet.strike - spot_price) / spot_price * 100).toFixed(2)
-      insight += `The strongest magnet is at $${topMagnet.strike} (${distance > '0' ? '+' : ''}${distance}% from spot) with ${topMagnet.probability.toFixed(0)}% probability. `
+      insight += `The strongest magnet is at $${topMagnet.strike} (${distance > '0' ? '+' : ''}${distance}% from spot) with ${safeFixed(topMagnet.probability, 0)}% probability. `
     }
 
     if (likely_pin && likely_pin !== topMagnet?.strike) {
@@ -1250,8 +1269,8 @@ export default function ArgusPage() {
       insight += `${dangerCount} strike(s) showing unusual gamma activity.`
     }
 
-    if (vix > 25) {
-      insight += ` Elevated VIX (${vix.toFixed(1)}) suggests options are pricing significant moves.`
+    if (safeNum(vix) > 25) {
+      insight += ` Elevated VIX (${safeFixed(vix, 1)}) suggests options are pricing significant moves.`
     }
 
     return insight
@@ -1263,12 +1282,12 @@ export default function ArgusPage() {
 
     // Create CSV content
     const headers = ['Strike', 'Net Gamma', 'Probability %', '1m ROC', '5m ROC', 'Is Pin', 'Is Magnet', 'Is Danger', 'Danger Type']
-    const rows = gammaData.strikes.map(s => [
+    const rows = safeArray(gammaData.strikes).map(s => [
       s.strike,
       s.net_gamma,
-      s.probability.toFixed(2),
-      s.roc_1min.toFixed(2),
-      s.roc_5min.toFixed(2),
+      safeFixed(s.probability),
+      safeFixed(s.roc_1min),
+      safeFixed(s.roc_5min),
       s.is_pin ? 'Yes' : 'No',
       s.is_magnet ? 'Yes' : 'No',
       s.is_danger ? 'Yes' : 'No',
@@ -1282,24 +1301,24 @@ export default function ArgusPage() {
       ['Export Time', new Date().toLocaleString()],
       ['Symbol', gammaData.symbol],
       ['Spot Price', gammaData.spot_price],
-      ['Expected Move', `±${gammaData.expected_move.toFixed(2)}`],
-      ['VIX', gammaData.vix.toFixed(2)],
+      ['Expected Move', `±${safeFixed(gammaData.expected_move)}`],
+      ['VIX', safeFixed(gammaData.vix)],
       ['Gamma Regime', gammaData.gamma_regime],
-      ['Likely Pin', gammaData.likely_pin],
-      ['Pin Probability', `${gammaData.pin_probability.toFixed(1)}%`],
+      ['Likely Pin', gammaData.likely_pin ?? 'N/A'],
+      ['Pin Probability', `${safeFixed(gammaData.pin_probability, 1)}%`],
       [],
       ['=== Top Magnets ==='],
-      ...gammaData.magnets.map((m, i) => [`Magnet #${i + 1}`, `$${m.strike}`, `${m.probability.toFixed(1)}%`]),
+      ...safeArray(gammaData.magnets).map((m, i) => [`Magnet #${i + 1}`, `$${m.strike}`, `${safeFixed(m.probability, 1)}%`]),
       [],
       ['=== Expected Move Change ==='],
       ['Signal', gammaData.expected_move_change?.signal || 'N/A'],
       ['Sentiment', gammaData.expected_move_change?.sentiment || 'N/A'],
-      ['Prior Day EM', gammaData.expected_move_change?.prior_day ? `±$${gammaData.expected_move_change.prior_day.toFixed(2)}` : 'N/A'],
-      ['Current EM', `±$${gammaData.expected_move_change?.current.toFixed(2) || 'N/A'}`],
-      ['Change %', `${gammaData.expected_move_change?.pct_change_prior.toFixed(1) || 0}%`],
+      ['Prior Day EM', gammaData.expected_move_change?.prior_day ? `±$${safeFixed(gammaData.expected_move_change.prior_day)}` : 'N/A'],
+      ['Current EM', gammaData.expected_move_change?.current ? `±$${safeFixed(gammaData.expected_move_change.current)}` : 'N/A'],
+      ['Change %', `${safeFixed(gammaData.expected_move_change?.pct_change_prior, 1)}%`],
       [],
       ['=== Danger Zones ==='],
-      ...gammaData.danger_zones.map(d => [d.danger_type, `$${d.strike}`, `ROC: ${d.roc_5min.toFixed(1)}%`]),
+      ...safeArray(gammaData.danger_zones).map(d => [d.danger_type, `$${d.strike}`, `ROC: ${safeFixed(d.roc_5min, 1)}%`]),
       [],
       ['=== Alerts ==='],
       ...alerts.map(a => [a.priority, a.message, new Date(a.triggered_at).toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }) + ' CT']),
@@ -1787,14 +1806,14 @@ export default function ArgusPage() {
                   <div className="text-center">
                     <div className="text-xs text-gray-500">Lower</div>
                     <div className="text-sm font-bold text-cyan-400">
-                      ${gammaData.market_structure.bounds.current_lower.toFixed(2)}
+                      ${safeFixed(gammaData.market_structure.bounds.current_lower)}
                     </div>
                   </div>
                   <div className="text-gray-600">—</div>
                   <div className="text-center">
                     <div className="text-xs text-gray-500">Upper</div>
                     <div className="text-sm font-bold text-purple-400">
-                      ${gammaData.market_structure.bounds.current_upper.toFixed(2)}
+                      ${safeFixed(gammaData.market_structure.bounds.current_upper)}
                     </div>
                   </div>
                 </div>
@@ -1822,15 +1841,15 @@ export default function ArgusPage() {
                 </div>
                 <div className="flex items-baseline gap-2 mb-2">
                   <span className="text-xl font-bold text-white">
-                    ${gammaData.market_structure.width.current_width.toFixed(2)}
+                    ${safeFixed(gammaData.market_structure.width.current_width)}
                   </span>
                   {gammaData.market_structure.width.change_pct !== null && (
                     <span className={`text-sm font-medium ${
-                      gammaData.market_structure.width.change_pct > 0 ? 'text-orange-400' :
-                      gammaData.market_structure.width.change_pct < 0 ? 'text-blue-400' : 'text-gray-400'
+                      safeNum(gammaData.market_structure.width.change_pct) > 0 ? 'text-orange-400' :
+                      safeNum(gammaData.market_structure.width.change_pct) < 0 ? 'text-blue-400' : 'text-gray-400'
                     }`}>
-                      {gammaData.market_structure.width.change_pct > 0 ? '+' : ''}
-                      {gammaData.market_structure.width.change_pct?.toFixed(1)}%
+                      {safeNum(gammaData.market_structure.width.change_pct) > 0 ? '+' : ''}
+                      {safeFixed(gammaData.market_structure.width.change_pct, 1)}%
                     </span>
                   )}
                 </div>
@@ -2338,19 +2357,19 @@ export default function ArgusPage() {
                     {/* Key levels row */}
                     {(match.flip_point || match.call_wall || match.put_wall) && (
                       <div className="flex flex-wrap gap-3 mb-3 text-xs">
-                        {match.flip_point && (
+                        {match.flip_point != null && (
                           <span className="px-2 py-1 bg-purple-500/20 text-purple-300 rounded">
-                            Flip: ${match.flip_point.toFixed(0)}
+                            Flip: ${safeFixed(match.flip_point, 0)}
                           </span>
                         )}
-                        {match.call_wall && (
+                        {match.call_wall != null && (
                           <span className="px-2 py-1 bg-emerald-500/20 text-emerald-300 rounded">
-                            Call Wall: ${match.call_wall.toFixed(0)}
+                            Call Wall: ${safeFixed(match.call_wall, 0)}
                           </span>
                         )}
-                        {match.put_wall && (
+                        {match.put_wall != null && (
                           <span className="px-2 py-1 bg-rose-500/20 text-rose-300 rounded">
-                            Put Wall: ${match.put_wall.toFixed(0)}
+                            Put Wall: ${safeFixed(match.put_wall, 0)}
                           </span>
                         )}
                       </div>
@@ -2531,7 +2550,7 @@ export default function ArgusPage() {
                     onClick={() => setSelectedStrike(strike)}
                   >
                     <div className="text-[10px] text-gray-500 mb-1">
-                      {strike.probability > 0 ? `${strike.probability.toFixed(0)}%` : ''}
+                      {safeNum(strike.probability) > 0 ? `${safeFixed(strike.probability, 0)}%` : ''}
                     </div>
                     <div
                       className={`w-6 rounded-t ${getBarColor(strike)} transition-all hover:opacity-80 relative`}
@@ -2552,7 +2571,7 @@ export default function ArgusPage() {
                 {/* Spot Line - key forces re-render when spot_price changes */}
                 {gammaData && gammaData.strikes.length > 1 && (
                   <div
-                    key={`spot-line-${gammaData.spot_price.toFixed(2)}`}
+                    key={`spot-line-${safeFixed(gammaData.spot_price)}`}
                     className="absolute bottom-0 top-0 border-l-2 border-dashed border-emerald-400/60 z-10 transition-all duration-500 ease-out"
                     style={{
                       left: `${((gammaData.spot_price - gammaData.strikes[0].strike) /
@@ -2560,7 +2579,7 @@ export default function ArgusPage() {
                     }}
                   >
                     <div className="absolute -top-1 left-1 text-[9px] text-emerald-400 font-bold bg-gray-900 px-1 rounded whitespace-nowrap">
-                      SPOT ${gammaData.spot_price.toFixed(2)}
+                      SPOT ${safeFixed(gammaData.spot_price)}
                     </div>
                   </div>
                 )}
@@ -2688,9 +2707,9 @@ export default function ArgusPage() {
                             </span>
                           </td>
                           <td className={`py-2 px-2 text-right font-mono ${
-                            stat.peakRoc > 10 ? 'text-rose-400' : stat.peakRoc > 5 ? 'text-yellow-400' : 'text-gray-400'
+                            safeNum(stat.peakRoc) > 10 ? 'text-rose-400' : safeNum(stat.peakRoc) > 5 ? 'text-yellow-400' : 'text-gray-400'
                           }`}>
-                            {stat.peakRoc.toFixed(1)}%
+                            {safeFixed(stat.peakRoc, 1)}%
                           </td>
                           <td className="py-2 px-2 text-right text-gray-400">
                             {stat.timeAsMagnet > 0 ? `${stat.timeAsMagnet}m` : '-'}
@@ -2790,17 +2809,17 @@ export default function ArgusPage() {
                           {formatGamma(strike.net_gamma)}
                         </td>
                         <td className="py-2 px-2 text-right text-gray-300">
-                          {strike.probability.toFixed(1)}%
+                          {safeFixed(strike.probability, 1)}%
                         </td>
                         <td className={`py-2 px-2 text-right font-mono ${
-                          strike.roc_1min > 0 ? 'text-emerald-400' : strike.roc_1min < 0 ? 'text-rose-400' : 'text-gray-500'
+                          safeNum(strike.roc_1min) > 0 ? 'text-emerald-400' : safeNum(strike.roc_1min) < 0 ? 'text-rose-400' : 'text-gray-500'
                         }`}>
-                          {strike.roc_1min > 0 ? '+' : ''}{strike.roc_1min.toFixed(1)}%
+                          {safeNum(strike.roc_1min) > 0 ? '+' : ''}{safeFixed(strike.roc_1min, 1)}%
                         </td>
                         <td className={`py-2 px-2 text-right font-mono ${
-                          strike.roc_5min > 0 ? 'text-emerald-400' : strike.roc_5min < 0 ? 'text-rose-400' : 'text-gray-500'
+                          safeNum(strike.roc_5min) > 0 ? 'text-emerald-400' : safeNum(strike.roc_5min) < 0 ? 'text-rose-400' : 'text-gray-500'
                         }`}>
-                          {strike.roc_5min > 0 ? '+' : ''}{strike.roc_5min.toFixed(1)}%
+                          {safeNum(strike.roc_5min) > 0 ? '+' : ''}{safeFixed(strike.roc_5min, 1)}%
                         </td>
                         <td className={`py-2 px-2 text-right font-mono ${
                           (strike.roc_30min ?? 0) > 0 ? 'text-emerald-400' : (strike.roc_30min ?? 0) < 0 ? 'text-rose-400' : 'text-gray-500'
@@ -2844,7 +2863,7 @@ export default function ArgusPage() {
                             }
                             return (
                               <span className={`px-1.5 py-0.5 rounded text-[10px] ${statusColors[trend.dominant_status] || 'text-gray-400'}`}>
-                                {arrows[trend.dominant_status]} {trend.dominant_duration_mins.toFixed(0)}m
+                                {arrows[trend.dominant_status]} {safeFixed(trend.dominant_duration_mins, 0)}m
                               </span>
                             )
                           })()}
@@ -2870,7 +2889,7 @@ export default function ArgusPage() {
                                     ? 'bg-rose-500/20 text-rose-400'
                                     : 'bg-emerald-500/20 text-emerald-400'
                                 }`}>
-                                  FLIP {flip.mins_ago.toFixed(0)}m
+                                  FLIP {safeFixed(flip.mins_ago, 0)}m
                                 </span>
                               )
                             })()}
@@ -3215,7 +3234,7 @@ export default function ArgusPage() {
                         <div className="flex flex-wrap gap-1.5">
                           {spikeZones.slice(0, 4).map(dz => (
                             <span key={dz.strike} className="px-2 py-1 bg-yellow-500/20 text-yellow-400 rounded text-xs">
-                              ${dz.strike} (+{dz.roc_1min.toFixed(0)}%)
+                              ${dz.strike} (+{safeFixed(dz.roc_1min, 0)}%)
                             </span>
                           ))}
                         </div>
@@ -3230,7 +3249,7 @@ export default function ArgusPage() {
                         <div className="flex flex-wrap gap-1.5">
                           {buildingZones.slice(0, 4).map(dz => (
                             <span key={dz.strike} className="px-2 py-1 bg-orange-500/20 text-orange-400 rounded text-xs">
-                              ${dz.strike} (+{dz.roc_5min.toFixed(0)}%)
+                              ${dz.strike} (+{safeFixed(dz.roc_5min, 0)}%)
                             </span>
                           ))}
                         </div>
@@ -3245,7 +3264,7 @@ export default function ArgusPage() {
                         <div className="flex flex-wrap gap-1.5">
                           {collapsingZones.slice(0, 4).map(dz => (
                             <span key={dz.strike} className="px-2 py-1 bg-rose-500/20 text-rose-400 rounded text-xs">
-                              ${dz.strike} ({dz.roc_5min.toFixed(0)}%)
+                              ${dz.strike} ({safeFixed(dz.roc_5min, 0)}%)
                             </span>
                           ))}
                         </div>
@@ -3274,8 +3293,8 @@ export default function ArgusPage() {
                           </p>
                         )}
                         <div className="flex justify-between text-[10px] text-gray-500 mt-2">
-                          <span>Avg ROC: {gammaData.pinning_status.avg_roc?.toFixed(1)}%</span>
-                          <span>Pin Distance: {gammaData.pinning_status.distance_to_pin_pct?.toFixed(2)}%</span>
+                          <span>Avg ROC: {safeFixed(gammaData.pinning_status?.avg_roc, 1)}%</span>
+                          <span>Pin Distance: {safeFixed(gammaData.pinning_status?.distance_to_pin_pct)}%</span>
                         </div>
                       </div>
                     ) : (
@@ -3306,8 +3325,8 @@ export default function ArgusPage() {
                             .map(s => (
                               <div key={s.strike} className="px-2 py-1.5 bg-gray-700/40 rounded text-xs text-center">
                                 <span className="text-white font-medium">${s.strike}</span>
-                                <span className={`ml-1 ${s.roc_5min > 0 ? 'text-emerald-400' : s.roc_5min < 0 ? 'text-rose-400' : 'text-gray-500'}`}>
-                                  {s.roc_5min > 0 ? '+' : ''}{s.roc_5min.toFixed(1)}%
+                                <span className={`ml-1 ${safeNum(s.roc_5min) > 0 ? 'text-emerald-400' : safeNum(s.roc_5min) < 0 ? 'text-rose-400' : 'text-gray-500'}`}>
+                                  {safeNum(s.roc_5min) > 0 ? '+' : ''}{safeFixed(s.roc_5min, 1)}%
                                 </span>
                               </div>
                             ))
@@ -3403,13 +3422,13 @@ export default function ArgusPage() {
                     </div>
                     <div className="text-right">
                       <div className="text-xs text-gray-500">Probability</div>
-                      <div className="text-lg font-bold text-purple-400">{gammaData.pin_probability.toFixed(0)}%</div>
+                      <div className="text-lg font-bold text-purple-400">{safeFixed(gammaData.pin_probability, 0)}%</div>
                     </div>
                   </div>
                 )}
 
                 {/* Top Magnets */}
-                {gammaData?.magnets.slice(0, 3).map((m, idx) => (
+                {safeArray(gammaData?.magnets).slice(0, 3).map((m, idx) => (
                   <div key={m.strike} className="flex items-center justify-between p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/30">
                     <div>
                       <div className="text-xs text-yellow-400 mb-1">MAGNET #{idx + 1}</div>
@@ -3417,7 +3436,7 @@ export default function ArgusPage() {
                     </div>
                     <div className="text-right">
                       <div className="text-xs text-gray-500">Attraction</div>
-                      <div className="text-lg font-bold text-yellow-400">{m.probability.toFixed(0)}%</div>
+                      <div className="text-lg font-bold text-yellow-400">{safeFixed(m.probability, 0)}%</div>
                     </div>
                   </div>
                 ))}
