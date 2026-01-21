@@ -1126,58 +1126,73 @@ export default function ArgusPage() {
   // Compute EOD Strike Statistics from danger zone logs and strike trends
   // MUST be before early returns to satisfy React hooks rules
   const computedEodStats = useMemo((): EODStrikeStat[] => {
-    if (!gammaData?.strikes) return []
+    try {
+      if (!gammaData?.strikes || !Array.isArray(gammaData.strikes)) return []
 
-    const strikeStats = new Map<number, EODStrikeStat>()
+      const strikeStats = new Map<number, EODStrikeStat>()
 
-    // Initialize with all current strikes
-    gammaData.strikes.forEach(strike => {
-      strikeStats.set(strike.strike, {
-        strike: strike.strike,
-        spikeCount: 0,
-        flipCount: 0,
-        peakRoc: Math.max(Math.abs(strike.roc_1min), Math.abs(strike.roc_5min)),
-        timeAsMagnet: 0,
-        trend: 'STABLE'
+      // Initialize with all current strikes
+      gammaData.strikes.forEach(strike => {
+        if (strike?.strike == null) return
+        strikeStats.set(strike.strike, {
+          strike: strike.strike,
+          spikeCount: 0,
+          flipCount: 0,
+          peakRoc: Math.max(Math.abs(strike.roc_1min || 0), Math.abs(strike.roc_5min || 0)),
+          timeAsMagnet: 0,
+          trend: 'STABLE'
+        })
       })
-    })
 
-    // Count spikes from danger zone logs
-    dangerZoneLogs.forEach(log => {
-      const stat = strikeStats.get(log.strike)
-      if (stat) {
-        if (log.danger_type === 'SPIKE') {
-          stat.spikeCount++
-        }
-        stat.peakRoc = Math.max(stat.peakRoc, Math.abs(log.roc_5min))
+      // Count spikes from danger zone logs
+      if (Array.isArray(dangerZoneLogs)) {
+        dangerZoneLogs.forEach(log => {
+          if (log?.strike == null) return
+          const stat = strikeStats.get(log.strike)
+          if (stat) {
+            if (log.danger_type === 'SPIKE') {
+              stat.spikeCount++
+            }
+            stat.peakRoc = Math.max(stat.peakRoc, Math.abs(log.roc_5min || 0))
+          }
+        })
       }
-    })
 
-    // Count flips from gamma flips data
-    gammaFlips30m.forEach(flip => {
-      const stat = strikeStats.get(flip.strike)
-      if (stat) {
-        stat.flipCount++
+      // Count flips from gamma flips data
+      if (Array.isArray(gammaFlips30m)) {
+        gammaFlips30m.forEach(flip => {
+          if (flip?.strike == null) return
+          const stat = strikeStats.get(flip.strike)
+          if (stat) {
+            stat.flipCount++
+          }
+        })
       }
-    })
 
-    // Get trends from strike trends data
-    Object.entries(strikeTrends).forEach(([strikeKey, trend]) => {
-      const strikeNum = parseFloat(strikeKey)
-      const stat = strikeStats.get(strikeNum)
-      if (stat) {
-        stat.timeAsMagnet = trend.status_durations?.BUILDING || 0
-        if (trend.dominant_status === 'BUILDING') stat.trend = 'BUILDING'
-        else if (trend.dominant_status === 'COLLAPSING') stat.trend = 'COLLAPSING'
-        else if (trend.total_events > 5) stat.trend = 'VOLATILE'
-        else stat.trend = 'STABLE'
+      // Get trends from strike trends data
+      if (strikeTrends && typeof strikeTrends === 'object') {
+        Object.entries(strikeTrends).forEach(([strikeKey, trend]) => {
+          const strikeNum = parseFloat(strikeKey)
+          if (isNaN(strikeNum)) return
+          const stat = strikeStats.get(strikeNum)
+          if (stat && trend) {
+            stat.timeAsMagnet = trend.status_durations?.BUILDING || 0
+            if (trend.dominant_status === 'BUILDING') stat.trend = 'BUILDING'
+            else if (trend.dominant_status === 'COLLAPSING') stat.trend = 'COLLAPSING'
+            else if ((trend.total_events || 0) > 5) stat.trend = 'VOLATILE'
+            else stat.trend = 'STABLE'
+          }
+        })
       }
-    })
 
-    // Sort by activity (spikes + flips) and return top 5
-    return Array.from(strikeStats.values())
-      .sort((a, b) => (b.spikeCount + b.flipCount + b.peakRoc) - (a.spikeCount + a.flipCount + a.peakRoc))
-      .slice(0, 5)
+      // Sort by activity (spikes + flips) and return top 5
+      return Array.from(strikeStats.values())
+        .sort((a, b) => (b.spikeCount + b.flipCount + b.peakRoc) - (a.spikeCount + a.flipCount + a.peakRoc))
+        .slice(0, 5)
+    } catch (err) {
+      console.error('[ARGUS] Error computing EOD stats:', err)
+      return []
+    }
   }, [gammaData?.strikes, dangerZoneLogs, gammaFlips30m, strikeTrends])
 
   const handleDayChange = (day: string) => {
@@ -1394,12 +1409,17 @@ export default function ArgusPage() {
   }), [gammaData?.danger_zones])
 
   // Memoize tomorrow's max gamma calculation
-  const tomorrowMaxGammaMemo = useMemo(() =>
-    tomorrowGammaData?.strikes && tomorrowGammaData.strikes.length > 0
-      ? Math.max(...tomorrowGammaData.strikes.map(s => Math.abs(s.net_gamma || 0)), 1)
-      : 1,
-    [tomorrowGammaData?.strikes]
-  )
+  const tomorrowMaxGammaMemo = useMemo(() => {
+    try {
+      if (!tomorrowGammaData?.strikes || !Array.isArray(tomorrowGammaData.strikes) || tomorrowGammaData.strikes.length === 0) {
+        return 1
+      }
+      const values = tomorrowGammaData.strikes.map(s => Math.abs(safeNum(s?.net_gamma, 0)))
+      return Math.max(...values, 1)
+    } catch {
+      return 1
+    }
+  }, [tomorrowGammaData?.strikes])
 
   return (
     <div className="min-h-screen bg-background">
