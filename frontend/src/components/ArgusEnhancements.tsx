@@ -184,11 +184,11 @@ export function TradeSetupDetector({ symbol = 'SPY' }: { symbol?: string }) {
             <div className="flex gap-4">
               <div>
                 <span className="text-xs text-emerald-400">Call Strikes: </span>
-                <span className="text-sm">{setup.entry_zones.call_strikes.join(', ')}</span>
+                <span className="text-sm">{setup.entry_zones?.call_strikes?.join(', ') || '-'}</span>
               </div>
               <div>
                 <span className="text-xs text-rose-400">Put Strikes: </span>
-                <span className="text-sm">{setup.entry_zones.put_strikes.join(', ')}</span>
+                <span className="text-sm">{setup.entry_zones?.put_strikes?.join(', ') || '-'}</span>
               </div>
             </div>
           </div>
@@ -196,7 +196,7 @@ export function TradeSetupDetector({ symbol = 'SPY' }: { symbol?: string }) {
           <div>
             <div className="text-xs text-gray-500 mb-2">Trade Ideas</div>
             <ul className="text-sm space-y-1">
-              {setup.trade_ideas.map((idea, idx) => (
+              {Array.isArray(setup.trade_ideas) && setup.trade_ideas.map((idea, idx) => (
                 <li key={idx} className="flex items-start gap-2">
                   <Zap className="w-3 h-3 mt-1 text-yellow-400 flex-shrink-0" />
                   {idea}
