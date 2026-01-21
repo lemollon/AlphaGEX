@@ -798,7 +798,7 @@ export default function ArgusPage() {
       console.log('[ARGUS] Fetching commentary...')
       const response = await apiClient.getArgusCommentary()
       console.log('[ARGUS] Commentary response:', response)
-      if (response.data?.success && response.data?.data?.commentary) {
+      if (response.data?.success && Array.isArray(response.data?.data?.commentary)) {
         setCommentary(response.data.data.commentary)
         console.log('[ARGUS] Commentary loaded:', response.data.data.commentary.length, 'entries')
       } else {
@@ -1022,7 +1022,7 @@ export default function ArgusPage() {
   const fetchReplayDates = useCallback(async () => {
     try {
       const response = await apiClient.getArgusReplayDates()
-      if (response.data?.success && response.data?.data?.dates) {
+      if (response.data?.success && Array.isArray(response.data?.data?.dates)) {
         setReplayDates(response.data.data.dates)
         if (response.data.data.dates.length > 0 && !selectedReplayDate) {
           setSelectedReplayDate(response.data.data.dates[0])
@@ -2009,8 +2009,8 @@ export default function ArgusPage() {
                 </div>
                 <div className="flex items-baseline gap-2 mb-2">
                   <span className="text-lg font-bold text-white">
-                    {gammaData.market_structure.intraday?.change_pct !== null
-                      ? `${gammaData.market_structure.intraday.change_pct > 0 ? '+' : ''}${gammaData.market_structure.intraday.change_pct}%`
+                    {gammaData.market_structure.intraday?.change_pct != null
+                      ? `${safeNum(gammaData.market_structure.intraday?.change_pct) > 0 ? '+' : ''}${gammaData.market_structure.intraday?.change_pct}%`
                       : '-'}
                   </span>
                   <span className="text-xs text-gray-500">from open</span>
@@ -2106,8 +2106,8 @@ export default function ArgusPage() {
                     (gammaData.market_structure.gex_momentum?.change_pct || 0) > 0 ? 'text-emerald-400' :
                     (gammaData.market_structure.gex_momentum?.change_pct || 0) < 0 ? 'text-rose-400' : 'text-gray-400'
                   }`}>
-                    {gammaData.market_structure.gex_momentum?.change_pct !== null
-                      ? `${gammaData.market_structure.gex_momentum.change_pct > 0 ? '+' : ''}${gammaData.market_structure.gex_momentum.change_pct}%`
+                    {gammaData.market_structure.gex_momentum?.change_pct != null
+                      ? `${safeNum(gammaData.market_structure.gex_momentum?.change_pct) > 0 ? '+' : ''}${gammaData.market_structure.gex_momentum?.change_pct}%`
                       : '-'}
                   </span>
                   <span className="text-xs text-gray-500">vs prior day</span>
@@ -2607,7 +2607,7 @@ export default function ArgusPage() {
                 {/* Tomorrow's bars (faded, behind today's) - aligned with today's strikes */}
                 {tomorrowGammaData?.strikes && gammaData?.strikes && (
                   <div className="absolute inset-0 flex items-end justify-center gap-1 pointer-events-none">
-                    {gammaData.strikes.map((todayStrike) => {
+                    {safeArray(gammaData?.strikes).map((todayStrike) => {
                       // Find matching strike in tomorrow's data
                       const tomorrowStrike = tomorrowGammaData.strikes?.find(s => s.strike === todayStrike.strike)
                       return (
@@ -2664,26 +2664,32 @@ export default function ArgusPage() {
                 ))}
 
                 {/* Spot Line - key forces re-render when spot_price changes */}
-                {gammaData && gammaData.strikes.length > 1 && (
+                {gammaData?.strikes && gammaData.strikes.length > 1 && (() => {
+                  const minStrike = gammaData.strikes[0].strike
+                  const maxStrike = gammaData.strikes[gammaData.strikes.length - 1].strike
+                  const range = maxStrike - minStrike
+                  if (range === 0) return null
+                  return (
                   <div
                     key={`spot-line-${safeFixed(gammaData.spot_price)}`}
                     className="absolute bottom-0 top-0 border-l-2 border-dashed border-emerald-400/60 z-10 transition-all duration-500 ease-out"
                     style={{
-                      left: `${((gammaData.spot_price - gammaData.strikes[0].strike) /
-                        (gammaData.strikes[gammaData.strikes.length - 1].strike - gammaData.strikes[0].strike)) * 100}%`
+                      left: `${((gammaData.spot_price - minStrike) / range) * 100}%`
                     }}
                   >
                     <div className="absolute -top-1 left-1 text-[9px] text-emerald-400 font-bold bg-gray-900 px-1 rounded whitespace-nowrap">
                       SPOT ${safeFixed(gammaData.spot_price)}
                     </div>
                   </div>
-                )}
+                  )
+                })()}
 
                 {/* Prior Day Expected Move Range - Dotted Lines */}
-                {gammaData && gammaData.strikes.length > 1 && gammaData.expected_move_change?.prior_day && (() => {
+                {gammaData?.strikes && gammaData.strikes.length > 1 && gammaData.expected_move_change?.prior_day && (() => {
                   const minStrike = gammaData.strikes[0].strike
                   const maxStrike = gammaData.strikes[gammaData.strikes.length - 1].strike
                   const range = maxStrike - minStrike
+                  if (range === 0) return null
                   const priorEM = gammaData.expected_move_change.prior_day
                   const lowerPrior = ((gammaData.spot_price - priorEM - minStrike) / range) * 100
                   const upperPrior = ((gammaData.spot_price + priorEM - minStrike) / range) * 100
@@ -2710,10 +2716,11 @@ export default function ArgusPage() {
                 })()}
 
                 {/* Current Expected Move Range - Solid Lines */}
-                {gammaData && gammaData.strikes.length > 1 && gammaData.expected_move && (() => {
+                {gammaData?.strikes && gammaData.strikes.length > 1 && gammaData.expected_move && (() => {
                   const minStrike = gammaData.strikes[0].strike
                   const maxStrike = gammaData.strikes[gammaData.strikes.length - 1].strike
                   const range = maxStrike - minStrike
+                  if (range === 0) return null
                   const currentEM = gammaData.expected_move
                   const lowerCurrent = ((gammaData.spot_price - currentEM - minStrike) / range) * 100
                   const upperCurrent = ((gammaData.spot_price + currentEM - minStrike) / range) * 100
@@ -3176,7 +3183,7 @@ export default function ArgusPage() {
                       {entry.danger_zones && entry.danger_zones.length > 0 && (
                         <div className="mt-2 flex flex-wrap gap-1">
                           <span className="text-[10px] text-orange-400">Danger:</span>
-                          {entry.danger_zones.slice(0, 5).map((dz, i) => (
+                          {safeArray(entry.danger_zones).slice(0, 5).map((dz, i) => (
                             <span key={i} className="px-1.5 py-0.5 bg-orange-500/20 text-orange-400 rounded text-[10px]">
                               {typeof dz === 'string' ? dz : JSON.stringify(dz)}
                             </span>
@@ -3410,11 +3417,11 @@ export default function ArgusPage() {
                       </div>
                     )}
                     {/* Show top ROC strikes even when calm */}
-                    {gammaData && gammaData.strikes && gammaData.strikes.length > 0 && (
+                    {gammaData?.strikes && gammaData.strikes.length > 0 && (
                       <div className="mt-2">
                         <div className="text-[10px] text-gray-600 mb-1">Top activity:</div>
                         <div className="grid grid-cols-3 gap-1">
-                          {[...gammaData.strikes]
+                          {[...safeArray(gammaData?.strikes)]
                             .sort((a, b) => Math.abs(b.roc_5min) - Math.abs(a.roc_5min))
                             .slice(0, 3)
                             .map(s => (
