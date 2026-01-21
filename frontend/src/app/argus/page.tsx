@@ -1733,7 +1733,12 @@ export default function ArgusPage() {
         )}
 
         {/* Market Structure Changes Panel - Multi-Signal Analysis */}
-        {gammaData?.market_structure && (
+        {/* Guard: Only render if all required nested objects exist */}
+        {gammaData?.market_structure?.combined &&
+         gammaData?.market_structure?.flip_point &&
+         gammaData?.market_structure?.bounds &&
+         gammaData?.market_structure?.width &&
+         gammaData?.market_structure?.walls && (
           <div className="mb-6 space-y-4">
             {/* Combined Signal Banner */}
             <div className={`rounded-xl p-5 border-2 ${
@@ -2164,14 +2169,14 @@ export default function ArgusPage() {
             </div>
 
             {/* Warnings Banner (if any) */}
-            {gammaData.market_structure.combined.warnings && gammaData.market_structure.combined.warnings.length > 0 && (
+            {gammaData?.market_structure?.combined?.warnings && gammaData.market_structure.combined.warnings.length > 0 && (
               <div className="bg-yellow-500/10 border border-yellow-500/50 rounded-lg p-3">
                 <div className="flex items-start gap-2">
                   <AlertTriangle className="w-5 h-5 text-yellow-400 flex-shrink-0" />
                   <div>
                     <div className="text-sm font-bold text-yellow-400 mb-1">Active Warnings</div>
                     <ul className="text-xs text-yellow-300/80 space-y-1">
-                      {gammaData.market_structure.combined.warnings.map((warning, idx) => (
+                      {(gammaData.market_structure.combined.warnings || []).map((warning, idx) => (
                         <li key={idx}>• {warning}</li>
                       ))}
                     </ul>
