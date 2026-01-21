@@ -874,7 +874,8 @@ export default function ArgusPage() {
       const response = await apiClient.getArgusPatterns()
       if (response.data?.success && response.data?.data) {
         // Patterns may be empty with a message - that's expected
-        setPatternMatches(response.data.data.patterns || [])
+        const patterns = response.data.data.patterns
+        setPatternMatches(Array.isArray(patterns) ? patterns : [])
       }
     } catch (err) {
       console.error('[ARGUS] Error fetching pattern matches:', err)
@@ -1043,7 +1044,7 @@ export default function ArgusPage() {
           : new Date()
         setLastUpdated(fetchedAt)
         // Set available times if returned
-        if (response.data.data.available_times) {
+        if (Array.isArray(response.data.data.available_times)) {
           setReplayTimes(response.data.data.available_times)
         }
       }
