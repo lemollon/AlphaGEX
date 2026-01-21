@@ -1240,7 +1240,7 @@ export default function ArgusPage() {
 
   // Download logs to CSV/Excel
   const downloadAlertsToExcel = () => {
-    if (alerts.length === 0) return
+    if (!Array.isArray(alerts) || alerts.length === 0) return
     const headers = ['Time (CT)', 'Type', 'Strike', 'Message', 'Priority']
     const rows = alerts.map(a => [
       new Date(a.triggered_at).toLocaleString('en-US', { timeZone: 'America/Chicago' }),
@@ -1260,7 +1260,7 @@ export default function ArgusPage() {
   }
 
   const downloadDangerZonesToExcel = () => {
-    if (dangerZoneLogs.length === 0) return
+    if (!Array.isArray(dangerZoneLogs) || dangerZoneLogs.length === 0) return
     const headers = ['Detected At (CT)', 'Strike', 'Type', 'ROC 1min', 'ROC 5min', 'Spot Price', 'Distance %', 'Status', 'Resolved At']
     const rows = dangerZoneLogs.map(log => [
       new Date(log.detected_at).toLocaleString('en-US', { timeZone: 'America/Chicago' }),
@@ -1383,7 +1383,7 @@ export default function ArgusPage() {
       ...safeArray(gammaData.danger_zones).map(d => [d.danger_type, `$${d.strike}`, `ROC: ${safeFixed(d.roc_5min, 1)}%`]),
       [],
       ['=== Alerts ==='],
-      ...alerts.map(a => [a.priority, a.message, new Date(a.triggered_at).toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }) + ' CT']),
+      ...safeArray(alerts).map(a => [a.priority, a.message, new Date(a.triggered_at).toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }) + ' CT']),
       [],
       ['=== Strike Data ==='],
       headers
@@ -2304,7 +2304,7 @@ export default function ArgusPage() {
                 {showTradeIdeas ? 'Hide' : 'Show'}
               </button>
             </div>
-            {showTradeIdeas && tradeIdeas.length > 0 ? (
+            {showTradeIdeas && Array.isArray(tradeIdeas) && tradeIdeas.length > 0 ? (
               <div className="space-y-3">
                 {tradeIdeas.slice(0, 3).map((idea) => (
                   <div
@@ -2378,7 +2378,7 @@ export default function ArgusPage() {
               Pattern Similarity
               <span className="text-xs text-gray-500 font-normal">vs Historical Days (90d)</span>
             </h3>
-            {patternMatches.length > 0 ? (
+            {Array.isArray(patternMatches) && patternMatches.length > 0 ? (
               <div className="space-y-4">
                 {patternMatches.slice(0, 5).map((match, idx) => (
                   <div key={match.date} className="p-4 bg-gray-900/50 rounded-lg border border-gray-700/50">
@@ -3122,14 +3122,14 @@ export default function ArgusPage() {
                   <Activity className="w-5 h-5 text-cyan-400" />
                   ARGUS Live Log
                 </h3>
-                {commentary.length > 0 && (
+                {Array.isArray(commentary) && commentary.length > 0 && (
                   <span className="text-xs text-gray-500">
                     {commentary.length} entries • Updates every 5 min
                   </span>
                 )}
               </div>
               <div className="space-y-3 max-h-80 overflow-y-auto">
-                {commentary.length > 0 ? (
+                {Array.isArray(commentary) && commentary.length > 0 ? (
                   commentary.slice(0, 20).map((entry) => (
                     <div
                       key={entry.id}
@@ -3139,12 +3139,12 @@ export default function ArgusPage() {
                       <div className="flex items-center justify-between mb-2">
                         <div className="flex items-center gap-2">
                           <Clock className="w-3 h-3 text-cyan-400" />
-                          <span className="text-xs text-cyan-400 font-medium">
-                            {new Date(entry.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          <span className="text-xs text-cyan-400 font-medium" suppressHydrationWarning>
+                            {new Date(entry.timestamp).toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit' })}
                           </span>
                         </div>
-                        <span className="text-[10px] text-gray-600">
-                          {new Date(entry.timestamp).toLocaleDateString()}
+                        <span className="text-[10px] text-gray-600" suppressHydrationWarning>
+                          {new Date(entry.timestamp).toLocaleDateString('en-US', { timeZone: 'America/Chicago' })}
                         </span>
                       </div>
 
@@ -3255,7 +3255,7 @@ export default function ArgusPage() {
                   </div>
                 </div>
                 <div className={`space-y-2 overflow-y-auto transition-all duration-300 ${alertsExpanded ? 'max-h-[500px]' : 'max-h-48'}`}>
-                  {alerts.length > 0 ? (
+                  {Array.isArray(alerts) && alerts.length > 0 ? (
                     alerts.slice(0, alertsExpanded ? 50 : 6).map((alert, idx) => (
                       <div
                         key={idx}
@@ -3446,7 +3446,7 @@ export default function ArgusPage() {
                     <span className="text-xs text-gray-500">Event Log</span>
                     <span className="text-[10px] text-emerald-400">Live • 15s refresh</span>
                   </div>
-                  {dangerZoneLogs.length > 0 ? (
+                  {Array.isArray(dangerZoneLogs) && dangerZoneLogs.length > 0 ? (
                     <div className={`space-y-1.5 overflow-y-auto transition-all duration-300 ${dangerZonesExpanded ? 'max-h-[400px]' : 'max-h-32'}`}>
                       {dangerZoneLogs.slice(0, dangerZonesExpanded ? 100 : 5).map((log) => (
                         <div
@@ -3556,7 +3556,7 @@ export default function ArgusPage() {
                 )}
               </h3>
               <div className="space-y-3">
-                {botPositions.length > 0 ? botPositions.map((bot, idx) => (
+                {Array.isArray(botPositions) && botPositions.length > 0 ? botPositions.map((bot, idx) => (
                   <div
                     key={`${bot.bot}-${idx}`}
                     className={`p-3 rounded-lg ${

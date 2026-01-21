@@ -1111,6 +1111,44 @@ class ArgusEngine:
         """Get list of active (unacknowledged) alerts"""
         return [a.to_dict() for a in self.alerts]
 
+    def get_gamma_snapshot(self, symbol: str = "SPY") -> Optional[Dict]:
+        """
+        Get the current gamma snapshot as a dictionary.
+
+        This returns the most recently processed snapshot from process_options_chain().
+        Returns None if no snapshot has been processed yet.
+
+        Args:
+            symbol: Symbol to get snapshot for (currently ignored, uses stored snapshot)
+
+        Returns:
+            Dict with gamma data including strikes, spot_price, gamma_regime, etc.
+            None if no data available.
+        """
+        if self.previous_snapshot is None:
+            return None
+
+        # Convert to dict and add flip_point for backwards compatibility
+        snapshot_dict = self.previous_snapshot.to_dict()
+
+        # Add flip_point if not present (computed from magnets/structure)
+        if 'flip_point' not in snapshot_dict:
+            # Flip point is typically near the largest gamma magnitude strike
+            strikes = snapshot_dict.get('strikes', [])
+            if strikes:
+                # Find the strike closest to spot with highest gamma
+                spot = snapshot_dict.get('spot_price', 0)
+                near_strikes = [s for s in strikes if abs(s.get('strike', 0) - spot) / spot < 0.02] if spot > 0 else strikes[:5]
+                if near_strikes:
+                    max_gamma_strike = max(near_strikes, key=lambda s: abs(s.get('net_gamma', 0)))
+                    snapshot_dict['flip_point'] = max_gamma_strike.get('strike', spot)
+                else:
+                    snapshot_dict['flip_point'] = spot
+            else:
+                snapshot_dict['flip_point'] = snapshot_dict.get('spot_price', 0)
+
+        return snapshot_dict
+
     def acknowledge_alert(self, alert_index: int) -> bool:
         """Acknowledge an alert by index"""
         if 0 <= alert_index < len(self.alerts):

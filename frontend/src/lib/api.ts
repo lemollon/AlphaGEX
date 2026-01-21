@@ -243,8 +243,8 @@ export const apiClient = {
     confirm: boolean
   }) => api.post('/api/ai/gexis/confirm-action', data),
 
-  // GEXIS Streaming Agentic Chat - Returns EventSource URL
-  getGexisStreamUrl: () => `${API_URL}/api/ai/gexis/agentic-chat/stream`,
+  // GEXIS Streaming Agentic Chat - Returns EventSource URL (or null if API_URL not set)
+  getGexisStreamUrl: () => API_URL ? `${API_URL}/api/ai/gexis/agentic-chat/stream` : null,
 
   gexisCommand: (command: string) =>
     api.post('/api/ai/gexis/command', { command }),
