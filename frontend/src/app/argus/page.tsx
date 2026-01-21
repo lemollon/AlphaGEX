@@ -1733,7 +1733,12 @@ export default function ArgusPage() {
         )}
 
         {/* Market Structure Changes Panel - Multi-Signal Analysis */}
-        {gammaData?.market_structure && (
+        {/* Guard: Only render if all required nested objects exist */}
+        {gammaData?.market_structure?.combined &&
+         gammaData?.market_structure?.flip_point &&
+         gammaData?.market_structure?.bounds &&
+         gammaData?.market_structure?.width &&
+         gammaData?.market_structure?.walls && (
           <div className="mb-6 space-y-4">
             {/* Combined Signal Banner */}
             <div className={`rounded-xl p-5 border-2 ${
@@ -2164,14 +2169,14 @@ export default function ArgusPage() {
             </div>
 
             {/* Warnings Banner (if any) */}
-            {gammaData.market_structure.combined.warnings && gammaData.market_structure.combined.warnings.length > 0 && (
+            {gammaData?.market_structure?.combined?.warnings && gammaData.market_structure.combined.warnings.length > 0 && (
               <div className="bg-yellow-500/10 border border-yellow-500/50 rounded-lg p-3">
                 <div className="flex items-start gap-2">
                   <AlertTriangle className="w-5 h-5 text-yellow-400 flex-shrink-0" />
                   <div>
                     <div className="text-sm font-bold text-yellow-400 mb-1">Active Warnings</div>
                     <ul className="text-xs text-yellow-300/80 space-y-1">
-                      {gammaData.market_structure.combined.warnings.map((warning, idx) => (
+                      {(gammaData.market_structure.combined.warnings || []).map((warning, idx) => (
                         <li key={idx}>• {warning}</li>
                       ))}
                     </ul>
@@ -2326,24 +2331,24 @@ export default function ArgusPage() {
                           {idea.direction}
                         </span>
                       </div>
-                      <span className="text-xs text-gray-500">{idea.confidence.toFixed(0)}% conf</span>
+                      <span className="text-xs text-gray-500">{safeFixed(idea.confidence, 0)}% conf</span>
                     </div>
                     <div className="grid grid-cols-4 gap-2 text-xs mb-2">
                       <div>
                         <div className="text-gray-500">Entry</div>
-                        <div className="font-mono text-white">${idea.entry.toFixed(2)}</div>
+                        <div className="font-mono text-white">${safeFixed(idea.entry, 2)}</div>
                       </div>
                       <div>
                         <div className="text-gray-500">Target</div>
-                        <div className="font-mono text-emerald-400">${idea.target.toFixed(2)}</div>
+                        <div className="font-mono text-emerald-400">${safeFixed(idea.target, 2)}</div>
                       </div>
                       <div>
                         <div className="text-gray-500">Stop</div>
-                        <div className="font-mono text-rose-400">${idea.stop.toFixed(2)}</div>
+                        <div className="font-mono text-rose-400">${safeFixed(idea.stop, 2)}</div>
                       </div>
                       <div>
                         <div className="text-gray-500">R:R</div>
-                        <div className="font-mono text-cyan-400">{idea.risk_reward.toFixed(1)}:1</div>
+                        <div className="font-mono text-cyan-400">{safeFixed(idea.risk_reward, 1)}:1</div>
                       </div>
                     </div>
                     <p className="text-xs text-gray-400">{idea.rationale}</p>
@@ -2406,7 +2411,7 @@ export default function ArgusPage() {
                           }`}>
                             {match.outcome_direction === 'UP' ? <ArrowUpRight className="w-4 h-4" /> :
                              match.outcome_direction === 'DOWN' ? <ArrowDownRight className="w-4 h-4" /> : null}
-                            {match.outcome_pct > 0 ? '+' : ''}{(match.outcome_pct || 0).toFixed(2)}%
+                            {safeNum(match.outcome_pct) > 0 ? '+' : ''}{safeFixed(match.outcome_pct, 2)}%
                           </div>
                         </div>
                       </div>
@@ -3013,8 +3018,8 @@ export default function ArgusPage() {
                 {/* ROC Grid - All Timeframes */}
                 <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
                   {[
-                    { label: '1 Min', value: selectedStrike.roc_1min, key: '1min', alwaysInTable: true },
-                    { label: '5 Min', value: selectedStrike.roc_5min, key: '5min', alwaysInTable: true },
+                    { label: '1 Min', value: selectedStrike.roc_1min ?? 0, key: '1min', alwaysInTable: true },
+                    { label: '5 Min', value: selectedStrike.roc_5min ?? 0, key: '5min', alwaysInTable: true },
                     { label: '30 Min', value: selectedStrike.roc_30min ?? 0, key: '30min', alwaysInTable: true },
                     { label: '1 Hour', value: selectedStrike.roc_1hr ?? 0, key: '1hr', alwaysInTable: true },
                     { label: '4 Hour', value: selectedStrike.roc_4hr ?? 0, key: '4hr', alwaysInTable: false },
@@ -3060,17 +3065,17 @@ export default function ArgusPage() {
                 <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                   <div className="bg-gray-900/30 rounded px-3 py-2">
                     <span className="text-gray-500">Net Gamma:</span>
-                    <span className={`ml-2 font-mono ${selectedStrike.net_gamma > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                      {selectedStrike.net_gamma > 1e6
-                        ? `${(selectedStrike.net_gamma / 1e6).toFixed(1)}M`
-                        : selectedStrike.net_gamma > 1e3
-                          ? `${(selectedStrike.net_gamma / 1e3).toFixed(1)}K`
-                          : selectedStrike.net_gamma.toFixed(0)}
+                    <span className={`ml-2 font-mono ${safeNum(selectedStrike.net_gamma) > 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      {safeNum(selectedStrike.net_gamma) > 1e6
+                        ? `${safeFixed(safeNum(selectedStrike.net_gamma) / 1e6, 1)}M`
+                        : safeNum(selectedStrike.net_gamma) > 1e3
+                          ? `${safeFixed(safeNum(selectedStrike.net_gamma) / 1e3, 1)}K`
+                          : safeFixed(selectedStrike.net_gamma, 0)}
                     </span>
                   </div>
                   <div className="bg-gray-900/30 rounded px-3 py-2">
                     <span className="text-gray-500">Probability:</span>
-                    <span className="ml-2 font-mono text-blue-400">{selectedStrike.probability.toFixed(1)}%</span>
+                    <span className="ml-2 font-mono text-blue-400">{safeFixed(selectedStrike.probability, 1)}%</span>
                   </div>
                   <div className="bg-gray-900/30 rounded px-3 py-2">
                     <span className="text-gray-500">Distance:</span>
@@ -3587,7 +3592,7 @@ export default function ArgusPage() {
                           <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-600/50">
                             <span className="text-xs text-gray-500">P&L</span>
                             <span className={`font-mono font-bold ${bot.pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                              {bot.pnl >= 0 ? '+' : ''}${bot.pnl.toFixed(2)}
+                              {safeNum(bot.pnl) >= 0 ? '+' : ''}${safeFixed(bot.pnl, 2)}
                             </span>
                           </div>
                         )}
@@ -3631,8 +3636,8 @@ export default function ArgusPage() {
                       </div>
                       <div className="text-right">
                         <div className="text-xs text-gray-500">Distance</div>
-                        <div className={`font-bold ${(marketContext.gamma_walls.call_wall_distance || 0) < 1 ? 'text-yellow-400' : 'text-emerald-400'}`}>
-                          +{marketContext.gamma_walls.call_wall_distance?.toFixed(2)}%
+                        <div className={`font-bold ${safeNum(marketContext.gamma_walls.call_wall_distance) < 1 ? 'text-yellow-400' : 'text-emerald-400'}`}>
+                          +{safeFixed(marketContext.gamma_walls.call_wall_distance, 2)}%
                         </div>
                       </div>
                     </div>
@@ -3648,8 +3653,8 @@ export default function ArgusPage() {
                       </div>
                       <div className="text-right">
                         <div className="text-xs text-gray-500">Distance</div>
-                        <div className={`font-bold ${Math.abs(marketContext.gamma_walls.put_wall_distance || 0) < 1 ? 'text-yellow-400' : 'text-rose-400'}`}>
-                          {marketContext.gamma_walls.put_wall_distance?.toFixed(2)}%
+                        <div className={`font-bold ${Math.abs(safeNum(marketContext.gamma_walls.put_wall_distance)) < 1 ? 'text-yellow-400' : 'text-rose-400'}`}>
+                          {safeFixed(marketContext.gamma_walls.put_wall_distance, 2)}%
                         </div>
                       </div>
                     </div>
