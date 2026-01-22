@@ -30,6 +30,7 @@ import {
   BotStatusBanner,
   UnrealizedPnLCard,
   HedgeSignalCard,
+  CapitalConfigPanel,
 } from '@/components/trader'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
 import DriftStatusCard from '@/components/DriftStatusCard'
@@ -386,8 +387,6 @@ function PositionCard({ position, isOpen }: { position: SpreadPosition; isOpen: 
 
 export default function AthenaPage() {
   const [activeTab, setActiveTab] = useState<AthenaTabId>('portfolio')
-  const [showResetConfirm, setShowResetConfirm] = useState(false)
-  const [isResetting, setIsResetting] = useState(false)
   const { addToast } = useToast()
 
   // Data hooks
@@ -434,21 +433,13 @@ export default function AthenaPage() {
   }
 
   const handleReset = async () => {
-    setIsResetting(true)
-    try {
-      const response = await apiClient.resetATHENAData(true)
-      if (response.data?.success) {
-        addToast({ type: 'success', title: 'Reset Complete', message: 'ATHENA data has been reset successfully' })
-        setShowResetConfirm(false)
-        // Refresh all data
-        refreshStatus()
-      } else {
-        addToast({ type: 'error', title: 'Reset Failed', message: response.data?.message || 'Failed to reset ATHENA data' })
-      }
-    } catch (error) {
-      addToast({ type: 'error', title: 'Reset Error', message: 'An error occurred while resetting data' })
-    } finally {
-      setIsResetting(false)
+    const response = await apiClient.resetATHENAData(true)
+    if (response.data?.success) {
+      addToast({ type: 'success', title: 'Reset Complete', message: 'ATHENA data has been reset successfully' })
+      refreshStatus()
+    } else {
+      addToast({ type: 'error', title: 'Reset Failed', message: response.data?.message || 'Failed to reset ATHENA data' })
+      throw new Error(response.data?.message || 'Failed to reset')
     }
   }
 
@@ -730,6 +721,7 @@ export default function AthenaPage() {
 
             {/* Config Tab */}
             {activeTab === 'config' && (
+              <>
               <BotCard title="Configuration" icon={<Settings className="h-5 w-5" />}>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="bg-gray-800/50 rounded-lg p-4">
@@ -765,59 +757,15 @@ export default function AthenaPage() {
                     <span className="text-xl font-bold text-white">08:35 - 14:30 CT</span>
                   </div>
                 </div>
-
-                {/* Reset Section */}
-                <div className="mt-6 pt-6 border-t border-gray-800">
-                  <h4 className="text-lg font-semibold text-white mb-4">Danger Zone</h4>
-                  {!showResetConfirm ? (
-                    <button
-                      onClick={() => setShowResetConfirm(true)}
-                      className="flex items-center gap-2 px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 rounded-lg transition-colors"
-                    >
-                      <RotateCcw className="w-4 h-4" />
-                      <span>Reset ATHENA Data</span>
-                    </button>
-                  ) : (
-                    <div className="p-4 bg-red-900/20 border border-red-500/50 rounded-lg">
-                      <div className="flex items-start gap-3 mb-4">
-                        <AlertTriangle className="w-5 h-5 text-red-400 mt-0.5" />
-                        <div>
-                          <p className="text-red-400 font-medium">Are you sure you want to reset?</p>
-                          <p className="text-gray-400 text-sm mt-1">
-                            This will permanently delete all ATHENA positions, trades, and scan history.
-                            This action cannot be undone.
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex gap-3">
-                        <button
-                          onClick={handleReset}
-                          disabled={isResetting}
-                          className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors disabled:opacity-50"
-                        >
-                          {isResetting ? (
-                            <>
-                              <RotateCcw className="w-4 h-4 animate-spin" />
-                              <span>Resetting...</span>
-                            </>
-                          ) : (
-                            <>
-                              <RotateCcw className="w-4 h-4" />
-                              <span>Yes, Reset All Data</span>
-                            </>
-                          )}
-                        </button>
-                        <button
-                          onClick={() => setShowResetConfirm(false)}
-                          className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
               </BotCard>
+
+              {/* Capital Configuration & Reset */}
+              <CapitalConfigPanel
+                botName="ATHENA"
+                onReset={handleReset}
+                brandColor="cyan"
+              />
+              </>
             )}
           </div>
         </div>

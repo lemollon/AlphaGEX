@@ -86,3 +86,7 @@ export type { EquityPoint } from './LiveEquityCurve'
 // Unified Bot Metrics - Single Source of Truth for all bot statistics
 // Use this instead of calculating stats in frontend components
 export { default as UnifiedBotMetrics, StatCard as UnifiedStatCard, CapitalSourceBadge, ReconciliationStatus } from './UnifiedBotMetrics'
+
+// Capital Configuration Panel - For setting starting capital and resetting bot data
+// Use in Config tabs of bot pages
+export { default as CapitalConfigPanel } from './CapitalConfigPanel'
