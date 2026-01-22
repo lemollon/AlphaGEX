@@ -281,8 +281,10 @@ def validate_option_liquidity(quote: Dict, min_bid: float = 0.01, max_spread_pct
     Returns:
         (is_valid, reason) tuple
     """
-    if quote is None or quote.get('error'):
-        return False, f"No quote data: {quote.get('error', 'None returned')}"
+    if quote is None:
+        return False, "No quote data: None returned"
+    if quote.get('error'):
+        return False, f"No quote data: {quote.get('error')}"
 
     bid = quote.get('bid', 0) or 0
     ask = quote.get('ask', 0) or 0

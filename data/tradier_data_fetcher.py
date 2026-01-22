@@ -283,7 +283,10 @@ class TradierDataFetcher:
             Quote data including bid, ask, last, volume
         """
         response = self._make_request('GET', 'markets/quotes', params={'symbols': symbol})
-        quotes = response.get('quotes', {})
+        if response is None:
+            logger.warning(f"No response from quote API for {symbol}")
+            return {}
+        quotes = response.get('quotes', {}) or {}
 
         if 'quote' in quotes:
             quote_data = quotes['quote']
@@ -306,7 +309,10 @@ class TradierDataFetcher:
             List of expiration dates in YYYY-MM-DD format
         """
         response = self._make_request('GET', 'markets/options/expirations', params={'symbol': symbol})
-        expirations = response.get('expirations', {})
+        if response is None:
+            logger.warning(f"No response from expirations API for {symbol}")
+            return []
+        expirations = response.get('expirations', {}) or {}
 
         date_list = expirations.get('date', [])
         if isinstance(date_list, str):
@@ -368,8 +374,11 @@ class TradierDataFetcher:
         }
 
         response = self._make_request('GET', 'markets/options/chains', params=params)
-        options_data = response.get('options', {})
-        option_list = options_data.get('option', [])
+        if response is None:
+            logger.warning(f"No response from options chain API for {symbol}")
+            return OptionChain(underlying=symbol, underlying_price=underlying_price)
+        options_data = response.get('options', {}) or {}
+        option_list = options_data.get('option', []) or []
 
         if isinstance(option_list, dict):
             option_list = [option_list]
