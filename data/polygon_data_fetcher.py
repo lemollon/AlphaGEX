@@ -424,10 +424,14 @@ class PolygonDataFetcher:
                     # Extract quote timestamp if available
                     quote_timestamp = last_quote.get('sip_timestamp') or last_quote.get('participant_timestamp')
                     if quote_timestamp:
-                        # Convert nanoseconds to datetime
-                        from datetime import datetime
-                        quote_time = datetime.fromtimestamp(quote_timestamp / 1e9)
-                        quote_time_str = quote_time.strftime('%Y-%m-%d %H:%M:%S')
+                        try:
+                            # Convert nanoseconds to datetime (handle string or int)
+                            from datetime import datetime
+                            ts_numeric = int(quote_timestamp) if isinstance(quote_timestamp, str) else quote_timestamp
+                            quote_time = datetime.fromtimestamp(ts_numeric / 1e9)
+                            quote_time_str = quote_time.strftime('%Y-%m-%d %H:%M:%S')
+                        except (ValueError, TypeError, OSError):
+                            quote_time_str = None
                     else:
                         quote_time_str = None
 
