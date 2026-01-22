@@ -181,18 +181,15 @@ except ImportError as e:
 def get_real_option_price(symbol: str, strike: float, option_type: str, expiration_date: str,
                           current_spot: float = None, use_theoretical: bool = True) -> Dict:
     """
-    Get REAL option price - Tradier (live) or Polygon (fallback).
-
-    Tradier provides REAL-TIME data with Greeks included.
-    Polygon is 15-minute delayed and requires theoretical pricing adjustment.
+    Get REAL option price from Tradier (real-time data with Greeks).
 
     Args:
         symbol: Underlying symbol
         strike: Option strike price
         option_type: 'call' or 'put'
         expiration_date: Expiration date YYYY-MM-DD
-        current_spot: Current underlying price (optional, will fetch if None)
-        use_theoretical: Whether to enhance with theoretical pricing (Polygon only)
+        current_spot: Current underlying price (optional, not used - kept for API compatibility)
+        use_theoretical: Not used - kept for API compatibility
 
     Returns:
         Dict with quote data including bid, ask, mid, greeks
@@ -200,72 +197,61 @@ def get_real_option_price(symbol: str, strike: float, option_type: str, expirati
     # Round strike to valid option increment for the symbol
     # SPY uses $1 increments, SPX uses $5 increments
     if symbol.upper() in ['SPY', 'QQQ', 'IWM']:
-        strike = round(strike)  # Round to nearest $1
+        strike = float(round(strike))  # Round to nearest $1, keep as float for comparison
     elif symbol.upper() in ['SPX', 'SPXW', 'NDX']:
-        strike = round(strike / 5) * 5  # Round to nearest $5
+        strike = float(round(strike / 5) * 5)  # Round to nearest $5
     else:
-        strike = round(strike)  # Default to $1 increment
+        strike = float(round(strike))  # Default to $1 increment
 
-    # Try Tradier first (REAL-TIME data with Greeks)
-    if UNIFIED_DATA_AVAILABLE:
-        try:
-            provider = get_data_provider()
-            chain = provider.get_options_chain(symbol, expiration_date, greeks=True)
+    if not UNIFIED_DATA_AVAILABLE:
+        return {'error': 'Tradier data provider not available'}
 
-            if chain and expiration_date in chain.chains:
-                # Find the specific contract
-                for contract in chain.chains[expiration_date]:
-                    if contract.strike == strike and contract.option_type == option_type:
-                        return {
-                            'bid': contract.bid,
-                            'ask': contract.ask,
-                            'mid': contract.mid,
-                            'last': contract.last,
-                            'volume': contract.volume,
-                            'open_interest': contract.open_interest,
-                            'delta': contract.delta,
-                            'gamma': contract.gamma,
-                            'theta': contract.theta,
-                            'vega': contract.vega,
-                            'iv': contract.implied_volatility,
-                            'is_delayed': False,  # Tradier is real-time
-                            'source': 'tradier'
-                        }
-
-            # If exact strike not found, try nearest
-            print(f"   ⚠️ Strike {strike} not found in Tradier chain, checking nearest...")
-
-        except Exception as e:
-            print(f"   ⚠️ Tradier option fetch failed: {e}, falling back to Polygon")
-
-    # Fallback to Polygon (15-minute delayed)
     try:
-        quote = polygon_fetcher.get_option_quote(
-            symbol=symbol,
-            strike=strike,
-            expiration=expiration_date,
-            option_type=option_type
-        )
+        provider = get_data_provider()
+        chain = provider.get_options_chain(symbol, expiration_date, greeks=True)
 
-        if quote is None:
-            return {'error': 'No option data found'}
+        if not chain or expiration_date not in chain.chains:
+            return {'error': f'No options chain for {symbol} exp {expiration_date}'}
 
-        quote['source'] = 'polygon'
+        contracts = chain.chains[expiration_date]
 
-        # If delayed data and theoretical pricing enabled, enhance with Black-Scholes
-        if use_theoretical and quote.get('is_delayed', False):
-            enhanced_quote = calculate_theoretical_option_price(quote, current_spot)
-            if 'error' not in enhanced_quote:
-                theo_price = enhanced_quote.get('theoretical_price', 0)
-                delayed_mid = quote.get('mid', 0)
-                adjustment = enhanced_quote.get('price_adjustment_pct', 0)
-                logger.debug(f"Black-Scholes: Delayed mid=${delayed_mid:.2f} → Theoretical=${theo_price:.2f} ({adjustment:+.1f}%)")
-                return enhanced_quote
+        # Find the specific contract using float comparison with tolerance
+        for contract in contracts:
+            if abs(contract.strike - strike) < 0.01 and contract.option_type == option_type:
+                return {
+                    'bid': contract.bid,
+                    'ask': contract.ask,
+                    'mid': contract.mid,
+                    'last': contract.last,
+                    'volume': contract.volume,
+                    'open_interest': contract.open_interest,
+                    'delta': contract.delta,
+                    'gamma': contract.gamma,
+                    'theta': contract.theta,
+                    'vega': contract.vega,
+                    'iv': contract.implied_volatility,
+                    'is_delayed': False,  # Tradier is real-time
+                    'source': 'tradier'
+                }
 
-        return quote
+        # Strike not found - find nearest available strike for better error message
+        available_strikes = sorted(set(
+            c.strike for c in contracts if c.option_type == option_type
+        ))
+
+        if available_strikes:
+            nearest = min(available_strikes, key=lambda x: abs(x - strike))
+            return {
+                'error': f'Strike ${strike:.0f} not found. Nearest available: ${nearest:.0f}',
+                'requested_strike': strike,
+                'nearest_strike': nearest,
+                'available_strikes': available_strikes[:10]  # First 10 for debugging
+            }
+        else:
+            return {'error': f'No {option_type} contracts found for {symbol} exp {expiration_date}'}
 
     except Exception as e:
-        logger.error(f"Error fetching option price: {e}")
+        logger.error(f"Error fetching option price from Tradier: {e}")
         return {'error': str(e)}
 
 
