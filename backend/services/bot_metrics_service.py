@@ -695,17 +695,14 @@ class BotMetricsService:
             today_realized = float(row[0] or 0)
             today_closed_count = int(row[1] or 0)
 
-            # Get current unrealized P&L
+            # Get open positions count
             cursor.execute(f"""
-                SELECT COALESCE(SUM(COALESCE(unrealized_pnl, 0)), 0), COUNT(*)
-                FROM {positions_table}
-                WHERE status = 'open'
+                SELECT COUNT(*) FROM {positions_table} WHERE status = 'open'
             """)
-            unr_row = cursor.fetchone()
-            current_unrealized = float(unr_row[0] or 0)
-            open_count = int(unr_row[1] or 0)
+            open_count = int(cursor.fetchone()[0] or 0)
 
-            # Get intraday snapshots
+            # Get intraday snapshots FIRST (these have live unrealized P&L from scheduler)
+            snapshots = []
             try:
                 cursor.execute(f"""
                     SELECT timestamp, balance, unrealized_pnl, realized_pnl, open_positions
@@ -716,6 +713,25 @@ class BotMetricsService:
                 snapshots = cursor.fetchall()
             except Exception:
                 snapshots = []  # Table might not exist
+
+            # Use latest snapshot's unrealized P&L for "live" point (scheduler calculates this with live pricing)
+            # Only fall back to positions table if no snapshots exist
+            current_unrealized = 0.0
+            if snapshots:
+                # Use the most recent snapshot's unrealized P&L
+                latest_snap = snapshots[-1]
+                current_unrealized = float(latest_snap[2] or 0)  # unrealized_pnl column
+                # Update open_count from latest snapshot if available
+                if latest_snap[4] is not None:
+                    open_count = int(latest_snap[4])
+            else:
+                # Fallback: query positions table (may be stale)
+                cursor.execute(f"""
+                    SELECT COALESCE(SUM(COALESCE(unrealized_pnl, 0)), 0)
+                    FROM {positions_table}
+                    WHERE status = 'open'
+                """)
+                current_unrealized = float(cursor.fetchone()[0] or 0)
 
             conn.close()
 

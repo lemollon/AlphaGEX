@@ -273,16 +273,17 @@ export default function EquityCurveChart({
   const { data, error, isLoading } = useSWR<EquityCurveData>(
     viewMode === 'historical' ? historicalEndpoint : null,
     fetcher,
-    { refreshInterval: 60000 }
+    { refreshInterval: 30000 }  // Refresh every 30 seconds for more responsive updates
   )
 
   // Fetch intraday data (only when botFilter is set and viewMode is intraday)
   // UNIFIED: Use unified metrics intraday endpoint for consistent starting capital
+  // Snapshots are captured every 5 minutes by scheduler; refresh every 30 seconds to show updates faster
   const intradayEndpoint = botFilter ? `/api/metrics/${botFilter}/equity-curve/intraday` : null
   const { data: intradayData, error: intradayError, isLoading: intradayLoading } = useSWR<IntradayEquityData>(
     viewMode === 'intraday' && intradayEndpoint ? intradayEndpoint : null,
     fetcher,
-    { refreshInterval: 60000 }  // Refresh every 60 seconds (data is captured every 5 min)
+    { refreshInterval: 30000 }  // Refresh every 30 seconds for more responsive updates
   )
 
   // Process equity curve for gradient
@@ -642,7 +643,7 @@ export default function EquityCurveChart({
             </span>
           </div>
           <span className="text-gray-500">
-            Updated every 5 minutes
+            Snapshots every 5 min, refreshing every 30 sec
           </span>
         </div>
       )}
