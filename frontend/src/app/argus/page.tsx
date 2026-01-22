@@ -749,7 +749,7 @@ export default function ArgusPage() {
       // Handle data_unavailable at root level (new backend response format)
       if (response.data?.data_unavailable || response.data?.success === false) {
         console.log('[ARGUS] Tomorrow data unavailable:', response.data?.message || 'No data')
-        setTomorrowGammaData(null)
+        // Don't clear existing data on refresh - preserve what we have
         return
       }
 
@@ -758,14 +758,14 @@ export default function ArgusPage() {
         // Skip error responses - only set valid gamma data with strikes
         if (newData.data_unavailable || !newData.strikes) {
           console.log('[ARGUS] Tomorrow data unavailable (nested):', newData.message || 'No strikes data')
-          setTomorrowGammaData(null)
+          // Don't clear existing data on refresh
           return
         }
         setTomorrowGammaData(newData)
       }
     } catch (err) {
       console.error('[ARGUS] Error fetching tomorrow gamma data:', err)
-      // Don't show error to user - tomorrow's data is optional enhancement
+      // Don't clear data on error - preserve existing data
     }
   }, [selectedSymbol, getTomorrowExpiration])
 
@@ -788,7 +788,10 @@ export default function ArgusPage() {
         const today = response.data.data.expirations.find((e: Expiration) => e.is_today)
         if (today) setActiveDay(today.day)
       }
-    } catch (err) {}
+    } catch (err) {
+      console.error('[ARGUS] Error fetching expirations:', err)
+      // Don't clear existing data on error
+    }
   }, [])
 
   const fetchAlerts = useCallback(async () => {
@@ -797,7 +800,10 @@ export default function ArgusPage() {
       if (response.data?.success && Array.isArray(response.data?.data?.alerts)) {
         setAlerts(response.data.data.alerts)
       }
-    } catch (err) {}
+    } catch (err) {
+      console.error('[ARGUS] Error fetching alerts:', err)
+      // Don't clear existing alerts on error
+    }
   }, [])
 
   const fetchCommentary = useCallback(async () => {
@@ -822,7 +828,10 @@ export default function ArgusPage() {
       if (response.data?.success && response.data?.data) {
         setMarketContext(response.data.data)
       }
-    } catch (err) {}
+    } catch (err) {
+      console.error('[ARGUS] Error fetching market context:', err)
+      // Don't clear existing context on error
+    }
   }, [])
 
   const fetchStrikeTrends = useCallback(async () => {
