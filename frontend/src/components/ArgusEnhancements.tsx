@@ -136,7 +136,7 @@ export function TradeSetupDetector({ symbol = 'SPY' }: { symbol?: string }) {
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <Target className="w-5 h-5" />
-          <span className="font-bold text-lg">{setup.setup_type.replace(/_/g, ' ')}</span>
+          <span className="font-bold text-lg">{(setup.setup_type ?? 'UNKNOWN').replace(/_/g, ' ')}</span>
           <span className={`px-2 py-0.5 rounded text-xs ${
             setup.risk_level === 'LOW' ? 'bg-emerald-500/20 text-emerald-400' :
             setup.risk_level === 'HIGH' ? 'bg-rose-500/20 text-rose-400' :

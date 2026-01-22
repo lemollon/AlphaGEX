@@ -53,7 +53,7 @@ const nextConfig = {
               "img-src 'self' data: https: blob:",
               "font-src 'self' data:",
               `connect-src 'self' http://localhost:8000 http://127.0.0.1:8000 ${process.env.NEXT_PUBLIC_API_URL || ''} ${process.env.NEXT_PUBLIC_WS_URL || ''} wss: ws: https:`,
-              "frame-src 'self' https://s3.tradingview.com",
+              "frame-src 'self' https://s3.tradingview.com https://vercel.live",
               "object-src 'none'",
               "base-uri 'self'",
               "form-action 'self'",
