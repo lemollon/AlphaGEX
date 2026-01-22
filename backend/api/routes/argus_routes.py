@@ -4207,40 +4207,68 @@ async def get_pattern_outcomes(symbol: str = Query(default="SPY")):
 
         cursor = conn.cursor()
 
-        # Find similar historical patterns
-        # Wrap in try-except to handle missing table gracefully
+        # Find similar historical patterns using gex_history table (aggregated to daily)
+        # Uses daily snapshots to find similar gamma regime days and their price outcomes
         try:
             cursor.execute("""
+                WITH daily_gex AS (
+                    -- Get one GEX snapshot per day (morning snapshot)
+                    SELECT DISTINCT ON (DATE(timestamp))
+                        DATE(timestamp) as trade_date,
+                        spot_price,
+                        net_gex as net_gamma,
+                        flip_point,
+                        CASE WHEN net_gex > 0 THEN 'POSITIVE' ELSE 'NEGATIVE' END as regime
+                    FROM gex_history
+                    WHERE symbol = %s
+                    AND timestamp > NOW() - INTERVAL '90 days'
+                    AND timestamp < NOW() - INTERVAL '1 day'
+                    ORDER BY DATE(timestamp), timestamp
+                ),
+                daily_prices AS (
+                    -- Get OHLC from price_history or market_data_daily
+                    SELECT
+                        date as trade_date,
+                        open as spot_open,
+                        high as spot_high,
+                        low as spot_low,
+                        close as spot_close
+                    FROM market_data_daily
+                    WHERE symbol = %s
+                    AND date > NOW() - INTERVAL '90 days'
+                )
                 SELECT
-                    trade_date,
-                    spot_open,
-                    spot_close,
-                    spot_high,
-                    spot_low,
-                    net_gamma,
-                    flip_point,
-                    ABS(spot_close - spot_open) / spot_open * 100 as move_pct,
-                    (spot_high - spot_low) / spot_open * 100 as range_pct,
-                    CASE WHEN net_gamma > 0 THEN 'POSITIVE' ELSE 'NEGATIVE' END as regime
-                FROM gex_structure_daily
-                WHERE symbol = %s
-                AND ABS(
-                    CASE WHEN net_gamma > 0 THEN 1 ELSE -1 END -
-                    CASE WHEN %s = 'POSITIVE' THEN 1 ELSE -1 END
-                ) = 0
-                ORDER BY trade_date DESC
+                    dg.trade_date,
+                    dp.spot_open,
+                    dp.spot_close,
+                    dp.spot_high,
+                    dp.spot_low,
+                    dg.net_gamma,
+                    dg.flip_point,
+                    CASE WHEN dp.spot_open > 0
+                        THEN ABS(dp.spot_close - dp.spot_open) / dp.spot_open * 100
+                        ELSE 0 END as move_pct,
+                    CASE WHEN dp.spot_open > 0
+                        THEN (dp.spot_high - dp.spot_low) / dp.spot_open * 100
+                        ELSE 0 END as range_pct,
+                    dg.regime
+                FROM daily_gex dg
+                LEFT JOIN daily_prices dp ON dg.trade_date = dp.trade_date
+                WHERE dg.regime = %s
+                AND dp.spot_open IS NOT NULL
+                ORDER BY dg.trade_date DESC
                 LIMIT 100
-            """, (symbol, current_regime))
+            """, (symbol, symbol, current_regime))
             rows = cursor.fetchall()
         except Exception as db_err:
-            # Table might not exist yet - handle gracefully
-            logger.warning(f"ARGUS pattern-outcomes: Database query failed (table may not exist): {db_err}")
+            # Tables might not exist - log and return empty
+            logger.warning(f"ARGUS pattern-outcomes: Database query failed: {db_err}")
             conn.close()
             return {
                 "success": True,
                 "data": {
                     "patterns": [],
-                    "message": "Pattern data collection in progress. Table not yet created."
+                    "message": "Insufficient historical data for pattern matching"
                 }
             }
 
