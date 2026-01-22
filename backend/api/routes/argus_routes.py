@@ -823,7 +823,8 @@ async def get_gamma_data(
         current_put_wall = None
 
         if snapshot.strikes:
-            # Find flip point (where gamma crosses zero)
+            # Find flip point (where gamma crosses zero) - find ALL sign changes and pick closest to spot
+            all_flip_points = []
             for i, strike in enumerate(snapshot.strikes[:-1]):
                 if hasattr(strike, 'net_gamma'):
                     curr_gamma = strike.net_gamma
@@ -833,10 +834,14 @@ async def get_gamma_data(
                         # Linear interpolation for more precise flip point
                         if curr_gamma != next_gamma:
                             ratio = abs(curr_gamma) / (abs(curr_gamma) + abs(next_gamma))
-                            current_flip_point = strike.strike + ratio * (next_strike.strike - strike.strike)
+                            flip_pt = strike.strike + ratio * (next_strike.strike - strike.strike)
                         else:
-                            current_flip_point = strike.strike
-                        break
+                            flip_pt = strike.strike
+                        all_flip_points.append(flip_pt)
+
+            # Select flip point closest to current spot price
+            if all_flip_points:
+                current_flip_point = min(all_flip_points, key=lambda fp: abs(fp - snapshot.spot_price))
 
             # Find call wall (highest gamma above spot) and put wall (highest gamma below spot)
             above_spot = [s for s in snapshot.strikes if hasattr(s, 'strike') and s.strike > snapshot.spot_price]
@@ -3024,14 +3029,17 @@ async def get_pattern_matches():
 
         # Get flip point, walls from strikes
         if snapshot.strikes:
-            # Find flip point (where gamma crosses zero)
+            # Find flip point (where gamma crosses zero) - find ALL and pick closest to spot
+            all_flip_points = []
             for i, strike in enumerate(snapshot.strikes[:-1]):
                 if hasattr(strike, 'net_gamma'):
                     curr_gamma = strike.net_gamma
                     next_gamma = snapshot.strikes[i + 1].net_gamma if hasattr(snapshot.strikes[i + 1], 'net_gamma') else 0
                     if curr_gamma * next_gamma < 0:  # Sign change
-                        current_structure['flip_point'] = strike.strike
-                        break
+                        all_flip_points.append(strike.strike)
+            # Select flip point closest to spot price
+            if all_flip_points:
+                current_structure['flip_point'] = min(all_flip_points, key=lambda fp: abs(fp - snapshot.spot_price))
 
             # Find call and put walls (highest gamma strikes above/below spot)
             above_spot = [s for s in snapshot.strikes if hasattr(s, 'strike') and s.strike > snapshot.spot_price]
