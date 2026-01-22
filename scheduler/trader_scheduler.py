@@ -276,6 +276,14 @@ class AutonomousTraderScheduler:
 
         self.scheduler = None
 
+        # Ensure all bot tables exist (may run before API initializes them)
+        try:
+            from db.config_and_database import init_bot_tables
+            init_bot_tables()
+            logger.info("✅ Bot tables initialized for scheduler")
+        except Exception as e:
+            logger.warning(f"Bot table initialization skipped: {e}")
+
         # PHOENIX - 0DTE SPY/SPX Options Trader
         # Capital: $400,000 (40% of total)
         # CRITICAL: Wrap in try-except to prevent scheduler crash if PHOENIX init fails
