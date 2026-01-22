@@ -1228,7 +1228,18 @@ async def get_ares_status():
 
         # current_equity = starting_capital + realized + unrealized
         # Unrealized P&L is now always calculated using MTM when open positions exist
-        starting_capital = 100000  # Default starting capital
+        # Get starting capital from config table (NOT hardcoded)
+        starting_capital = 100000  # Default for ARES (SPY bot)
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM autonomous_config WHERE key = 'ares_starting_capital'")
+            config_row = cursor.fetchone()
+            if config_row and config_row[0]:
+                starting_capital = float(config_row[0])
+            conn.close()
+        except Exception:
+            pass  # Use default if config lookup fails
         current_equity = starting_capital + total_pnl + unrealized_pnl
 
         return {
@@ -1363,7 +1374,18 @@ async def get_ares_status():
             logger.warning(f"ARES Tradier connection failed: {status['tradier_error']}")
 
         # Calculate current_equity = starting_capital + realized + unrealized (matches equity curve)
-        starting_capital = 100000  # Default starting capital
+        # Get starting capital from config table (NOT hardcoded)
+        starting_capital = 100000  # Default for ARES (SPY bot)
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM autonomous_config WHERE key = 'ares_starting_capital'")
+            config_row = cursor.fetchone()
+            if config_row and config_row[0]:
+                starting_capital = float(config_row[0])
+            conn.close()
+        except Exception:
+            pass  # Use default if config lookup fails
         total_pnl = status.get('total_pnl', 0)
         unrealized_pnl = status.get('unrealized_pnl')  # Can be None if no live pricing
         status['starting_capital'] = starting_capital
@@ -2381,27 +2403,28 @@ async def save_equity_snapshot():
     to build detailed intraday equity curve.
 
     Saves: balance, unrealized_pnl, realized_pnl, open_positions
+
+    CRITICAL: Uses same formula as scheduler and intraday endpoint:
+    current_equity = starting_capital + realized_pnl + unrealized_pnl
     """
     now = datetime.now(ZoneInfo("America/Chicago"))
-
-    # Get current Tradier balance
-    tradier_balance = _get_tradier_account_balance()
-
-    if not tradier_balance.get('connected'):
-        return {
-            "success": False,
-            "error": "Tradier not connected",
-            "details": tradier_balance.get('error')
-        }
-
-    current_equity = tradier_balance.get('total_equity', 0)
 
     try:
         from database_adapter import get_connection
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Create table if not exists with all required columns
+        # Get starting capital from config (same as scheduler)
+        starting_capital = 100000  # Default for ARES
+        cursor.execute("SELECT value FROM autonomous_config WHERE key = 'ares_starting_capital'")
+        config_row = cursor.fetchone()
+        if config_row and config_row[0]:
+            try:
+                starting_capital = float(config_row[0])
+            except (ValueError, TypeError):
+                pass
+
+        # Create table if not exists - MUST match scheduler schema exactly
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS ares_equity_snapshots (
                 id SERIAL PRIMARY KEY,
@@ -2409,7 +2432,6 @@ async def save_equity_snapshot():
                 balance DECIMAL(12, 2) NOT NULL,
                 unrealized_pnl DECIMAL(12, 2),
                 realized_pnl DECIMAL(12, 2),
-                option_buying_power DECIMAL(12, 2),
                 open_positions INTEGER,
                 note TEXT,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -2445,17 +2467,20 @@ async def save_equity_snapshot():
         except Exception:
             pass
 
-        # Insert snapshot with all fields
+        # Calculate current equity using SAME formula as scheduler
+        # current_equity = starting_capital + realized_pnl + unrealized_pnl
+        current_equity = starting_capital + realized_pnl + unrealized_pnl
+
+        # Insert snapshot - MUST match scheduler schema exactly (6 columns)
         cursor.execute('''
             INSERT INTO ares_equity_snapshots
-            (timestamp, balance, unrealized_pnl, realized_pnl, option_buying_power, open_positions, note)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            (timestamp, balance, unrealized_pnl, realized_pnl, open_positions, note)
+            VALUES (%s, %s, %s, %s, %s, %s)
         ''', (
             now,
-            current_equity,
+            round(current_equity, 2),
             round(unrealized_pnl, 2),
             round(realized_pnl, 2),
-            tradier_balance.get('option_buying_power', 0),
             open_count,
             f"Auto snapshot at {now.strftime('%H:%M:%S')}"
         ))
@@ -2468,9 +2493,9 @@ async def save_equity_snapshot():
             "data": {
                 "timestamp": now.isoformat(),
                 "equity": round(current_equity, 2),
+                "starting_capital": round(starting_capital, 2),
                 "unrealized_pnl": round(unrealized_pnl, 2),
                 "realized_pnl": round(realized_pnl, 2),
-                "option_buying_power": round(tradier_balance.get('option_buying_power', 0), 2),
                 "open_positions": open_count
             }
         }
@@ -3942,3 +3967,207 @@ async def get_ares_diagnostics():
             "message": "ARES is ready to execute trades in Tradier sandbox" if can_execute and not issues else f"ARES cannot execute trades: {'; '.join(issues)}"
         }
     }
+
+
+@router.get("/diagnostics/intraday")
+async def get_ares_intraday_diagnostics():
+    """
+    Diagnose why ARES intraday equity chart might not be working.
+
+    Checks:
+    - If ares_equity_snapshots table exists
+    - Number of snapshots today and total
+    - Most recent snapshot data
+    - ares_positions table columns
+    - Comparison with TITAN snapshots
+    """
+    CENTRAL_TZ = ZoneInfo("America/Chicago")
+    now = datetime.now(CENTRAL_TZ)
+    today = now.strftime('%Y-%m-%d')
+
+    result = {
+        "timestamp": now.isoformat(),
+        "today": today,
+        "ares": {},
+        "titan": {},
+        "issues": [],
+        "recommendations": []
+    }
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # ========== ARES CHECKS ==========
+
+        # Check if ares_equity_snapshots table exists
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'ares_equity_snapshots'
+            )
+        """)
+        ares_table_exists = cursor.fetchone()[0]
+        result["ares"]["table_exists"] = ares_table_exists
+
+        if not ares_table_exists:
+            result["issues"].append("ares_equity_snapshots table does NOT exist")
+            result["recommendations"].append("Table will be created when scheduler runs during market hours")
+        else:
+            # Get table columns
+            cursor.execute("""
+                SELECT column_name, data_type
+                FROM information_schema.columns
+                WHERE table_name = 'ares_equity_snapshots'
+                ORDER BY ordinal_position
+            """)
+            result["ares"]["columns"] = [{"name": r[0], "type": r[1]} for r in cursor.fetchall()]
+
+            # Count total snapshots
+            cursor.execute("SELECT COUNT(*) FROM ares_equity_snapshots")
+            result["ares"]["total_snapshots"] = cursor.fetchone()[0]
+
+            # Count today's snapshots
+            cursor.execute("""
+                SELECT COUNT(*) FROM ares_equity_snapshots
+                WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+            """, (today,))
+            result["ares"]["today_snapshots"] = cursor.fetchone()[0]
+
+            if result["ares"]["today_snapshots"] == 0:
+                result["issues"].append("No ARES snapshots saved today")
+                result["recommendations"].append("Check if scheduler worker is running during market hours")
+
+            # Get most recent snapshot
+            cursor.execute("""
+                SELECT timestamp, balance, unrealized_pnl, realized_pnl, open_positions, note
+                FROM ares_equity_snapshots
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """)
+            row = cursor.fetchone()
+            if row:
+                result["ares"]["latest_snapshot"] = {
+                    "timestamp": row[0].isoformat() if row[0] else None,
+                    "balance": float(row[1]) if row[1] else 0,
+                    "unrealized_pnl": float(row[2]) if row[2] else 0,
+                    "realized_pnl": float(row[3]) if row[3] else 0,
+                    "open_positions": row[4],
+                    "note": row[5]
+                }
+            else:
+                result["ares"]["latest_snapshot"] = None
+                result["issues"].append("No snapshots ever saved for ARES")
+
+        # Check ares_positions table
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'ares_positions'
+            )
+        """)
+        ares_pos_exists = cursor.fetchone()[0]
+        result["ares"]["positions_table_exists"] = ares_pos_exists
+
+        if ares_pos_exists:
+            # Check required columns exist
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'ares_positions'
+            """)
+            ares_cols = {r[0] for r in cursor.fetchall()}
+            required_cols = {'position_id', 'total_credit', 'contracts', 'spread_width',
+                           'put_short_strike', 'put_long_strike', 'call_short_strike',
+                           'call_long_strike', 'expiration', 'status', 'realized_pnl'}
+            missing_cols = required_cols - ares_cols
+            result["ares"]["missing_columns"] = list(missing_cols) if missing_cols else None
+
+            if missing_cols:
+                result["issues"].append(f"ares_positions missing columns: {missing_cols}")
+
+            # Count positions
+            cursor.execute("SELECT COUNT(*) FROM ares_positions WHERE status = 'open'")
+            result["ares"]["open_positions"] = cursor.fetchone()[0]
+
+            cursor.execute("SELECT COUNT(*) FROM ares_positions WHERE status IN ('closed', 'expired')")
+            result["ares"]["closed_positions"] = cursor.fetchone()[0]
+
+            cursor.execute("SELECT COALESCE(SUM(realized_pnl), 0) FROM ares_positions WHERE status IN ('closed', 'expired')")
+            result["ares"]["total_realized_pnl"] = float(cursor.fetchone()[0] or 0)
+
+        # ========== TITAN COMPARISON ==========
+
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'titan_equity_snapshots'
+            )
+        """)
+        titan_table_exists = cursor.fetchone()[0]
+        result["titan"]["table_exists"] = titan_table_exists
+
+        if titan_table_exists:
+            cursor.execute("SELECT COUNT(*) FROM titan_equity_snapshots")
+            result["titan"]["total_snapshots"] = cursor.fetchone()[0]
+
+            cursor.execute("""
+                SELECT COUNT(*) FROM titan_equity_snapshots
+                WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+            """, (today,))
+            result["titan"]["today_snapshots"] = cursor.fetchone()[0]
+
+            cursor.execute("""
+                SELECT timestamp, balance FROM titan_equity_snapshots
+                ORDER BY timestamp DESC LIMIT 1
+            """)
+            row = cursor.fetchone()
+            if row:
+                result["titan"]["latest_snapshot"] = {
+                    "timestamp": row[0].isoformat() if row[0] else None,
+                    "balance": float(row[1]) if row[1] else 0
+                }
+
+        # ========== MARKET STATUS ==========
+        is_weekday = now.weekday() < 5
+        market_open = now.replace(hour=8, minute=30, second=0, microsecond=0)
+        market_close = now.replace(hour=15, minute=0, second=0, microsecond=0)
+        is_market_hours = market_open <= now <= market_close
+
+        result["market_status"] = {
+            "is_weekday": is_weekday,
+            "is_market_hours": is_market_hours,
+            "current_time_ct": now.strftime('%H:%M:%S'),
+            "market_open": "08:30:00",
+            "market_close": "15:00:00"
+        }
+
+        if not is_weekday:
+            result["issues"].append("Today is weekend - scheduler won't save snapshots")
+        elif not is_market_hours:
+            result["issues"].append(f"Outside market hours ({now.strftime('%H:%M')} CT) - scheduler won't save snapshots")
+
+        # ========== CONFIG CHECK ==========
+        cursor.execute("SELECT value FROM autonomous_config WHERE key = 'ares_starting_capital'")
+        row = cursor.fetchone()
+        result["ares"]["starting_capital_config"] = float(row[0]) if row and row[0] else "NOT SET (default 100000)"
+
+        conn.close()
+
+        # ========== SUMMARY ==========
+        if not result["issues"]:
+            result["status"] = "OK"
+            result["message"] = "All checks passed"
+        else:
+            result["status"] = "ISSUES_FOUND"
+            result["message"] = f"Found {len(result['issues'])} issue(s)"
+
+        return {"success": True, "data": result}
+
+    except Exception as e:
+        logger.error(f"Intraday diagnostics error: {e}")
+        import traceback
+        return {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }

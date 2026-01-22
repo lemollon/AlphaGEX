@@ -22,6 +22,17 @@ from enum import Enum
 
 logger = logging.getLogger(__name__)
 
+# Import MTM calculation functions for live unrealized P&L
+MTM_AVAILABLE = False
+calculate_ic_mark_to_market = None
+calculate_spread_mark_to_market = None
+try:
+    from trading.mark_to_market import calculate_ic_mark_to_market, calculate_spread_mark_to_market
+    MTM_AVAILABLE = True
+    logger.info("bot_metrics_service: MTM functions loaded successfully")
+except ImportError as e:
+    logger.warning(f"bot_metrics_service: MTM functions not available: {e}")
+
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 
@@ -385,7 +396,7 @@ class BotMetricsService:
             try:
                 cursor = conn.cursor()
 
-                # Get aggregate stats from database (SINGLE QUERY for consistency)
+                # Get aggregate stats from database (excluding unrealized - we calculate that with MTM)
                 cursor.execute(f"""
                     SELECT
                         COUNT(*) FILTER (WHERE status = 'open') as open_count,
@@ -393,7 +404,6 @@ class BotMetricsService:
                         COUNT(*) FILTER (WHERE status IN ('closed', 'expired') AND realized_pnl > 0) as wins,
                         COUNT(*) FILTER (WHERE status IN ('closed', 'expired') AND realized_pnl <= 0) as losses,
                         COALESCE(SUM(CASE WHEN status IN ('closed', 'expired') THEN realized_pnl ELSE 0 END), 0) as total_realized,
-                        COALESCE(SUM(CASE WHEN status = 'open' THEN COALESCE(unrealized_pnl, 0) ELSE 0 END), 0) as total_unrealized,
                         COALESCE(SUM(CASE
                             WHEN status IN ('closed', 'expired')
                             AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
@@ -408,10 +418,81 @@ class BotMetricsService:
                     winning_trades = int(row[2] or 0)
                     losing_trades = int(row[3] or 0)
                     total_realized = float(row[4] or 0)
-                    total_unrealized = float(row[5] or 0)
-                    today_realized = float(row[6] or 0)
+                    today_realized = float(row[5] or 0)
 
                 total_trades = closed_count
+
+                # CRITICAL: Calculate unrealized P&L using mark-to-market (NOT from stale DB column)
+                # The positions table unrealized_pnl column is never updated with live values
+                if open_count > 0 and MTM_AVAILABLE:
+                    try:
+                        # Iron Condor bots: ARES, TITAN, PEGASUS
+                        if bot in [BotName.ARES, BotName.TITAN, BotName.PEGASUS]:
+                            underlying = 'SPY' if bot == BotName.ARES else 'SPX'
+                            cursor.execute(f"""
+                                SELECT position_id, total_credit, contracts, spread_width,
+                                       put_short_strike, put_long_strike, call_short_strike, call_long_strike,
+                                       expiration
+                                FROM {positions_table}
+                                WHERE status = 'open'
+                            """)
+                            open_positions = cursor.fetchall()
+
+                            for pos in open_positions:
+                                pos_id, credit, contracts, spread_w, put_short, put_long, call_short, call_long, exp = pos
+                                if not all([credit, contracts, put_short, put_long, call_short, call_long, exp]):
+                                    continue
+                                try:
+                                    exp_str = str(exp) if not isinstance(exp, str) else exp
+                                    mtm = calculate_ic_mark_to_market(
+                                        underlying=underlying,
+                                        expiration=exp_str,
+                                        put_short_strike=float(put_short),
+                                        put_long_strike=float(put_long),
+                                        call_short_strike=float(call_short),
+                                        call_long_strike=float(call_long),
+                                        contracts=int(contracts),
+                                        entry_credit=float(credit),
+                                        use_cache=True
+                                    )
+                                    if mtm.get('success') and mtm.get('unrealized_pnl') is not None:
+                                        total_unrealized += mtm['unrealized_pnl']
+                                except Exception as pos_err:
+                                    logger.debug(f"MTM failed for {bot.value} position {pos_id}: {pos_err}")
+
+                        # Directional spread bots: ATHENA, ICARUS
+                        elif bot in [BotName.ATHENA, BotName.ICARUS]:
+                            cursor.execute(f"""
+                                SELECT position_id, spread_type, entry_debit, contracts,
+                                       long_strike, short_strike, expiration
+                                FROM {positions_table}
+                                WHERE status = 'open'
+                            """)
+                            open_positions = cursor.fetchall()
+
+                            for pos in open_positions:
+                                pos_id, spread_type, debit, contracts, long_strike, short_strike, exp = pos
+                                if not all([debit, contracts, long_strike, short_strike, exp]):
+                                    continue
+                                try:
+                                    exp_str = str(exp) if not isinstance(exp, str) else exp
+                                    mtm = calculate_spread_mark_to_market(
+                                        underlying='SPY',
+                                        expiration=exp_str,
+                                        long_strike=float(long_strike),
+                                        short_strike=float(short_strike),
+                                        spread_type=spread_type or 'call_debit',
+                                        contracts=int(contracts),
+                                        entry_debit=float(debit),
+                                        use_cache=True
+                                    )
+                                    if mtm.get('success') and mtm.get('unrealized_pnl') is not None:
+                                        total_unrealized += mtm['unrealized_pnl']
+                                except Exception as pos_err:
+                                    logger.debug(f"MTM failed for {bot.value} position {pos_id}: {pos_err}")
+
+                    except Exception as mtm_err:
+                        logger.warning(f"MTM calculation failed for {bot.value}: {mtm_err}")
 
                 # Calculate high water mark from equity snapshots
                 snapshots_table = tables['snapshots']

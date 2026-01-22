@@ -409,7 +409,18 @@ async def get_titan_status():
 
     if not titan:
         # TITAN not running - read stats from database
-        starting_capital = 200000
+        # Get starting capital from config table (NOT hardcoded)
+        starting_capital = 200000  # Default for TITAN (SPX bot)
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM autonomous_config WHERE key = 'titan_starting_capital'")
+            config_row = cursor.fetchone()
+            if config_row and config_row[0]:
+                starting_capital = float(config_row[0])
+            conn.close()
+        except Exception:
+            pass  # Use default if config lookup fails
         total_pnl = 0
         unrealized_pnl = 0  # Will calculate using MTM if open positions exist
         trade_count = 0
@@ -577,8 +588,22 @@ async def get_titan_status():
         status['trading_window_status'] = trading_window_status
         status['trading_window_end'] = entry_end
         status['current_time'] = current_time_str
+
+        # Get starting capital from config table (NOT hardcoded)
+        starting_capital = 200000  # Default for TITAN (SPX bot)
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM autonomous_config WHERE key = 'titan_starting_capital'")
+            config_row = cursor.fetchone()
+            if config_row and config_row[0]:
+                starting_capital = float(config_row[0])
+            conn.close()
+        except Exception:
+            pass  # Use default if config lookup fails
+
         if 'capital' not in status:
-            status['capital'] = 200000
+            status['capital'] = starting_capital
         if 'capital_source' not in status:
             status['capital_source'] = 'paper'
         if 'total_pnl' not in status:
@@ -589,7 +614,6 @@ async def get_titan_status():
             status['win_rate'] = 0
 
         # Calculate current_equity = starting_capital + realized + unrealized (matches equity curve)
-        starting_capital = 200000  # TITAN starting capital
         total_pnl = status.get('total_pnl', 0)
         unrealized_pnl = status.get('unrealized_pnl')  # Can be None if no live pricing
         status['starting_capital'] = starting_capital
