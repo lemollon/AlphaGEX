@@ -2505,9 +2505,9 @@ export default function ArgusPage() {
             </div>
             <div className="flex flex-col items-end gap-1">
               {dataTimestamp && (
-                <div className="text-xs text-gray-500 flex items-center gap-1">
+                <div className="text-xs text-gray-500 flex items-center gap-1" suppressHydrationWarning>
                   <Clock className="w-3 h-3" />
-                  {dataTimestamp.toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} CT
+                  <span suppressHydrationWarning>{dataTimestamp.toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} CT</span>
                 </div>
               )}
               {autoRefresh && !isMarketClosed && (
@@ -2564,7 +2564,7 @@ export default function ArgusPage() {
                     )}
                   </h3>
                   {dataTimestamp && (
-                    <span className="text-[10px] text-gray-500">
+                    <span className="text-[10px] text-gray-500" suppressHydrationWarning>
                       Data: {dataTimestamp.toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} CT
                     </span>
                   )}
@@ -2843,9 +2843,9 @@ export default function ArgusPage() {
                   Strike Analysis
                 </h3>
                 {lastUpdated && (
-                  <div className="flex items-center gap-2 text-xs text-gray-500">
+                  <div className="flex items-center gap-2 text-xs text-gray-500" suppressHydrationWarning>
                     <Clock className="w-3 h-3" />
-                    <span>Last updated: {lastUpdated.toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} CT</span>
+                    <span suppressHydrationWarning>Last updated: {lastUpdated.toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} CT</span>
                   </div>
                 )}
               </div>
@@ -3268,7 +3268,7 @@ export default function ArgusPage() {
                         }`}
                       >
                         <div className="text-sm text-white">{alert.message}</div>
-                        <div className="text-xs text-gray-500 mt-1">
+                        <div className="text-xs text-gray-500 mt-1" suppressHydrationWarning>
                           {new Date(alert.triggered_at).toLocaleTimeString('en-US', { timeZone: 'America/Chicago', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true })} CT
                         </div>
                       </div>
@@ -3474,7 +3474,7 @@ export default function ArgusPage() {
                               <span className="text-gray-600 text-[10px]">resolved</span>
                             )}
                           </div>
-                          <span className="text-gray-500">
+                          <span className="text-gray-500" suppressHydrationWarning>
                             {new Date(log.detected_at).toLocaleTimeString('en-US', {
                               timeZone: 'America/Chicago',
                               hour: '2-digit',
@@ -3558,7 +3558,7 @@ export default function ArgusPage() {
               <div className="space-y-3">
                 {Array.isArray(botPositions) && botPositions.length > 0 ? botPositions.map((bot, idx) => (
                   <div
-                    key={`${bot.bot}-${idx}`}
+                    key={`${bot.bot ?? 'bot'}-${idx}`}
                     className={`p-3 rounded-lg ${
                       bot.status === 'open'
                         ? 'bg-emerald-500/10 border border-emerald-500/30'
@@ -3567,7 +3567,7 @@ export default function ArgusPage() {
                   >
                     <div className="flex items-center justify-between mb-1">
                       <div>
-                        <span className="font-bold text-white">{bot.bot}</span>
+                        <span className="font-bold text-white">{bot.bot ?? 'Unknown'}</span>
                         {bot.strategy && (
                           <span className="text-xs text-gray-500 ml-2">{bot.strategy}</span>
                         )}
@@ -3578,7 +3578,7 @@ export default function ArgusPage() {
                         bot.status === 'closed' ? 'bg-gray-600 text-gray-300' :
                         'bg-gray-700 text-gray-500'
                       }`}>
-                        {bot.status.toUpperCase()}
+                        {(bot.status ?? 'unknown').toUpperCase()}
                       </span>
                     </div>
                     {bot.status === 'open' && (

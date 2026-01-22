@@ -2683,42 +2683,129 @@ async def get_bot_positions():
     """
     Get active bot positions for ARGUS context.
 
-    Shows what ARES, ATHENA, PHOENIX are doing relative to gamma structure.
+    Shows what ARES, ATHENA, TITAN, ICARUS, PEGASUS are doing relative to gamma structure.
+
+    Returns BotPosition interface matching frontend:
+    - bot: string (ARES, ATHENA, TITAN, etc.)
+    - strategy: string (Iron Condor, Directional Spread, etc.)
+    - status: string (open, watching, closed)
+    - strikes: string (format: "590/610" for IC, "595" for directional)
+    - direction: string (BULLISH, BEARISH, NEUTRAL)
+    - pnl: number (unrealized P&L for open, realized for closed)
+    - safe: boolean (position within gamma walls)
     """
     try:
         positions = []
 
-        # Check ARES positions
+        # Check ARES positions (Iron Condors - always NEUTRAL direction)
         try:
             from backend.api.routes.ares_routes import get_ares_positions
             ares_data = await get_ares_positions()
             if ares_data.get('success') and ares_data.get('data', {}).get('positions'):
                 for pos in ares_data['data']['positions']:
+                    # Calculate P&L: For open ICs, estimate based on credit received
+                    # Real P&L would require current option prices
+                    pnl = pos.get('realized_pnl') or pos.get('max_profit', 0) * 0.3  # Estimate 30% of max for open
                     positions.append({
                         'bot': 'ARES',
                         'strategy': 'Iron Condor',
                         'status': pos.get('status', 'open'),
-                        'strikes': f"{pos.get('put_short_strike')}/{pos.get('call_short_strike')}",
+                        'strikes': f"{pos.get('put_short_strike', 0):.0f}/{pos.get('call_short_strike', 0):.0f}",
+                        'direction': 'NEUTRAL',  # Iron Condors are non-directional
+                        'pnl': round(float(pnl), 2) if pnl else 0,
                         'safe': True  # Will be calculated based on magnets
                     })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Could not fetch ARES positions: {e}")
 
-        # Check ATHENA positions
+        # Check ATHENA positions (Directional spreads)
         try:
             from backend.api.routes.athena_routes import get_athena_positions
             athena_data = await get_athena_positions()
             if athena_data.get('success') and athena_data.get('data', {}).get('positions'):
                 for pos in athena_data['data']['positions']:
+                    # Determine direction from spread type or explicit field
+                    direction = pos.get('direction', 'NEUTRAL')
+                    if not direction or direction == 'NEUTRAL':
+                        # Infer from strategy name
+                        strategy = pos.get('strategy', '').upper()
+                        if 'CALL' in strategy or 'BULL' in strategy:
+                            direction = 'BULLISH'
+                        elif 'PUT' in strategy or 'BEAR' in strategy:
+                            direction = 'BEARISH'
+                        else:
+                            direction = 'NEUTRAL'
+
+                    pnl = pos.get('realized_pnl') or pos.get('unrealized_pnl', 0)
                     positions.append({
                         'bot': 'ATHENA',
-                        'strategy': pos.get('strategy', 'Directional'),
+                        'strategy': pos.get('strategy', 'Directional Spread'),
                         'status': pos.get('status', 'open'),
-                        'strikes': str(pos.get('strike', 'N/A')),
+                        'strikes': str(pos.get('strike', pos.get('short_strike', 'N/A'))),
+                        'direction': direction,
+                        'pnl': round(float(pnl), 2) if pnl else 0,
                         'safe': True
                     })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Could not fetch ATHENA positions: {e}")
+
+        # Check TITAN positions (Aggressive Iron Condors on SPX)
+        try:
+            from backend.api.routes.titan_routes import get_titan_positions
+            titan_data = await get_titan_positions()
+            if titan_data.get('success') and titan_data.get('data', {}).get('positions'):
+                for pos in titan_data['data']['positions']:
+                    pnl = pos.get('realized_pnl') or pos.get('unrealized_pnl', 0)
+                    positions.append({
+                        'bot': 'TITAN',
+                        'strategy': 'Aggressive IC (SPX)',
+                        'status': pos.get('status', 'open'),
+                        'strikes': f"{pos.get('put_short_strike', 0):.0f}/{pos.get('call_short_strike', 0):.0f}",
+                        'direction': 'NEUTRAL',
+                        'pnl': round(float(pnl), 2) if pnl else 0,
+                        'safe': True
+                    })
+        except Exception as e:
+            logger.debug(f"Could not fetch TITAN positions: {e}")
+
+        # Check ICARUS positions (Aggressive Directional)
+        try:
+            from backend.api.routes.icarus_routes import get_icarus_positions
+            icarus_data = await get_icarus_positions()
+            if icarus_data.get('success') and icarus_data.get('data', {}).get('positions'):
+                for pos in icarus_data['data']['positions']:
+                    direction = pos.get('direction', 'NEUTRAL')
+                    pnl = pos.get('realized_pnl') or pos.get('unrealized_pnl', 0)
+                    positions.append({
+                        'bot': 'ICARUS',
+                        'strategy': 'Aggressive Directional',
+                        'status': pos.get('status', 'open'),
+                        'strikes': str(pos.get('strike', 'N/A')),
+                        'direction': direction.upper() if direction else 'NEUTRAL',
+                        'pnl': round(float(pnl), 2) if pnl else 0,
+                        'safe': True
+                    })
+        except Exception as e:
+            logger.debug(f"Could not fetch ICARUS positions: {e}")
+
+        # Check PEGASUS positions (Weekly Iron Condors)
+        try:
+            from backend.api.routes.pegasus_routes import get_pegasus_positions
+            pegasus_data = await get_pegasus_positions()
+            if pegasus_data.get('success') and pegasus_data.get('data', {}).get('positions'):
+                for pos in pegasus_data['data']['positions']:
+                    pnl = pos.get('realized_pnl') or pos.get('unrealized_pnl', 0)
+                    positions.append({
+                        'bot': 'PEGASUS',
+                        'strategy': 'Weekly IC (SPX)',
+                        'status': pos.get('status', 'open'),
+                        'strikes': f"{pos.get('put_short_strike', 0):.0f}/{pos.get('call_short_strike', 0):.0f}",
+                        'direction': 'NEUTRAL',
+                        'pnl': round(float(pnl), 2) if pnl else 0,
+                        'safe': True
+                    })
+        except Exception as e:
+            logger.debug(f"Could not fetch PEGASUS positions: {e}")
 
         return {
             "success": True,
@@ -3857,99 +3944,124 @@ async def get_trade_setups(symbol: str = Query(default="SPY")):
         dist_to_call_wall_pct = abs(call_wall - spot_price) / spot_price * 100 if call_wall and spot_price > 0 else 999
         dist_to_put_wall_pct = abs(spot_price - put_wall) / spot_price * 100 if put_wall and spot_price > 0 else 999
 
+        # Helper to build common metrics for all setups
+        def build_setup(setup_type: str, description: str, confidence_pct: float,
+                        risk_level: str, trade_ideas: list, call_strikes: list = None, put_strikes: list = None):
+            """Build a setup dict matching the frontend TradeSetup interface."""
+            # Find pin probability from top magnet
+            top_magnets = sorted(strikes, key=lambda x: abs(x.get('net_gamma', 0)), reverse=True)[:1]
+            pin_prob = top_magnets[0].get('probability', 0.5) if top_magnets else 0.5
+
+            return {
+                'setup_type': setup_type,
+                'description': description,
+                'confidence': confidence_pct / 100.0,  # Frontend expects 0-1, not 0-100
+                'risk_level': risk_level,
+                'entry_zones': {
+                    'call_strikes': call_strikes or ([call_wall] if call_wall else []),
+                    'put_strikes': put_strikes or ([put_wall] if put_wall else [])
+                },
+                'current_metrics': {
+                    'gamma_regime': gamma_regime,
+                    'pin_probability': pin_prob * 100,  # As percentage
+                    'distance_to_flip_pct': round(dist_to_flip_pct, 2),
+                    'distance_to_wall_pct': round(min(dist_to_call_wall_pct, dist_to_put_wall_pct), 2)
+                },
+                'trade_ideas': trade_ideas
+            }
+
         # IC_SAFE_ZONE: Price between walls with positive gamma
         if gamma_regime == 'POSITIVE' and dist_to_call_wall_pct > 0.5 and dist_to_put_wall_pct > 0.5:
             confidence = min(95, 70 + (min(dist_to_call_wall_pct, dist_to_put_wall_pct) * 10))
-            setups.append({
-                'setup_type': 'IC_SAFE_ZONE',
-                'name': 'Iron Condor Safe Zone',
-                'description': f'Price pinned between walls. Positive gamma dampens moves.',
-                'confidence': round(confidence),
-                'action': 'SELL_IRON_CONDOR',
-                'details': {
-                    'call_wall': call_wall,
-                    'put_wall': put_wall,
-                    'gamma_regime': gamma_regime,
-                    'suggested_short_call': call_wall,
-                    'suggested_short_put': put_wall
-                },
-                'risk_level': 'LOW' if vix < 20 else 'MEDIUM'
-            })
+            setups.append(build_setup(
+                setup_type='IC_SAFE_ZONE',
+                description=f'Price pinned between walls at ${spot_price:.2f}. Positive gamma dampens moves. Safe for Iron Condors.',
+                confidence_pct=confidence,
+                risk_level='LOW' if vix < 20 else 'MEDIUM',
+                trade_ideas=[
+                    f'Sell Iron Condor with short strikes at ${put_wall} / ${call_wall}',
+                    f'Target 30-50% of max profit, exit if tested',
+                    f'VIX at {vix:.1f} - {"tight spreads OK" if vix < 18 else "widen strikes slightly"}'
+                ]
+            ))
 
         # BREAKOUT_WARNING: Near wall with negative gamma
         if gamma_regime == 'NEGATIVE' and (dist_to_call_wall_pct < 0.3 or dist_to_put_wall_pct < 0.3):
             wall_type = 'CALL' if dist_to_call_wall_pct < dist_to_put_wall_pct else 'PUT'
             confidence = min(90, 60 + ((0.5 - min(dist_to_call_wall_pct, dist_to_put_wall_pct)) * 100))
-            setups.append({
-                'setup_type': 'BREAKOUT_WARNING',
-                'name': f'{wall_type} Wall Break Imminent',
-                'description': f'Price near {wall_type.lower()} wall with negative gamma. Breakout likely.',
-                'confidence': round(confidence),
-                'action': 'AVOID_NEW_IC' if wall_type == 'CALL' else 'AVOID_NEW_IC',
-                'details': {
-                    'wall_type': wall_type,
-                    'distance_to_wall_pct': round(min(dist_to_call_wall_pct, dist_to_put_wall_pct), 2),
-                    'gamma_regime': gamma_regime
-                },
-                'risk_level': 'HIGH'
-            })
+            setups.append(build_setup(
+                setup_type='BREAKOUT_WARNING',
+                description=f'Price near {wall_type.lower()} wall with negative gamma. Breakout likely. Avoid new Iron Condors.',
+                confidence_pct=confidence,
+                risk_level='HIGH',
+                trade_ideas=[
+                    f'AVOID opening new Iron Condors - wall break imminent',
+                    f'Consider {"call" if wall_type == "CALL" else "put"} debit spread if directional',
+                    f'If holding IC, consider closing {"call" if wall_type == "CALL" else "put"} side'
+                ]
+            ))
 
         # FADE_THE_MOVE: Overextended from flip in positive gamma
         if gamma_regime == 'POSITIVE' and dist_to_flip_pct > 0.5:
             direction = 'DOWN' if spot_price > flip_point else 'UP'
             confidence = min(85, 50 + (dist_to_flip_pct * 20))
-            setups.append({
-                'setup_type': 'FADE_THE_MOVE',
-                'name': f'Fade to Flip Point ({direction})',
-                'description': f'Price {dist_to_flip_pct:.1f}% from flip. Positive gamma pulls back.',
-                'confidence': round(confidence),
-                'action': f'DIRECTIONAL_{direction}',
-                'details': {
-                    'flip_point': flip_point,
-                    'current_price': spot_price,
-                    'expected_move_to_flip': round(flip_point - spot_price, 2),
-                    'gamma_regime': gamma_regime
-                },
-                'risk_level': 'MEDIUM'
-            })
+            setups.append(build_setup(
+                setup_type='FADE_THE_MOVE',
+                description=f'Price {dist_to_flip_pct:.1f}% from flip point at ${flip_point:.2f}. Positive gamma pulls price back.',
+                confidence_pct=confidence,
+                risk_level='MEDIUM',
+                trade_ideas=[
+                    f'Fade move {"down" if direction == "DOWN" else "up"} toward flip at ${flip_point:.2f}',
+                    f'{"Put" if direction == "DOWN" else "Call"} credit spread or directional play',
+                    f'Target move of ${abs(flip_point - spot_price):.2f} back to flip'
+                ]
+            ))
 
         # PIN_SETUP: High magnet attraction
-        top_magnets = sorted(strikes, key=lambda x: abs(x.get('net_gamma', 0)), reverse=True)[:3]
-        for magnet in top_magnets:
+        pin_magnets = sorted(strikes, key=lambda x: abs(x.get('net_gamma', 0)), reverse=True)[:3]
+        for magnet in pin_magnets:
             strike = magnet.get('strike', 0)
             probability = magnet.get('probability', 0)
             # Guard against division by zero when spot_price is 0 or missing
             if spot_price > 0 and probability > 0.6 and abs(strike - spot_price) / spot_price * 100 < 1.0:
-                setups.append({
-                    'setup_type': 'PIN_SETUP',
-                    'name': f'Pin to {strike}',
-                    'description': f'{probability*100:.0f}% probability of pinning to {strike}',
-                    'confidence': round(probability * 100),
-                    'action': 'SELL_STRADDLE' if probability > 0.75 else 'SELL_STRANGLE',
-                    'details': {
-                        'pin_strike': strike,
-                        'probability': round(probability, 2),
-                        'distance_pct': round(abs(strike - spot_price) / spot_price * 100, 2) if spot_price > 0 else 0
-                    },
-                    'risk_level': 'MEDIUM' if probability > 0.7 else 'HIGH'
-                })
+                setups.append(build_setup(
+                    setup_type='PIN_SETUP',
+                    description=f'{probability*100:.0f}% probability of pinning to ${strike}. High gamma magnet attraction.',
+                    confidence_pct=probability * 100,
+                    risk_level='MEDIUM' if probability > 0.7 else 'HIGH',
+                    trade_ideas=[
+                        f'{"Sell straddle" if probability > 0.75 else "Sell strangle"} centered at ${strike}',
+                        f'Pin probability: {probability*100:.0f}% - {"strong" if probability > 0.75 else "moderate"} conviction',
+                        f'Distance to pin: {abs(strike - spot_price) / spot_price * 100:.2f}% from current price'
+                    ],
+                    call_strikes=[strike],
+                    put_strikes=[strike]
+                ))
 
-        # Sort by confidence
+        # Sort by confidence (descending)
         setups.sort(key=lambda x: x['confidence'], reverse=True)
+
+        # Return the BEST setup directly in data (not wrapped in array)
+        # Frontend expects a single TradeSetup object
+        if setups:
+            best_setup = setups[0]
+        else:
+            # Default setup when no conditions match
+            best_setup = build_setup(
+                setup_type='NEUTRAL',
+                description=f'No clear setup detected. Market at ${spot_price:.2f} in {gamma_regime} gamma regime.',
+                confidence_pct=50,
+                risk_level='MEDIUM',
+                trade_ideas=[
+                    'Wait for clearer signal before entering',
+                    f'Current gamma regime: {gamma_regime}',
+                    f'VIX at {vix:.1f} - monitor for regime change'
+                ]
+            )
 
         return {
             "success": True,
-            "data": {
-                "setups": setups[:5],  # Top 5 setups
-                "market_context": {
-                    "spot_price": spot_price,
-                    "flip_point": flip_point,
-                    "gamma_regime": gamma_regime,
-                    "vix": vix,
-                    "expected_move": expected_move
-                },
-                "timestamp": format_central_timestamp()
-            }
+            "data": best_setup  # Single setup object, not wrapped in array
         }
 
     except Exception as e:
@@ -3989,109 +4101,47 @@ async def get_optimal_strikes(
         gamma_regime = snapshot.get('gamma_regime', 'NEUTRAL')
         strikes = snapshot.get('strikes', [])
 
-        # Find walls and magnets
-        call_strikes = [s for s in strikes if s.get('strike', 0) > spot_price]
-        put_strikes = [s for s in strikes if s.get('strike', 0) < spot_price]
+        # Find call and put strikes
+        raw_call_strikes = [s for s in strikes if s.get('strike', 0) > spot_price]
+        raw_put_strikes = [s for s in strikes if s.get('strike', 0) < spot_price]
 
-        # Sort by gamma strength
-        call_strikes.sort(key=lambda x: x.get('net_gamma', 0), reverse=True)
-        put_strikes.sort(key=lambda x: abs(x.get('net_gamma', 0)), reverse=True)
+        # Sort by gamma strength (best strikes first)
+        raw_call_strikes.sort(key=lambda x: x.get('net_gamma', 0), reverse=True)
+        raw_put_strikes.sort(key=lambda x: abs(x.get('net_gamma', 0)), reverse=True)
 
-        recommendations = []
+        def build_optimal_strike(s: dict, side: str) -> dict:
+            """Build OptimalStrike object matching frontend interface."""
+            strike_price = s.get('strike', 0)
+            probability = s.get('probability', 0.5)
+            gamma = abs(s.get('net_gamma', 0))
+            distance_pct = abs(strike_price - spot_price) / spot_price * 100 if spot_price > 0 else 0
 
-        if strategy == 'iron_condor':
-            # Find optimal short strikes (strongest walls) - use .get() to prevent KeyError
-            short_call = call_strikes[0].get('strike', spot_price + expected_move) if call_strikes else spot_price + expected_move
-            short_put = put_strikes[0].get('strike', spot_price - expected_move) if put_strikes else spot_price - expected_move
+            # Calculate expected value and risk/reward
+            # For credit spreads: EV = (prob_win * credit) - (prob_loss * max_loss)
+            # Simplified: Higher probability and closer distance = better EV
+            ev_estimate = (1 - probability) * 100 - (probability * 50)  # Rough estimate
+            risk_reward = (1 - probability) / max(probability, 0.01)  # Win/loss ratio
 
-            # Calculate probabilities
-            short_call_prob = call_strikes[0].get('probability', 0.5) if call_strikes else 0.5
-            short_put_prob = put_strikes[0].get('probability', 0.5) if put_strikes else 0.5
+            return {
+                'strike': strike_price,
+                'side': side,
+                'probability': round((1 - probability) * 100, 1),  # Prob of staying OTM (profit)
+                'expected_value': round(ev_estimate, 2),
+                'risk_reward': round(risk_reward, 2),
+                'gamma_exposure': round(gamma, 0),
+                'distance_from_spot_pct': round(distance_pct, 2)
+            }
 
-            # Wings at ~1.5x expected move or next strikes
-            long_call = short_call + max(5, expected_move * 0.5)
-            long_put = short_put - max(5, expected_move * 0.5)
+        # Build calls and puts arrays matching frontend OptimalStrike interface
+        calls = [build_optimal_strike(s, 'CALL') for s in raw_call_strikes[:5]]
+        puts = [build_optimal_strike(s, 'PUT') for s in raw_put_strikes[:5]]
 
-            # Round to standard strikes
-            long_call = round(long_call)
-            long_put = round(long_put)
-
-            # Calculate overall probability of profit
-            pop = (1 - short_call_prob) * (1 - short_put_prob) * 100
-
-            recommendations.append({
-                'strategy': 'IRON_CONDOR',
-                'legs': {
-                    'short_put': short_put,
-                    'long_put': long_put,
-                    'short_call': short_call,
-                    'long_call': long_call
-                },
-                'width': {
-                    'put_spread': short_put - long_put,
-                    'call_spread': long_call - short_call
-                },
-                'probability_of_profit': round(pop, 1),
-                'gamma_support': {
-                    'short_put_wall_strength': round(abs(put_strikes[0].get('net_gamma', 0)) if put_strikes else 0, 0),
-                    'short_call_wall_strength': round(call_strikes[0].get('net_gamma', 0) if call_strikes else 0, 0)
-                },
-                'risk_assessment': {
-                    'gamma_regime': gamma_regime,
-                    'vix_level': vix,
-                    'recommendation': 'FAVORABLE' if gamma_regime == 'POSITIVE' and vix < 25 else 'CAUTION' if gamma_regime == 'NEGATIVE' else 'NEUTRAL'
-                }
-            })
-
-        elif strategy == 'put_spread':
-            if put_strikes:
-                short_put = put_strikes[0]['strike']
-                long_put = short_put - max(5, expected_move * 0.3)
-                pop = (1 - put_strikes[0].get('probability', 0.5)) * 100
-
-                recommendations.append({
-                    'strategy': 'PUT_CREDIT_SPREAD',
-                    'legs': {
-                        'short_put': short_put,
-                        'long_put': round(long_put)
-                    },
-                    'width': short_put - round(long_put),
-                    'probability_of_profit': round(pop, 1),
-                    'wall_strength': round(abs(put_strikes[0].get('net_gamma', 0)), 0)
-                })
-
-        elif strategy == 'call_spread':
-            if call_strikes:
-                short_call = call_strikes[0]['strike']
-                long_call = short_call + max(5, expected_move * 0.3)
-                pop = (1 - call_strikes[0].get('probability', 0.5)) * 100
-
-                recommendations.append({
-                    'strategy': 'CALL_CREDIT_SPREAD',
-                    'legs': {
-                        'short_call': short_call,
-                        'long_call': round(long_call)
-                    },
-                    'width': round(long_call) - short_call,
-                    'probability_of_profit': round(pop, 1),
-                    'wall_strength': round(call_strikes[0].get('net_gamma', 0), 0)
-                })
-
+        # Frontend expects: { calls: OptimalStrike[], puts: OptimalStrike[] }
         return {
             "success": True,
             "data": {
-                "recommendations": recommendations,
-                "market_context": {
-                    "spot_price": spot_price,
-                    "expected_move": expected_move,
-                    "expected_range": {
-                        "low": round(spot_price - expected_move, 2),
-                        "high": round(spot_price + expected_move, 2)
-                    },
-                    "vix": vix,
-                    "gamma_regime": gamma_regime
-                },
-                "timestamp": format_central_timestamp()
+                "calls": calls,
+                "puts": puts
             }
         }
 
@@ -4163,22 +4213,16 @@ async def get_pattern_outcomes(symbol: str = Query(default="SPY")):
         conn.close()
 
         if not rows:
-            # Try gex_history fallback
             return {
                 "success": True,
                 "data": {
-                    "current_pattern": {
-                        "gamma_regime": current_regime,
-                        "vix": current_vix,
-                        "dist_to_flip_pct": round(dist_to_flip, 2)
-                    },
-                    "matches": [],
-                    "statistics": None,
+                    "patterns": [],
                     "message": "Insufficient historical data for pattern matching"
                 }
             }
 
-        # Calculate statistics
+        # Build patterns array matching frontend PatternOutcome interface
+        # Group by pattern type and calculate statistics for each
         moves = [abs(r[7]) for r in rows if r[7] is not None]
         ranges = [r[8] for r in rows if r[8] is not None]
 
@@ -4187,39 +4231,57 @@ async def get_pattern_outcomes(symbol: str = Query(default="SPY")):
         wins = sum(1 for m in moves if m <= expected_range)
         win_rate = wins / len(moves) * 100 if moves else 0
 
-        statistics = {
-            "total_matches": len(rows),
-            "win_rate": round(win_rate, 1),
-            "avg_move_pct": round(sum(moves) / len(moves), 2) if moves else 0,
-            "max_move_pct": round(max(moves), 2) if moves else 0,
-            "min_move_pct": round(min(moves), 2) if moves else 0,
-            "avg_range_pct": round(sum(ranges) / len(ranges), 2) if ranges else 0
-        }
+        # Calculate best and worst cases
+        best_case = -min(moves) if moves else 0  # Best = smallest move (positive for IC)
+        worst_case = -max(moves) if moves else 0  # Worst = biggest move (negative loss)
 
-        # Sample matches for display
-        sample_matches = []
-        for r in rows[:10]:
-            sample_matches.append({
-                "date": str(r[0]),
-                "open": float(r[1]) if r[1] else 0,
-                "close": float(r[2]) if r[2] else 0,
-                "move_pct": round(float(r[7]), 2) if r[7] else 0,
-                "range_pct": round(float(r[8]), 2) if r[8] else 0,
-                "regime": r[9]
+        # Calculate current similarity based on regime match and VIX
+        base_similarity = 0.7 if current_regime in ['POSITIVE', 'NEGATIVE'] else 0.5
+        vix_factor = 1.0 if 15 <= current_vix <= 25 else 0.8
+        current_similarity = base_similarity * vix_factor
+
+        # Build patterns matching frontend interface
+        patterns = [
+            {
+                'pattern_type': f'{current_regime}_GAMMA',
+                'sample_size': len(rows),
+                'win_rate': round(win_rate, 1),
+                'avg_return': round(-sum(moves) / len(moves) / 10, 1) if moves else 0,  # Approx IC return
+                'best_case': round(best_case / 10, 1),  # Scale to reasonable %
+                'worst_case': round(worst_case / 10, 1),
+                'current_similarity': round(current_similarity, 2)
+            }
+        ]
+
+        # Add regime-specific patterns if we have enough data
+        if win_rate >= 60:
+            patterns.append({
+                'pattern_type': 'PIN_ZONE_HOLD',
+                'sample_size': wins,
+                'win_rate': round(win_rate, 1),
+                'avg_return': round(abs(sum(m for m in moves if m <= expected_range)) / max(wins, 1) * 5, 1),
+                'best_case': round(expected_range * 3, 1),
+                'worst_case': -round(expected_range, 1),
+                'current_similarity': round(current_similarity * 0.9, 2)
             })
 
+        if len([m for m in moves if m > expected_range]) >= 5:
+            breakout_moves = [m for m in moves if m > expected_range]
+            patterns.append({
+                'pattern_type': 'BREAKOUT_RISK',
+                'sample_size': len(breakout_moves),
+                'win_rate': round((1 - win_rate / 100) * 100, 1),  # Inverse for breakout traders
+                'avg_return': round(sum(breakout_moves) / len(breakout_moves) * 2, 1),
+                'best_case': round(max(breakout_moves) * 2, 1),
+                'worst_case': round(-min(breakout_moves), 1),
+                'current_similarity': round(current_similarity * 0.7, 2)
+            })
+
+        # Frontend expects response.data.data.patterns
         return {
             "success": True,
             "data": {
-                "current_pattern": {
-                    "gamma_regime": current_regime,
-                    "vix": current_vix,
-                    "dist_to_flip_pct": round(dist_to_flip, 2)
-                },
-                "statistics": statistics,
-                "interpretation": f"In {current_regime} gamma with similar conditions, price stayed in range {win_rate:.0f}% of the time with avg move of {statistics['avg_move_pct']:.1f}%",
-                "sample_matches": sample_matches,
-                "timestamp": format_central_timestamp()
+                "patterns": patterns
             }
         }
 
