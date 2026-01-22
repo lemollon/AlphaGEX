@@ -1228,7 +1228,18 @@ async def get_ares_status():
 
         # current_equity = starting_capital + realized + unrealized
         # Unrealized P&L is now always calculated using MTM when open positions exist
-        starting_capital = 100000  # Default starting capital
+        # Get starting capital from config table (NOT hardcoded)
+        starting_capital = 100000  # Default for ARES (SPY bot)
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM autonomous_config WHERE key = 'ares_starting_capital'")
+            config_row = cursor.fetchone()
+            if config_row and config_row[0]:
+                starting_capital = float(config_row[0])
+            conn.close()
+        except Exception:
+            pass  # Use default if config lookup fails
         current_equity = starting_capital + total_pnl + unrealized_pnl
 
         return {
@@ -1363,7 +1374,18 @@ async def get_ares_status():
             logger.warning(f"ARES Tradier connection failed: {status['tradier_error']}")
 
         # Calculate current_equity = starting_capital + realized + unrealized (matches equity curve)
-        starting_capital = 100000  # Default starting capital
+        # Get starting capital from config table (NOT hardcoded)
+        starting_capital = 100000  # Default for ARES (SPY bot)
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM autonomous_config WHERE key = 'ares_starting_capital'")
+            config_row = cursor.fetchone()
+            if config_row and config_row[0]:
+                starting_capital = float(config_row[0])
+            conn.close()
+        except Exception:
+            pass  # Use default if config lookup fails
         total_pnl = status.get('total_pnl', 0)
         unrealized_pnl = status.get('unrealized_pnl')  # Can be None if no live pricing
         status['starting_capital'] = starting_capital
