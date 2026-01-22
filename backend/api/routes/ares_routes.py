@@ -1988,6 +1988,10 @@ async def get_ares_intraday_equity(date: str = None):
     - Realized P&L from closed positions
     - Unrealized P&L from open positions (mark-to-market)
 
+    AUTO-SNAPSHOT: If market is open and no recent snapshot exists,
+    automatically saves one to ensure intraday chart has data even
+    if the scheduler worker isn't running.
+
     Args:
         date: Date to get intraday data for (default: today)
     """
@@ -2016,7 +2020,96 @@ async def get_ares_intraday_equity(date: str = None):
             except (ValueError, TypeError):
                 pass
 
-        # Get intraday snapshots for the requested date
+        # =====================================================================
+        # AUTO-SNAPSHOT: Save snapshot if market is open and none recent
+        # This ensures intraday data exists even if scheduler isn't running
+        # =====================================================================
+        is_today = (today == now.strftime('%Y-%m-%d'))
+        is_weekday = now.weekday() < 5
+        market_open = now.replace(hour=8, minute=30, second=0, microsecond=0)
+        market_close = now.replace(hour=15, minute=0, second=0, microsecond=0)
+        is_market_hours = market_open <= now <= market_close
+
+        if is_today and is_weekday and is_market_hours:
+            # Check if we need to auto-save a snapshot (none in last 4 minutes)
+            cursor.execute("""
+                SELECT MAX(timestamp) FROM ares_equity_snapshots
+                WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+            """, (today,))
+            last_snap_row = cursor.fetchone()
+            last_snap_time = last_snap_row[0] if last_snap_row and last_snap_row[0] else None
+
+            should_auto_save = False
+            if not last_snap_time:
+                should_auto_save = True
+                logger.info("ARES intraday: No snapshots today, auto-saving first snapshot")
+            else:
+                # Make timezone-aware comparison
+                if last_snap_time.tzinfo is None:
+                    last_snap_time = last_snap_time.replace(tzinfo=CENTRAL_TZ)
+                else:
+                    last_snap_time = last_snap_time.astimezone(CENTRAL_TZ)
+                minutes_since_last = (now - last_snap_time).total_seconds() / 60
+                if minutes_since_last >= 4:
+                    should_auto_save = True
+                    logger.info(f"ARES intraday: Last snapshot {minutes_since_last:.1f} min ago, auto-saving")
+
+            if should_auto_save:
+                try:
+                    # Get realized P&L
+                    cursor.execute("""
+                        SELECT COALESCE(SUM(realized_pnl), 0)
+                        FROM ares_positions WHERE status IN ('closed', 'expired')
+                    """)
+                    auto_realized = float(cursor.fetchone()[0] or 0)
+
+                    # Get unrealized P&L via MTM
+                    auto_unrealized = 0
+                    auto_open_count = 0
+                    try:
+                        live_pnl = _calculate_live_unrealized_pnl()
+                        if live_pnl.get('success'):
+                            auto_unrealized = live_pnl.get('total_unrealized_pnl', 0)
+                            auto_open_count = len(live_pnl.get('positions', []))
+                    except Exception:
+                        pass
+
+                    auto_equity = starting_capital + auto_realized + auto_unrealized
+
+                    # Ensure table exists
+                    cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS ares_equity_snapshots (
+                            id SERIAL PRIMARY KEY,
+                            timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+                            balance DECIMAL(12, 2) NOT NULL,
+                            unrealized_pnl DECIMAL(12, 2),
+                            realized_pnl DECIMAL(12, 2),
+                            open_positions INTEGER,
+                            note TEXT,
+                            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                        )
+                    ''')
+
+                    # Insert auto-snapshot
+                    cursor.execute('''
+                        INSERT INTO ares_equity_snapshots
+                        (timestamp, balance, unrealized_pnl, realized_pnl, open_positions, note)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    ''', (
+                        now,
+                        round(auto_equity, 2),
+                        round(auto_unrealized, 2),
+                        round(auto_realized, 2),
+                        auto_open_count,
+                        f"Auto-save from intraday endpoint at {now.strftime('%H:%M:%S')}"
+                    ))
+                    conn.commit()
+                    logger.info(f"ARES intraday: Auto-saved snapshot equity=${auto_equity:.2f}")
+                except Exception as auto_err:
+                    logger.warning(f"ARES intraday: Auto-save failed: {auto_err}")
+                    # Don't fail the request, just continue
+
+        # Get intraday snapshots for the requested date (re-fetch after potential auto-save)
         # All snapshot tables now have unrealized_pnl and realized_pnl columns
         cursor.execute("""
             SELECT timestamp, balance, unrealized_pnl, realized_pnl, open_positions, note
