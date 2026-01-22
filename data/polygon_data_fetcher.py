@@ -1413,8 +1413,9 @@ def get_vix_for_date(date_str: str) -> float:
     global _vix_fetch_stats
 
     try:
-        # Parse target date
+        # Parse target date and make timezone-aware
         target_date = datetime.strptime(date_str, '%Y-%m-%d')
+        target_date = CENTRAL_TZ.localize(target_date)  # Make timezone-aware
 
         # Get VIX history covering the target date
         days_ago = (datetime.now(CENTRAL_TZ) - target_date).days + 5  # Buffer for weekends
