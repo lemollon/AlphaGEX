@@ -18,6 +18,7 @@ import {
   useTITANConfig,
   useTITANLivePnL,
   useScanActivityTitan,
+  useUnifiedBotSummary,  // UNIFIED: Single source of truth for stats
 } from '@/lib/hooks/useMarketData'
 import {
   BotPageHeader,
@@ -33,6 +34,7 @@ import {
   BotStatusBanner,
   UnrealizedPnLCard,
   HedgeSignalCard,
+  CapitalConfigPanel,
 } from '@/components/trader'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
 import DriftStatusCard from '@/components/DriftStatusCard'
@@ -505,8 +507,6 @@ function PositionCard({ position, isOpen }: { position: IronCondorPosition; isOp
 
 export default function TitanPage() {
   const [activeTab, setActiveTab] = useState<TitanTabId>('portfolio')
-  const [showResetConfirm, setShowResetConfirm] = useState(false)
-  const [isResetting, setIsResetting] = useState(false)
   const { addToast } = useToast()
 
   // Data hooks
@@ -517,6 +517,10 @@ export default function TitanPage() {
   const { data: livePnLData, isLoading: livePnLLoading, isValidating: livePnLValidating } = useTITANLivePnL()
   const { data: scanData, isLoading: scansLoading } = useScanActivityTitan(50)
 
+  // UNIFIED METRICS: Single source of truth for all stats
+  const { data: unifiedData, mutate: refreshUnified } = useUnifiedBotSummary('TITAN')
+  const unifiedMetrics = unifiedData?.data
+
   // Extract data
   const status: TITANStatus | null = statusData?.data || null
   const openPositions: IronCondorPosition[] = positionsData?.data?.open_positions || []
@@ -524,14 +528,14 @@ export default function TitanPage() {
   const scans = scanData?.data?.scans || []
   const config = configData?.data || null
 
-  // Calculate stats
-  const totalPnL = status?.total_pnl || 0
-  const winRate = status?.win_rate || 0
-  const tradeCount = status?.trade_count || 0
-  // Use current_equity (starting_capital + total_pnl + unrealized_pnl when available)
-  const currentEquity = status?.current_equity || status?.capital || 200000
-  // Check if unrealized P&L is available (live pricing from worker)
-  const hasLivePricing = status?.unrealized_pnl !== null && status?.unrealized_pnl !== undefined
+  // UNIFIED: Use server-calculated stats (never calculate in frontend)
+  const totalPnL = unifiedMetrics?.total_realized_pnl ?? (status?.total_pnl || 0)
+  const winRate = unifiedMetrics?.win_rate ?? (status?.win_rate || 0)  // Already 0-100 from server
+  const tradeCount = unifiedMetrics?.total_trades ?? (status?.trade_count || 0)
+  const currentEquity = unifiedMetrics?.current_equity ?? (status?.current_equity || status?.capital || 200000)
+  const capitalSource = unifiedMetrics?.capital_source ?? 'default'
+  // Check if unrealized P&L is available
+  const hasLivePricing = unifiedMetrics?.total_unrealized_pnl !== undefined && unifiedMetrics?.total_unrealized_pnl !== 0
 
   // Brand info
   const brand = BOT_BRANDS.TITAN
@@ -542,21 +546,13 @@ export default function TitanPage() {
   }
 
   const handleReset = async () => {
-    setIsResetting(true)
-    try {
-      const response = await apiClient.resetTITANData(true)
-      if (response.data?.success) {
-        addToast({ type: 'success', title: 'Reset Complete', message: 'TITAN data has been reset successfully' })
-        setShowResetConfirm(false)
-        // Refresh all data
-        refreshStatus()
-      } else {
-        addToast({ type: 'error', title: 'Reset Failed', message: response.data?.message || 'Failed to reset TITAN data' })
-      }
-    } catch (error) {
-      addToast({ type: 'error', title: 'Reset Error', message: 'An error occurred while resetting data' })
-    } finally {
-      setIsResetting(false)
+    const response = await apiClient.resetTITANData(true)
+    if (response.data?.success) {
+      addToast({ type: 'success', title: 'Reset Complete', message: 'TITAN data has been reset successfully' })
+      refreshStatus()
+    } else {
+      addToast({ type: 'error', title: 'Reset Failed', message: response.data?.message || 'Failed to reset TITAN data' })
+      throw new Error(response.data?.message || 'Failed to reset')
     }
   }
 
@@ -855,6 +851,7 @@ export default function TitanPage() {
 
             {/* Config Tab */}
             {activeTab === 'config' && (
+              <>
               <BotCard title="Configuration" icon={<Settings className="h-5 w-5" />}>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="bg-gray-800/50 rounded-lg p-4">
@@ -892,59 +889,15 @@ export default function TitanPage() {
                     <p className="text-gray-300 text-sm">{config.description}</p>
                   </div>
                 )}
-
-                {/* Reset Section */}
-                <div className="mt-6 pt-6 border-t border-gray-800">
-                  <h4 className="text-lg font-semibold text-white mb-4">Danger Zone</h4>
-                  {!showResetConfirm ? (
-                    <button
-                      onClick={() => setShowResetConfirm(true)}
-                      className="flex items-center gap-2 px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 rounded-lg transition-colors"
-                    >
-                      <RotateCcw className="w-4 h-4" />
-                      <span>Reset TITAN Data</span>
-                    </button>
-                  ) : (
-                    <div className="p-4 bg-red-900/20 border border-red-500/50 rounded-lg">
-                      <div className="flex items-start gap-3 mb-4">
-                        <AlertTriangle className="w-5 h-5 text-red-400 mt-0.5" />
-                        <div>
-                          <p className="text-red-400 font-medium">Are you sure you want to reset?</p>
-                          <p className="text-gray-400 text-sm mt-1">
-                            This will permanently delete all TITAN positions, trades, and scan history.
-                            This action cannot be undone.
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex gap-3">
-                        <button
-                          onClick={handleReset}
-                          disabled={isResetting}
-                          className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors disabled:opacity-50"
-                        >
-                          {isResetting ? (
-                            <>
-                              <RotateCcw className="w-4 h-4 animate-spin" />
-                              <span>Resetting...</span>
-                            </>
-                          ) : (
-                            <>
-                              <RotateCcw className="w-4 h-4" />
-                              <span>Yes, Reset All Data</span>
-                            </>
-                          )}
-                        </button>
-                        <button
-                          onClick={() => setShowResetConfirm(false)}
-                          className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
               </BotCard>
+
+              {/* Capital Configuration & Reset */}
+              <CapitalConfigPanel
+                botName="TITAN"
+                onReset={handleReset}
+                brandColor="violet"
+              />
+              </>
             )}
           </div>
         </div>

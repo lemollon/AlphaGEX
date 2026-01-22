@@ -18,6 +18,7 @@ import {
   useATHENAConfig,
   useATHENALivePnL,
   useScanActivityAthena,
+  useUnifiedBotSummary,
 } from '@/lib/hooks/useMarketData'
 import {
   BotPageHeader,
@@ -29,6 +30,7 @@ import {
   BotStatusBanner,
   UnrealizedPnLCard,
   HedgeSignalCard,
+  CapitalConfigPanel,
 } from '@/components/trader'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
 import DriftStatusCard from '@/components/DriftStatusCard'
@@ -385,8 +387,6 @@ function PositionCard({ position, isOpen }: { position: SpreadPosition; isOpen: 
 
 export default function AthenaPage() {
   const [activeTab, setActiveTab] = useState<AthenaTabId>('portfolio')
-  const [showResetConfirm, setShowResetConfirm] = useState(false)
-  const [isResetting, setIsResetting] = useState(false)
   const { addToast } = useToast()
 
   // Data hooks
@@ -396,6 +396,10 @@ export default function AthenaPage() {
   const { data: configData } = useATHENAConfig()
   const { data: livePnLData, isLoading: livePnLLoading, isValidating: livePnLValidating } = useATHENALivePnL()
   const { data: scanData, isLoading: scansLoading } = useScanActivityAthena(50)
+
+  // UNIFIED METRICS: Single source of truth for all stats
+  const { data: unifiedData, mutate: refreshUnified } = useUnifiedBotSummary('ATHENA')
+  const unifiedMetrics = unifiedData?.data
 
   // Extract data
   const status: ATHENAStatus | null = statusData?.data || statusData || null
@@ -408,13 +412,15 @@ export default function AthenaPage() {
   const openPositions = allPositions.filter(p => p.status === 'open')
   const closedPositions = allPositions.filter(p => p.status === 'closed' || p.status === 'expired')
 
-  // Calculate stats
-  const totalPnL = closedPositions.reduce((sum, p) => sum + (p.realized_pnl || 0), 0)
-  const winCount = closedPositions.filter(p => (p.realized_pnl || 0) > 0).length
-  const winRate = closedPositions.length > 0 ? (winCount / closedPositions.length) * 100 : 0
-  const tradeCount = closedPositions.length
-  // Use current_equity (starting_capital + total_pnl + unrealized_pnl when available)
-  const currentEquity = status?.current_equity || status?.capital || 100000
+  // UNIFIED: Use server-calculated stats (never calculate in frontend)
+  // Priority: unified metrics → status fallback → frontend calculation as last resort
+  const totalPnL = unifiedMetrics?.total_realized_pnl ?? closedPositions.reduce((sum, p) => sum + (p.realized_pnl || 0), 0)
+  const winRate = unifiedMetrics?.win_rate ?? (closedPositions.length > 0
+    ? (closedPositions.filter(p => (p.realized_pnl || 0) > 0).length / closedPositions.length) * 100
+    : 0)  // Already 0-100 percentage from server
+  const tradeCount = unifiedMetrics?.total_trades ?? closedPositions.length
+  const currentEquity = unifiedMetrics?.current_equity ?? (status?.current_equity || status?.capital || 100000)
+  const capitalSource = unifiedMetrics?.capital_source ?? 'default'
   // Check if unrealized P&L is available (live pricing from worker)
   const hasLivePricing = status?.unrealized_pnl !== null && status?.unrealized_pnl !== undefined
 
@@ -422,26 +428,18 @@ export default function AthenaPage() {
   const brand = BOT_BRANDS.ATHENA
 
   const handleRefresh = async () => {
-    await refreshStatus()
+    await Promise.all([refreshStatus(), refreshUnified()])
     addToast({ type: 'success', title: 'Refreshed', message: 'ATHENA data refreshed' })
   }
 
   const handleReset = async () => {
-    setIsResetting(true)
-    try {
-      const response = await apiClient.resetATHENAData(true)
-      if (response.data?.success) {
-        addToast({ type: 'success', title: 'Reset Complete', message: 'ATHENA data has been reset successfully' })
-        setShowResetConfirm(false)
-        // Refresh all data
-        refreshStatus()
-      } else {
-        addToast({ type: 'error', title: 'Reset Failed', message: response.data?.message || 'Failed to reset ATHENA data' })
-      }
-    } catch (error) {
-      addToast({ type: 'error', title: 'Reset Error', message: 'An error occurred while resetting data' })
-    } finally {
-      setIsResetting(false)
+    const response = await apiClient.resetATHENAData(true)
+    if (response.data?.success) {
+      addToast({ type: 'success', title: 'Reset Complete', message: 'ATHENA data has been reset successfully' })
+      refreshStatus()
+    } else {
+      addToast({ type: 'error', title: 'Reset Failed', message: response.data?.message || 'Failed to reset ATHENA data' })
+      throw new Error(response.data?.message || 'Failed to reset')
     }
   }
 
@@ -471,6 +469,25 @@ export default function AthenaPage() {
             isRefreshing={statusLoading}
             scanIntervalMinutes={status?.scan_interval_minutes || 5}
           />
+
+          {/* Capital Source Warning - Shows when using default capital */}
+          {capitalSource === 'default' && (
+            <div className="bg-yellow-900/30 border border-yellow-500/50 rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-yellow-400 mt-0.5 flex-shrink-0" />
+                <div className="flex-1">
+                  <h3 className="text-yellow-400 font-semibold">Using Default Capital</h3>
+                  <p className="text-gray-300 text-sm mt-1">
+                    ATHENA is using the default starting capital ($100,000). For accurate P&L and return calculations,
+                    configure your actual starting capital via the API.
+                  </p>
+                  <p className="text-gray-500 text-xs mt-2">
+                    POST /api/metrics/ATHENA/capital with your actual starting capital
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* ATHENA vs ICARUS Comparison Banner */}
           <div className="bg-cyan-900/20 border border-cyan-500/30 rounded-lg p-4">
@@ -704,6 +721,7 @@ export default function AthenaPage() {
 
             {/* Config Tab */}
             {activeTab === 'config' && (
+              <>
               <BotCard title="Configuration" icon={<Settings className="h-5 w-5" />}>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div className="bg-gray-800/50 rounded-lg p-4">
@@ -739,59 +757,15 @@ export default function AthenaPage() {
                     <span className="text-xl font-bold text-white">08:35 - 14:30 CT</span>
                   </div>
                 </div>
-
-                {/* Reset Section */}
-                <div className="mt-6 pt-6 border-t border-gray-800">
-                  <h4 className="text-lg font-semibold text-white mb-4">Danger Zone</h4>
-                  {!showResetConfirm ? (
-                    <button
-                      onClick={() => setShowResetConfirm(true)}
-                      className="flex items-center gap-2 px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 rounded-lg transition-colors"
-                    >
-                      <RotateCcw className="w-4 h-4" />
-                      <span>Reset ATHENA Data</span>
-                    </button>
-                  ) : (
-                    <div className="p-4 bg-red-900/20 border border-red-500/50 rounded-lg">
-                      <div className="flex items-start gap-3 mb-4">
-                        <AlertTriangle className="w-5 h-5 text-red-400 mt-0.5" />
-                        <div>
-                          <p className="text-red-400 font-medium">Are you sure you want to reset?</p>
-                          <p className="text-gray-400 text-sm mt-1">
-                            This will permanently delete all ATHENA positions, trades, and scan history.
-                            This action cannot be undone.
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex gap-3">
-                        <button
-                          onClick={handleReset}
-                          disabled={isResetting}
-                          className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors disabled:opacity-50"
-                        >
-                          {isResetting ? (
-                            <>
-                              <RotateCcw className="w-4 h-4 animate-spin" />
-                              <span>Resetting...</span>
-                            </>
-                          ) : (
-                            <>
-                              <RotateCcw className="w-4 h-4" />
-                              <span>Yes, Reset All Data</span>
-                            </>
-                          )}
-                        </button>
-                        <button
-                          onClick={() => setShowResetConfirm(false)}
-                          className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
               </BotCard>
+
+              {/* Capital Configuration & Reset */}
+              <CapitalConfigPanel
+                botName="ATHENA"
+                onReset={handleReset}
+                brandColor="cyan"
+              />
+              </>
             )}
           </div>
         </div>

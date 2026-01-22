@@ -1811,6 +1811,241 @@ export function useDailyMannaArchive(limit: number = 30, options?: SWRConfigurat
 }
 
 // =============================================================================
+// UNIFIED BOT METRICS HOOKS - Single Source of Truth
+// These hooks provide consistent, authoritative data for all trading bots.
+// Frontend should NEVER calculate stats locally - always use these hooks.
+// =============================================================================
+
+// Type definitions for unified metrics
+export interface BotCapitalConfig {
+  bot_name: string
+  starting_capital: number
+  capital_source: 'database' | 'tradier' | 'default'
+  tradier_connected: boolean
+  tradier_balance: number | null
+  last_updated: string
+}
+
+export interface BotMetricsSummary {
+  bot_name: string
+  starting_capital: number
+  current_equity: number
+  capital_source: string
+  total_realized_pnl: number
+  total_unrealized_pnl: number
+  total_pnl: number
+  today_realized_pnl: number
+  today_unrealized_pnl: number
+  today_pnl: number
+  total_trades: number
+  winning_trades: number
+  losing_trades: number
+  win_rate: number  // 0-100 percentage, NOT decimal
+  open_positions: number
+  closed_positions: number
+  total_return_pct: number
+  max_drawdown_pct: number
+  high_water_mark: number
+  calculated_at: string
+}
+
+export interface UnifiedEquityCurvePoint {
+  date: string
+  equity: number
+  daily_pnl: number
+  cumulative_pnl: number
+  realized_pnl: number
+  unrealized_pnl: number
+  drawdown_pct: number
+  trade_count: number
+  return_pct: number
+}
+
+export interface UnifiedIntradayPoint {
+  timestamp: string
+  time: string
+  equity: number
+  cumulative_pnl: number
+  realized_pnl: number
+  unrealized_pnl: number
+  open_positions: number
+}
+
+// Unified metrics fetchers
+const unifiedMetricsFetchers = {
+  summary: async (bot: string) => {
+    const response = await api.get(`/api/metrics/${bot.toLowerCase()}/summary`)
+    return response.data
+  },
+  capital: async (bot: string) => {
+    const response = await api.get(`/api/metrics/${bot.toLowerCase()}/capital`)
+    return response.data
+  },
+  equityCurve: async (bot: string, days: number = 90) => {
+    const response = await api.get(`/api/metrics/${bot.toLowerCase()}/equity-curve?days=${days}`)
+    return response.data
+  },
+  intradayEquity: async (bot: string, date?: string) => {
+    const url = date
+      ? `/api/metrics/${bot.toLowerCase()}/equity-curve/intraday?date=${date}`
+      : `/api/metrics/${bot.toLowerCase()}/equity-curve/intraday`
+    const response = await api.get(url)
+    return response.data
+  },
+  reconcile: async (bot: string) => {
+    const response = await api.get(`/api/metrics/${bot.toLowerCase()}/reconcile`)
+    return response.data
+  },
+  allSummaries: async () => {
+    const response = await api.get('/api/metrics/all/summary')
+    return response.data
+  },
+  allCapital: async () => {
+    const response = await api.get('/api/metrics/all/capital')
+    return response.data
+  },
+  allReconcile: async () => {
+    const response = await api.get('/api/metrics/all/reconcile')
+    return response.data
+  },
+}
+
+/**
+ * Get unified metrics summary for a bot.
+ * This is THE authoritative source for bot statistics.
+ *
+ * Data includes:
+ * - starting_capital: Authoritative starting capital (from database/Tradier/default)
+ * - current_equity: starting_capital + total_pnl
+ * - win_rate: Percentage (0-100), NOT decimal
+ * - All values come from database aggregates, never frontend calculations
+ */
+export function useUnifiedBotSummary(bot: string, options?: SWRConfiguration) {
+  return useSWR<{ success: boolean; data: BotMetricsSummary }>(
+    `unified-metrics-summary-${bot.toLowerCase()}`,
+    () => unifiedMetricsFetchers.summary(bot),
+    {
+      ...swrConfig,
+      refreshInterval: 30 * 1000, // 30 seconds
+      ...options,
+    }
+  )
+}
+
+/**
+ * Get capital configuration for a bot.
+ * This is THE source of truth for starting capital.
+ * Both historical and intraday charts use this same value.
+ */
+export function useUnifiedBotCapital(bot: string, options?: SWRConfiguration) {
+  return useSWR<{ success: boolean; data: BotCapitalConfig }>(
+    `unified-metrics-capital-${bot.toLowerCase()}`,
+    () => unifiedMetricsFetchers.capital(bot),
+    {
+      ...swrConfig,
+      refreshInterval: 60 * 1000, // 1 minute
+      ...options,
+    }
+  )
+}
+
+/**
+ * Get historical equity curve for a bot.
+ * Uses the SAME starting capital as intraday endpoint.
+ */
+export function useUnifiedEquityCurve(bot: string, days: number = 90, options?: SWRConfiguration) {
+  return useSWR(
+    `unified-equity-curve-${bot.toLowerCase()}-${days}`,
+    () => unifiedMetricsFetchers.equityCurve(bot, days),
+    {
+      ...swrConfig,
+      refreshInterval: 60 * 1000, // 1 minute
+      ...options,
+    }
+  )
+}
+
+/**
+ * Get intraday equity curve for a bot.
+ * Uses the SAME starting capital as historical endpoint.
+ */
+export function useUnifiedIntradayEquity(bot: string, date?: string, options?: SWRConfiguration) {
+  return useSWR(
+    `unified-intraday-equity-${bot.toLowerCase()}-${date || 'today'}`,
+    () => unifiedMetricsFetchers.intradayEquity(bot, date),
+    {
+      ...swrConfig,
+      refreshInterval: 60 * 1000, // 1 minute
+      ...options,
+    }
+  )
+}
+
+/**
+ * Check data consistency for a bot.
+ * Returns list of any discrepancies found.
+ */
+export function useUnifiedReconcile(bot: string, options?: SWRConfiguration) {
+  return useSWR(
+    `unified-reconcile-${bot.toLowerCase()}`,
+    () => unifiedMetricsFetchers.reconcile(bot),
+    {
+      ...swrConfig,
+      refreshInterval: 5 * 60 * 1000, // 5 minutes
+      ...options,
+    }
+  )
+}
+
+/**
+ * Get metrics summaries for ALL bots at once.
+ * Useful for dashboard overview.
+ */
+export function useAllBotsSummary(options?: SWRConfiguration) {
+  return useSWR(
+    'unified-all-bots-summary',
+    unifiedMetricsFetchers.allSummaries,
+    {
+      ...swrConfig,
+      refreshInterval: 30 * 1000, // 30 seconds
+      ...options,
+    }
+  )
+}
+
+/**
+ * Get capital configurations for ALL bots at once.
+ * Useful for admin/config overview.
+ */
+export function useAllBotsCapital(options?: SWRConfiguration) {
+  return useSWR(
+    'unified-all-bots-capital',
+    unifiedMetricsFetchers.allCapital,
+    {
+      ...swrConfig,
+      refreshInterval: 60 * 1000, // 1 minute
+      ...options,
+    }
+  )
+}
+
+/**
+ * Run reconciliation check on ALL bots.
+ * Returns summary of data consistency.
+ */
+export function useAllBotsReconcile(options?: SWRConfiguration) {
+  return useSWR(
+    'unified-all-bots-reconcile',
+    unifiedMetricsFetchers.allReconcile,
+    {
+      ...swrConfig,
+      refreshInterval: 5 * 60 * 1000, // 5 minutes
+      ...options,
+    }
+  )
+}
+
+// =============================================================================
 // PREFETCH - Warm the cache on app load
 // =============================================================================
 

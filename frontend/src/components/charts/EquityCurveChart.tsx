@@ -266,14 +266,19 @@ export default function EquityCurveChart({
   const [hoveredEventDate, setHoveredEventDate] = useState<string | null>(null)
 
   // Fetch historical data
+  // UNIFIED: Use unified metrics endpoint when bot-specific, falls back to events endpoint for combined view
+  const historicalEndpoint = botFilter
+    ? `/api/metrics/${botFilter}/equity-curve?days=${days}`  // UNIFIED endpoint with consistent capital
+    : `/api/events/equity-curve?days=${days}&timeframe=${timeframe}`  // Legacy endpoint for combined view
   const { data, error, isLoading } = useSWR<EquityCurveData>(
-    viewMode === 'historical' ? `/api/events/equity-curve?days=${days}&timeframe=${timeframe}${botFilter ? `&bot=${botFilter}` : ''}` : null,
+    viewMode === 'historical' ? historicalEndpoint : null,
     fetcher,
     { refreshInterval: 60000 }
   )
 
   // Fetch intraday data (only when botFilter is set and viewMode is intraday)
-  const intradayEndpoint = botFilter ? `/api/${botFilter.toLowerCase()}/equity-curve/intraday` : null
+  // UNIFIED: Use unified metrics intraday endpoint for consistent starting capital
+  const intradayEndpoint = botFilter ? `/api/metrics/${botFilter}/equity-curve/intraday` : null
   const { data: intradayData, error: intradayError, isLoading: intradayLoading } = useSWR<IntradayEquityData>(
     viewMode === 'intraday' && intradayEndpoint ? intradayEndpoint : null,
     fetcher,
