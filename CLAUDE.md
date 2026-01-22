@@ -898,6 +898,45 @@ When the user says any of these, ensure full end-to-end implementation:
 - "make it actually work"
 - "activate it"
 
+### Bot Completeness Requirements
+**CRITICAL: Each trading bot is an independent system.** When fixing issues or adding features to ANY bot, treat it as a complete web application that must work end-to-end:
+
+**Each bot (ARES, TITAN, PEGASUS, ATHENA, ICARUS) MUST have:**
+
+1. **Historical Equity Curve** (`/equity-curve`)
+   - Query ALL closed trades (no date filter on SQL - filter output only)
+   - Cumulative P&L = running sum of all realized_pnl
+   - Equity = starting_capital + cumulative_pnl
+   - starting_capital from config table (NOT hardcoded)
+
+2. **Intraday Equity Curve** (`/equity-curve/intraday`)
+   - Read from `{bot}_equity_snapshots` table
+   - Include unrealized P&L from open positions
+   - Market open equity = starting_capital + previous_day_cumulative_pnl
+
+3. **Position Management**
+   - `close_position()` must set: `close_time = NOW()`, `realized_pnl`
+   - `expire_position()` must exist and set same fields
+   - All position status changes must update `close_time`
+
+4. **Data Consistency**
+   - Same starting_capital lookup in ALL endpoints (config table)
+   - Same P&L formula everywhere: `(close_price - entry_price) * contracts * 100`
+   - Timezone handling: `::timestamptz AT TIME ZONE 'America/Chicago'`
+
+**When fixing ONE bot, check ALL bots for the same issue.** Don't fix ARES and leave TITAN broken.
+
+**Common Bot Endpoints to Verify:**
+| Endpoint | Purpose | Key Checks |
+|----------|---------|------------|
+| `/status` | Bot health | Config loaded, positions counted |
+| `/positions` | Open positions | All fields populated |
+| `/equity-curve` | Historical P&L | Cumulative math correct |
+| `/equity-curve/intraday` | Today's P&L | Snapshots being saved |
+| `/performance` | Statistics | Win rate, total P&L accurate |
+| `/logs` | Activity log | Actions being logged |
+| `/scan-activity` | Scan history | Scans recorded |
+
 ---
 
 ## Important Notes for AI Assistants
