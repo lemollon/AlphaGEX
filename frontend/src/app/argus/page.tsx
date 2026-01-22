@@ -613,7 +613,11 @@ export default function ArgusPage() {
         const errorMsg = response.data?.message || response.data?.reason || 'Data unavailable'
         console.log('[ARGUS] Data unavailable:', response.data?.reason, errorMsg)
         setError(errorMsg)
-        setGammaData(null)
+        // DON'T clear existing data on refresh errors - keep showing stale data
+        // Only clear on initial load when there's no existing data to preserve
+        if (initialLoadRef.current) {
+          setGammaData(null)
+        }
         return
       }
 
@@ -624,7 +628,10 @@ export default function ArgusPage() {
         if (newData.data_unavailable) {
           console.log('[ARGUS] Data unavailable (nested):', newData.reason, newData.message)
           setError(newData.message || 'Data unavailable')
-          setGammaData(null)
+          // DON'T clear existing data on refresh errors
+          if (initialLoadRef.current) {
+            setGammaData(null)
+          }
           return
         }
 
