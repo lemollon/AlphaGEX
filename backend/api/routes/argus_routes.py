@@ -750,8 +750,14 @@ async def get_gamma_data(
 
     try:
         # Determine expiration
+        # Day names that need to be converted to dates
+        day_names = {'mon', 'tue', 'wed', 'thu', 'fri', 'today'}
+
         if day:
             expiration = engine.get_0dte_expiration(day)
+        elif expiration and expiration.lower() in day_names:
+            # Frontend sent day name as expiration - convert it to a date
+            expiration = engine.get_0dte_expiration(expiration.lower())
         elif not expiration:
             expiration = engine.get_0dte_expiration('today')
 
@@ -4194,29 +4200,42 @@ async def get_pattern_outcomes(symbol: str = Query(default="SPY")):
         cursor = conn.cursor()
 
         # Find similar historical patterns
-        cursor.execute("""
-            SELECT
-                trade_date,
-                spot_open,
-                spot_close,
-                spot_high,
-                spot_low,
-                net_gamma,
-                flip_point,
-                ABS(spot_close - spot_open) / spot_open * 100 as move_pct,
-                (spot_high - spot_low) / spot_open * 100 as range_pct,
-                CASE WHEN net_gamma > 0 THEN 'POSITIVE' ELSE 'NEGATIVE' END as regime
-            FROM gex_structure_daily
-            WHERE symbol = %s
-            AND ABS(
-                CASE WHEN net_gamma > 0 THEN 1 ELSE -1 END -
-                CASE WHEN %s = 'POSITIVE' THEN 1 ELSE -1 END
-            ) = 0
-            ORDER BY trade_date DESC
-            LIMIT 100
-        """, (symbol, current_regime))
+        # Wrap in try-except to handle missing table gracefully
+        try:
+            cursor.execute("""
+                SELECT
+                    trade_date,
+                    spot_open,
+                    spot_close,
+                    spot_high,
+                    spot_low,
+                    net_gamma,
+                    flip_point,
+                    ABS(spot_close - spot_open) / spot_open * 100 as move_pct,
+                    (spot_high - spot_low) / spot_open * 100 as range_pct,
+                    CASE WHEN net_gamma > 0 THEN 'POSITIVE' ELSE 'NEGATIVE' END as regime
+                FROM gex_structure_daily
+                WHERE symbol = %s
+                AND ABS(
+                    CASE WHEN net_gamma > 0 THEN 1 ELSE -1 END -
+                    CASE WHEN %s = 'POSITIVE' THEN 1 ELSE -1 END
+                ) = 0
+                ORDER BY trade_date DESC
+                LIMIT 100
+            """, (symbol, current_regime))
+            rows = cursor.fetchall()
+        except Exception as db_err:
+            # Table might not exist yet - handle gracefully
+            logger.warning(f"ARGUS pattern-outcomes: Database query failed (table may not exist): {db_err}")
+            conn.close()
+            return {
+                "success": True,
+                "data": {
+                    "patterns": [],
+                    "message": "Pattern data collection in progress. Table not yet created."
+                }
+            }
 
-        rows = cursor.fetchall()
         conn.close()
         logger.info(f"ARGUS pattern-outcomes: Query returned {len(rows)} rows")
 
