@@ -3857,99 +3857,124 @@ async def get_trade_setups(symbol: str = Query(default="SPY")):
         dist_to_call_wall_pct = abs(call_wall - spot_price) / spot_price * 100 if call_wall and spot_price > 0 else 999
         dist_to_put_wall_pct = abs(spot_price - put_wall) / spot_price * 100 if put_wall and spot_price > 0 else 999
 
+        # Helper to build common metrics for all setups
+        def build_setup(setup_type: str, description: str, confidence_pct: float,
+                        risk_level: str, trade_ideas: list, call_strikes: list = None, put_strikes: list = None):
+            """Build a setup dict matching the frontend TradeSetup interface."""
+            # Find pin probability from top magnet
+            top_magnets = sorted(strikes, key=lambda x: abs(x.get('net_gamma', 0)), reverse=True)[:1]
+            pin_prob = top_magnets[0].get('probability', 0.5) if top_magnets else 0.5
+
+            return {
+                'setup_type': setup_type,
+                'description': description,
+                'confidence': confidence_pct / 100.0,  # Frontend expects 0-1, not 0-100
+                'risk_level': risk_level,
+                'entry_zones': {
+                    'call_strikes': call_strikes or ([call_wall] if call_wall else []),
+                    'put_strikes': put_strikes or ([put_wall] if put_wall else [])
+                },
+                'current_metrics': {
+                    'gamma_regime': gamma_regime,
+                    'pin_probability': pin_prob * 100,  # As percentage
+                    'distance_to_flip_pct': round(dist_to_flip_pct, 2),
+                    'distance_to_wall_pct': round(min(dist_to_call_wall_pct, dist_to_put_wall_pct), 2)
+                },
+                'trade_ideas': trade_ideas
+            }
+
         # IC_SAFE_ZONE: Price between walls with positive gamma
         if gamma_regime == 'POSITIVE' and dist_to_call_wall_pct > 0.5 and dist_to_put_wall_pct > 0.5:
             confidence = min(95, 70 + (min(dist_to_call_wall_pct, dist_to_put_wall_pct) * 10))
-            setups.append({
-                'setup_type': 'IC_SAFE_ZONE',
-                'name': 'Iron Condor Safe Zone',
-                'description': f'Price pinned between walls. Positive gamma dampens moves.',
-                'confidence': round(confidence),
-                'action': 'SELL_IRON_CONDOR',
-                'details': {
-                    'call_wall': call_wall,
-                    'put_wall': put_wall,
-                    'gamma_regime': gamma_regime,
-                    'suggested_short_call': call_wall,
-                    'suggested_short_put': put_wall
-                },
-                'risk_level': 'LOW' if vix < 20 else 'MEDIUM'
-            })
+            setups.append(build_setup(
+                setup_type='IC_SAFE_ZONE',
+                description=f'Price pinned between walls at ${spot_price:.2f}. Positive gamma dampens moves. Safe for Iron Condors.',
+                confidence_pct=confidence,
+                risk_level='LOW' if vix < 20 else 'MEDIUM',
+                trade_ideas=[
+                    f'Sell Iron Condor with short strikes at ${put_wall} / ${call_wall}',
+                    f'Target 30-50% of max profit, exit if tested',
+                    f'VIX at {vix:.1f} - {"tight spreads OK" if vix < 18 else "widen strikes slightly"}'
+                ]
+            ))
 
         # BREAKOUT_WARNING: Near wall with negative gamma
         if gamma_regime == 'NEGATIVE' and (dist_to_call_wall_pct < 0.3 or dist_to_put_wall_pct < 0.3):
             wall_type = 'CALL' if dist_to_call_wall_pct < dist_to_put_wall_pct else 'PUT'
             confidence = min(90, 60 + ((0.5 - min(dist_to_call_wall_pct, dist_to_put_wall_pct)) * 100))
-            setups.append({
-                'setup_type': 'BREAKOUT_WARNING',
-                'name': f'{wall_type} Wall Break Imminent',
-                'description': f'Price near {wall_type.lower()} wall with negative gamma. Breakout likely.',
-                'confidence': round(confidence),
-                'action': 'AVOID_NEW_IC' if wall_type == 'CALL' else 'AVOID_NEW_IC',
-                'details': {
-                    'wall_type': wall_type,
-                    'distance_to_wall_pct': round(min(dist_to_call_wall_pct, dist_to_put_wall_pct), 2),
-                    'gamma_regime': gamma_regime
-                },
-                'risk_level': 'HIGH'
-            })
+            setups.append(build_setup(
+                setup_type='BREAKOUT_WARNING',
+                description=f'Price near {wall_type.lower()} wall with negative gamma. Breakout likely. Avoid new Iron Condors.',
+                confidence_pct=confidence,
+                risk_level='HIGH',
+                trade_ideas=[
+                    f'AVOID opening new Iron Condors - wall break imminent',
+                    f'Consider {"call" if wall_type == "CALL" else "put"} debit spread if directional',
+                    f'If holding IC, consider closing {"call" if wall_type == "CALL" else "put"} side'
+                ]
+            ))
 
         # FADE_THE_MOVE: Overextended from flip in positive gamma
         if gamma_regime == 'POSITIVE' and dist_to_flip_pct > 0.5:
             direction = 'DOWN' if spot_price > flip_point else 'UP'
             confidence = min(85, 50 + (dist_to_flip_pct * 20))
-            setups.append({
-                'setup_type': 'FADE_THE_MOVE',
-                'name': f'Fade to Flip Point ({direction})',
-                'description': f'Price {dist_to_flip_pct:.1f}% from flip. Positive gamma pulls back.',
-                'confidence': round(confidence),
-                'action': f'DIRECTIONAL_{direction}',
-                'details': {
-                    'flip_point': flip_point,
-                    'current_price': spot_price,
-                    'expected_move_to_flip': round(flip_point - spot_price, 2),
-                    'gamma_regime': gamma_regime
-                },
-                'risk_level': 'MEDIUM'
-            })
+            setups.append(build_setup(
+                setup_type='FADE_THE_MOVE',
+                description=f'Price {dist_to_flip_pct:.1f}% from flip point at ${flip_point:.2f}. Positive gamma pulls price back.',
+                confidence_pct=confidence,
+                risk_level='MEDIUM',
+                trade_ideas=[
+                    f'Fade move {"down" if direction == "DOWN" else "up"} toward flip at ${flip_point:.2f}',
+                    f'{"Put" if direction == "DOWN" else "Call"} credit spread or directional play',
+                    f'Target move of ${abs(flip_point - spot_price):.2f} back to flip'
+                ]
+            ))
 
         # PIN_SETUP: High magnet attraction
-        top_magnets = sorted(strikes, key=lambda x: abs(x.get('net_gamma', 0)), reverse=True)[:3]
-        for magnet in top_magnets:
+        pin_magnets = sorted(strikes, key=lambda x: abs(x.get('net_gamma', 0)), reverse=True)[:3]
+        for magnet in pin_magnets:
             strike = magnet.get('strike', 0)
             probability = magnet.get('probability', 0)
             # Guard against division by zero when spot_price is 0 or missing
             if spot_price > 0 and probability > 0.6 and abs(strike - spot_price) / spot_price * 100 < 1.0:
-                setups.append({
-                    'setup_type': 'PIN_SETUP',
-                    'name': f'Pin to {strike}',
-                    'description': f'{probability*100:.0f}% probability of pinning to {strike}',
-                    'confidence': round(probability * 100),
-                    'action': 'SELL_STRADDLE' if probability > 0.75 else 'SELL_STRANGLE',
-                    'details': {
-                        'pin_strike': strike,
-                        'probability': round(probability, 2),
-                        'distance_pct': round(abs(strike - spot_price) / spot_price * 100, 2) if spot_price > 0 else 0
-                    },
-                    'risk_level': 'MEDIUM' if probability > 0.7 else 'HIGH'
-                })
+                setups.append(build_setup(
+                    setup_type='PIN_SETUP',
+                    description=f'{probability*100:.0f}% probability of pinning to ${strike}. High gamma magnet attraction.',
+                    confidence_pct=probability * 100,
+                    risk_level='MEDIUM' if probability > 0.7 else 'HIGH',
+                    trade_ideas=[
+                        f'{"Sell straddle" if probability > 0.75 else "Sell strangle"} centered at ${strike}',
+                        f'Pin probability: {probability*100:.0f}% - {"strong" if probability > 0.75 else "moderate"} conviction',
+                        f'Distance to pin: {abs(strike - spot_price) / spot_price * 100:.2f}% from current price'
+                    ],
+                    call_strikes=[strike],
+                    put_strikes=[strike]
+                ))
 
-        # Sort by confidence
+        # Sort by confidence (descending)
         setups.sort(key=lambda x: x['confidence'], reverse=True)
+
+        # Return the BEST setup directly in data (not wrapped in array)
+        # Frontend expects a single TradeSetup object
+        if setups:
+            best_setup = setups[0]
+        else:
+            # Default setup when no conditions match
+            best_setup = build_setup(
+                setup_type='NEUTRAL',
+                description=f'No clear setup detected. Market at ${spot_price:.2f} in {gamma_regime} gamma regime.',
+                confidence_pct=50,
+                risk_level='MEDIUM',
+                trade_ideas=[
+                    'Wait for clearer signal before entering',
+                    f'Current gamma regime: {gamma_regime}',
+                    f'VIX at {vix:.1f} - monitor for regime change'
+                ]
+            )
 
         return {
             "success": True,
-            "data": {
-                "setups": setups[:5],  # Top 5 setups
-                "market_context": {
-                    "spot_price": spot_price,
-                    "flip_point": flip_point,
-                    "gamma_regime": gamma_regime,
-                    "vix": vix,
-                    "expected_move": expected_move
-                },
-                "timestamp": format_central_timestamp()
-            }
+            "data": best_setup  # Single setup object, not wrapped in array
         }
 
     except Exception as e:
