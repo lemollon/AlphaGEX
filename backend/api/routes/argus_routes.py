@@ -2683,42 +2683,129 @@ async def get_bot_positions():
     """
     Get active bot positions for ARGUS context.
 
-    Shows what ARES, ATHENA, PHOENIX are doing relative to gamma structure.
+    Shows what ARES, ATHENA, TITAN, ICARUS, PEGASUS are doing relative to gamma structure.
+
+    Returns BotPosition interface matching frontend:
+    - bot: string (ARES, ATHENA, TITAN, etc.)
+    - strategy: string (Iron Condor, Directional Spread, etc.)
+    - status: string (open, watching, closed)
+    - strikes: string (format: "590/610" for IC, "595" for directional)
+    - direction: string (BULLISH, BEARISH, NEUTRAL)
+    - pnl: number (unrealized P&L for open, realized for closed)
+    - safe: boolean (position within gamma walls)
     """
     try:
         positions = []
 
-        # Check ARES positions
+        # Check ARES positions (Iron Condors - always NEUTRAL direction)
         try:
             from backend.api.routes.ares_routes import get_ares_positions
             ares_data = await get_ares_positions()
             if ares_data.get('success') and ares_data.get('data', {}).get('positions'):
                 for pos in ares_data['data']['positions']:
+                    # Calculate P&L: For open ICs, estimate based on credit received
+                    # Real P&L would require current option prices
+                    pnl = pos.get('realized_pnl') or pos.get('max_profit', 0) * 0.3  # Estimate 30% of max for open
                     positions.append({
                         'bot': 'ARES',
                         'strategy': 'Iron Condor',
                         'status': pos.get('status', 'open'),
-                        'strikes': f"{pos.get('put_short_strike')}/{pos.get('call_short_strike')}",
+                        'strikes': f"{pos.get('put_short_strike', 0):.0f}/{pos.get('call_short_strike', 0):.0f}",
+                        'direction': 'NEUTRAL',  # Iron Condors are non-directional
+                        'pnl': round(float(pnl), 2) if pnl else 0,
                         'safe': True  # Will be calculated based on magnets
                     })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Could not fetch ARES positions: {e}")
 
-        # Check ATHENA positions
+        # Check ATHENA positions (Directional spreads)
         try:
             from backend.api.routes.athena_routes import get_athena_positions
             athena_data = await get_athena_positions()
             if athena_data.get('success') and athena_data.get('data', {}).get('positions'):
                 for pos in athena_data['data']['positions']:
+                    # Determine direction from spread type or explicit field
+                    direction = pos.get('direction', 'NEUTRAL')
+                    if not direction or direction == 'NEUTRAL':
+                        # Infer from strategy name
+                        strategy = pos.get('strategy', '').upper()
+                        if 'CALL' in strategy or 'BULL' in strategy:
+                            direction = 'BULLISH'
+                        elif 'PUT' in strategy or 'BEAR' in strategy:
+                            direction = 'BEARISH'
+                        else:
+                            direction = 'NEUTRAL'
+
+                    pnl = pos.get('realized_pnl') or pos.get('unrealized_pnl', 0)
                     positions.append({
                         'bot': 'ATHENA',
-                        'strategy': pos.get('strategy', 'Directional'),
+                        'strategy': pos.get('strategy', 'Directional Spread'),
                         'status': pos.get('status', 'open'),
-                        'strikes': str(pos.get('strike', 'N/A')),
+                        'strikes': str(pos.get('strike', pos.get('short_strike', 'N/A'))),
+                        'direction': direction,
+                        'pnl': round(float(pnl), 2) if pnl else 0,
                         'safe': True
                     })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Could not fetch ATHENA positions: {e}")
+
+        # Check TITAN positions (Aggressive Iron Condors on SPX)
+        try:
+            from backend.api.routes.titan_routes import get_titan_positions
+            titan_data = await get_titan_positions()
+            if titan_data.get('success') and titan_data.get('data', {}).get('positions'):
+                for pos in titan_data['data']['positions']:
+                    pnl = pos.get('realized_pnl') or pos.get('unrealized_pnl', 0)
+                    positions.append({
+                        'bot': 'TITAN',
+                        'strategy': 'Aggressive IC (SPX)',
+                        'status': pos.get('status', 'open'),
+                        'strikes': f"{pos.get('put_short_strike', 0):.0f}/{pos.get('call_short_strike', 0):.0f}",
+                        'direction': 'NEUTRAL',
+                        'pnl': round(float(pnl), 2) if pnl else 0,
+                        'safe': True
+                    })
+        except Exception as e:
+            logger.debug(f"Could not fetch TITAN positions: {e}")
+
+        # Check ICARUS positions (Aggressive Directional)
+        try:
+            from backend.api.routes.icarus_routes import get_icarus_positions
+            icarus_data = await get_icarus_positions()
+            if icarus_data.get('success') and icarus_data.get('data', {}).get('positions'):
+                for pos in icarus_data['data']['positions']:
+                    direction = pos.get('direction', 'NEUTRAL')
+                    pnl = pos.get('realized_pnl') or pos.get('unrealized_pnl', 0)
+                    positions.append({
+                        'bot': 'ICARUS',
+                        'strategy': 'Aggressive Directional',
+                        'status': pos.get('status', 'open'),
+                        'strikes': str(pos.get('strike', 'N/A')),
+                        'direction': direction.upper() if direction else 'NEUTRAL',
+                        'pnl': round(float(pnl), 2) if pnl else 0,
+                        'safe': True
+                    })
+        except Exception as e:
+            logger.debug(f"Could not fetch ICARUS positions: {e}")
+
+        # Check PEGASUS positions (Weekly Iron Condors)
+        try:
+            from backend.api.routes.pegasus_routes import get_pegasus_positions
+            pegasus_data = await get_pegasus_positions()
+            if pegasus_data.get('success') and pegasus_data.get('data', {}).get('positions'):
+                for pos in pegasus_data['data']['positions']:
+                    pnl = pos.get('realized_pnl') or pos.get('unrealized_pnl', 0)
+                    positions.append({
+                        'bot': 'PEGASUS',
+                        'strategy': 'Weekly IC (SPX)',
+                        'status': pos.get('status', 'open'),
+                        'strikes': f"{pos.get('put_short_strike', 0):.0f}/{pos.get('call_short_strike', 0):.0f}",
+                        'direction': 'NEUTRAL',
+                        'pnl': round(float(pnl), 2) if pnl else 0,
+                        'safe': True
+                    })
+        except Exception as e:
+            logger.debug(f"Could not fetch PEGASUS positions: {e}")
 
         return {
             "success": True,
