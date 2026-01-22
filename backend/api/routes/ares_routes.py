@@ -3967,3 +3967,207 @@ async def get_ares_diagnostics():
             "message": "ARES is ready to execute trades in Tradier sandbox" if can_execute and not issues else f"ARES cannot execute trades: {'; '.join(issues)}"
         }
     }
+
+
+@router.get("/diagnostics/intraday")
+async def get_ares_intraday_diagnostics():
+    """
+    Diagnose why ARES intraday equity chart might not be working.
+
+    Checks:
+    - If ares_equity_snapshots table exists
+    - Number of snapshots today and total
+    - Most recent snapshot data
+    - ares_positions table columns
+    - Comparison with TITAN snapshots
+    """
+    CENTRAL_TZ = ZoneInfo("America/Chicago")
+    now = datetime.now(CENTRAL_TZ)
+    today = now.strftime('%Y-%m-%d')
+
+    result = {
+        "timestamp": now.isoformat(),
+        "today": today,
+        "ares": {},
+        "titan": {},
+        "issues": [],
+        "recommendations": []
+    }
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # ========== ARES CHECKS ==========
+
+        # Check if ares_equity_snapshots table exists
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'ares_equity_snapshots'
+            )
+        """)
+        ares_table_exists = cursor.fetchone()[0]
+        result["ares"]["table_exists"] = ares_table_exists
+
+        if not ares_table_exists:
+            result["issues"].append("ares_equity_snapshots table does NOT exist")
+            result["recommendations"].append("Table will be created when scheduler runs during market hours")
+        else:
+            # Get table columns
+            cursor.execute("""
+                SELECT column_name, data_type
+                FROM information_schema.columns
+                WHERE table_name = 'ares_equity_snapshots'
+                ORDER BY ordinal_position
+            """)
+            result["ares"]["columns"] = [{"name": r[0], "type": r[1]} for r in cursor.fetchall()]
+
+            # Count total snapshots
+            cursor.execute("SELECT COUNT(*) FROM ares_equity_snapshots")
+            result["ares"]["total_snapshots"] = cursor.fetchone()[0]
+
+            # Count today's snapshots
+            cursor.execute("""
+                SELECT COUNT(*) FROM ares_equity_snapshots
+                WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+            """, (today,))
+            result["ares"]["today_snapshots"] = cursor.fetchone()[0]
+
+            if result["ares"]["today_snapshots"] == 0:
+                result["issues"].append("No ARES snapshots saved today")
+                result["recommendations"].append("Check if scheduler worker is running during market hours")
+
+            # Get most recent snapshot
+            cursor.execute("""
+                SELECT timestamp, balance, unrealized_pnl, realized_pnl, open_positions, note
+                FROM ares_equity_snapshots
+                ORDER BY timestamp DESC
+                LIMIT 1
+            """)
+            row = cursor.fetchone()
+            if row:
+                result["ares"]["latest_snapshot"] = {
+                    "timestamp": row[0].isoformat() if row[0] else None,
+                    "balance": float(row[1]) if row[1] else 0,
+                    "unrealized_pnl": float(row[2]) if row[2] else 0,
+                    "realized_pnl": float(row[3]) if row[3] else 0,
+                    "open_positions": row[4],
+                    "note": row[5]
+                }
+            else:
+                result["ares"]["latest_snapshot"] = None
+                result["issues"].append("No snapshots ever saved for ARES")
+
+        # Check ares_positions table
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'ares_positions'
+            )
+        """)
+        ares_pos_exists = cursor.fetchone()[0]
+        result["ares"]["positions_table_exists"] = ares_pos_exists
+
+        if ares_pos_exists:
+            # Check required columns exist
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'ares_positions'
+            """)
+            ares_cols = {r[0] for r in cursor.fetchall()}
+            required_cols = {'position_id', 'total_credit', 'contracts', 'spread_width',
+                           'put_short_strike', 'put_long_strike', 'call_short_strike',
+                           'call_long_strike', 'expiration', 'status', 'realized_pnl'}
+            missing_cols = required_cols - ares_cols
+            result["ares"]["missing_columns"] = list(missing_cols) if missing_cols else None
+
+            if missing_cols:
+                result["issues"].append(f"ares_positions missing columns: {missing_cols}")
+
+            # Count positions
+            cursor.execute("SELECT COUNT(*) FROM ares_positions WHERE status = 'open'")
+            result["ares"]["open_positions"] = cursor.fetchone()[0]
+
+            cursor.execute("SELECT COUNT(*) FROM ares_positions WHERE status IN ('closed', 'expired')")
+            result["ares"]["closed_positions"] = cursor.fetchone()[0]
+
+            cursor.execute("SELECT COALESCE(SUM(realized_pnl), 0) FROM ares_positions WHERE status IN ('closed', 'expired')")
+            result["ares"]["total_realized_pnl"] = float(cursor.fetchone()[0] or 0)
+
+        # ========== TITAN COMPARISON ==========
+
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'titan_equity_snapshots'
+            )
+        """)
+        titan_table_exists = cursor.fetchone()[0]
+        result["titan"]["table_exists"] = titan_table_exists
+
+        if titan_table_exists:
+            cursor.execute("SELECT COUNT(*) FROM titan_equity_snapshots")
+            result["titan"]["total_snapshots"] = cursor.fetchone()[0]
+
+            cursor.execute("""
+                SELECT COUNT(*) FROM titan_equity_snapshots
+                WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+            """, (today,))
+            result["titan"]["today_snapshots"] = cursor.fetchone()[0]
+
+            cursor.execute("""
+                SELECT timestamp, balance FROM titan_equity_snapshots
+                ORDER BY timestamp DESC LIMIT 1
+            """)
+            row = cursor.fetchone()
+            if row:
+                result["titan"]["latest_snapshot"] = {
+                    "timestamp": row[0].isoformat() if row[0] else None,
+                    "balance": float(row[1]) if row[1] else 0
+                }
+
+        # ========== MARKET STATUS ==========
+        is_weekday = now.weekday() < 5
+        market_open = now.replace(hour=8, minute=30, second=0, microsecond=0)
+        market_close = now.replace(hour=15, minute=0, second=0, microsecond=0)
+        is_market_hours = market_open <= now <= market_close
+
+        result["market_status"] = {
+            "is_weekday": is_weekday,
+            "is_market_hours": is_market_hours,
+            "current_time_ct": now.strftime('%H:%M:%S'),
+            "market_open": "08:30:00",
+            "market_close": "15:00:00"
+        }
+
+        if not is_weekday:
+            result["issues"].append("Today is weekend - scheduler won't save snapshots")
+        elif not is_market_hours:
+            result["issues"].append(f"Outside market hours ({now.strftime('%H:%M')} CT) - scheduler won't save snapshots")
+
+        # ========== CONFIG CHECK ==========
+        cursor.execute("SELECT value FROM autonomous_config WHERE key = 'ares_starting_capital'")
+        row = cursor.fetchone()
+        result["ares"]["starting_capital_config"] = float(row[0]) if row and row[0] else "NOT SET (default 100000)"
+
+        conn.close()
+
+        # ========== SUMMARY ==========
+        if not result["issues"]:
+            result["status"] = "OK"
+            result["message"] = "All checks passed"
+        else:
+            result["status"] = "ISSUES_FOUND"
+            result["message"] = f"Found {len(result['issues'])} issue(s)"
+
+        return {"success": True, "data": result}
+
+    except Exception as e:
+        logger.error(f"Intraday diagnostics error: {e}")
+        import traceback
+        return {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
