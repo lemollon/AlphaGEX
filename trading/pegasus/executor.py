@@ -641,12 +641,13 @@ class OrderExecutor:
             from database_adapter import DatabaseAdapter
             db = DatabaseAdapter()
 
+            # BUG FIX: Query pegasus_positions table instead of autonomous_closed_trades
             trades = db.execute_query("""
-                SELECT pnl_realized, entry_credit, max_loss
-                FROM autonomous_closed_trades
-                WHERE bot_name = 'PEGASUS'
-                AND closed_at > NOW() - INTERVAL '90 days'
-                ORDER BY closed_at DESC
+                SELECT realized_pnl as pnl_realized, total_credit as entry_credit, max_loss
+                FROM pegasus_positions
+                WHERE status IN ('closed', 'expired')
+                AND close_time > NOW() - INTERVAL '90 days'
+                ORDER BY close_time DESC
                 LIMIT 100
             """)
 

@@ -419,6 +419,14 @@ class ICARUSTrader(MathOptimizerMixin):
 
                     self.db.log("INFO", f"Closed {pos.position_id}: {reason}, P&L=${pnl:.2f}")
 
+                    # Save equity snapshot after closing position (for real-time equity curve)
+                    self.db.save_equity_snapshot(
+                        balance=self.db.get_current_balance(),
+                        realized_pnl=pnl,
+                        open_positions=self.db.get_position_count(),
+                        note=f"Closed {pos.position_id}: {reason}"
+                    )
+
         return closed_count, total_pnl
 
     def _record_oracle_outcome(self, pos: SpreadPosition, close_reason: str, pnl: float):
@@ -871,6 +879,14 @@ class ICARUSTrader(MathOptimizerMixin):
                 position.db_persisted = False
 
         self.db.log("INFO", f"Opened: {position.position_id}", position.to_dict())
+
+        # Save equity snapshot after opening position (for real-time equity curve)
+        self.db.save_equity_snapshot(
+            balance=self.db.get_current_balance(),
+            realized_pnl=0,
+            open_positions=self.db.get_position_count(),
+            note=f"Opened {position.position_id}"
+        )
 
         # Store Oracle prediction
         self._store_oracle_prediction(signal, position)

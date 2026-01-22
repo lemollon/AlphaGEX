@@ -510,12 +510,13 @@ class OrderExecutor:
             from database_adapter import DatabaseAdapter
             db = DatabaseAdapter()
 
+            # BUG FIX: Query icarus_positions table instead of autonomous_closed_trades
             trades = db.execute_query("""
-                SELECT pnl_realized, entry_debit, max_loss
-                FROM autonomous_closed_trades
-                WHERE bot_name = 'ICARUS'
-                AND closed_at > NOW() - INTERVAL '90 days'
-                ORDER BY closed_at DESC
+                SELECT realized_pnl as pnl_realized, entry_debit, max_loss
+                FROM icarus_positions
+                WHERE status IN ('closed', 'expired')
+                AND close_time > NOW() - INTERVAL '90 days'
+                ORDER BY close_time DESC
                 LIMIT 100
             """)
 
