@@ -18,6 +18,7 @@ import {
   useTITANConfig,
   useTITANLivePnL,
   useScanActivityTitan,
+  useUnifiedBotSummary,  // UNIFIED: Single source of truth for stats
 } from '@/lib/hooks/useMarketData'
 import {
   BotPageHeader,
@@ -517,6 +518,10 @@ export default function TitanPage() {
   const { data: livePnLData, isLoading: livePnLLoading, isValidating: livePnLValidating } = useTITANLivePnL()
   const { data: scanData, isLoading: scansLoading } = useScanActivityTitan(50)
 
+  // UNIFIED METRICS: Single source of truth for all stats
+  const { data: unifiedData, mutate: refreshUnified } = useUnifiedBotSummary('TITAN')
+  const unifiedMetrics = unifiedData?.data
+
   // Extract data
   const status: TITANStatus | null = statusData?.data || null
   const openPositions: IronCondorPosition[] = positionsData?.data?.open_positions || []
@@ -524,14 +529,14 @@ export default function TitanPage() {
   const scans = scanData?.data?.scans || []
   const config = configData?.data || null
 
-  // Calculate stats
-  const totalPnL = status?.total_pnl || 0
-  const winRate = status?.win_rate || 0
-  const tradeCount = status?.trade_count || 0
-  // Use current_equity (starting_capital + total_pnl + unrealized_pnl when available)
-  const currentEquity = status?.current_equity || status?.capital || 200000
-  // Check if unrealized P&L is available (live pricing from worker)
-  const hasLivePricing = status?.unrealized_pnl !== null && status?.unrealized_pnl !== undefined
+  // UNIFIED: Use server-calculated stats (never calculate in frontend)
+  const totalPnL = unifiedMetrics?.total_realized_pnl ?? (status?.total_pnl || 0)
+  const winRate = unifiedMetrics?.win_rate ?? (status?.win_rate || 0)  // Already 0-100 from server
+  const tradeCount = unifiedMetrics?.total_trades ?? (status?.trade_count || 0)
+  const currentEquity = unifiedMetrics?.current_equity ?? (status?.current_equity || status?.capital || 200000)
+  const capitalSource = unifiedMetrics?.capital_source ?? 'default'
+  // Check if unrealized P&L is available
+  const hasLivePricing = unifiedMetrics?.total_unrealized_pnl !== undefined && unifiedMetrics?.total_unrealized_pnl !== 0
 
   // Brand info
   const brand = BOT_BRANDS.TITAN

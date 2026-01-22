@@ -19,6 +19,7 @@ import {
   useARESConfig,
   useARESLivePnL,
   useScanActivityAres,
+  useUnifiedBotSummary,  // UNIFIED: Single source of truth for stats
 } from '@/lib/hooks/useMarketData'
 import {
   BotPageHeader,
@@ -496,6 +497,10 @@ export default function AresPage() {
   const { data: livePnLData, isLoading: livePnLLoading, isValidating: livePnLValidating } = useARESLivePnL()
   const { data: scanData, isLoading: scansLoading } = useScanActivityAres(50)
 
+  // UNIFIED METRICS: Single source of truth for all stats (replaces frontend calculations)
+  const { data: unifiedData, mutate: refreshUnified } = useUnifiedBotSummary('ARES')
+  const unifiedMetrics = unifiedData?.data
+
   // Extract data
   const status: ARESStatus | null = statusData?.data || statusData || null
   const allPositions: IronCondorPosition[] = positionsData?.data?.positions || positionsData?.positions || []
@@ -508,21 +513,21 @@ export default function AresPage() {
   const openPositions = allPositions.filter(p => p.ticker === 'SPY' || (!p.ticker && (p.spread_width || 10) <= 5))
   const closedPositions = allClosedPositions.filter(p => p.ticker === 'SPY' || (!p.ticker && (p.spread_width || 10) <= 5))
 
-  // Calculate stats
-  const totalPnL = closedPositions.reduce((sum, p) => sum + (p.realized_pnl || 0), 0)
-  const winCount = closedPositions.filter(p => (p.realized_pnl || 0) > 0).length
-  const winRate = closedPositions.length > 0 ? (winCount / closedPositions.length) * 100 : 0
-  const tradeCount = closedPositions.length
-  // Use current_equity (starting_capital + total_pnl + unrealized_pnl when available)
-  const currentEquity = status?.current_equity || status?.capital || 100000
+  // UNIFIED: Use server-calculated stats (never calculate in frontend)
+  // These come from database aggregates via /api/metrics/ares/summary
+  const totalPnL = unifiedMetrics?.total_realized_pnl ?? 0
+  const winRate = unifiedMetrics?.win_rate ?? 0  // Already 0-100 percentage from server
+  const tradeCount = unifiedMetrics?.total_trades ?? 0
+  const currentEquity = unifiedMetrics?.current_equity ?? (status?.current_equity || status?.capital || 100000)
+  const capitalSource = unifiedMetrics?.capital_source ?? 'default'
   // Check if unrealized P&L is available (live pricing from worker)
-  const hasLivePricing = status?.unrealized_pnl !== null && status?.unrealized_pnl !== undefined
+  const hasLivePricing = unifiedMetrics?.total_unrealized_pnl !== undefined && unifiedMetrics?.total_unrealized_pnl !== 0
 
   // Brand info
   const brand = BOT_BRANDS.ARES
 
   const handleRefresh = async () => {
-    await refreshStatus()
+    await Promise.all([refreshStatus(), refreshUnified()])
     addToast({ type: 'success', title: 'Refreshed', message: 'ARES data refreshed' })
   }
 
@@ -573,15 +578,34 @@ export default function AresPage() {
             scanIntervalMinutes={status?.scan_interval_minutes || 5}
           />
 
+          {/* Capital Source Banner - Show if using default capital */}
+          {capitalSource === 'default' && (
+            <div className="bg-yellow-900/30 border border-yellow-500/50 rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-yellow-400 mt-0.5 flex-shrink-0" />
+                <div className="flex-1">
+                  <h3 className="text-yellow-400 font-semibold">Using Default Capital</h3>
+                  <p className="text-gray-300 text-sm mt-1">
+                    ARES is using default starting capital ({formatCurrency(currentEquity - totalPnL)}).
+                    Configure your actual starting capital for accurate returns.
+                  </p>
+                  <p className="text-gray-400 text-xs mt-2">
+                    Set via: POST /api/metrics/ares/capital or connect Tradier to auto-detect.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Tradier Connection Error Banner */}
-          {status && !status.sandbox_connected && (
+          {status && !status.sandbox_connected && capitalSource !== 'default' && (
             <div className="bg-red-900/30 border border-red-500/50 rounded-lg p-4">
               <div className="flex items-start gap-3">
                 <AlertTriangle className="w-5 h-5 text-red-400 mt-0.5 flex-shrink-0" />
                 <div className="flex-1">
                   <h3 className="text-red-400 font-semibold">Tradier Not Connected</h3>
                   <p className="text-gray-300 text-sm mt-1">
-                    ARES requires a Tradier connection for live trading. Currently showing paper capital ($100k).
+                    ARES requires a Tradier connection for live trading. Capital source: {capitalSource}.
                   </p>
                   {status.tradier_error && (
                     <p className="text-red-300 text-xs mt-2 font-mono bg-red-900/20 p-2 rounded">

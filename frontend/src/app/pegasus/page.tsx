@@ -18,6 +18,7 @@ import {
   usePEGASUSConfig,
   usePEGASUSLivePnL,
   useScanActivityPegasus,
+  useUnifiedBotSummary,
 } from '@/lib/hooks/useMarketData'
 import {
   BotPageHeader,
@@ -515,6 +516,10 @@ export default function PegasusPage() {
   const { data: livePnLData, isLoading: livePnLLoading, isValidating: livePnLValidating } = usePEGASUSLivePnL()
   const { data: scanData, isLoading: scansLoading } = useScanActivityPegasus(50)
 
+  // UNIFIED METRICS: Single source of truth for all stats
+  const { data: unifiedData, mutate: refreshUnified } = useUnifiedBotSummary('PEGASUS')
+  const unifiedMetrics = unifiedData?.data
+
   // Extract data
   const status: PEGASUSStatus | null = statusData?.data || null
   const openPositions: IronCondorPosition[] = positionsData?.data?.open_positions || []
@@ -522,12 +527,13 @@ export default function PegasusPage() {
   const scans = scanData?.data?.scans || []
   const config = configData?.data || null
 
-  // Calculate stats
-  const totalPnL = status?.total_pnl || 0
-  const winRate = status?.win_rate || 0
-  const tradeCount = status?.trade_count || 0
-  // Use current_equity (starting_capital + total_pnl + unrealized_pnl when available)
-  const currentEquity = status?.current_equity || status?.capital || 200000
+  // UNIFIED: Use server-calculated stats (never calculate in frontend)
+  // Priority: unified metrics → status fallback
+  const totalPnL = unifiedMetrics?.total_realized_pnl ?? (status?.total_pnl || 0)
+  const winRate = unifiedMetrics?.win_rate ?? (status?.win_rate || 0)  // Already 0-100 percentage from server
+  const tradeCount = unifiedMetrics?.total_trades ?? (status?.trade_count || 0)
+  const currentEquity = unifiedMetrics?.current_equity ?? (status?.current_equity || status?.capital || 200000)
+  const capitalSource = unifiedMetrics?.capital_source ?? 'default'
   // Check if unrealized P&L is available (live pricing from worker)
   const hasLivePricing = status?.unrealized_pnl !== null && status?.unrealized_pnl !== undefined
 
@@ -535,7 +541,7 @@ export default function PegasusPage() {
   const brand = BOT_BRANDS.PEGASUS
 
   const handleRefresh = async () => {
-    await refreshStatus()
+    await Promise.all([refreshStatus(), refreshUnified()])
     addToast({ type: 'success', title: 'Refreshed', message: 'PEGASUS data refreshed' })
   }
 
@@ -584,6 +590,25 @@ export default function PegasusPage() {
             isRefreshing={statusLoading}
             scanIntervalMinutes={status?.scan_interval_minutes || 5}
           />
+
+          {/* Capital Source Warning - Shows when using default capital */}
+          {capitalSource === 'default' && (
+            <div className="bg-yellow-900/30 border border-yellow-500/50 rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-yellow-400 mt-0.5 flex-shrink-0" />
+                <div className="flex-1">
+                  <h3 className="text-yellow-400 font-semibold">Using Default Capital</h3>
+                  <p className="text-gray-300 text-sm mt-1">
+                    PEGASUS is using the default starting capital ($200,000). For accurate P&L and return calculations,
+                    configure your actual starting capital via the API.
+                  </p>
+                  <p className="text-gray-500 text-xs mt-2">
+                    POST /api/metrics/PEGASUS/capital with your actual starting capital
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Paper Trading Info Banner */}
           {status && status.source === 'paper' && (
