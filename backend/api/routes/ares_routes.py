@@ -1961,12 +1961,9 @@ async def get_ares_intraday_equity(date: str = None):
     today = date or now.strftime('%Y-%m-%d')
     current_time = now.strftime('%H:%M:%S')
 
-    # Get starting capital from Tradier balance when available
-    tradier_balance = _get_tradier_account_balance()
-    if tradier_balance.get('connected') and tradier_balance.get('total_equity', 0) > 0:
-        starting_capital = round(tradier_balance['total_equity'], 2)
-    else:
-        starting_capital = 100000  # Default fallback
+    # IMPORTANT: starting_capital is the FIXED amount the bot started with, NOT current account balance
+    # Tradier total_equity is current balance (starting + all P&L), using it here would double-count P&L
+    starting_capital = 100000  # Default starting capital for ARES
 
     try:
         from database_adapter import get_connection
@@ -2191,9 +2188,9 @@ async def get_ares_live_equity_curve():
         if row and float(row[0]) > 0:
             starting_capital = float(row[0])
         else:
-            # First time - get from Tradier balance or use 100k default
-            tradier_balance = _get_tradier_account_balance()
-            starting_capital = tradier_balance.get('total_equity', 100000) if tradier_balance.get('connected') else 100000
+            # IMPORTANT: starting_capital is the FIXED initial amount, NOT current Tradier balance
+            # Tradier total_equity = starting_capital + all P&L, using it would cause double-counting
+            starting_capital = 100000  # Default starting capital for ARES
             # Store it for future reference
             cursor.execute('''
                 INSERT INTO autonomous_config (key, value)
@@ -2496,12 +2493,21 @@ async def get_ares_performance():
     """
     ares = get_ares_instance()
 
-    # Get starting capital from Tradier balance when available
-    tradier_balance = _get_tradier_account_balance()
-    if tradier_balance.get('connected') and tradier_balance.get('total_equity', 0) > 0:
-        starting_capital = round(tradier_balance['total_equity'], 2)
-    else:
-        starting_capital = 100000  # Default fallback
+    # IMPORTANT: starting_capital is the FIXED amount the bot started with, NOT current account balance
+    # Tradier total_equity is current balance (starting + all P&L), using it here would double-count P&L
+    starting_capital = 100000  # Default starting capital for ARES
+
+    # Try to get from config table
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM autonomous_config WHERE key = 'ares_starting_capital'")
+        row = cursor.fetchone()
+        if row and row[0]:
+            starting_capital = float(row[0])
+        conn.close()
+    except Exception:
+        pass
 
     if not ares:
         return {
