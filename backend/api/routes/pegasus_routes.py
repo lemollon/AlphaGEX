@@ -1088,9 +1088,6 @@ async def get_pegasus_intraday_equity(date: str = None):
     - Realized P&L from closed positions
     - Unrealized P&L from open positions (mark-to-market)
 
-    AUTO-SNAPSHOT: If market is open and no recent snapshot exists,
-    automatically saves one to ensure intraday chart has data.
-
     Args:
         date: Date to get intraday data for (default: today)
     """
@@ -1116,85 +1113,7 @@ async def get_pegasus_intraday_equity(date: str = None):
             except (ValueError, TypeError):
                 pass
 
-        # =====================================================================
-        # AUTO-SNAPSHOT: Save snapshot if market is open and none recent
-        # =====================================================================
-        is_today = (today == now.strftime('%Y-%m-%d'))
-        is_weekday = now.weekday() < 5
-        market_open = now.replace(hour=8, minute=30, second=0, microsecond=0)
-        market_close = now.replace(hour=15, minute=0, second=0, microsecond=0)
-        is_market_hours = market_open <= now <= market_close
-
-        if is_today and is_weekday and is_market_hours:
-            cursor.execute("""
-                SELECT MAX(timestamp) FROM pegasus_equity_snapshots
-                WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
-            """, (today,))
-            last_snap_row = cursor.fetchone()
-            last_snap_time = last_snap_row[0] if last_snap_row and last_snap_row[0] else None
-
-            should_auto_save = False
-            if not last_snap_time:
-                should_auto_save = True
-                logger.info("PEGASUS intraday: No snapshots today, auto-saving first snapshot")
-            else:
-                if last_snap_time.tzinfo is None:
-                    last_snap_time = last_snap_time.replace(tzinfo=CENTRAL_TZ)
-                else:
-                    last_snap_time = last_snap_time.astimezone(CENTRAL_TZ)
-                minutes_since_last = (now - last_snap_time).total_seconds() / 60
-                if minutes_since_last >= 4:
-                    should_auto_save = True
-                    logger.info(f"PEGASUS intraday: Last snapshot {minutes_since_last:.1f} min ago, auto-saving")
-
-            if should_auto_save:
-                try:
-                    cursor.execute("""
-                        SELECT COALESCE(SUM(realized_pnl), 0)
-                        FROM pegasus_positions WHERE status IN ('closed', 'expired')
-                    """)
-                    auto_realized = float(cursor.fetchone()[0] or 0)
-
-                    cursor.execute("""
-                        SELECT position_id, total_credit, contracts, spread_width,
-                               put_short_strike, put_long_strike, call_short_strike, call_long_strike, expiration
-                        FROM pegasus_positions WHERE status = 'open'
-                    """)
-                    auto_open_positions = cursor.fetchall()
-                    auto_open_count = len(auto_open_positions)
-                    auto_unrealized = 0
-
-                    if auto_open_positions and MTM_AVAILABLE:
-                        mtm_result = _calculate_pegasus_unrealized_pnl(auto_open_positions)
-                        auto_unrealized = mtm_result.get('total_unrealized_pnl', 0)
-
-                    auto_equity = starting_capital + auto_realized + auto_unrealized
-
-                    cursor.execute('''
-                        CREATE TABLE IF NOT EXISTS pegasus_equity_snapshots (
-                            id SERIAL PRIMARY KEY,
-                            timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
-                            balance DECIMAL(12, 2) NOT NULL,
-                            unrealized_pnl DECIMAL(12, 2),
-                            realized_pnl DECIMAL(12, 2),
-                            open_positions INTEGER,
-                            note TEXT,
-                            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-                        )
-                    ''')
-
-                    cursor.execute('''
-                        INSERT INTO pegasus_equity_snapshots
-                        (timestamp, balance, unrealized_pnl, realized_pnl, open_positions, note)
-                        VALUES (%s, %s, %s, %s, %s, %s)
-                    ''', (now, round(auto_equity, 2), round(auto_unrealized, 2), round(auto_realized, 2),
-                          auto_open_count, f"Auto-save from intraday endpoint at {now.strftime('%H:%M:%S')}"))
-                    conn.commit()
-                    logger.info(f"PEGASUS intraday: Auto-saved snapshot equity=${auto_equity:.2f}")
-                except Exception as auto_err:
-                    logger.warning(f"PEGASUS intraday: Auto-save failed: {auto_err}")
-
-        # Get intraday snapshots for the requested date (re-fetch after potential auto-save)
+        # Get intraday snapshots for the requested date
         cursor.execute("""
             SELECT timestamp, balance, unrealized_pnl, realized_pnl, open_positions, note
             FROM pegasus_equity_snapshots
