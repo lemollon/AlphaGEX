@@ -93,7 +93,7 @@ def _calculate_titan_unrealized_pnl(positions: list) -> dict:
 
     Args:
         positions: List of position tuples from database query with columns:
-                   (position_id, entry_credit, contracts, spread_width,
+                   (position_id, total_credit, contracts, spread_width,
                     put_short_strike, put_long_strike, call_short_strike, call_long_strike,
                     expiration)
 
@@ -115,8 +115,8 @@ def _calculate_titan_unrealized_pnl(positions: list) -> dict:
     total_unrealized = 0
 
     for pos in positions:
-        pos_id, entry_credit, contracts, spread_width, put_short, put_long, call_short, call_long, expiration = pos
-        entry_credit = float(entry_credit or 0)
+        pos_id, total_credit, contracts, spread_width, put_short, put_long, call_short, call_long, expiration = pos
+        total_credit = float(total_credit or 0)
         contracts = int(contracts or 1)
         spread_width = float(spread_width or 12)
         put_short = float(put_short or 0)
@@ -143,7 +143,7 @@ def _calculate_titan_unrealized_pnl(positions: list) -> dict:
                     call_short_strike=call_short,
                     call_long_strike=call_long,
                     contracts=contracts,
-                    entry_credit=entry_credit,
+                    entry_credit=total_credit,  # DB column is total_credit
                     use_cache=True
                 )
 
@@ -201,15 +201,15 @@ def _calculate_titan_unrealized_pnl(positions: list) -> dict:
                 put_dist = (spx_price - put_short) / spread_width
                 call_dist = (call_short - spx_price) / spread_width
                 factor = min(put_dist, call_dist) / 2
-                current_value = entry_credit * max(0.1, 0.5 - factor * 0.3)
+                current_value = total_credit * max(0.1, 0.5 - factor * 0.3)
             elif spx_price <= put_short:
                 intrinsic = put_short - spx_price
-                current_value = min(spread_width, intrinsic + entry_credit * 0.2)
+                current_value = min(spread_width, intrinsic + total_credit * 0.2)
             else:
                 intrinsic = spx_price - call_short
-                current_value = min(spread_width, intrinsic + entry_credit * 0.2)
+                current_value = min(spread_width, intrinsic + total_credit * 0.2)
 
-            pos_unrealized = (entry_credit - current_value) * 100 * contracts
+            pos_unrealized = (total_credit - current_value) * 100 * contracts
             pos_result['unrealized_pnl'] = round(pos_unrealized, 2)
             pos_result['current_value'] = round(current_value, 4)
             pos_result['underlying_price'] = spx_price
@@ -869,7 +869,7 @@ async def get_titan_equity_curve(days: int = 30):
     Args:
         days: Number of days of history (default 30)
     """
-    starting_capital = 200000
+    starting_capital = 200000  # Default for TITAN (SPX bot)
     today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
     unrealized_pnl = 0.0
     open_positions_count = 0
@@ -877,6 +877,15 @@ async def get_titan_equity_curve(days: int = 30):
     try:
         conn = get_connection()
         cursor = conn.cursor()
+
+        # Check config table for starting capital (consistent with intraday endpoint)
+        try:
+            cursor.execute("SELECT value FROM autonomous_config WHERE key = 'titan_starting_capital'")
+            config_row = cursor.fetchone()
+            if config_row and config_row[0]:
+                starting_capital = float(config_row[0])
+        except Exception:
+            pass
 
         # Get closed positions for historical equity curve
         cursor.execute('''
@@ -1095,7 +1104,7 @@ async def get_titan_intraday_equity(date: str = None):
         try:
             # Query positions with all fields needed for MTM calculation
             cursor.execute("""
-                SELECT position_id, entry_credit, contracts, spread_width,
+                SELECT position_id, total_credit, contracts, spread_width,
                        put_short_strike, put_long_strike, call_short_strike, call_long_strike,
                        expiration
                 FROM titan_positions
@@ -1179,7 +1188,7 @@ async def get_titan_intraday_equity(date: str = None):
             "data_points": data_points,
             "current_equity": round(current_equity, 2),
             "day_pnl": round(day_pnl, 2),
-            "starting_equity": round(starting_capital, 2),
+            "starting_equity": market_open_equity,  # Equity at market open (starting_capital + prev realized)
             "high_of_day": round(high_of_day, 2),
             "low_of_day": round(low_of_day, 2),
             "snapshots_count": len(snapshots)
@@ -1253,7 +1262,7 @@ async def save_titan_equity_snapshot():
 
         # Get open positions and calculate unrealized P&L using mark-to-market
         cursor.execute("""
-            SELECT position_id, entry_credit, contracts, spread_width,
+            SELECT position_id, total_credit, contracts, spread_width,
                    put_short_strike, put_long_strike, call_short_strike, call_long_strike,
                    expiration
             FROM titan_positions

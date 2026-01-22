@@ -283,15 +283,14 @@ class BotMetricsService:
                 if conn:
                     conn.close()
 
-        # 2. Try Tradier if no database config
+        # 2. Check Tradier connection (for status info only, NOT for starting capital)
+        # CRITICAL: Do NOT use Tradier balance as starting_capital!
+        # Tradier balance = starting_capital + all P&L, using it would cause double-counting
         tradier_data = self._get_tradier_balance(sandbox=(bot in [BotName.ARES]))
         if tradier_data and tradier_data.get('connected'):
             tradier_connected = True
             tradier_balance = tradier_data.get('total_equity', 0)
-
-            if starting_capital is None and tradier_balance and tradier_balance > 0:
-                starting_capital = tradier_balance
-                capital_source = 'tradier'
+            # Note: tradier_balance is current equity (starting + P&L), not starting capital
 
         # 3. Fall back to default
         if starting_capital is None:

@@ -41,13 +41,13 @@ router = APIRouter(prefix="/api/events", tags=["Events"])
 
 def _get_ares_capital() -> float:
     """
-    Get ARES starting capital from Tradier or database.
+    Get ARES starting capital from database config.
 
-    ARES represents the actual Tradier sandbox account, so we fetch the real balance.
-    Falls back to stored starting capital or $100k default.
+    CRITICAL: Do NOT use Tradier balance as starting capital!
+    Tradier balance = starting_capital + all P&L (double-counting issue).
+    Starting capital is the FIXED amount the bot started with.
     """
     try:
-        # Try to get stored starting capital from database first
         conn = get_connection()
         cursor = conn.cursor()
 
@@ -61,16 +61,7 @@ def _get_ares_capital() -> float:
         if row and float(row[0]) > 0:
             return float(row[0])
 
-        # Fall back to fetching from Tradier
-        try:
-            from backend.api.routes.ares_routes import _get_tradier_account_balance
-            tradier_balance = _get_tradier_account_balance()
-            if tradier_balance.get('connected') and tradier_balance.get('total_equity', 0) > 0:
-                return round(tradier_balance['total_equity'], 2)
-        except ImportError:
-            pass
-
-        # Default fallback
+        # Default fallback - NEVER use Tradier balance here
         return 100000
 
     except Exception as e:
