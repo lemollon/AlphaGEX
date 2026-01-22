@@ -2648,8 +2648,8 @@ async def generate_commentary(request: CommentaryRequest = None):
 
 def generate_fallback_commentary(snapshot) -> str:
     """Generate basic commentary without Claude API"""
-    now = datetime.now(ZoneInfo("America/New_York"))
-    time_str = now.strftime("%I:%M %p ET")
+    now = datetime.now(ZoneInfo("America/Chicago"))
+    time_str = now.strftime("%I:%M %p CT")
 
     # Build commentary
     lines = [f"🕐 {time_str} - 5-Minute Update", ""]

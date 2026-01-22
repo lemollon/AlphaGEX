@@ -923,12 +923,13 @@ class OrderExecutor:
             db = DatabaseAdapter()
 
             # Query closed ARES trades for win rate calculation
+            # BUG FIX: Query ares_positions table instead of autonomous_closed_trades
             trades = db.execute_query("""
-                SELECT pnl_realized, entry_credit, max_loss
-                FROM autonomous_closed_trades
-                WHERE bot_name = 'ARES'
-                AND closed_at > NOW() - INTERVAL '90 days'
-                ORDER BY closed_at DESC
+                SELECT realized_pnl as pnl_realized, total_credit as entry_credit, max_loss
+                FROM ares_positions
+                WHERE status IN ('closed', 'expired')
+                AND close_time > NOW() - INTERVAL '90 days'
+                ORDER BY close_time DESC
                 LIMIT 100
             """)
 

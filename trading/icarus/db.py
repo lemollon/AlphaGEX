@@ -570,9 +570,9 @@ class ICARUSDatabase:
                         trade_date, trades_executed, positions_closed, realized_pnl
                     ) VALUES (%s, %s, %s, %s)
                     ON CONFLICT (trade_date) DO UPDATE SET
-                        trades_executed = EXCLUDED.trades_executed,
-                        positions_closed = EXCLUDED.positions_closed,
-                        realized_pnl = EXCLUDED.realized_pnl,
+                        trades_executed = icarus_daily_perf.trades_executed + EXCLUDED.trades_executed,
+                        positions_closed = icarus_daily_perf.positions_closed + EXCLUDED.positions_closed,
+                        realized_pnl = icarus_daily_perf.realized_pnl + EXCLUDED.realized_pnl,
                         updated_at = NOW()
                 """, (
                     summary.date,
@@ -585,6 +585,66 @@ class ICARUSDatabase:
         except Exception as e:
             logger.error(f"{self.bot_name}: Failed to update daily perf: {e}")
             return False
+
+    # =========================================================================
+    # EQUITY SNAPSHOTS - For real-time equity curve tracking
+    # =========================================================================
+
+    def save_equity_snapshot(
+        self,
+        balance: float,
+        realized_pnl: float = 0,
+        unrealized_pnl: float = 0,
+        open_positions: int = 0,
+        note: str = ""
+    ) -> bool:
+        """
+        Save equity snapshot for equity curve tracking.
+
+        Called after every trade open/close to ensure equity curve updates immediately.
+        """
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    CREATE TABLE IF NOT EXISTS icarus_equity_snapshots (
+                        id SERIAL PRIMARY KEY,
+                        timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                        balance DECIMAL(12, 2) NOT NULL,
+                        unrealized_pnl DECIMAL(12, 2) DEFAULT 0,
+                        realized_pnl DECIMAL(12, 2) DEFAULT 0,
+                        open_positions INTEGER DEFAULT 0,
+                        note TEXT,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                    )
+                """)
+                c.execute("""
+                    INSERT INTO icarus_equity_snapshots
+                    (timestamp, balance, realized_pnl, unrealized_pnl, open_positions, note)
+                    VALUES (NOW(), %s, %s, %s, %s, %s)
+                """, (balance, realized_pnl, unrealized_pnl, open_positions, note))
+                conn.commit()
+                logger.debug(f"{self.bot_name}: Equity snapshot saved: ${balance:.2f}")
+                return True
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to save equity snapshot: {e}")
+            return False
+
+    def get_current_balance(self) -> float:
+        """Get current balance from latest equity snapshot or config."""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    SELECT balance FROM icarus_equity_snapshots
+                    ORDER BY timestamp DESC LIMIT 1
+                """)
+                row = c.fetchone()
+                if row:
+                    return float(row[0])
+        except Exception as e:
+            logger.debug(f"{self.bot_name}: Could not get balance from snapshots: {e}")
+        return 100000.0  # ICARUS default capital
 
     # =========================================================================
     # SIGNAL LOGGING
