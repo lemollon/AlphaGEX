@@ -467,7 +467,7 @@ async def get_pegasus_status():
                     SUM(CASE WHEN status IN ('closed', 'expired') THEN 1 ELSE 0 END) as closed_count,
                     SUM(CASE WHEN status IN ('closed', 'expired') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
                     COALESCE(SUM(CASE WHEN status IN ('closed', 'expired') THEN realized_pnl ELSE 0 END), 0) as total_pnl,
-                    SUM(CASE WHEN DATE(open_time AT TIME ZONE 'America/Chicago') = %s THEN 1 ELSE 0 END) as traded_today
+                    SUM(CASE WHEN DATE(open_time::timestamptz AT TIME ZONE 'America/Chicago') = %s THEN 1 ELSE 0 END) as traded_today
                 FROM pegasus_positions
             ''', (today,))
             row = cursor.fetchone()
@@ -956,7 +956,7 @@ async def get_pegasus_equity_curve(days: int = 30):
 
         # Get closed positions for historical equity curve
         cursor.execute('''
-            SELECT DATE(close_time AT TIME ZONE 'America/Chicago') as close_date,
+            SELECT DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as close_date,
                    realized_pnl, position_id
             FROM pegasus_positions
             WHERE status IN ('closed', 'expired')
@@ -1127,7 +1127,7 @@ async def get_pegasus_intraday_equity(date: str = None):
             SELECT COALESCE(SUM(realized_pnl), 0)
             FROM pegasus_positions
             WHERE status IN ('closed', 'expired')
-            AND DATE(close_time AT TIME ZONE 'America/Chicago') <= %s
+            AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') <= %s
         """, (today,))
         total_realized_row = cursor.fetchone()
         total_realized = float(total_realized_row[0]) if total_realized_row and total_realized_row[0] else 0
@@ -1137,7 +1137,7 @@ async def get_pegasus_intraday_equity(date: str = None):
             SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
             FROM pegasus_positions
             WHERE status IN ('closed', 'expired')
-            AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
+            AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
         """, (today,))
         today_row = cursor.fetchone()
         today_realized = float(today_row[0]) if today_row and today_row[0] else 0
@@ -1520,7 +1520,7 @@ async def get_pegasus_live_pnl():
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM pegasus_positions
                 WHERE status IN ('closed', 'expired')
-                AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
+                AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
             ''', (today,))
             realized_row = cursor.fetchone()
             today_realized = float(realized_row[0]) if realized_row else 0
@@ -1770,7 +1770,7 @@ async def get_pegasus_performance(
         # Get closed positions for performance calculation
         c.execute("""
             SELECT
-                DATE(close_time AT TIME ZONE 'America/Chicago') as trade_date,
+                DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as trade_date,
                 COUNT(*) as trades_executed,
                 SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as trades_won,
                 SUM(CASE WHEN realized_pnl <= 0 THEN 1 ELSE 0 END) as trades_lost,
@@ -1778,7 +1778,7 @@ async def get_pegasus_performance(
             FROM pegasus_positions
             WHERE status IN ('closed', 'expired')
             AND close_time >= CURRENT_DATE - INTERVAL '%s days'
-            GROUP BY DATE(close_time AT TIME ZONE 'America/Chicago')
+            GROUP BY DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago')
             ORDER BY trade_date DESC
         """, (days,))
 

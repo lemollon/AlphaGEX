@@ -956,7 +956,7 @@ async def get_athena_performance(
         # Compute daily performance from closed positions in athena_positions
         c.execute("""
             SELECT
-                DATE(close_time AT TIME ZONE 'America/Chicago') as trade_date,
+                DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as trade_date,
                 COUNT(*) as trades_executed,
                 SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as trades_won,
                 SUM(CASE WHEN realized_pnl <= 0 THEN 1 ELSE 0 END) as trades_lost,
@@ -966,7 +966,7 @@ async def get_athena_performance(
             FROM athena_positions
             WHERE status IN ('closed', 'expired')
             AND close_time >= NOW() - INTERVAL '%s days'
-            GROUP BY DATE(close_time AT TIME ZONE 'America/Chicago')
+            GROUP BY DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago')
             ORDER BY trade_date DESC
         """, (days,))
 
@@ -2056,13 +2056,13 @@ async def get_athena_equity_curve(days: int = 30):
         try:
             c.execute("""
                 SELECT
-                    DATE(close_time AT TIME ZONE 'America/Chicago') as trade_date,
+                    DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as trade_date,
                     SUM(realized_pnl) as daily_pnl,
                     COUNT(*) as trades
                 FROM athena_positions
                 WHERE status IN ('closed', 'expired')
                 AND close_time >= NOW() - INTERVAL '%s days'
-                GROUP BY DATE(close_time AT TIME ZONE 'America/Chicago')
+                GROUP BY DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago')
                 ORDER BY trade_date
             """, (days,))
             rows = c.fetchall()
@@ -2081,13 +2081,13 @@ async def get_athena_equity_curve(days: int = 30):
             # Fall back to legacy table
             c.execute("""
                 SELECT
-                    DATE(exit_time AT TIME ZONE 'America/Chicago') as trade_date,
+                    DATE(exit_time::timestamptz AT TIME ZONE 'America/Chicago') as trade_date,
                     SUM(realized_pnl) as daily_pnl,
                     COUNT(*) as trades
                 FROM apache_positions
                 WHERE status IN ('closed', 'expired')
                 AND exit_time >= NOW() - INTERVAL '%s days'
-                GROUP BY DATE(exit_time AT TIME ZONE 'America/Chicago')
+                GROUP BY DATE(exit_time::timestamptz AT TIME ZONE 'America/Chicago')
                 ORDER BY trade_date
             """, (days,))
             rows = c.fetchall()
@@ -2243,7 +2243,7 @@ async def get_athena_intraday_equity(date: str = None):
             SELECT COALESCE(SUM(realized_pnl), 0)
             FROM athena_positions
             WHERE status IN ('closed', 'expired')
-            AND DATE(close_time AT TIME ZONE 'America/Chicago') <= %s
+            AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') <= %s
         """, (today,))
         total_realized_row = cursor.fetchone()
         total_realized = float(total_realized_row[0]) if total_realized_row and total_realized_row[0] else 0
@@ -2253,7 +2253,7 @@ async def get_athena_intraday_equity(date: str = None):
             SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
             FROM athena_positions
             WHERE status IN ('closed', 'expired')
-            AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
+            AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
         """, (today,))
         today_row = cursor.fetchone()
         today_realized = float(today_row[0]) if today_row and today_row[0] else 0

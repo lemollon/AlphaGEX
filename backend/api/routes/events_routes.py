@@ -193,7 +193,7 @@ def detect_events_from_trades(days: int = 90, bot_filter: str = None) -> List[di
 
             cursor.execute(f'''
                 SELECT
-                    DATE(close_time AT TIME ZONE 'America/Chicago') as exit_date,
+                    DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as exit_date,
                     close_time as exit_time,
                     realized_pnl,
                     %s as strategy,
@@ -204,7 +204,7 @@ def detect_events_from_trades(days: int = 90, bot_filter: str = None) -> List[di
                 FROM {table_name}
                 WHERE status IN ('closed', 'expired')
                 AND close_time IS NOT NULL
-                AND DATE(close_time AT TIME ZONE 'America/Chicago') >= %s
+                AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') >= %s
                 ORDER BY close_time ASC
             ''', [bot_upper, start_date])
 
@@ -690,13 +690,13 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
         # Get daily aggregated trades
         if timeframe == 'daily':
             date_format_legacy = "exit_date"
-            date_format_v2 = "DATE(close_time AT TIME ZONE 'America/Chicago')"
+            date_format_v2 = "DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago')"
         elif timeframe == 'weekly':
             date_format_legacy = "DATE_TRUNC('week', exit_date::date)::date"
-            date_format_v2 = "DATE_TRUNC('week', DATE(close_time AT TIME ZONE 'America/Chicago'))::date"
+            date_format_v2 = "DATE_TRUNC('week', DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago'))::date"
         else:  # monthly
             date_format_legacy = "DATE_TRUNC('month', exit_date::date)::date"
-            date_format_v2 = "DATE_TRUNC('month', DATE(close_time AT TIME ZONE 'America/Chicago'))::date"
+            date_format_v2 = "DATE_TRUNC('month', DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago'))::date"
 
         # Bot-specific table mapping for V2 bots
         # Each V2 bot stores closed trades in its own positions table
@@ -725,7 +725,7 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
                     FROM {table_name}
                     WHERE status IN ('closed', 'expired')
                     AND close_time IS NOT NULL
-                    AND DATE(close_time AT TIME ZONE 'America/Chicago') >= %s
+                    AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') >= %s
                     GROUP BY {date_format_v2}
                     ORDER BY period_date ASC
                 ''', [start_date])

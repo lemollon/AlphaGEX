@@ -916,14 +916,14 @@ async def get_icarus_performance(
         # Get daily performance from positions
         c.execute("""
             SELECT
-                DATE(open_time AT TIME ZONE 'America/Chicago') as trade_date,
+                DATE(open_time::timestamptz AT TIME ZONE 'America/Chicago') as trade_date,
                 COUNT(*) as trades,
                 SUM(CASE WHEN status IN ('closed', 'expired') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
                 SUM(CASE WHEN status IN ('closed', 'expired') AND realized_pnl <= 0 THEN 1 ELSE 0 END) as losses,
                 COALESCE(SUM(realized_pnl), 0) as total_pnl
             FROM icarus_positions
-            WHERE DATE(open_time AT TIME ZONE 'America/Chicago') >= CURRENT_DATE - INTERVAL '%s days'
-            GROUP BY DATE(open_time AT TIME ZONE 'America/Chicago')
+            WHERE DATE(open_time::timestamptz AT TIME ZONE 'America/Chicago') >= CURRENT_DATE - INTERVAL '%s days'
+            GROUP BY DATE(open_time::timestamptz AT TIME ZONE 'America/Chicago')
             ORDER BY trade_date DESC
         """, (days,))
 
@@ -936,7 +936,7 @@ async def get_icarus_performance(
                 SUM(CASE WHEN status IN ('closed', 'expired') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
                 COALESCE(SUM(realized_pnl), 0) as total_pnl
             FROM icarus_positions
-            WHERE DATE(open_time AT TIME ZONE 'America/Chicago') >= CURRENT_DATE - INTERVAL '%s days'
+            WHERE DATE(open_time::timestamptz AT TIME ZONE 'America/Chicago') >= CURRENT_DATE - INTERVAL '%s days'
         """, (days,))
 
         summary_row = c.fetchone()
@@ -1365,7 +1365,7 @@ async def get_icarus_equity_curve(days: int = 30):
 
         # Get closed positions grouped by date
         cursor.execute('''
-            SELECT DATE(close_time AT TIME ZONE 'America/Chicago') as close_date,
+            SELECT DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as close_date,
                    realized_pnl, position_id
             FROM icarus_positions
             WHERE status IN ('closed', 'expired')
@@ -1550,7 +1550,7 @@ async def get_icarus_intraday_equity(date: str = None):
             SELECT COALESCE(SUM(realized_pnl), 0)
             FROM icarus_positions
             WHERE status IN ('closed', 'expired')
-            AND DATE(close_time AT TIME ZONE 'America/Chicago') <= %s
+            AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') <= %s
         """, (today,))
         total_realized_row = cursor.fetchone()
         total_realized = float(total_realized_row[0]) if total_realized_row and total_realized_row[0] else 0
@@ -1560,7 +1560,7 @@ async def get_icarus_intraday_equity(date: str = None):
             SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
             FROM icarus_positions
             WHERE status IN ('closed', 'expired')
-            AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
+            AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
         """, (today,))
         today_row = cursor.fetchone()
         today_realized = float(today_row[0]) if today_row and today_row[0] else 0
