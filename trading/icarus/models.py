@@ -208,9 +208,9 @@ class SpreadPosition:
         data['spread_type'] = self.spread_type.value
         data['status'] = self.status.value
         if self.open_time:
-            data['open_time'] = self.open_time.isoformat()
+            data['open_time'] = self.open_time.isoformat() if hasattr(self.open_time, 'isoformat') else self.open_time
         if self.close_time:
-            data['close_time'] = self.close_time.isoformat()
+            data['close_time'] = self.close_time.isoformat() if hasattr(self.close_time, 'isoformat') else self.close_time
         return data
 
 

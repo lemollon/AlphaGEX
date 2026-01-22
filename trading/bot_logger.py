@@ -167,8 +167,8 @@ class ExecutionTimeline:
 
     def to_dict(self) -> Dict:
         return {
-            "order_submitted_at": self.order_submitted_at.isoformat() if self.order_submitted_at else None,
-            "order_filled_at": self.order_filled_at.isoformat() if self.order_filled_at else None,
+            "order_submitted_at": self.order_submitted_at.isoformat() if self.order_submitted_at and hasattr(self.order_submitted_at, 'isoformat') else self.order_submitted_at,
+            "order_filled_at": self.order_filled_at.isoformat() if self.order_filled_at and hasattr(self.order_filled_at, 'isoformat') else self.order_filled_at,
             "broker_order_id": self.broker_order_id,
             "expected_fill_price": self.expected_fill_price,
             "actual_fill_price": self.actual_fill_price,
@@ -306,7 +306,7 @@ class BotDecision:
             "execution": self.execution.to_dict(),
             "actual_pnl": self.actual_pnl,
             "exit_triggered_by": self.exit_triggered_by,
-            "exit_timestamp": self.exit_timestamp.isoformat() if self.exit_timestamp else None,
+            "exit_timestamp": self.exit_timestamp.isoformat() if self.exit_timestamp and hasattr(self.exit_timestamp, 'isoformat') else self.exit_timestamp,
             "exit_price": self.exit_price,
             "exit_slippage_pct": self.exit_slippage_pct,
             "outcome_correct": self.outcome_correct,

@@ -750,8 +750,14 @@ async def get_gamma_data(
 
     try:
         # Determine expiration
+        # Day names that need to be converted to dates
+        day_names = {'mon', 'tue', 'wed', 'thu', 'fri', 'today'}
+
         if day:
             expiration = engine.get_0dte_expiration(day)
+        elif expiration and expiration.lower() in day_names:
+            # Frontend sent day name as expiration - convert it to a date
+            expiration = engine.get_0dte_expiration(expiration.lower())
         elif not expiration:
             expiration = engine.get_0dte_expiration('today')
 
@@ -817,7 +823,8 @@ async def get_gamma_data(
         current_put_wall = None
 
         if snapshot.strikes:
-            # Find flip point (where gamma crosses zero)
+            # Find flip point (where gamma crosses zero) - find ALL sign changes and pick closest to spot
+            all_flip_points = []
             for i, strike in enumerate(snapshot.strikes[:-1]):
                 if hasattr(strike, 'net_gamma'):
                     curr_gamma = strike.net_gamma
@@ -827,10 +834,14 @@ async def get_gamma_data(
                         # Linear interpolation for more precise flip point
                         if curr_gamma != next_gamma:
                             ratio = abs(curr_gamma) / (abs(curr_gamma) + abs(next_gamma))
-                            current_flip_point = strike.strike + ratio * (next_strike.strike - strike.strike)
+                            flip_pt = strike.strike + ratio * (next_strike.strike - strike.strike)
                         else:
-                            current_flip_point = strike.strike
-                        break
+                            flip_pt = strike.strike
+                        all_flip_points.append(flip_pt)
+
+            # Select flip point closest to current spot price
+            if all_flip_points:
+                current_flip_point = min(all_flip_points, key=lambda fp: abs(fp - snapshot.spot_price))
 
             # Find call wall (highest gamma above spot) and put wall (highest gamma below spot)
             above_spot = [s for s in snapshot.strikes if hasattr(s, 'strike') and s.strike > snapshot.spot_price]
@@ -3018,14 +3029,17 @@ async def get_pattern_matches():
 
         # Get flip point, walls from strikes
         if snapshot.strikes:
-            # Find flip point (where gamma crosses zero)
+            # Find flip point (where gamma crosses zero) - find ALL and pick closest to spot
+            all_flip_points = []
             for i, strike in enumerate(snapshot.strikes[:-1]):
                 if hasattr(strike, 'net_gamma'):
                     curr_gamma = strike.net_gamma
                     next_gamma = snapshot.strikes[i + 1].net_gamma if hasattr(snapshot.strikes[i + 1], 'net_gamma') else 0
                     if curr_gamma * next_gamma < 0:  # Sign change
-                        current_structure['flip_point'] = strike.strike
-                        break
+                        all_flip_points.append(strike.strike)
+            # Select flip point closest to spot price
+            if all_flip_points:
+                current_structure['flip_point'] = min(all_flip_points, key=lambda fp: abs(fp - snapshot.spot_price))
 
             # Find call and put walls (highest gamma strikes above/below spot)
             above_spot = [s for s in snapshot.strikes if hasattr(s, 'strike') and s.strike > snapshot.spot_price]
@@ -4193,30 +4207,71 @@ async def get_pattern_outcomes(symbol: str = Query(default="SPY")):
 
         cursor = conn.cursor()
 
-        # Find similar historical patterns
-        cursor.execute("""
-            SELECT
-                trade_date,
-                spot_open,
-                spot_close,
-                spot_high,
-                spot_low,
-                net_gamma,
-                flip_point,
-                ABS(spot_close - spot_open) / spot_open * 100 as move_pct,
-                (spot_high - spot_low) / spot_open * 100 as range_pct,
-                CASE WHEN net_gamma > 0 THEN 'POSITIVE' ELSE 'NEGATIVE' END as regime
-            FROM gex_structure_daily
-            WHERE symbol = %s
-            AND ABS(
-                CASE WHEN net_gamma > 0 THEN 1 ELSE -1 END -
-                CASE WHEN %s = 'POSITIVE' THEN 1 ELSE -1 END
-            ) = 0
-            ORDER BY trade_date DESC
-            LIMIT 100
-        """, (symbol, current_regime))
+        # Find similar historical patterns using gex_history table (aggregated to daily)
+        # Uses daily snapshots to find similar gamma regime days and their price outcomes
+        try:
+            cursor.execute("""
+                WITH daily_gex AS (
+                    -- Get one GEX snapshot per day (morning snapshot)
+                    SELECT DISTINCT ON (DATE(timestamp))
+                        DATE(timestamp) as trade_date,
+                        spot_price,
+                        net_gex as net_gamma,
+                        flip_point,
+                        CASE WHEN net_gex > 0 THEN 'POSITIVE' ELSE 'NEGATIVE' END as regime
+                    FROM gex_history
+                    WHERE symbol = %s
+                    AND timestamp > NOW() - INTERVAL '90 days'
+                    AND timestamp < NOW() - INTERVAL '1 day'
+                    ORDER BY DATE(timestamp), timestamp
+                ),
+                daily_prices AS (
+                    -- Get OHLC from price_history or market_data_daily
+                    SELECT
+                        date as trade_date,
+                        open as spot_open,
+                        high as spot_high,
+                        low as spot_low,
+                        close as spot_close
+                    FROM market_data_daily
+                    WHERE symbol = %s
+                    AND date > NOW() - INTERVAL '90 days'
+                )
+                SELECT
+                    dg.trade_date,
+                    dp.spot_open,
+                    dp.spot_close,
+                    dp.spot_high,
+                    dp.spot_low,
+                    dg.net_gamma,
+                    dg.flip_point,
+                    CASE WHEN dp.spot_open > 0
+                        THEN ABS(dp.spot_close - dp.spot_open) / dp.spot_open * 100
+                        ELSE 0 END as move_pct,
+                    CASE WHEN dp.spot_open > 0
+                        THEN (dp.spot_high - dp.spot_low) / dp.spot_open * 100
+                        ELSE 0 END as range_pct,
+                    dg.regime
+                FROM daily_gex dg
+                LEFT JOIN daily_prices dp ON dg.trade_date = dp.trade_date
+                WHERE dg.regime = %s
+                AND dp.spot_open IS NOT NULL
+                ORDER BY dg.trade_date DESC
+                LIMIT 100
+            """, (symbol, symbol, current_regime))
+            rows = cursor.fetchall()
+        except Exception as db_err:
+            # Tables might not exist - log and return empty
+            logger.warning(f"ARGUS pattern-outcomes: Database query failed: {db_err}")
+            conn.close()
+            return {
+                "success": True,
+                "data": {
+                    "patterns": [],
+                    "message": "Insufficient historical data for pattern matching"
+                }
+            }
 
-        rows = cursor.fetchall()
         conn.close()
         logger.info(f"ARGUS pattern-outcomes: Query returned {len(rows)} rows")
 

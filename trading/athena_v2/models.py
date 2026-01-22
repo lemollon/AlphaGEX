@@ -148,8 +148,8 @@ class SpreadPosition:
             # Order tracking
             'order_id': self.order_id,
             'status': self.status.value,
-            'open_time': self.open_time.isoformat() if self.open_time else None,
-            'close_time': self.close_time.isoformat() if self.close_time else None,
+            'open_time': self.open_time.isoformat() if self.open_time and hasattr(self.open_time, 'isoformat') else self.open_time,
+            'close_time': self.close_time.isoformat() if self.close_time and hasattr(self.close_time, 'isoformat') else self.close_time,
             'close_price': self.close_price,
             'close_reason': self.close_reason,
             'realized_pnl': self.realized_pnl,
