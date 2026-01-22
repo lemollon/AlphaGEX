@@ -2566,20 +2566,28 @@ class AutonomousTraderScheduler:
                     row = cursor.fetchone()
                     starting_capital = float(row[0]) if row and row[0] else default_cap
 
-                    # Get realized P&L from closed positions
-                    cursor.execute(f"""
-                        SELECT COALESCE(SUM(realized_pnl), 0)
-                        FROM {pos_table}
-                        WHERE status IN ('closed', 'expired')
-                    """)
-                    realized_row = cursor.fetchone()
-                    realized_pnl = float(realized_row[0]) if realized_row and realized_row[0] else 0
+                    # Get realized P&L from closed positions (handle missing table gracefully)
+                    realized_pnl = 0
+                    open_count = 0
+                    try:
+                        cursor.execute(f"""
+                            SELECT COALESCE(SUM(realized_pnl), 0)
+                            FROM {pos_table}
+                            WHERE status IN ('closed', 'expired')
+                        """)
+                        realized_row = cursor.fetchone()
+                        realized_pnl = float(realized_row[0]) if realized_row and realized_row[0] else 0
 
-                    # Count open positions
-                    cursor.execute(f"""
-                        SELECT COUNT(*) FROM {pos_table} WHERE status = 'open'
-                    """)
-                    open_count = cursor.fetchone()[0] or 0
+                        # Count open positions
+                        cursor.execute(f"""
+                            SELECT COUNT(*) FROM {pos_table} WHERE status = 'open'
+                        """)
+                        open_count = cursor.fetchone()[0] or 0
+                    except Exception as table_err:
+                        # Positions table might not exist yet - use defaults
+                        logger.info(f"EQUITY_SNAPSHOTS: {bot_name.upper()} positions table not ready ({table_err}), using defaults")
+                        realized_pnl = 0
+                        open_count = 0
 
                     # Get unrealized P&L from bot's trader instance if available
                     # Each bot's get_status() method calculates actual unrealized from live pricing
