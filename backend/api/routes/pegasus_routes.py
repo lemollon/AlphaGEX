@@ -1239,7 +1239,7 @@ async def get_pegasus_intraday_equity(date: str = None):
             "data_points": data_points,
             "current_equity": round(current_equity, 2),
             "day_pnl": round(day_pnl, 2),
-            "starting_equity": round(starting_capital, 2),
+            "starting_equity": market_open_equity,  # Equity at market open (starting_capital + prev realized)
             "high_of_day": round(high_of_day, 2),
             "low_of_day": round(low_of_day, 2),
             "snapshots_count": len(snapshots)
