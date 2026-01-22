@@ -138,11 +138,11 @@ export function TradeSetupDetector({ symbol = 'SPY' }: { symbol?: string }) {
           <Target className="w-5 h-5" />
           <span className="font-bold text-lg">{(setup.setup_type ?? 'UNKNOWN').replace(/_/g, ' ')}</span>
           <span className={`px-2 py-0.5 rounded text-xs ${
-            setup.risk_level === 'LOW' ? 'bg-emerald-500/20 text-emerald-400' :
-            setup.risk_level === 'HIGH' ? 'bg-rose-500/20 text-rose-400' :
+            (setup.risk_level ?? 'MEDIUM') === 'LOW' ? 'bg-emerald-500/20 text-emerald-400' :
+            (setup.risk_level ?? 'MEDIUM') === 'HIGH' ? 'bg-rose-500/20 text-rose-400' :
             'bg-yellow-500/20 text-yellow-400'
           }`}>
-            {setup.risk_level} RISK
+            {setup.risk_level ?? 'MEDIUM'} RISK
           </span>
         </div>
         <button
@@ -153,7 +153,7 @@ export function TradeSetupDetector({ symbol = 'SPY' }: { symbol?: string }) {
         </button>
       </div>
 
-      <p className="text-sm text-gray-300 mb-3">{setup.description}</p>
+      <p className="text-sm text-gray-300 mb-3">{setup.description ?? 'No description available'}</p>
 
       <div className="flex items-center gap-4 mb-3">
         <div className="flex items-center gap-1">
@@ -162,7 +162,7 @@ export function TradeSetupDetector({ symbol = 'SPY' }: { symbol?: string }) {
         </div>
         <div className="flex items-center gap-1">
           <Activity className="w-4 h-4 text-gray-500" />
-          <span className="text-sm">{setup.current_metrics.gamma_regime} regime</span>
+          <span className="text-sm">{setup.current_metrics?.gamma_regime ?? 'UNKNOWN'} regime</span>
         </div>
       </div>
 
