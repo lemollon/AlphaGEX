@@ -1939,7 +1939,7 @@ async def get_ares_intraday_equity(date: str = None):
         # Track high/low for summary
         all_equities = [market_open_equity]
 
-        # Add snapshots
+        # Add snapshots - recalculate equity from P&L to ensure consistency
         for snapshot in snapshots:
             ts, balance, snap_unrealized, snap_realized, open_count, note = snapshot
             snap_time = ts.astimezone(CENTRAL_TZ) if ts.tzinfo else ts
@@ -1947,7 +1947,8 @@ async def get_ares_intraday_equity(date: str = None):
             # Use snapshot values if available, otherwise estimate
             snap_unrealized_val = float(snap_unrealized) if snap_unrealized else 0
             snap_realized_val = float(snap_realized) if snap_realized else total_realized
-            snap_equity = round(float(balance) if balance else starting_capital, 2)
+            # Recalculate equity: starting_capital + realized + unrealized (don't trust stored balance)
+            snap_equity = round(starting_capital + snap_realized_val + snap_unrealized_val, 2)
             all_equities.append(snap_equity)
 
             data_points.append({

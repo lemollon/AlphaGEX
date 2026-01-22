@@ -277,9 +277,9 @@ export default function EquityCurveChart({
   )
 
   // Fetch intraday data (only when botFilter is set and viewMode is intraday)
-  // UNIFIED: Use unified metrics intraday endpoint for consistent starting capital
-  // Snapshots are captured every 5 minutes by scheduler; refresh every 30 seconds to show updates faster
-  const intradayEndpoint = botFilter ? `/api/metrics/${botFilter}/equity-curve/intraday` : null
+  // Use bot-specific endpoints which have LIVE mark-to-market calculation
+  // Bot routes calculate unrealized P&L using real option pricing, not stale snapshots
+  const intradayEndpoint = botFilter ? `/api/${botFilter.toLowerCase()}/equity-curve/intraday` : null
   const { data: intradayData, error: intradayError, isLoading: intradayLoading } = useSWR<IntradayEquityData>(
     viewMode === 'intraday' && intradayEndpoint ? intradayEndpoint : null,
     fetcher,
@@ -715,7 +715,7 @@ export default function EquityCurveChart({
                 }}
               />
 
-              {/* Main equity area with brand colors */}
+              {/* Main equity area with brand colors - baseValue ensures fill is relative to starting capital */}
               <Area
                 type="monotone"
                 dataKey="equity"
@@ -723,6 +723,7 @@ export default function EquityCurveChart({
                 strokeWidth={2}
                 fill={`url(#equityGradient-${botFilter || 'default'})`}
                 filter={`url(#glow-${botFilter || 'default'})`}
+                baseValue={summary.starting_capital}
                 animationDuration={1000}
                 animationEasing="ease-out"
               />
