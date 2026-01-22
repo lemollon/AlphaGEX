@@ -336,7 +336,9 @@ export default function EquityCurveChart({
   // Chart bounds (handles both historical and intraday)
   const { minEquity, maxEquity, minDrawdown, maxDrawdown } = useMemo(() => {
     const dataToUse = viewMode === 'intraday' ? processedIntradayData : processedData
-    if (!dataToUse.length) return { minEquity: 0, maxEquity: 100000, minDrawdown: 0, maxDrawdown: 10 }
+    // Use bot-appropriate starting capital for empty chart bounds
+    const defaultCapital = (botFilter === 'TITAN' || botFilter === 'PEGASUS') ? 200000 : 100000
+    if (!dataToUse.length) return { minEquity: 0, maxEquity: defaultCapital, minDrawdown: 0, maxDrawdown: 10 }
 
     const equities = dataToUse.map(p => p.equity)
     const drawdowns = viewMode === 'intraday' ? [0] : processedData.map(p => p.drawdown_pct)
@@ -347,7 +349,7 @@ export default function EquityCurveChart({
       minDrawdown: 0,
       maxDrawdown: Math.max(...drawdowns, 5) * 1.2
     }
-  }, [processedData, processedIntradayData, viewMode])
+  }, [processedData, processedIntradayData, viewMode, botFilter])
 
   // Render event markers
   const renderEventMarkers = () => {
@@ -499,6 +501,10 @@ export default function EquityCurveChart({
     )
   }
 
+  // Get default starting capital based on bot type
+  // SPX bots (TITAN, PEGASUS) use $200k, SPY bots (ARES, ATHENA, ICARUS) use $100k
+  const defaultStartingCapital = (botFilter === 'TITAN' || botFilter === 'PEGASUS') ? 200000 : 100000
+
   // Get summary based on view mode
   const summary = viewMode === 'intraday' && intradayData
     ? {
@@ -508,7 +514,7 @@ export default function EquityCurveChart({
         total_trades: intradayData.snapshots_count,
         starting_capital: intradayData.starting_equity
       }
-    : data?.summary || { total_pnl: 0, final_equity: 0, max_drawdown_pct: 0, total_trades: 0, starting_capital: 100000 }
+    : data?.summary || { total_pnl: 0, final_equity: 0, max_drawdown_pct: 0, total_trades: 0, starting_capital: defaultStartingCapital }
 
   return (
     <div className={`bg-[#0a0a0a] border rounded-lg overflow-hidden ${

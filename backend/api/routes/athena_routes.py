@@ -365,22 +365,27 @@ async def get_athena_status():
     if not athena:
         # ATHENA not running - read stats from database
         total_pnl = 0
-        # IMPORTANT: Don't use stale unrealized_pnl from database when worker isn't running
-        # Set to None to indicate live pricing is unavailable
-        unrealized_pnl = None
+        unrealized_pnl = 0  # Will calculate using MTM if open positions exist
         trade_count = 0
         win_count = 0
         open_count = 0
         closed_count = 0
         traded_today = False
         today = now.strftime('%Y-%m-%d')
+        spy_price = None
+
+        # Get current SPY price for MTM estimation fallback
+        try:
+            from data.unified_data_provider import get_price
+            spy_price = get_price("SPY")
+        except Exception:
+            pass
 
         try:
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Note: We intentionally do NOT use unrealized_pnl from database here
-            # because it may be stale. Unrealized P&L requires live pricing.
+            # Get trade stats
             try:
                 cursor.execute('''
                     SELECT
@@ -415,22 +420,44 @@ async def get_athena_status():
                 total_pnl = float(row[4] or 0)
                 traded_today = (row[5] or 0) > 0
 
+            # Calculate unrealized P&L using MTM if there are open positions
+            if open_count > 0:
+                try:
+                    cursor.execute('''
+                        SELECT position_id, spread_type, entry_debit, contracts,
+                               long_strike, short_strike, max_profit, max_loss, expiration
+                        FROM athena_positions
+                        WHERE status = 'open'
+                    ''')
+                    open_positions = cursor.fetchall()
+                    if open_positions:
+                        mtm_result = _calculate_athena_unrealized_pnl(open_positions, spy_price)
+                        unrealized_pnl = mtm_result['total_unrealized_pnl']
+                        logger.debug(f"ATHENA status: MTM unrealized=${unrealized_pnl:.2f} via {mtm_result['primary_method']}")
+                except Exception as e:
+                    logger.debug(f"Could not calculate ATHENA unrealized P&L: {e}")
+
+            # Get starting capital from config table (consistent with intraday endpoint)
+            starting_capital = 100000  # Default for ATHENA (SPY bot)
+            try:
+                cursor.execute("SELECT value FROM autonomous_config WHERE key = 'athena_starting_capital'")
+                config_row = cursor.fetchone()
+                if config_row and config_row[0]:
+                    starting_capital = float(config_row[0])
+            except Exception:
+                pass
+
             conn.close()
         except Exception as db_err:
             logger.debug(f"Could not read ATHENA stats from database: {db_err}")
+            starting_capital = 100000
 
         win_rate = round((win_count / closed_count) * 100, 1) if closed_count > 0 else 0
 
         # Determine if ATHENA is actually active based on heartbeat
         scan_interval = 5
         is_active, active_reason = _is_bot_actually_active(heartbeat, scan_interval)
-
-        # current_equity = starting_capital + realized
-        # Only add unrealized if we have live pricing (worker running)
-        starting_capital = 100000
-        current_equity = starting_capital + total_pnl
-        if unrealized_pnl is not None:
-            current_equity += unrealized_pnl
+        current_equity = starting_capital + total_pnl + unrealized_pnl
 
         return {
             "success": True,

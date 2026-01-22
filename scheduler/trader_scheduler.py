@@ -136,6 +136,21 @@ except ImportError:
     TITANTradingMode = None
     print("Warning: TITAN not available. Aggressive SPX Iron Condor trading will be disabled.")
 
+# Import mark-to-market utilities for accurate equity snapshots
+MTM_AVAILABLE = False
+try:
+    from trading.mark_to_market import (
+        calculate_ic_mark_to_market,
+        calculate_spread_mark_to_market,
+        build_occ_symbol,
+        get_option_quotes_batch,
+    )
+    MTM_AVAILABLE = True
+except ImportError:
+    calculate_ic_mark_to_market = None
+    calculate_spread_mark_to_market = None
+    print("Warning: Mark-to-market not available. Equity snapshots will use trader instance values.")
+
 # Import decision logger for comprehensive logging
 try:
     from trading.decision_logger import get_phoenix_logger, get_atlas_logger, get_ares_logger, BotName
@@ -2597,18 +2612,98 @@ class AutonomousTraderScheduler:
                         realized_pnl = 0
                         open_count = 0
 
-                    # Get unrealized P&L from bot's trader instance if available
-                    # Each bot's get_status() method calculates actual unrealized from live pricing
+                    # Calculate unrealized P&L using mark-to-market pricing from open positions
+                    # This is more reliable than trader instance which may have stale data
                     unrealized_pnl = 0
-                    trader_instance = getattr(self, trader_attr, None)
-                    if trader_instance and open_count > 0:
+                    mtm_method = 'none'
+
+                    if open_count > 0 and MTM_AVAILABLE:
                         try:
-                            status = trader_instance.get_status()
-                            unrealized_pnl = status.get('unrealized_pnl', 0) or 0
-                            logger.info(f"EQUITY_SNAPSHOTS: {bot_name.upper()} got live unrealized=${unrealized_pnl:.2f} from trader instance")
-                        except Exception as e:
-                            logger.warning(f"EQUITY_SNAPSHOTS: {bot_name.upper()} failed to get live unrealized: {e}")
-                            unrealized_pnl = 0
+                            # Iron Condor bots: ARES, TITAN, PEGASUS
+                            if bot_name in ['ares', 'titan', 'pegasus']:
+                                # Query IC positions with all MTM fields
+                                underlying = 'SPY' if bot_name == 'ares' else 'SPX'
+                                cursor.execute(f"""
+                                    SELECT position_id, total_credit, contracts, spread_width,
+                                           put_short_strike, put_long_strike, call_short_strike, call_long_strike,
+                                           expiration
+                                    FROM {pos_table}
+                                    WHERE status = 'open'
+                                """)
+                                open_positions = cursor.fetchall()
+
+                                for pos in open_positions:
+                                    pos_id, credit, contracts, spread_w, put_short, put_long, call_short, call_long, exp = pos
+                                    if not all([credit, contracts, put_short, put_long, call_short, call_long, exp]):
+                                        continue
+                                    try:
+                                        exp_str = str(exp) if not isinstance(exp, str) else exp
+                                        mtm = calculate_ic_mark_to_market(
+                                            underlying=underlying,
+                                            expiration=exp_str,
+                                            put_short_strike=float(put_short),
+                                            put_long_strike=float(put_long),
+                                            call_short_strike=float(call_short),
+                                            call_long_strike=float(call_long),
+                                            contracts=int(contracts),
+                                            entry_credit=float(credit),
+                                            use_cache=True
+                                        )
+                                        if mtm.get('success') and mtm.get('unrealized_pnl') is not None:
+                                            unrealized_pnl += mtm['unrealized_pnl']
+                                            mtm_method = 'mark_to_market'
+                                    except Exception as pos_err:
+                                        logger.debug(f"EQUITY_SNAPSHOTS: {bot_name.upper()} MTM failed for {pos_id}: {pos_err}")
+
+                            # Directional spread bots: ATHENA, ICARUS
+                            elif bot_name in ['athena', 'icarus']:
+                                cursor.execute(f"""
+                                    SELECT position_id, spread_type, entry_debit, contracts,
+                                           long_strike, short_strike, max_profit, max_loss, expiration
+                                    FROM {pos_table}
+                                    WHERE status = 'open'
+                                """)
+                                open_positions = cursor.fetchall()
+
+                                for pos in open_positions:
+                                    pos_id, spread_type, debit, contracts, long_strike, short_strike, max_profit, max_loss, exp = pos
+                                    if not all([debit, contracts, long_strike, short_strike, exp]):
+                                        continue
+                                    try:
+                                        exp_str = str(exp) if not isinstance(exp, str) else exp
+                                        mtm = calculate_spread_mark_to_market(
+                                            underlying='SPY',
+                                            expiration=exp_str,
+                                            long_strike=float(long_strike),
+                                            short_strike=float(short_strike),
+                                            spread_type=spread_type,
+                                            contracts=int(contracts),
+                                            entry_debit=float(debit),
+                                            use_cache=True
+                                        )
+                                        if mtm.get('success') and mtm.get('unrealized_pnl') is not None:
+                                            unrealized_pnl += mtm['unrealized_pnl']
+                                            mtm_method = 'mark_to_market'
+                                    except Exception as pos_err:
+                                        logger.debug(f"EQUITY_SNAPSHOTS: {bot_name.upper()} MTM failed for {pos_id}: {pos_err}")
+
+                            if mtm_method == 'mark_to_market':
+                                logger.info(f"EQUITY_SNAPSHOTS: {bot_name.upper()} MTM unrealized=${unrealized_pnl:.2f}")
+                        except Exception as mtm_err:
+                            logger.warning(f"EQUITY_SNAPSHOTS: {bot_name.upper()} MTM calculation failed: {mtm_err}")
+                            mtm_method = 'failed'
+
+                    # Fallback to trader instance if MTM failed or unavailable
+                    if mtm_method != 'mark_to_market' and open_count > 0:
+                        trader_instance = getattr(self, trader_attr, None)
+                        if trader_instance:
+                            try:
+                                status = trader_instance.get_status()
+                                unrealized_pnl = status.get('unrealized_pnl', 0) or 0
+                                logger.info(f"EQUITY_SNAPSHOTS: {bot_name.upper()} fallback to trader instance unrealized=${unrealized_pnl:.2f}")
+                            except Exception as e:
+                                logger.warning(f"EQUITY_SNAPSHOTS: {bot_name.upper()} trader instance fallback failed: {e}")
+                                unrealized_pnl = 0
 
                     # Calculate current equity (realized + unrealized for intraday tracking)
                     current_equity = starting_capital + realized_pnl + unrealized_pnl
