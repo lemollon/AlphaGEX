@@ -2403,27 +2403,28 @@ async def save_equity_snapshot():
     to build detailed intraday equity curve.
 
     Saves: balance, unrealized_pnl, realized_pnl, open_positions
+
+    CRITICAL: Uses same formula as scheduler and intraday endpoint:
+    current_equity = starting_capital + realized_pnl + unrealized_pnl
     """
     now = datetime.now(ZoneInfo("America/Chicago"))
-
-    # Get current Tradier balance
-    tradier_balance = _get_tradier_account_balance()
-
-    if not tradier_balance.get('connected'):
-        return {
-            "success": False,
-            "error": "Tradier not connected",
-            "details": tradier_balance.get('error')
-        }
-
-    current_equity = tradier_balance.get('total_equity', 0)
 
     try:
         from database_adapter import get_connection
         conn = get_connection()
         cursor = conn.cursor()
 
-        # Create table if not exists with all required columns
+        # Get starting capital from config (same as scheduler)
+        starting_capital = 100000  # Default for ARES
+        cursor.execute("SELECT value FROM autonomous_config WHERE key = 'ares_starting_capital'")
+        config_row = cursor.fetchone()
+        if config_row and config_row[0]:
+            try:
+                starting_capital = float(config_row[0])
+            except (ValueError, TypeError):
+                pass
+
+        # Create table if not exists - MUST match scheduler schema exactly
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS ares_equity_snapshots (
                 id SERIAL PRIMARY KEY,
@@ -2431,7 +2432,6 @@ async def save_equity_snapshot():
                 balance DECIMAL(12, 2) NOT NULL,
                 unrealized_pnl DECIMAL(12, 2),
                 realized_pnl DECIMAL(12, 2),
-                option_buying_power DECIMAL(12, 2),
                 open_positions INTEGER,
                 note TEXT,
                 created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
@@ -2467,17 +2467,20 @@ async def save_equity_snapshot():
         except Exception:
             pass
 
-        # Insert snapshot with all fields
+        # Calculate current equity using SAME formula as scheduler
+        # current_equity = starting_capital + realized_pnl + unrealized_pnl
+        current_equity = starting_capital + realized_pnl + unrealized_pnl
+
+        # Insert snapshot - MUST match scheduler schema exactly (6 columns)
         cursor.execute('''
             INSERT INTO ares_equity_snapshots
-            (timestamp, balance, unrealized_pnl, realized_pnl, option_buying_power, open_positions, note)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            (timestamp, balance, unrealized_pnl, realized_pnl, open_positions, note)
+            VALUES (%s, %s, %s, %s, %s, %s)
         ''', (
             now,
-            current_equity,
+            round(current_equity, 2),
             round(unrealized_pnl, 2),
             round(realized_pnl, 2),
-            tradier_balance.get('option_buying_power', 0),
             open_count,
             f"Auto snapshot at {now.strftime('%H:%M:%S')}"
         ))
@@ -2490,9 +2493,9 @@ async def save_equity_snapshot():
             "data": {
                 "timestamp": now.isoformat(),
                 "equity": round(current_equity, 2),
+                "starting_capital": round(starting_capital, 2),
                 "unrealized_pnl": round(unrealized_pnl, 2),
                 "realized_pnl": round(realized_pnl, 2),
-                "option_buying_power": round(tradier_balance.get('option_buying_power', 0), 2),
                 "open_positions": open_count
             }
         }
