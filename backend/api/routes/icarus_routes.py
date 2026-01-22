@@ -1363,16 +1363,16 @@ async def get_icarus_equity_curve(days: int = 30):
             except (ValueError, TypeError):
                 pass
 
-        # Get closed positions grouped by date
+        # Get ALL closed positions for correct cumulative P&L calculation
+        # The days parameter filters the OUTPUT, not the query
         cursor.execute('''
             SELECT DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as close_date,
                    realized_pnl, position_id
             FROM icarus_positions
             WHERE status IN ('closed', 'expired')
             AND close_time IS NOT NULL
-            AND close_time >= NOW() - INTERVAL '%s days'
             ORDER BY close_time ASC
-        ''', (days,))
+        ''')
         rows = cursor.fetchall()
 
         # Get open positions for unrealized P&L calculation

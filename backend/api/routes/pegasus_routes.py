@@ -945,7 +945,7 @@ async def get_pegasus_equity_curve(days: int = 30):
     Args:
         days: Number of days of history (default 30)
     """
-    starting_capital = 200000
+    starting_capital = 200000  # Default for PEGASUS (SPX bot)
     today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
     unrealized_pnl = 0.0
     open_positions_count = 0
@@ -953,6 +953,15 @@ async def get_pegasus_equity_curve(days: int = 30):
     try:
         conn = get_connection()
         cursor = conn.cursor()
+
+        # Check config table for starting capital (consistent with intraday endpoint)
+        try:
+            cursor.execute("SELECT value FROM autonomous_config WHERE key = 'pegasus_starting_capital'")
+            config_row = cursor.fetchone()
+            if config_row and config_row[0]:
+                starting_capital = float(config_row[0])
+        except Exception:
+            pass
 
         # Get closed positions for historical equity curve
         cursor.execute('''

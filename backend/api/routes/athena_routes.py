@@ -2053,6 +2053,8 @@ async def get_athena_equity_curve(days: int = 30):
             pass
 
         # Try V2 tables first, fall back to legacy
+        # IMPORTANT: Get ALL closed trades for correct cumulative P&L calculation
+        # Then filter output to last N days in Python
         try:
             c.execute("""
                 SELECT
@@ -2061,10 +2063,10 @@ async def get_athena_equity_curve(days: int = 30):
                     COUNT(*) as trades
                 FROM athena_positions
                 WHERE status IN ('closed', 'expired')
-                AND close_time >= NOW() - INTERVAL '%s days'
+                AND close_time IS NOT NULL
                 GROUP BY DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago')
                 ORDER BY trade_date
-            """, (days,))
+            """)
             rows = c.fetchall()
 
             # Get open positions for unrealized P&L calculation
@@ -2086,10 +2088,10 @@ async def get_athena_equity_curve(days: int = 30):
                     COUNT(*) as trades
                 FROM apache_positions
                 WHERE status IN ('closed', 'expired')
-                AND exit_time >= NOW() - INTERVAL '%s days'
+                AND exit_time IS NOT NULL
                 GROUP BY DATE(exit_time::timestamptz AT TIME ZONE 'America/Chicago')
                 ORDER BY trade_date
-            """, (days,))
+            """)
             rows = c.fetchall()
             open_positions = []
             open_positions_count = 0
