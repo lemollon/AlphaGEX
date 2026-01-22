@@ -75,6 +75,7 @@ from backend.api.routes import (
     math_optimizer_routes,  # Mathematical Optimization - HMM, Kalman, Thompson, Convex, HJB, MDP algorithms
     validation_routes,  # AutoValidation - ML model health monitoring, Thompson allocation, auto-retrain
     drift_routes,  # Drift Detection - Backtest vs Live performance comparison
+    unified_metrics_routes,  # Unified Bot Metrics - Single source of truth for all bot stats
 )
 
 # ============================================================================
@@ -322,6 +323,7 @@ app.include_router(quant_routes.router)
 app.include_router(math_optimizer_routes.router)
 app.include_router(validation_routes.router)
 app.include_router(drift_routes.router)
+app.include_router(unified_metrics_routes.router)
 print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, ares, daily-manna, prometheus, argus, docs, solomon, events, oracle, math-optimizer, validation, drift")
 
 # Initialize existing AlphaGEX components (singleton pattern)

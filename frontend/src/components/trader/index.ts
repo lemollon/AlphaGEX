@@ -82,3 +82,7 @@ export type { LivePnLData, LivePosition, EquityDataPoint, TimePeriod } from './L
 
 // Re-export types from LiveEquityCurve (with alias to avoid conflict)
 export type { EquityPoint } from './LiveEquityCurve'
+
+// Unified Bot Metrics - Single Source of Truth for all bot statistics
+// Use this instead of calculating stats in frontend components
+export { default as UnifiedBotMetrics, StatCard as UnifiedStatCard, CapitalSourceBadge, ReconciliationStatus } from './UnifiedBotMetrics'
