@@ -2233,7 +2233,7 @@ async def get_athena_intraday_equity(date: str = None):
         cursor.execute("""
             SELECT timestamp, balance, unrealized_pnl, realized_pnl, open_positions, note
             FROM athena_equity_snapshots
-            WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+            WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
             ORDER BY timestamp ASC
         """, (today,))
         snapshots = cursor.fetchall()

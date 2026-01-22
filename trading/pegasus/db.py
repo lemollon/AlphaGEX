@@ -406,6 +406,30 @@ class PEGASUSDatabase:
             logger.error(f"{self.bot_name}: Failed to partial close position: {e}")
             return False
 
+    def expire_position(self, position_id: str, realized_pnl: float, close_price: float = None) -> bool:
+        """Mark position as expired with final P&L and close price"""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    UPDATE pegasus_positions
+                    SET status = 'expired',
+                        close_time = NOW(),
+                        close_reason = 'EXPIRED',
+                        close_price = %s,
+                        realized_pnl = %s
+                    WHERE position_id = %s AND status = 'open'
+                    RETURNING id
+                """, (_to_python(close_price), _to_python(realized_pnl), position_id))
+                result = c.fetchone()
+                conn.commit()
+                if result:
+                    logger.info(f"{self.bot_name}: Expired position {position_id}, P&L=${realized_pnl:.2f}")
+                return result is not None
+        except Exception as e:
+            logger.error(f"{self.bot_name}: Failed to expire position: {e}")
+            return False
+
     def get_position_count(self) -> int:
         try:
             with db_connection() as conn:

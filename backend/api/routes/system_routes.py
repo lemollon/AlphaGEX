@@ -375,7 +375,7 @@ async def cleanup_equity_snapshots(bot: str = None, confirm: bool = False):
                     cursor.execute(f"""
                         SELECT COUNT(*), MIN(timestamp), MAX(timestamp)
                         FROM {table_name}
-                        WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+                        WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
                     """, (today,))
                     row = cursor.fetchone()
                     preview[bot_name] = {
@@ -401,7 +401,7 @@ async def cleanup_equity_snapshots(bot: str = None, confirm: bool = False):
             try:
                 cursor.execute(f"""
                     DELETE FROM {table_name}
-                    WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+                    WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
                 """, (today,))
                 deleted = cursor.rowcount
                 results[bot_name] = {"deleted": deleted, "table": table_name}

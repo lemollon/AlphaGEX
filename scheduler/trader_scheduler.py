@@ -2728,8 +2728,8 @@ class AutonomousTraderScheduler:
                             cursor.execute(f"""
                                 ALTER TABLE {snap_table} ADD COLUMN IF NOT EXISTS {col} DECIMAL(12, 2)
                             """)
-                        except Exception:
-                            pass
+                        except Exception as col_err:
+                            logger.warning(f"EQUITY_SNAPSHOTS: {bot_name.upper()} failed to add {col} column: {col_err}")
 
                     # Insert snapshot
                     cursor.execute(f"""

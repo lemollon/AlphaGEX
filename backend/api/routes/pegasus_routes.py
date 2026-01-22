@@ -1117,7 +1117,7 @@ async def get_pegasus_intraday_equity(date: str = None):
         cursor.execute("""
             SELECT timestamp, balance, unrealized_pnl, realized_pnl, open_positions, note
             FROM pegasus_equity_snapshots
-            WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+            WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
             ORDER BY timestamp ASC
         """, (today,))
         snapshots = cursor.fetchall()
@@ -2000,7 +2000,7 @@ async def cleanup_open_positions(confirm: bool = False):
         today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
         cursor.execute("""
             DELETE FROM pegasus_equity_snapshots
-            WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+            WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
         """, (today,))
         deleted_snapshots = cursor.rowcount
 

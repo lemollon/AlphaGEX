@@ -1094,7 +1094,7 @@ async def get_titan_intraday_equity(date: str = None):
         cursor.execute("""
             SELECT timestamp, balance, unrealized_pnl, realized_pnl, open_positions, note
             FROM titan_equity_snapshots
-            WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+            WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
             ORDER BY timestamp ASC
         """, (today,))
         snapshots = cursor.fetchall()
@@ -1854,7 +1854,7 @@ async def cleanup_titan_open_positions(confirm: bool = False):
         try:
             cursor.execute("""
                 DELETE FROM titan_equity_snapshots
-                WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = CURRENT_DATE
+                WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = CURRENT_DATE
             """)
             deleted_snapshots = cursor.rowcount
         except Exception:

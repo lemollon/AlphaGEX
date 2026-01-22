@@ -2021,7 +2021,7 @@ async def get_ares_intraday_equity(date: str = None):
         cursor.execute("""
             SELECT timestamp, balance, unrealized_pnl, realized_pnl, open_positions, note
             FROM ares_equity_snapshots
-            WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+            WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
             ORDER BY timestamp ASC
         """, (today,))
         snapshots = cursor.fetchall()
@@ -4031,7 +4031,7 @@ async def get_ares_intraday_diagnostics():
             # Count today's snapshots
             cursor.execute("""
                 SELECT COUNT(*) FROM ares_equity_snapshots
-                WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+                WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
             """, (today,))
             result["ares"]["today_snapshots"] = cursor.fetchone()[0]
 
@@ -4113,7 +4113,7 @@ async def get_ares_intraday_diagnostics():
 
             cursor.execute("""
                 SELECT COUNT(*) FROM titan_equity_snapshots
-                WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+                WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
             """, (today,))
             result["titan"]["today_snapshots"] = cursor.fetchone()[0]
 
