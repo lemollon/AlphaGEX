@@ -145,6 +145,117 @@ def get_ares_instance():
         return None
 
 
+def _calculate_ares_unrealized_pnl(positions: list) -> dict:
+    """
+    Calculate unrealized P&L for ARES Iron Condor positions using mark-to-market pricing.
+
+    Args:
+        positions: List of position tuples from database query with columns:
+                   (position_id, total_credit, contracts, spread_width,
+                    put_short_strike, put_long_strike, call_short_strike, call_long_strike,
+                    expiration)
+
+    Returns:
+        Dict with total_unrealized_pnl, method, and position details
+    """
+    result = {
+        'total_unrealized_pnl': 0,
+        'positions': [],
+        'method': 'estimation',
+        'mtm_success_count': 0,
+        'mtm_fail_count': 0
+    }
+
+    if not positions:
+        return result
+
+    total_unrealized = 0
+
+    for pos in positions:
+        pos_id, total_credit, contracts, spread_width, put_short, put_long, call_short, call_long, expiration = pos
+        total_credit = float(total_credit or 0)
+        contracts = int(contracts or 1)
+        spread_width = float(spread_width or 10)
+        put_short = float(put_short or 0)
+        put_long = float(put_long or 0)
+        call_short = float(call_short or 0)
+        call_long = float(call_long or 0)
+
+        pos_result = {
+            'position_id': pos_id,
+            'unrealized_pnl': 0,
+            'method': 'estimation'
+        }
+
+        # Try mark-to-market first
+        if MTM_AVAILABLE and expiration:
+            try:
+                exp_str = expiration.strftime('%Y-%m-%d') if hasattr(expiration, 'strftime') else str(expiration)
+                mtm = calculate_ic_mark_to_market(
+                    underlying='SPY',  # ARES trades SPY
+                    expiration=exp_str,
+                    put_short_strike=put_short,
+                    put_long_strike=put_long,
+                    call_short_strike=call_short,
+                    call_long_strike=call_long,
+                    contracts=contracts,
+                    entry_credit=total_credit,
+                    use_cache=True
+                )
+
+                if mtm.get('success') and mtm.get('unrealized_pnl') is not None:
+                    pos_result['unrealized_pnl'] = mtm['unrealized_pnl']
+                    pos_result['method'] = 'mark_to_market'
+                    result['mtm_success_count'] += 1
+                    total_unrealized += mtm['unrealized_pnl']
+                    result['positions'].append(pos_result)
+                    continue
+                else:
+                    result['mtm_fail_count'] += 1
+            except Exception as e:
+                result['mtm_fail_count'] += 1
+                logger.debug(f"MTM failed for {pos_id}: {e}")
+
+        # Fallback to estimation based on underlying price
+        try:
+            from data.unified_data_provider import get_price
+            spy_price = get_price("SPY")
+        except Exception:
+            spy_price = None
+
+        if spy_price and spy_price > 0:
+            if put_short < spy_price < call_short:
+                # Safe zone - estimate based on distance from strikes
+                put_dist = (spy_price - put_short) / spread_width
+                call_dist = (call_short - spy_price) / spread_width
+                factor = min(put_dist, call_dist) / 2
+                current_value = total_credit * max(0.1, 0.5 - factor * 0.3)
+            elif spy_price <= put_short:
+                intrinsic = put_short - spy_price
+                current_value = min(spread_width, intrinsic + total_credit * 0.2)
+            else:
+                intrinsic = spy_price - call_short
+                current_value = min(spread_width, intrinsic + total_credit * 0.2)
+
+            pos_unrealized = (total_credit - current_value) * 100 * contracts
+            pos_result['unrealized_pnl'] = round(pos_unrealized, 2)
+            total_unrealized += pos_unrealized
+
+        result['positions'].append(pos_result)
+
+    result['total_unrealized_pnl'] = round(total_unrealized, 2)
+
+    if result['mtm_success_count'] > 0:
+        if result['mtm_fail_count'] == 0:
+            result['method'] = 'mark_to_market'
+        else:
+            result['method'] = 'mixed'
+    else:
+        result['method'] = 'estimation'
+
+    return result
+
+
 def _get_heartbeat(bot_name: str) -> dict:
     """Get heartbeat info for a bot from the database"""
     CENTRAL_TZ = ZoneInfo("America/Chicago")
@@ -1014,9 +1125,7 @@ async def get_ares_status():
     if not ares:
         # ARES not running in this process - read stats from database
         total_pnl = 0
-        # IMPORTANT: Don't use stale unrealized_pnl from database when worker isn't running
-        # Set to None to indicate live pricing is unavailable
-        unrealized_pnl = None
+        unrealized_pnl = 0  # Will calculate using MTM if open positions exist
         trade_count = 0
         win_count = 0
         open_count = 0
@@ -1029,8 +1138,7 @@ async def get_ares_status():
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Note: We intentionally do NOT use unrealized_pnl from database here
-            # because it may be stale. Unrealized P&L requires live pricing.
+            # Get trade stats
             cursor.execute('''
                 SELECT
                     COUNT(*) as total,
@@ -1042,7 +1150,6 @@ async def get_ares_status():
                 FROM ares_positions
             ''', (today,))
             row = cursor.fetchone()
-            conn.close()
 
             if row:
                 trade_count = row[0] or 0
@@ -1051,6 +1158,23 @@ async def get_ares_status():
                 win_count = row[3] or 0
                 total_pnl = float(row[4] or 0)
                 traded_today = (row[5] or 0) > 0
+
+            # Calculate unrealized P&L using MTM if there are open positions
+            if open_count > 0:
+                cursor.execute('''
+                    SELECT position_id, total_credit, contracts, spread_width,
+                           put_short_strike, put_long_strike, call_short_strike, call_long_strike,
+                           expiration
+                    FROM ares_positions
+                    WHERE status = 'open'
+                ''')
+                open_positions = cursor.fetchall()
+                if open_positions:
+                    mtm_result = _calculate_ares_unrealized_pnl(open_positions)
+                    unrealized_pnl = mtm_result['total_unrealized_pnl']
+                    logger.debug(f"ARES status: MTM unrealized=${unrealized_pnl:.2f} via {mtm_result['method']}")
+
+            conn.close()
         except Exception as db_err:
             logger.debug(f"Could not read ARES stats from database: {db_err}")
 
@@ -1102,12 +1226,10 @@ async def get_ares_status():
         scan_interval = 5
         is_active, active_reason = _is_ares_actually_active(heartbeat, scan_interval)
 
-        # current_equity = starting_capital + realized
-        # Only add unrealized if we have live pricing (worker running)
+        # current_equity = starting_capital + realized + unrealized
+        # Unrealized P&L is now always calculated using MTM when open positions exist
         starting_capital = 100000  # Default starting capital
-        current_equity = starting_capital + total_pnl
-        if unrealized_pnl is not None:
-            current_equity += unrealized_pnl
+        current_equity = starting_capital + total_pnl + unrealized_pnl
 
         return {
             "success": True,

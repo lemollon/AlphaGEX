@@ -411,9 +411,7 @@ async def get_titan_status():
         # TITAN not running - read stats from database
         starting_capital = 200000
         total_pnl = 0
-        # IMPORTANT: Don't use stale unrealized_pnl from database when worker isn't running
-        # Set to None to indicate live pricing is unavailable
-        unrealized_pnl = None
+        unrealized_pnl = 0  # Will calculate using MTM if open positions exist
         trade_count = 0
         win_count = 0
         open_count = 0
@@ -425,8 +423,7 @@ async def get_titan_status():
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Note: We intentionally do NOT use unrealized_pnl from database here
-            # because it may be stale. Unrealized P&L requires live pricing.
+            # Get trade stats
             cursor.execute('''
                 SELECT
                     COUNT(*) as total,
@@ -438,7 +435,6 @@ async def get_titan_status():
                 FROM titan_positions
             ''', (today,))
             row = cursor.fetchone()
-            conn.close()
 
             if row:
                 trade_count = row[0] or 0
@@ -447,6 +443,23 @@ async def get_titan_status():
                 win_count = row[3] or 0
                 total_pnl = float(row[4] or 0)
                 trades_today = row[5] or 0
+
+            # Calculate unrealized P&L using MTM if there are open positions
+            if open_count > 0:
+                cursor.execute('''
+                    SELECT position_id, total_credit, contracts, spread_width,
+                           put_short_strike, put_long_strike, call_short_strike, call_long_strike,
+                           expiration
+                    FROM titan_positions
+                    WHERE status = 'open'
+                ''')
+                open_positions = cursor.fetchall()
+                if open_positions:
+                    mtm_result = _calculate_titan_unrealized_pnl(open_positions)
+                    unrealized_pnl = mtm_result['total_unrealized_pnl']
+                    logger.debug(f"TITAN status: MTM unrealized=${unrealized_pnl:.2f} via {mtm_result['method']}")
+
+            conn.close()
         except Exception as db_err:
             logger.debug(f"Could not read TITAN stats from database: {db_err}")
 
@@ -482,11 +495,9 @@ async def get_titan_status():
         scan_interval = 5
         is_active, active_reason = _is_bot_actually_active(heartbeat, scan_interval)
 
-        # current_equity = starting_capital + realized
-        # Only add unrealized if we have live pricing (worker running)
-        current_equity = starting_capital + total_pnl
-        if unrealized_pnl is not None:
-            current_equity += unrealized_pnl
+        # current_equity = starting_capital + realized + unrealized
+        # Unrealized P&L is now always calculated using MTM when open positions exist
+        current_equity = starting_capital + total_pnl + unrealized_pnl
 
         return {
             "success": True,
