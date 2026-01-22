@@ -675,31 +675,45 @@ class BotMetricsService:
         try:
             cursor = conn.cursor()
 
-            # Get total realized P&L up to (but not including) target date
-            cursor.execute(f"""
-                SELECT COALESCE(SUM(realized_pnl), 0)
-                FROM {positions_table}
-                WHERE status IN ('closed', 'expired')
-                AND DATE(close_time AT TIME ZONE 'America/Chicago') < %s
-            """, (target_date,))
-            prev_realized = float(cursor.fetchone()[0] or 0)
+            # Get P&L data from positions table (handle missing table gracefully)
+            prev_realized = 0.0
+            today_realized = 0.0
+            today_closed_count = 0
+            open_count = 0
 
-            # Get target date's realized P&L
-            cursor.execute(f"""
-                SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
-                FROM {positions_table}
-                WHERE status IN ('closed', 'expired')
-                AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
-            """, (target_date,))
-            row = cursor.fetchone()
-            today_realized = float(row[0] or 0)
-            today_closed_count = int(row[1] or 0)
+            try:
+                # Get total realized P&L up to (but not including) target date
+                cursor.execute(f"""
+                    SELECT COALESCE(SUM(realized_pnl), 0)
+                    FROM {positions_table}
+                    WHERE status IN ('closed', 'expired')
+                    AND DATE(close_time AT TIME ZONE 'America/Chicago') < %s
+                """, (target_date,))
+                prev_realized = float(cursor.fetchone()[0] or 0)
 
-            # Get open positions count
-            cursor.execute(f"""
-                SELECT COUNT(*) FROM {positions_table} WHERE status = 'open'
-            """)
-            open_count = int(cursor.fetchone()[0] or 0)
+                # Get target date's realized P&L
+                cursor.execute(f"""
+                    SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
+                    FROM {positions_table}
+                    WHERE status IN ('closed', 'expired')
+                    AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
+                """, (target_date,))
+                row = cursor.fetchone()
+                today_realized = float(row[0] or 0)
+                today_closed_count = int(row[1] or 0)
+
+                # Get open positions count
+                cursor.execute(f"""
+                    SELECT COUNT(*) FROM {positions_table} WHERE status = 'open'
+                """)
+                open_count = int(cursor.fetchone()[0] or 0)
+            except Exception as table_err:
+                # Positions table might not exist yet - use defaults
+                logger.debug(f"Positions table {positions_table} not ready: {table_err}")
+                prev_realized = 0.0
+                today_realized = 0.0
+                today_closed_count = 0
+                open_count = 0
 
             # Get intraday snapshots FIRST (these have live unrealized P&L from scheduler)
             snapshots = []
@@ -725,13 +739,16 @@ class BotMetricsService:
                 if latest_snap[4] is not None:
                     open_count = int(latest_snap[4])
             else:
-                # Fallback: query positions table (may be stale)
-                cursor.execute(f"""
-                    SELECT COALESCE(SUM(COALESCE(unrealized_pnl, 0)), 0)
-                    FROM {positions_table}
-                    WHERE status = 'open'
-                """)
-                current_unrealized = float(cursor.fetchone()[0] or 0)
+                # Fallback: query positions table (may be stale, handle missing table)
+                try:
+                    cursor.execute(f"""
+                        SELECT COALESCE(SUM(COALESCE(unrealized_pnl, 0)), 0)
+                        FROM {positions_table}
+                        WHERE status = 'open'
+                    """)
+                    current_unrealized = float(cursor.fetchone()[0] or 0)
+                except Exception:
+                    current_unrealized = 0.0  # Table doesn't exist
 
             conn.close()
 

@@ -3552,6 +3552,340 @@ def init_database():
     conn.commit()
     conn.close()
 
+    # Initialize bot-specific tables
+    init_bot_tables()
+
+
+def init_bot_tables():
+    """
+    Initialize all trading bot tables.
+
+    This ensures all bot tables exist even if the bot traders haven't been
+    instantiated yet. Required for equity snapshot scheduler to work for all bots.
+
+    Tables created:
+    - {bot}_positions: Position tracking for each bot
+    - {bot}_equity_snapshots: Intraday equity curve data
+    - {bot}_signals: Signal generation history
+    - {bot}_scan_activity: Scan activity logs
+    """
+    print("🤖 Initializing bot tables...")
+
+    conn = get_connection()
+    conn._conn.autocommit = True
+    c = conn.cursor()
+
+    # ===========================================================================
+    # ARES - SPY Iron Condor (0DTE)
+    # ===========================================================================
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS ares_positions (
+            id SERIAL PRIMARY KEY,
+            position_id VARCHAR(50) UNIQUE NOT NULL,
+            ticker VARCHAR(10) NOT NULL,
+            expiration DATE NOT NULL,
+            put_short_strike DECIMAL(10, 2) NOT NULL,
+            put_long_strike DECIMAL(10, 2) NOT NULL,
+            put_credit DECIMAL(10, 4) NOT NULL,
+            call_short_strike DECIMAL(10, 2) NOT NULL,
+            call_long_strike DECIMAL(10, 2) NOT NULL,
+            call_credit DECIMAL(10, 4) NOT NULL,
+            contracts INTEGER NOT NULL,
+            spread_width DECIMAL(10, 2) NOT NULL,
+            total_credit DECIMAL(10, 4) NOT NULL,
+            max_loss DECIMAL(10, 2) NOT NULL,
+            max_profit DECIMAL(10, 2) NOT NULL,
+            underlying_at_entry DECIMAL(10, 2) NOT NULL,
+            vix_at_entry DECIMAL(6, 2),
+            expected_move DECIMAL(10, 2),
+            call_wall DECIMAL(10, 2),
+            put_wall DECIMAL(10, 2),
+            flip_point DECIMAL(10, 2),
+            net_gex DECIMAL(15, 2),
+            gex_regime VARCHAR(30),
+            oracle_confidence DECIMAL(5, 4),
+            oracle_reasoning TEXT,
+            oracle_win_probability DECIMAL(8, 4),
+            oracle_advice VARCHAR(20),
+            oracle_top_factors TEXT,
+            oracle_use_gex_walls BOOLEAN DEFAULT FALSE,
+            oracle_prediction_id INTEGER,
+            put_order_id VARCHAR(50),
+            call_order_id VARCHAR(50),
+            status VARCHAR(20) NOT NULL DEFAULT 'open',
+            open_time TIMESTAMP WITH TIME ZONE NOT NULL,
+            open_date DATE,
+            close_time TIMESTAMP WITH TIME ZONE,
+            close_price DECIMAL(10, 4),
+            close_reason VARCHAR(100),
+            realized_pnl DECIMAL(10, 2),
+            unrealized_pnl DECIMAL(10, 2),
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    ''')
+
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS ares_equity_snapshots (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+            balance DECIMAL(12, 2) NOT NULL,
+            unrealized_pnl DECIMAL(12, 2),
+            realized_pnl DECIMAL(12, 2),
+            open_positions INTEGER,
+            note TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    ''')
+
+    # ===========================================================================
+    # ATHENA - SPY Directional Spreads
+    # ===========================================================================
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS athena_positions (
+            id SERIAL PRIMARY KEY,
+            position_id VARCHAR(50) UNIQUE NOT NULL,
+            spread_type VARCHAR(30) NOT NULL,
+            ticker VARCHAR(10) NOT NULL,
+            long_strike DECIMAL(10, 2) NOT NULL,
+            short_strike DECIMAL(10, 2) NOT NULL,
+            expiration DATE NOT NULL,
+            entry_debit DECIMAL(10, 4) NOT NULL,
+            contracts INTEGER NOT NULL,
+            max_profit DECIMAL(10, 2) NOT NULL,
+            max_loss DECIMAL(10, 2) NOT NULL,
+            underlying_at_entry DECIMAL(10, 2) NOT NULL,
+            call_wall DECIMAL(10, 2),
+            put_wall DECIMAL(10, 2),
+            flip_point DECIMAL(10, 2),
+            net_gex DECIMAL(15, 2),
+            gex_regime VARCHAR(30),
+            vix_at_entry DECIMAL(6, 2),
+            oracle_confidence DECIMAL(5, 4),
+            oracle_advice VARCHAR(50),
+            oracle_prediction_id INTEGER,
+            ml_direction VARCHAR(20),
+            ml_confidence DECIMAL(5, 4),
+            ml_model_name VARCHAR(100),
+            ml_win_probability DECIMAL(8, 4),
+            ml_top_features TEXT,
+            wall_type VARCHAR(20),
+            wall_distance_pct DECIMAL(6, 4),
+            trade_reasoning TEXT,
+            direction_taken VARCHAR(10),
+            order_id VARCHAR(50),
+            status VARCHAR(20) NOT NULL DEFAULT 'open',
+            open_time TIMESTAMP WITH TIME ZONE NOT NULL,
+            close_time TIMESTAMP WITH TIME ZONE,
+            close_price DECIMAL(10, 4),
+            close_reason VARCHAR(100),
+            realized_pnl DECIMAL(10, 2),
+            unrealized_pnl DECIMAL(10, 2),
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    ''')
+
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS athena_equity_snapshots (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+            balance DECIMAL(12, 2) NOT NULL,
+            unrealized_pnl DECIMAL(12, 2),
+            realized_pnl DECIMAL(12, 2),
+            open_positions INTEGER,
+            note TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    ''')
+
+    # ===========================================================================
+    # TITAN - SPX Aggressive Iron Condor
+    # ===========================================================================
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS titan_positions (
+            id SERIAL PRIMARY KEY,
+            position_id VARCHAR(50) UNIQUE NOT NULL,
+            ticker VARCHAR(10) NOT NULL DEFAULT 'SPX',
+            expiration DATE NOT NULL,
+            put_short_strike DECIMAL(10, 2) NOT NULL,
+            put_long_strike DECIMAL(10, 2) NOT NULL,
+            put_credit DECIMAL(10, 4) NOT NULL,
+            call_short_strike DECIMAL(10, 2) NOT NULL,
+            call_long_strike DECIMAL(10, 2) NOT NULL,
+            call_credit DECIMAL(10, 4) NOT NULL,
+            contracts INTEGER NOT NULL,
+            spread_width DECIMAL(10, 2) NOT NULL DEFAULT 12.0,
+            total_credit DECIMAL(10, 4) NOT NULL,
+            max_loss DECIMAL(10, 2) NOT NULL,
+            max_profit DECIMAL(10, 2) NOT NULL,
+            underlying_at_entry DECIMAL(10, 2) NOT NULL,
+            vix_at_entry DECIMAL(6, 2),
+            expected_move DECIMAL(10, 2),
+            call_wall DECIMAL(10, 2),
+            put_wall DECIMAL(10, 2),
+            flip_point DECIMAL(10, 2),
+            net_gex DECIMAL(15, 2),
+            gex_regime VARCHAR(30),
+            oracle_confidence DECIMAL(5, 4),
+            oracle_reasoning TEXT,
+            oracle_win_probability DECIMAL(8, 4),
+            oracle_advice VARCHAR(20),
+            oracle_top_factors TEXT,
+            oracle_use_gex_walls BOOLEAN DEFAULT FALSE,
+            oracle_prediction_id INTEGER,
+            put_order_id VARCHAR(50),
+            call_order_id VARCHAR(50),
+            status VARCHAR(20) NOT NULL DEFAULT 'open',
+            open_time TIMESTAMP WITH TIME ZONE NOT NULL,
+            close_time TIMESTAMP WITH TIME ZONE,
+            close_price DECIMAL(10, 4),
+            close_reason VARCHAR(100),
+            realized_pnl DECIMAL(10, 2),
+            unrealized_pnl DECIMAL(10, 2),
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    ''')
+
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS titan_equity_snapshots (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+            balance DECIMAL(12, 2) NOT NULL,
+            unrealized_pnl DECIMAL(12, 2),
+            realized_pnl DECIMAL(12, 2),
+            open_positions INTEGER,
+            note TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    ''')
+
+    # ===========================================================================
+    # PEGASUS - SPX Weekly Iron Condor
+    # ===========================================================================
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS pegasus_positions (
+            id SERIAL PRIMARY KEY,
+            position_id VARCHAR(50) UNIQUE NOT NULL,
+            ticker VARCHAR(10) NOT NULL DEFAULT 'SPX',
+            expiration DATE NOT NULL,
+            put_short_strike DECIMAL(10, 2) NOT NULL,
+            put_long_strike DECIMAL(10, 2) NOT NULL,
+            put_credit DECIMAL(10, 4) NOT NULL,
+            call_short_strike DECIMAL(10, 2) NOT NULL,
+            call_long_strike DECIMAL(10, 2) NOT NULL,
+            call_credit DECIMAL(10, 4) NOT NULL,
+            contracts INTEGER NOT NULL,
+            spread_width DECIMAL(10, 2) NOT NULL DEFAULT 10.0,
+            total_credit DECIMAL(10, 4) NOT NULL,
+            max_loss DECIMAL(10, 2) NOT NULL,
+            max_profit DECIMAL(10, 2) NOT NULL,
+            underlying_at_entry DECIMAL(10, 2) NOT NULL,
+            vix_at_entry DECIMAL(6, 2),
+            expected_move DECIMAL(10, 2),
+            call_wall DECIMAL(10, 2),
+            put_wall DECIMAL(10, 2),
+            flip_point DECIMAL(10, 2),
+            net_gex DECIMAL(15, 2),
+            gex_regime VARCHAR(30),
+            oracle_confidence DECIMAL(5, 4),
+            oracle_reasoning TEXT,
+            oracle_win_probability DECIMAL(8, 4),
+            oracle_advice VARCHAR(20),
+            oracle_top_factors TEXT,
+            oracle_use_gex_walls BOOLEAN DEFAULT FALSE,
+            oracle_prediction_id INTEGER,
+            put_order_id VARCHAR(50),
+            call_order_id VARCHAR(50),
+            status VARCHAR(20) NOT NULL DEFAULT 'open',
+            open_time TIMESTAMP WITH TIME ZONE NOT NULL,
+            close_time TIMESTAMP WITH TIME ZONE,
+            close_price DECIMAL(10, 4),
+            close_reason VARCHAR(100),
+            realized_pnl DECIMAL(10, 2),
+            unrealized_pnl DECIMAL(10, 2),
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    ''')
+
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS pegasus_equity_snapshots (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+            balance DECIMAL(12, 2) NOT NULL,
+            unrealized_pnl DECIMAL(12, 2),
+            realized_pnl DECIMAL(12, 2),
+            open_positions INTEGER,
+            note TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    ''')
+
+    # ===========================================================================
+    # ICARUS - SPY Aggressive Directional Spreads
+    # ===========================================================================
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS icarus_positions (
+            id SERIAL PRIMARY KEY,
+            position_id VARCHAR(50) UNIQUE NOT NULL,
+            spread_type VARCHAR(30) NOT NULL,
+            ticker VARCHAR(10) NOT NULL,
+            long_strike DECIMAL(10, 2) NOT NULL,
+            short_strike DECIMAL(10, 2) NOT NULL,
+            expiration DATE NOT NULL,
+            entry_debit DECIMAL(10, 4) NOT NULL,
+            contracts INTEGER NOT NULL,
+            max_profit DECIMAL(10, 2) NOT NULL,
+            max_loss DECIMAL(10, 2) NOT NULL,
+            underlying_at_entry DECIMAL(10, 2) NOT NULL,
+            call_wall DECIMAL(10, 2),
+            put_wall DECIMAL(10, 2),
+            flip_point DECIMAL(10, 2),
+            net_gex DECIMAL(15, 2),
+            gex_regime VARCHAR(30),
+            vix_at_entry DECIMAL(6, 2),
+            oracle_confidence DECIMAL(8, 4),
+            oracle_advice VARCHAR(50),
+            oracle_prediction_id INTEGER,
+            ml_direction VARCHAR(20),
+            ml_confidence DECIMAL(8, 4),
+            ml_model_name VARCHAR(100),
+            ml_win_probability DECIMAL(8, 4),
+            ml_top_features TEXT,
+            wall_type VARCHAR(20),
+            wall_distance_pct DECIMAL(6, 4),
+            trade_reasoning TEXT,
+            direction_taken VARCHAR(10),
+            order_id VARCHAR(50),
+            status VARCHAR(20) NOT NULL DEFAULT 'open',
+            open_time TIMESTAMP WITH TIME ZONE NOT NULL,
+            close_time TIMESTAMP WITH TIME ZONE,
+            close_price DECIMAL(10, 4),
+            close_reason VARCHAR(100),
+            realized_pnl DECIMAL(10, 2),
+            unrealized_pnl DECIMAL(10, 2),
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    ''')
+
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS icarus_equity_snapshots (
+            id SERIAL PRIMARY KEY,
+            timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+            balance DECIMAL(12, 2) NOT NULL,
+            unrealized_pnl DECIMAL(12, 2),
+            realized_pnl DECIMAL(12, 2),
+            open_positions INTEGER,
+            note TEXT,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+        )
+    ''')
+
+    conn.commit()
+    conn.close()
+    print("✅ Bot tables initialized (ARES, ATHENA, TITAN, PEGASUS, ICARUS)")
+
 
 def _get_table_columns(cursor, table_name):
     """Get list of column names for a table (PostgreSQL)"""
