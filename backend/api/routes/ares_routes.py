@@ -1982,28 +1982,13 @@ async def get_ares_intraday_equity(date: str = None):
                 pass
 
         # Get intraday snapshots for the requested date
-        # Check if new columns exist, use them if available
+        # All snapshot tables now have unrealized_pnl and realized_pnl columns
         cursor.execute("""
-            SELECT column_name FROM information_schema.columns
-            WHERE table_name = 'ares_equity_snapshots' AND column_name = 'unrealized_pnl'
-        """)
-        has_new_columns = cursor.fetchone() is not None
-
-        if has_new_columns:
-            cursor.execute("""
-                SELECT timestamp, balance, unrealized_pnl, realized_pnl, open_positions, note
-                FROM ares_equity_snapshots
-                WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
-                ORDER BY timestamp ASC
-            """, (today,))
-        else:
-            # Fallback for old schema
-            cursor.execute("""
-                SELECT timestamp, balance, NULL as unrealized_pnl, NULL as realized_pnl, open_positions, note
-                FROM ares_equity_snapshots
-                WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
-                ORDER BY timestamp ASC
-            """, (today,))
+            SELECT timestamp, balance, unrealized_pnl, realized_pnl, open_positions, note
+            FROM ares_equity_snapshots
+            WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+            ORDER BY timestamp ASC
+        """, (today,))
         snapshots = cursor.fetchall()
 
         # Get total realized P&L from closed positions up to today
@@ -2063,9 +2048,10 @@ async def get_ares_intraday_equity(date: str = None):
             ts, balance, snap_unrealized, snap_realized, open_count, note = snapshot
             snap_time = ts.astimezone(CENTRAL_TZ) if ts.tzinfo else ts
 
-            # Use snapshot values if available, otherwise estimate
-            snap_unrealized_val = float(snap_unrealized) if snap_unrealized else 0
-            snap_realized_val = float(snap_realized) if snap_realized else total_realized
+            # Use snapshot values - convert NULL to 0 (matches other bots)
+            # CRITICAL: Do NOT use total_realized as fallback - it's cumulative all-time!
+            snap_unrealized_val = float(snap_unrealized or 0)
+            snap_realized_val = float(snap_realized or 0)
             # Recalculate equity: starting_capital + realized + unrealized (don't trust stored balance)
             snap_equity = round(starting_capital + snap_realized_val + snap_unrealized_val, 2)
             all_equities.append(snap_equity)

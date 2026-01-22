@@ -437,19 +437,26 @@ async def get_athena_status():
                 except Exception as e:
                     logger.debug(f"Could not calculate ATHENA unrealized P&L: {e}")
 
+            # Get starting capital from config table (consistent with intraday endpoint)
+            starting_capital = 100000  # Default for ATHENA (SPY bot)
+            try:
+                cursor.execute("SELECT value FROM autonomous_config WHERE key = 'athena_starting_capital'")
+                config_row = cursor.fetchone()
+                if config_row and config_row[0]:
+                    starting_capital = float(config_row[0])
+            except Exception:
+                pass
+
             conn.close()
         except Exception as db_err:
             logger.debug(f"Could not read ATHENA stats from database: {db_err}")
+            starting_capital = 100000
 
         win_rate = round((win_count / closed_count) * 100, 1) if closed_count > 0 else 0
 
         # Determine if ATHENA is actually active based on heartbeat
         scan_interval = 5
         is_active, active_reason = _is_bot_actually_active(heartbeat, scan_interval)
-
-        # current_equity = starting_capital + realized + unrealized
-        # Unrealized P&L is now always calculated using MTM when open positions exist
-        starting_capital = 100000
         current_equity = starting_capital + total_pnl + unrealized_pnl
 
         return {

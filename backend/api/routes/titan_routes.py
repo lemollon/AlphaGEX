@@ -459,6 +459,15 @@ async def get_titan_status():
                     unrealized_pnl = mtm_result['total_unrealized_pnl']
                     logger.debug(f"TITAN status: MTM unrealized=${unrealized_pnl:.2f} via {mtm_result['method']}")
 
+            # Get starting capital from config table (consistent with intraday endpoint)
+            try:
+                cursor.execute("SELECT value FROM autonomous_config WHERE key = 'titan_starting_capital'")
+                config_row = cursor.fetchone()
+                if config_row and config_row[0]:
+                    starting_capital = float(config_row[0])
+            except Exception:
+                pass
+
             conn.close()
         except Exception as db_err:
             logger.debug(f"Could not read TITAN stats from database: {db_err}")

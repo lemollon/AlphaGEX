@@ -433,7 +433,7 @@ async def get_pegasus_status():
 
     if not pegasus:
         # PEGASUS not running - read stats from database
-        starting_capital = 200000
+        starting_capital = 200000  # Default for PEGASUS (SPX bot)
         total_pnl = 0
         # IMPORTANT: Don't use stale unrealized_pnl from database when worker isn't running
         # Set to None to indicate live pricing is unavailable
@@ -448,6 +448,15 @@ async def get_pegasus_status():
         try:
             conn = get_connection()
             cursor = conn.cursor()
+
+            # Get starting capital from config table (consistent with intraday endpoint)
+            try:
+                cursor.execute("SELECT value FROM autonomous_config WHERE key = 'pegasus_starting_capital'")
+                config_row = cursor.fetchone()
+                if config_row and config_row[0]:
+                    starting_capital = float(config_row[0])
+            except Exception:
+                pass
 
             # Note: We intentionally do NOT use unrealized_pnl from database here
             # because it may be stale. Unrealized P&L requires live pricing.
@@ -481,7 +490,7 @@ async def get_pegasus_status():
         tradier_connected = tradier_balance.get('connected', False)
 
         # PEGASUS always uses paper capital - Tradier is optional for price data
-        capital = 200000 + total_pnl  # Paper capital + P&L
+        capital = starting_capital + total_pnl  # Paper capital + P&L
         capital_message = "Paper trading with $200k capital"
         if tradier_connected:
             capital_message += " (Tradier connected for live prices)"
@@ -593,10 +602,21 @@ async def get_pegasus_status():
         db_win_count = 0
         db_open_count = 0
         db_closed_count = 0
+        db_starting_capital = 200000  # Default for PEGASUS (SPX bot)
         today = now.strftime('%Y-%m-%d')
         try:
             conn = get_connection()
             cursor = conn.cursor()
+
+            # Get starting capital from config table (consistent with intraday endpoint)
+            try:
+                cursor.execute("SELECT value FROM autonomous_config WHERE key = 'pegasus_starting_capital'")
+                config_row = cursor.fetchone()
+                if config_row and config_row[0]:
+                    db_starting_capital = float(config_row[0])
+            except Exception:
+                pass
+
             cursor.execute('''
                 SELECT
                     COUNT(*) as total,
@@ -626,12 +646,12 @@ async def get_pegasus_status():
 
         # Ensure capital fields exist
         if 'capital' not in status:
-            status['capital'] = 200000
+            status['capital'] = db_starting_capital
         if 'capital_source' not in status:
             status['capital_source'] = 'paper'
 
         # Calculate current_equity = starting_capital + realized + unrealized (matches equity curve)
-        starting_capital = 200000  # PEGASUS starting capital
+        starting_capital = db_starting_capital
         total_pnl = status.get('total_pnl', 0)
         unrealized_pnl = status.get('unrealized_pnl')  # Can be None if no live pricing
         status['starting_capital'] = starting_capital
