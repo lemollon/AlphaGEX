@@ -2022,7 +2022,7 @@ async def get_athena_equity_curve(days: int = 30):
     Data comes from athena_positions (V2) or apache_positions (legacy).
     """
     CENTRAL_TZ = ZoneInfo("America/Chicago")
-    starting_capital = 100000
+    starting_capital = 100000  # Default for ATHENA (SPY bot)
     today = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
     unrealized_pnl = 0.0
     open_positions_count = 0
@@ -2030,6 +2030,15 @@ async def get_athena_equity_curve(days: int = 30):
     try:
         conn = get_connection()
         c = conn.cursor()
+
+        # Check config table for starting capital (consistent with intraday endpoint)
+        try:
+            c.execute("SELECT value FROM autonomous_config WHERE key = 'athena_starting_capital'")
+            config_row = c.fetchone()
+            if config_row and config_row[0]:
+                starting_capital = float(config_row[0])
+        except Exception:
+            pass
 
         # Try V2 tables first, fall back to legacy
         try:

@@ -1672,7 +1672,20 @@ async def get_ares_equity_curve(days: int = 30):
     # CRITICAL FIX: Use fixed starting capital for equity curve calculations
     # Previously used Tradier balance which already includes realized P&L, causing double-counting
     # The equity curve should show: starting_capital + cumulative_realized_pnl + unrealized_pnl
-    starting_capital = 100000
+    starting_capital = 100000  # Default for ARES (SPY bot)
+
+    # Check config table for override (consistent with intraday endpoint)
+    try:
+        from database_adapter import get_connection
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM autonomous_config WHERE key = 'ares_starting_capital'")
+        config_row = cursor.fetchone()
+        if config_row and config_row[0]:
+            starting_capital = float(config_row[0])
+        conn.close()
+    except Exception:
+        pass
 
     today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
     unrealized_pnl = 0.0
