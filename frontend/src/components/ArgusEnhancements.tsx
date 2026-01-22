@@ -158,7 +158,7 @@ export function TradeSetupDetector({ symbol = 'SPY' }: { symbol?: string }) {
       <div className="flex items-center gap-4 mb-3">
         <div className="flex items-center gap-1">
           <Percent className="w-4 h-4 text-gray-500" />
-          <span className="text-sm">{(setup.confidence * 100).toFixed(0)}% confidence</span>
+          <span className="text-sm">{((setup.confidence ?? 0) * 100).toFixed(0)}% confidence</span>
         </div>
         <div className="flex items-center gap-1">
           <Activity className="w-4 h-4 text-gray-500" />
@@ -171,11 +171,11 @@ export function TradeSetupDetector({ symbol = 'SPY' }: { symbol?: string }) {
           <div className="grid grid-cols-2 gap-4 mb-4">
             <div>
               <div className="text-xs text-gray-500 mb-1">Pin Probability</div>
-              <div className="text-lg font-bold">{setup.current_metrics.pin_probability.toFixed(0)}%</div>
+              <div className="text-lg font-bold">{(setup.current_metrics?.pin_probability ?? 0).toFixed(0)}%</div>
             </div>
             <div>
               <div className="text-xs text-gray-500 mb-1">Distance to Flip</div>
-              <div className="text-lg font-bold">{setup.current_metrics.distance_to_flip_pct.toFixed(2)}%</div>
+              <div className="text-lg font-bold">{(setup.current_metrics?.distance_to_flip_pct ?? 0).toFixed(2)}%</div>
             </div>
           </div>
 
@@ -260,14 +260,14 @@ export function OptimalStrikes({ symbol = 'SPY' }: { symbol?: string }) {
       <div className="flex items-center gap-4 text-sm">
         <div title="Probability">
           <span className="text-gray-500">P: </span>
-          <span className="font-medium">{strike.probability.toFixed(0)}%</span>
+          <span className="font-medium">{(strike.probability ?? 0).toFixed(0)}%</span>
         </div>
         <div title="Risk/Reward">
           <span className="text-gray-500">R/R: </span>
-          <span className="font-medium">{strike.risk_reward.toFixed(1)}</span>
+          <span className="font-medium">{(strike.risk_reward ?? 0).toFixed(1)}</span>
         </div>
         <div title="Distance from Spot">
-          <span className="text-gray-500">{strike.distance_from_spot_pct.toFixed(1)}% away</span>
+          <span className="text-gray-500">{(strike.distance_from_spot_pct ?? 0).toFixed(1)}% away</span>
         </div>
       </div>
     </div>
@@ -358,44 +358,44 @@ export function PatternOutcomes({ symbol = 'SPY' }: { symbol?: string }) {
         {patterns.map((pattern, idx) => (
           <div key={idx} className="p-3 bg-gray-900/50 rounded-lg">
             <div className="flex items-center justify-between mb-2">
-              <span className="font-medium">{pattern.pattern_type.replace(/_/g, ' ')}</span>
+              <span className="font-medium">{(pattern.pattern_type ?? '').replace(/_/g, ' ')}</span>
               <span className={`text-sm px-2 py-0.5 rounded ${
-                pattern.win_rate >= 60 ? 'bg-emerald-500/20 text-emerald-400' :
-                pattern.win_rate >= 50 ? 'bg-yellow-500/20 text-yellow-400' :
+                (pattern.win_rate ?? 0) >= 60 ? 'bg-emerald-500/20 text-emerald-400' :
+                (pattern.win_rate ?? 0) >= 50 ? 'bg-yellow-500/20 text-yellow-400' :
                 'bg-rose-500/20 text-rose-400'
               }`}>
-                {pattern.win_rate.toFixed(0)}% win rate
+                {(pattern.win_rate ?? 0).toFixed(0)}% win rate
               </span>
             </div>
             <div className="grid grid-cols-4 gap-2 text-xs">
               <div>
                 <span className="text-gray-500">Samples: </span>
-                <span>{pattern.sample_size}</span>
+                <span>{pattern.sample_size ?? 0}</span>
               </div>
               <div>
                 <span className="text-gray-500">Avg Return: </span>
-                <span className={pattern.avg_return >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
-                  {pattern.avg_return >= 0 ? '+' : ''}{pattern.avg_return.toFixed(1)}%
+                <span className={(pattern.avg_return ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}>
+                  {(pattern.avg_return ?? 0) >= 0 ? '+' : ''}{(pattern.avg_return ?? 0).toFixed(1)}%
                 </span>
               </div>
               <div>
                 <span className="text-gray-500">Best: </span>
-                <span className="text-emerald-400">+{pattern.best_case.toFixed(1)}%</span>
+                <span className="text-emerald-400">+{(pattern.best_case ?? 0).toFixed(1)}%</span>
               </div>
               <div>
                 <span className="text-gray-500">Worst: </span>
-                <span className="text-rose-400">{pattern.worst_case.toFixed(1)}%</span>
+                <span className="text-rose-400">{(pattern.worst_case ?? 0).toFixed(1)}%</span>
               </div>
             </div>
             <div className="mt-2">
               <div className="flex items-center justify-between text-xs">
                 <span className="text-gray-500">Current Match</span>
-                <span>{(pattern.current_similarity * 100).toFixed(0)}%</span>
+                <span>{((pattern.current_similarity ?? 0) * 100).toFixed(0)}%</span>
               </div>
               <div className="h-1.5 bg-gray-700 rounded-full mt-1">
                 <div
                   className="h-full bg-blue-500 rounded-full"
-                  style={{ width: `${pattern.current_similarity * 100}%` }}
+                  style={{ width: `${(pattern.current_similarity ?? 0) * 100}%` }}
                 />
               </div>
             </div>
@@ -452,16 +452,16 @@ export function PinAccuracyTracker({ symbol = 'SPY' }: { symbol?: string }) {
         <div className="grid grid-cols-3 gap-3">
           {accuracy.map((period, idx) => (
             <div key={idx} className="text-center p-3 bg-gray-900/50 rounded-lg">
-              <div className="text-xs text-gray-500 mb-1">{period.period}</div>
+              <div className="text-xs text-gray-500 mb-1">{period.period ?? '-'}</div>
               <div className={`text-2xl font-bold ${
-                period.accuracy_rate >= 70 ? 'text-emerald-400' :
-                period.accuracy_rate >= 50 ? 'text-yellow-400' :
+                (period.accuracy_rate ?? 0) >= 70 ? 'text-emerald-400' :
+                (period.accuracy_rate ?? 0) >= 50 ? 'text-yellow-400' :
                 'text-rose-400'
               }`}>
-                {period.accuracy_rate.toFixed(0)}%
+                {(period.accuracy_rate ?? 0).toFixed(0)}%
               </div>
               <div className="text-xs text-gray-500 mt-1">
-                {period.predictions} predictions
+                {period.predictions ?? 0} predictions
               </div>
             </div>
           ))}
