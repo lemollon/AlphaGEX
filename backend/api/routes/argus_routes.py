@@ -4163,26 +4163,33 @@ async def get_pattern_outcomes(symbol: str = Query(default="SPY")):
     - Average move
     - Best/worst outcomes
     """
+    logger.info(f"ARGUS pattern-outcomes: Starting for symbol={symbol}")
+
     engine = get_engine()
     if not engine:
+        logger.error("ARGUS pattern-outcomes: Engine not available")
         raise HTTPException(status_code=503, detail="ARGUS engine not available")
 
     try:
         # Get current pattern
+        logger.debug(f"ARGUS pattern-outcomes: Getting gamma snapshot for {symbol}")
         snapshot = engine.get_gamma_snapshot(symbol)
         if not snapshot:
-            return {"success": True, "data": {"matches": [], "message": "No gamma data available"}}
+            logger.info(f"ARGUS pattern-outcomes: No snapshot available for {symbol}")
+            return {"success": True, "data": {"patterns": [], "message": "No gamma data available"}}
 
         current_regime = snapshot.get('gamma_regime', 'NEUTRAL')
         current_vix = snapshot.get('vix', 20)
         spot_price = snapshot.get('spot_price', 0)
         flip_point = snapshot.get('flip_point', spot_price)
         dist_to_flip = abs(spot_price - flip_point) / spot_price * 100 if spot_price > 0 else 0
+        logger.debug(f"ARGUS pattern-outcomes: regime={current_regime}, vix={current_vix}, spot={spot_price}")
 
         # Query historical data from database
         conn = get_connection()
         if not conn:
-            return {"success": True, "data": {"matches": [], "message": "Database not available"}}
+            logger.warning("ARGUS pattern-outcomes: Database connection not available")
+            return {"success": True, "data": {"patterns": [], "message": "Database not available"}}
 
         cursor = conn.cursor()
 
@@ -4211,8 +4218,10 @@ async def get_pattern_outcomes(symbol: str = Query(default="SPY")):
 
         rows = cursor.fetchall()
         conn.close()
+        logger.info(f"ARGUS pattern-outcomes: Query returned {len(rows)} rows")
 
         if not rows:
+            logger.info(f"ARGUS pattern-outcomes: No historical data for {symbol} with regime {current_regime}")
             return {
                 "success": True,
                 "data": {
@@ -4278,6 +4287,7 @@ async def get_pattern_outcomes(symbol: str = Query(default="SPY")):
             })
 
         # Frontend expects response.data.data.patterns
+        logger.info(f"ARGUS pattern-outcomes: Returning {len(patterns)} patterns for {symbol}")
         return {
             "success": True,
             "data": {
@@ -4286,7 +4296,7 @@ async def get_pattern_outcomes(symbol: str = Query(default="SPY")):
         }
 
     except Exception as e:
-        logger.error(f"Error getting pattern outcomes: {e}")
+        logger.error(f"ARGUS pattern-outcomes: Error for {symbol}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
