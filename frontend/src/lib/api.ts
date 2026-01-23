@@ -1179,6 +1179,22 @@ export const apiClient = {
   getMathOptimizerDecisions: (limit: number = 20) => api.get(`/api/math-optimizer/decisions?limit=${limit}`),
   getMathOptimizerBotStats: (botName: string) => api.get(`/api/math-optimizer/bot/${botName}`),
   getMathOptimizerDocumentation: () => api.get('/api/math-optimizer/documentation'),
+
+  // Bot Reports - End-of-day analysis reports for all trading bots
+  getBotReportToday: (bot: string) =>
+    api.get(`/api/trader/${bot}/reports/today`),
+  getBotReportArchive: (bot: string, limit: number = 30, offset: number = 0) =>
+    api.get(`/api/trader/${bot}/reports/archive`, { params: { limit, offset } }),
+  getBotReportByDate: (bot: string, date: string) =>
+    api.get(`/api/trader/${bot}/reports/archive/${date}`),
+  generateBotReport: (bot: string, date?: string) =>
+    api.post(`/api/trader/${bot}/reports/generate`, null, { params: { date, regenerate: true } }),
+  downloadBotReport: (bot: string, date: string, format: 'json' | 'pdf' = 'json') =>
+    api.get(`/api/trader/${bot}/reports/download/${date}`, { params: { format } }),
+  downloadAllBotReports: (bot: string) =>
+    api.get(`/api/trader/${bot}/reports/download-all`),
+  getBotReportStats: (bot: string) =>
+    api.get(`/api/trader/${bot}/reports/archive/stats`),
 }
 
 // WebSocket connection

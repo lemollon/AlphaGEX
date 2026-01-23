@@ -2772,6 +2772,101 @@ class AutonomousTraderScheduler:
                 except Exception:
                     pass
 
+    def scheduled_bot_reports_logic(self):
+        """
+        BOT REPORTS - runs daily at 3:15 PM CT after market close
+
+        Generates end-of-day analysis reports for all trading bots:
+        - ARES, ATHENA, PEGASUS, TITAN, ICARUS
+
+        Reports include:
+        - Trade-by-trade analysis with timestamps
+        - Yahoo Finance intraday tick data
+        - Claude AI analysis explaining WHY trades won/lost
+        - Daily summary with lessons learned
+
+        Reports are saved to {bot}_daily_reports tables for archive access.
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        # Only run on weekdays
+        if now.weekday() >= 5:  # Saturday = 5, Sunday = 6
+            logger.info(f"BOT_REPORTS: Weekend, skipping report generation at {now.strftime('%H:%M:%S')}")
+            return
+
+        logger.info(f"BOT_REPORTS: Starting end-of-day report generation at {now.strftime('%H:%M:%S')}")
+
+        try:
+            # Import the report generator
+            from backend.services.bot_report_generator import generate_report_for_bot, save_report_to_archive
+
+            bots = ['ares', 'athena', 'titan', 'pegasus', 'icarus']
+            reports_generated = 0
+            reports_failed = 0
+
+            for bot_name in bots:
+                try:
+                    logger.info(f"BOT_REPORTS: Generating report for {bot_name.upper()}...")
+
+                    # Generate the report
+                    report = generate_report_for_bot(bot_name, now.date())
+
+                    if report:
+                        # Save to archive
+                        save_report_to_archive(bot_name, report)
+                        trade_count = report.get('trade_count', 0)
+                        total_pnl = report.get('total_pnl', 0)
+                        logger.info(f"BOT_REPORTS: {bot_name.upper()} report saved - {trade_count} trades, P&L: ${total_pnl:.2f}")
+                        reports_generated += 1
+                    else:
+                        logger.info(f"BOT_REPORTS: {bot_name.upper()} - No trades today, skipping report")
+
+                except Exception as e:
+                    logger.error(f"BOT_REPORTS: {bot_name.upper()} report failed: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    reports_failed += 1
+                    continue
+
+            logger.info(f"BOT_REPORTS: Complete - {reports_generated} reports generated, {reports_failed} failed")
+
+        except ImportError as e:
+            logger.error(f"BOT_REPORTS: Failed to import report generator: {e}")
+        except Exception as e:
+            logger.error(f"BOT_REPORTS: Unexpected error: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def scheduled_reports_purge_logic(self):
+        """
+        REPORTS PURGE - runs weekly on Sunday at 6:30 PM CT
+
+        Cleans up old reports older than 5 years to manage storage.
+        """
+        now = datetime.now(CENTRAL_TZ)
+        logger.info(f"REPORTS_PURGE: Starting purge of reports older than 5 years at {now.strftime('%H:%M:%S')}")
+
+        try:
+            from backend.services.bot_report_generator import purge_old_reports
+
+            # purge_old_reports handles all bots at once with days_to_keep parameter
+            # 5 years = 5 * 365 = 1825 days
+            results = purge_old_reports(days_to_keep=5 * 365)
+
+            total_deleted = sum(results.values()) if results else 0
+            for bot_name, deleted in results.items():
+                if deleted > 0:
+                    logger.info(f"REPORTS_PURGE: {bot_name.upper()} - purged {deleted} old reports")
+
+            logger.info(f"REPORTS_PURGE: Complete - {total_deleted} total reports purged")
+
+        except ImportError as e:
+            logger.error(f"REPORTS_PURGE: Failed to import purge function: {e}")
+        except Exception as e:
+            logger.error(f"REPORTS_PURGE: Unexpected error: {e}")
+            import traceback
+            traceback.print_exc()
+
     def start(self):
         """Start the autonomous trading scheduler"""
         if not APSCHEDULER_AVAILABLE:
@@ -2799,6 +2894,8 @@ class AutonomousTraderScheduler:
         logger.info(f"SOLOMON Schedule: DAILY at 4:00 PM CT (after market close)")
         logger.info(f"QUANT Schedule: WEEKLY on Sunday at 5:00 PM CT (ML model training)")
         logger.info(f"EQUITY_SNAPSHOTS Schedule: Every 5 min (runs 24/7, market hours checked internally)")
+        logger.info(f"BOT_REPORTS Schedule: DAILY at 3:15 PM CT (end-of-day analysis reports)")
+        logger.info(f"REPORTS_PURGE Schedule: WEEKLY on Sunday at 6:30 PM CT (5-year retention cleanup)")
         logger.info(f"Log file: {LOG_FILE}")
         logger.info("=" * 80)
 
@@ -3238,6 +3335,43 @@ class AutonomousTraderScheduler:
             replace_existing=True
         )
         logger.info("✅ TRADE_SYNC job scheduled (every 30 min, checks market hours internally)")
+
+        # =================================================================
+        # BOT_REPORTS JOB: End-of-day analysis - runs at 3:15 PM CT daily
+        # Generates Claude AI reports explaining WHY bots won/lost money
+        # Includes Yahoo Finance intraday ticks for precise timestamps
+        # =================================================================
+        self.scheduler.add_job(
+            self.scheduled_bot_reports_logic,
+            trigger=CronTrigger(
+                hour=15,       # 3:00 PM CT
+                minute=15,     # 3:15 PM CT - after EOD reconciliation (3:01) completes
+                day_of_week='mon-fri',
+                timezone='America/Chicago'
+            ),
+            id='bot_reports',
+            name='BOT_REPORTS - End-of-Day Analysis Reports',
+            replace_existing=True
+        )
+        logger.info("✅ BOT_REPORTS job scheduled (3:15 PM CT daily, Mon-Fri)")
+
+        # =================================================================
+        # REPORTS_PURGE JOB: 5-year retention cleanup - runs Sunday 6:30 PM CT
+        # Deletes reports older than 5 years to manage storage
+        # =================================================================
+        self.scheduler.add_job(
+            self.scheduled_reports_purge_logic,
+            trigger=CronTrigger(
+                hour=18,       # 6:00 PM CT
+                minute=30,     # 6:30 PM CT
+                day_of_week='sun',
+                timezone='America/Chicago'
+            ),
+            id='reports_purge',
+            name='REPORTS_PURGE - 5-Year Retention Cleanup',
+            replace_existing=True
+        )
+        logger.info("✅ REPORTS_PURGE job scheduled (WEEKLY on Sunday at 6:30 PM CT)")
 
         # =================================================================
         # CRITICAL: Verify at least one trading bot is available
