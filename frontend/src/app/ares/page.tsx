@@ -4,7 +4,7 @@ import React, { useState } from 'react'
 import {
   Sword, TrendingUp, Activity, DollarSign, Target,
   BarChart3, ChevronDown, ChevronUp, Server, Clock, Zap,
-  Shield, Crosshair, Settings, Wallet, History, LayoutDashboard, Download
+  Shield, Crosshair, Settings, Wallet, History, LayoutDashboard, Download, FileText
 } from 'lucide-react'
 // Recharts imports removed - using shared EquityCurveChart component
 import Navigation from '@/components/Navigation'
@@ -37,6 +37,7 @@ import {
 } from '@/components/trader'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
 import DriftStatusCard from '@/components/DriftStatusCard'
+import BotReportPage from '@/components/trader/BotReportPage'
 
 // ==============================================================================
 // INTERFACES
@@ -140,6 +141,7 @@ const ARES_TABS = [
   { id: 'overview' as const, label: 'Overview', icon: LayoutDashboard, description: 'Bot status and metrics' },
   { id: 'activity' as const, label: 'Activity', icon: Activity, description: 'Scans and decisions' },
   { id: 'history' as const, label: 'History', icon: History, description: 'Closed positions' },
+  { id: 'reports' as const, label: 'Reports', icon: FileText, description: 'Daily AI analysis' },
   { id: 'config' as const, label: 'Config', icon: Settings, description: 'Settings and controls' },
 ]
 type AresTabId = typeof ARES_TABS[number]['id']
@@ -833,6 +835,16 @@ export default function AresPage() {
                   </div>
                 )}
               </BotCard>
+            )}
+
+            {/* Reports Tab */}
+            {activeTab === 'reports' && (
+              <BotReportPage
+                botName="ARES"
+                botDisplayName="ARES"
+                brandColor="amber"
+                backLink="/ares"
+              />
             )}
 
             {/* Config Tab */}
