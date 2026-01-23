@@ -393,9 +393,9 @@ async def get_athena_status():
                     SELECT
                         COUNT(*) as total,
                         SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_count,
-                        SUM(CASE WHEN status IN ('closed', 'expired') THEN 1 ELSE 0 END) as closed_count,
-                        SUM(CASE WHEN status IN ('closed', 'expired') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-                        COALESCE(SUM(CASE WHEN status IN ('closed', 'expired') THEN realized_pnl ELSE 0 END), 0) as total_pnl,
+                        SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') THEN 1 ELSE 0 END) as closed_count,
+                        SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                        COALESCE(SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') THEN realized_pnl ELSE 0 END), 0) as total_pnl,
                         SUM(CASE WHEN DATE(created_at) = %s THEN 1 ELSE 0 END) as traded_today
                     FROM athena_positions
                 ''', (today,))
@@ -406,9 +406,9 @@ async def get_athena_status():
                     SELECT
                         COUNT(*) as total,
                         SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_count,
-                        SUM(CASE WHEN status IN ('closed', 'expired') THEN 1 ELSE 0 END) as closed_count,
-                        SUM(CASE WHEN status IN ('closed', 'expired') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-                        COALESCE(SUM(CASE WHEN status IN ('closed', 'expired') THEN realized_pnl ELSE 0 END), 0) as total_pnl,
+                        SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') THEN 1 ELSE 0 END) as closed_count,
+                        SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                        COALESCE(SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') THEN realized_pnl ELSE 0 END), 0) as total_pnl,
                         SUM(CASE WHEN DATE(created_at) = %s THEN 1 ELSE 0 END) as traded_today
                     FROM apache_positions
                 ''', (today,))
@@ -530,9 +530,9 @@ async def get_athena_status():
                     SELECT
                         COUNT(*) as total,
                         SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_count,
-                        SUM(CASE WHEN status IN ('closed', 'expired') THEN 1 ELSE 0 END) as closed_count,
-                        SUM(CASE WHEN status IN ('closed', 'expired') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-                        COALESCE(SUM(CASE WHEN status IN ('closed', 'expired') THEN realized_pnl ELSE 0 END), 0) as total_pnl
+                        SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') THEN 1 ELSE 0 END) as closed_count,
+                        SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                        COALESCE(SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') THEN realized_pnl ELSE 0 END), 0) as total_pnl
                     FROM athena_positions
                 ''')
                 row = cursor.fetchone()
@@ -542,9 +542,9 @@ async def get_athena_status():
                     SELECT
                         COUNT(*) as total,
                         SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_count,
-                        SUM(CASE WHEN status IN ('closed', 'expired') THEN 1 ELSE 0 END) as closed_count,
-                        SUM(CASE WHEN status IN ('closed', 'expired') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-                        COALESCE(SUM(CASE WHEN status IN ('closed', 'expired') THEN realized_pnl ELSE 0 END), 0) as total_pnl
+                        SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') THEN 1 ELSE 0 END) as closed_count,
+                        SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                        COALESCE(SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') THEN realized_pnl ELSE 0 END), 0) as total_pnl
                     FROM apache_positions
                 ''')
                 row = cursor.fetchone()
@@ -652,7 +652,7 @@ async def get_athena_positions(
         if status_filter == "open":
             where_clause = "WHERE status = 'open'"
         elif status_filter == "closed":
-            where_clause = "WHERE status IN ('closed', 'expired')"
+            where_clause = "WHERE status IN ('closed', 'expired', 'partial_close')"
 
         # Check if new columns exist (migration 010)
         c.execute("""
@@ -966,7 +966,7 @@ async def get_athena_performance(
                 SUM(CASE WHEN spread_type ILIKE '%%BULL%%' THEN 1 ELSE 0 END) as bullish_trades,
                 SUM(CASE WHEN spread_type ILIKE '%%BEAR%%' THEN 1 ELSE 0 END) as bearish_trades
             FROM athena_positions
-            WHERE status IN ('closed', 'expired')
+            WHERE status IN ('closed', 'expired', 'partial_close')
             AND close_time >= NOW() - INTERVAL '%s days'
             GROUP BY DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago')
             ORDER BY trade_date DESC
@@ -983,7 +983,7 @@ async def get_athena_performance(
                 SUM(CASE WHEN spread_type ILIKE '%%BULL%%' THEN 1 ELSE 0 END) as bullish_count,
                 SUM(CASE WHEN spread_type ILIKE '%%BEAR%%' THEN 1 ELSE 0 END) as bearish_count
             FROM athena_positions
-            WHERE status IN ('closed', 'expired')
+            WHERE status IN ('closed', 'expired', 'partial_close')
             AND close_time >= NOW() - INTERVAL '%s days'
         """, (days,))
 
@@ -1555,7 +1555,7 @@ async def get_athena_live_pnl():
             cursor.execute('''
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM athena_positions
-                WHERE status IN ('closed', 'expired')
+                WHERE status IN ('closed', 'expired', 'partial_close')
                 AND DATE(close_time) = %s
             ''', (today,))
             realized_row = cursor.fetchone()
@@ -1565,7 +1565,7 @@ async def get_athena_live_pnl():
             cursor.execute('''
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM athena_positions
-                WHERE status IN ('closed', 'expired')
+                WHERE status IN ('closed', 'expired', 'partial_close')
                 AND close_time IS NOT NULL
             ''')
             cumulative_row = cursor.fetchone()
@@ -1704,7 +1704,7 @@ async def get_athena_live_pnl():
             cursor.execute('''
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM athena_positions
-                WHERE status IN ('closed', 'expired')
+                WHERE status IN ('closed', 'expired', 'partial_close')
                 AND DATE(close_time) = %s
             ''', (today,))
             realized_row = cursor.fetchone()
@@ -1714,7 +1714,7 @@ async def get_athena_live_pnl():
             cursor.execute('''
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM athena_positions
-                WHERE status IN ('closed', 'expired')
+                WHERE status IN ('closed', 'expired', 'partial_close')
                 AND close_time IS NOT NULL
             ''')
             cumulative_row = cursor.fetchone()
@@ -2086,7 +2086,7 @@ async def get_athena_equity_curve(days: int = 30):
                     SUM(realized_pnl) as daily_pnl,
                     COUNT(*) as trades
                 FROM athena_positions
-                WHERE status IN ('closed', 'expired')
+                WHERE status IN ('closed', 'expired', 'partial_close')
                 AND close_time IS NOT NULL
                 GROUP BY DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago')
                 ORDER BY trade_date
@@ -2111,7 +2111,7 @@ async def get_athena_equity_curve(days: int = 30):
                     SUM(realized_pnl) as daily_pnl,
                     COUNT(*) as trades
                 FROM apache_positions
-                WHERE status IN ('closed', 'expired')
+                WHERE status IN ('closed', 'expired', 'partial_close')
                 AND exit_time IS NOT NULL
                 GROUP BY DATE(exit_time::timestamptz AT TIME ZONE 'America/Chicago')
                 ORDER BY trade_date
@@ -2268,7 +2268,7 @@ async def get_athena_intraday_equity(date: str = None):
         cursor.execute("""
             SELECT COALESCE(SUM(realized_pnl), 0)
             FROM athena_positions
-            WHERE status IN ('closed', 'expired')
+            WHERE status IN ('closed', 'expired', 'partial_close')
             AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') <= %s
         """, (today,))
         total_realized_row = cursor.fetchone()
@@ -2278,7 +2278,7 @@ async def get_athena_intraday_equity(date: str = None):
         cursor.execute("""
             SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
             FROM athena_positions
-            WHERE status IN ('closed', 'expired')
+            WHERE status IN ('closed', 'expired', 'partial_close')
             AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
         """, (today,))
         today_row = cursor.fetchone()
@@ -2475,7 +2475,7 @@ async def save_athena_equity_snapshot():
         cursor.execute("""
             SELECT COALESCE(SUM(realized_pnl), 0)
             FROM athena_positions
-            WHERE status IN ('closed', 'expired')
+            WHERE status IN ('closed', 'expired', 'partial_close')
         """)
         row = cursor.fetchone()
         realized_pnl = float(row[0]) if row and row[0] else 0
@@ -2603,7 +2603,7 @@ async def reset_athena_data(confirm: bool = False):
                 total = cursor.fetchone()[0]
                 cursor.execute("SELECT COUNT(*) FROM athena_positions WHERE status = 'open'")
                 open_count = cursor.fetchone()[0]
-                cursor.execute("SELECT COUNT(*) FROM athena_positions WHERE status IN ('closed', 'expired')")
+                cursor.execute("SELECT COUNT(*) FROM athena_positions WHERE status IN ('closed', 'expired', 'partial_close')")
                 closed_count = cursor.fetchone()[0]
                 table_name = "athena_positions"
             except Exception:
@@ -2611,7 +2611,7 @@ async def reset_athena_data(confirm: bool = False):
                 total = cursor.fetchone()[0]
                 cursor.execute("SELECT COUNT(*) FROM apache_positions WHERE status = 'open'")
                 open_count = cursor.fetchone()[0]
-                cursor.execute("SELECT COUNT(*) FROM apache_positions WHERE status IN ('closed', 'expired')")
+                cursor.execute("SELECT COUNT(*) FROM apache_positions WHERE status IN ('closed', 'expired', 'partial_close')")
                 closed_count = cursor.fetchone()[0]
                 table_name = "apache_positions"
 

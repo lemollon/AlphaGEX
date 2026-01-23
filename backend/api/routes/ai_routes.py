@@ -288,7 +288,7 @@ async def execute_gexis_command(command: str, args: str = None) -> dict:
                             COALESCE(SUM(realized_pnl), 0) as total_pnl,
                             COALESCE(AVG(realized_pnl), 0) as avg_pnl
                         FROM ares_positions
-                        WHERE status IN ('closed', 'expired')
+                        WHERE status IN ('closed', 'expired', 'partial_close')
                     """)
                     row = cursor.fetchone()
                     conn.commit()

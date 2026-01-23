@@ -2593,10 +2593,11 @@ class AutonomousTraderScheduler:
                     realized_pnl = 0
                     open_count = 0
                     try:
+                        # Include partial_close - positions where one leg closed but other failed
                         cursor.execute(f"""
                             SELECT COALESCE(SUM(realized_pnl), 0)
                             FROM {pos_table}
-                            WHERE status IN ('closed', 'expired')
+                            WHERE status IN ('closed', 'expired', 'partial_close')
                         """)
                         realized_row = cursor.fetchone()
                         realized_pnl = float(realized_row[0]) if realized_row and realized_row[0] else 0

@@ -202,7 +202,7 @@ def detect_events_from_trades(days: int = 90, bot_filter: str = None) -> List[di
                     vix_at_entry as exit_vix,
                     gex_regime
                 FROM {table_name}
-                WHERE status IN ('closed', 'expired')
+                WHERE status IN ('closed', 'expired', 'partial_close')
                 AND close_time IS NOT NULL
                 AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') >= %s
                 ORDER BY close_time ASC
@@ -723,7 +723,7 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
                         SUM(realized_pnl) as daily_pnl,
                         COUNT(*) as trade_count
                     FROM {table_name}
-                    WHERE status IN ('closed', 'expired')
+                    WHERE status IN ('closed', 'expired', 'partial_close')
                     AND close_time IS NOT NULL
                     AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') >= %s
                     GROUP BY {date_format_v2}

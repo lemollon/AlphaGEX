@@ -2770,7 +2770,7 @@ async def get_sync_status():
                 # Check for missing P&L
                 cursor.execute(f"""
                     SELECT COUNT(*) FROM {table}
-                    WHERE status IN ('closed', 'expired') AND realized_pnl IS NULL
+                    WHERE status IN ('closed', 'expired', 'partial_close') AND realized_pnl IS NULL
                 """, ())
                 missing_pnl_count = cursor.fetchone()[0]
                 status["missing_pnl"][bot_name] = missing_pnl_count

@@ -474,9 +474,9 @@ async def get_icarus_status():
                 SELECT
                     COUNT(*) as total,
                     SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_count,
-                    SUM(CASE WHEN status IN ('closed', 'expired') THEN 1 ELSE 0 END) as closed_count,
-                    SUM(CASE WHEN status IN ('closed', 'expired') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-                    COALESCE(SUM(CASE WHEN status IN ('closed', 'expired') THEN realized_pnl ELSE 0 END), 0) as total_pnl,
+                    SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') THEN 1 ELSE 0 END) as closed_count,
+                    SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                    COALESCE(SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') THEN realized_pnl ELSE 0 END), 0) as total_pnl,
                     SUM(CASE WHEN DATE(created_at) = %s THEN 1 ELSE 0 END) as traded_today
                 FROM icarus_positions
             ''', (today,))
@@ -601,9 +601,9 @@ async def get_icarus_status():
                 SELECT
                     COUNT(*) as total,
                     SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_count,
-                    SUM(CASE WHEN status IN ('closed', 'expired') THEN 1 ELSE 0 END) as closed_count,
-                    SUM(CASE WHEN status IN ('closed', 'expired') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-                    COALESCE(SUM(CASE WHEN status IN ('closed', 'expired') THEN realized_pnl ELSE 0 END), 0) as total_pnl
+                    SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') THEN 1 ELSE 0 END) as closed_count,
+                    SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                    COALESCE(SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') THEN realized_pnl ELSE 0 END), 0) as total_pnl
                 FROM icarus_positions
             ''')
             row = cursor.fetchone()
@@ -680,7 +680,7 @@ async def get_icarus_positions(
         if status_filter == "open":
             where_clause = "WHERE status = 'open'"
         elif status_filter == "closed":
-            where_clause = "WHERE status IN ('closed', 'expired')"
+            where_clause = "WHERE status IN ('closed', 'expired', 'partial_close')"
 
         c.execute(f"""
             SELECT
@@ -920,8 +920,8 @@ async def get_icarus_performance(
             SELECT
                 DATE(open_time::timestamptz AT TIME ZONE 'America/Chicago') as trade_date,
                 COUNT(*) as trades,
-                SUM(CASE WHEN status IN ('closed', 'expired') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-                SUM(CASE WHEN status IN ('closed', 'expired') AND realized_pnl <= 0 THEN 1 ELSE 0 END) as losses,
+                SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') AND realized_pnl <= 0 THEN 1 ELSE 0 END) as losses,
                 COALESCE(SUM(realized_pnl), 0) as total_pnl
             FROM icarus_positions
             WHERE DATE(open_time::timestamptz AT TIME ZONE 'America/Chicago') >= CURRENT_DATE - INTERVAL '%s days'
@@ -935,7 +935,7 @@ async def get_icarus_performance(
         c.execute("""
             SELECT
                 COUNT(*) as total_trades,
-                SUM(CASE WHEN status IN ('closed', 'expired') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
                 COALESCE(SUM(realized_pnl), 0) as total_pnl
             FROM icarus_positions
             WHERE DATE(open_time::timestamptz AT TIME ZONE 'America/Chicago') >= CURRENT_DATE - INTERVAL '%s days'
@@ -1115,7 +1115,7 @@ async def get_icarus_live_pnl():
             cursor.execute('''
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM icarus_positions
-                WHERE status IN ('closed', 'expired')
+                WHERE status IN ('closed', 'expired', 'partial_close')
                 AND DATE(close_time) = %s
             ''', (today,))
             realized_row = cursor.fetchone()
@@ -1125,7 +1125,7 @@ async def get_icarus_live_pnl():
             cursor.execute('''
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM icarus_positions
-                WHERE status IN ('closed', 'expired')
+                WHERE status IN ('closed', 'expired', 'partial_close')
                 AND close_time IS NOT NULL
             ''')
             cumulative_row = cursor.fetchone()
@@ -1382,7 +1382,7 @@ async def get_icarus_equity_curve(days: int = 30):
             SELECT DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as close_date,
                    realized_pnl, position_id
             FROM icarus_positions
-            WHERE status IN ('closed', 'expired')
+            WHERE status IN ('closed', 'expired', 'partial_close')
             AND close_time IS NOT NULL
             ORDER BY close_time ASC
         ''')
@@ -1562,7 +1562,7 @@ async def get_icarus_intraday_equity(date: str = None):
         cursor.execute("""
             SELECT COALESCE(SUM(realized_pnl), 0)
             FROM icarus_positions
-            WHERE status IN ('closed', 'expired')
+            WHERE status IN ('closed', 'expired', 'partial_close')
             AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') <= %s
         """, (today,))
         total_realized_row = cursor.fetchone()
@@ -1572,7 +1572,7 @@ async def get_icarus_intraday_equity(date: str = None):
         cursor.execute("""
             SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
             FROM icarus_positions
-            WHERE status IN ('closed', 'expired')
+            WHERE status IN ('closed', 'expired', 'partial_close')
             AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
         """, (today,))
         today_row = cursor.fetchone()
@@ -1769,7 +1769,7 @@ async def save_icarus_equity_snapshot():
         cursor.execute("""
             SELECT COALESCE(SUM(realized_pnl), 0)
             FROM icarus_positions
-            WHERE status IN ('closed', 'expired')
+            WHERE status IN ('closed', 'expired', 'partial_close')
         """)
         row = cursor.fetchone()
         realized_pnl = float(row[0]) if row and row[0] else 0
