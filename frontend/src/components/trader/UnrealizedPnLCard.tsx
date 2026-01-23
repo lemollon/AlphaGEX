@@ -20,6 +20,7 @@ interface PositionPnL {
 interface LivePnLData {
   total_unrealized_pnl: number | null
   total_realized_pnl: number
+  today_realized_pnl?: number  // Today's realized only (optional)
   net_pnl: number
   positions: PositionPnL[]
   position_count: number
@@ -160,9 +161,9 @@ export default function UnrealizedPnLCard({
             )}
           </div>
 
-          {/* Today's Realized P&L */}
+          {/* Cumulative Realized P&L */}
           <div className="text-center border-x border-gray-800">
-            <div className="text-xs text-gray-500 mb-1">Today Realized</div>
+            <div className="text-xs text-gray-500 mb-1">Realized</div>
             <div className={`text-xl font-bold ${realizedPnL >= 0 ? 'text-green-400' : 'text-red-400'}`}>
               {realizedPnL >= 0 ? '+' : ''}{formatCurrency(realizedPnL)}
             </div>

@@ -84,10 +84,11 @@ def _calculate_icarus_unrealized_pnl(positions: list, spy_price: float = None) -
         contracts = int(contracts or 1)
         long_strike = float(long_strike or 0)
         short_strike = float(short_strike or 0)
-        max_profit = float(max_profit or 0)
-        max_loss = float(max_loss or entry_debit * 100)
         spread_type_upper = (spread_type or '').upper()
         spread_width = abs(short_strike - long_strike)
+        # For debit spreads: max_loss = entry_debit * 100, max_profit = (spread_width - entry_debit) * 100
+        max_profit = float(max_profit) if max_profit else (spread_width - entry_debit) * 100
+        max_loss = float(max_loss) if max_loss else entry_debit * 100
 
         pos_unrealized = 0.0
         method = 'estimation'
@@ -139,7 +140,8 @@ def _calculate_icarus_unrealized_pnl(positions: list, spy_price: float = None) -
                     current_value = max(0, long_strike - spy_price)
 
             pos_unrealized = (current_value - entry_debit) * 100 * contracts
-            pos_unrealized = max(-max_loss, min(max_profit * contracts, pos_unrealized))
+            # Bound unrealized P&L: max_loss and max_profit are per-contract, scale by contracts
+            pos_unrealized = max(-max_loss * contracts, min(max_profit * contracts, pos_unrealized))
 
         total_unrealized += pos_unrealized
         position_details.append({
@@ -1118,6 +1120,16 @@ async def get_icarus_live_pnl():
             ''', (today,))
             realized_row = cursor.fetchone()
             today_realized = float(realized_row[0]) if realized_row else 0
+
+            # Get cumulative realized P&L from ALL closed positions (matches equity curve)
+            cursor.execute('''
+                SELECT COALESCE(SUM(realized_pnl), 0)
+                FROM icarus_positions
+                WHERE status IN ('closed', 'expired')
+                AND close_time IS NOT NULL
+            ''')
+            cumulative_row = cursor.fetchone()
+            cumulative_realized = float(cumulative_row[0]) if cumulative_row else 0
             conn.close()
 
             # Calculate MTM for each position
@@ -1190,8 +1202,9 @@ async def get_icarus_live_pnl():
                 "success": True,
                 "data": {
                     "total_unrealized_pnl": final_unrealized,
-                    "total_realized_pnl": round(today_realized, 2),
-                    "net_pnl": round(today_realized + (final_unrealized or 0), 2) if final_unrealized is not None else round(today_realized, 2),
+                    "total_realized_pnl": round(cumulative_realized, 2),
+                    "today_realized_pnl": round(today_realized, 2),
+                    "net_pnl": round(cumulative_realized + (final_unrealized or 0), 2) if final_unrealized is not None else round(cumulative_realized, 2),
                     "positions": positions,
                     "position_count": len(positions),
                     "source": "database",
@@ -1686,6 +1699,8 @@ async def get_icarus_intraday_equity(date: str = None):
             "data_points": data_points,
             "current_equity": round(current_equity, 2),
             "day_pnl": round(day_pnl, 2),
+            "day_realized": round(today_realized, 2),
+            "day_unrealized": round(unrealized_pnl, 2),
             "starting_equity": market_open_equity,  # Equity at market open (starting_capital + prev realized)
             "high_of_day": round(high_of_day, 2),
             "low_of_day": round(low_of_day, 2),
@@ -1711,6 +1726,8 @@ async def get_icarus_intraday_equity(date: str = None):
             }],
             "current_equity": starting_capital,
             "day_pnl": 0,
+            "day_realized": 0,
+            "day_unrealized": 0,
             "starting_equity": starting_capital,
             "high_of_day": starting_capital,
             "low_of_day": starting_capital,

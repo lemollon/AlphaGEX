@@ -2129,6 +2129,8 @@ async def get_ares_intraday_equity(date: str = None):
             "data_points": data_points,
             "current_equity": round(current_equity, 2),
             "day_pnl": round(day_pnl, 2),
+            "day_realized": round(today_realized, 2),
+            "day_unrealized": round(unrealized_pnl, 2),
             "starting_equity": market_open_equity,  # Equity at market open (starting_capital + prev realized)
             "high_of_day": round(high_of_day, 2),
             "low_of_day": round(low_of_day, 2),
@@ -2154,6 +2156,8 @@ async def get_ares_intraday_equity(date: str = None):
             }],
             "current_equity": starting_capital,
             "day_pnl": 0,
+            "day_realized": 0,
+            "day_unrealized": 0,
             "starting_equity": starting_capital,
             "high_of_day": starting_capital,
             "low_of_day": starting_capital,
@@ -3124,8 +3128,9 @@ async def get_ares_live_pnl():
 
     Returns:
     - total_unrealized_pnl: Sum of all open position unrealized P&L
-    - total_realized_pnl: Today's realized P&L from closed positions
-    - net_pnl: Total (unrealized + realized)
+    - total_realized_pnl: Cumulative realized P&L from ALL closed positions (matches equity curve)
+    - today_realized_pnl: Today's realized P&L only
+    - net_pnl: Total (unrealized + cumulative realized)
     - positions: List of position details with current P&L, strike distances, risk status
     - underlying_price: Current SPY/SPX price
     """
@@ -3161,6 +3166,16 @@ async def get_ares_live_pnl():
             ''', (today,))
             realized_row = cursor.fetchone()
             today_realized = float(realized_row[0]) if realized_row else 0
+
+            # Get cumulative realized P&L from ALL closed positions (matches equity curve)
+            cursor.execute('''
+                SELECT COALESCE(SUM(realized_pnl), 0)
+                FROM ares_positions
+                WHERE status IN ('closed', 'expired')
+                AND close_time IS NOT NULL
+            ''')
+            cumulative_row = cursor.fetchone()
+            cumulative_realized = float(cumulative_row[0]) if cumulative_row else 0
             conn.close()
 
             # Format open positions with entry context and calculate MTM
@@ -3240,8 +3255,9 @@ async def get_ares_live_pnl():
                 "success": True,
                 "data": {
                     "total_unrealized_pnl": final_unrealized,
-                    "total_realized_pnl": round(today_realized, 2),
-                    "net_pnl": round(today_realized + (final_unrealized or 0), 2) if final_unrealized is not None else round(today_realized, 2),
+                    "total_realized_pnl": round(cumulative_realized, 2),
+                    "today_realized_pnl": round(today_realized, 2),
+                    "net_pnl": round(cumulative_realized + (final_unrealized or 0), 2) if final_unrealized is not None else round(cumulative_realized, 2),
                     "positions": positions,
                     "position_count": len(positions),
                     "source": "database",
@@ -3293,6 +3309,16 @@ async def get_ares_live_pnl():
             ''', (today,))
             realized_row = cursor.fetchone()
             today_realized = float(realized_row[0]) if realized_row else 0
+
+            # Get cumulative realized P&L from ALL closed positions (matches equity curve)
+            cursor.execute('''
+                SELECT COALESCE(SUM(realized_pnl), 0)
+                FROM ares_positions
+                WHERE status IN ('closed', 'expired')
+                AND close_time IS NOT NULL
+            ''')
+            cumulative_row = cursor.fetchone()
+            cumulative_realized = float(cumulative_row[0]) if cumulative_row else 0
             conn.close()
 
             # Format positions
@@ -3319,8 +3345,9 @@ async def get_ares_live_pnl():
                 "success": True,
                 "data": {
                     "total_unrealized_pnl": None,
-                    "total_realized_pnl": round(today_realized, 2),
-                    "net_pnl": round(today_realized, 2),
+                    "total_realized_pnl": round(cumulative_realized, 2),
+                    "today_realized_pnl": round(today_realized, 2),
+                    "net_pnl": round(cumulative_realized, 2),
                     "positions": positions,
                     "position_count": len(positions),
                     "source": "database",
