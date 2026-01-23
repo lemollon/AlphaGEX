@@ -833,10 +833,9 @@ export default function IcarusPage() {
                 </div>
               </BotCard>
 
-              {/* Capital Configuration & Reset */}
+              {/* Capital Configuration */}
               <CapitalConfigPanel
                 botName="ICARUS"
-                onReset={handleReset}
                 brandColor="orange"
               />
               </>

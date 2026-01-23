@@ -881,10 +881,9 @@ export default function AresPage() {
                 )}
               </BotCard>
 
-              {/* Capital Configuration & Reset */}
+              {/* Capital Configuration */}
               <CapitalConfigPanel
                 botName="ARES"
-                onReset={handleReset}
                 brandColor="amber"
               />
               </>

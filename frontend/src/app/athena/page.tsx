@@ -759,10 +759,9 @@ export default function AthenaPage() {
                 </div>
               </BotCard>
 
-              {/* Capital Configuration & Reset */}
+              {/* Capital Configuration */}
               <CapitalConfigPanel
                 botName="ATHENA"
-                onReset={handleReset}
                 brandColor="cyan"
               />
               </>

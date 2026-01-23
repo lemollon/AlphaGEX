@@ -18,18 +18,15 @@ import {
   AlertTriangle,
   CheckCircle,
   RefreshCw,
-  RotateCcw,
   Database,
   Wallet,
   Settings,
-  Trash2,
   PiggyBank,
 } from 'lucide-react'
 import { useUnifiedBotSummary, useUnifiedBotCapital } from '@/lib/hooks/useMarketData'
 
 interface CapitalConfigPanelProps {
   botName: 'ARES' | 'ATHENA' | 'ICARUS' | 'TITAN' | 'PEGASUS'
-  onReset?: () => Promise<void>
   brandColor?: string  // e.g., 'amber', 'cyan', 'orange', 'violet', 'blue'
 }
 
@@ -60,13 +57,10 @@ function formatCurrency(value: number): string {
 
 export default function CapitalConfigPanel({
   botName,
-  onReset,
   brandColor,
 }: CapitalConfigPanelProps) {
   const [newCapital, setNewCapital] = useState('')
   const [isUpdating, setIsUpdating] = useState(false)
-  const [isResetting, setIsResetting] = useState(false)
-  const [showResetConfirm, setShowResetConfirm] = useState(false)
   const [updateMessage, setUpdateMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   // Recapitalize state
@@ -117,22 +111,6 @@ export default function CapitalConfigPanel({
       setUpdateMessage({ type: 'error', text: 'Network error - please try again' })
     } finally {
       setIsUpdating(false)
-    }
-  }
-
-  const handleReset = async () => {
-    if (!onReset) return
-
-    setIsResetting(true)
-    try {
-      await onReset()
-      setShowResetConfirm(false)
-      // Refresh data after reset
-      await Promise.all([refreshSummary(), refreshCapital()])
-    } catch (error) {
-      // Error handling should be done in the onReset callback
-    } finally {
-      setIsResetting(false)
     }
   }
 
@@ -384,68 +362,6 @@ export default function CapitalConfigPanel({
           <strong>Preserves:</strong> Closed trades, equity snapshots, scan history, decision logs
         </div>
       </div>
-
-      {/* Danger Zone - Reset */}
-      {onReset && (
-        <div className="bg-red-900/10 rounded-lg border border-red-500/30 p-4">
-          <h4 className="text-red-400 font-semibold mb-2 flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4" />
-            Danger Zone
-          </h4>
-          <p className="text-gray-400 text-sm mb-4">
-            Reset all {botName} data including positions, trades, and scan history.
-            Use this when starting fresh or after an account blow-up.
-          </p>
-
-          {!showResetConfirm ? (
-            <button
-              onClick={() => setShowResetConfirm(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 rounded-lg transition-colors"
-            >
-              <Trash2 className="w-4 h-4" />
-              Reset {botName} Data
-            </button>
-          ) : (
-            <div className="p-4 bg-red-900/20 border border-red-500/50 rounded-lg">
-              <div className="flex items-start gap-3 mb-4">
-                <AlertTriangle className="w-5 h-5 text-red-400 mt-0.5" />
-                <div>
-                  <p className="text-red-400 font-medium">Are you absolutely sure?</p>
-                  <p className="text-gray-400 text-sm mt-1">
-                    This will permanently delete all {botName} positions, trades, equity snapshots, and scan history.
-                    <strong className="text-red-400"> This action cannot be undone.</strong>
-                  </p>
-                </div>
-              </div>
-              <div className="flex gap-3">
-                <button
-                  onClick={handleReset}
-                  disabled={isResetting}
-                  className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors disabled:opacity-50"
-                >
-                  {isResetting ? (
-                    <>
-                      <RotateCcw className="w-4 h-4 animate-spin" />
-                      Resetting...
-                    </>
-                  ) : (
-                    <>
-                      <Trash2 className="w-4 h-4" />
-                      Yes, Reset All Data
-                    </>
-                  )}
-                </button>
-                <button
-                  onClick={() => setShowResetConfirm(false)}
-                  className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Info Note */}
       <div className="text-xs text-gray-500 flex items-start gap-2">
