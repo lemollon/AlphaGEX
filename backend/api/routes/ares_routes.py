@@ -1722,7 +1722,7 @@ async def get_ares_equity_curve(days: int = 30):
 
             # Get closed positions from database
             cursor.execute('''
-                SELECT DATE(close_time AT TIME ZONE 'America/Chicago') as close_date,
+                SELECT DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as close_date,
                        realized_pnl, position_id
                 FROM ares_positions
                 WHERE status IN ('closed', 'expired')
@@ -2021,17 +2021,18 @@ async def get_ares_intraday_equity(date: str = None):
         cursor.execute("""
             SELECT timestamp, balance, unrealized_pnl, realized_pnl, open_positions, note
             FROM ares_equity_snapshots
-            WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+            WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
             ORDER BY timestamp ASC
         """, (today,))
         snapshots = cursor.fetchall()
 
         # Get total realized P&L from closed positions up to today
+        # Cast close_time to timestamp to handle text/timestamp column type mismatch
         cursor.execute("""
             SELECT COALESCE(SUM(realized_pnl), 0)
             FROM ares_positions
             WHERE status IN ('closed', 'expired')
-            AND DATE(close_time AT TIME ZONE 'America/Chicago') <= %s
+            AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') <= %s
         """, (today,))
         total_realized_row = cursor.fetchone()
         total_realized = float(total_realized_row[0]) if total_realized_row and total_realized_row[0] else 0
@@ -2041,7 +2042,7 @@ async def get_ares_intraday_equity(date: str = None):
             SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
             FROM ares_positions
             WHERE status IN ('closed', 'expired')
-            AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
+            AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
         """, (today,))
         today_row = cursor.fetchone()
         today_realized = float(today_row[0]) if today_row and today_row[0] else 0
@@ -2231,7 +2232,7 @@ async def get_ares_live_equity_curve():
 
         # Get historical closed positions for the equity curve (grouped by date)
         cursor.execute('''
-            SELECT DATE(close_time AT TIME ZONE 'America/Chicago') as close_date,
+            SELECT DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as close_date,
                    realized_pnl, position_id, close_time
             FROM ares_positions
             WHERE status IN ('closed', 'expired')
@@ -2245,7 +2246,7 @@ async def get_ares_live_equity_curve():
             SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
             FROM ares_positions
             WHERE status IN ('closed', 'expired')
-            AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
+            AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
         ''', (today,))
         today_row = cursor.fetchone()
         today_realized = float(today_row[0]) if today_row and today_row[0] else 0
@@ -3156,7 +3157,7 @@ async def get_ares_live_pnl():
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM ares_positions
                 WHERE status IN ('closed', 'expired')
-                AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
+                AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
             ''', (today,))
             realized_row = cursor.fetchone()
             today_realized = float(realized_row[0]) if realized_row else 0
@@ -3288,7 +3289,7 @@ async def get_ares_live_pnl():
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM ares_positions
                 WHERE status IN ('closed', 'expired')
-                AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
+                AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
             ''', (today,))
             realized_row = cursor.fetchone()
             today_realized = float(realized_row[0]) if realized_row else 0
@@ -4030,7 +4031,7 @@ async def get_ares_intraday_diagnostics():
             # Count today's snapshots
             cursor.execute("""
                 SELECT COUNT(*) FROM ares_equity_snapshots
-                WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+                WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
             """, (today,))
             result["ares"]["today_snapshots"] = cursor.fetchone()[0]
 
@@ -4112,7 +4113,7 @@ async def get_ares_intraday_diagnostics():
 
             cursor.execute("""
                 SELECT COUNT(*) FROM titan_equity_snapshots
-                WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+                WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
             """, (today,))
             result["titan"]["today_snapshots"] = cursor.fetchone()[0]
 
