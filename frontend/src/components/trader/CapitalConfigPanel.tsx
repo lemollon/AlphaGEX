@@ -23,6 +23,7 @@ import {
   Wallet,
   Settings,
   Trash2,
+  PiggyBank,
 } from 'lucide-react'
 import { useUnifiedBotSummary, useUnifiedBotCapital } from '@/lib/hooks/useMarketData'
 
@@ -67,6 +68,12 @@ export default function CapitalConfigPanel({
   const [isResetting, setIsResetting] = useState(false)
   const [showResetConfirm, setShowResetConfirm] = useState(false)
   const [updateMessage, setUpdateMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+
+  // Recapitalize state
+  const [recapAmount, setRecapAmount] = useState('')
+  const [recapNote, setRecapNote] = useState('')
+  const [isRecapitalizing, setIsRecapitalizing] = useState(false)
+  const [recapMessage, setRecapMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   const { data: summaryData, mutate: refreshSummary } = useUnifiedBotSummary(botName)
   const { data: capitalData, mutate: refreshCapital } = useUnifiedBotCapital(botName)
@@ -126,6 +133,53 @@ export default function CapitalConfigPanel({
       // Error handling should be done in the onReset callback
     } finally {
       setIsResetting(false)
+    }
+  }
+
+  const handleRecapitalize = async () => {
+    const capitalValue = parseFloat(recapAmount.replace(/[^0-9.]/g, ''))
+
+    if (isNaN(capitalValue) || capitalValue <= 0) {
+      setRecapMessage({ type: 'error', text: 'Please enter a valid capital amount' })
+      return
+    }
+
+    setIsRecapitalizing(true)
+    setRecapMessage(null)
+
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL || ''
+      const params = new URLSearchParams({
+        bot: botName,
+        capital: capitalValue.toString(),
+      })
+      if (recapNote.trim()) {
+        params.append('note', recapNote.trim())
+      }
+
+      const response = await fetch(`${baseUrl}/api/trader/bots/recapitalize?${params}`, {
+        method: 'POST',
+      })
+
+      const data = await response.json()
+
+      if (data.success) {
+        const prevCapital = data.previous_capital ? formatCurrency(data.previous_capital) : 'N/A'
+        setRecapMessage({
+          type: 'success',
+          text: `Recapitalized from ${prevCapital} to ${formatCurrency(capitalValue)}. All historical data preserved.`
+        })
+        setRecapAmount('')
+        setRecapNote('')
+        // Refresh both summary and capital data
+        await Promise.all([refreshSummary(), refreshCapital()])
+      } else {
+        setRecapMessage({ type: 'error', text: data.detail || 'Failed to recapitalize' })
+      }
+    } catch (error) {
+      setRecapMessage({ type: 'error', text: 'Network error - please try again' })
+    } finally {
+      setIsRecapitalizing(false)
     }
   }
 
@@ -257,6 +311,78 @@ export default function CapitalConfigPanel({
             {updateMessage.text}
           </div>
         )}
+      </div>
+
+      {/* Recapitalize - Preserves History */}
+      <div className={`rounded-lg border ${colors.border} ${colors.bg} p-4`}>
+        <h4 className={`font-semibold mb-2 flex items-center gap-2 ${colors.text}`}>
+          <PiggyBank className="w-4 h-4" />
+          Recapitalize Account
+        </h4>
+        <p className="text-gray-400 text-sm mb-4">
+          Add fresh capital after a drawdown while <strong className="text-green-400">preserving all historical data</strong> for Solomon learning.
+          Use this instead of reset to keep valuable trade history.
+        </p>
+
+        <div className="space-y-3">
+          <div className="flex gap-3">
+            <div className="flex-1 relative">
+              <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">$</span>
+              <input
+                type="text"
+                value={recapAmount}
+                onChange={(e) => setRecapAmount(e.target.value)}
+                placeholder="100,000"
+                className="w-full bg-gray-900 border border-gray-700 rounded-lg px-8 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-gray-500"
+              />
+            </div>
+          </div>
+
+          <input
+            type="text"
+            value={recapNote}
+            onChange={(e) => setRecapNote(e.target.value)}
+            placeholder="Note (optional): e.g., Blown during FOMC"
+            className="w-full bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:border-gray-500"
+          />
+
+          <button
+            onClick={handleRecapitalize}
+            disabled={isRecapitalizing || !recapAmount}
+            className={`w-full px-4 py-2 rounded-lg font-medium transition-colors ${colors.bg} ${colors.text} ${colors.border} border ${colors.hover} disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2`}
+          >
+            {isRecapitalizing ? (
+              <>
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                Recapitalizing...
+              </>
+            ) : (
+              <>
+                <PiggyBank className="w-4 h-4" />
+                Recapitalize {botName}
+              </>
+            )}
+          </button>
+        </div>
+
+        {recapMessage && (
+          <div className={`mt-3 p-2 rounded text-sm flex items-center gap-2 ${
+            recapMessage.type === 'success'
+              ? 'bg-green-500/10 text-green-400 border border-green-500/30'
+              : 'bg-red-500/10 text-red-400 border border-red-500/30'
+          }`}>
+            {recapMessage.type === 'success' ? (
+              <CheckCircle className="w-4 h-4" />
+            ) : (
+              <AlertTriangle className="w-4 h-4" />
+            )}
+            {recapMessage.text}
+          </div>
+        )}
+
+        <div className="mt-3 text-xs text-gray-500">
+          <strong>Preserves:</strong> Closed trades, equity snapshots, scan history, decision logs
+        </div>
       </div>
 
       {/* Danger Zone - Reset */}
