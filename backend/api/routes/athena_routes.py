@@ -93,10 +93,11 @@ def _calculate_athena_unrealized_pnl(positions: list, spy_price: float = None) -
         contracts = int(contracts or 1)
         long_strike = float(long_strike or 0)
         short_strike = float(short_strike or 0)
-        max_profit = float(max_profit or 0)
-        max_loss = float(max_loss or entry_debit * 100)
         spread_type_upper = (spread_type or '').upper()
         spread_width = abs(short_strike - long_strike)
+        # For debit spreads: max_loss = entry_debit * 100, max_profit = (spread_width - entry_debit) * 100
+        max_profit = float(max_profit) if max_profit else (spread_width - entry_debit) * 100
+        max_loss = float(max_loss) if max_loss else entry_debit * 100
 
         pos_unrealized = 0.0
         method = 'estimation'
@@ -148,7 +149,8 @@ def _calculate_athena_unrealized_pnl(positions: list, spy_price: float = None) -
                     current_value = max(0, long_strike - spy_price)
 
             pos_unrealized = (current_value - entry_debit) * 100 * contracts
-            pos_unrealized = max(-max_loss, min(max_profit * contracts, pos_unrealized))
+            # Bound unrealized P&L: max_loss and max_profit are per-contract, scale by contracts
+            pos_unrealized = max(-max_loss * contracts, min(max_profit * contracts, pos_unrealized))
 
         total_unrealized += pos_unrealized
         position_details.append({
