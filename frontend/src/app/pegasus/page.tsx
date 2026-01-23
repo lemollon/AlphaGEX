@@ -906,10 +906,9 @@ export default function PegasusPage() {
                 )}
               </BotCard>
 
-              {/* Capital Configuration & Reset */}
+              {/* Capital Configuration */}
               <CapitalConfigPanel
                 botName="PEGASUS"
-                onReset={handleReset}
                 brandColor="blue"
               />
               </>

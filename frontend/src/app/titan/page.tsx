@@ -891,10 +891,9 @@ export default function TitanPage() {
                 )}
               </BotCard>
 
-              {/* Capital Configuration & Reset */}
+              {/* Capital Configuration */}
               <CapitalConfigPanel
                 botName="TITAN"
-                onReset={handleReset}
                 brandColor="violet"
               />
               </>
