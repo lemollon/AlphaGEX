@@ -23,7 +23,7 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api", tags=["Bot Reports"])
+router = APIRouter(prefix="/api/trader", tags=["Bot Reports"])
 
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 VALID_BOTS = ['ares', 'athena', 'titan', 'pegasus', 'icarus']
@@ -108,6 +108,13 @@ async def get_today_report(
     # Generate new report
     try:
         report = generate_report_for_bot(bot_lower, today)
+        if report is None:
+            return {
+                "success": True,
+                "data": None,
+                "cached": False,
+                "message": f"No trades for {bot.upper()} today - no report generated"
+            }
         return {
             "success": True,
             "data": report,
@@ -238,6 +245,15 @@ async def generate_report(
         report = generate_report_for_bot(bot_lower, report_date)
 
         elapsed = int((time.time() - start) * 1000)
+
+        if report is None:
+            return {
+                "success": True,
+                "data": None,
+                "generated": False,
+                "generation_time_ms": elapsed,
+                "message": f"No trades for {bot.upper()} on {report_date} - no report generated"
+            }
 
         return {
             "success": True,

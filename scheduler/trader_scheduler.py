@@ -2798,7 +2798,7 @@ class AutonomousTraderScheduler:
 
         try:
             # Import the report generator
-            from backend.services.bot_report_generator import generate_report_for_bot, save_report_to_archive
+            from backend.services.bot_report_generator import generate_report_for_bot
 
             bots = ['ares', 'athena', 'titan', 'pegasus', 'icarus']
             reports_generated = 0
@@ -2808,12 +2808,10 @@ class AutonomousTraderScheduler:
                 try:
                     logger.info(f"BOT_REPORTS: Generating report for {bot_name.upper()}...")
 
-                    # Generate the report
+                    # Generate the report (saves to archive internally)
                     report = generate_report_for_bot(bot_name, now.date())
 
                     if report:
-                        # Save to archive
-                        save_report_to_archive(bot_name, report)
                         trade_count = report.get('trade_count', 0)
                         total_pnl = report.get('total_pnl', 0)
                         logger.info(f"BOT_REPORTS: {bot_name.upper()} report saved - {trade_count} trades, P&L: ${total_pnl:.2f}")

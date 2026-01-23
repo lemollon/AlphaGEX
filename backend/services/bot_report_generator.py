@@ -758,6 +758,11 @@ def generate_report_for_bot(
     # Step 1: Fetch closed trades
     trades = fetch_closed_trades_for_date(bot, report_date)
 
+    # If no trades, return None (don't generate empty reports)
+    if not trades:
+        logger.info(f"No trades for {bot.upper()} on {report_date} - skipping report generation")
+        return None
+
     # Step 2: Fetch scan activity
     scans = fetch_scan_activity_for_date(bot, report_date)
 

@@ -196,8 +196,14 @@ export default function BotReportPage({
     try {
       const response = await apiClient.generateBotReport(botName.toLowerCase())
       if (response.data.success) {
-        setReport(response.data.data)
-        setError(null)
+        if (response.data.data) {
+          setReport(response.data.data)
+          setError(null)
+        } else {
+          // No trades case - data is null but success is true
+          setReport(null)
+          setError(response.data.message || 'No trades found - no report generated')
+        }
       } else {
         setError(response.data.detail || 'Failed to generate report')
       }
