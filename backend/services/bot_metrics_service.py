@@ -392,6 +392,9 @@ class BotMetricsService:
         max_drawdown_pct = 0.0
 
         conn = self._get_connection()
+        if not conn:
+            logger.warning(f"get_metrics_summary({bot.value}): Database connection failed, returning defaults")
+
         if conn:
             try:
                 cursor = conn.cursor()
@@ -421,6 +424,16 @@ class BotMetricsService:
                     losing_trades = int(row[3] or 0)
                     total_realized = float(row[4] or 0)
                     today_realized = float(row[5] or 0)
+
+                    # DEBUG: Log query results for visibility
+                    logger.info(
+                        f"get_metrics_summary({bot.value}): "
+                        f"table={positions_table}, open={open_count}, closed={closed_count}, "
+                        f"wins={winning_trades}, losses={losing_trades}, "
+                        f"total_realized=${total_realized:.2f}, today_realized=${today_realized:.2f}"
+                    )
+                else:
+                    logger.warning(f"get_metrics_summary({bot.value}): Query returned no rows from {positions_table}")
 
                 total_trades = closed_count
 

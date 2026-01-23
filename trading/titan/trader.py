@@ -1212,7 +1212,9 @@ class TITANTrader(MathOptimizerMixin):
         for pos in positions:
             success, price, pnl = self.executor.close_position(pos, reason)
             if success:
-                self.db.close_position(pos.position_id, price, pnl, reason)
+                db_success = self.db.close_position(pos.position_id, price, pnl, reason)
+                if not db_success:
+                    logger.error(f"CRITICAL: Failed to close {pos.position_id} in database! P&L ${pnl:.2f} not recorded.")
                 self._record_oracle_outcome(pos, reason, pnl)
                 if pos.position_id in self._prediction_ids:
                     self._record_learning_memory_outcome(
