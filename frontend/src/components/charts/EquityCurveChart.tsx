@@ -86,6 +86,8 @@ interface EquityCurveSummary {
   max_drawdown_pct: number
   total_trades: number
   starting_capital: number
+  day_realized?: number    // Only present in intraday view
+  day_unrealized?: number  // Only present in intraday view
 }
 
 interface EquityCurveData {
@@ -557,12 +559,12 @@ export default function EquityCurveChart({
             {/* Show realized/unrealized breakdown for intraday view */}
             {viewMode === 'intraday' && intradayData && (
               <span className="text-gray-400 text-xs">
-                (<span className={summary.day_realized >= 0 ? 'text-green-400' : 'text-red-400'}>
-                  {summary.day_realized >= 0 ? '+' : ''}${summary.day_realized?.toLocaleString() || 0}
+                (<span className={(summary.day_realized ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}>
+                  {(summary.day_realized ?? 0) >= 0 ? '+' : ''}${(summary.day_realized ?? 0).toLocaleString()}
                 </span>
                 {' '}realized,{' '}
-                <span className={summary.day_unrealized >= 0 ? 'text-green-400' : 'text-red-400'}>
-                  {summary.day_unrealized >= 0 ? '+' : ''}${summary.day_unrealized?.toLocaleString() || 0}
+                <span className={(summary.day_unrealized ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}>
+                  {(summary.day_unrealized ?? 0) >= 0 ? '+' : ''}${(summary.day_unrealized ?? 0).toLocaleString()}
                 </span>
                 {' '}unrealized)
               </span>
