@@ -4,7 +4,7 @@ import React, { useState, useMemo } from 'react'
 import {
   Shield, TrendingUp, TrendingDown, Activity, DollarSign, Target,
   RefreshCw, BarChart3, ChevronDown, ChevronUp, Server, Clock, Zap,
-  Brain, Crosshair, Settings, Wallet, History, LayoutDashboard, Eye, Download
+  Brain, Crosshair, Settings, Wallet, History, LayoutDashboard, Eye, Download, FileText
 } from 'lucide-react'
 // Recharts imports removed - using shared EquityCurveChart component
 import Navigation from '@/components/Navigation'
@@ -38,6 +38,7 @@ import {
 } from '@/components/trader'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
 import DriftStatusCard from '@/components/DriftStatusCard'
+import BotReportPage from '@/components/trader/BotReportPage'
 
 // ==============================================================================
 // INTERFACES
@@ -140,6 +141,7 @@ const PEGASUS_TABS = [
   { id: 'overview' as const, label: 'Overview', icon: LayoutDashboard, description: 'Bot status and metrics' },
   { id: 'activity' as const, label: 'Activity', icon: Activity, description: 'Scans and decisions' },
   { id: 'history' as const, label: 'History', icon: History, description: 'Closed positions' },
+  { id: 'reports' as const, label: 'Reports', icon: FileText, description: 'Daily AI analysis' },
   { id: 'config' as const, label: 'Config', icon: Settings, description: 'Settings and controls' },
 ]
 type PegasusTabId = typeof PEGASUS_TABS[number]['id']
@@ -860,6 +862,16 @@ export default function PegasusPage() {
                   </div>
                 )}
               </BotCard>
+            )}
+
+            {/* Reports Tab */}
+            {activeTab === 'reports' && (
+              <BotReportPage
+                botName="PEGASUS"
+                botDisplayName="PEGASUS"
+                brandColor="blue"
+                backLink="/pegasus"
+              />
             )}
 
             {/* Config Tab */}
