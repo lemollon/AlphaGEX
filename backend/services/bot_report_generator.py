@@ -59,11 +59,14 @@ try:
         fetch_vix_history,
         find_high_low_during_trade,
         find_level_tests,
-        BOT_SYMBOLS
+        BOT_SYMBOLS,
+        YFINANCE_AVAILABLE
     )
-    YAHOO_AVAILABLE = True
+    # Only mark as available if yfinance is actually installed
+    YAHOO_AVAILABLE = YFINANCE_AVAILABLE
 except ImportError:
     YAHOO_AVAILABLE = False
+    YFINANCE_AVAILABLE = False
     logger.warning("Yahoo intraday service not available")
 
 # Claude API
