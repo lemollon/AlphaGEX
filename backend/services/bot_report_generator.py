@@ -14,13 +14,164 @@ Date: January 2025
 import json
 import logging
 import time
+import traceback
+from contextlib import contextmanager
 from datetime import datetime, timedelta, date
 from decimal import Decimal
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any, Tuple, Union
 from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 CENTRAL_TZ = ZoneInfo("America/Chicago")
+
+# Claude model to use
+CLAUDE_MODEL = "claude-3-5-sonnet-20241022"
+
+
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+def _safe_json_dumps(obj: Any, default_value: str = "{}") -> str:
+    """
+    Safely serialize object to JSON string.
+
+    Handles Decimal, datetime, date, and other non-serializable types.
+    Returns default_value on failure.
+    """
+    def json_serializer(o):
+        if isinstance(o, Decimal):
+            return float(o)
+        elif isinstance(o, (datetime, date)):
+            return o.isoformat()
+        elif hasattr(o, '__dict__'):
+            return str(o)
+        else:
+            return str(o)
+
+    try:
+        return json.dumps(obj, default=json_serializer)
+    except Exception as e:
+        logger.warning(f"JSON serialization failed: {e}")
+        return default_value
+
+
+def _safe_get(d: Optional[Dict], *keys, default=None):
+    """
+    Safely get nested dictionary values.
+
+    Usage: _safe_get(data, "level1", "level2", default="N/A")
+    """
+    if d is None:
+        return default
+
+    result = d
+    for key in keys:
+        if isinstance(result, dict):
+            result = result.get(key)
+        else:
+            return default
+        if result is None:
+            return default
+
+    return result if result is not None else default
+
+
+@contextmanager
+def _db_connection():
+    """
+    Context manager for database connections.
+
+    Ensures connection is always closed, even on error.
+    Rolls back on exception.
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        yield conn
+        conn.commit()
+    except Exception as e:
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        raise
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def _extract_claude_response_text(message: Any) -> Optional[str]:
+    """
+    Safely extract text from a Claude API response.
+
+    Args:
+        message: The response from client.messages.create()
+
+    Returns:
+        The text content, or None if extraction fails
+    """
+    try:
+        if message is None:
+            logger.warning("Claude response is None")
+            return None
+
+        if not hasattr(message, 'content'):
+            logger.warning("Claude response has no 'content' attribute")
+            return None
+
+        if not message.content:
+            logger.warning("Claude response content is empty")
+            return None
+
+        first_block = message.content[0]
+
+        if not hasattr(first_block, 'text'):
+            logger.warning(f"First content block has no 'text' attribute: {type(first_block)}")
+            return None
+
+        return first_block.text.strip()
+
+    except (IndexError, AttributeError, TypeError) as e:
+        logger.warning(f"Could not extract text from Claude response: {e}")
+        return None
+
+
+def _parse_claude_json_response(response_text: Optional[str]) -> Optional[Dict[str, Any]]:
+    """
+    Parse JSON from Claude's response, handling markdown code blocks.
+
+    Args:
+        response_text: The raw text from Claude
+
+    Returns:
+        Parsed JSON dict, or None if parsing fails
+    """
+    if not response_text:
+        return None
+
+    try:
+        # Handle potential markdown code blocks
+        text = response_text
+        if "```json" in text:
+            text = text.split("```json")[1].split("```")[0]
+        elif "```" in text:
+            # Try to extract from generic code block
+            parts = text.split("```")
+            if len(parts) >= 2:
+                text = parts[1]
+
+        return json.loads(text.strip())
+
+    except (json.JSONDecodeError, IndexError, ValueError) as e:
+        logger.warning(f"Could not parse Claude JSON response: {e}")
+        logger.debug(f"Response text was: {response_text[:500] if response_text else 'None'}")
+        return None
+
 
 # Valid bot names
 VALID_BOTS = ['ares', 'athena', 'titan', 'pegasus', 'icarus']
@@ -88,6 +239,7 @@ def _ensure_report_tables_exist():
         logger.warning("Database not available - cannot create report tables")
         return False
 
+    conn = None
     try:
         conn = get_connection()
         cursor = conn.cursor()
@@ -135,12 +287,22 @@ def _ensure_report_tables_exist():
             logger.info(f"Ensured table {table_name} exists")
 
         conn.commit()
-        conn.close()
         return True
 
     except Exception as e:
         logger.error(f"Error creating report tables: {e}")
+        if conn:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
         return False
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
 
 # Initialize tables on module import
@@ -171,35 +333,34 @@ def fetch_closed_trades_for_date(bot: str, report_date: date) -> List[Dict[str, 
         return []
 
     try:
-        conn = get_connection()
-        cursor = conn.cursor()
+        with _db_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(f"""
-            SELECT *
-            FROM {table}
-            WHERE status IN ('closed', 'expired')
-            AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
-            ORDER BY close_time ASC
-        """, (report_date,))
+            cursor.execute(f"""
+                SELECT *
+                FROM {table}
+                WHERE status IN ('closed', 'expired')
+                AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
+                ORDER BY close_time ASC
+            """, (report_date,))
 
-        columns = [desc[0] for desc in cursor.description]
-        trades = []
+            columns = [desc[0] for desc in cursor.description]
+            trades = []
 
-        for row in cursor.fetchall():
-            trade = dict(zip(columns, row))
-            # Convert Decimal to float for JSON serialization
-            for key, value in trade.items():
-                if isinstance(value, Decimal):
-                    trade[key] = float(value)
-                elif isinstance(value, datetime):
-                    trade[key] = value.isoformat()
-                elif isinstance(value, date):
-                    trade[key] = value.isoformat()
-            trades.append(trade)
+            for row in cursor.fetchall():
+                trade = dict(zip(columns, row))
+                # Convert Decimal to float for JSON serialization
+                for key, value in trade.items():
+                    if isinstance(value, Decimal):
+                        trade[key] = float(value)
+                    elif isinstance(value, datetime):
+                        trade[key] = value.isoformat()
+                    elif isinstance(value, date):
+                        trade[key] = value.isoformat()
+                trades.append(trade)
 
-        conn.close()
-        logger.info(f"Fetched {len(trades)} closed trades for {bot} on {report_date}")
-        return trades
+            logger.info(f"Fetched {len(trades)} closed trades for {bot} on {report_date}")
+            return trades
 
     except Exception as e:
         logger.error(f"Error fetching trades for {bot}: {e}")
@@ -223,51 +384,50 @@ def fetch_scan_activity_for_date(bot: str, report_date: date) -> List[Dict[str, 
     source_table = BOT_SCAN_SOURCES.get(bot, 'scan_activity')
 
     try:
-        conn = get_connection()
-        cursor = conn.cursor()
+        with _db_connection() as conn:
+            cursor = conn.cursor()
 
-        # Check if table exists and has bot_name column
-        cursor.execute("""
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_name = %s AND column_name = 'bot_name'
-        """, (source_table,))
-        has_bot_column = cursor.fetchone() is not None
+            # Check if table exists and has bot_name column
+            cursor.execute("""
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = %s AND column_name = 'bot_name'
+            """, (source_table,))
+            has_bot_column = cursor.fetchone() is not None
 
-        if has_bot_column:
-            cursor.execute(f"""
-                SELECT *
-                FROM {source_table}
-                WHERE bot_name = %s
-                AND DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
-                ORDER BY timestamp ASC
-            """, (bot.upper(), report_date))
-        else:
-            cursor.execute(f"""
-                SELECT *
-                FROM {source_table}
-                WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
-                ORDER BY timestamp ASC
-            """, (report_date,))
+            if has_bot_column:
+                cursor.execute(f"""
+                    SELECT *
+                    FROM {source_table}
+                    WHERE bot_name = %s
+                    AND DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+                    ORDER BY timestamp ASC
+                """, (bot.upper(), report_date))
+            else:
+                cursor.execute(f"""
+                    SELECT *
+                    FROM {source_table}
+                    WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+                    ORDER BY timestamp ASC
+                """, (report_date,))
 
-        columns = [desc[0] for desc in cursor.description]
-        scans = []
+            columns = [desc[0] for desc in cursor.description]
+            scans = []
 
-        for row in cursor.fetchall():
-            scan = dict(zip(columns, row))
-            # Convert types for JSON
-            for key, value in scan.items():
-                if isinstance(value, Decimal):
-                    scan[key] = float(value)
-                elif isinstance(value, datetime):
-                    scan[key] = value.isoformat()
-                elif isinstance(value, date):
-                    scan[key] = value.isoformat()
-            scans.append(scan)
+            for row in cursor.fetchall():
+                scan = dict(zip(columns, row))
+                # Convert types for JSON
+                for key, value in scan.items():
+                    if isinstance(value, Decimal):
+                        scan[key] = float(value)
+                    elif isinstance(value, datetime):
+                        scan[key] = value.isoformat()
+                    elif isinstance(value, date):
+                        scan[key] = value.isoformat()
+                scans.append(scan)
 
-        conn.close()
-        logger.info(f"Fetched {len(scans)} scans for {bot} on {report_date}")
-        return scans
+            logger.info(f"Fetched {len(scans)} scans for {bot} on {report_date}")
+            return scans
 
     except Exception as e:
         logger.error(f"Error fetching scan activity for {bot}: {e}")
@@ -521,26 +681,22 @@ def analyze_trade_with_claude(
             messages=[{"role": "user", "content": prompt}]
         )
 
-        # Parse response
-        response_text = message.content[0].text.strip()
-
-        # Try to extract JSON
-        try:
-            # Handle potential markdown code blocks
-            if "```json" in response_text:
-                response_text = response_text.split("```json")[1].split("```")[0]
-            elif "```" in response_text:
-                response_text = response_text.split("```")[1].split("```")[0]
-
-            analysis = json.loads(response_text)
-            analysis["position_id"] = trade.get("position_id")
-            analysis["pnl"] = trade.get("realized_pnl", 0)
-            analysis["_generated_by"] = "claude-3-5-sonnet"
-            return analysis
-
-        except json.JSONDecodeError:
-            logger.warning(f"Could not parse Claude response as JSON: {response_text[:200]}")
+        # Parse response safely
+        response_text = _extract_claude_response_text(message)
+        if not response_text:
+            logger.warning("Could not extract text from Claude trade analysis response")
             return _fallback_trade_analysis(trade, ticks)
+
+        analysis = _parse_claude_json_response(response_text)
+        if not analysis:
+            logger.warning(f"Could not parse Claude trade analysis as JSON: {response_text[:200]}")
+            return _fallback_trade_analysis(trade, ticks)
+
+        # Add metadata
+        analysis["position_id"] = trade.get("position_id")
+        analysis["pnl"] = trade.get("realized_pnl", 0)
+        analysis["_generated_by"] = "claude-3-5-sonnet"
+        return analysis
 
     except Exception as e:
         logger.error(f"Error calling Claude for trade analysis: {e}")
@@ -576,22 +732,39 @@ def _build_tick_summary(ticks: List[Dict[str, Any]], trade: Dict[str, Any]) -> s
     if not ticks:
         return "No intraday data available"
 
+    def _format_candle(candle: Dict[str, Any], prefix: str = "") -> str:
+        """Safely format a candle dict."""
+        time_ct = candle.get('time_ct', 'N/A')
+        open_p = candle.get('open', 'N/A')
+        high_p = candle.get('high', 'N/A')
+        low_p = candle.get('low', 'N/A')
+        close_p = candle.get('close', 'N/A')
+        return f"{prefix}{time_ct} O:{open_p} H:{high_p} L:{low_p} C:{close_p}"
+
     # Sample key candles: first, last, high, low, and every 15 mins
     summary_lines = []
 
     # Entry candle
     if ticks:
-        summary_lines.append(f"Entry area: {ticks[0]['time_ct']} O:{ticks[0]['open']} H:{ticks[0]['high']} L:{ticks[0]['low']} C:{ticks[0]['close']}")
+        try:
+            summary_lines.append(_format_candle(ticks[0], "Entry area: "))
+        except (IndexError, TypeError) as e:
+            logger.warning(f"Could not format entry candle: {e}")
 
     # Sample every 15 candles (roughly 15 minutes for 1-min data)
     for i in range(0, len(ticks), 15):
         if i > 0 and i < len(ticks) - 1:
-            t = ticks[i]
-            summary_lines.append(f"{t['time_ct']} O:{t['open']} H:{t['high']} L:{t['low']} C:{t['close']}")
+            try:
+                summary_lines.append(_format_candle(ticks[i]))
+            except (IndexError, TypeError) as e:
+                logger.warning(f"Could not format candle at index {i}: {e}")
 
     # Exit candle
     if len(ticks) > 1:
-        summary_lines.append(f"Exit area: {ticks[-1]['time_ct']} O:{ticks[-1]['open']} H:{ticks[-1]['high']} L:{ticks[-1]['low']} C:{ticks[-1]['close']}")
+        try:
+            summary_lines.append(_format_candle(ticks[-1], "Exit area: "))
+        except (IndexError, TypeError) as e:
+            logger.warning(f"Could not format exit candle: {e}")
 
     return "\n".join(summary_lines[:20])  # Limit to 20 lines
 
@@ -672,21 +845,19 @@ def generate_daily_summary_with_claude(
             messages=[{"role": "user", "content": prompt}]
         )
 
-        response_text = message.content[0].text.strip()
-
-        try:
-            if "```json" in response_text:
-                response_text = response_text.split("```json")[1].split("```")[0]
-            elif "```" in response_text:
-                response_text = response_text.split("```")[1].split("```")[0]
-
-            summary = json.loads(response_text)
-            summary["_generated_by"] = "claude-3-5-sonnet"
-            return summary
-
-        except json.JSONDecodeError:
-            logger.warning(f"Could not parse daily summary response: {response_text[:200]}")
+        # Parse response safely
+        response_text = _extract_claude_response_text(message)
+        if not response_text:
+            logger.warning("Could not extract text from Claude daily summary response")
             return _fallback_daily_summary(trades, trade_analyses)
+
+        summary = _parse_claude_json_response(response_text)
+        if not summary:
+            logger.warning(f"Could not parse daily summary as JSON: {response_text[:200]}")
+            return _fallback_daily_summary(trades, trade_analyses)
+
+        summary["_generated_by"] = "claude-3-5-sonnet"
+        return summary
 
     except Exception as e:
         logger.error(f"Error generating daily summary: {e}")
@@ -841,74 +1012,73 @@ def save_report_to_archive(bot: str, report: Dict[str, Any]) -> bool:
         return False
 
     try:
-        conn = get_connection()
-        cursor = conn.cursor()
+        with _db_connection() as conn:
+            cursor = conn.cursor()
 
-        table_name = f"{bot.lower()}_daily_reports"
+            table_name = f"{bot.lower()}_daily_reports"
 
-        cursor.execute(f"""
-            INSERT INTO {table_name} (
-                report_date,
-                trades_data,
-                intraday_ticks,
-                scan_activity,
-                market_context,
-                trade_analyses,
-                daily_summary,
-                lessons_learned,
-                total_pnl,
-                trade_count,
-                win_count,
-                loss_count,
-                generated_at,
-                generation_model,
-                generation_duration_ms,
-                archived_at
-            ) VALUES (
-                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
-            )
-            ON CONFLICT (report_date) DO UPDATE SET
-                trades_data = EXCLUDED.trades_data,
-                intraday_ticks = EXCLUDED.intraday_ticks,
-                scan_activity = EXCLUDED.scan_activity,
-                market_context = EXCLUDED.market_context,
-                trade_analyses = EXCLUDED.trade_analyses,
-                daily_summary = EXCLUDED.daily_summary,
-                lessons_learned = EXCLUDED.lessons_learned,
-                total_pnl = EXCLUDED.total_pnl,
-                trade_count = EXCLUDED.trade_count,
-                win_count = EXCLUDED.win_count,
-                loss_count = EXCLUDED.loss_count,
-                generated_at = EXCLUDED.generated_at,
-                generation_model = EXCLUDED.generation_model,
-                generation_duration_ms = EXCLUDED.generation_duration_ms,
-                archived_at = NOW()
-        """, (
-            report["report_date"],
-            json.dumps(report["trades_data"]),
-            json.dumps(report["intraday_ticks"]),
-            json.dumps(report["scan_activity"]),
-            json.dumps(report["market_context"]),
-            json.dumps(report["trade_analyses"]),
-            report["daily_summary"],
-            report["lessons_learned"],
-            report["total_pnl"],
-            report["trade_count"],
-            report["win_count"],
-            report["loss_count"],
-            report["generated_at"],
-            report["generation_model"],
-            report["generation_duration_ms"]
-        ))
+            # Use _safe_json_dumps to handle Decimal, datetime, and other types
+            cursor.execute(f"""
+                INSERT INTO {table_name} (
+                    report_date,
+                    trades_data,
+                    intraday_ticks,
+                    scan_activity,
+                    market_context,
+                    trade_analyses,
+                    daily_summary,
+                    lessons_learned,
+                    total_pnl,
+                    trade_count,
+                    win_count,
+                    loss_count,
+                    generated_at,
+                    generation_model,
+                    generation_duration_ms,
+                    archived_at
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
+                )
+                ON CONFLICT (report_date) DO UPDATE SET
+                    trades_data = EXCLUDED.trades_data,
+                    intraday_ticks = EXCLUDED.intraday_ticks,
+                    scan_activity = EXCLUDED.scan_activity,
+                    market_context = EXCLUDED.market_context,
+                    trade_analyses = EXCLUDED.trade_analyses,
+                    daily_summary = EXCLUDED.daily_summary,
+                    lessons_learned = EXCLUDED.lessons_learned,
+                    total_pnl = EXCLUDED.total_pnl,
+                    trade_count = EXCLUDED.trade_count,
+                    win_count = EXCLUDED.win_count,
+                    loss_count = EXCLUDED.loss_count,
+                    generated_at = EXCLUDED.generated_at,
+                    generation_model = EXCLUDED.generation_model,
+                    generation_duration_ms = EXCLUDED.generation_duration_ms,
+                    archived_at = NOW()
+            """, (
+                _safe_get(report, "report_date", default=""),
+                _safe_json_dumps(_safe_get(report, "trades_data", default=[]), "[]"),
+                _safe_json_dumps(_safe_get(report, "intraday_ticks", default={}), "{}"),
+                _safe_json_dumps(_safe_get(report, "scan_activity", default=[]), "[]"),
+                _safe_json_dumps(_safe_get(report, "market_context", default={}), "{}"),
+                _safe_json_dumps(_safe_get(report, "trade_analyses", default=[]), "[]"),
+                _safe_get(report, "daily_summary", default=""),
+                _safe_get(report, "lessons_learned", default=[]),
+                _safe_get(report, "total_pnl", default=0),
+                _safe_get(report, "trade_count", default=0),
+                _safe_get(report, "win_count", default=0),
+                _safe_get(report, "loss_count", default=0),
+                _safe_get(report, "generated_at", default=""),
+                _safe_get(report, "generation_model", default=""),
+                _safe_get(report, "generation_duration_ms", default=0)
+            ))
 
-        conn.commit()
-        conn.close()
-
-        logger.info(f"Saved report to {table_name} for {report['report_date']}")
-        return True
+            logger.info(f"Saved report to {table_name} for {_safe_get(report, 'report_date')}")
+            return True
 
     except Exception as e:
         logger.error(f"Error saving report: {e}")
+        traceback.print_exc()
         return False
 
 
@@ -927,43 +1097,47 @@ def get_report_from_archive(bot: str, report_date: date) -> Optional[Dict[str, A
         return None
 
     try:
-        conn = get_connection()
-        cursor = conn.cursor()
+        with _db_connection() as conn:
+            cursor = conn.cursor()
 
-        table_name = f"{bot.lower()}_daily_reports"
+            table_name = f"{bot.lower()}_daily_reports"
 
-        cursor.execute(f"""
-            SELECT * FROM {table_name}
-            WHERE report_date = %s
-        """, (report_date,))
+            cursor.execute(f"""
+                SELECT * FROM {table_name}
+                WHERE report_date = %s
+            """, (report_date,))
 
-        row = cursor.fetchone()
-        conn.close()
+            row = cursor.fetchone()
 
-        if not row:
-            return None
+            if not row:
+                return None
 
-        columns = [desc[0] for desc in cursor.description]
-        report = dict(zip(columns, row))
+            # Get columns BEFORE closing connection
+            columns = [desc[0] for desc in cursor.description]
+            report = dict(zip(columns, row))
 
-        # Convert types
-        for key in ['trades_data', 'intraday_ticks', 'scan_activity', 'market_context', 'trade_analyses']:
-            if key in report and isinstance(report[key], str):
-                report[key] = json.loads(report[key])
+            # Convert types
+            for key in ['trades_data', 'intraday_ticks', 'scan_activity', 'market_context', 'trade_analyses']:
+                if key in report and isinstance(report[key], str):
+                    try:
+                        report[key] = json.loads(report[key])
+                    except json.JSONDecodeError:
+                        logger.warning(f"Could not parse JSON for {key}")
+                        report[key] = {} if key.endswith('ticks') or key.endswith('context') else []
 
-        for key in ['report_date']:
-            if key in report and isinstance(report[key], date):
-                report[key] = report[key].isoformat()
+            for key in ['report_date']:
+                if key in report and isinstance(report[key], date):
+                    report[key] = report[key].isoformat()
 
-        for key in ['generated_at', 'archived_at']:
-            if key in report and isinstance(report[key], datetime):
-                report[key] = report[key].isoformat()
+            for key in ['generated_at', 'archived_at']:
+                if key in report and isinstance(report[key], datetime):
+                    report[key] = report[key].isoformat()
 
-        for key in ['total_pnl']:
-            if key in report and isinstance(report[key], Decimal):
-                report[key] = float(report[key])
+            for key in ['total_pnl']:
+                if key in report and isinstance(report[key], Decimal):
+                    report[key] = float(report[key])
 
-        return report
+            return report
 
     except Exception as e:
         logger.error(f"Error retrieving report: {e}")
@@ -990,44 +1164,44 @@ def get_archive_list(
         return [], 0
 
     try:
-        conn = get_connection()
-        cursor = conn.cursor()
+        with _db_connection() as conn:
+            cursor = conn.cursor()
 
-        table_name = f"{bot.lower()}_daily_reports"
+            table_name = f"{bot.lower()}_daily_reports"
 
-        # Get total count
-        cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-        total = cursor.fetchone()[0]
+            # Get total count
+            cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+            count_row = cursor.fetchone()
+            total = count_row[0] if count_row else 0
 
-        # Get summaries
-        cursor.execute(f"""
-            SELECT
-                report_date,
-                total_pnl,
-                trade_count,
-                win_count,
-                loss_count,
-                lessons_learned,
-                generated_at
-            FROM {table_name}
-            ORDER BY report_date DESC
-            LIMIT %s OFFSET %s
-        """, (limit, offset))
+            # Get summaries
+            cursor.execute(f"""
+                SELECT
+                    report_date,
+                    total_pnl,
+                    trade_count,
+                    win_count,
+                    loss_count,
+                    lessons_learned,
+                    generated_at
+                FROM {table_name}
+                ORDER BY report_date DESC
+                LIMIT %s OFFSET %s
+            """, (limit, offset))
 
-        reports = []
-        for row in cursor.fetchall():
-            reports.append({
-                "report_date": row[0].isoformat() if isinstance(row[0], date) else row[0],
-                "total_pnl": float(row[1]) if row[1] else 0,
-                "trade_count": row[2] or 0,
-                "win_count": row[3] or 0,
-                "loss_count": row[4] or 0,
-                "lessons_learned": row[5] or [],
-                "generated_at": row[6].isoformat() if isinstance(row[6], datetime) else row[6]
-            })
+            reports = []
+            for row in cursor.fetchall():
+                reports.append({
+                    "report_date": row[0].isoformat() if isinstance(row[0], date) else row[0],
+                    "total_pnl": float(row[1]) if row[1] else 0,
+                    "trade_count": row[2] or 0,
+                    "win_count": row[3] or 0,
+                    "loss_count": row[4] or 0,
+                    "lessons_learned": row[5] or [],
+                    "generated_at": row[6].isoformat() if isinstance(row[6], datetime) else row[6]
+                })
 
-        conn.close()
-        return reports, total
+            return reports, total
 
     except Exception as e:
         logger.error(f"Error getting archive list: {e}")
@@ -1048,36 +1222,35 @@ def get_archive_stats(bot: str) -> Dict[str, Any]:
         return {"total_reports": 0}
 
     try:
-        conn = get_connection()
-        cursor = conn.cursor()
+        with _db_connection() as conn:
+            cursor = conn.cursor()
 
-        table_name = f"{bot.lower()}_daily_reports"
+            table_name = f"{bot.lower()}_daily_reports"
 
-        cursor.execute(f"""
-            SELECT
-                COUNT(*) as total_reports,
-                MIN(report_date) as oldest_date,
-                MAX(report_date) as newest_date,
-                SUM(trade_count) as total_trades,
-                SUM(total_pnl) as total_pnl_all_time,
-                AVG(total_pnl) as avg_daily_pnl
-            FROM {table_name}
-        """)
+            cursor.execute(f"""
+                SELECT
+                    COUNT(*) as total_reports,
+                    MIN(report_date) as oldest_date,
+                    MAX(report_date) as newest_date,
+                    SUM(trade_count) as total_trades,
+                    SUM(total_pnl) as total_pnl_all_time,
+                    AVG(total_pnl) as avg_daily_pnl
+                FROM {table_name}
+            """)
 
-        row = cursor.fetchone()
-        conn.close()
+            row = cursor.fetchone()
 
-        if not row:
-            return {"total_reports": 0}
+            if not row:
+                return {"total_reports": 0}
 
-        return {
-            "total_reports": row[0] or 0,
-            "oldest_date": row[1].isoformat() if row[1] else None,
-            "newest_date": row[2].isoformat() if row[2] else None,
-            "total_trades_analyzed": row[3] or 0,
-            "total_pnl_all_time": float(row[4]) if row[4] else 0,
-            "avg_daily_pnl": float(row[5]) if row[5] else 0
-        }
+            return {
+                "total_reports": row[0] or 0,
+                "oldest_date": row[1].isoformat() if row[1] else None,
+                "newest_date": row[2].isoformat() if row[2] else None,
+                "total_trades_analyzed": row[3] or 0,
+                "total_pnl_all_time": float(row[4]) if row[4] else 0,
+                "avg_daily_pnl": float(row[5]) if row[5] else 0
+            }
 
     except Exception as e:
         logger.error(f"Error getting archive stats: {e}")
@@ -1101,24 +1274,21 @@ def purge_old_reports(days_to_keep: int = 5 * 365) -> Dict[str, int]:
     results = {}
 
     try:
-        conn = get_connection()
-        cursor = conn.cursor()
+        with _db_connection() as conn:
+            cursor = conn.cursor()
 
-        for bot in VALID_BOTS:
-            table_name = f"{bot}_daily_reports"
-            cursor.execute(f"""
-                DELETE FROM {table_name}
-                WHERE report_date < %s
-            """, (cutoff_date,))
-            deleted = cursor.rowcount
-            results[bot] = deleted
-            if deleted > 0:
-                logger.info(f"Purged {deleted} old reports from {table_name}")
+            for bot in VALID_BOTS:
+                table_name = f"{bot}_daily_reports"
+                cursor.execute(f"""
+                    DELETE FROM {table_name}
+                    WHERE report_date < %s
+                """, (cutoff_date,))
+                deleted = cursor.rowcount
+                results[bot] = deleted
+                if deleted > 0:
+                    logger.info(f"Purged {deleted} old reports from {table_name}")
 
-        conn.commit()
-        conn.close()
-
-        return results
+            return results
 
     except Exception as e:
         logger.error(f"Error purging old reports: {e}")
