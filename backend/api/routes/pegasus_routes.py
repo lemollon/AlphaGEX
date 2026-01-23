@@ -1248,6 +1248,8 @@ async def get_pegasus_intraday_equity(date: str = None):
             "data_points": data_points,
             "current_equity": round(current_equity, 2),
             "day_pnl": round(day_pnl, 2),
+            "day_realized": round(today_realized, 2),
+            "day_unrealized": round(unrealized_pnl, 2),
             "starting_equity": market_open_equity,  # Equity at market open (starting_capital + prev realized)
             "high_of_day": round(high_of_day, 2),
             "low_of_day": round(low_of_day, 2),
@@ -1273,6 +1275,8 @@ async def get_pegasus_intraday_equity(date: str = None):
             }],
             "current_equity": starting_capital,
             "day_pnl": 0,
+            "day_realized": 0,
+            "day_unrealized": 0,
             "starting_equity": starting_capital,
             "high_of_day": starting_capital,
             "low_of_day": starting_capital,
