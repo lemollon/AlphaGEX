@@ -112,6 +112,8 @@ interface IntradayEquityData {
   data_points: IntradayEquityPoint[]
   current_equity: number
   day_pnl: number
+  day_realized: number
+  day_unrealized: number
   starting_equity: number
   high_of_day: number
   low_of_day: number
@@ -509,6 +511,8 @@ export default function EquityCurveChart({
   const summary = viewMode === 'intraday' && intradayData
     ? {
         total_pnl: intradayData.day_pnl,
+        day_realized: intradayData.day_realized ?? 0,
+        day_unrealized: intradayData.day_unrealized ?? 0,
         final_equity: intradayData.current_equity,
         max_drawdown_pct: 0,
         total_trades: intradayData.snapshots_count,
@@ -550,6 +554,19 @@ export default function EquityCurveChart({
             <span className={summary.total_pnl >= 0 ? 'text-green-400' : 'text-red-400'}>
               {summary.total_pnl >= 0 ? '+' : ''}${summary.total_pnl?.toLocaleString() || 0}
             </span>
+            {/* Show realized/unrealized breakdown for intraday view */}
+            {viewMode === 'intraday' && intradayData && (
+              <span className="text-gray-400 text-xs">
+                (<span className={summary.day_realized >= 0 ? 'text-green-400' : 'text-red-400'}>
+                  {summary.day_realized >= 0 ? '+' : ''}${summary.day_realized?.toLocaleString() || 0}
+                </span>
+                {' '}realized,{' '}
+                <span className={summary.day_unrealized >= 0 ? 'text-green-400' : 'text-red-400'}>
+                  {summary.day_unrealized >= 0 ? '+' : ''}${summary.day_unrealized?.toLocaleString() || 0}
+                </span>
+                {' '}unrealized)
+              </span>
+            )}
             {viewMode === 'historical' && (
               <span className="text-red-400">
                 -{summary.max_drawdown_pct?.toFixed(1) || 0}% DD
