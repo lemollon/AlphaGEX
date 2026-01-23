@@ -1558,6 +1558,16 @@ async def get_athena_live_pnl():
             ''', (today,))
             realized_row = cursor.fetchone()
             today_realized = float(realized_row[0]) if realized_row else 0
+
+            # Get cumulative realized P&L from ALL closed positions (matches equity curve)
+            cursor.execute('''
+                SELECT COALESCE(SUM(realized_pnl), 0)
+                FROM athena_positions
+                WHERE status IN ('closed', 'expired')
+                AND close_time IS NOT NULL
+            ''')
+            cumulative_row = cursor.fetchone()
+            cumulative_realized = float(cumulative_row[0]) if cumulative_row else 0
             conn.close()
 
             # Format open positions with entry context and calculate MTM
@@ -1644,8 +1654,9 @@ async def get_athena_live_pnl():
                 "success": True,
                 "data": {
                     "total_unrealized_pnl": final_unrealized,
-                    "total_realized_pnl": round(today_realized, 2),
-                    "net_pnl": round(today_realized + (final_unrealized or 0), 2) if final_unrealized is not None else round(today_realized, 2),
+                    "total_realized_pnl": round(cumulative_realized, 2),
+                    "today_realized_pnl": round(today_realized, 2),
+                    "net_pnl": round(cumulative_realized + (final_unrealized or 0), 2) if final_unrealized is not None else round(cumulative_realized, 2),
                     "positions": positions,
                     "position_count": len(positions),
                     "source": "database",
@@ -1696,6 +1707,16 @@ async def get_athena_live_pnl():
             ''', (today,))
             realized_row = cursor.fetchone()
             today_realized = float(realized_row[0]) if realized_row else 0
+
+            # Get cumulative realized P&L from ALL closed positions (matches equity curve)
+            cursor.execute('''
+                SELECT COALESCE(SUM(realized_pnl), 0)
+                FROM athena_positions
+                WHERE status IN ('closed', 'expired')
+                AND close_time IS NOT NULL
+            ''')
+            cumulative_row = cursor.fetchone()
+            cumulative_realized = float(cumulative_row[0]) if cumulative_row else 0
             conn.close()
 
             # Format positions
@@ -1720,8 +1741,9 @@ async def get_athena_live_pnl():
                 "success": True,
                 "data": {
                     "total_unrealized_pnl": None,
-                    "total_realized_pnl": round(today_realized, 2),
-                    "net_pnl": round(today_realized, 2),
+                    "total_realized_pnl": round(cumulative_realized, 2),
+                    "today_realized_pnl": round(today_realized, 2),
+                    "net_pnl": round(cumulative_realized, 2),
                     "positions": positions,
                     "position_count": len(positions),
                     "source": "database",
