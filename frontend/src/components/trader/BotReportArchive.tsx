@@ -45,7 +45,9 @@ interface ArchiveStats {
   total_losses: number
   best_day: { date: string; pnl: number } | null
   worst_day: { date: string; pnl: number } | null
-  date_range: { oldest: string; newest: string } | null
+  oldest_date: string | null
+  newest_date: string | null
+  avg_daily_pnl?: number
 }
 
 interface BotReportArchiveProps {

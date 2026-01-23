@@ -38,16 +38,24 @@ import {
 
 interface TradeAnalysis {
   position_id: string
-  direction: string
-  entry_time: string
-  exit_time: string
-  entry_price: number
-  exit_price: number
   pnl: number
-  win: boolean
-  analysis: string
-  key_moments: string[]
-  market_context: string
+  entry_analysis?: {
+    quality: string
+    reasoning: string
+  }
+  price_action_summary?: string
+  exit_analysis?: {
+    was_optimal: boolean
+    reasoning: string
+  }
+  why_won_or_lost?: string
+  lesson?: string
+  key_timestamps?: Array<{
+    time: string
+    event: string
+    price: number
+  }>
+  _generated_by?: string
 }
 
 interface ReportData {
@@ -63,11 +71,14 @@ interface ReportData {
   generated_at: string
   generation_model: string
   market_context?: {
-    vix_open?: number
-    vix_close?: number
-    spy_open?: number
-    spy_close?: number
-    regime?: string
+    summary?: {
+      vix_open?: number
+      vix_close?: number
+      vix_high?: number
+      vix_low?: number
+      dominant_regime?: string
+    }
+    events?: Array<{ type: string; timestamp: string }>
   }
 }
 
@@ -421,34 +432,54 @@ export default function BotReportPage({
           </div>
 
           {/* Market Context */}
-          {report.market_context && (
+          {report.market_context?.summary && (
             <div className="bg-gray-800/50 rounded-lg border border-gray-700 p-4">
               <h3 className="text-white font-medium mb-3 flex items-center gap-2">
                 <TrendingUp className="w-4 h-4 text-gray-400" />
                 Market Context
               </h3>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                {report.market_context.vix_open !== undefined && (
+                {report.market_context.summary.vix_open !== undefined && (
                   <div>
                     <span className="text-gray-500">VIX Open:</span>
-                    <span className="text-white ml-2">{report.market_context.vix_open?.toFixed(2)}</span>
+                    <span className="text-white ml-2">{report.market_context.summary.vix_open?.toFixed(2)}</span>
                   </div>
                 )}
-                {report.market_context.vix_close !== undefined && (
+                {report.market_context.summary.vix_close !== undefined && (
                   <div>
                     <span className="text-gray-500">VIX Close:</span>
-                    <span className="text-white ml-2">{report.market_context.vix_close?.toFixed(2)}</span>
+                    <span className="text-white ml-2">{report.market_context.summary.vix_close?.toFixed(2)}</span>
                   </div>
                 )}
-                {report.market_context.regime && (
+                {report.market_context.summary.vix_high !== undefined && (
+                  <div>
+                    <span className="text-gray-500">VIX High:</span>
+                    <span className="text-white ml-2">{report.market_context.summary.vix_high?.toFixed(2)}</span>
+                  </div>
+                )}
+                {report.market_context.summary.vix_low !== undefined && (
+                  <div>
+                    <span className="text-gray-500">VIX Low:</span>
+                    <span className="text-white ml-2">{report.market_context.summary.vix_low?.toFixed(2)}</span>
+                  </div>
+                )}
+                {report.market_context.summary.dominant_regime && (
                   <div>
                     <span className="text-gray-500">Regime:</span>
-                    <span className={`ml-2 ${report.market_context.regime === 'POSITIVE' ? 'text-green-400' : 'text-red-400'}`}>
-                      {report.market_context.regime}
+                    <span className={`ml-2 ${report.market_context.summary.dominant_regime === 'POSITIVE' ? 'text-green-400' : 'text-red-400'}`}>
+                      {report.market_context.summary.dominant_regime}
                     </span>
                   </div>
                 )}
               </div>
+              {report.market_context.events && report.market_context.events.length > 0 && (
+                <div className="mt-3 text-sm">
+                  <span className="text-gray-500">Events:</span>
+                  <span className="text-white ml-2">
+                    {report.market_context.events.map(e => e.type).join(', ')}
+                  </span>
+                </div>
+              )}
             </div>
           )}
 
@@ -496,90 +527,123 @@ export default function BotReportPage({
             {expandedSections.trades && (
               <div className="px-4 pb-4 space-y-3">
                 {report.trade_analyses && report.trade_analyses.length > 0 ? (
-                  report.trade_analyses.map((trade, idx) => (
-                    <div
-                      key={trade.position_id || idx}
-                      className={`rounded-lg border ${trade.win ? 'border-green-500/30 bg-green-500/5' : 'border-red-500/30 bg-red-500/5'} overflow-hidden`}
-                    >
-                      <button
-                        onClick={() => toggleTrade(trade.position_id || String(idx))}
-                        className="w-full p-3 flex items-center justify-between hover:bg-gray-800/20 transition-colors"
+                  report.trade_analyses.map((trade, idx) => {
+                    const isWin = trade.pnl >= 0
+                    return (
+                      <div
+                        key={trade.position_id || idx}
+                        className={`rounded-lg border ${isWin ? 'border-green-500/30 bg-green-500/5' : 'border-red-500/30 bg-red-500/5'} overflow-hidden`}
                       >
-                        <div className="flex items-center gap-3">
-                          {trade.win ? (
-                            <CheckCircle className="w-5 h-5 text-green-400" />
+                        <button
+                          onClick={() => toggleTrade(trade.position_id || String(idx))}
+                          className="w-full p-3 flex items-center justify-between hover:bg-gray-800/20 transition-colors"
+                        >
+                          <div className="flex items-center gap-3">
+                            {isWin ? (
+                              <CheckCircle className="w-5 h-5 text-green-400" />
+                            ) : (
+                              <XCircle className="w-5 h-5 text-red-400" />
+                            )}
+                            <div className="text-left">
+                              <div className="flex items-center gap-2">
+                                <span className={`font-medium ${isWin ? 'text-green-400' : 'text-red-400'}`}>
+                                  Trade #{idx + 1}
+                                </span>
+                                <span className={`font-bold ${trade.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                  {formatCurrency(trade.pnl)}
+                                </span>
+                                {trade.entry_analysis?.quality && (
+                                  <span className={`text-xs px-2 py-0.5 rounded ${
+                                    trade.entry_analysis.quality === 'GOOD' ? 'bg-green-500/20 text-green-400' :
+                                    trade.entry_analysis.quality === 'POOR' ? 'bg-red-500/20 text-red-400' :
+                                    'bg-yellow-500/20 text-yellow-400'
+                                  }`}>
+                                    {trade.entry_analysis.quality}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-gray-500 text-sm">
+                                {trade.position_id || `Position ${idx + 1}`}
+                              </div>
+                            </div>
+                          </div>
+                          {expandedTrades.has(trade.position_id || String(idx)) ? (
+                            <ChevronUp className="w-5 h-5 text-gray-400" />
                           ) : (
-                            <XCircle className="w-5 h-5 text-red-400" />
+                            <ChevronDown className="w-5 h-5 text-gray-400" />
                           )}
-                          <div className="text-left">
-                            <div className="flex items-center gap-2">
-                              <span className={`font-medium ${trade.win ? 'text-green-400' : 'text-red-400'}`}>
-                                {trade.direction?.toUpperCase()} Trade
-                              </span>
-                              <span className={`font-bold ${trade.pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                {formatCurrency(trade.pnl)}
-                              </span>
-                            </div>
-                            <div className="text-gray-500 text-sm">
-                              {formatTime(trade.entry_time)} - {formatTime(trade.exit_time)}
-                            </div>
+                        </button>
+
+                        {expandedTrades.has(trade.position_id || String(idx)) && (
+                          <div className="px-3 pb-3 border-t border-gray-700/50 mt-0 pt-3 space-y-3">
+                            {/* Entry Analysis */}
+                            {trade.entry_analysis && (
+                              <div>
+                                <h4 className="text-gray-400 text-sm font-medium mb-1">Entry Analysis</h4>
+                                <p className="text-gray-300 text-sm">{trade.entry_analysis.reasoning}</p>
+                              </div>
+                            )}
+
+                            {/* Price Action Summary */}
+                            {trade.price_action_summary && (
+                              <div>
+                                <h4 className="text-gray-400 text-sm font-medium mb-1">Price Action</h4>
+                                <p className="text-gray-300 text-sm whitespace-pre-wrap">{trade.price_action_summary}</p>
+                              </div>
+                            )}
+
+                            {/* Exit Analysis */}
+                            {trade.exit_analysis && (
+                              <div>
+                                <h4 className="text-gray-400 text-sm font-medium mb-1">Exit Analysis</h4>
+                                <div className="flex items-center gap-2 mb-1">
+                                  <span className={`text-xs px-2 py-0.5 rounded ${trade.exit_analysis.was_optimal ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
+                                    {trade.exit_analysis.was_optimal ? 'Optimal Exit' : 'Could Be Better'}
+                                  </span>
+                                </div>
+                                <p className="text-gray-300 text-sm">{trade.exit_analysis.reasoning}</p>
+                              </div>
+                            )}
+
+                            {/* Why Won or Lost */}
+                            {trade.why_won_or_lost && (
+                              <div>
+                                <h4 className="text-gray-400 text-sm font-medium mb-1">Why {isWin ? 'Won' : 'Lost'}</h4>
+                                <p className="text-gray-300 text-sm">{trade.why_won_or_lost}</p>
+                              </div>
+                            )}
+
+                            {/* Key Timestamps */}
+                            {trade.key_timestamps && trade.key_timestamps.length > 0 && (
+                              <div>
+                                <h4 className="text-gray-400 text-sm font-medium mb-1">Key Moments</h4>
+                                <ul className="space-y-1">
+                                  {trade.key_timestamps.map((ts, i) => (
+                                    <li key={i} className="text-gray-300 text-sm flex items-start gap-2">
+                                      <Clock className="w-3 h-3 mt-1 text-gray-500 flex-shrink-0" />
+                                      <span>
+                                        <span className="text-gray-500">{ts.time}</span>
+                                        {' - '}{ts.event}
+                                        {ts.price > 0 && <span className="text-gray-500"> (${ts.price.toFixed(2)})</span>}
+                                      </span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+
+                            {/* Lesson */}
+                            {trade.lesson && (
+                              <div className="mt-3 p-2 bg-gray-800/50 rounded">
+                                <h4 className="text-gray-400 text-sm font-medium mb-1">Lesson</h4>
+                                <p className="text-gray-300 text-sm italic">{trade.lesson}</p>
+                              </div>
+                            )}
                           </div>
-                        </div>
-                        {expandedTrades.has(trade.position_id || String(idx)) ? (
-                          <ChevronUp className="w-5 h-5 text-gray-400" />
-                        ) : (
-                          <ChevronDown className="w-5 h-5 text-gray-400" />
                         )}
-                      </button>
-
-                      {expandedTrades.has(trade.position_id || String(idx)) && (
-                        <div className="px-3 pb-3 border-t border-gray-700/50">
-                          {/* Trade Details */}
-                          <div className="grid grid-cols-2 gap-2 text-sm mt-3 mb-3">
-                            <div>
-                              <span className="text-gray-500">Entry:</span>
-                              <span className="text-white ml-2">${trade.entry_price?.toFixed(2)}</span>
-                            </div>
-                            <div>
-                              <span className="text-gray-500">Exit:</span>
-                              <span className="text-white ml-2">${trade.exit_price?.toFixed(2)}</span>
-                            </div>
-                          </div>
-
-                          {/* Analysis */}
-                          {trade.analysis && (
-                            <div className="mb-3">
-                              <h4 className="text-gray-400 text-sm font-medium mb-1">Analysis</h4>
-                              <p className="text-gray-300 text-sm whitespace-pre-wrap">{trade.analysis}</p>
-                            </div>
-                          )}
-
-                          {/* Key Moments */}
-                          {trade.key_moments && trade.key_moments.length > 0 && (
-                            <div className="mb-3">
-                              <h4 className="text-gray-400 text-sm font-medium mb-1">Key Moments</h4>
-                              <ul className="space-y-1">
-                                {trade.key_moments.map((moment, i) => (
-                                  <li key={i} className="text-gray-300 text-sm flex items-start gap-2">
-                                    <Clock className="w-3 h-3 mt-1 text-gray-500 flex-shrink-0" />
-                                    {moment}
-                                  </li>
-                                ))}
-                              </ul>
-                            </div>
-                          )}
-
-                          {/* Market Context */}
-                          {trade.market_context && (
-                            <div>
-                              <h4 className="text-gray-400 text-sm font-medium mb-1">Market Context</h4>
-                              <p className="text-gray-300 text-sm">{trade.market_context}</p>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  ))
+                      </div>
+                    )
+                  })
                 ) : (
                   <p className="text-gray-500 text-center py-4">No trade analyses available</p>
                 )}

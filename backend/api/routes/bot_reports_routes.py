@@ -127,6 +127,34 @@ async def get_today_report(
 
 
 # =============================================================================
+# ARCHIVE STATS (must be before /archive/{date} to avoid route conflict)
+# =============================================================================
+
+@router.get("/{bot}/reports/archive/stats")
+async def get_report_archive_stats(bot: str):
+    """
+    Get statistics about the report archive.
+
+    Returns:
+        Archive statistics including total reports, date range, and totals
+    """
+    if not GENERATOR_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Report generator service unavailable")
+
+    bot_lower = _validate_bot(bot)
+
+    try:
+        stats = get_archive_stats(bot_lower)
+        return {
+            "success": True,
+            "data": stats
+        }
+    except Exception as e:
+        logger.error(f"Error getting archive stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
 # ARCHIVE LIST
 # =============================================================================
 
@@ -356,10 +384,18 @@ async def download_all_reports(
         # For full download, we need complete reports not summaries
         full_reports = []
         for summary in reports:
-            report_date = datetime.strptime(summary["report_date"], "%Y-%m-%d").date()
-            full_report = get_report_from_archive(bot_lower, report_date)
-            if full_report:
-                full_reports.append(full_report)
+            date_str = summary.get("report_date")
+            if not date_str:
+                logger.warning(f"Skipping report with missing date: {summary}")
+                continue
+            try:
+                report_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+                full_report = get_report_from_archive(bot_lower, report_date)
+                if full_report:
+                    full_reports.append(full_report)
+            except ValueError as e:
+                logger.warning(f"Could not parse date '{date_str}': {e}")
+                continue
 
         if format.lower() == "json":
             content = json.dumps({
@@ -383,34 +419,6 @@ async def download_all_reports(
 
     except Exception as e:
         logger.error(f"Error downloading all reports: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-# =============================================================================
-# ARCHIVE STATS
-# =============================================================================
-
-@router.get("/{bot}/reports/archive/stats")
-async def get_report_archive_stats(bot: str):
-    """
-    Get statistics about the report archive.
-
-    Returns:
-        Archive statistics including total reports, date range, and totals
-    """
-    if not GENERATOR_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Report generator service unavailable")
-
-    bot_lower = _validate_bot(bot)
-
-    try:
-        stats = get_archive_stats(bot_lower)
-        return {
-            "success": True,
-            "data": stats
-        }
-    except Exception as e:
-        logger.error(f"Error getting archive stats: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

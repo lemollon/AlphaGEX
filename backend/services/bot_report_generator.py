@@ -1216,7 +1216,8 @@ def get_archive_stats(bot: str) -> Dict[str, Any]:
         bot: Bot name
 
     Returns:
-        Stats dict
+        Stats dict with total_reports, total_trades, total_wins, total_losses,
+        total_pnl, best_day, worst_day, date_range
     """
     if not DB_AVAILABLE:
         return {"total_reports": 0}
@@ -1227,30 +1228,69 @@ def get_archive_stats(bot: str) -> Dict[str, Any]:
 
             table_name = f"{bot.lower()}_daily_reports"
 
+            # Get aggregate stats
             cursor.execute(f"""
                 SELECT
                     COUNT(*) as total_reports,
                     MIN(report_date) as oldest_date,
                     MAX(report_date) as newest_date,
-                    SUM(trade_count) as total_trades,
-                    SUM(total_pnl) as total_pnl_all_time,
+                    COALESCE(SUM(trade_count), 0) as total_trades,
+                    COALESCE(SUM(win_count), 0) as total_wins,
+                    COALESCE(SUM(loss_count), 0) as total_losses,
+                    COALESCE(SUM(total_pnl), 0) as total_pnl_all_time,
                     AVG(total_pnl) as avg_daily_pnl
                 FROM {table_name}
             """)
 
             row = cursor.fetchone()
 
-            if not row:
+            if not row or row[0] == 0:
                 return {"total_reports": 0}
 
-            return {
+            stats = {
                 "total_reports": row[0] or 0,
                 "oldest_date": row[1].isoformat() if row[1] else None,
                 "newest_date": row[2].isoformat() if row[2] else None,
-                "total_trades_analyzed": row[3] or 0,
-                "total_pnl_all_time": float(row[4]) if row[4] else 0,
-                "avg_daily_pnl": float(row[5]) if row[5] else 0
+                "total_trades": row[3] or 0,
+                "total_wins": row[4] or 0,
+                "total_losses": row[5] or 0,
+                "total_pnl": float(row[6]) if row[6] else 0,
+                "avg_daily_pnl": float(row[7]) if row[7] else 0,
+                "best_day": None,
+                "worst_day": None
             }
+
+            # Get best day
+            cursor.execute(f"""
+                SELECT report_date, total_pnl
+                FROM {table_name}
+                WHERE total_pnl IS NOT NULL
+                ORDER BY total_pnl DESC
+                LIMIT 1
+            """)
+            best_row = cursor.fetchone()
+            if best_row:
+                stats["best_day"] = {
+                    "date": best_row[0].isoformat() if best_row[0] else None,
+                    "pnl": float(best_row[1]) if best_row[1] else 0
+                }
+
+            # Get worst day
+            cursor.execute(f"""
+                SELECT report_date, total_pnl
+                FROM {table_name}
+                WHERE total_pnl IS NOT NULL
+                ORDER BY total_pnl ASC
+                LIMIT 1
+            """)
+            worst_row = cursor.fetchone()
+            if worst_row:
+                stats["worst_day"] = {
+                    "date": worst_row[0].isoformat() if worst_row[0] else None,
+                    "pnl": float(worst_row[1]) if worst_row[1] else 0
+                }
+
+            return stats
 
     except Exception as e:
         logger.error(f"Error getting archive stats: {e}")
