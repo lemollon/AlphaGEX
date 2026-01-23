@@ -2079,6 +2079,107 @@ async def get_all_bots_status():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/bots/recapitalize")
+async def recapitalize_bot(bot: str, capital: float, note: str = None):
+    """
+    Recapitalize a bot with fresh capital while preserving all historical data.
+
+    Use this instead of reset when a bot blows an account - keeps all trade
+    history for Solomon learning while allowing the bot to continue trading.
+
+    Args:
+        bot: Bot name (ARES, ATHENA, TITAN, PEGASUS, ICARUS)
+        capital: New starting capital amount
+        note: Optional note explaining the recapitalization
+
+    Preserves:
+        - All closed trades (for win/loss pattern analysis)
+        - All equity snapshots (for drawdown analysis)
+        - All decision logs (for Solomon learning)
+        - All scan activity (for signal analysis)
+    """
+    valid_bots = ['ARES', 'ATHENA', 'TITAN', 'PEGASUS', 'ICARUS']
+    bot_upper = bot.upper()
+
+    if bot_upper not in valid_bots:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid bot. Must be one of: {', '.join(valid_bots)}"
+        )
+
+    if capital <= 0:
+        raise HTTPException(status_code=400, detail="Capital must be positive")
+
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+
+        bot_lower = bot_upper.lower()
+        config_key = f"{bot_lower}_starting_capital"
+        snapshot_table = f"{bot_lower}_equity_snapshots"
+
+        # Get previous capital for logging
+        c.execute(
+            "SELECT value FROM autonomous_config WHERE key = %s",
+            (config_key,)
+        )
+        row = c.fetchone()
+        previous_capital = float(row[0]) if row else None
+
+        # Update starting capital
+        c.execute("""
+            INSERT INTO autonomous_config (key, value, updated_at)
+            VALUES (%s, %s, NOW())
+            ON CONFLICT (key) DO UPDATE SET value = %s, updated_at = NOW()
+        """, (config_key, str(capital), str(capital)))
+
+        # Record recapitalization event in equity snapshots
+        recap_note = note or f"Recapitalized from ${previous_capital:,.2f}" if previous_capital else "Initial capitalization"
+
+        try:
+            c.execute(f"""
+                INSERT INTO {snapshot_table}
+                (timestamp, balance, realized_pnl, unrealized_pnl, open_positions, note)
+                VALUES (NOW(), %s, 0, 0, 0, %s)
+            """, (capital, f"[RECAPITALIZE] {recap_note}"))
+        except Exception as snap_err:
+            logger.warning(f"Could not record recap in {snapshot_table}: {snap_err}")
+
+        # Log the recapitalization event
+        try:
+            c.execute("""
+                INSERT INTO trading_decisions
+                (bot_name, decision_type, decision, reasoning, created_at)
+                VALUES (%s, 'RECAPITALIZE', 'APPROVED', %s, NOW())
+            """, (bot_upper, f"Capital set to ${capital:,.2f}. Previous: ${previous_capital:,.2f if previous_capital else 0:,.2f}. Note: {note or 'None'}"))
+        except Exception:
+            pass
+
+        conn.commit()
+        conn.close()
+
+        return {
+            "success": True,
+            "bot": bot_upper,
+            "previous_capital": previous_capital,
+            "new_capital": capital,
+            "note": note,
+            "message": f"{bot_upper} recapitalized to ${capital:,.2f}. All historical data preserved for Solomon learning.",
+            "data_preserved": [
+                f"{bot_lower}_positions (closed trades)",
+                f"{bot_lower}_equity_snapshots (drawdown history)",
+                f"{bot_lower}_scan_activity (signal history)",
+                "trading_decisions (decision logs)"
+            ]
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error recapitalizing {bot}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/bots/reset")
 async def reset_bot_data(bot: str = None, confirm: bool = False):
     """
