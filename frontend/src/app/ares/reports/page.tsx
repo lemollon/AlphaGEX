@@ -31,6 +31,7 @@ function ReportsContent() {
       botDisplayName="ARES"
       brandColor="amber"
       backLink="/ares"
+      date={date}
     />
   )
 }

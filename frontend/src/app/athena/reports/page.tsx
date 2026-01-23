@@ -31,6 +31,7 @@ function ReportsContent() {
       botDisplayName="ATHENA"
       brandColor="cyan"
       backLink="/athena"
+      date={date}
     />
   )
 }

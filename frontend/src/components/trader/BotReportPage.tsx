@@ -87,6 +87,7 @@ interface BotReportPageProps {
   botDisplayName: string
   brandColor: string  // e.g., 'amber', 'cyan', 'orange', 'violet', 'blue'
   backLink: string    // e.g., '/ares'
+  date?: string | null  // Optional date for viewing historical reports (YYYY-MM-DD format)
 }
 
 const BRAND_COLORS: Record<string, { bg: string; border: string; text: string; gradient: string }> = {
@@ -163,7 +164,8 @@ export default function BotReportPage({
   botName,
   botDisplayName,
   brandColor,
-  backLink
+  backLink,
+  date
 }: BotReportPageProps) {
   const [report, setReport] = useState<ReportData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -180,13 +182,18 @@ export default function BotReportPage({
 
   useEffect(() => {
     fetchReport()
-  }, [botName])
+  }, [botName, date])
 
   const fetchReport = async () => {
     try {
       setLoading(true)
       setError(null)
-      const response = await apiClient.getBotReportToday(botName.toLowerCase())
+
+      // Use date-specific API if viewing historical report, otherwise get today's
+      const response = date
+        ? await apiClient.getBotReportByDate(botName.toLowerCase(), date)
+        : await apiClient.getBotReportToday(botName.toLowerCase())
+
       if (response.data.success && response.data.data) {
         setReport(response.data.data)
       } else if (response.data.message) {
@@ -339,48 +346,64 @@ export default function BotReportPage({
             </>
           )}
 
-          <button
-            onClick={handleGenerate}
-            disabled={generating}
-            className={`px-4 py-2 rounded-lg ${colors.bg} ${colors.border} border ${colors.text} hover:opacity-80 transition-opacity flex items-center gap-2 disabled:opacity-50`}
-          >
-            {generating ? (
-              <>
-                <RefreshCw className="w-4 h-4 animate-spin" />
-                Generating...
-              </>
-            ) : (
-              <>
-                <Brain className="w-4 h-4" />
-                Generate Report
-              </>
-            )}
-          </button>
+          {/* Only show Generate button for today's report, not historical */}
+          {!date && (
+            <button
+              onClick={handleGenerate}
+              disabled={generating}
+              className={`px-4 py-2 rounded-lg ${colors.bg} ${colors.border} border ${colors.text} hover:opacity-80 transition-opacity flex items-center gap-2 disabled:opacity-50`}
+            >
+              {generating ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Brain className="w-4 h-4" />
+                  Generate Report
+                </>
+              )}
+            </button>
+          )}
         </div>
       </div>
 
       {error && !report && (
         <div className={`rounded-lg border ${colors.border} ${colors.bg} p-8 text-center`}>
           <AlertCircle className={`w-12 h-12 ${colors.text} mx-auto mb-4`} />
-          <h2 className="text-xl font-semibold text-white mb-2">No Report Available</h2>
+          <h2 className="text-xl font-semibold text-white mb-2">
+            {date ? 'Historical Report Not Found' : 'No Report Available'}
+          </h2>
           <p className="text-gray-400 mb-4">{error}</p>
-          <button
-            onClick={handleGenerate}
-            disabled={generating}
-            className={`px-4 py-2 rounded-lg ${colors.bg} ${colors.border} border ${colors.text} hover:opacity-80 transition-opacity inline-flex items-center gap-2`}
-          >
-            {generating ? (
-              <>
-                <RefreshCw className="w-4 h-4 animate-spin" />
-                Generating...
-              </>
-            ) : (
-              <>
-                <Brain className="w-4 h-4" />
-                Generate Report Now
-              </>
-            )}
-          </button>
+          {/* Only show Generate button for today's report, not historical */}
+          {!date ? (
+            <button
+              onClick={handleGenerate}
+              disabled={generating}
+              className={`px-4 py-2 rounded-lg ${colors.bg} ${colors.border} border ${colors.text} hover:opacity-80 transition-opacity inline-flex items-center gap-2`}
+            >
+              {generating ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Brain className="w-4 h-4" />
+                  Generate Report Now
+                </>
+              )}
+            </button>
+          ) : (
+            <Link
+              href={`${backLink}/reports`}
+              className={`px-4 py-2 rounded-lg ${colors.bg} ${colors.border} border ${colors.text} hover:opacity-80 transition-opacity inline-flex items-center gap-2`}
+            >
+              <ArrowLeft className="w-4 h-4" />
+              View Today&apos;s Report
+            </Link>
+          )}
         </div>
       )}
 

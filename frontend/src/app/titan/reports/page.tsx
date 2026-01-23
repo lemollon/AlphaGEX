@@ -23,12 +23,14 @@ function ReportsContent() {
     )
   }
 
+  // Show main report page (today or specific date)
   return (
     <BotReportPage
       botName="TITAN"
       botDisplayName="TITAN"
       brandColor="violet"
       backLink="/titan"
+      date={date}
     />
   )
 }
