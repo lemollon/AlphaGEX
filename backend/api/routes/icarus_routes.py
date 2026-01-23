@@ -1579,6 +1579,17 @@ async def get_icarus_intraday_equity(date: str = None):
         today_realized = float(today_row[0]) if today_row and today_row[0] else 0
         today_closed_count = int(today_row[1]) if today_row and today_row[1] else 0
 
+        # Get today's closed trades with timestamps for accurate intraday cumulative calculation
+        # This fixes the "cliff" bug where old snapshots had NULL/incorrect realized_pnl
+        cursor.execute("""
+            SELECT close_time::timestamptz, realized_pnl
+            FROM icarus_positions
+            WHERE status IN ('closed', 'expired')
+            AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
+            ORDER BY close_time ASC
+        """, (today,))
+        today_closes = cursor.fetchall()
+
         # Calculate unrealized P&L from open positions using real option quotes (MTM)
         unrealized_pnl = 0
         open_positions = []
@@ -1651,13 +1662,21 @@ async def get_icarus_intraday_equity(date: str = None):
         # Track high/low for summary
         all_equities = [market_open_equity]
 
-        # Add snapshots - recalculate equity from P&L to ensure consistency
-        # Don't trust stored balance which may have been calculated with wrong starting_capital
+        # Add snapshots - calculate cumulative realized at each snapshot's timestamp
+        # This fixes the "cliff" bug where old snapshots had NULL/incorrect realized_pnl
         for snapshot in snapshots:
             ts, balance, snap_unrealized, snap_realized, open_count, note = snapshot
             snap_time = ts.astimezone(CENTRAL_TZ) if ts.tzinfo else ts
+
+            # Calculate cumulative realized at this snapshot's timestamp from actual trades
+            # prev_day_realized + sum of today's closes that happened before this snapshot
+            snap_realized_val = prev_day_realized
+            for close_time, close_pnl in today_closes:
+                close_time_ct = close_time.astimezone(CENTRAL_TZ) if close_time and close_time.tzinfo else close_time
+                if close_time_ct and close_time_ct <= snap_time:
+                    snap_realized_val += float(close_pnl or 0)
+
             snap_unrealized_val = float(snap_unrealized or 0)
-            snap_realized_val = float(snap_realized or 0)
             # Recalculate equity: starting_capital + realized + unrealized
             snap_equity = round(starting_capital + snap_realized_val + snap_unrealized_val, 2)
             all_equities.append(snap_equity)
