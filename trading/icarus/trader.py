@@ -1273,7 +1273,9 @@ class ICARUSTrader(MathOptimizerMixin):
         for pos in positions:
             success, close_price, pnl = self.executor.close_position(pos, reason)
             if success:
-                self.db.close_position(pos.position_id, close_price, pnl, reason)
+                db_success = self.db.close_position(pos.position_id, close_price, pnl, reason)
+                if not db_success:
+                    logger.error(f"CRITICAL: Failed to close {pos.position_id} in database! P&L ${pnl:.2f} not recorded.")
                 self._record_oracle_outcome(pos, reason, pnl)
                 if pos.position_id in self._prediction_ids:
                     self._record_learning_memory_outcome(
@@ -1325,7 +1327,10 @@ class ICARUSTrader(MathOptimizerMixin):
                     final_pnl = self._calculate_expiration_pnl(pos, current_price)
                     close_price = (final_pnl / (100 * pos.contracts)) + pos.entry_debit if pos.contracts > 0 else 0
 
-                    self.db.expire_position(pos.position_id, final_pnl, close_price)
+                    db_success = self.db.expire_position(pos.position_id, final_pnl, close_price)
+                    if not db_success:
+                        logger.error(f"CRITICAL: Failed to expire {pos.position_id} in database! P&L ${final_pnl:.2f} not recorded.")
+                        result['errors'].append(f"DB update failed for {pos.position_id}")
 
                     close_reason = "EXPIRED_PROFIT" if final_pnl > 0 else "EXPIRED_LOSS"
                     self._record_oracle_outcome(pos, close_reason, final_pnl)

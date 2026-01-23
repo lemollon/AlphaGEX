@@ -392,20 +392,25 @@ class BotMetricsService:
         max_drawdown_pct = 0.0
 
         conn = self._get_connection()
+        if not conn:
+            logger.warning(f"get_metrics_summary({bot.value}): Database connection failed, returning defaults")
+
         if conn:
             try:
                 cursor = conn.cursor()
 
                 # Get aggregate stats from database (excluding unrealized - we calculate that with MTM)
+                # CRITICAL: Include 'partial_close' status - these are positions where one leg closed
+                # but the other failed. They have realized_pnl and must be counted in metrics.
                 cursor.execute(f"""
                     SELECT
                         COUNT(*) FILTER (WHERE status = 'open') as open_count,
-                        COUNT(*) FILTER (WHERE status IN ('closed', 'expired')) as closed_count,
-                        COUNT(*) FILTER (WHERE status IN ('closed', 'expired') AND realized_pnl > 0) as wins,
-                        COUNT(*) FILTER (WHERE status IN ('closed', 'expired') AND realized_pnl <= 0) as losses,
-                        COALESCE(SUM(CASE WHEN status IN ('closed', 'expired') THEN realized_pnl ELSE 0 END), 0) as total_realized,
+                        COUNT(*) FILTER (WHERE status IN ('closed', 'expired', 'partial_close')) as closed_count,
+                        COUNT(*) FILTER (WHERE status IN ('closed', 'expired', 'partial_close') AND realized_pnl > 0) as wins,
+                        COUNT(*) FILTER (WHERE status IN ('closed', 'expired', 'partial_close') AND realized_pnl <= 0) as losses,
+                        COALESCE(SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') THEN realized_pnl ELSE 0 END), 0) as total_realized,
                         COALESCE(SUM(CASE
-                            WHEN status IN ('closed', 'expired')
+                            WHEN status IN ('closed', 'expired', 'partial_close')
                             AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
                             THEN realized_pnl ELSE 0 END), 0) as today_realized
                     FROM {positions_table}
@@ -419,6 +424,16 @@ class BotMetricsService:
                     losing_trades = int(row[3] or 0)
                     total_realized = float(row[4] or 0)
                     today_realized = float(row[5] or 0)
+
+                    # DEBUG: Log query results for visibility
+                    logger.info(
+                        f"get_metrics_summary({bot.value}): "
+                        f"table={positions_table}, open={open_count}, closed={closed_count}, "
+                        f"wins={winning_trades}, losses={losing_trades}, "
+                        f"total_realized=${total_realized:.2f}, today_realized=${today_realized:.2f}"
+                    )
+                else:
+                    logger.warning(f"get_metrics_summary({bot.value}): Query returned no rows from {positions_table}")
 
                 total_trades = closed_count
 
@@ -586,14 +601,14 @@ class BotMetricsService:
         try:
             cursor = conn.cursor()
 
-            # Get daily P&L aggregates
+            # Get daily P&L aggregates (include partial_close - positions with one leg closed)
             cursor.execute(f"""
                 SELECT
                     DATE(close_time AT TIME ZONE 'America/Chicago') as trade_date,
                     SUM(realized_pnl) as daily_pnl,
                     COUNT(*) as trade_count
                 FROM {positions_table}
-                WHERE status IN ('closed', 'expired')
+                WHERE status IN ('closed', 'expired', 'partial_close')
                 AND DATE(close_time AT TIME ZONE 'America/Chicago') >= %s
                 GROUP BY DATE(close_time AT TIME ZONE 'America/Chicago')
                 ORDER BY trade_date
@@ -763,10 +778,11 @@ class BotMetricsService:
 
             try:
                 # Get total realized P&L up to (but not including) target date
+                # Include partial_close - positions where one leg closed but other failed
                 cursor.execute(f"""
                     SELECT COALESCE(SUM(realized_pnl), 0)
                     FROM {positions_table}
-                    WHERE status IN ('closed', 'expired')
+                    WHERE status IN ('closed', 'expired', 'partial_close')
                     AND DATE(close_time AT TIME ZONE 'America/Chicago') < %s
                 """, (target_date,))
                 prev_realized = float(cursor.fetchone()[0] or 0)
@@ -775,7 +791,7 @@ class BotMetricsService:
                 cursor.execute(f"""
                     SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
                     FROM {positions_table}
-                    WHERE status IN ('closed', 'expired')
+                    WHERE status IN ('closed', 'expired', 'partial_close')
                     AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
                 """, (target_date,))
                 row = cursor.fetchone()

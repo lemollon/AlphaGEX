@@ -439,9 +439,9 @@ async def get_titan_status():
                 SELECT
                     COUNT(*) as total,
                     SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_count,
-                    SUM(CASE WHEN status IN ('closed', 'expired') THEN 1 ELSE 0 END) as closed_count,
-                    SUM(CASE WHEN status IN ('closed', 'expired') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-                    COALESCE(SUM(CASE WHEN status IN ('closed', 'expired') THEN realized_pnl ELSE 0 END), 0) as total_pnl,
+                    SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') THEN 1 ELSE 0 END) as closed_count,
+                    SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                    COALESCE(SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') THEN realized_pnl ELSE 0 END), 0) as total_pnl,
                     SUM(CASE WHEN DATE(open_time::timestamptz AT TIME ZONE 'America/Chicago') = %s THEN 1 ELSE 0 END) as trades_today
                 FROM titan_positions
             ''', (today,))
@@ -678,7 +678,7 @@ async def get_titan_positions():
                     oracle_reasoning, oracle_top_factors,
                     open_time, close_time
                 FROM titan_positions
-                WHERE status IN ('closed', 'expired')
+                WHERE status IN ('closed', 'expired', 'partial_close')
                 ORDER BY close_time DESC
                 LIMIT 100
             ''')
@@ -916,7 +916,7 @@ async def get_titan_equity_curve(days: int = 30):
             SELECT DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as close_date,
                    realized_pnl, position_id
             FROM titan_positions
-            WHERE status IN ('closed', 'expired')
+            WHERE status IN ('closed', 'expired', 'partial_close')
             AND close_time IS NOT NULL
             ORDER BY close_time ASC
         ''')
@@ -1103,7 +1103,7 @@ async def get_titan_intraday_equity(date: str = None):
         cursor.execute("""
             SELECT COALESCE(SUM(realized_pnl), 0)
             FROM titan_positions
-            WHERE status IN ('closed', 'expired')
+            WHERE status IN ('closed', 'expired', 'partial_close')
             AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') <= %s
         """, (today,))
         total_realized_row = cursor.fetchone()
@@ -1113,7 +1113,7 @@ async def get_titan_intraday_equity(date: str = None):
         cursor.execute("""
             SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
             FROM titan_positions
-            WHERE status IN ('closed', 'expired')
+            WHERE status IN ('closed', 'expired', 'partial_close')
             AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
         """, (today,))
         today_row = cursor.fetchone()
@@ -1283,7 +1283,7 @@ async def save_titan_equity_snapshot():
         cursor.execute("""
             SELECT COALESCE(SUM(realized_pnl), 0)
             FROM titan_positions
-            WHERE status IN ('closed', 'expired')
+            WHERE status IN ('closed', 'expired', 'partial_close')
         """)
         row = cursor.fetchone()
         realized_pnl = float(row[0]) if row and row[0] else 0
@@ -1496,7 +1496,7 @@ async def get_titan_live_pnl():
             cursor.execute('''
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM titan_positions
-                WHERE status IN ('closed', 'expired')
+                WHERE status IN ('closed', 'expired', 'partial_close')
                 AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
             ''', (today,))
             realized_row = cursor.fetchone()
@@ -1506,7 +1506,7 @@ async def get_titan_live_pnl():
             cursor.execute('''
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM titan_positions
-                WHERE status IN ('closed', 'expired')
+                WHERE status IN ('closed', 'expired', 'partial_close')
                 AND close_time IS NOT NULL
             ''')
             cumulative_row = cursor.fetchone()
@@ -1713,7 +1713,7 @@ async def get_titan_performance(
                 SUM(CASE WHEN realized_pnl <= 0 THEN 1 ELSE 0 END) as trades_lost,
                 COALESCE(SUM(realized_pnl), 0) as net_pnl
             FROM titan_positions
-            WHERE status IN ('closed', 'expired')
+            WHERE status IN ('closed', 'expired', 'partial_close')
             AND close_time >= CURRENT_DATE - INTERVAL '%s days'
             GROUP BY DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago')
             ORDER BY trade_date DESC
@@ -1727,7 +1727,7 @@ async def get_titan_performance(
                 SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as total_wins,
                 COALESCE(SUM(realized_pnl), 0) as total_pnl
             FROM titan_positions
-            WHERE status IN ('closed', 'expired')
+            WHERE status IN ('closed', 'expired', 'partial_close')
             AND close_time >= CURRENT_DATE - INTERVAL '%s days'
         """, (days,))
 

@@ -1649,7 +1649,17 @@ class ARESTrader(MathOptimizerMixin):
                     close_price = pos.total_credit - (final_pnl / (100 * pos.contracts)) if pos.contracts > 0 else 0
 
                     # Mark position as expired in database with close price for audit
-                    self.db.expire_position(pos.position_id, final_pnl, close_price)
+                    # CRITICAL: Check return value - if DB update fails, position P&L won't be recorded!
+                    db_success = self.db.expire_position(pos.position_id, final_pnl, close_price)
+                    if not db_success:
+                        logger.error(
+                            f"CRITICAL: Failed to expire {pos.position_id} in database! "
+                            f"P&L ${final_pnl:.2f} will NOT be recorded. Position may be stuck in 'open' status."
+                        )
+                        result['errors'].append(f"DB update failed for {pos.position_id}")
+                        # Still continue to record the outcome for ML (position is effectively expired)
+                    else:
+                        logger.info(f"ARES: Successfully expired {pos.position_id} with P&L ${final_pnl:.2f}")
 
                     # Record outcome for ML feedback
                     # Zero P&L is breakeven, not a loss

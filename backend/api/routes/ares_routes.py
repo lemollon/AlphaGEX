@@ -1143,9 +1143,9 @@ async def get_ares_status():
                 SELECT
                     COUNT(*) as total,
                     SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_count,
-                    SUM(CASE WHEN status IN ('closed', 'expired') THEN 1 ELSE 0 END) as closed_count,
-                    SUM(CASE WHEN status IN ('closed', 'expired') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-                    COALESCE(SUM(CASE WHEN status IN ('closed', 'expired') THEN realized_pnl ELSE 0 END), 0) as total_pnl,
+                    SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') THEN 1 ELSE 0 END) as closed_count,
+                    SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                    COALESCE(SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') THEN realized_pnl ELSE 0 END), 0) as total_pnl,
                     SUM(CASE WHEN open_date = %s THEN 1 ELSE 0 END) as traded_today
                 FROM ares_positions
             ''', (today,))
@@ -1316,9 +1316,9 @@ async def get_ares_status():
                 SELECT
                     COUNT(*) as total,
                     SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_count,
-                    SUM(CASE WHEN status IN ('closed', 'expired') THEN 1 ELSE 0 END) as closed_count,
-                    SUM(CASE WHEN status IN ('closed', 'expired') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
-                    COALESCE(SUM(CASE WHEN status IN ('closed', 'expired') THEN realized_pnl ELSE 0 END), 0) as total_pnl
+                    SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') THEN 1 ELSE 0 END) as closed_count,
+                    SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') AND realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                    COALESCE(SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') THEN realized_pnl ELSE 0 END), 0) as total_pnl
                 FROM ares_positions
             ''')
             row = cursor.fetchone()
@@ -1450,7 +1450,7 @@ async def get_ares_positions():
                     oracle_confidence, oracle_win_probability, oracle_advice, oracle_reasoning, oracle_top_factors,
                     close_reason
                 FROM ares_positions
-                WHERE status IN ('closed', 'expired')
+                WHERE status IN ('closed', 'expired', 'partial_close')
                 ORDER BY close_time DESC
                 LIMIT 100
             ''')
@@ -1481,7 +1481,7 @@ async def get_ares_positions():
                     contracts, spread_width, max_loss, close_price, realized_pnl, status,
                     underlying_price_at_entry, vix_at_entry
                 FROM ares_positions
-                WHERE status IN ('closed', 'expired')
+                WHERE status IN ('closed', 'expired', 'partial_close')
                 ORDER BY close_time DESC
                 LIMIT 100
             ''')
@@ -1725,7 +1725,7 @@ async def get_ares_equity_curve(days: int = 30):
                 SELECT DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as close_date,
                        realized_pnl, position_id
                 FROM ares_positions
-                WHERE status IN ('closed', 'expired')
+                WHERE status IN ('closed', 'expired', 'partial_close')
                 AND close_time IS NOT NULL
                 ORDER BY close_time ASC
             ''')
@@ -2031,7 +2031,7 @@ async def get_ares_intraday_equity(date: str = None):
         cursor.execute("""
             SELECT COALESCE(SUM(realized_pnl), 0)
             FROM ares_positions
-            WHERE status IN ('closed', 'expired')
+            WHERE status IN ('closed', 'expired', 'partial_close')
             AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') <= %s
         """, (today,))
         total_realized_row = cursor.fetchone()
@@ -2041,7 +2041,7 @@ async def get_ares_intraday_equity(date: str = None):
         cursor.execute("""
             SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
             FROM ares_positions
-            WHERE status IN ('closed', 'expired')
+            WHERE status IN ('closed', 'expired', 'partial_close')
             AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
         """, (today,))
         today_row = cursor.fetchone()
@@ -2229,7 +2229,7 @@ async def get_ares_live_equity_curve():
         cursor.execute('''
             SELECT COALESCE(SUM(realized_pnl), 0)
             FROM ares_positions
-            WHERE status IN ('closed', 'expired')
+            WHERE status IN ('closed', 'expired', 'partial_close')
         ''')
         total_realized_row = cursor.fetchone()
         total_realized_pnl = float(total_realized_row[0]) if total_realized_row and total_realized_row[0] else 0
@@ -2239,7 +2239,7 @@ async def get_ares_live_equity_curve():
             SELECT DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as close_date,
                    realized_pnl, position_id, close_time
             FROM ares_positions
-            WHERE status IN ('closed', 'expired')
+            WHERE status IN ('closed', 'expired', 'partial_close')
             AND close_time IS NOT NULL
             ORDER BY close_time ASC
         ''')
@@ -2249,7 +2249,7 @@ async def get_ares_live_equity_curve():
         cursor.execute('''
             SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
             FROM ares_positions
-            WHERE status IN ('closed', 'expired')
+            WHERE status IN ('closed', 'expired', 'partial_close')
             AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
         ''', (today,))
         today_row = cursor.fetchone()
@@ -2458,7 +2458,7 @@ async def save_equity_snapshot():
         cursor.execute('''
             SELECT COALESCE(SUM(realized_pnl), 0)
             FROM ares_positions
-            WHERE status IN ('closed', 'expired')
+            WHERE status IN ('closed', 'expired', 'partial_close')
         ''')
         realized_row = cursor.fetchone()
         realized_pnl = float(realized_row[0]) if realized_row and realized_row[0] else 0
@@ -3161,7 +3161,7 @@ async def get_ares_live_pnl():
             cursor.execute('''
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM ares_positions
-                WHERE status IN ('closed', 'expired')
+                WHERE status IN ('closed', 'expired', 'partial_close')
                 AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
             ''', (today,))
             realized_row = cursor.fetchone()
@@ -3171,7 +3171,7 @@ async def get_ares_live_pnl():
             cursor.execute('''
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM ares_positions
-                WHERE status IN ('closed', 'expired')
+                WHERE status IN ('closed', 'expired', 'partial_close')
                 AND close_time IS NOT NULL
             ''')
             cumulative_row = cursor.fetchone()
@@ -3304,7 +3304,7 @@ async def get_ares_live_pnl():
             cursor.execute('''
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM ares_positions
-                WHERE status IN ('closed', 'expired')
+                WHERE status IN ('closed', 'expired', 'partial_close')
                 AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
             ''', (today,))
             realized_row = cursor.fetchone()
@@ -3314,7 +3314,7 @@ async def get_ares_live_pnl():
             cursor.execute('''
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM ares_positions
-                WHERE status IN ('closed', 'expired')
+                WHERE status IN ('closed', 'expired', 'partial_close')
                 AND close_time IS NOT NULL
             ''')
             cumulative_row = cursor.fetchone()
@@ -3855,7 +3855,7 @@ async def reset_ares_data(confirm: bool = False):
             total = cursor.fetchone()[0]
             cursor.execute("SELECT COUNT(*) FROM ares_positions WHERE status = 'open'")
             open_count = cursor.fetchone()[0]
-            cursor.execute("SELECT COUNT(*) FROM ares_positions WHERE status IN ('closed', 'expired')")
+            cursor.execute("SELECT COUNT(*) FROM ares_positions WHERE status IN ('closed', 'expired', 'partial_close')")
             closed_count = cursor.fetchone()[0]
             conn.close()
 
@@ -4117,10 +4117,10 @@ async def get_ares_intraday_diagnostics():
             cursor.execute("SELECT COUNT(*) FROM ares_positions WHERE status = 'open'")
             result["ares"]["open_positions"] = cursor.fetchone()[0]
 
-            cursor.execute("SELECT COUNT(*) FROM ares_positions WHERE status IN ('closed', 'expired')")
+            cursor.execute("SELECT COUNT(*) FROM ares_positions WHERE status IN ('closed', 'expired', 'partial_close')")
             result["ares"]["closed_positions"] = cursor.fetchone()[0]
 
-            cursor.execute("SELECT COALESCE(SUM(realized_pnl), 0) FROM ares_positions WHERE status IN ('closed', 'expired')")
+            cursor.execute("SELECT COALESCE(SUM(realized_pnl), 0) FROM ares_positions WHERE status IN ('closed', 'expired', 'partial_close')")
             result["ares"]["total_realized_pnl"] = float(cursor.fetchone()[0] or 0)
 
         # ========== TITAN COMPARISON ==========

@@ -340,7 +340,7 @@ def fetch_closed_trades_for_date(bot: str, report_date: date) -> List[Dict[str, 
             cursor.execute(f"""
                 SELECT *
                 FROM {table}
-                WHERE status IN ('closed', 'expired')
+                WHERE status IN ('closed', 'expired', 'partial_close')
                 AND DATE(close_time::timestamp AT TIME ZONE 'America/Chicago') = %s
                 ORDER BY close_time ASC
             """, (report_date,))
