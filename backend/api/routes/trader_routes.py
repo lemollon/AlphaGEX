@@ -2788,7 +2788,8 @@ async def get_sync_status():
             cursor.execute("SELECT COUNT(*) FROM autonomous_open_positions WHERE status = 'open'")
             status["unified_sync"]["open_positions"] = cursor.fetchone()[0]
 
-            cursor.execute("SELECT COUNT(*) FROM autonomous_closed_trades WHERE exit_time >= NOW() - INTERVAL '7 days'")
+            # Use COALESCE to handle legacy data with NULL exit_time
+            cursor.execute("SELECT COUNT(*) FROM autonomous_closed_trades WHERE COALESCE(exit_time::timestamp, entry_time::timestamp) >= NOW() - INTERVAL '7 days'")
             status["unified_sync"]["recent_closed"] = cursor.fetchone()[0]
         except Exception as e:
             status["unified_sync"]["error"] = str(e)

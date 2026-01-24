@@ -102,6 +102,53 @@ def fix_missing_close_times(conn):
     return total_fixed
 
 
+def fix_missing_exit_times(conn):
+    """
+    Data integrity migration: Fix autonomous_closed_trades with NULL exit_time.
+
+    The autonomous_closed_trades table uses exit_time (TEXT) instead of close_time.
+    Historical data may have NULL exit_time. This migration sets exit_time = entry_time.
+    """
+    cursor = conn.cursor()
+    total_fixed = 0
+
+    try:
+        # Check if table exists
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'autonomous_closed_trades'
+            )
+        """)
+        if not cursor.fetchone()[0]:
+            return 0
+
+        # Count affected rows
+        cursor.execute("""
+            SELECT COUNT(*) FROM autonomous_closed_trades
+            WHERE exit_time IS NULL AND entry_time IS NOT NULL
+        """)
+        affected = cursor.fetchone()[0]
+
+        if affected > 0:
+            # Fix: Set exit_time = entry_time for historical records
+            cursor.execute("""
+                UPDATE autonomous_closed_trades
+                SET exit_time = entry_time
+                WHERE exit_time IS NULL
+                AND entry_time IS NOT NULL
+            """)
+            total_fixed = cursor.rowcount
+            conn.commit()
+            logger.info(f"Fixed {total_fixed} trades in autonomous_closed_trades with missing exit_time")
+            print(f"🔧 Data integrity: Fixed {total_fixed} trades with missing exit_time")
+
+    except Exception as e:
+        logger.warning(f"Could not check/fix autonomous_closed_trades: {e}")
+
+    return total_fixed
+
+
 def ensure_all_tables_exist(conn):
     """
     Verify all tables exist.
@@ -132,6 +179,7 @@ def initialize_on_startup():
         # Run data integrity migrations
         print("🔍 Running data integrity checks...")
         fix_missing_close_times(conn)
+        fix_missing_exit_times(conn)
 
         conn.close()
 
