@@ -423,6 +423,58 @@ async def download_all_reports(
 
 
 # =============================================================================
+# COST TRACKING
+# =============================================================================
+
+@router.get("/reports/costs")
+async def get_all_reports_costs():
+    """
+    Get aggregate cost data for all bot reports.
+
+    Returns:
+        Cost breakdown by bot and total across all bots
+    """
+    if not GENERATOR_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Report generator service unavailable")
+
+    try:
+        costs_by_bot = {}
+        totals = {
+            "total_reports": 0,
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "total_tokens": 0,
+            "total_cost_usd": 0
+        }
+
+        for bot in VALID_BOTS:
+            stats = get_archive_stats(bot)
+            bot_costs = {
+                "total_reports": stats.get("total_reports", 0),
+                "total_input_tokens": stats.get("total_input_tokens", 0),
+                "total_output_tokens": stats.get("total_output_tokens", 0),
+                "total_tokens": stats.get("total_tokens", 0),
+                "total_cost_usd": stats.get("total_cost_usd", 0)
+            }
+            costs_by_bot[bot.upper()] = bot_costs
+
+            # Aggregate totals
+            for key in totals:
+                totals[key] += bot_costs.get(key, 0)
+
+        return {
+            "success": True,
+            "data": {
+                "by_bot": costs_by_bot,
+                "totals": totals
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting report costs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
 # ADMIN - PURGE OLD REPORTS
 # =============================================================================
 

@@ -70,6 +70,11 @@ interface ReportData {
   loss_count: number
   generated_at: string
   generation_model: string
+  generation_duration_ms?: number
+  input_tokens?: number
+  output_tokens?: number
+  total_tokens?: number
+  estimated_cost_usd?: number
   market_context?: {
     summary?: {
       vix_open?: number
@@ -709,8 +714,23 @@ export default function BotReportPage({
           </div>
 
           {/* Generation Info */}
-          <div className="text-center text-xs text-gray-500">
-            Generated at {formatTime(report.generated_at)} using {report.generation_model || 'Claude AI'}
+          <div className="text-center text-xs text-gray-500 space-y-1">
+            <div>
+              Generated at {formatTime(report.generated_at)} using {report.generation_model || 'Claude AI'}
+              {report.generation_duration_ms && ` in ${(report.generation_duration_ms / 1000).toFixed(1)}s`}
+            </div>
+            {(report.total_tokens || report.estimated_cost_usd) && (
+              <div className="flex items-center justify-center gap-3">
+                {report.total_tokens > 0 && (
+                  <span>{report.total_tokens.toLocaleString()} tokens</span>
+                )}
+                {report.estimated_cost_usd > 0 && (
+                  <span className="text-amber-400/70">
+                    ${report.estimated_cost_usd.toFixed(4)} estimated cost
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </>
       )}
