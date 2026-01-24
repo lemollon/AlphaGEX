@@ -2,6 +2,7 @@
 """
 Startup Initialization Script
 Creates database tables on first startup - NO FAKE DATA
+Also runs data integrity migrations to fix historical data issues.
 """
 import logging
 from db.config_and_database import init_database
@@ -18,6 +19,154 @@ if not logger.handlers:
     handler.setFormatter(formatter)
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
+
+
+# Bot position tables that need close_time migration
+BOT_POSITION_TABLES = [
+    'ares_positions',
+    'athena_positions',
+    'titan_positions',
+    'pegasus_positions',
+    'icarus_positions',
+]
+
+
+def fix_missing_close_times(conn):
+    """
+    Data integrity migration: Fix positions with NULL close_time.
+
+    Per CLAUDE.md requirements:
+    - close_position() must set: close_time = NOW(), realized_pnl
+    - expire_position() must exist and set same fields
+    - All position status changes must update close_time
+
+    Historical data may have close_time = NULL due to older code versions.
+    This migration sets close_time = open_time for affected records.
+    """
+    cursor = conn.cursor()
+    total_fixed = 0
+
+    for table in BOT_POSITION_TABLES:
+        try:
+            # Check if table exists
+            cursor.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = %s
+                )
+            """, (table,))
+            if not cursor.fetchone()[0]:
+                continue
+
+            # Check if both columns exist
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = %s AND column_name IN ('close_time', 'open_time')
+            """, (table,))
+            columns = [row[0] for row in cursor.fetchall()]
+            if 'close_time' not in columns or 'open_time' not in columns:
+                logger.debug(f"Skipping {table}: missing required columns")
+                continue
+
+            # Count affected rows
+            cursor.execute(f"""
+                SELECT COUNT(*) FROM {table}
+                WHERE status IN ('closed', 'expired', 'partial_close')
+                AND close_time IS NULL
+            """)
+            affected = cursor.fetchone()[0]
+
+            if affected > 0:
+                # Fix: Set close_time = open_time for historical records
+                cursor.execute(f"""
+                    UPDATE {table}
+                    SET close_time = open_time
+                    WHERE status IN ('closed', 'expired', 'partial_close')
+                    AND close_time IS NULL
+                    AND open_time IS NOT NULL
+                """)
+                fixed = cursor.rowcount
+                total_fixed += fixed
+                logger.info(f"Fixed {fixed} positions in {table} with missing close_time")
+
+        except Exception as e:
+            logger.warning(f"Could not check/fix {table}: {e}")
+            continue
+
+    if total_fixed > 0:
+        conn.commit()
+        print(f"🔧 Data integrity: Fixed {total_fixed} positions with missing close_time")
+    else:
+        logger.debug("No positions with missing close_time found")
+
+    return total_fixed
+
+
+def fix_missing_exit_times(conn):
+    """
+    Data integrity migration: Fix autonomous_closed_trades with NULL exit_time/exit_date.
+
+    The autonomous_closed_trades table uses exit_time/exit_date (TEXT) instead of close_time.
+    Historical data may have NULL exit_time/exit_date. This migration sets them to entry values.
+    """
+    cursor = conn.cursor()
+    total_fixed = 0
+
+    try:
+        # Check if table exists
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'autonomous_closed_trades'
+            )
+        """)
+        if not cursor.fetchone()[0]:
+            return 0
+
+        # Fix NULL exit_time
+        cursor.execute("""
+            SELECT COUNT(*) FROM autonomous_closed_trades
+            WHERE exit_time IS NULL AND entry_time IS NOT NULL
+        """)
+        affected_time = cursor.fetchone()[0]
+
+        if affected_time > 0:
+            cursor.execute("""
+                UPDATE autonomous_closed_trades
+                SET exit_time = entry_time
+                WHERE exit_time IS NULL
+                AND entry_time IS NOT NULL
+            """)
+            fixed_time = cursor.rowcount
+            total_fixed += fixed_time
+            logger.info(f"Fixed {fixed_time} trades with missing exit_time")
+
+        # Fix NULL exit_date
+        cursor.execute("""
+            SELECT COUNT(*) FROM autonomous_closed_trades
+            WHERE exit_date IS NULL AND entry_date IS NOT NULL
+        """)
+        affected_date = cursor.fetchone()[0]
+
+        if affected_date > 0:
+            cursor.execute("""
+                UPDATE autonomous_closed_trades
+                SET exit_date = entry_date
+                WHERE exit_date IS NULL
+                AND entry_date IS NOT NULL
+            """)
+            fixed_date = cursor.rowcount
+            total_fixed += fixed_date
+            logger.info(f"Fixed {fixed_date} trades with missing exit_date")
+
+        if total_fixed > 0:
+            conn.commit()
+            print(f"🔧 Data integrity: Fixed {total_fixed} trades with missing exit_time/exit_date")
+
+    except Exception as e:
+        logger.warning(f"Could not check/fix autonomous_closed_trades: {e}")
+
+    return total_fixed
 
 
 def ensure_all_tables_exist(conn):
@@ -46,6 +195,12 @@ def initialize_on_startup():
         # Ensure all tables exist
         conn = get_connection()
         ensure_all_tables_exist(conn)
+
+        # Run data integrity migrations
+        print("🔍 Running data integrity checks...")
+        fix_missing_close_times(conn)
+        fix_missing_exit_times(conn)
+
         conn.close()
 
         print("✅ Database tables ready")

@@ -261,7 +261,7 @@ class RiskManagerMixin:
             c.execute("""
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM autonomous_closed_trades
-                WHERE exit_date = %s AND symbol = %s
+                WHERE COALESCE(exit_date, entry_date) = %s AND symbol = %s
             """, (today, self.symbol))
 
             result = c.fetchone()
@@ -280,10 +280,10 @@ class RiskManagerMixin:
             c = conn.cursor()
 
             c.execute("""
-                SELECT exit_date, realized_pnl
+                SELECT COALESCE(exit_date, entry_date), realized_pnl
                 FROM autonomous_closed_trades
                 WHERE symbol = %s
-                ORDER BY exit_date ASC
+                ORDER BY COALESCE(exit_date, entry_date) ASC
             """, (self.symbol,))
 
             trades = c.fetchall()

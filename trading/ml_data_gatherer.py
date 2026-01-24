@@ -697,11 +697,11 @@ class MLDataGatherer:
 
             # Get recent closed trades for this bot
             c.execute("""
-                SELECT pnl, closed_at
+                SELECT pnl, COALESCE(closed_at, entry_time::timestamp) as closed_at
                 FROM autonomous_closed_trades
                 WHERE bot_name = %s
-                AND closed_at > NOW() - INTERVAL '30 days'
-                ORDER BY closed_at DESC
+                AND COALESCE(closed_at, entry_time::timestamp) > NOW() - INTERVAL '30 days'
+                ORDER BY COALESCE(closed_at, entry_time::timestamp) DESC
                 LIMIT 20
             """, (bot_name,))
 
@@ -733,7 +733,7 @@ class MLDataGatherer:
                 SELECT COALESCE(SUM(pnl), 0)
                 FROM autonomous_closed_trades
                 WHERE bot_name = %s
-                AND DATE(closed_at) = CURRENT_DATE
+                AND DATE(COALESCE(closed_at, entry_time::timestamp)) = CURRENT_DATE
             """, (bot_name,))
             result = c.fetchone()
             bundle.daily_pnl = float(result[0]) if result and result[0] else 0
@@ -742,7 +742,7 @@ class MLDataGatherer:
                 SELECT COALESCE(SUM(pnl), 0)
                 FROM autonomous_closed_trades
                 WHERE bot_name = %s
-                AND closed_at > NOW() - INTERVAL '7 days'
+                AND COALESCE(closed_at, entry_time::timestamp) > NOW() - INTERVAL '7 days'
             """, (bot_name,))
             result = c.fetchone()
             bundle.weekly_pnl = float(result[0]) if result and result[0] else 0

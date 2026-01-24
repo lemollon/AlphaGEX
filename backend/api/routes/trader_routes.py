@@ -145,7 +145,7 @@ async def get_trader_performance():
                 today_realized AS (
                     SELECT COALESCE(SUM(realized_pnl), 0) as total
                     FROM autonomous_closed_trades
-                    WHERE exit_date = %s
+                    WHERE COALESCE(exit_date, entry_date) = %s
                 ),
                 today_unrealized AS (
                     SELECT COALESCE(SUM(unrealized_pnl), 0) as total
@@ -315,14 +315,14 @@ async def get_closed_trades(limit: int = 50, symbol: str = None):
             cursor.execute("""
                 SELECT * FROM autonomous_closed_trades
                 WHERE symbol = %s
-                ORDER BY exit_date DESC, exit_time DESC
+                ORDER BY COALESCE(exit_date, entry_date) DESC, COALESCE(exit_time, entry_time) DESC
                 LIMIT %s
             """, (symbol.upper(), int(limit)))
         else:
             # Show ALL symbols for unified portfolio view
             cursor.execute("""
                 SELECT * FROM autonomous_closed_trades
-                ORDER BY exit_date DESC, exit_time DESC
+                ORDER BY COALESCE(exit_date, entry_date) DESC, COALESCE(exit_time, entry_time) DESC
                 LIMIT %s
             """, (int(limit),))
         trades = cursor.fetchall()
@@ -384,14 +384,14 @@ async def get_equity_curve(days: int = 30, symbol: str = None):
             symbol_filter = f"AND symbol = '{symbol.upper()}'" if symbol else ""
             trades = pd.read_sql_query(f"""
                 SELECT
-                    exit_date as trade_date,
-                    exit_time as trade_time,
+                    COALESCE(exit_date, entry_date) as trade_date,
+                    COALESCE(exit_time, entry_time) as trade_time,
                     realized_pnl,
                     strategy,
                     symbol
                 FROM autonomous_closed_trades
-                WHERE exit_date >= '{start_date_str}' {symbol_filter}
-                ORDER BY exit_date ASC, exit_time ASC
+                WHERE COALESCE(exit_date, entry_date) >= '{start_date_str}' {symbol_filter}
+                ORDER BY COALESCE(exit_date, entry_date) ASC, COALESCE(exit_time, entry_time) ASC
             """, conn)
 
             conn.close()
@@ -812,7 +812,7 @@ async def get_trader_trades(limit: int = 10, symbol: str = None):
                    exit_price, realized_pnl, exit_reason
             FROM autonomous_closed_trades
             {symbol_filter_closed}
-            ORDER BY exit_date DESC, exit_time DESC
+            ORDER BY COALESCE(exit_date, entry_date) DESC, COALESCE(exit_time, entry_time) DESC
             LIMIT %s
         """, conn, params=(int(limit),))
 
@@ -2788,7 +2788,8 @@ async def get_sync_status():
             cursor.execute("SELECT COUNT(*) FROM autonomous_open_positions WHERE status = 'open'")
             status["unified_sync"]["open_positions"] = cursor.fetchone()[0]
 
-            cursor.execute("SELECT COUNT(*) FROM autonomous_closed_trades WHERE exit_time >= NOW() - INTERVAL '7 days'")
+            # Use COALESCE to handle legacy data with NULL exit_time
+            cursor.execute("SELECT COUNT(*) FROM autonomous_closed_trades WHERE COALESCE(exit_time::timestamp, entry_time::timestamp) >= NOW() - INTERVAL '7 days'")
             status["unified_sync"]["recent_closed"] = cursor.fetchone()[0]
         except Exception as e:
             status["unified_sync"]["error"] = str(e)

@@ -1152,7 +1152,7 @@ class SmartDTECalculator:
                 WHERE strategy = %s
                   AND expiration_date IS NOT NULL
                   AND entry_date IS NOT NULL
-                  AND exit_date >= NOW() - INTERVAL '90 days'
+                  AND COALESCE(exit_date, entry_date) >= NOW() - INTERVAL '90 days'
             """
 
             try:

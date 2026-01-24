@@ -269,7 +269,7 @@ async def get_autonomous_positions(status: str = "open"):
                        entry_price, exit_price, realized_pnl, entry_date,
                        'closed' as status
                 FROM autonomous_closed_trades
-                ORDER BY exit_date DESC
+                ORDER BY COALESCE(exit_date, entry_date) DESC
                 LIMIT 50
             """)
             for row in c.fetchall():
@@ -376,7 +376,7 @@ async def get_partial_close_positions():
                        close_reason, close_time, realized_pnl
                 FROM ares_positions
                 WHERE status = 'partial_close'
-                ORDER BY close_time DESC
+                ORDER BY COALESCE(close_time, open_time) DESC
             """)
             for row in c.fetchall():
                 positions.append({
@@ -398,7 +398,7 @@ async def get_partial_close_positions():
                        close_reason, close_time, realized_pnl
                 FROM athena_positions
                 WHERE status = 'partial_close'
-                ORDER BY close_time DESC
+                ORDER BY COALESCE(close_time, open_time) DESC
             """)
             for row in c.fetchall():
                 positions.append({
@@ -420,7 +420,7 @@ async def get_partial_close_positions():
                        close_reason, close_time, realized_pnl
                 FROM pegasus_positions
                 WHERE status = 'partial_close'
-                ORDER BY close_time DESC
+                ORDER BY COALESCE(close_time, open_time) DESC
             """)
             for row in c.fetchall():
                 positions.append({

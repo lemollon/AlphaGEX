@@ -1451,7 +1451,7 @@ async def get_ares_positions():
                     close_reason
                 FROM ares_positions
                 WHERE status IN ('closed', 'expired', 'partial_close')
-                ORDER BY close_time DESC
+                ORDER BY COALESCE(close_time, open_time) DESC
                 LIMIT 100
             ''')
             closed_rows = cursor.fetchall()
@@ -1482,7 +1482,7 @@ async def get_ares_positions():
                     underlying_price_at_entry, vix_at_entry
                 FROM ares_positions
                 WHERE status IN ('closed', 'expired', 'partial_close')
-                ORDER BY close_time DESC
+                ORDER BY COALESCE(close_time, open_time) DESC
                 LIMIT 100
             ''')
             closed_rows = cursor.fetchall()
@@ -1721,13 +1721,13 @@ async def get_ares_equity_curve(days: int = 30):
             cursor = conn.cursor()
 
             # Get closed positions from database - use full timestamp for granular chart
+            # Use COALESCE to fall back to open_time if close_time is NULL (legacy data)
             cursor.execute('''
-                SELECT close_time::timestamptz AT TIME ZONE 'America/Chicago' as close_timestamp,
+                SELECT COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago' as close_timestamp,
                        realized_pnl, position_id
                 FROM ares_positions
                 WHERE status IN ('closed', 'expired', 'partial_close')
-                AND close_time IS NOT NULL
-                ORDER BY close_time ASC
+                ORDER BY COALESCE(close_time, open_time) ASC
             ''')
             rows = cursor.fetchall()
 
@@ -2039,11 +2039,12 @@ async def get_ares_intraday_equity(date: str = None):
 
         # Get total realized P&L from closed positions up to today
         # Cast close_time to timestamp to handle text/timestamp column type mismatch
+        # Use COALESCE to handle legacy data with NULL close_time
         cursor.execute("""
             SELECT COALESCE(SUM(realized_pnl), 0)
             FROM ares_positions
             WHERE status IN ('closed', 'expired', 'partial_close')
-            AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') <= %s
+            AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') <= %s
         """, (today,))
         total_realized_row = cursor.fetchone()
         total_realized = float(total_realized_row[0]) if total_realized_row and total_realized_row[0] else 0
@@ -2053,7 +2054,7 @@ async def get_ares_intraday_equity(date: str = None):
             SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
             FROM ares_positions
             WHERE status IN ('closed', 'expired', 'partial_close')
-            AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
+            AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
         """, (today,))
         today_row = cursor.fetchone()
         today_realized = float(today_row[0]) if today_row and today_row[0] else 0
@@ -2062,11 +2063,11 @@ async def get_ares_intraday_equity(date: str = None):
         # Get today's closed trades with timestamps for accurate intraday cumulative calculation
         # This fixes the "cliff" bug where old snapshots had NULL/incorrect realized_pnl
         cursor.execute("""
-            SELECT close_time::timestamptz, realized_pnl
+            SELECT COALESCE(close_time, open_time)::timestamptz, realized_pnl
             FROM ares_positions
             WHERE status IN ('closed', 'expired')
-            AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
-            ORDER BY close_time ASC
+            AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
+            ORDER BY COALESCE(close_time, open_time) ASC
         """, (today,))
         today_closes = cursor.fetchall()
 
@@ -2263,22 +2264,23 @@ async def get_ares_live_equity_curve():
         total_realized_pnl = float(total_realized_row[0]) if total_realized_row and total_realized_row[0] else 0
 
         # Get historical closed positions for the equity curve (grouped by date)
+        # Use COALESCE to fall back to open_time if close_time is NULL (legacy data)
         cursor.execute('''
-            SELECT DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as close_date,
-                   realized_pnl, position_id, close_time
+            SELECT DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') as close_date,
+                   realized_pnl, position_id, COALESCE(close_time, open_time) as close_time
             FROM ares_positions
             WHERE status IN ('closed', 'expired', 'partial_close')
-            AND close_time IS NOT NULL
-            ORDER BY close_time ASC
+            ORDER BY COALESCE(close_time, open_time) ASC
         ''')
         historical_rows = cursor.fetchall()
 
         # Get today's realized P&L specifically
+        # Use COALESCE to handle legacy data with NULL close_time
         cursor.execute('''
             SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
             FROM ares_positions
             WHERE status IN ('closed', 'expired', 'partial_close')
-            AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
+            AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
         ''', (today,))
         today_row = cursor.fetchone()
         today_realized = float(today_row[0]) if today_row and today_row[0] else 0
@@ -3186,21 +3188,22 @@ async def get_ares_live_pnl():
             open_rows = cursor.fetchall()
 
             # Get today's realized P&L from closed positions
+            # Use COALESCE to handle legacy data with NULL close_time
             cursor.execute('''
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM ares_positions
                 WHERE status IN ('closed', 'expired', 'partial_close')
-                AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
+                AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
             ''', (today,))
             realized_row = cursor.fetchone()
             today_realized = float(realized_row[0]) if realized_row else 0
 
             # Get cumulative realized P&L from ALL closed positions (matches equity curve)
+            # Note: Don't filter on close_time - historical data may have NULL close_time
             cursor.execute('''
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM ares_positions
                 WHERE status IN ('closed', 'expired', 'partial_close')
-                AND close_time IS NOT NULL
             ''')
             cumulative_row = cursor.fetchone()
             cumulative_realized = float(cumulative_row[0]) if cumulative_row else 0
@@ -3329,21 +3332,22 @@ async def get_ares_live_pnl():
             open_rows = cursor.fetchall()
 
             # Get today's realized P&L
+            # Use COALESCE to handle legacy data with NULL close_time
             cursor.execute('''
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM ares_positions
                 WHERE status IN ('closed', 'expired', 'partial_close')
-                AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
+                AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
             ''', (today,))
             realized_row = cursor.fetchone()
             today_realized = float(realized_row[0]) if realized_row else 0
 
             # Get cumulative realized P&L from ALL closed positions (matches equity curve)
+            # Note: Don't filter on close_time - historical data may have NULL close_time
             cursor.execute('''
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM ares_positions
                 WHERE status IN ('closed', 'expired', 'partial_close')
-                AND close_time IS NOT NULL
             ''')
             cumulative_row = cursor.fetchone()
             cumulative_realized = float(cumulative_row[0]) if cumulative_row else 0

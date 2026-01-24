@@ -765,7 +765,7 @@ async def _get_trader_update_data() -> dict:
                    entry_date, exit_date, entry_price, exit_price,
                    realized_pnl, realized_pnl_pct, exit_reason
             FROM autonomous_closed_trades
-            ORDER BY exit_date DESC, exit_time DESC
+            ORDER BY COALESCE(exit_date, entry_date) DESC, COALESCE(exit_time, entry_time) DESC
             LIMIT 10
         """, conn)
 

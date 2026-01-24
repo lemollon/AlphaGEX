@@ -191,10 +191,11 @@ def detect_events_from_trades(days: int = 90, bot_filter: str = None) -> List[di
             table_name = v2_bot_tables[bot_filter.upper()]
             bot_upper = bot_filter.upper()
 
+            # Use COALESCE to fall back to open_time if close_time is NULL (legacy data)
             cursor.execute(f'''
                 SELECT
-                    DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as exit_date,
-                    close_time as exit_time,
+                    DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') as exit_date,
+                    COALESCE(close_time, open_time) as exit_time,
                     realized_pnl,
                     %s as strategy,
                     ticker as symbol,
@@ -203,9 +204,8 @@ def detect_events_from_trades(days: int = 90, bot_filter: str = None) -> List[di
                     gex_regime
                 FROM {table_name}
                 WHERE status IN ('closed', 'expired', 'partial_close')
-                AND close_time IS NOT NULL
-                AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') >= %s
-                ORDER BY close_time ASC
+                AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') >= %s
+                ORDER BY COALESCE(close_time, open_time) ASC
             ''', [bot_upper, start_date])
 
             trades = cursor.fetchall()
@@ -224,8 +224,8 @@ def detect_events_from_trades(days: int = 90, bot_filter: str = None) -> List[di
                         exit_vix,
                         gex_regime
                     FROM autonomous_closed_trades
-                    WHERE exit_date >= %s AND strategy ILIKE %s
-                    ORDER BY exit_date ASC, exit_time ASC
+                    WHERE COALESCE(exit_date, entry_date) >= %s AND strategy ILIKE %s
+                    ORDER BY COALESCE(exit_date, entry_date) ASC, COALESCE(exit_time, entry_time) ASC
                 ''', params)
                 trades = cursor.fetchall()
         else:
@@ -238,8 +238,8 @@ def detect_events_from_trades(days: int = 90, bot_filter: str = None) -> List[di
 
             cursor.execute(f'''
                 SELECT
-                    exit_date,
-                    exit_time,
+                    COALESCE(exit_date, entry_date) as exit_date,
+                    COALESCE(exit_time, entry_time) as exit_time,
                     realized_pnl,
                     strategy,
                     symbol,
@@ -247,8 +247,8 @@ def detect_events_from_trades(days: int = 90, bot_filter: str = None) -> List[di
                     exit_vix,
                     gex_regime
                 FROM autonomous_closed_trades
-                WHERE exit_date >= %s {bot_clause}
-                ORDER BY exit_date ASC, exit_time ASC
+                WHERE COALESCE(exit_date, entry_date) >= %s {bot_clause}
+                ORDER BY COALESCE(exit_date, entry_date) ASC, COALESCE(exit_time, entry_time) ASC
             ''', params)
 
             trades = cursor.fetchall()
@@ -713,22 +713,23 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
             try:
                 if is_individual_trades:
                     # Get individual trades with full timestamps for granular daily chart
+                    # Use COALESCE to fall back to open_time if close_time is NULL (legacy data)
                     cursor.execute(f'''
                         SELECT
-                            close_time::timestamptz AT TIME ZONE 'America/Chicago' as close_timestamp,
+                            COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago' as close_timestamp,
                             realized_pnl,
                             position_id
                         FROM {table_name}
                         WHERE status IN ('closed', 'expired', 'partial_close')
-                        AND close_time IS NOT NULL
-                        ORDER BY close_time ASC
+                        ORDER BY COALESCE(close_time, open_time) ASC
                     ''')
                 else:
                     # Weekly/monthly aggregation
+                    # Use COALESCE to fall back to open_time if close_time is NULL (legacy data)
                     if timeframe == 'weekly':
-                        date_format_v2 = "DATE_TRUNC('week', DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago'))::date"
+                        date_format_v2 = "DATE_TRUNC('week', DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago'))::date"
                     else:  # monthly
-                        date_format_v2 = "DATE_TRUNC('month', DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago'))::date"
+                        date_format_v2 = "DATE_TRUNC('month', DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago'))::date"
 
                     cursor.execute(f'''
                         SELECT
@@ -737,7 +738,6 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
                             COUNT(*) as trade_count
                         FROM {table_name}
                         WHERE status IN ('closed', 'expired', 'partial_close')
-                        AND close_time IS NOT NULL
                         GROUP BY {date_format_v2}
                         ORDER BY period_date ASC
                     ''')
@@ -754,18 +754,18 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
                     # Get ALL trades - no date filter per CLAUDE.md requirements
                     cursor.execute('''
                         SELECT
-                            exit_date::date as close_timestamp,
+                            COALESCE(exit_date, entry_date)::date as close_timestamp,
                             realized_pnl,
                             id as position_id
                         FROM autonomous_closed_trades
                         WHERE strategy ILIKE %s
-                        ORDER BY exit_date ASC
+                        ORDER BY COALESCE(exit_date, entry_date) ASC
                     ''', [f'%{bot_filter}%'])
                 else:
                     if timeframe == 'weekly':
-                        date_format_legacy = "DATE_TRUNC('week', exit_date::date)::date"
+                        date_format_legacy = "DATE_TRUNC('week', COALESCE(exit_date, entry_date)::date)::date"
                     else:
-                        date_format_legacy = "DATE_TRUNC('month', exit_date::date)::date"
+                        date_format_legacy = "DATE_TRUNC('month', COALESCE(exit_date, entry_date)::date)::date"
                     # Get ALL trades - no date filter per CLAUDE.md requirements
                     cursor.execute(f'''
                         SELECT
@@ -790,18 +790,18 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
                 # Get ALL trades - no date filter per CLAUDE.md requirements
                 cursor.execute(f'''
                     SELECT
-                        exit_date::date as close_timestamp,
+                        COALESCE(exit_date, entry_date)::date as close_timestamp,
                         realized_pnl,
                         id as position_id
                     FROM autonomous_closed_trades
                     {bot_clause}
-                    ORDER BY exit_date ASC
+                    ORDER BY COALESCE(exit_date, entry_date) ASC
                 ''', params)
             else:
                 if timeframe == 'weekly':
-                    date_format_legacy = "DATE_TRUNC('week', exit_date::date)::date"
+                    date_format_legacy = "DATE_TRUNC('week', COALESCE(exit_date, entry_date)::date)::date"
                 else:
-                    date_format_legacy = "DATE_TRUNC('month', exit_date::date)::date"
+                    date_format_legacy = "DATE_TRUNC('month', COALESCE(exit_date, entry_date)::date)::date"
                 # Get ALL trades - no date filter per CLAUDE.md requirements
                 where_clause = f"WHERE {bot_clause[6:]}" if bot_clause else ""
                 cursor.execute(f'''

@@ -499,10 +499,11 @@ class TITANDatabase:
         try:
             with db_connection() as conn:
                 c = conn.cursor()
+                # Use COALESCE to handle legacy data with NULL close_time
                 c.execute("""
-                    SELECT close_time FROM titan_positions
-                    WHERE status = 'closed' AND close_time IS NOT NULL
-                    ORDER BY close_time DESC
+                    SELECT COALESCE(close_time, open_time) FROM titan_positions
+                    WHERE status = 'closed'
+                    ORDER BY COALESCE(close_time, open_time) DESC
                     LIMIT 1
                 """)
                 result = c.fetchone()
@@ -833,7 +834,7 @@ class TITANDatabase:
                         close_price, close_reason, realized_pnl
                     FROM titan_positions
                     WHERE status = 'partial_close'
-                    ORDER BY close_time DESC
+                    ORDER BY COALESCE(close_time, open_time) DESC
                 """)
 
                 for row in c.fetchall():

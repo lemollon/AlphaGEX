@@ -924,12 +924,13 @@ class OrderExecutor:
 
             # Query closed ARES trades for win rate calculation
             # BUG FIX: Query ares_positions table instead of autonomous_closed_trades
+            # Use COALESCE to handle legacy data with NULL close_time
             trades = db.execute_query("""
                 SELECT realized_pnl as pnl_realized, total_credit as entry_credit, max_loss
                 FROM ares_positions
                 WHERE status IN ('closed', 'expired')
-                AND close_time > NOW() - INTERVAL '90 days'
-                ORDER BY close_time DESC
+                AND COALESCE(close_time, open_time) > NOW() - INTERVAL '90 days'
+                ORDER BY COALESCE(close_time, open_time) DESC
                 LIMIT 100
             """)
 

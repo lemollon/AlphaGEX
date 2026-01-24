@@ -720,7 +720,7 @@ class AutonomousPaperTrader(
         c.execute("""
             SELECT COALESCE(SUM(realized_pnl), 0)
             FROM autonomous_closed_trades
-            WHERE exit_date = %s
+            WHERE COALESCE(exit_date, entry_date) = %s
         """, (today,))
         today_realized = c.fetchone()[0] or 0
 
