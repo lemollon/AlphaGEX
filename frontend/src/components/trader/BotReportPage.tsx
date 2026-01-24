@@ -721,10 +721,10 @@ export default function BotReportPage({
             </div>
             {(report.total_tokens || report.estimated_cost_usd) && (
               <div className="flex items-center justify-center gap-3">
-                {report.total_tokens > 0 && (
-                  <span>{report.total_tokens.toLocaleString()} tokens</span>
+                {(report.total_tokens ?? 0) > 0 && (
+                  <span>{report.total_tokens?.toLocaleString()} tokens</span>
                 )}
-                {report.estimated_cost_usd > 0 && (
+                {(report.estimated_cost_usd ?? 0) > 0 && (
                   <span className="text-amber-400/70">
                     ${report.estimated_cost_usd.toFixed(4)} estimated cost
                   </span>
