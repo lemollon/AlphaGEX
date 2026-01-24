@@ -772,7 +772,7 @@ class PEGASUSDatabase:
                         close_price, close_reason, realized_pnl
                     FROM pegasus_positions
                     WHERE status = 'partial_close'
-                    ORDER BY close_time DESC
+                    ORDER BY COALESCE(close_time, open_time) DESC
                 """)
 
                 for row in c.fetchall():
