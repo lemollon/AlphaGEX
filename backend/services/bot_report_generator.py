@@ -27,6 +27,26 @@ CENTRAL_TZ = ZoneInfo("America/Chicago")
 # Claude model to use
 CLAUDE_MODEL = "claude-3-5-sonnet-20241022"
 
+# Claude pricing (per 1M tokens) - Sonnet 3.5 as of Jan 2025
+CLAUDE_INPUT_PRICE_PER_1M = 3.00   # $3 per 1M input tokens
+CLAUDE_OUTPUT_PRICE_PER_1M = 15.00  # $15 per 1M output tokens
+
+
+def calculate_claude_cost(input_tokens: int, output_tokens: int) -> float:
+    """
+    Calculate the estimated cost in USD for Claude API usage.
+
+    Args:
+        input_tokens: Number of input tokens
+        output_tokens: Number of output tokens
+
+    Returns:
+        Estimated cost in USD
+    """
+    input_cost = (input_tokens / 1_000_000) * CLAUDE_INPUT_PRICE_PER_1M
+    output_cost = (output_tokens / 1_000_000) * CLAUDE_OUTPUT_PRICE_PER_1M
+    return input_cost + output_cost
+
 
 # =============================================================================
 # HELPER FUNCTIONS
@@ -274,7 +294,13 @@ def _ensure_report_tables_exist():
                     generated_at TIMESTAMP WITH TIME ZONE,
                     generation_model VARCHAR(50),
                     generation_duration_ms INTEGER,
-                    archived_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                    archived_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+                    -- Cost tracking
+                    input_tokens INTEGER DEFAULT 0,
+                    output_tokens INTEGER DEFAULT 0,
+                    total_tokens INTEGER DEFAULT 0,
+                    estimated_cost_usd DECIMAL(10,6) DEFAULT 0
                 )
             """)
 
@@ -682,26 +708,41 @@ def analyze_trade_with_claude(
             messages=[{"role": "user", "content": prompt}]
         )
 
+        # Capture token usage
+        input_tokens = getattr(message.usage, 'input_tokens', 0) if hasattr(message, 'usage') else 0
+        output_tokens = getattr(message.usage, 'output_tokens', 0) if hasattr(message, 'usage') else 0
+
         # Parse response safely
         response_text = _extract_claude_response_text(message)
         if not response_text:
             logger.warning("Could not extract text from Claude trade analysis response")
-            return _fallback_trade_analysis(trade, ticks)
+            fallback = _fallback_trade_analysis(trade, ticks)
+            fallback["_input_tokens"] = input_tokens
+            fallback["_output_tokens"] = output_tokens
+            return fallback
 
         analysis = _parse_claude_json_response(response_text)
         if not analysis:
             logger.warning(f"Could not parse Claude trade analysis as JSON: {response_text[:200]}")
-            return _fallback_trade_analysis(trade, ticks)
+            fallback = _fallback_trade_analysis(trade, ticks)
+            fallback["_input_tokens"] = input_tokens
+            fallback["_output_tokens"] = output_tokens
+            return fallback
 
-        # Add metadata
+        # Add metadata including token usage
         analysis["position_id"] = trade.get("position_id")
         analysis["pnl"] = trade.get("realized_pnl", 0)
         analysis["_generated_by"] = "claude-3-5-sonnet"
+        analysis["_input_tokens"] = input_tokens
+        analysis["_output_tokens"] = output_tokens
         return analysis
 
     except Exception as e:
         logger.error(f"Error calling Claude for trade analysis: {e}")
-        return _fallback_trade_analysis(trade, ticks)
+        fallback = _fallback_trade_analysis(trade, ticks)
+        fallback["_input_tokens"] = 0
+        fallback["_output_tokens"] = 0
+        return fallback
 
 
 def _fallback_trade_analysis(trade: Dict[str, Any], ticks: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -724,7 +765,9 @@ def _fallback_trade_analysis(trade: Dict[str, Any], ticks: List[Dict[str, Any]])
         "why_won_or_lost": f"{'Profit target reached' if won else 'Stop loss or adverse move'} - {trade.get('close_reason', 'unknown')}",
         "lesson": "Review trade manually for specific insights",
         "key_timestamps": [],
-        "_generated_by": "fallback"
+        "_generated_by": "fallback",
+        "_input_tokens": 0,
+        "_output_tokens": 0
     }
 
 
@@ -795,7 +838,9 @@ def generate_daily_summary_with_claude(
             "win_rate": "N/A",
             "lessons_learned": [],
             "best_trade": None,
-            "worst_trade": None
+            "worst_trade": None,
+            "_input_tokens": 0,
+            "_output_tokens": 0
         }
 
     if not CLAUDE_AVAILABLE:
@@ -846,23 +891,38 @@ def generate_daily_summary_with_claude(
             messages=[{"role": "user", "content": prompt}]
         )
 
+        # Capture token usage
+        input_tokens = getattr(message.usage, 'input_tokens', 0) if hasattr(message, 'usage') else 0
+        output_tokens = getattr(message.usage, 'output_tokens', 0) if hasattr(message, 'usage') else 0
+
         # Parse response safely
         response_text = _extract_claude_response_text(message)
         if not response_text:
             logger.warning("Could not extract text from Claude daily summary response")
-            return _fallback_daily_summary(trades, trade_analyses)
+            fallback = _fallback_daily_summary(trades, trade_analyses)
+            fallback["_input_tokens"] = input_tokens
+            fallback["_output_tokens"] = output_tokens
+            return fallback
 
         summary = _parse_claude_json_response(response_text)
         if not summary:
             logger.warning(f"Could not parse daily summary as JSON: {response_text[:200]}")
-            return _fallback_daily_summary(trades, trade_analyses)
+            fallback = _fallback_daily_summary(trades, trade_analyses)
+            fallback["_input_tokens"] = input_tokens
+            fallback["_output_tokens"] = output_tokens
+            return fallback
 
         summary["_generated_by"] = "claude-3-5-sonnet"
+        summary["_input_tokens"] = input_tokens
+        summary["_output_tokens"] = output_tokens
         return summary
 
     except Exception as e:
         logger.error(f"Error generating daily summary: {e}")
-        return _fallback_daily_summary(trades, trade_analyses)
+        fallback = _fallback_daily_summary(trades, trade_analyses)
+        fallback["_input_tokens"] = 0
+        fallback["_output_tokens"] = 0
+        return fallback
 
 
 def _fallback_daily_summary(
@@ -896,7 +956,9 @@ def _fallback_daily_summary(
             "position_id": worst.get("position_id") if worst else None,
             "reason": f"Worst P&L: ${worst.get('realized_pnl', 0):.2f}" if worst else None
         },
-        "_generated_by": "fallback"
+        "_generated_by": "fallback",
+        "_input_tokens": 0,
+        "_output_tokens": 0
     }
 
 
@@ -969,6 +1031,19 @@ def generate_report_for_bot(
 
     generation_time_ms = int((time.time() - start_time) * 1000)
 
+    # Aggregate token usage from all Claude calls
+    total_input_tokens = sum(a.get("_input_tokens", 0) for a in trade_analyses)
+    total_output_tokens = sum(a.get("_output_tokens", 0) for a in trade_analyses)
+
+    # Add daily summary tokens
+    total_input_tokens += daily_summary_data.get("_input_tokens", 0)
+    total_output_tokens += daily_summary_data.get("_output_tokens", 0)
+
+    total_tokens = total_input_tokens + total_output_tokens
+    estimated_cost = calculate_claude_cost(total_input_tokens, total_output_tokens)
+
+    logger.info(f"Report tokens: {total_input_tokens} input + {total_output_tokens} output = {total_tokens} total, cost: ${estimated_cost:.4f}")
+
     # Build complete report
     report = {
         "report_date": report_date.isoformat(),
@@ -986,7 +1061,11 @@ def generate_report_for_bot(
         "loss_count": loss_count,
         "generated_at": datetime.now(CENTRAL_TZ).isoformat(),
         "generation_model": "claude-3-5-sonnet" if CLAUDE_AVAILABLE else "fallback",
-        "generation_duration_ms": generation_time_ms
+        "generation_duration_ms": generation_time_ms,
+        "input_tokens": total_input_tokens,
+        "output_tokens": total_output_tokens,
+        "total_tokens": total_tokens,
+        "estimated_cost_usd": estimated_cost
     }
 
     # Step 7: Save to archive
@@ -1036,9 +1115,13 @@ def save_report_to_archive(bot: str, report: Dict[str, Any]) -> bool:
                     generated_at,
                     generation_model,
                     generation_duration_ms,
+                    input_tokens,
+                    output_tokens,
+                    total_tokens,
+                    estimated_cost_usd,
                     archived_at
                 ) VALUES (
-                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW()
                 )
                 ON CONFLICT (report_date) DO UPDATE SET
                     trades_data = EXCLUDED.trades_data,
@@ -1055,6 +1138,10 @@ def save_report_to_archive(bot: str, report: Dict[str, Any]) -> bool:
                     generated_at = EXCLUDED.generated_at,
                     generation_model = EXCLUDED.generation_model,
                     generation_duration_ms = EXCLUDED.generation_duration_ms,
+                    input_tokens = EXCLUDED.input_tokens,
+                    output_tokens = EXCLUDED.output_tokens,
+                    total_tokens = EXCLUDED.total_tokens,
+                    estimated_cost_usd = EXCLUDED.estimated_cost_usd,
                     archived_at = NOW()
             """, (
                 _safe_get(report, "report_date", default=""),
@@ -1071,7 +1158,11 @@ def save_report_to_archive(bot: str, report: Dict[str, Any]) -> bool:
                 _safe_get(report, "loss_count", default=0),
                 _safe_get(report, "generated_at", default=""),
                 _safe_get(report, "generation_model", default=""),
-                _safe_get(report, "generation_duration_ms", default=0)
+                _safe_get(report, "generation_duration_ms", default=0),
+                _safe_get(report, "input_tokens", default=0),
+                _safe_get(report, "output_tokens", default=0),
+                _safe_get(report, "total_tokens", default=0),
+                _safe_get(report, "estimated_cost_usd", default=0)
             ))
 
             logger.info(f"Saved report to {table_name} for {_safe_get(report, 'report_date')}")
@@ -1184,7 +1275,11 @@ def get_archive_list(
                     win_count,
                     loss_count,
                     lessons_learned,
-                    generated_at
+                    generated_at,
+                    input_tokens,
+                    output_tokens,
+                    total_tokens,
+                    estimated_cost_usd
                 FROM {table_name}
                 ORDER BY report_date DESC
                 LIMIT %s OFFSET %s
@@ -1199,7 +1294,11 @@ def get_archive_list(
                     "win_count": row[3] or 0,
                     "loss_count": row[4] or 0,
                     "lessons_learned": row[5] or [],
-                    "generated_at": row[6].isoformat() if isinstance(row[6], datetime) else row[6]
+                    "generated_at": row[6].isoformat() if isinstance(row[6], datetime) else row[6],
+                    "input_tokens": row[7] or 0,
+                    "output_tokens": row[8] or 0,
+                    "total_tokens": row[9] or 0,
+                    "estimated_cost_usd": float(row[10]) if row[10] else 0
                 })
 
             return reports, total
@@ -1239,7 +1338,11 @@ def get_archive_stats(bot: str) -> Dict[str, Any]:
                     COALESCE(SUM(win_count), 0) as total_wins,
                     COALESCE(SUM(loss_count), 0) as total_losses,
                     COALESCE(SUM(total_pnl), 0) as total_pnl_all_time,
-                    AVG(total_pnl) as avg_daily_pnl
+                    AVG(total_pnl) as avg_daily_pnl,
+                    COALESCE(SUM(input_tokens), 0) as total_input_tokens,
+                    COALESCE(SUM(output_tokens), 0) as total_output_tokens,
+                    COALESCE(SUM(total_tokens), 0) as total_tokens,
+                    COALESCE(SUM(estimated_cost_usd), 0) as total_cost_usd
                 FROM {table_name}
             """)
 
@@ -1258,7 +1361,12 @@ def get_archive_stats(bot: str) -> Dict[str, Any]:
                 "total_pnl": float(row[6]) if row[6] else 0,
                 "avg_daily_pnl": float(row[7]) if row[7] else 0,
                 "best_day": None,
-                "worst_day": None
+                "worst_day": None,
+                # Cost tracking
+                "total_input_tokens": row[8] or 0,
+                "total_output_tokens": row[9] or 0,
+                "total_tokens": row[10] or 0,
+                "total_cost_usd": float(row[11]) if row[11] else 0
             }
 
             # Get best day

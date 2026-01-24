@@ -1195,6 +1195,10 @@ export const apiClient = {
     api.get(`/api/trader/${bot}/reports/download-all`),
   getBotReportStats: (bot: string) =>
     api.get(`/api/trader/${bot}/reports/archive/stats`),
+
+  // Report cost tracking
+  getReportsCosts: () =>
+    api.get('/api/trader/reports/costs'),
 }
 
 // WebSocket connection
