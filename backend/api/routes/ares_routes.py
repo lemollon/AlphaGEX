@@ -1720,9 +1720,9 @@ async def get_ares_equity_curve(days: int = 30):
             conn = get_connection()
             cursor = conn.cursor()
 
-            # Get closed positions from database
+            # Get closed positions from database - use full timestamp for granular chart
             cursor.execute('''
-                SELECT DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as close_date,
+                SELECT close_time::timestamptz AT TIME ZONE 'America/Chicago' as close_timestamp,
                        realized_pnl, position_id
                 FROM ares_positions
                 WHERE status IN ('closed', 'expired', 'partial_close')
@@ -1765,44 +1765,52 @@ async def get_ares_equity_curve(days: int = 30):
                     except Exception as e:
                         logger.debug(f"ARES MTM calculation failed for {pos_id}: {e}")
 
-            # Build equity curve from database positions
+            # Build equity curve from database positions - one point per trade for granular charts
             equity_curve = []
-            positions_by_date = {}
             cumulative_pnl = 0
 
             if rows:
-                for row in rows:
-                    close_date, pnl, pos_id = row
-                    date_key = str(close_date) if close_date else None
-                    if date_key:
-                        if date_key not in positions_by_date:
-                            positions_by_date[date_key] = []
-                        positions_by_date[date_key].append({'pnl': float(pnl or 0), 'id': pos_id})
-
-                sorted_dates = sorted(positions_by_date.keys())
-
-                # Add starting point
-                if sorted_dates:
+                # Add starting point before first trade
+                first_timestamp = rows[0][0]
+                if first_timestamp:
+                    first_date = first_timestamp.strftime('%Y-%m-%d') if hasattr(first_timestamp, 'strftime') else str(first_timestamp)[:10]
                     equity_curve.append({
-                        "date": sorted_dates[0],
+                        "date": first_date,
+                        "timestamp": first_date + "T00:00:00",
                         "equity": starting_capital,
                         "pnl": 0,
                         "daily_pnl": 0,
-                        "return_pct": 0
+                        "return_pct": 0,
+                        "position_id": None
                     })
 
-                for date_str in sorted_dates:
-                    daily_pnl = sum(p['pnl'] for p in positions_by_date[date_str])
-                    cumulative_pnl += daily_pnl
+                # Create one data point per trade for granular visualization
+                for row in rows:
+                    close_timestamp, pnl, pos_id = row
+                    trade_pnl = float(pnl or 0)
+                    cumulative_pnl += trade_pnl
                     current_equity = starting_capital + cumulative_pnl
+
+                    # Format timestamp for frontend
+                    if close_timestamp:
+                        if hasattr(close_timestamp, 'isoformat'):
+                            timestamp_str = close_timestamp.isoformat()
+                            date_str = close_timestamp.strftime('%Y-%m-%d')
+                        else:
+                            timestamp_str = str(close_timestamp)
+                            date_str = str(close_timestamp)[:10]
+                    else:
+                        timestamp_str = today + "T00:00:00"
+                        date_str = today
 
                     equity_curve.append({
                         "date": date_str,
+                        "timestamp": timestamp_str,
                         "equity": round(current_equity, 2),
                         "pnl": round(cumulative_pnl, 2),
-                        "daily_pnl": round(daily_pnl, 2),
+                        "daily_pnl": round(trade_pnl, 2),
                         "return_pct": round((cumulative_pnl / starting_capital) * 100, 2),
-                        "trades_closed": len(positions_by_date[date_str])
+                        "position_id": pos_id
                     })
 
             # Add today's entry with unrealized P&L from open positions
@@ -1811,12 +1819,12 @@ async def get_ares_equity_curve(days: int = 30):
 
             # Always add today's data point if we have open positions or closed positions
             if open_positions_count > 0 or rows:
-                # Remove duplicate today entry if exists
-                if equity_curve and equity_curve[-1]["date"] == today:
-                    equity_curve.pop()
+                now = datetime.now(ZoneInfo("America/Chicago"))
+                now_str = now.isoformat()
 
                 equity_curve.append({
                     "date": today,
+                    "timestamp": now_str,
                     "equity": round(current_equity_with_unrealized, 2),
                     "pnl": round(total_pnl_with_unrealized, 2),
                     "realized_pnl": round(cumulative_pnl, 2),
@@ -1846,11 +1854,13 @@ async def get_ares_equity_curve(days: int = 30):
             logger.warning(f"Could not read equity curve from database: {db_err}")
 
         # Fallback: return starting equity point
+        now = datetime.now(ZoneInfo("America/Chicago"))
         return {
             "success": True,
             "data": {
                 "equity_curve": [{
                     "date": today,
+                    "timestamp": now.isoformat(),
                     "equity": starting_capital,
                     "pnl": 0,
                     "daily_pnl": 0,
@@ -1892,55 +1902,55 @@ async def get_ares_equity_curve(days: int = 30):
                 except Exception as e:
                     logger.debug(f"ARES MTM calculation failed for position: {e}")
 
-        # Group positions by close date (or expiration if no close_date)
-        positions_by_date = {}
-        for pos in ares.closed_positions:
-            # Use close_date if available, otherwise expiration
-            date_key = pos.close_date or pos.expiration
-            if date_key:
-                if date_key not in positions_by_date:
-                    positions_by_date[date_key] = []
-                positions_by_date[date_key].append(pos)
+        # Sort positions by close time for granular equity curve
+        sorted_positions = sorted(
+            ares.closed_positions,
+            key=lambda p: p.close_date or p.expiration or ""
+        )
 
-        # Sort dates and build curve
-        sorted_dates = sorted(positions_by_date.keys())
-
-        # Add starting point
-        if sorted_dates:
-            first_date = sorted_dates[0]
+        # Add starting point before first trade
+        if sorted_positions:
+            first_pos = sorted_positions[0]
+            first_date = first_pos.close_date or first_pos.expiration
             equity_curve.append({
-                "date": first_date,
+                "date": str(first_date)[:10] if first_date else today,
+                "timestamp": str(first_date) if first_date else today + "T00:00:00",
                 "equity": starting_capital,
                 "pnl": 0,
                 "daily_pnl": 0,
-                "return_pct": 0
+                "return_pct": 0,
+                "position_id": None
             })
 
-        for date_str in sorted_dates:
-            daily_pnl = sum(pos.realized_pnl for pos in positions_by_date[date_str])
-            cumulative_pnl += daily_pnl
+        # Create one data point per trade for granular visualization
+        for pos in sorted_positions:
+            trade_pnl = float(pos.realized_pnl or 0)
+            cumulative_pnl += trade_pnl
             current_equity = starting_capital + cumulative_pnl
+
+            close_time = pos.close_date or pos.expiration
+            date_str = str(close_time)[:10] if close_time else today
+            timestamp_str = str(close_time) if close_time else today + "T00:00:00"
 
             equity_curve.append({
                 "date": date_str,
+                "timestamp": timestamp_str,
                 "equity": round(current_equity, 2),
                 "pnl": round(cumulative_pnl, 2),
-                "daily_pnl": round(daily_pnl, 2),
+                "daily_pnl": round(trade_pnl, 2),
                 "return_pct": round((cumulative_pnl / starting_capital) * 100, 2),
-                "trades_closed": len(positions_by_date[date_str])
+                "position_id": getattr(pos, 'position_id', None)
             })
 
         # Add today's entry with unrealized P&L
         total_pnl_with_unrealized = cumulative_pnl + unrealized_pnl
         current_equity_with_unrealized = starting_capital + total_pnl_with_unrealized
+        now = datetime.now(ZoneInfo("America/Chicago"))
 
-        # Remove duplicate today entry if exists
-        if equity_curve and equity_curve[-1]["date"] == today:
-            equity_curve.pop()
-
-        # Add today's data point
+        # Add today's data point with unrealized P&L
         equity_curve.append({
             "date": today,
+            "timestamp": now.isoformat(),
             "equity": round(current_equity_with_unrealized, 2),
             "pnl": round(total_pnl_with_unrealized, 2),
             "realized_pnl": round(cumulative_pnl, 2),
@@ -1954,6 +1964,7 @@ async def get_ares_equity_curve(days: int = 30):
         if len(equity_curve) == 1:
             equity_curve.insert(0, {
                 "date": today,
+                "timestamp": today + "T00:00:00",
                 "equity": starting_capital,
                 "pnl": 0,
                 "daily_pnl": 0,

@@ -1377,9 +1377,9 @@ async def get_icarus_equity_curve(days: int = 30):
                 pass
 
         # Get ALL closed positions for correct cumulative P&L calculation
-        # The days parameter filters the OUTPUT, not the query
+        # Use full timestamp for granular chart - days parameter filters OUTPUT, not query
         cursor.execute('''
-            SELECT DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as close_date,
+            SELECT close_time::timestamptz AT TIME ZONE 'America/Chicago' as close_timestamp,
                    realized_pnl, position_id
             FROM icarus_positions
             WHERE status IN ('closed', 'expired', 'partial_close')
@@ -1420,56 +1420,64 @@ async def get_icarus_equity_curve(days: int = 30):
                 except Exception as e:
                     logger.debug(f"MTM calculation failed for {pos_id}: {e}")
 
+        # Build equity curve - one point per trade for granular visualization
         equity_curve = []
-        positions_by_date = {}
         cumulative_pnl = 0
 
         if rows:
-            for row in rows:
-                close_date, pnl, pos_id = row
-                date_key = str(close_date) if close_date else None
-                if date_key:
-                    if date_key not in positions_by_date:
-                        positions_by_date[date_key] = []
-                    positions_by_date[date_key].append({'pnl': float(pnl) if pnl else 0, 'id': pos_id})
-
-            sorted_dates = sorted(positions_by_date.keys())
-
-            if sorted_dates:
+            # Add starting point before first trade
+            first_timestamp = rows[0][0]
+            if first_timestamp:
+                first_date = first_timestamp.strftime('%Y-%m-%d') if hasattr(first_timestamp, 'strftime') else str(first_timestamp)[:10]
                 equity_curve.append({
-                    "date": sorted_dates[0],
+                    "date": first_date,
+                    "timestamp": first_date + "T00:00:00",
                     "equity": starting_capital,
                     "pnl": 0,
                     "daily_pnl": 0,
-                    "return_pct": 0
+                    "return_pct": 0,
+                    "position_id": None
                 })
 
-            for date_str in sorted_dates:
-                daily_pnl = sum(p['pnl'] for p in positions_by_date[date_str])
-                cumulative_pnl += daily_pnl
+            # Create one data point per trade
+            for row in rows:
+                close_timestamp, pnl, pos_id = row
+                trade_pnl = float(pnl) if pnl else 0
+                cumulative_pnl += trade_pnl
                 current_equity = starting_capital + cumulative_pnl
+
+                # Format timestamp for frontend
+                if close_timestamp:
+                    if hasattr(close_timestamp, 'isoformat'):
+                        timestamp_str = close_timestamp.isoformat()
+                        date_str = close_timestamp.strftime('%Y-%m-%d')
+                    else:
+                        timestamp_str = str(close_timestamp)
+                        date_str = str(close_timestamp)[:10]
+                else:
+                    timestamp_str = today + "T00:00:00"
+                    date_str = today
 
                 equity_curve.append({
                     "date": date_str,
+                    "timestamp": timestamp_str,
                     "equity": round(current_equity, 2),
                     "pnl": round(cumulative_pnl, 2),
-                    "daily_pnl": round(daily_pnl, 2),
+                    "daily_pnl": round(trade_pnl, 2),
                     "return_pct": round((cumulative_pnl / starting_capital) * 100, 2),
-                    "trades_closed": len(positions_by_date[date_str])
+                    "position_id": pos_id
                 })
 
         # Add today's entry with unrealized P&L from open positions
         total_pnl_with_unrealized = cumulative_pnl + unrealized_pnl
         current_equity_with_unrealized = starting_capital + total_pnl_with_unrealized
+        now = datetime.now(CENTRAL_TZ)
 
         # Always add today's data point if we have open positions or closed positions
         if open_positions_count > 0 or rows:
-            # Remove duplicate today entry if exists
-            if equity_curve and equity_curve[-1]["date"] == today:
-                equity_curve.pop()
-
             equity_curve.append({
                 "date": today,
+                "timestamp": now.isoformat(),
                 "equity": round(current_equity_with_unrealized, 2),
                 "pnl": round(total_pnl_with_unrealized, 2),
                 "realized_pnl": round(cumulative_pnl, 2),
@@ -1498,11 +1506,13 @@ async def get_icarus_equity_curve(days: int = 30):
     except Exception as db_err:
         logger.warning(f"Could not read equity curve from database: {db_err}")
 
+    now = datetime.now(CENTRAL_TZ)
     return {
         "success": True,
         "data": {
             "equity_curve": [{
                 "date": today,
+                "timestamp": now.isoformat(),
                 "equity": starting_capital,
                 "pnl": 0,
                 "daily_pnl": 0,

@@ -580,10 +580,10 @@ class BotMetricsService:
         Get historical equity curve for a bot.
 
         CRITICAL: Uses the SAME starting capital as intraday chart.
+        Returns individual trade points for granular chart visualization.
         """
         now = datetime.now(CENTRAL_TZ)
         today = now.strftime('%Y-%m-%d')
-        start_date = (now - timedelta(days=days)).strftime('%Y-%m-%d')
 
         # Get authoritative capital
         capital_config = self.get_capital_config(bot)
@@ -601,20 +601,20 @@ class BotMetricsService:
         try:
             cursor = conn.cursor()
 
-            # Get daily P&L aggregates (include partial_close - positions with one leg closed)
+            # Get ALL individual closed trades with full timestamps for granular chart
+            # No date filter on query - we need all trades for correct cumulative P&L
             cursor.execute(f"""
                 SELECT
-                    DATE(close_time AT TIME ZONE 'America/Chicago') as trade_date,
-                    SUM(realized_pnl) as daily_pnl,
-                    COUNT(*) as trade_count
+                    close_time AT TIME ZONE 'America/Chicago' as close_timestamp,
+                    realized_pnl,
+                    position_id
                 FROM {positions_table}
                 WHERE status IN ('closed', 'expired', 'partial_close')
-                AND DATE(close_time AT TIME ZONE 'America/Chicago') >= %s
-                GROUP BY DATE(close_time AT TIME ZONE 'America/Chicago')
-                ORDER BY trade_date
-            """, (start_date,))
+                AND close_time IS NOT NULL
+                ORDER BY close_time ASC
+            """)
 
-            daily_data = cursor.fetchall()
+            trades_data = cursor.fetchall()
 
             # Get current unrealized P&L
             unrealized_pnl = 0.0
@@ -634,29 +634,34 @@ class BotMetricsService:
 
             conn.close()
 
-            # Build equity curve
+            # Build equity curve - one point per trade for granular visualization
             cumulative_pnl = 0.0
             high_water = starting_capital
+            total_trade_count = 0
 
-            # Add starting point
-            if daily_data:
-                first_date = str(daily_data[0][0])
-                equity_curve.append(EquityCurvePoint(
-                    date=first_date,
-                    equity=starting_capital,
-                    daily_pnl=0,
-                    cumulative_pnl=0,
-                    realized_pnl=0,
-                    unrealized_pnl=0,
-                    drawdown_pct=0,
-                    trade_count=0,
-                    return_pct=0
-                ))
+            # Add starting point before first trade
+            if trades_data:
+                first_timestamp = trades_data[0][0]
+                if first_timestamp:
+                    first_date = first_timestamp.strftime('%Y-%m-%d') if hasattr(first_timestamp, 'strftime') else str(first_timestamp)[:10]
+                    equity_curve.append(EquityCurvePoint(
+                        date=first_date,
+                        equity=starting_capital,
+                        daily_pnl=0,
+                        cumulative_pnl=0,
+                        realized_pnl=0,
+                        unrealized_pnl=0,
+                        drawdown_pct=0,
+                        trade_count=0,
+                        return_pct=0
+                    ))
 
-            for trade_date, daily_pnl, trade_count in daily_data:
-                date_str = str(trade_date)
-                cumulative_pnl += float(daily_pnl or 0)
+            # Create one data point per trade
+            for close_timestamp, pnl, position_id in trades_data:
+                trade_pnl = float(pnl or 0)
+                cumulative_pnl += trade_pnl
                 current_equity = starting_capital + cumulative_pnl
+                total_trade_count += 1
 
                 # Update high water mark
                 if current_equity > high_water:
@@ -670,15 +675,24 @@ class BotMetricsService:
 
                 return_pct = round((cumulative_pnl / starting_capital) * 100, 2) if starting_capital > 0 else 0
 
+                # Format timestamp for frontend
+                if close_timestamp:
+                    if hasattr(close_timestamp, 'strftime'):
+                        date_str = close_timestamp.strftime('%Y-%m-%d')
+                    else:
+                        date_str = str(close_timestamp)[:10]
+                else:
+                    date_str = today
+
                 equity_curve.append(EquityCurvePoint(
                     date=date_str,
                     equity=round(current_equity, 2),
-                    daily_pnl=round(float(daily_pnl or 0), 2),
+                    daily_pnl=round(trade_pnl, 2),
                     cumulative_pnl=round(cumulative_pnl, 2),
                     realized_pnl=round(cumulative_pnl, 2),
                     unrealized_pnl=0,
                     drawdown_pct=drawdown_pct,
-                    trade_count=int(trade_count or 0),
+                    trade_count=1,  # Each point represents one trade
                     return_pct=return_pct
                 ))
 
@@ -686,22 +700,8 @@ class BotMetricsService:
             total_pnl = cumulative_pnl + unrealized_pnl
             current_equity = starting_capital + total_pnl
 
-            # Check if we need to add/update today's point
-            if equity_curve and equity_curve[-1].date == today:
-                # Update existing today entry
-                equity_curve[-1] = EquityCurvePoint(
-                    date=today,
-                    equity=round(current_equity, 2),
-                    daily_pnl=round(equity_curve[-1].daily_pnl + unrealized_pnl, 2),
-                    cumulative_pnl=round(total_pnl, 2),
-                    realized_pnl=round(cumulative_pnl, 2),
-                    unrealized_pnl=round(unrealized_pnl, 2),
-                    drawdown_pct=equity_curve[-1].drawdown_pct,
-                    trade_count=equity_curve[-1].trade_count,
-                    return_pct=round((total_pnl / starting_capital) * 100, 2) if starting_capital > 0 else 0
-                )
-            else:
-                # Add new today entry
+            # Always add today's point if we have data
+            if trades_data or open_count > 0:
                 equity_curve.append(EquityCurvePoint(
                     date=today,
                     equity=round(current_equity, 2),
