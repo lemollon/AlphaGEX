@@ -35,6 +35,10 @@ interface ArchiveItem {
   generated_at: string
   daily_summary?: string
   lessons_learned?: string[]
+  input_tokens?: number
+  output_tokens?: number
+  total_tokens?: number
+  estimated_cost_usd?: number
 }
 
 interface ArchiveStats {
@@ -48,6 +52,10 @@ interface ArchiveStats {
   oldest_date: string | null
   newest_date: string | null
   avg_daily_pnl?: number
+  total_input_tokens?: number
+  total_output_tokens?: number
+  total_tokens?: number
+  total_cost_usd?: number
 }
 
 interface BotReportArchiveProps {
@@ -207,7 +215,7 @@ export default function BotReportArchive({
 
       {/* Stats Overview */}
       {stats && (
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
           <div className={`rounded-lg border ${colors.border} ${colors.bg} p-4`}>
             <div className="text-gray-400 text-sm">Total P&L</div>
             <div className={`text-xl font-bold ${stats.total_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
@@ -244,6 +252,16 @@ export default function BotReportArchive({
             </div>
             {stats.worst_day && (
               <div className="text-xs text-gray-500">{formatDate(stats.worst_day.date)}</div>
+            )}
+          </div>
+
+          <div className={`rounded-lg border ${colors.border} ${colors.bg} p-4`}>
+            <div className="text-gray-400 text-sm">Report Costs</div>
+            <div className="text-xl font-bold text-amber-400">
+              ${(stats.total_cost_usd || 0).toFixed(2)}
+            </div>
+            {stats.total_tokens && stats.total_tokens > 0 && (
+              <div className="text-xs text-gray-500">{stats.total_tokens.toLocaleString()} tokens</div>
             )}
           </div>
         </div>
@@ -299,6 +317,12 @@ export default function BotReportArchive({
                   </div>
 
                   <div className="flex items-center gap-6">
+                    {item.estimated_cost_usd !== undefined && item.estimated_cost_usd > 0 && (
+                      <div className="text-right text-xs text-gray-500">
+                        <div className="text-amber-400/70">${item.estimated_cost_usd.toFixed(4)}</div>
+                        <div>{item.total_tokens?.toLocaleString() || 0} tokens</div>
+                      </div>
+                    )}
                     <div className="text-right">
                       <div className={`font-bold ${item.total_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                         {formatCurrency(item.total_pnl)}
