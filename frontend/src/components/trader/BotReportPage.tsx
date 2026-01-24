@@ -726,7 +726,7 @@ export default function BotReportPage({
                 )}
                 {(report.estimated_cost_usd ?? 0) > 0 && (
                   <span className="text-amber-400/70">
-                    ${report.estimated_cost_usd.toFixed(4)} estimated cost
+                    ${report.estimated_cost_usd?.toFixed(4)} estimated cost
                   </span>
                 )}
               </div>
