@@ -178,7 +178,7 @@ class RiskManager:
                 MAX(realized_pnl) as largest_winner,
                 MIN(realized_pnl) as largest_loser
             FROM autonomous_closed_trades
-            WHERE exit_date >= %s
+            WHERE COALESCE(exit_date, entry_date) >= %s
         """, (start_date,))
 
         row = c.fetchone()
@@ -401,12 +401,12 @@ class RiskManager:
 
             c.execute("""
                 SELECT
-                    exit_date,
+                    COALESCE(exit_date, entry_date) as exit_date,
                     SUM(realized_pnl) as daily_pnl
                 FROM autonomous_closed_trades
-                WHERE exit_date >= %s
-                GROUP BY exit_date
-                ORDER BY exit_date
+                WHERE COALESCE(exit_date, entry_date) >= %s
+                GROUP BY COALESCE(exit_date, entry_date)
+                ORDER BY COALESCE(exit_date, entry_date)
             """, (start_date,))
 
             rows = c.fetchall()

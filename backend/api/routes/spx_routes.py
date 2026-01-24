@@ -97,12 +97,12 @@ async def get_spx_trades(limit: int = 20):
         c.execute(f'''
             SELECT id, symbol, action as option_type, strike, expiration_date,
                    contracts, entry_price, entry_date, entry_time,
-                   exit_date, exit_time, exit_price,
+                   COALESCE(exit_date, entry_date) as exit_date, COALESCE(exit_time, entry_time) as exit_time, exit_price,
                    NULL::real as unrealized_pnl, realized_pnl, 'CLOSED' as status,
                    strategy, COALESCE(trade_reasoning, '') as trade_reasoning
             FROM autonomous_closed_trades
             WHERE symbol = 'SPX'
-            ORDER BY exit_date DESC, exit_time DESC
+            ORDER BY COALESCE(exit_date, entry_date) DESC, COALESCE(exit_time, entry_time) DESC
             LIMIT {int(limit)}
         ''')
         closed_trades = [dict(row) for row in c.fetchall()]
@@ -143,11 +143,11 @@ async def get_spx_equity_curve(days: int = 30):
 
         # Query unified closed trades table for SPX
         c.execute('''
-            SELECT exit_date as date, SUM(realized_pnl) as daily_pnl
+            SELECT COALESCE(exit_date, entry_date) as date, SUM(realized_pnl) as daily_pnl
             FROM autonomous_closed_trades
-            WHERE symbol = 'SPX' AND exit_date >= %s
-            GROUP BY exit_date
-            ORDER BY exit_date ASC
+            WHERE symbol = 'SPX' AND COALESCE(exit_date, entry_date) >= %s
+            GROUP BY COALESCE(exit_date, entry_date)
+            ORDER BY COALESCE(exit_date, entry_date) ASC
         ''', (start_date,))
 
         results = c.fetchall()
@@ -207,13 +207,13 @@ async def get_spx_trade_log():
 
         # Get closed trades for SPX
         c.execute('''
-            SELECT id, exit_date as date, exit_time as time,
+            SELECT id, COALESCE(exit_date, entry_date) as date, COALESCE(exit_time, entry_time) as time,
                    'CLOSE ' || action as action,
                    'SPX ' || strike || ' ' || action || ' ' || expiration_date as details,
                    COALESCE(realized_pnl, 0) as pnl
             FROM autonomous_closed_trades
             WHERE symbol = 'SPX'
-            ORDER BY exit_date DESC, exit_time DESC
+            ORDER BY COALESCE(exit_date, entry_date) DESC, COALESCE(exit_time, entry_time) DESC
             LIMIT 50
         ''')
         closed_logs = [dict(row) for row in c.fetchall()]

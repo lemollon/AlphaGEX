@@ -109,9 +109,9 @@ class TradeExportService:
                 created_at
             FROM autonomous_closed_trades
             WHERE symbol = %s
-              AND exit_date >= %s
-              AND exit_date <= %s
-            ORDER BY exit_date DESC, exit_time DESC
+              AND COALESCE(exit_date, entry_date) >= %s
+              AND COALESCE(exit_date, entry_date) <= %s
+            ORDER BY COALESCE(exit_date, entry_date) DESC, COALESCE(exit_time, entry_time) DESC
         ''', conn, params=(symbol, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')))
 
         # Get open positions
@@ -190,9 +190,9 @@ class TradeExportService:
                 exit_reason
             FROM autonomous_closed_trades
             WHERE symbol = %s
-              AND exit_date >= %s
-              AND exit_date <= %s
-            ORDER BY exit_date ASC, exit_time ASC
+              AND COALESCE(exit_date, entry_date) >= %s
+              AND COALESCE(exit_date, entry_date) <= %s
+            ORDER BY COALESCE(exit_date, entry_date) ASC, COALESCE(exit_time, entry_time) ASC
         ''', conn, params=(symbol, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')))
 
         conn.close()
@@ -892,8 +892,8 @@ class TradeExportService:
         """Add trade history sheet to workbook"""
         trades = pd.read_sql_query('''
             SELECT * FROM autonomous_closed_trades
-            WHERE symbol = %s AND exit_date >= %s AND exit_date <= %s
-            ORDER BY exit_date DESC
+            WHERE symbol = %s AND COALESCE(exit_date, entry_date) >= %s AND COALESCE(exit_date, entry_date) <= %s
+            ORDER BY COALESCE(exit_date, entry_date) DESC
         ''', conn, params=(symbol, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')))
 
         ws = wb.create_sheet("Trade History")
@@ -941,7 +941,7 @@ class TradeExportService:
                 MIN(realized_pnl) as worst_trade,
                 AVG(hold_time_hours) as avg_hold_time
             FROM autonomous_closed_trades
-            WHERE symbol = %s AND exit_date >= %s AND exit_date <= %s
+            WHERE symbol = %s AND COALESCE(exit_date, entry_date) >= %s AND COALESCE(exit_date, entry_date) <= %s
         ''', (symbol, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')))
 
         row = cursor.fetchone()

@@ -224,8 +224,8 @@ def detect_events_from_trades(days: int = 90, bot_filter: str = None) -> List[di
                         exit_vix,
                         gex_regime
                     FROM autonomous_closed_trades
-                    WHERE exit_date >= %s AND strategy ILIKE %s
-                    ORDER BY exit_date ASC, exit_time ASC
+                    WHERE COALESCE(exit_date, entry_date) >= %s AND strategy ILIKE %s
+                    ORDER BY COALESCE(exit_date, entry_date) ASC, COALESCE(exit_time, entry_time) ASC
                 ''', params)
                 trades = cursor.fetchall()
         else:
@@ -238,8 +238,8 @@ def detect_events_from_trades(days: int = 90, bot_filter: str = None) -> List[di
 
             cursor.execute(f'''
                 SELECT
-                    exit_date,
-                    exit_time,
+                    COALESCE(exit_date, entry_date) as exit_date,
+                    COALESCE(exit_time, entry_time) as exit_time,
                     realized_pnl,
                     strategy,
                     symbol,
@@ -247,8 +247,8 @@ def detect_events_from_trades(days: int = 90, bot_filter: str = None) -> List[di
                     exit_vix,
                     gex_regime
                 FROM autonomous_closed_trades
-                WHERE exit_date >= %s {bot_clause}
-                ORDER BY exit_date ASC, exit_time ASC
+                WHERE COALESCE(exit_date, entry_date) >= %s {bot_clause}
+                ORDER BY COALESCE(exit_date, entry_date) ASC, COALESCE(exit_time, entry_time) ASC
             ''', params)
 
             trades = cursor.fetchall()
@@ -754,18 +754,18 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
                     # Get ALL trades - no date filter per CLAUDE.md requirements
                     cursor.execute('''
                         SELECT
-                            exit_date::date as close_timestamp,
+                            COALESCE(exit_date, entry_date)::date as close_timestamp,
                             realized_pnl,
                             id as position_id
                         FROM autonomous_closed_trades
                         WHERE strategy ILIKE %s
-                        ORDER BY exit_date ASC
+                        ORDER BY COALESCE(exit_date, entry_date) ASC
                     ''', [f'%{bot_filter}%'])
                 else:
                     if timeframe == 'weekly':
-                        date_format_legacy = "DATE_TRUNC('week', exit_date::date)::date"
+                        date_format_legacy = "DATE_TRUNC('week', COALESCE(exit_date, entry_date)::date)::date"
                     else:
-                        date_format_legacy = "DATE_TRUNC('month', exit_date::date)::date"
+                        date_format_legacy = "DATE_TRUNC('month', COALESCE(exit_date, entry_date)::date)::date"
                     # Get ALL trades - no date filter per CLAUDE.md requirements
                     cursor.execute(f'''
                         SELECT
@@ -790,18 +790,18 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
                 # Get ALL trades - no date filter per CLAUDE.md requirements
                 cursor.execute(f'''
                     SELECT
-                        exit_date::date as close_timestamp,
+                        COALESCE(exit_date, entry_date)::date as close_timestamp,
                         realized_pnl,
                         id as position_id
                     FROM autonomous_closed_trades
                     {bot_clause}
-                    ORDER BY exit_date ASC
+                    ORDER BY COALESCE(exit_date, entry_date) ASC
                 ''', params)
             else:
                 if timeframe == 'weekly':
-                    date_format_legacy = "DATE_TRUNC('week', exit_date::date)::date"
+                    date_format_legacy = "DATE_TRUNC('week', COALESCE(exit_date, entry_date)::date)::date"
                 else:
-                    date_format_legacy = "DATE_TRUNC('month', exit_date::date)::date"
+                    date_format_legacy = "DATE_TRUNC('month', COALESCE(exit_date, entry_date)::date)::date"
                 # Get ALL trades - no date filter per CLAUDE.md requirements
                 where_clause = f"WHERE {bot_clause[6:]}" if bot_clause else ""
                 cursor.execute(f'''

@@ -618,7 +618,7 @@ def get_regime_pattern_performance() -> Dict[str, Any]:
                 MAX(realized_pnl) as best_trade,
                 MIN(realized_pnl) as worst_trade
             FROM autonomous_closed_trades
-            WHERE exit_date >= NOW() - INTERVAL '30 days'
+            WHERE COALESCE(exit_date, entry_date) >= NOW() - INTERVAL '30 days'
             GROUP BY pattern_type
             HAVING COUNT(*) >= 3
             ORDER BY (SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END)::float / COUNT(*)) DESC
@@ -1501,7 +1501,7 @@ async def generate_daily_trading_plan():
                     SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
                     AVG(realized_pnl) as avg_pnl
                 FROM autonomous_closed_trades
-                WHERE exit_date >= NOW() - INTERVAL '7 days'
+                WHERE COALESCE(exit_date, entry_date) >= NOW() - INTERVAL '7 days'
             """)
             perf_row = c.fetchone()
             if perf_row and perf_row['total']:

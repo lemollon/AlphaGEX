@@ -75,7 +75,7 @@ class PerformanceTrackerMixin:
                 SELECT realized_pnl_pct
                 FROM autonomous_closed_trades
                 WHERE UPPER(REPLACE(strategy, ' ', '_')) LIKE %s
-                ORDER BY exit_date DESC, exit_time DESC
+                ORDER BY COALESCE(exit_date, entry_date) DESC, COALESCE(exit_time, entry_time) DESC
             """, (f'%{core_strategy}%',))
 
             results = c.fetchall()
@@ -226,7 +226,7 @@ class PerformanceTrackerMixin:
             c.execute("""
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM autonomous_closed_trades
-                WHERE exit_date = %s
+                WHERE COALESCE(exit_date, entry_date) = %s
             """, (today_str,))
             daily_realized = c.fetchone()[0] or 0
 
@@ -286,7 +286,7 @@ class PerformanceTrackerMixin:
         closed = pd.read_sql_query("""
             SELECT * FROM autonomous_closed_trades
             WHERE symbol = %s
-            ORDER BY exit_date DESC, exit_time DESC
+            ORDER BY COALESCE(exit_date, entry_date) DESC, COALESCE(exit_time, entry_time) DESC
         """, conn, params=(symbol,))
 
         # Get open positions from dedicated table - FILTER BY SYMBOL
