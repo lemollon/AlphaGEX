@@ -603,15 +603,15 @@ class BotMetricsService:
 
             # Get ALL individual closed trades with full timestamps for granular chart
             # No date filter on query - we need all trades for correct cumulative P&L
+            # Use COALESCE to fall back to open_time if close_time is NULL (legacy data)
             cursor.execute(f"""
                 SELECT
-                    close_time AT TIME ZONE 'America/Chicago' as close_timestamp,
+                    COALESCE(close_time, open_time) AT TIME ZONE 'America/Chicago' as close_timestamp,
                     realized_pnl,
                     position_id
                 FROM {positions_table}
                 WHERE status IN ('closed', 'expired', 'partial_close')
-                AND close_time IS NOT NULL
-                ORDER BY close_time ASC
+                ORDER BY COALESCE(close_time, open_time) ASC
             """)
 
             trades_data = cursor.fetchall()

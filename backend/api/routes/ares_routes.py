@@ -1721,13 +1721,13 @@ async def get_ares_equity_curve(days: int = 30):
             cursor = conn.cursor()
 
             # Get closed positions from database - use full timestamp for granular chart
+            # Use COALESCE to fall back to open_time if close_time is NULL (legacy data)
             cursor.execute('''
-                SELECT close_time::timestamptz AT TIME ZONE 'America/Chicago' as close_timestamp,
+                SELECT COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago' as close_timestamp,
                        realized_pnl, position_id
                 FROM ares_positions
                 WHERE status IN ('closed', 'expired', 'partial_close')
-                AND close_time IS NOT NULL
-                ORDER BY close_time ASC
+                ORDER BY COALESCE(close_time, open_time) ASC
             ''')
             rows = cursor.fetchall()
 

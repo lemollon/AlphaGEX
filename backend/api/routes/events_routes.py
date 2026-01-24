@@ -713,22 +713,23 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
             try:
                 if is_individual_trades:
                     # Get individual trades with full timestamps for granular daily chart
+                    # Use COALESCE to fall back to open_time if close_time is NULL (legacy data)
                     cursor.execute(f'''
                         SELECT
-                            close_time::timestamptz AT TIME ZONE 'America/Chicago' as close_timestamp,
+                            COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago' as close_timestamp,
                             realized_pnl,
                             position_id
                         FROM {table_name}
                         WHERE status IN ('closed', 'expired', 'partial_close')
-                        AND close_time IS NOT NULL
-                        ORDER BY close_time ASC
+                        ORDER BY COALESCE(close_time, open_time) ASC
                     ''')
                 else:
                     # Weekly/monthly aggregation
+                    # Use COALESCE to fall back to open_time if close_time is NULL (legacy data)
                     if timeframe == 'weekly':
-                        date_format_v2 = "DATE_TRUNC('week', DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago'))::date"
+                        date_format_v2 = "DATE_TRUNC('week', DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago'))::date"
                     else:  # monthly
-                        date_format_v2 = "DATE_TRUNC('month', DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago'))::date"
+                        date_format_v2 = "DATE_TRUNC('month', DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago'))::date"
 
                     cursor.execute(f'''
                         SELECT
@@ -737,7 +738,6 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
                             COUNT(*) as trade_count
                         FROM {table_name}
                         WHERE status IN ('closed', 'expired', 'partial_close')
-                        AND close_time IS NOT NULL
                         GROUP BY {date_format_v2}
                         ORDER BY period_date ASC
                     ''')
