@@ -232,7 +232,7 @@ def get_strategy_performance(days: int = 30) -> Dict[str, Any]:
                     FROM autonomous_positions
                     WHERE bot_name = %s
                         AND status = 'closed'
-                        AND closed_at >= NOW() - INTERVAL '%s days'
+                        AND COALESCE(closed_at, created_at) >= NOW() - INTERVAL '%s days'
                 """, (bot, days))
 
                 row = c.fetchone()

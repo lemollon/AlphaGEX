@@ -43,8 +43,8 @@ class TradeJournalAgent:
                 notes
             FROM positions
             WHERE status = 'CLOSED'
-            AND closed_at >= NOW() - INTERVAL '%s days'
-            ORDER BY closed_at DESC
+            AND COALESCE(closed_at, opened_at) >= NOW() - INTERVAL '%s days'
+            ORDER BY COALESCE(closed_at, opened_at) DESC
         """
 
         df = pd.read_sql_query(query % days_back, conn.raw_connection)
