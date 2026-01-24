@@ -104,10 +104,10 @@ def fix_missing_close_times(conn):
 
 def fix_missing_exit_times(conn):
     """
-    Data integrity migration: Fix autonomous_closed_trades with NULL exit_time.
+    Data integrity migration: Fix autonomous_closed_trades with NULL exit_time/exit_date.
 
-    The autonomous_closed_trades table uses exit_time (TEXT) instead of close_time.
-    Historical data may have NULL exit_time. This migration sets exit_time = entry_time.
+    The autonomous_closed_trades table uses exit_time/exit_date (TEXT) instead of close_time.
+    Historical data may have NULL exit_time/exit_date. This migration sets them to entry values.
     """
     cursor = conn.cursor()
     total_fixed = 0
@@ -123,25 +123,45 @@ def fix_missing_exit_times(conn):
         if not cursor.fetchone()[0]:
             return 0
 
-        # Count affected rows
+        # Fix NULL exit_time
         cursor.execute("""
             SELECT COUNT(*) FROM autonomous_closed_trades
             WHERE exit_time IS NULL AND entry_time IS NOT NULL
         """)
-        affected = cursor.fetchone()[0]
+        affected_time = cursor.fetchone()[0]
 
-        if affected > 0:
-            # Fix: Set exit_time = entry_time for historical records
+        if affected_time > 0:
             cursor.execute("""
                 UPDATE autonomous_closed_trades
                 SET exit_time = entry_time
                 WHERE exit_time IS NULL
                 AND entry_time IS NOT NULL
             """)
-            total_fixed = cursor.rowcount
+            fixed_time = cursor.rowcount
+            total_fixed += fixed_time
+            logger.info(f"Fixed {fixed_time} trades with missing exit_time")
+
+        # Fix NULL exit_date
+        cursor.execute("""
+            SELECT COUNT(*) FROM autonomous_closed_trades
+            WHERE exit_date IS NULL AND entry_date IS NOT NULL
+        """)
+        affected_date = cursor.fetchone()[0]
+
+        if affected_date > 0:
+            cursor.execute("""
+                UPDATE autonomous_closed_trades
+                SET exit_date = entry_date
+                WHERE exit_date IS NULL
+                AND entry_date IS NOT NULL
+            """)
+            fixed_date = cursor.rowcount
+            total_fixed += fixed_date
+            logger.info(f"Fixed {fixed_date} trades with missing exit_date")
+
+        if total_fixed > 0:
             conn.commit()
-            logger.info(f"Fixed {total_fixed} trades in autonomous_closed_trades with missing exit_time")
-            print(f"🔧 Data integrity: Fixed {total_fixed} trades with missing exit_time")
+            print(f"🔧 Data integrity: Fixed {total_fixed} trades with missing exit_time/exit_date")
 
     except Exception as e:
         logger.warning(f"Could not check/fix autonomous_closed_trades: {e}")

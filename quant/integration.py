@@ -205,7 +205,7 @@ class QuantEnhancedTrader:
                     AVG(CASE WHEN pnl_percent <= 0 THEN ABS(pnl_percent) END) as avg_loss
                 FROM paper_trades
                 WHERE symbol = %s
-                  AND exit_date IS NOT NULL
+                  AND (exit_date IS NOT NULL OR status IN ('closed', 'expired'))
                   AND entry_date >= NOW() - INTERVAL '180 days'
             """, (self.symbol,))
 
