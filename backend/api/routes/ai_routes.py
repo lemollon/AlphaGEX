@@ -1251,7 +1251,7 @@ async def get_daily_briefing():
                     COALESCE(SUM(realized_pnl), 0) as total_pnl
                 FROM autonomous_positions
                 WHERE status = 'closed'
-                AND closed_at >= NOW() - INTERVAL '7 days'
+                AND COALESCE(closed_at, created_at) >= NOW() - INTERVAL '7 days'
             """)
             row = c.fetchone()
             if row and row[0] > 0:
@@ -1562,7 +1562,7 @@ async def execute_quick_command(request: dict):
                 c.execute("""
                     SELECT COALESCE(SUM(realized_pnl), 0)
                     FROM autonomous_positions
-                    WHERE status = 'closed' AND DATE(closed_at) = CURRENT_DATE
+                    WHERE status = 'closed' AND DATE(COALESCE(closed_at, created_at)) = CURRENT_DATE
                 """)
                 pnl_data["today"] = float(c.fetchone()[0] or 0)
 
@@ -1570,7 +1570,7 @@ async def execute_quick_command(request: dict):
                 c.execute("""
                     SELECT COALESCE(SUM(realized_pnl), 0)
                     FROM autonomous_positions
-                    WHERE status = 'closed' AND closed_at >= NOW() - INTERVAL '7 days'
+                    WHERE status = 'closed' AND COALESCE(closed_at, created_at) >= NOW() - INTERVAL '7 days'
                 """)
                 pnl_data["week"] = float(c.fetchone()[0] or 0)
 
@@ -1578,7 +1578,7 @@ async def execute_quick_command(request: dict):
                 c.execute("""
                     SELECT COALESCE(SUM(realized_pnl), 0)
                     FROM autonomous_positions
-                    WHERE status = 'closed' AND closed_at >= DATE_TRUNC('month', NOW())
+                    WHERE status = 'closed' AND COALESCE(closed_at, created_at) >= DATE_TRUNC('month', NOW())
                 """)
                 pnl_data["month"] = float(c.fetchone()[0] or 0)
 

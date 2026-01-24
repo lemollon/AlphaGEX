@@ -262,7 +262,7 @@ def get_trading_stats(days: int = 30) -> Dict:
                 MIN(realized_pnl) as worst_trade
             FROM ares_positions
             WHERE status IN ('closed', 'expired')
-            AND close_date >= NOW() - INTERVAL '{days} days'
+            AND COALESCE(close_date::timestamp, open_date::timestamp) >= NOW() - INTERVAL '{days} days'
         """)
 
         if results and not isinstance(results, dict):
