@@ -363,12 +363,13 @@ def fetch_closed_trades_for_date(bot: str, report_date: date) -> List[Dict[str, 
             cursor = conn.cursor()
 
             # Cast close_time to timestamp in case it's stored as TEXT
+            # Use COALESCE to fall back to open_time if close_time is NULL
             cursor.execute(f"""
                 SELECT *
                 FROM {table}
                 WHERE status IN ('closed', 'expired', 'partial_close')
-                AND DATE(close_time::timestamp AT TIME ZONE 'America/Chicago') = %s
-                ORDER BY close_time ASC
+                AND DATE(COALESCE(close_time, open_time)::timestamp AT TIME ZONE 'America/Chicago') = %s
+                ORDER BY COALESCE(close_time, open_time) ASC
             """, (report_date,))
 
             columns = [desc[0] for desc in cursor.description]

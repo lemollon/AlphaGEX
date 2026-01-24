@@ -411,7 +411,7 @@ class BotMetricsService:
                         COALESCE(SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') THEN realized_pnl ELSE 0 END), 0) as total_realized,
                         COALESCE(SUM(CASE
                             WHEN status IN ('closed', 'expired', 'partial_close')
-                            AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
+                            AND DATE(COALESCE(close_time, open_time) AT TIME ZONE 'America/Chicago') = %s
                             THEN realized_pnl ELSE 0 END), 0) as today_realized
                     FROM {positions_table}
                 """, (today,))
@@ -779,11 +779,12 @@ class BotMetricsService:
             try:
                 # Get total realized P&L up to (but not including) target date
                 # Include partial_close - positions where one leg closed but other failed
+                # Use COALESCE to handle legacy data with NULL close_time
                 cursor.execute(f"""
                     SELECT COALESCE(SUM(realized_pnl), 0)
                     FROM {positions_table}
                     WHERE status IN ('closed', 'expired', 'partial_close')
-                    AND DATE(close_time AT TIME ZONE 'America/Chicago') < %s
+                    AND DATE(COALESCE(close_time, open_time) AT TIME ZONE 'America/Chicago') < %s
                 """, (target_date,))
                 prev_realized = float(cursor.fetchone()[0] or 0)
 
@@ -792,7 +793,7 @@ class BotMetricsService:
                     SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
                     FROM {positions_table}
                     WHERE status IN ('closed', 'expired', 'partial_close')
-                    AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
+                    AND DATE(COALESCE(close_time, open_time) AT TIME ZONE 'America/Chicago') = %s
                 """, (target_date,))
                 row = cursor.fetchone()
                 today_realized = float(row[0] or 0)
