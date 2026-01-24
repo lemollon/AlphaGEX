@@ -751,47 +751,50 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
             # If no V2 data found, fall back to legacy table for backwards compatibility
             if not rows:
                 if is_individual_trades:
+                    # Get ALL trades - no date filter per CLAUDE.md requirements
                     cursor.execute('''
                         SELECT
                             exit_date::date as close_timestamp,
                             realized_pnl,
                             id as position_id
                         FROM autonomous_closed_trades
-                        WHERE exit_date >= %s AND strategy ILIKE %s
+                        WHERE strategy ILIKE %s
                         ORDER BY exit_date ASC
-                    ''', [start_date, f'%{bot_filter}%'])
+                    ''', [f'%{bot_filter}%'])
                 else:
                     if timeframe == 'weekly':
                         date_format_legacy = "DATE_TRUNC('week', exit_date::date)::date"
                     else:
                         date_format_legacy = "DATE_TRUNC('month', exit_date::date)::date"
+                    # Get ALL trades - no date filter per CLAUDE.md requirements
                     cursor.execute(f'''
                         SELECT
                             {date_format_legacy} as period_date,
                             SUM(realized_pnl) as daily_pnl,
                             COUNT(*) as trade_count
                         FROM autonomous_closed_trades
-                        WHERE exit_date >= %s AND strategy ILIKE %s
+                        WHERE strategy ILIKE %s
                         GROUP BY {date_format_legacy}
                         ORDER BY period_date ASC
-                    ''', [start_date, f'%{bot_filter}%'])
+                    ''', [f'%{bot_filter}%'])
                 rows = cursor.fetchall()
         else:
             # No bot filter or unknown bot - use legacy unified table
-            params = [start_date]
             bot_clause = ""
+            params = []
             if bot_filter:
-                bot_clause = "AND strategy ILIKE %s"
+                bot_clause = "WHERE strategy ILIKE %s"
                 params.append(f'%{bot_filter}%')
 
             if is_individual_trades:
+                # Get ALL trades - no date filter per CLAUDE.md requirements
                 cursor.execute(f'''
                     SELECT
                         exit_date::date as close_timestamp,
                         realized_pnl,
                         id as position_id
                     FROM autonomous_closed_trades
-                    WHERE exit_date >= %s {bot_clause}
+                    {bot_clause}
                     ORDER BY exit_date ASC
                 ''', params)
             else:
@@ -799,16 +802,18 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
                     date_format_legacy = "DATE_TRUNC('week', exit_date::date)::date"
                 else:
                     date_format_legacy = "DATE_TRUNC('month', exit_date::date)::date"
+                # Get ALL trades - no date filter per CLAUDE.md requirements
+                where_clause = f"WHERE {bot_clause[6:]}" if bot_clause else ""
                 cursor.execute(f'''
                     SELECT
                         {date_format_legacy} as period_date,
                         SUM(realized_pnl) as daily_pnl,
                         COUNT(*) as trade_count
                     FROM autonomous_closed_trades
-                    WHERE exit_date >= %s {bot_clause}
+                    {where_clause}
                     GROUP BY {date_format_legacy}
                     ORDER BY period_date ASC
-                ''', params)
+                ''', params if bot_clause else [])
             rows = cursor.fetchall()
 
         if not rows:
