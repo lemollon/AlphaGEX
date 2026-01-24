@@ -670,7 +670,10 @@ def _calculate_bot_unrealized_pnl(cursor, bot_filter: str = None) -> float:
 
 def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str = 'daily') -> List[dict]:
     """
-    Get equity curve data from trades, aggregated by timeframe.
+    Get equity curve data from trades.
+
+    For 'daily' timeframe: Returns individual trade points for granular charts
+    For 'weekly'/'monthly': Returns aggregated data by period
 
     IMPORTANT: V2 bots (ARES, ATHENA, PEGASUS) store trades in their own tables,
     not in autonomous_closed_trades. This function reads from the correct table
@@ -687,17 +690,6 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
     try:
         start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
 
-        # Get daily aggregated trades
-        if timeframe == 'daily':
-            date_format_legacy = "exit_date"
-            date_format_v2 = "DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago')"
-        elif timeframe == 'weekly':
-            date_format_legacy = "DATE_TRUNC('week', exit_date::date)::date"
-            date_format_v2 = "DATE_TRUNC('week', DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago'))::date"
-        else:  # monthly
-            date_format_legacy = "DATE_TRUNC('month', exit_date::date)::date"
-            date_format_v2 = "DATE_TRUNC('month', DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago'))::date"
-
         # Bot-specific table mapping for V2 bots
         # Each V2 bot stores closed trades in its own positions table
         bot_tables = {
@@ -709,6 +701,8 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
         }
 
         rows = []
+        is_individual_trades = (timeframe == 'daily')  # For daily, get individual trades
+
         # Get starting capital dynamically (ARES fetches from Tradier)
         starting_capital = _get_bot_capital(bot_filter)
 
@@ -717,18 +711,36 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
             table_name = bot_tables[bot_filter.upper()]
 
             try:
-                cursor.execute(f'''
-                    SELECT
-                        {date_format_v2} as period_date,
-                        SUM(realized_pnl) as daily_pnl,
-                        COUNT(*) as trade_count
-                    FROM {table_name}
-                    WHERE status IN ('closed', 'expired', 'partial_close')
-                    AND close_time IS NOT NULL
-                    AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') >= %s
-                    GROUP BY {date_format_v2}
-                    ORDER BY period_date ASC
-                ''', [start_date])
+                if is_individual_trades:
+                    # Get individual trades with full timestamps for granular daily chart
+                    cursor.execute(f'''
+                        SELECT
+                            close_time::timestamptz AT TIME ZONE 'America/Chicago' as close_timestamp,
+                            realized_pnl,
+                            position_id
+                        FROM {table_name}
+                        WHERE status IN ('closed', 'expired', 'partial_close')
+                        AND close_time IS NOT NULL
+                        ORDER BY close_time ASC
+                    ''')
+                else:
+                    # Weekly/monthly aggregation
+                    if timeframe == 'weekly':
+                        date_format_v2 = "DATE_TRUNC('week', DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago'))::date"
+                    else:  # monthly
+                        date_format_v2 = "DATE_TRUNC('month', DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago'))::date"
+
+                    cursor.execute(f'''
+                        SELECT
+                            {date_format_v2} as period_date,
+                            SUM(realized_pnl) as daily_pnl,
+                            COUNT(*) as trade_count
+                        FROM {table_name}
+                        WHERE status IN ('closed', 'expired', 'partial_close')
+                        AND close_time IS NOT NULL
+                        GROUP BY {date_format_v2}
+                        ORDER BY period_date ASC
+                    ''')
 
                 rows = cursor.fetchall()
             except Exception as table_err:
@@ -738,17 +750,31 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
 
             # If no V2 data found, fall back to legacy table for backwards compatibility
             if not rows:
-                params = [start_date, f'%{bot_filter}%']
-                cursor.execute(f'''
-                    SELECT
-                        {date_format_legacy} as period_date,
-                        SUM(realized_pnl) as daily_pnl,
-                        COUNT(*) as trade_count
-                    FROM autonomous_closed_trades
-                    WHERE exit_date >= %s AND strategy ILIKE %s
-                    GROUP BY {date_format_legacy}
-                    ORDER BY period_date ASC
-                ''', params)
+                if is_individual_trades:
+                    cursor.execute('''
+                        SELECT
+                            exit_date::date as close_timestamp,
+                            realized_pnl,
+                            id as position_id
+                        FROM autonomous_closed_trades
+                        WHERE exit_date >= %s AND strategy ILIKE %s
+                        ORDER BY exit_date ASC
+                    ''', [start_date, f'%{bot_filter}%'])
+                else:
+                    if timeframe == 'weekly':
+                        date_format_legacy = "DATE_TRUNC('week', exit_date::date)::date"
+                    else:
+                        date_format_legacy = "DATE_TRUNC('month', exit_date::date)::date"
+                    cursor.execute(f'''
+                        SELECT
+                            {date_format_legacy} as period_date,
+                            SUM(realized_pnl) as daily_pnl,
+                            COUNT(*) as trade_count
+                        FROM autonomous_closed_trades
+                        WHERE exit_date >= %s AND strategy ILIKE %s
+                        GROUP BY {date_format_legacy}
+                        ORDER BY period_date ASC
+                    ''', [start_date, f'%{bot_filter}%'])
                 rows = cursor.fetchall()
         else:
             # No bot filter or unknown bot - use legacy unified table
@@ -758,16 +784,31 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
                 bot_clause = "AND strategy ILIKE %s"
                 params.append(f'%{bot_filter}%')
 
-            cursor.execute(f'''
-                SELECT
-                    {date_format_legacy} as period_date,
-                    SUM(realized_pnl) as daily_pnl,
-                    COUNT(*) as trade_count
-                FROM autonomous_closed_trades
-                WHERE exit_date >= %s {bot_clause}
-                GROUP BY {date_format_legacy}
-                ORDER BY period_date ASC
-            ''', params)
+            if is_individual_trades:
+                cursor.execute(f'''
+                    SELECT
+                        exit_date::date as close_timestamp,
+                        realized_pnl,
+                        id as position_id
+                    FROM autonomous_closed_trades
+                    WHERE exit_date >= %s {bot_clause}
+                    ORDER BY exit_date ASC
+                ''', params)
+            else:
+                if timeframe == 'weekly':
+                    date_format_legacy = "DATE_TRUNC('week', exit_date::date)::date"
+                else:
+                    date_format_legacy = "DATE_TRUNC('month', exit_date::date)::date"
+                cursor.execute(f'''
+                    SELECT
+                        {date_format_legacy} as period_date,
+                        SUM(realized_pnl) as daily_pnl,
+                        COUNT(*) as trade_count
+                    FROM autonomous_closed_trades
+                    WHERE exit_date >= %s {bot_clause}
+                    GROUP BY {date_format_legacy}
+                    ORDER BY period_date ASC
+                ''', params)
             rows = cursor.fetchall()
 
         if not rows:
@@ -792,25 +833,71 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
         equity_curve = []
         cumulative_pnl = 0
         high_water_mark = starting_capital
+        today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
 
-        for period_date, daily_pnl, trade_count in rows:
-            daily_pnl = daily_pnl or 0
-            cumulative_pnl += daily_pnl
-            equity = starting_capital + cumulative_pnl
+        if is_individual_trades:
+            # Build one point per trade for granular visualization
+            if rows:
+                # Add starting point
+                first_timestamp = rows[0][0]
+                if first_timestamp:
+                    first_date = first_timestamp.strftime('%Y-%m-%d') if hasattr(first_timestamp, 'strftime') else str(first_timestamp)[:10]
+                    equity_curve.append({
+                        'date': first_date,
+                        'equity': starting_capital,
+                        'daily_pnl': 0,
+                        'cumulative_pnl': 0,
+                        'drawdown_pct': 0,
+                        'trade_count': 0
+                    })
 
-            if equity > high_water_mark:
-                high_water_mark = equity
+            for close_timestamp, pnl, position_id in rows:
+                daily_pnl = float(pnl or 0)
+                cumulative_pnl += daily_pnl
+                equity = starting_capital + cumulative_pnl
 
-            drawdown_pct = ((high_water_mark - equity) / high_water_mark * 100) if high_water_mark > 0 else 0
+                if equity > high_water_mark:
+                    high_water_mark = equity
 
-            equity_curve.append({
-                'date': str(period_date),
-                'equity': round(equity, 2),
-                'daily_pnl': round(daily_pnl, 2),
-                'cumulative_pnl': round(cumulative_pnl, 2),
-                'drawdown_pct': round(drawdown_pct, 2),
-                'trade_count': trade_count
-            })
+                drawdown_pct = ((high_water_mark - equity) / high_water_mark * 100) if high_water_mark > 0 else 0
+
+                # Format date from timestamp
+                if close_timestamp:
+                    if hasattr(close_timestamp, 'strftime'):
+                        date_str = close_timestamp.strftime('%Y-%m-%d')
+                    else:
+                        date_str = str(close_timestamp)[:10]
+                else:
+                    date_str = today
+
+                equity_curve.append({
+                    'date': date_str,
+                    'equity': round(equity, 2),
+                    'daily_pnl': round(daily_pnl, 2),
+                    'cumulative_pnl': round(cumulative_pnl, 2),
+                    'drawdown_pct': round(drawdown_pct, 2),
+                    'trade_count': 1
+                })
+        else:
+            # Weekly/monthly aggregated view
+            for period_date, daily_pnl, trade_count in rows:
+                daily_pnl = daily_pnl or 0
+                cumulative_pnl += daily_pnl
+                equity = starting_capital + cumulative_pnl
+
+                if equity > high_water_mark:
+                    high_water_mark = equity
+
+                drawdown_pct = ((high_water_mark - equity) / high_water_mark * 100) if high_water_mark > 0 else 0
+
+                equity_curve.append({
+                    'date': str(period_date),
+                    'equity': round(equity, 2),
+                    'daily_pnl': round(daily_pnl, 2),
+                    'cumulative_pnl': round(cumulative_pnl, 2),
+                    'drawdown_pct': round(drawdown_pct, 2),
+                    'trade_count': trade_count
+                })
 
         # Add unrealized P&L from open positions to current day
         today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
