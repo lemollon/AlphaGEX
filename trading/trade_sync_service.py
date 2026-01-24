@@ -453,12 +453,13 @@ class TradeSyncService:
             result['open_synced'] += 1
 
         # Sync closed/expired positions (last 7 days only to avoid duplicates)
+        # Use COALESCE to handle legacy data with NULL close_time
         cursor.execute(f"""
             SELECT position_id, 'SPY' as symbol, open_time, close_time,
                    {credit_field}, close_price, contracts, realized_pnl, close_reason
             FROM {table}
             WHERE status IN ('closed', 'expired')
-            AND close_time >= NOW() - INTERVAL '7 days'
+            AND COALESCE(close_time, open_time) >= NOW() - INTERVAL '7 days'
         """)
         closed_positions = cursor.fetchall()
 

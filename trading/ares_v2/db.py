@@ -525,11 +525,12 @@ class ARESDatabase:
         try:
             with db_connection() as conn:
                 c = conn.cursor()
+                # Use COALESCE to handle legacy data with NULL close_time
                 c.execute("""
                     SELECT COALESCE(SUM(realized_pnl), 0)
                     FROM ares_positions
                     WHERE status IN ('closed', 'expired', 'partial_close')
-                    AND DATE(close_time AT TIME ZONE 'America/Chicago') = %s
+                    AND DATE(COALESCE(close_time, open_time) AT TIME ZONE 'America/Chicago') = %s
                 """, (date,))
                 result = c.fetchone()[0]
                 return float(result) if result else 0.0

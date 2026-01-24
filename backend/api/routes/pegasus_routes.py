@@ -1842,6 +1842,7 @@ async def get_pegasus_performance(
         rows = c.fetchall()
 
         # Calculate summary stats
+        # Use COALESCE to handle legacy data with NULL close_time
         c.execute("""
             SELECT
                 COUNT(*) as total_trades,
@@ -1849,7 +1850,7 @@ async def get_pegasus_performance(
                 COALESCE(SUM(realized_pnl), 0) as total_pnl
             FROM pegasus_positions
             WHERE status IN ('closed', 'expired', 'partial_close')
-            AND close_time >= CURRENT_DATE - INTERVAL '%s days'
+            AND COALESCE(close_time, open_time) >= CURRENT_DATE - INTERVAL '%s days'
         """, (days,))
 
         summary_row = c.fetchone()

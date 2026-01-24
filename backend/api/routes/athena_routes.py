@@ -977,6 +977,7 @@ async def get_athena_performance(
 
         # Calculate summary stats from athena_positions
         c.execute("""
+            -- Use COALESCE to handle legacy data with NULL close_time
             SELECT
                 COUNT(*) as total_trades,
                 SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as total_wins,
@@ -985,7 +986,7 @@ async def get_athena_performance(
                 SUM(CASE WHEN spread_type ILIKE '%%BEAR%%' THEN 1 ELSE 0 END) as bearish_count
             FROM athena_positions
             WHERE status IN ('closed', 'expired', 'partial_close')
-            AND close_time >= NOW() - INTERVAL '%s days'
+            AND COALESCE(close_time, open_time) >= NOW() - INTERVAL '%s days'
         """, (days,))
 
         summary_row = c.fetchone()
