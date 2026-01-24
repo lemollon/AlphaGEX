@@ -694,3 +694,83 @@ async def get_performance_stats():
         stats["connection_pool"] = {"error": str(e)}
 
     return stats
+
+
+@router.post("/api/migrations/fix-close-times")
+async def run_close_time_migration():
+    """
+    Data integrity migration: Fix positions with NULL close_time.
+
+    Per CLAUDE.md requirements, all closed positions must have close_time set.
+    Historical data may have NULL close_time due to older code versions.
+    This migration sets close_time = open_time for affected records.
+
+    This runs automatically on startup but can be triggered manually here.
+    """
+    try:
+        from database_adapter import get_connection
+
+        # Bot position tables
+        tables = [
+            'ares_positions',
+            'athena_positions',
+            'titan_positions',
+            'pegasus_positions',
+            'icarus_positions',
+        ]
+
+        conn = get_connection()
+        cursor = conn.cursor()
+        results = {"fixed": {}, "total_fixed": 0, "errors": []}
+
+        for table in tables:
+            try:
+                # Check if table exists
+                cursor.execute("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_name = %s
+                    )
+                """, (table,))
+                if not cursor.fetchone()[0]:
+                    results["fixed"][table] = {"skipped": "table does not exist"}
+                    continue
+
+                # Count affected before fix
+                cursor.execute(f"""
+                    SELECT COUNT(*) FROM {table}
+                    WHERE status IN ('closed', 'expired', 'partial_close')
+                    AND close_time IS NULL
+                """)
+                before_count = cursor.fetchone()[0]
+
+                if before_count > 0:
+                    # Fix: Set close_time = open_time
+                    cursor.execute(f"""
+                        UPDATE {table}
+                        SET close_time = open_time
+                        WHERE status IN ('closed', 'expired', 'partial_close')
+                        AND close_time IS NULL
+                        AND open_time IS NOT NULL
+                    """)
+                    fixed = cursor.rowcount
+                    results["fixed"][table] = {"fixed": fixed, "affected": before_count}
+                    results["total_fixed"] += fixed
+                else:
+                    results["fixed"][table] = {"fixed": 0, "affected": 0}
+
+            except Exception as e:
+                results["errors"].append({"table": table, "error": str(e)})
+
+        conn.commit()
+        conn.close()
+
+        return {
+            "success": True,
+            "message": f"Fixed {results['total_fixed']} positions with missing close_time",
+            "details": results
+        }
+
+    except Exception as e:
+        logger.error(f"Close time migration failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
