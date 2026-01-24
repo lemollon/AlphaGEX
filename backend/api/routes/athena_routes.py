@@ -2077,19 +2077,17 @@ async def get_athena_equity_curve(days: int = 30):
             pass
 
         # Try V2 tables first, fall back to legacy
-        # IMPORTANT: Get ALL closed trades for correct cumulative P&L calculation
-        # Then filter output to last N days in Python
+        # Get individual trades with full timestamps for granular chart
         try:
             c.execute("""
                 SELECT
-                    DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as trade_date,
-                    SUM(realized_pnl) as daily_pnl,
-                    COUNT(*) as trades
+                    close_time::timestamptz AT TIME ZONE 'America/Chicago' as close_timestamp,
+                    realized_pnl,
+                    position_id
                 FROM athena_positions
                 WHERE status IN ('closed', 'expired', 'partial_close')
                 AND close_time IS NOT NULL
-                GROUP BY DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago')
-                ORDER BY trade_date
+                ORDER BY close_time ASC
             """)
             rows = c.fetchall()
 
@@ -2107,14 +2105,13 @@ async def get_athena_equity_curve(days: int = 30):
             # Fall back to legacy table
             c.execute("""
                 SELECT
-                    DATE(exit_time::timestamptz AT TIME ZONE 'America/Chicago') as trade_date,
-                    SUM(realized_pnl) as daily_pnl,
-                    COUNT(*) as trades
+                    exit_time::timestamptz AT TIME ZONE 'America/Chicago' as close_timestamp,
+                    realized_pnl,
+                    position_id
                 FROM apache_positions
                 WHERE status IN ('closed', 'expired', 'partial_close')
                 AND exit_time IS NOT NULL
-                GROUP BY DATE(exit_time::timestamptz AT TIME ZONE 'America/Chicago')
-                ORDER BY trade_date
+                ORDER BY exit_time ASC
             """)
             rows = c.fetchall()
             open_positions = []
@@ -2152,33 +2149,63 @@ async def get_athena_equity_curve(days: int = 30):
             unrealized_pnl = pnl_result['total_unrealized_pnl']
             logger.debug(f"ATHENA equity-curve: unrealized=${unrealized_pnl:.2f} via {pnl_result.get('primary_method', 'unknown')}")
 
-        # Build equity curve
+        # Build equity curve - one point per trade for granular visualization
         equity_curve = []
         running_pnl = 0.0
 
-        for row in rows:
-            trade_date, daily_pnl, trades = row
-            running_pnl += float(daily_pnl or 0)
-            equity_curve.append({
-                "date": str(trade_date),
-                "cumulative_pnl": round(running_pnl, 2),
-                "daily_pnl": round(float(daily_pnl or 0), 2),
-                "trade_count": trades,
-                "equity": round(starting_capital + running_pnl, 2),
-            })
+        if rows:
+            # Add starting point before first trade
+            first_timestamp = rows[0][0]
+            if first_timestamp:
+                first_date = first_timestamp.strftime('%Y-%m-%d') if hasattr(first_timestamp, 'strftime') else str(first_timestamp)[:10]
+                equity_curve.append({
+                    "date": first_date,
+                    "timestamp": first_date + "T00:00:00",
+                    "cumulative_pnl": 0,
+                    "daily_pnl": 0,
+                    "trade_count": 0,
+                    "equity": starting_capital,
+                    "position_id": None
+                })
+
+            # Create one data point per trade
+            for row in rows:
+                close_timestamp, pnl, pos_id = row
+                trade_pnl = float(pnl or 0)
+                running_pnl += trade_pnl
+
+                # Format timestamp for frontend
+                if close_timestamp:
+                    if hasattr(close_timestamp, 'isoformat'):
+                        timestamp_str = close_timestamp.isoformat()
+                        date_str = close_timestamp.strftime('%Y-%m-%d')
+                    else:
+                        timestamp_str = str(close_timestamp)
+                        date_str = str(close_timestamp)[:10]
+                else:
+                    timestamp_str = today + "T00:00:00"
+                    date_str = today
+
+                equity_curve.append({
+                    "date": date_str,
+                    "timestamp": timestamp_str,
+                    "cumulative_pnl": round(running_pnl, 2),
+                    "daily_pnl": round(trade_pnl, 2),
+                    "trade_count": 1,
+                    "equity": round(starting_capital + running_pnl, 2),
+                    "position_id": pos_id
+                })
 
         # Add today's entry with unrealized P&L from open positions
         total_pnl_with_unrealized = running_pnl + unrealized_pnl
         current_equity_with_unrealized = starting_capital + total_pnl_with_unrealized
+        now = datetime.now(CENTRAL_TZ)
 
         # Always add today's data point if we have open positions or closed positions
         if open_positions_count > 0 or rows:
-            # Remove duplicate today entry if exists
-            if equity_curve and equity_curve[-1]["date"] == today:
-                equity_curve.pop()
-
             equity_curve.append({
                 "date": today,
+                "timestamp": now.isoformat(),
                 "cumulative_pnl": round(total_pnl_with_unrealized, 2),
                 "daily_pnl": round(unrealized_pnl, 2),
                 "trade_count": 0,
@@ -2203,6 +2230,7 @@ async def get_athena_equity_curve(days: int = 30):
         }
     except Exception as e:
         logger.error(f"Error getting ATHENA equity curve: {e}")
+        now = datetime.now(CENTRAL_TZ)
         return {
             "success": True,
             "data": {
@@ -2211,6 +2239,7 @@ async def get_athena_equity_curve(days: int = 30):
                 "total_pnl": 0,
                 "equity_curve": [{
                     "date": today,
+                    "timestamp": now.isoformat(),
                     "cumulative_pnl": 0,
                     "daily_pnl": 0,
                     "trade_count": 0,
