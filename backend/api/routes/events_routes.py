@@ -191,10 +191,11 @@ def detect_events_from_trades(days: int = 90, bot_filter: str = None) -> List[di
             table_name = v2_bot_tables[bot_filter.upper()]
             bot_upper = bot_filter.upper()
 
+            # Use COALESCE to fall back to open_time if close_time is NULL (legacy data)
             cursor.execute(f'''
                 SELECT
-                    DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as exit_date,
-                    close_time as exit_time,
+                    DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') as exit_date,
+                    COALESCE(close_time, open_time) as exit_time,
                     realized_pnl,
                     %s as strategy,
                     ticker as symbol,
@@ -203,9 +204,8 @@ def detect_events_from_trades(days: int = 90, bot_filter: str = None) -> List[di
                     gex_regime
                 FROM {table_name}
                 WHERE status IN ('closed', 'expired', 'partial_close')
-                AND close_time IS NOT NULL
-                AND DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') >= %s
-                ORDER BY close_time ASC
+                AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') >= %s
+                ORDER BY COALESCE(close_time, open_time) ASC
             ''', [bot_upper, start_date])
 
             trades = cursor.fetchall()

@@ -1569,11 +1569,11 @@ async def get_pegasus_live_pnl():
             today_realized = float(realized_row[0]) if realized_row else 0
 
             # Get cumulative realized P&L from ALL closed positions (matches equity curve)
+            # Note: Don't filter on close_time - historical data may have NULL close_time
             cursor.execute('''
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM pegasus_positions
                 WHERE status IN ('closed', 'expired', 'partial_close')
-                AND close_time IS NOT NULL
             ''')
             cumulative_row = cursor.fetchone()
             cumulative_realized = float(cumulative_row[0]) if cumulative_row else 0

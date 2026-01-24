@@ -1562,11 +1562,11 @@ async def get_athena_live_pnl():
             today_realized = float(realized_row[0]) if realized_row else 0
 
             # Get cumulative realized P&L from ALL closed positions (matches equity curve)
+            # Note: Don't filter on close_time - historical data may have NULL close_time
             cursor.execute('''
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM athena_positions
                 WHERE status IN ('closed', 'expired', 'partial_close')
-                AND close_time IS NOT NULL
             ''')
             cumulative_row = cursor.fetchone()
             cumulative_realized = float(cumulative_row[0]) if cumulative_row else 0
@@ -1711,11 +1711,11 @@ async def get_athena_live_pnl():
             today_realized = float(realized_row[0]) if realized_row else 0
 
             # Get cumulative realized P&L from ALL closed positions (matches equity curve)
+            # Note: Don't filter on close_time - historical data may have NULL close_time
             cursor.execute('''
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM athena_positions
                 WHERE status IN ('closed', 'expired', 'partial_close')
-                AND close_time IS NOT NULL
             ''')
             cumulative_row = cursor.fetchone()
             cumulative_realized = float(cumulative_row[0]) if cumulative_row else 0
@@ -2102,16 +2102,16 @@ async def get_athena_equity_curve(days: int = 30):
             open_positions_count = len(open_positions)
 
         except Exception:
-            # Fall back to legacy table
+            # Fall back to legacy table (apache_positions uses exit_time instead of close_time)
+            # Don't filter on exit_time IS NOT NULL - may have legacy data issues
             c.execute("""
                 SELECT
-                    exit_time::timestamptz AT TIME ZONE 'America/Chicago' as close_timestamp,
+                    COALESCE(exit_time, entry_time)::timestamptz AT TIME ZONE 'America/Chicago' as close_timestamp,
                     realized_pnl,
                     position_id
                 FROM apache_positions
                 WHERE status IN ('closed', 'expired', 'partial_close')
-                AND exit_time IS NOT NULL
-                ORDER BY exit_time ASC
+                ORDER BY COALESCE(exit_time, entry_time) ASC
             """)
             rows = c.fetchall()
             open_positions = []
