@@ -17,6 +17,7 @@ import PortfolioSummaryCard from '@/components/dashboard/PortfolioSummaryCard'
 import AllOpenPositionsTable from '@/components/dashboard/AllOpenPositionsTable'
 import MarketConditionsBanner from '@/components/dashboard/MarketConditionsBanner'
 import TodaysActivityFeed from '@/components/dashboard/TodaysActivityFeed'
+import AllBotReportsSummary from '@/components/dashboard/AllBotReportsSummary'
 
 export default function Dashboard() {
   return (
@@ -69,7 +70,12 @@ export default function Dashboard() {
             <GammaExpirationWidget />
           </div>
 
-          {/* Row 6: AI/ML Systems - SAGE, QUANT, Math Optimizer, Sync Status */}
+          {/* Row 6: Today's Bot Reports - Cached from database, no Claude API charges */}
+          <div className="mb-4">
+            <AllBotReportsSummary />
+          </div>
+
+          {/* Row 7: AI/ML Systems - SAGE, QUANT, Math Optimizer, Sync Status */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
             <SAGEStatusWidget />
             <QuantStatusWidget />
@@ -77,13 +83,13 @@ export default function Dashboard() {
             <SyncStatusWidget />
           </div>
 
-          {/* Row 7: ARGUS Alerts & Scan Feed - Activity monitoring */}
+          {/* Row 8: ARGUS Alerts & Scan Feed - Activity monitoring */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
             <ARGUSAlertsWidget />
             <DashboardScanFeed />
           </div>
 
-          {/* Row 8: Intelligence Dashboard - Full width */}
+          {/* Row 9: Intelligence Dashboard - Full width */}
           <div>
             <IntelligenceDashboard />
           </div>
