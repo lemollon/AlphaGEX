@@ -864,14 +864,16 @@ class BotMetricsService:
                 if latest_snap[4] is not None:
                     open_count = int(latest_snap[4])
             else:
-                # Fallback: query positions table (may be stale, handle missing table)
+                # Fallback: just count open positions
+                # NOTE: unrealized_pnl is not stored in bot position tables - it's calculated via MTM
                 try:
                     cursor.execute(f"""
-                        SELECT COALESCE(SUM(COALESCE(unrealized_pnl, 0)), 0)
+                        SELECT COUNT(*)
                         FROM {positions_table}
                         WHERE status = 'open'
                     """)
-                    current_unrealized = float(cursor.fetchone()[0] or 0)
+                    open_count = int(cursor.fetchone()[0] or 0)
+                    current_unrealized = 0.0  # MTM calculation would go here if needed
                 except Exception:
                     current_unrealized = 0.0  # Table doesn't exist
 
