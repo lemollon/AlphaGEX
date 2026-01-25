@@ -640,20 +640,19 @@ class BotMetricsService:
             )
 
             # Get current unrealized P&L
+            # NOTE: unrealized_pnl is calculated via MTM, not stored in positions table
+            # Just count open positions here - unrealized P&L is added separately if needed
             unrealized_pnl = 0.0
             open_count = 0
             if include_unrealized:
                 cursor.execute(f"""
-                    SELECT
-                        COALESCE(SUM(COALESCE(unrealized_pnl, 0)), 0),
-                        COUNT(*)
+                    SELECT COUNT(*)
                     FROM {positions_table}
                     WHERE status = 'open'
                 """)
-                unr_row = cursor.fetchone()
-                if unr_row:
-                    unrealized_pnl = float(unr_row[0] or 0)
-                    open_count = int(unr_row[1] or 0)
+                count_row = cursor.fetchone()
+                if count_row:
+                    open_count = int(count_row[0] or 0)
 
             conn.close()
 
@@ -865,14 +864,16 @@ class BotMetricsService:
                 if latest_snap[4] is not None:
                     open_count = int(latest_snap[4])
             else:
-                # Fallback: query positions table (may be stale, handle missing table)
+                # Fallback: just count open positions
+                # NOTE: unrealized_pnl is not stored in bot position tables - it's calculated via MTM
                 try:
                     cursor.execute(f"""
-                        SELECT COALESCE(SUM(COALESCE(unrealized_pnl, 0)), 0)
+                        SELECT COUNT(*)
                         FROM {positions_table}
                         WHERE status = 'open'
                     """)
-                    current_unrealized = float(cursor.fetchone()[0] or 0)
+                    open_count = int(cursor.fetchone()[0] or 0)
+                    current_unrealized = 0.0  # MTM calculation would go here if needed
                 except Exception:
                     current_unrealized = 0.0  # Table doesn't exist
 
@@ -960,12 +961,17 @@ class BotMetricsService:
             }
 
         except Exception as e:
-            logger.error(f"Failed to build intraday equity for {bot.value}: {e}")
+            error_msg = f"Failed to build intraday equity for {bot.value}: {e}"
+            logger.error(error_msg)
             import traceback
-            traceback.print_exc()
+            tb_str = traceback.format_exc()
+            logger.error(tb_str)
             if conn:
                 conn.close()
-            return self._empty_intraday(bot, starting_capital, target_date)
+            result = self._empty_intraday(bot, starting_capital, target_date)
+            result["error"] = error_msg
+            result["traceback"] = tb_str[:500]
+            return result
 
     def _empty_equity_curve(self, bot: BotName, starting_capital: float) -> Dict[str, Any]:
         """Return empty equity curve structure"""
