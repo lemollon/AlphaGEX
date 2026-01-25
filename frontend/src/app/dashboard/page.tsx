@@ -19,6 +19,20 @@ import MarketConditionsBanner from '@/components/dashboard/MarketConditionsBanne
 import TodaysActivityFeed from '@/components/dashboard/TodaysActivityFeed'
 import AllBotReportsSummary from '@/components/dashboard/AllBotReportsSummary'
 
+// Section Header Component
+function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }) {
+  return (
+    <div className="flex items-center gap-3 mb-3 mt-6 first:mt-0">
+      <div className="h-px flex-1 bg-gradient-to-r from-gray-800 to-transparent" />
+      <div className="text-center">
+        <h2 className="text-sm font-semibold text-gray-400 uppercase tracking-wider">{title}</h2>
+        {subtitle && <p className="text-xs text-gray-600">{subtitle}</p>}
+      </div>
+      <div className="h-px flex-1 bg-gradient-to-l from-gray-800 to-transparent" />
+    </div>
+  )
+}
+
 export default function Dashboard() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-background-deep">
@@ -38,12 +52,19 @@ export default function Dashboard() {
             <p className="text-text-secondary text-sm mt-1">Real-time portfolio & trading activity</p>
           </div>
 
-          {/* Row 1: Market Conditions Banner - Key context at a glance */}
+          {/* ═══════════════════════════════════════════════════════════════════ */}
+          {/* SECTION 1: MARKET CONDITIONS                                         */}
+          {/* ═══════════════════════════════════════════════════════════════════ */}
           <div className="mb-4">
             <MarketConditionsBanner />
           </div>
 
-          {/* Row 2: Portfolio Summary + Bot Status */}
+          {/* ═══════════════════════════════════════════════════════════════════ */}
+          {/* SECTION 2: PORTFOLIO & BOTS                                          */}
+          {/* ═══════════════════════════════════════════════════════════════════ */}
+          <SectionHeader title="Portfolio & Bots" />
+
+          {/* Portfolio Summary + Bot Status */}
           <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-4">
             <div className="xl:col-span-1">
               <PortfolioSummaryCard />
@@ -53,29 +74,50 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Row 3: Bot Performance Comparison - Full width equity curve */}
+          {/* Bot Performance Comparison - Full width equity curve */}
           <div className="mb-4">
-            <MultiBotEquityCurve days={30} height={350} showPercentage={true} />
+            <MultiBotEquityCurve days={30} height={300} showPercentage={true} />
           </div>
 
-          {/* Row 4: All Open Positions - Full width table */}
-          <div className="mb-4">
+          {/* Open Positions + Trading Reports - Side by side */}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-4">
             <AllOpenPositionsTable />
+            <AllBotReportsSummary />
           </div>
 
-          {/* Row 5: Today's Activity + Oracle + Gamma */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
-            <TodaysActivityFeed />
+          {/* ═══════════════════════════════════════════════════════════════════ */}
+          {/* SECTION 3: MARKET INTELLIGENCE                                       */}
+          {/* ═══════════════════════════════════════════════════════════════════ */}
+          <SectionHeader title="Market Intelligence" />
+
+          {/* Oracle + Gamma - 2 column compact layout */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
             <OracleRecommendationWidget />
             <GammaExpirationWidget />
           </div>
 
-          {/* Row 6: Today's Bot Reports - Cached from database, no Claude API charges */}
-          <div className="mb-4">
-            <AllBotReportsSummary />
+          {/* ═══════════════════════════════════════════════════════════════════ */}
+          {/* SECTION 4: ACTIVITY MONITORING                                       */}
+          {/* ═══════════════════════════════════════════════════════════════════ */}
+          <SectionHeader title="Activity Monitoring" />
+
+          {/* Activity Feed + ARGUS Alerts */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+            <TodaysActivityFeed />
+            <ARGUSAlertsWidget />
           </div>
 
-          {/* Row 7: AI/ML Systems - SAGE, QUANT, Math Optimizer, Sync Status */}
+          {/* Scan Feed - Full width for detailed activity */}
+          <div className="mb-4">
+            <DashboardScanFeed />
+          </div>
+
+          {/* ═══════════════════════════════════════════════════════════════════ */}
+          {/* SECTION 5: AI/ML SYSTEMS                                             */}
+          {/* ═══════════════════════════════════════════════════════════════════ */}
+          <SectionHeader title="AI/ML Systems" />
+
+          {/* AI/ML Status Widgets */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
             <SAGEStatusWidget />
             <QuantStatusWidget />
@@ -83,13 +125,7 @@ export default function Dashboard() {
             <SyncStatusWidget />
           </div>
 
-          {/* Row 8: ARGUS Alerts & Scan Feed - Activity monitoring */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-            <ARGUSAlertsWidget />
-            <DashboardScanFeed />
-          </div>
-
-          {/* Row 9: Intelligence Dashboard - Full width */}
+          {/* Intelligence Dashboard - Full width */}
           <div>
             <IntelligenceDashboard />
           </div>
