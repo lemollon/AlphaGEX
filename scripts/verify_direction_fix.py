@@ -279,12 +279,12 @@ print("\n[4] ORACLE INTEGRATION")
 print("-" * 70)
 
 try:
-    from quant.oracle_advisor import OracleAdvisor, OracleMarketContext, GEXRegime
+    from quant.oracle_advisor import OracleAdvisor, MarketContext, GEXRegime
 
     oracle = OracleAdvisor()
 
-    # Create context for near-put-wall scenario
-    context = OracleMarketContext(
+    # Create context for near-put-wall scenario (dataclass)
+    context = MarketContext(
         spot_price=585.5,
         vix=18.0,
         gex_put_wall=582.0,
