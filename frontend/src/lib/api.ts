@@ -554,6 +554,9 @@ export const apiClient = {
   // GEX ML MODELS - For ARGUS/HYPERION
   getGexModelsStatus: () => api.get('/api/ml/gex-models/status'),
   getGexModelsDataStatus: () => api.get('/api/ml/gex-models/data-status'),
+  getGexModelsDataPreview: (limit: number = 10) => api.get('/api/ml/gex-models/data-preview', { params: { limit } }),
+  getGexModelsDataDiagnostic: () => api.get('/api/ml/gex-models/data-diagnostic'),
+  populateGexFromSnapshots: () => api.post('/api/ml/gex-models/populate-from-snapshots'),
   trainGexModels: (data: {
     symbols?: string[]
     start_date?: string
