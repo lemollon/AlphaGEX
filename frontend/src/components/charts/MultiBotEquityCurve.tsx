@@ -396,7 +396,9 @@ export default function MultiBotEquityCurve({
                 }}
               >
                 <div className="flex items-center gap-2 mb-2">
-                  <Icon className="w-4 h-4" style={{ color: brand.hexPrimary }} />
+                  <span style={{ color: brand.hexPrimary }}>
+                    <Icon className="w-4 h-4" />
+                  </span>
                   <span className="text-sm font-medium" style={{ color: brand.hexPrimary }}>
                     {bot.name}
                   </span>
