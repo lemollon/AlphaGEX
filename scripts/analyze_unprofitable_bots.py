@@ -203,7 +203,7 @@ def analyze_bot(conn, bot_name, config):
     # 4. P&L by Direction (for directional bots)
     if config['type'] == 'directional' and 'direction' in config['columns']:
         print("\n" + "-" * 60)
-        print("3. P&L BY DIRECTION")
+        print("3. P&L BY DIRECTION (SPREAD TYPE)")
         print("-" * 60)
 
         direction_col = config['columns']['direction']
@@ -236,6 +236,92 @@ def analyze_bot(conn, bot_name, config):
                     'count': count, 'wins': wins, 'losses': losses,
                     'win_rate': wr, 'total_pnl': float(total_pnl), 'avg_pnl': float(avg_pnl)
                 }
+
+        # Direction accuracy by GEX regime - key insight!
+        print("\n" + "-" * 60)
+        print("3b. DIRECTION ACCURACY BY GEX REGIME")
+        print("-" * 60)
+        print("  (Market can trend in ANY regime - question is: is direction correct?)")
+
+        cursor.execute(f"""
+            SELECT
+                gex_regime,
+                {direction_col} as direction,
+                COUNT(*) as count,
+                SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
+                COALESCE(SUM(realized_pnl), 0) as total_pnl
+            FROM {table}
+            WHERE status IN ('closed', 'expired')
+            AND realized_pnl IS NOT NULL
+            GROUP BY gex_regime, {direction_col}
+            ORDER BY gex_regime, direction
+        """)
+
+        regime_dir_results = cursor.fetchall()
+        if regime_dir_results:
+            print(f"  {'GEX Regime':<12} {'Direction':<12} {'Count':>6} {'Wins':>6} {'Losses':>6} {'Win%':>7} {'Total P&L':>12}")
+            print("  " + "-" * 72)
+            for row in regime_dir_results:
+                regime, direction, count, wins, losses, total_pnl = row
+                wins = wins or 0
+                losses = losses or 0
+                wr = (wins / count * 100) if count > 0 else 0
+                print(f"  {regime or 'Unknown':<12} {direction or 'N/A':<12} {count:>6} {wins:>6} {losses:>6} {wr:>6.1f}% ${float(total_pnl):>10,.2f}")
+
+        # Analyze if wall proximity logic is working
+        print("\n" + "-" * 60)
+        print("3c. WALL PROXIMITY VS DIRECTION CHOICE")
+        print("-" * 60)
+        print("  Question: When near PUT wall, is BULLISH chosen? (expected: yes)")
+        print("            When near CALL wall, is BEARISH chosen? (expected: yes)")
+
+        try:
+            cursor.execute(f"""
+                SELECT
+                    CASE
+                        WHEN put_wall > 0 AND call_wall > 0 THEN
+                            CASE
+                                WHEN ABS(underlying_at_entry - put_wall) / underlying_at_entry * 100 < 1.5 THEN 'NEAR_PUT_WALL'
+                                WHEN ABS(call_wall - underlying_at_entry) / underlying_at_entry * 100 < 1.5 THEN 'NEAR_CALL_WALL'
+                                ELSE 'BETWEEN_WALLS'
+                            END
+                        ELSE 'NO_WALL_DATA'
+                    END as wall_proximity,
+                    {direction_col} as direction,
+                    COUNT(*) as count,
+                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                    SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) as losses,
+                    COALESCE(SUM(realized_pnl), 0) as total_pnl
+                FROM {table}
+                WHERE status IN ('closed', 'expired')
+                AND realized_pnl IS NOT NULL
+                GROUP BY wall_proximity, {direction_col}
+                ORDER BY wall_proximity, direction
+            """)
+
+            wall_results = cursor.fetchall()
+            if wall_results:
+                print(f"\n  {'Wall Proximity':<16} {'Direction':<12} {'Count':>6} {'Wins':>6} {'Losses':>6} {'Win%':>7} {'P&L':>12}")
+                print("  " + "-" * 75)
+                for row in wall_results:
+                    proximity, direction, count, wins, losses, total_pnl = row
+                    wins = wins or 0
+                    losses = losses or 0
+                    wr = (wins / count * 100) if count > 0 else 0
+                    # Highlight expected vs unexpected combinations
+                    expected = ""
+                    if proximity == "NEAR_PUT_WALL" and "BULL" in (direction or ""):
+                        expected = "✓"
+                    elif proximity == "NEAR_CALL_WALL" and "BEAR" in (direction or ""):
+                        expected = "✓"
+                    elif proximity == "NEAR_PUT_WALL" and "BEAR" in (direction or ""):
+                        expected = "⚠️wrong"
+                    elif proximity == "NEAR_CALL_WALL" and "BULL" in (direction or ""):
+                        expected = "⚠️wrong"
+                    print(f"  {proximity:<16} {direction or 'N/A':<12} {count:>6} {wins:>6} {losses:>6} {wr:>6.1f}% ${float(total_pnl):>10,.2f} {expected}")
+        except Exception as e:
+            print(f"  Could not analyze wall proximity: {e}")
 
     # 5. P&L by VIX Level at Entry
     print("\n" + "-" * 60)
