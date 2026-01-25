@@ -44,7 +44,6 @@ import BuildVersion from './BuildVersion'
 import { CrossButton, DedicationModal, StewardshipTagline, StewardshipBanner } from './StewardshipBanner'
 
 const navItems = [
-  { href: '/', label: 'Dashboard', icon: LayoutDashboard, category: 'Main' },
   { href: '/daily-manna', label: 'Daily Manna', icon: BookOpen, category: 'Main' },
   { href: '/gex', label: 'GEX Analysis', icon: TrendingUp, category: 'Analysis' },
   { href: '/gex/history', label: 'GEX History', icon: Activity, category: 'Analysis' },
@@ -59,6 +58,7 @@ const navItems = [
   { href: '/solomon', label: 'SOLOMON (Feedback Loop)', icon: BookOpen, category: 'AI & Testing' },
   { href: '/prometheus', label: 'PROMETHEUS (ML System)', icon: Flame, category: 'AI & Testing' },
   { href: '/math-optimizer', label: 'Math Optimizer', icon: Brain, category: 'AI & Testing' },
+  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, category: 'Live Trading' },
   { href: '/ares', label: 'ARES (SPY Iron Condor)', icon: Sword, category: 'Live Trading' },
   { href: '/athena', label: 'ATHENA (Directional Spreads)', icon: Target, category: 'Live Trading' },
   { href: '/icarus', label: 'ICARUS (Aggressive Directional)', icon: Flame, category: 'Live Trading' },
@@ -195,7 +195,7 @@ export default function Navigation() {
             </button>
 
             <div className="flex items-center space-x-3">
-              <Link href="/" className="flex items-center space-x-2">
+              <Link href="/dashboard" className="flex items-center space-x-2">
                 <Activity className="w-8 h-8 text-primary" />
                 <div className="flex flex-col">
                   <span className="text-xl font-bold text-text-primary leading-tight">AlphaGEX</span>
