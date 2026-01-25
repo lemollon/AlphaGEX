@@ -172,7 +172,7 @@ class ATHENAConfig:
     # Strategy params (aligned with Apache GEX backtest optimal settings)
     ticker: str = "SPY"
     spread_width: int = 2  # $2 spreads
-    wall_filter_pct: float = 5.0  # Trade within 5% of GEX wall (relaxed from 3% for more trades)
+    wall_filter_pct: float = 1.0  # Trade within 1% of GEX wall (Apache backtest optimal)
     min_rr_ratio: float = 1.5  # Min risk:reward (need edge to be profitable)
 
     # Win probability thresholds - aligned with Oracle's low_confidence_threshold (0.45)

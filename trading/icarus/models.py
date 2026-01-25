@@ -81,7 +81,7 @@ class ICARUSConfig:
     spread_width: int = 3  # $3 vs ATHENA's $2
 
     # Signal thresholds - AGGRESSIVE but with EDGE (Apache-based)
-    wall_filter_pct: float = 6.0  # 6% - aggressive, more room to trade than ATHENA's 5%
+    wall_filter_pct: float = 1.0  # 1% - Apache backtest optimal (same as ATHENA)
     min_rr_ratio: float = 1.2  # 1.2 vs ATHENA's 1.5 - still need edge
     min_win_probability: float = 0.48  # 48% vs ATHENA's 50% - lower but near breakeven
     min_confidence: float = 0.48  # 48% vs ATHENA's 50%
