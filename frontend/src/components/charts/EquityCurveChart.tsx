@@ -290,6 +290,37 @@ export default function EquityCurveChart({
     { refreshInterval: 30000 }  // Refresh every 30 seconds for more responsive updates
   )
 
+  // Helper: Get week key from date string (YYYY-WW format)
+  const getWeekKey = (dateStr: string): string => {
+    const d = new Date(dateStr)
+    const startOfYear = new Date(d.getFullYear(), 0, 1)
+    const days = Math.floor((d.getTime() - startOfYear.getTime()) / (24 * 60 * 60 * 1000))
+    const weekNum = Math.ceil((days + startOfYear.getDay() + 1) / 7)
+    return `${d.getFullYear()}-W${weekNum.toString().padStart(2, '0')}`
+  }
+
+  // Helper: Get month key from date string (YYYY-MM format)
+  const getMonthKey = (dateStr: string): string => {
+    return dateStr.slice(0, 7) // YYYY-MM
+  }
+
+  // Helper: Get week start date for display (e.g., "Jan 6")
+  const getWeekLabel = (dateStr: string): string => {
+    const d = new Date(dateStr)
+    const dayOfWeek = d.getDay()
+    const diff = d.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1) // Monday start
+    const monday = new Date(d.setDate(diff))
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    return `${months[monday.getMonth()]} ${monday.getDate()}`
+  }
+
+  // Helper: Get month label for display (e.g., "Jan")
+  const getMonthLabel = (dateStr: string): string => {
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    const monthIndex = parseInt(dateStr.slice(5, 7), 10) - 1
+    return months[monthIndex] || dateStr.slice(5, 7)
+  }
+
   // Process equity curve for gradient
   const processedData = useMemo(() => {
     if (!data?.equity_curve) return []
@@ -302,6 +333,52 @@ export default function EquityCurveChart({
       }
     })
   }, [data?.equity_curve])
+
+  // Aggregate data by timeframe (weekly/monthly)
+  const aggregatedData = useMemo(() => {
+    if (!processedData.length) return []
+
+    // Daily: return as-is (but dedupe by date, taking last point per day)
+    if (timeframe === 'daily') {
+      const byDate = new Map<string, typeof processedData[0]>()
+      processedData.forEach(point => {
+        const dateKey = point.date?.slice(0, 10) || ''
+        byDate.set(dateKey, point) // Last point for each date wins
+      })
+      return Array.from(byDate.values()).map(point => ({
+        ...point,
+        displayDate: point.date?.slice(5, 10) || '' // MM-DD
+      }))
+    }
+
+    // Weekly: aggregate by week
+    if (timeframe === 'weekly') {
+      const byWeek = new Map<string, typeof processedData[0]>()
+      processedData.forEach(point => {
+        const weekKey = getWeekKey(point.date || '')
+        byWeek.set(weekKey, point) // Last point for each week wins
+      })
+      return Array.from(byWeek.entries()).map(([weekKey, point]) => ({
+        ...point,
+        displayDate: getWeekLabel(point.date || '')
+      }))
+    }
+
+    // Monthly: aggregate by month
+    if (timeframe === 'monthly') {
+      const byMonth = new Map<string, typeof processedData[0]>()
+      processedData.forEach(point => {
+        const monthKey = getMonthKey(point.date || '')
+        byMonth.set(monthKey, point) // Last point for each month wins
+      })
+      return Array.from(byMonth.entries()).map(([monthKey, point]) => ({
+        ...point,
+        displayDate: getMonthLabel(monthKey)
+      }))
+    }
+
+    return processedData
+  }, [processedData, timeframe])
 
   // Process intraday data
   const processedIntradayData = useMemo(() => {
@@ -339,13 +416,13 @@ export default function EquityCurveChart({
 
   // Chart bounds (handles both historical and intraday)
   const { minEquity, maxEquity, minDrawdown, maxDrawdown } = useMemo(() => {
-    const dataToUse = viewMode === 'intraday' ? processedIntradayData : processedData
+    const dataToUse = viewMode === 'intraday' ? processedIntradayData : aggregatedData
     // Use bot-appropriate starting capital for empty chart bounds
     const defaultCapital = (botFilter === 'TITAN' || botFilter === 'PEGASUS') ? 200000 : 100000
     if (!dataToUse.length) return { minEquity: 0, maxEquity: defaultCapital, minDrawdown: 0, maxDrawdown: 10 }
 
     const equities = dataToUse.map(p => p.equity)
-    const drawdowns = viewMode === 'intraday' ? [0] : processedData.map(p => p.drawdown_pct)
+    const drawdowns = viewMode === 'intraday' ? [0] : aggregatedData.map(p => p.drawdown_pct)
 
     return {
       minEquity: Math.min(...equities) * 0.98,
@@ -353,7 +430,7 @@ export default function EquityCurveChart({
       minDrawdown: 0,
       maxDrawdown: Math.max(...drawdowns, 5) * 1.2
     }
-  }, [processedData, processedIntradayData, viewMode, botFilter])
+  }, [aggregatedData, processedIntradayData, viewMode, botFilter])
 
   // Render event markers
   const renderEventMarkers = () => {
@@ -675,10 +752,10 @@ export default function EquityCurveChart({
 
       {/* Main Chart */}
       <div className="p-4" style={{ height }}>
-        {(viewMode === 'intraday' ? processedIntradayData.length : processedData.length) > 0 ? (
+        {(viewMode === 'intraday' ? processedIntradayData.length : aggregatedData.length) > 0 ? (
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart
-              data={viewMode === 'intraday' ? processedIntradayData : processedData}
+              data={viewMode === 'intraday' ? processedIntradayData : aggregatedData}
               margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
             >
               <defs>
@@ -701,7 +778,7 @@ export default function EquityCurveChart({
               <CartesianGrid strokeDasharray="3 3" stroke="#374151" strokeOpacity={0.5} />
 
               <XAxis
-                dataKey={viewMode === 'intraday' ? 'time' : 'date'}
+                dataKey={viewMode === 'intraday' ? 'time' : 'displayDate'}
                 stroke="#6B7280"
                 fontSize={10}
                 tickFormatter={(value) => {
@@ -709,9 +786,8 @@ export default function EquityCurveChart({
                     // Format time like "9:30" or "14:00"
                     return value || ''
                   }
-                  if (timeframe === 'daily') return value?.slice(5) || ''
-                  if (timeframe === 'weekly') return value?.slice(5) || ''
-                  return value?.slice(0, 7) || ''
+                  // displayDate is already formatted: MM-DD for daily, "Jan 6" for weekly, "Jan" for monthly
+                  return value || ''
                 }}
                 interval="preserveStartEnd"
                 tickMargin={8}
@@ -797,7 +873,7 @@ export default function EquityCurveChart({
       </div>
 
       {/* Drawdown Chart (historical only) */}
-      {showDrawdown && viewMode === 'historical' && processedData.length > 0 && (
+      {showDrawdown && viewMode === 'historical' && aggregatedData.length > 0 && (
         <div className="border-t border-gray-800">
           <div className="px-4 py-2 flex items-center gap-2 text-xs text-gray-400">
             <TrendingDown className="w-3 h-3 text-red-400" />
@@ -805,7 +881,7 @@ export default function EquityCurveChart({
           </div>
           <div className="px-4 pb-4" style={{ height: 100 }}>
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={processedData} margin={{ top: 0, right: 20, left: 10, bottom: 0 }}>
+              <AreaChart data={aggregatedData} margin={{ top: 0, right: 20, left: 10, bottom: 0 }}>
                 <defs>
                   <linearGradient id="drawdownGradient" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#EF4444" stopOpacity={0.5} />
