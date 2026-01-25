@@ -1722,39 +1722,43 @@ async def get_gex_training_data_status():
         conn = get_connection()
         cursor = conn.cursor()
 
+        # Helper to safely query table that might not exist
+        def safe_count_query(table_name, date_col="trade_date"):
+            try:
+                if date_col == "timestamp":
+                    cursor.execute(f"""
+                        SELECT COUNT(DISTINCT DATE({date_col})), MIN(DATE({date_col})), MAX(DATE({date_col}))
+                        FROM {table_name}
+                    """)
+                else:
+                    cursor.execute(f"""
+                        SELECT COUNT(*), MIN({date_col}), MAX({date_col})
+                        FROM {table_name}
+                    """)
+                row = cursor.fetchone()
+                return row[0] if row else 0, str(row[1]) if row and row[1] else None, str(row[2]) if row and row[2] else None
+            except Exception as e:
+                if "does not exist" in str(e).lower() or "relation" in str(e).lower():
+                    conn.rollback()  # Clear the error state
+                    return 0, None, None
+                raise
+
         # Check gex_structure_daily (primary source)
-        cursor.execute("""
-            SELECT COUNT(*), MIN(trade_date), MAX(trade_date)
-            FROM gex_structure_daily
-        """)
-        gex_row = cursor.fetchone()
-        gex_count = gex_row[0] if gex_row else 0
-        gex_min = str(gex_row[1]) if gex_row and gex_row[1] else None
-        gex_max = str(gex_row[2]) if gex_row and gex_row[2] else None
+        gex_count, gex_min, gex_max = safe_count_query("gex_structure_daily", "trade_date")
 
         # Check gex_history (fallback source) - count distinct days
-        cursor.execute("""
-            SELECT COUNT(DISTINCT DATE(timestamp)), MIN(DATE(timestamp)), MAX(DATE(timestamp))
-            FROM gex_history
-        """)
-        hist_row = cursor.fetchone()
-        hist_days = hist_row[0] if hist_row else 0
-        hist_min = str(hist_row[1]) if hist_row and hist_row[1] else None
-        hist_max = str(hist_row[2]) if hist_row and hist_row[2] else None
+        hist_days, hist_min, hist_max = safe_count_query("gex_history", "timestamp")
 
         # Also get total snapshots in gex_history
-        cursor.execute("SELECT COUNT(*) FROM gex_history")
-        hist_snapshots = cursor.fetchone()[0] or 0
+        try:
+            cursor.execute("SELECT COUNT(*) FROM gex_history")
+            hist_snapshots = cursor.fetchone()[0] or 0
+        except Exception:
+            conn.rollback()
+            hist_snapshots = 0
 
         # Check vix_daily
-        cursor.execute("""
-            SELECT COUNT(*), MIN(trade_date), MAX(trade_date)
-            FROM vix_daily
-        """)
-        vix_row = cursor.fetchone()
-        vix_count = vix_row[0] if vix_row else 0
-        vix_min = str(vix_row[1]) if vix_row and vix_row[1] else None
-        vix_max = str(vix_row[2]) if vix_row and vix_row[2] else None
+        vix_count, vix_min, vix_max = safe_count_query("vix_daily", "trade_date")
 
         conn.close()
 
@@ -2216,6 +2220,282 @@ async def populate_gex_structure_from_snapshots():
 
     except Exception as e:
         logger.error(f"Populate from snapshots error: {e}")
+        import traceback
+        return {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
+
+@router.post("/gex-models/populate-from-orat")
+async def populate_gex_structure_from_orat(
+    symbol: str = "SPY",
+    start_date: str = "2023-01-01",
+    limit: int = 500
+):
+    """
+    Populate gex_structure_daily from ORAT historical options database.
+
+    This reads from the ORAT_DATABASE_URL (historical options data)
+    and writes to the main DATABASE_URL (AlphaGEX production).
+
+    Args:
+        symbol: SPY or SPX (default: SPY)
+        start_date: Start date for data (default: 2023-01-01)
+        limit: Max days to process (default: 500)
+    """
+    import os
+    import psycopg2
+    from urllib.parse import urlparse
+
+    orat_url = os.getenv('ORAT_DATABASE_URL')
+    main_url = os.getenv('DATABASE_URL')
+
+    if not orat_url:
+        return {
+            "success": False,
+            "error": "ORAT_DATABASE_URL not configured. Cannot populate from ORAT."
+        }
+
+    if not main_url:
+        return {
+            "success": False,
+            "error": "DATABASE_URL not configured."
+        }
+
+    try:
+        # Connect to ORAT database (read source)
+        orat_parsed = urlparse(orat_url)
+        orat_conn = psycopg2.connect(
+            host=orat_parsed.hostname,
+            port=orat_parsed.port or 5432,
+            user=orat_parsed.username,
+            password=orat_parsed.password,
+            database=orat_parsed.path[1:],
+            connect_timeout=30
+        )
+
+        # Connect to main database (write destination)
+        from database_adapter import get_connection
+        main_conn = get_connection()
+
+        orat_cursor = orat_conn.cursor()
+        main_cursor = main_conn.cursor()
+
+        # Create table in main database if not exists
+        main_cursor.execute("""
+            CREATE TABLE IF NOT EXISTS gex_structure_daily (
+                id SERIAL PRIMARY KEY,
+                trade_date DATE NOT NULL,
+                symbol VARCHAR(10) NOT NULL,
+                spot_open NUMERIC(12,4),
+                spot_close NUMERIC(12,4),
+                spot_high NUMERIC(12,4),
+                spot_low NUMERIC(12,4),
+                net_gamma NUMERIC(20,2),
+                total_call_gamma NUMERIC(20,2),
+                total_put_gamma NUMERIC(20,2),
+                flip_point NUMERIC(12,4),
+                flip_point_2 NUMERIC(12,4),
+                magnet_1_strike NUMERIC(12,2),
+                magnet_1_gamma NUMERIC(20,2),
+                magnet_2_strike NUMERIC(12,2),
+                magnet_2_gamma NUMERIC(20,2),
+                magnet_3_strike NUMERIC(12,2),
+                magnet_3_gamma NUMERIC(20,2),
+                call_wall NUMERIC(12,2),
+                put_wall NUMERIC(12,2),
+                gamma_above_spot NUMERIC(20,2),
+                gamma_below_spot NUMERIC(20,2),
+                gamma_imbalance_pct NUMERIC(10,4),
+                num_magnets_above INTEGER,
+                num_magnets_below INTEGER,
+                nearest_magnet_strike NUMERIC(12,2),
+                nearest_magnet_distance_pct NUMERIC(10,4),
+                open_to_flip_distance_pct NUMERIC(10,4),
+                open_in_pin_zone BOOLEAN,
+                price_open NUMERIC(12,4),
+                price_close NUMERIC(12,4),
+                price_high NUMERIC(12,4),
+                price_low NUMERIC(12,4),
+                price_change_pct NUMERIC(10,4),
+                price_range_pct NUMERIC(10,4),
+                close_distance_to_flip_pct NUMERIC(10,4),
+                close_distance_to_magnet1_pct NUMERIC(10,4),
+                close_distance_to_magnet2_pct NUMERIC(10,4),
+                close_distance_to_call_wall_pct NUMERIC(10,4),
+                close_distance_to_put_wall_pct NUMERIC(10,4),
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(trade_date, symbol)
+            )
+        """)
+        main_conn.commit()
+
+        # Get available dates from ORAT
+        ticker = 'SPX' if symbol == 'SPX' else 'SPY'
+        orat_cursor.execute("""
+            SELECT DISTINCT trade_date
+            FROM orat_options_eod
+            WHERE ticker = %s AND trade_date >= %s
+            ORDER BY trade_date
+            LIMIT %s
+        """, (ticker, start_date, limit))
+
+        available_dates = [row[0] for row in orat_cursor.fetchall()]
+
+        if not available_dates:
+            orat_conn.close()
+            main_conn.close()
+            return {
+                "success": False,
+                "error": f"No ORAT data found for {symbol} since {start_date}"
+            }
+
+        # Check which dates already exist in main database
+        main_cursor.execute("""
+            SELECT trade_date FROM gex_structure_daily
+            WHERE symbol = %s AND trade_date >= %s
+        """, (symbol, start_date))
+        existing_dates = set(row[0] for row in main_cursor.fetchall())
+
+        # Filter to only new dates
+        new_dates = [d for d in available_dates if d not in existing_dates]
+
+        if not new_dates:
+            orat_conn.close()
+            main_conn.close()
+            return {
+                "success": True,
+                "data": {
+                    "message": f"All {len(available_dates)} dates already populated",
+                    "skipped": len(available_dates),
+                    "inserted": 0
+                }
+            }
+
+        # Process each new date
+        inserted = 0
+        errors = []
+
+        for trade_date in new_dates:
+            try:
+                # Get options data from ORAT for this date
+                orat_cursor.execute("""
+                    SELECT strike, gamma, call_oi, put_oi, underlying_price
+                    FROM orat_options_eod
+                    WHERE ticker = %s AND trade_date = %s
+                    AND dte <= 7 AND dte >= 0
+                    AND gamma IS NOT NULL AND gamma > 0
+                    ORDER BY strike
+                """, (ticker, trade_date))
+
+                rows = orat_cursor.fetchall()
+                if not rows:
+                    continue
+
+                # Calculate GEX structure
+                spot_price = float(rows[0][4])
+
+                # Build strike data
+                strike_data = {}
+                for row in rows:
+                    strike = float(row[0])
+                    gamma = float(row[1])
+                    call_oi = int(row[2]) if row[2] else 0
+                    put_oi = int(row[3]) if row[3] else 0
+
+                    call_gex = gamma * call_oi * 100 * (spot_price ** 2)
+                    put_gex = gamma * put_oi * 100 * (spot_price ** 2)
+
+                    if strike not in strike_data:
+                        strike_data[strike] = {'call': 0, 'put': 0}
+                    strike_data[strike]['call'] += call_gex
+                    strike_data[strike]['put'] += put_gex
+
+                # Calculate aggregates
+                total_call = sum(d['call'] for d in strike_data.values())
+                total_put = sum(d['put'] for d in strike_data.values())
+                net_gamma = total_call - total_put
+
+                # Find flip point
+                flip_point = None
+                sorted_strikes = sorted(strike_data.keys())
+                for i in range(len(sorted_strikes) - 1):
+                    s1, s2 = sorted_strikes[i], sorted_strikes[i+1]
+                    net1 = strike_data[s1]['call'] - strike_data[s1]['put']
+                    net2 = strike_data[s2]['call'] - strike_data[s2]['put']
+                    if (net1 > 0 and net2 < 0) or (net1 < 0 and net2 > 0):
+                        if net2 != net1:
+                            flip_point = s1 + (s2 - s1) * abs(net1) / (abs(net1) + abs(net2))
+                            break
+
+                # Find magnets (top 3 by absolute net gamma)
+                net_by_strike = [(s, d['call'] - d['put']) for s, d in strike_data.items()]
+                magnets = sorted(net_by_strike, key=lambda x: abs(x[1]), reverse=True)[:3]
+
+                # Insert into main database
+                main_cursor.execute("""
+                    INSERT INTO gex_structure_daily (
+                        trade_date, symbol, spot_open, spot_close,
+                        net_gamma, total_call_gamma, total_put_gamma,
+                        flip_point,
+                        magnet_1_strike, magnet_1_gamma,
+                        magnet_2_strike, magnet_2_gamma,
+                        magnet_3_strike, magnet_3_gamma,
+                        price_open, price_close
+                    ) VALUES (
+                        %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                    )
+                    ON CONFLICT (trade_date, symbol) DO UPDATE SET
+                        net_gamma = EXCLUDED.net_gamma,
+                        total_call_gamma = EXCLUDED.total_call_gamma,
+                        total_put_gamma = EXCLUDED.total_put_gamma,
+                        flip_point = EXCLUDED.flip_point
+                """, (
+                    trade_date, symbol, spot_price, spot_price,
+                    net_gamma, total_call, total_put,
+                    flip_point,
+                    magnets[0][0] if len(magnets) > 0 else None,
+                    magnets[0][1] if len(magnets) > 0 else None,
+                    magnets[1][0] if len(magnets) > 1 else None,
+                    magnets[1][1] if len(magnets) > 1 else None,
+                    magnets[2][0] if len(magnets) > 2 else None,
+                    magnets[2][1] if len(magnets) > 2 else None,
+                    spot_price, spot_price
+                ))
+                inserted += 1
+
+                # Commit every 50 rows
+                if inserted % 50 == 0:
+                    main_conn.commit()
+
+            except Exception as e:
+                if len(errors) < 5:
+                    errors.append(f"{trade_date}: {str(e)[:100]}")
+
+        main_conn.commit()
+
+        # Get final count
+        main_cursor.execute("SELECT COUNT(*) FROM gex_structure_daily WHERE symbol = %s", (symbol,))
+        total_count = main_cursor.fetchone()[0]
+
+        orat_conn.close()
+        main_conn.close()
+
+        return {
+            "success": True,
+            "data": {
+                "inserted": inserted,
+                "skipped": len(available_dates) - len(new_dates),
+                "total_records": total_count,
+                "errors": errors if errors else None,
+                "message": f"Populated {inserted} days from ORAT for {symbol}"
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"ORAT populate error: {e}")
         import traceback
         return {
             "success": False,
