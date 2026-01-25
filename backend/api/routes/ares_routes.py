@@ -1713,8 +1713,9 @@ async def get_ares_equity_curve(days: int = 30):
     unrealized_pnl = 0.0
     open_positions_count = 0
 
-    if not ares:
-        # ARES not running in this process - read from database directly
+    # ALWAYS read from database for historical equity curve data
+    # In-memory closed_positions is lost on restart, so database is the source of truth
+    if True:
         try:
             from database_adapter import get_connection
             conn = get_connection()
