@@ -13,6 +13,10 @@ import QuantStatusWidget from '@/components/QuantStatusWidget'
 import MathOptimizerWidget from '@/components/MathOptimizerWidget'
 import SyncStatusWidget from '@/components/SyncStatusWidget'
 import MultiBotEquityCurve from '@/components/charts/MultiBotEquityCurve'
+import PortfolioSummaryCard from '@/components/dashboard/PortfolioSummaryCard'
+import AllOpenPositionsTable from '@/components/dashboard/AllOpenPositionsTable'
+import MarketConditionsBanner from '@/components/dashboard/MarketConditionsBanner'
+import TodaysActivityFeed from '@/components/dashboard/TodaysActivityFeed'
 
 export default function Dashboard() {
   return (
@@ -29,27 +33,43 @@ export default function Dashboard() {
 
           {/* Header */}
           <div className="mb-4">
-            <h1 className="text-2xl font-bold text-text-primary">AlphaGEX Dashboard</h1>
-            <p className="text-text-secondary text-sm mt-1">Real-time GEX intelligence & trading signals</p>
+            <h1 className="text-2xl font-bold text-text-primary">Live Trading Dashboard</h1>
+            <p className="text-text-secondary text-sm mt-1">Real-time portfolio & trading activity</p>
           </div>
 
-          {/* Row 1: Bot Status - Full width with all 5 bots */}
+          {/* Row 1: Market Conditions Banner - Key context at a glance */}
           <div className="mb-4">
-            <BotStatusOverview />
+            <MarketConditionsBanner />
           </div>
 
-          {/* Row 2: Bot Performance Comparison - Full width equity curve */}
+          {/* Row 2: Portfolio Summary + Bot Status */}
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-4">
+            <div className="xl:col-span-1">
+              <PortfolioSummaryCard />
+            </div>
+            <div className="xl:col-span-2">
+              <BotStatusOverview />
+            </div>
+          </div>
+
+          {/* Row 3: Bot Performance Comparison - Full width equity curve */}
           <div className="mb-4">
             <MultiBotEquityCurve days={30} height={350} showPercentage={true} />
           </div>
 
-          {/* Row 3: Oracle & Gamma Expiration */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+          {/* Row 4: All Open Positions - Full width table */}
+          <div className="mb-4">
+            <AllOpenPositionsTable />
+          </div>
+
+          {/* Row 5: Today's Activity + Oracle + Gamma */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+            <TodaysActivityFeed />
             <OracleRecommendationWidget />
             <GammaExpirationWidget />
           </div>
 
-          {/* Row 4: AI/ML Systems - SAGE, QUANT, Math Optimizer, Sync Status */}
+          {/* Row 6: AI/ML Systems - SAGE, QUANT, Math Optimizer, Sync Status */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
             <SAGEStatusWidget />
             <QuantStatusWidget />
@@ -57,13 +77,13 @@ export default function Dashboard() {
             <SyncStatusWidget />
           </div>
 
-          {/* Row 5: ARGUS Alerts & Scan Feed - Activity monitoring */}
+          {/* Row 7: ARGUS Alerts & Scan Feed - Activity monitoring */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
             <ARGUSAlertsWidget />
             <DashboardScanFeed />
           </div>
 
-          {/* Row 6: Intelligence Dashboard - Full width */}
+          {/* Row 8: Intelligence Dashboard - Full width */}
           <div>
             <IntelligenceDashboard />
           </div>
