@@ -602,6 +602,21 @@ class BotMetricsService:
         try:
             cursor = conn.cursor()
 
+            # DIAGNOSTIC: Count closed trades first (simple query to verify data exists)
+            cursor.execute(f"""
+                SELECT COUNT(*),
+                       COALESCE(SUM(realized_pnl), 0) as total_pnl
+                FROM {positions_table}
+                WHERE status IN ('closed', 'expired', 'partial_close')
+            """)
+            count_row = cursor.fetchone()
+            closed_count = count_row[0] if count_row else 0
+            total_pnl_check = float(count_row[1]) if count_row and count_row[1] else 0
+            logger.info(
+                f"get_equity_curve({bot.value}): DIAGNOSTIC - {positions_table} has "
+                f"{closed_count} closed trades, total_pnl=${total_pnl_check:.2f}"
+            )
+
             # Get ALL individual closed trades with full timestamps for granular chart
             # No date filter on query - we need all trades for correct cumulative P&L
             # Use COALESCE to fall back to open_time if close_time is NULL (legacy data)
@@ -744,12 +759,17 @@ class BotMetricsService:
             }
 
         except Exception as e:
-            logger.error(f"Failed to build equity curve for {bot.value}: {e}")
+            error_msg = f"Failed to build equity curve for {bot.value}: {e}"
+            logger.error(error_msg)
             import traceback
-            traceback.print_exc()
+            tb_str = traceback.format_exc()
+            logger.error(tb_str)
             if conn:
                 conn.close()
-            return self._empty_equity_curve(bot, starting_capital)
+            result = self._empty_equity_curve(bot, starting_capital)
+            result["error"] = error_msg
+            result["traceback"] = tb_str[:500]  # Include first 500 chars of traceback
+            return result
 
     def get_intraday_equity(self, bot: BotName, date_str: Optional[str] = None) -> Dict[str, Any]:
         """
