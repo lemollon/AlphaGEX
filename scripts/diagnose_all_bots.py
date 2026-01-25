@@ -189,7 +189,7 @@ def run_diagnostics():
 
         cursor.execute(f"""
             SELECT COUNT(*) FROM {table}
-            WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+            WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
         """, (today,))
         today_count = cursor.fetchone()[0]
         print(f"    Today's snapshots: {today_count}")
@@ -233,14 +233,13 @@ def run_diagnostics():
         try:
             # This is the EXACT query used by equity curve endpoints
             cursor.execute(f"""
-                SELECT DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago') as close_date,
+                SELECT DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') as close_date,
                        SUM(realized_pnl) as daily_pnl,
                        COUNT(*) as trade_count
                 FROM {table}
                 WHERE status IN ('closed', 'expired')
-                AND close_time IS NOT NULL
                 AND realized_pnl IS NOT NULL
-                GROUP BY DATE(close_time::timestamptz AT TIME ZONE 'America/Chicago')
+                GROUP BY DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago')
                 ORDER BY close_date
                 LIMIT 10
             """)

@@ -496,7 +496,7 @@ class ARESDatabase:
                 c.execute("""
                     SELECT COUNT(*)
                     FROM ares_positions
-                    WHERE DATE(open_time AT TIME ZONE 'America/Chicago') = %s
+                    WHERE DATE(open_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
                 """, (date,))
                 return c.fetchone()[0] > 0
         except Exception:
@@ -510,7 +510,7 @@ class ARESDatabase:
                 c.execute("""
                     SELECT COUNT(*)
                     FROM ares_positions
-                    WHERE DATE(open_time AT TIME ZONE 'America/Chicago') = %s
+                    WHERE DATE(open_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
                 """, (date,))
                 return c.fetchone()[0]
         except Exception:
@@ -526,11 +526,12 @@ class ARESDatabase:
             with db_connection() as conn:
                 c = conn.cursor()
                 # Use COALESCE to handle legacy data with NULL close_time
+                # NOTE: Cast to timestamptz explicitly for psycopg2 compatibility
                 c.execute("""
                     SELECT COALESCE(SUM(realized_pnl), 0)
                     FROM ares_positions
                     WHERE status IN ('closed', 'expired', 'partial_close')
-                    AND DATE(COALESCE(close_time, open_time) AT TIME ZONE 'America/Chicago') = %s
+                    AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
                 """, (date,))
                 result = c.fetchone()[0]
                 return float(result) if result else 0.0

@@ -445,7 +445,7 @@ class PEGASUSDatabase:
                 c = conn.cursor()
                 c.execute("""
                     SELECT COUNT(*) FROM pegasus_positions
-                    WHERE DATE(open_time AT TIME ZONE 'America/Chicago') = %s
+                    WHERE DATE(open_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
                 """, (date,))
                 return c.fetchone()[0] > 0
         except Exception:

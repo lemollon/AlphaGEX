@@ -362,14 +362,14 @@ def fetch_closed_trades_for_date(bot: str, report_date: date) -> List[Dict[str, 
         with _db_connection() as conn:
             cursor = conn.cursor()
 
-            # Cast close_time to timestamp in case it's stored as TEXT
+            # Cast close_time to timestamptz for proper timezone handling
             # Use COALESCE to fall back to open_time if close_time is NULL
             cursor.execute(f"""
                 SELECT *
                 FROM {table}
                 WHERE status IN ('closed', 'expired', 'partial_close')
-                AND DATE(COALESCE(close_time, open_time)::timestamp AT TIME ZONE 'America/Chicago') = %s
-                ORDER BY COALESCE(close_time, open_time) ASC
+                AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
+                ORDER BY COALESCE(close_time, open_time)::timestamptz ASC
             """, (report_date,))
 
             columns = [desc[0] for desc in cursor.description]
@@ -428,14 +428,14 @@ def fetch_scan_activity_for_date(bot: str, report_date: date) -> List[Dict[str, 
                     SELECT *
                     FROM {source_table}
                     WHERE bot_name = %s
-                    AND DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+                    AND DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
                     ORDER BY timestamp ASC
                 """, (bot.upper(), report_date))
             else:
                 cursor.execute(f"""
                     SELECT *
                     FROM {source_table}
-                    WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+                    WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
                     ORDER BY timestamp ASC
                 """, (report_date,))
 

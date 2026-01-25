@@ -402,6 +402,7 @@ class BotMetricsService:
                 # Get aggregate stats from database (excluding unrealized - we calculate that with MTM)
                 # CRITICAL: Include 'partial_close' status - these are positions where one leg closed
                 # but the other failed. They have realized_pnl and must be counted in metrics.
+                # NOTE: Cast to timestamptz explicitly for psycopg2 compatibility
                 cursor.execute(f"""
                     SELECT
                         COUNT(*) FILTER (WHERE status = 'open') as open_count,
@@ -411,7 +412,7 @@ class BotMetricsService:
                         COALESCE(SUM(CASE WHEN status IN ('closed', 'expired', 'partial_close') THEN realized_pnl ELSE 0 END), 0) as total_realized,
                         COALESCE(SUM(CASE
                             WHEN status IN ('closed', 'expired', 'partial_close')
-                            AND DATE(COALESCE(close_time, open_time) AT TIME ZONE 'America/Chicago') = %s
+                            AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
                             THEN realized_pnl ELSE 0 END), 0) as today_realized
                     FROM {positions_table}
                 """, (today,))
@@ -604,17 +605,24 @@ class BotMetricsService:
             # Get ALL individual closed trades with full timestamps for granular chart
             # No date filter on query - we need all trades for correct cumulative P&L
             # Use COALESCE to fall back to open_time if close_time is NULL (legacy data)
+            # NOTE: Cast to timestamptz explicitly for psycopg2 compatibility
             cursor.execute(f"""
                 SELECT
-                    COALESCE(close_time, open_time) AT TIME ZONE 'America/Chicago' as close_timestamp,
+                    COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago' as close_timestamp,
                     realized_pnl,
                     position_id
                 FROM {positions_table}
                 WHERE status IN ('closed', 'expired', 'partial_close')
-                ORDER BY COALESCE(close_time, open_time) ASC
+                ORDER BY COALESCE(close_time, open_time)::timestamptz ASC
             """)
 
             trades_data = cursor.fetchall()
+
+            # DEBUG: Log how many trades were found
+            logger.info(
+                f"get_equity_curve({bot.value}): Found {len(trades_data)} closed trades "
+                f"from table {positions_table}"
+            )
 
             # Get current unrealized P&L
             unrealized_pnl = 0.0
@@ -780,11 +788,12 @@ class BotMetricsService:
                 # Get total realized P&L up to (but not including) target date
                 # Include partial_close - positions where one leg closed but other failed
                 # Use COALESCE to handle legacy data with NULL close_time
+                # NOTE: Cast to timestamptz explicitly for psycopg2 compatibility
                 cursor.execute(f"""
                     SELECT COALESCE(SUM(realized_pnl), 0)
                     FROM {positions_table}
                     WHERE status IN ('closed', 'expired', 'partial_close')
-                    AND DATE(COALESCE(close_time, open_time) AT TIME ZONE 'America/Chicago') < %s
+                    AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') < %s
                 """, (target_date,))
                 prev_realized = float(cursor.fetchone()[0] or 0)
 
@@ -793,7 +802,7 @@ class BotMetricsService:
                     SELECT COALESCE(SUM(realized_pnl), 0), COUNT(*)
                     FROM {positions_table}
                     WHERE status IN ('closed', 'expired', 'partial_close')
-                    AND DATE(COALESCE(close_time, open_time) AT TIME ZONE 'America/Chicago') = %s
+                    AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
                 """, (target_date,))
                 row = cursor.fetchone()
                 today_realized = float(row[0] or 0)
@@ -818,7 +827,7 @@ class BotMetricsService:
                 cursor.execute(f"""
                     SELECT timestamp, balance, unrealized_pnl, realized_pnl, open_positions
                     FROM {snapshots_table}
-                    WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+                    WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
                     ORDER BY timestamp ASC
                 """, (target_date,))
                 snapshots = cursor.fetchall()

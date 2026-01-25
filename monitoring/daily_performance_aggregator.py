@@ -37,20 +37,20 @@ def aggregate_daily_performance():
         conn = get_connection()
 
         # Get all closed positions
+        # Use COALESCE to handle legacy data with NULL closed_date
         closed_positions = pd.read_sql_query("""
             SELECT
-                closed_date as date,
+                COALESCE(closed_date, entry_date) as date,
                 realized_pnl,
                 entry_date,
                 closed_date,
                 entry_time,
-                closed_time,
+                COALESCE(closed_time, entry_time) as closed_time,
                 confidence,
                 strategy
             FROM autonomous_positions
             WHERE status = 'CLOSED'
-              AND closed_date IS NOT NULL
-            ORDER BY closed_date, closed_time
+            ORDER BY COALESCE(closed_date, entry_date), COALESCE(closed_time, entry_time)
         """, conn.raw_connection)
 
         if closed_positions.empty:

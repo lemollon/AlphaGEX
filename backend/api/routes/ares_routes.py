@@ -1903,8 +1903,10 @@ async def get_ares_equity_curve(days: int = 30):
                     logger.debug(f"ARES MTM calculation failed for position: {e}")
 
         # Sort positions by close time for granular equity curve
+        # Check if ares has closed_positions attribute, otherwise use empty list
+        closed_positions_list = getattr(ares, 'closed_positions', []) or []
         sorted_positions = sorted(
-            ares.closed_positions,
+            closed_positions_list,
             key=lambda p: p.close_date or p.expiration or ""
         )
 
@@ -1981,7 +1983,7 @@ async def get_ares_equity_curve(days: int = 30):
                 "realized_pnl": round(cumulative_pnl, 2),
                 "unrealized_pnl": round(unrealized_pnl, 2),
                 "total_return_pct": round((total_pnl_with_unrealized / starting_capital) * 100, 2),
-                "closed_positions_count": len(ares.closed_positions),
+                "closed_positions_count": len(closed_positions_list),
                 "open_positions_count": open_positions_count
             }
         }
@@ -2591,15 +2593,16 @@ async def get_ares_performance():
 
     try:
         # Calculate performance metrics
-        winning_trades = sum(1 for pos in ares.closed_positions if pos.realized_pnl > 0)
-        losing_trades = sum(1 for pos in ares.closed_positions if pos.realized_pnl <= 0)
-        total_closed = len(ares.closed_positions)
+        closed_positions_list = getattr(ares, 'closed_positions', []) or []
+        winning_trades = sum(1 for pos in closed_positions_list if pos.realized_pnl > 0)
+        losing_trades = sum(1 for pos in closed_positions_list if pos.realized_pnl <= 0)
+        total_closed = len(closed_positions_list)
 
-        total_pnl = sum(pos.realized_pnl for pos in ares.closed_positions)
+        total_pnl = sum(pos.realized_pnl for pos in closed_positions_list)
         avg_pnl = total_pnl / total_closed if total_closed > 0 else 0
 
-        best_trade = max((pos.realized_pnl for pos in ares.closed_positions), default=0)
-        worst_trade = min((pos.realized_pnl for pos in ares.closed_positions), default=0)
+        best_trade = max((pos.realized_pnl for pos in closed_positions_list), default=0)
+        worst_trade = min((pos.realized_pnl for pos in closed_positions_list), default=0)
         current_capital = starting_capital + total_pnl
         return_pct = (total_pnl / starting_capital) * 100 if starting_capital > 0 else 0
 
@@ -2608,7 +2611,7 @@ async def get_ares_performance():
         max_dd = 0
         running_equity = starting_capital
 
-        for pos in ares.closed_positions:
+        for pos in closed_positions_list:
             running_equity += pos.realized_pnl
             peak = max(peak, running_equity)
             dd = (peak - running_equity) / peak * 100 if peak > 0 else 0
