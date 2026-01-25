@@ -200,29 +200,29 @@ export default function GexMLPage() {
   return (
     <>
       <Navigation />
-      <main className="min-h-screen bg-black text-white px-4 pb-4 md:px-6 md:pb-6 pt-28">
+      <main className="min-h-screen bg-background-deep text-text-primary px-4 pb-4 md:px-6 md:pb-6 pt-28">
         <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-3">
-            <Brain className="w-8 h-8 text-purple-400" />
+            <Brain className="w-8 h-8 text-info" />
             <div>
-              <h1 className="text-2xl font-bold">ORION</h1>
-              <p className="text-gray-400 text-sm">
+              <h1 className="text-2xl font-bold text-text-primary">ORION</h1>
+              <p className="text-text-secondary text-sm">
                 GEX Probability Models for ARGUS and HYPERION
               </p>
             </div>
           </div>
           <div className="flex items-center gap-3">
             {lastRefresh && (
-              <span className="text-xs text-gray-500">
+              <span className="text-xs text-text-muted">
                 Last refresh: {lastRefresh.toLocaleTimeString()}
               </span>
             )}
             <button
               onClick={fetchStatus}
               disabled={loading}
-              className="flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors disabled:opacity-50"
+              className="flex items-center gap-2 px-4 py-2 bg-background-hover hover:bg-primary/20 rounded-lg transition-colors disabled:opacity-50"
             >
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
               Refresh
@@ -232,26 +232,26 @@ export default function GexMLPage() {
 
         {/* Error Alert */}
         {error && (
-          <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center gap-3">
-            <AlertTriangle className="w-5 h-5 text-red-400" />
-            <span className="text-red-400">{error}</span>
+          <div className="mb-6 p-4 bg-danger/10 border border-danger/30 rounded-lg flex items-center gap-3">
+            <AlertTriangle className="w-5 h-5 text-danger" />
+            <span className="text-danger">{error}</span>
           </div>
         )}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Model Status Card */}
-          <div className="bg-gray-800/50 rounded-xl p-6 border border-gray-700">
+          <div className="bg-background-card rounded-xl p-6 border border-gray-700/50 shadow-card">
             <div className="flex items-center gap-3 mb-6">
-              <div className={`p-2 rounded-lg ${modelStatus?.is_trained ? 'bg-emerald-500/20' : 'bg-red-500/20'}`}>
+              <div className={`p-2 rounded-lg ${modelStatus?.is_trained ? 'bg-success/20' : 'bg-danger/20'}`}>
                 {modelStatus?.is_trained ? (
-                  <CheckCircle className="w-6 h-6 text-emerald-400" />
+                  <CheckCircle className="w-6 h-6 text-success" />
                 ) : (
-                  <XCircle className="w-6 h-6 text-red-400" />
+                  <XCircle className="w-6 h-6 text-danger" />
                 )}
               </div>
               <div>
-                <h2 className="text-lg font-bold">Model Status</h2>
-                <p className={`text-sm ${modelStatus?.is_trained ? 'text-emerald-400' : 'text-red-400'}`}>
+                <h2 className="text-lg font-bold text-text-primary">Model Status</h2>
+                <p className={`text-sm ${modelStatus?.is_trained ? 'text-success' : 'text-danger'}`}>
                   {modelStatus?.is_trained ? 'Trained & Ready' : 'Not Trained'}
                 </p>
               </div>
@@ -260,39 +260,39 @@ export default function GexMLPage() {
             {modelStatus?.model_info && (
               <div className="space-y-3 mb-6">
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-400">Version</span>
-                  <span className="font-mono">v{modelStatus.model_info.version}</span>
+                  <span className="text-text-secondary">Version</span>
+                  <span className="font-mono text-text-primary">v{modelStatus.model_info.version}</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-400">Created</span>
-                  <span className="font-mono">{formatDate(modelStatus.model_info.created_at)}</span>
+                  <span className="text-text-secondary">Created</span>
+                  <span className="font-mono text-text-primary">{formatDate(modelStatus.model_info.created_at)}</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-400">Training Records</span>
-                  <span className="font-mono">{modelStatus.model_info.training_records?.toLocaleString() || 'N/A'}</span>
+                  <span className="text-text-secondary">Training Records</span>
+                  <span className="font-mono text-text-primary">{modelStatus.model_info.training_records?.toLocaleString() || 'N/A'}</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-gray-400">Model Size</span>
-                  <span className="font-mono">{modelStatus.model_info.size_kb?.toFixed(1) || 'N/A'} KB</span>
+                  <span className="text-text-secondary">Model Size</span>
+                  <span className="font-mono text-text-primary">{modelStatus.model_info.size_kb?.toFixed(1) || 'N/A'} KB</span>
                 </div>
               </div>
             )}
 
             <div className="space-y-3">
               <div className="flex justify-between items-center text-sm">
-                <span className="text-gray-400 flex items-center gap-2">
+                <span className="text-text-secondary flex items-center gap-2">
                   <Clock className="w-4 h-4" />
                   Staleness
                 </span>
                 <span className={`font-mono ${
-                  modelStatus?.needs_retraining ? 'text-yellow-400' : 'text-emerald-400'
+                  modelStatus?.needs_retraining ? 'text-warning' : 'text-success'
                 }`}>
                   {formatHours(modelStatus?.staleness_hours ?? null)}
                 </span>
               </div>
               <div className="flex justify-between items-center text-sm">
-                <span className="text-gray-400">Needs Retraining</span>
-                <span className={modelStatus?.needs_retraining ? 'text-yellow-400' : 'text-emerald-400'}>
+                <span className="text-text-secondary">Needs Retraining</span>
+                <span className={modelStatus?.needs_retraining ? 'text-warning' : 'text-success'}>
                   {modelStatus?.needs_retraining ? 'Yes' : 'No'}
                 </span>
               </div>
@@ -300,14 +300,14 @@ export default function GexMLPage() {
           </div>
 
           {/* Training Data Status Card */}
-          <div className="bg-gray-800/50 rounded-xl p-6 border border-gray-700">
+          <div className="bg-background-card rounded-xl p-6 border border-gray-700/50 shadow-card">
             <div className="flex items-center gap-3 mb-6">
-              <div className={`p-2 rounded-lg ${dataStatus?.readiness?.is_ready ? 'bg-emerald-500/20' : 'bg-yellow-500/20'}`}>
-                <Database className={`w-6 h-6 ${dataStatus?.readiness?.is_ready ? 'text-emerald-400' : 'text-yellow-400'}`} />
+              <div className={`p-2 rounded-lg ${dataStatus?.readiness?.is_ready ? 'bg-success/20' : 'bg-warning/20'}`}>
+                <Database className={`w-6 h-6 ${dataStatus?.readiness?.is_ready ? 'text-success' : 'text-warning'}`} />
               </div>
               <div>
-                <h2 className="text-lg font-bold">Training Data</h2>
-                <p className={`text-sm ${dataStatus?.readiness?.is_ready ? 'text-emerald-400' : 'text-yellow-400'}`}>
+                <h2 className="text-lg font-bold text-text-primary">Training Data</h2>
+                <p className={`text-sm ${dataStatus?.readiness?.is_ready ? 'text-success' : 'text-warning'}`}>
                   {dataStatus?.readiness?.message || 'Checking...'}
                 </p>
               </div>
@@ -477,14 +477,14 @@ export default function GexMLPage() {
           </div>
 
           {/* Sub-Models Status Card */}
-          <div className="bg-gray-800/50 rounded-xl p-6 border border-gray-700">
+          <div className="bg-background-card rounded-xl p-6 border border-gray-700/50 shadow-card">
             <div className="flex items-center gap-3 mb-6">
-              <div className="p-2 rounded-lg bg-purple-500/20">
-                <Zap className="w-6 h-6 text-purple-400" />
+              <div className="p-2 rounded-lg bg-info/20">
+                <Zap className="w-6 h-6 text-info" />
               </div>
               <div>
-                <h2 className="text-lg font-bold">5 Sub-Models</h2>
-                <p className="text-sm text-gray-400">XGBoost classifiers and regressors</p>
+                <h2 className="text-lg font-bold text-text-primary">5 Sub-Models</h2>
+                <p className="text-sm text-text-secondary">XGBoost classifiers and regressors</p>
               </div>
             </div>
 
@@ -499,18 +499,18 @@ export default function GexMLPage() {
                 const Icon = model.icon
                 const isTrained = modelStatus?.sub_models?.[model.key as keyof typeof modelStatus.sub_models]
                 return (
-                  <div key={model.key} className="flex items-center justify-between p-3 bg-gray-700/30 rounded-lg">
+                  <div key={model.key} className="flex items-center justify-between p-3 bg-background-hover rounded-lg">
                     <div className="flex items-center gap-3">
-                      <Icon className={`w-4 h-4 ${isTrained ? 'text-purple-400' : 'text-gray-500'}`} />
+                      <Icon className={`w-4 h-4 ${isTrained ? 'text-info' : 'text-text-muted'}`} />
                       <div>
-                        <div className="text-sm font-medium">{model.label}</div>
-                        <div className="text-xs text-gray-500">{model.desc}</div>
+                        <div className="text-sm font-medium text-text-primary">{model.label}</div>
+                        <div className="text-xs text-text-muted">{model.desc}</div>
                       </div>
                     </div>
                     {isTrained ? (
-                      <CheckCircle className="w-5 h-5 text-emerald-400" />
+                      <CheckCircle className="w-5 h-5 text-success" />
                     ) : (
-                      <XCircle className="w-5 h-5 text-gray-500" />
+                      <XCircle className="w-5 h-5 text-text-muted" />
                     )}
                   </div>
                 )
@@ -519,44 +519,44 @@ export default function GexMLPage() {
           </div>
 
           {/* Usage & Integration Card */}
-          <div className="bg-gray-800/50 rounded-xl p-6 border border-gray-700">
+          <div className="bg-background-card rounded-xl p-6 border border-gray-700/50 shadow-card">
             <div className="flex items-center gap-3 mb-6">
-              <div className="p-2 rounded-lg bg-blue-500/20">
-                <Info className="w-6 h-6 text-blue-400" />
+              <div className="p-2 rounded-lg bg-primary/20">
+                <Info className="w-6 h-6 text-primary" />
               </div>
               <div>
-                <h2 className="text-lg font-bold">Integration</h2>
-                <p className="text-sm text-gray-400">How models are used</p>
+                <h2 className="text-lg font-bold text-text-primary">Integration</h2>
+                <p className="text-sm text-text-secondary">How models are used</p>
               </div>
             </div>
 
             <div className="space-y-4">
-              <div className="p-4 bg-gradient-to-r from-purple-500/10 to-transparent border-l-2 border-purple-500 rounded-r-lg">
+              <div className="p-4 bg-gradient-to-r from-info/10 to-transparent border-l-2 border-info rounded-r-lg">
                 <div className="flex items-center gap-2 mb-2">
-                  <Eye className="w-5 h-5 text-purple-400" />
-                  <span className="font-medium">ARGUS (0DTE Gamma)</span>
+                  <Eye className="w-5 h-5 text-info" />
+                  <span className="font-medium text-text-primary">ARGUS (0DTE Gamma)</span>
                 </div>
-                <p className="text-sm text-gray-400">
+                <p className="text-sm text-text-secondary">
                   {modelStatus?.usage?.argus || '60% ML + 40% distance-weighted probability'}
                 </p>
               </div>
 
-              <div className="p-4 bg-gradient-to-r from-blue-500/10 to-transparent border-l-2 border-blue-500 rounded-r-lg">
+              <div className="p-4 bg-gradient-to-r from-primary/10 to-transparent border-l-2 border-primary rounded-r-lg">
                 <div className="flex items-center gap-2 mb-2">
-                  <Sparkles className="w-5 h-5 text-blue-400" />
-                  <span className="font-medium">HYPERION (Weekly Gamma)</span>
+                  <Sparkles className="w-5 h-5 text-primary" />
+                  <span className="font-medium text-text-primary">HYPERION (Weekly Gamma)</span>
                 </div>
-                <p className="text-sm text-gray-400">
+                <p className="text-sm text-text-secondary">
                   {modelStatus?.usage?.hyperion || '60% ML + 40% distance-weighted probability'}
                 </p>
               </div>
 
-              <div className="mt-4 p-3 bg-gray-700/30 rounded-lg">
-                <h4 className="text-sm font-medium mb-2">Probability Calculation</h4>
-                <div className="font-mono text-xs text-gray-400 bg-gray-800 p-2 rounded">
+              <div className="mt-4 p-3 bg-background-hover rounded-lg">
+                <h4 className="text-sm font-medium text-text-primary mb-2">Probability Calculation</h4>
+                <div className="font-mono text-xs text-text-secondary bg-background-deep p-2 rounded">
                   probability = (0.6 × ML_prob) + (0.4 × distance_prob)
                 </div>
-                <p className="text-xs text-gray-500 mt-2">
+                <p className="text-xs text-text-muted mt-2">
                   When ML models are not trained, falls back to 100% distance-based calculation.
                 </p>
               </div>
@@ -565,11 +565,11 @@ export default function GexMLPage() {
         </div>
 
         {/* Training Controls */}
-        <div className="mt-6 bg-gray-800/50 rounded-xl p-6 border border-gray-700">
+        <div className="mt-6 bg-background-card rounded-xl p-6 border border-gray-700/50 shadow-card">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
-              <Play className="w-5 h-5 text-emerald-400" />
-              <h2 className="text-lg font-bold">Training Controls</h2>
+              <Play className="w-5 h-5 text-success" />
+              <h2 className="text-lg font-bold text-text-primary">Training Controls</h2>
             </div>
           </div>
 
@@ -579,8 +579,8 @@ export default function GexMLPage() {
               disabled={training || !dataStatus?.readiness?.is_ready}
               className={`flex items-center gap-2 px-6 py-3 rounded-lg font-medium transition-all ${
                 training || !dataStatus?.readiness?.is_ready
-                  ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
-                  : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                  ? 'bg-background-hover text-text-muted cursor-not-allowed'
+                  : 'bg-success hover:bg-success-hover text-white'
               }`}
             >
               {training ? (
@@ -596,9 +596,9 @@ export default function GexMLPage() {
               )}
             </button>
 
-            <div className="text-sm text-gray-400">
+            <div className="text-sm text-text-secondary">
               {!dataStatus?.readiness?.is_ready ? (
-                <span className="text-yellow-400">
+                <span className="text-warning">
                   Need at least {dataStatus?.readiness?.min_records_needed || 100} GEX records to train
                 </span>
               ) : modelStatus?.is_trained ? (
@@ -610,37 +610,37 @@ export default function GexMLPage() {
           </div>
 
           {/* Scheduled Training Info */}
-          <div className="mt-4 p-3 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+          <div className="mt-4 p-3 bg-primary/10 border border-primary/30 rounded-lg">
             <div className="flex items-center gap-2 text-sm">
-              <Clock className="w-4 h-4 text-blue-400" />
-              <span className="text-blue-400 font-medium">Auto-Training Schedule:</span>
-              <span className="text-gray-300">Every Sunday at 6:00 PM CT</span>
+              <Clock className="w-4 h-4 text-primary" />
+              <span className="text-primary font-medium">Auto-Training Schedule:</span>
+              <span className="text-text-primary">Every Sunday at 6:00 PM CT</span>
             </div>
-            <p className="text-xs text-gray-500 mt-1 ml-6">
+            <p className="text-xs text-text-muted mt-1 ml-6">
               Models automatically retrain weekly when older than 7 days. Training uses GEX data from SPX and SPY.
             </p>
           </div>
 
           {/* Training Result */}
           {trainingResult && (
-            <div className="mt-4 p-4 bg-gray-700/30 rounded-lg">
-              <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
+            <div className="mt-4 p-4 bg-background-hover rounded-lg">
+              <h4 className="text-sm font-medium text-text-primary mb-2 flex items-center gap-2">
                 {trainingResult.success ? (
                   <>
-                    <CheckCircle className="w-4 h-4 text-emerald-400" />
+                    <CheckCircle className="w-4 h-4 text-success" />
                     Training Complete
                   </>
                 ) : (
                   <>
-                    <XCircle className="w-4 h-4 text-red-400" />
+                    <XCircle className="w-4 h-4 text-danger" />
                     Training Failed
                   </>
                 )}
               </h4>
               {trainingResult.success ? (
-                <p className="text-sm text-gray-400">{trainingResult.message}</p>
+                <p className="text-sm text-text-secondary">{trainingResult.message}</p>
               ) : (
-                <p className="text-sm text-red-400">{trainingResult.error}</p>
+                <p className="text-sm text-danger">{trainingResult.error}</p>
               )}
             </div>
           )}
@@ -648,9 +648,9 @@ export default function GexMLPage() {
 
         {/* Model Metrics (if trained) */}
         {modelStatus?.model_info?.metrics && Object.keys(modelStatus.model_info.metrics).length > 0 && (
-          <div className="mt-6 bg-gray-800/50 rounded-xl p-6 border border-gray-700">
-            <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
-              <Activity className="w-5 h-5 text-blue-400" />
+          <div className="mt-6 bg-background-card rounded-xl p-6 border border-gray-700/50 shadow-card">
+            <h2 className="text-lg font-bold text-text-primary mb-4 flex items-center gap-2">
+              <Activity className="w-5 h-5 text-primary" />
               Training Metrics
             </h2>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
@@ -672,11 +672,11 @@ export default function GexMLPage() {
                   displayValue = String(value)
                 }
                 return (
-                  <div key={key} className="p-3 bg-gray-700/30 rounded-lg">
-                    <div className="text-xs text-gray-400 mb-1">
+                  <div key={key} className="p-3 bg-background-hover rounded-lg">
+                    <div className="text-xs text-text-secondary mb-1">
                       {key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                     </div>
-                    <div className="text-lg font-mono font-bold">
+                    <div className="text-lg font-mono font-bold text-text-primary">
                       {displayValue}
                     </div>
                   </div>

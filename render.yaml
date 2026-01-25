@@ -104,6 +104,8 @@ services:
         value: America/Chicago
       - key: PYTHON_VERSION
         value: 3.11.0
+      - key: PYTHONPATH
+        value: /opt/render/project/src
       - key: POLYGON_API_KEY
         sync: false
       - key: TRADING_VOLATILITY_API_KEY
@@ -133,6 +135,8 @@ services:
         value: America/Chicago
       - key: PYTHON_VERSION
         value: 3.11.0
+      - key: PYTHONPATH
+        value: /opt/render/project/src
       - key: POLYGON_API_KEY
         sync: false
       - key: TRADING_VOLATILITY_API_KEY

@@ -92,11 +92,40 @@ if not os.getenv('POLYGON_API_KEY'):
 # Texas Central Time - standard timezone for all AlphaGEX operations
 CENTRAL_TZ = ZoneInfo("America/Chicago")
 
+# Import MarketCalendar for holiday-aware market hours checking
+_market_calendar = None
+
+def get_market_calendar():
+    """Get singleton MarketCalendar instance for holiday checking"""
+    global _market_calendar
+    if _market_calendar is None:
+        try:
+            from trading.market_calendar import MarketCalendar
+            _market_calendar = MarketCalendar()
+            print("✅ MarketCalendar loaded with holiday support")
+        except ImportError as e:
+            print(f"⚠️  MarketCalendar not available, using basic market hours: {e}")
+            _market_calendar = False  # Mark as unavailable
+    return _market_calendar
+
 
 def is_market_hours() -> bool:
-    """Check if current time is during market hours (8:30 AM - 3:00 PM CT, Mon-Fri)"""
+    """
+    Check if current time is during market hours (8:30 AM - 3:00 PM CT, Mon-Fri)
+
+    PRODUCTION ENHANCEMENT: Now includes holiday checking via MarketCalendar
+    """
     now = datetime.now(CENTRAL_TZ)
 
+    # Try to use MarketCalendar for full holiday support
+    calendar = get_market_calendar()
+    if calendar and calendar is not False:
+        try:
+            return calendar.is_market_open(now)
+        except Exception as e:
+            print(f"⚠️  MarketCalendar check failed, falling back to basic: {e}")
+
+    # Fallback: basic weekday + time check (no holidays)
     # Check if weekday (0=Monday, 4=Friday)
     if now.weekday() > 4:  # Saturday=5, Sunday=6
         return False
@@ -109,11 +138,83 @@ def is_market_hours() -> bool:
     return market_open <= current_time <= market_close
 
 
+def is_market_holiday() -> tuple:
+    """
+    Check if today is a market holiday.
+
+    Returns:
+        (is_holiday: bool, holiday_name: str or None)
+    """
+    calendar = get_market_calendar()
+    if calendar and calendar is not False:
+        try:
+            today_str = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
+            if today_str in calendar.holidays:
+                return True, f"Market Holiday ({today_str})"
+        except Exception:
+            pass
+    return False, None
+
+
+def record_heartbeat(status: str = "running", error: str = None):
+    """
+    Record collector heartbeat to database for health monitoring.
+
+    This allows external monitoring to detect if the collector is stuck or crashed.
+    """
+    try:
+        from database_adapter import get_connection
+        conn = get_connection()
+        c = conn.cursor()
+
+        # Create heartbeat table if not exists
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS collector_heartbeat (
+                id SERIAL PRIMARY KEY,
+                timestamp TIMESTAMPTZ DEFAULT NOW(),
+                status TEXT NOT NULL,
+                error_message TEXT,
+                market_open BOOLEAN,
+                is_holiday BOOLEAN
+            )
+        """)
+
+        # Clean old heartbeats (keep last 24 hours)
+        c.execute("""
+            DELETE FROM collector_heartbeat
+            WHERE timestamp < NOW() - INTERVAL '24 hours'
+        """)
+
+        # Insert new heartbeat
+        market_open = is_market_hours()
+        is_holiday, _ = is_market_holiday()
+
+        c.execute("""
+            INSERT INTO collector_heartbeat (status, error_message, market_open, is_holiday)
+            VALUES (%s, %s, %s, %s)
+        """, (status, error[:500] if error else None, market_open, is_holiday))
+
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        # Don't let heartbeat failures crash the collector
+        print(f"  ⚠️ Heartbeat recording failed: {e}")
+
+
 def is_after_market_close() -> bool:
-    """Check if it's after market close (for end-of-day jobs)"""
+    """
+    Check if it's after market close (for end-of-day jobs)
+
+    PRODUCTION ENHANCEMENT: Now includes holiday checking
+    """
     now = datetime.now(CENTRAL_TZ)
 
     if now.weekday() > 4:  # Weekend
+        return False
+
+    # Check for holidays - no end-of-day jobs on holidays
+    is_holiday, _ = is_market_holiday()
+    if is_holiday:
         return False
 
     # Run daily jobs between 3:00 PM - 3:30 PM CT (same as 4:00 PM - 4:30 PM ET)
@@ -779,7 +880,7 @@ def run_market_snapshots():
                 'trap_detected': None,
                 'market_session': 'RTH',
                 'minutes_to_close': 390,
-                'day_of_week': datetime.now(ET).weekday()
+                'day_of_week': datetime.now(CENTRAL_TZ).weekday()
             }
 
             if DataCollector.store_market_snapshot(snapshot):
@@ -1051,7 +1152,7 @@ def run_historical_oi():
                 conn = get_connection()
                 c = conn.cursor()
 
-                today = datetime.now(ET).strftime('%Y-%m-%d')
+                today = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
                 count = 0
 
                 for option in chain['options'].get('option', [])[:100]:
@@ -1224,7 +1325,7 @@ def run_gamma_daily_summary():
         from gamma.gamma_tracking_database import GammaTrackingDB
 
         db = GammaTrackingDB()
-        today = datetime.now(ET).strftime('%Y-%m-%d')
+        today = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
         db.calculate_daily_summary('SPY', today)
         print(f"  ✅ gamma_daily_summary updated for {today}")
         log_collection('gamma_daily_summary', 'gamma_daily_summary', True)
@@ -1346,48 +1447,122 @@ def run_initial_collection():
 
 
 def run_scheduler():
-    """Main scheduler loop"""
+    """
+    Main scheduler loop with production-level error handling.
+
+    PRODUCTION ENHANCEMENTS:
+    - Exponential backoff on consecutive errors (max 5 retries, then reset)
+    - Holiday-aware market hours checking
+    - Health heartbeat recording every 5 minutes
+    - Graceful error recovery without crashing
+    - Render auto-restart is only used as last resort
+    """
     setup_schedule()
+
+    # Error tracking for exponential backoff
+    consecutive_errors = 0
+    max_consecutive_errors = 5
+    base_sleep_seconds = 30
+    last_heartbeat = datetime.now(CENTRAL_TZ)
+    heartbeat_interval_seconds = 300  # 5 minutes
+
+    # Record startup heartbeat
+    record_heartbeat(status="starting")
+
+    # Check for holiday
+    is_holiday, holiday_reason = is_market_holiday()
+    if is_holiday:
+        print(f"\n📅 {holiday_reason}")
+        print("   Collector will continue running and check periodically.\n")
+        record_heartbeat(status="holiday", error=holiday_reason)
 
     # Run initial collection immediately if market is open
     if is_market_hours():
+        record_heartbeat(status="initial_collection")
         run_initial_collection()
     else:
-        now = datetime.now(ET)
-        print(f"\n⏸️  Market is closed ({now.strftime('%I:%M %p ET')})")
-        print("   Waiting for market open (9:30 AM ET)...\n")
+        now = datetime.now(CENTRAL_TZ)
+        status_msg = "Market is closed"
+        if is_holiday:
+            status_msg = f"Market holiday: {holiday_reason}"
+        elif now.weekday() >= 5:
+            status_msg = "Weekend - market closed"
 
-    # Main loop
-    try:
-        while not shutdown_requested:
-            schedule.run_pending()
-            time.sleep(30)  # Check every 30 seconds for more responsive scheduling
+        print(f"\n⏸️  {status_msg} ({now.strftime('%I:%M %p CT')})")
+        print("   Collector will check periodically and run when market opens.\n")
+        record_heartbeat(status="waiting", error=status_msg)
 
-    except KeyboardInterrupt:
-        print("\n\n⚠️  Scheduler stopped by user")
-    except Exception as e:
-        print(f"\n\n❌ Fatal error in scheduler: {e}")
-        traceback.print_exc()
-        # Don't exit - let watchdog restart us
-        raise
-    finally:
-        # Graceful shutdown sequence
-        print("\n" + "=" * 60)
-        print("GRACEFUL SHUTDOWN SEQUENCE")
-        print("=" * 60)
-
-        # Close database connection pool
+    # Main loop with production error handling
+    while not shutdown_requested:
         try:
-            from database_adapter import close_pool
-            print("[SHUTDOWN] Closing database connection pool...")
-            close_pool()
-            print("[SHUTDOWN] Database pool closed")
-        except Exception as e:
-            print(f"[SHUTDOWN] Database pool close failed: {e}")
+            # Run scheduled tasks
+            schedule.run_pending()
 
-        print("=" * 60)
-        print("Data collector shutdown complete")
-        print("=" * 60)
+            # Record heartbeat periodically
+            now = datetime.now(CENTRAL_TZ)
+            if (now - last_heartbeat).total_seconds() >= heartbeat_interval_seconds:
+                heartbeat_status = "running" if is_market_hours() else "idle"
+                record_heartbeat(status=heartbeat_status)
+                last_heartbeat = now
+
+            # Reset error counter on successful iteration
+            if consecutive_errors > 0:
+                print(f"✅ Scheduler recovered after {consecutive_errors} error(s)")
+                consecutive_errors = 0
+
+            # Normal sleep
+            time.sleep(base_sleep_seconds)
+
+        except KeyboardInterrupt:
+            print("\n\n⚠️  Scheduler stopped by user")
+            record_heartbeat(status="stopped", error="User interrupt")
+            break
+
+        except Exception as e:
+            consecutive_errors += 1
+            error_msg = f"Scheduler error #{consecutive_errors}: {e}"
+            print(f"\n❌ {error_msg}")
+            traceback.print_exc()
+
+            # Record error heartbeat
+            record_heartbeat(status="error", error=str(e)[:500])
+
+            if consecutive_errors >= max_consecutive_errors:
+                # Too many errors - log and reset counter, but DON'T crash
+                print(f"\n⚠️  {consecutive_errors} consecutive errors - resetting counter")
+                print("   Collector will continue running. Render will restart if it truly fails.\n")
+                consecutive_errors = 0
+
+                # Extra long sleep after many errors
+                backoff_sleep = 300  # 5 minutes
+                print(f"   Sleeping {backoff_sleep}s before resuming...")
+                time.sleep(backoff_sleep)
+            else:
+                # Exponential backoff: 30s, 60s, 120s, 240s, 480s
+                backoff_sleep = base_sleep_seconds * (2 ** consecutive_errors)
+                backoff_sleep = min(backoff_sleep, 600)  # Cap at 10 minutes
+                print(f"   Backing off {backoff_sleep}s before retry...")
+                time.sleep(backoff_sleep)
+
+    # Graceful shutdown sequence
+    print("\n" + "=" * 60)
+    print("GRACEFUL SHUTDOWN SEQUENCE")
+    print("=" * 60)
+
+    record_heartbeat(status="shutting_down")
+
+    # Close database connection pool
+    try:
+        from database_adapter import close_pool
+        print("[SHUTDOWN] Closing database connection pool...")
+        close_pool()
+        print("[SHUTDOWN] Database pool closed")
+    except Exception as e:
+        print(f"[SHUTDOWN] Database pool close failed: {e}")
+
+    print("=" * 60)
+    print("Data collector shutdown complete")
+    print("=" * 60)
 
 
 if __name__ == '__main__':
