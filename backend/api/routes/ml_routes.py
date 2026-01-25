@@ -1802,3 +1802,423 @@ async def get_gex_training_data_status():
             "success": False,
             "error": str(e)
         }
+
+
+@router.get("/gex-models/data-preview")
+async def get_gex_training_data_preview(limit: int = 10):
+    """
+    Preview sample training data that will be used for ORION model training.
+
+    Shows actual records from gex_structure_daily (primary) or gex_history (fallback)
+    so users can verify data quality before training.
+
+    Args:
+        limit: Number of sample records to return (default: 10, max: 50)
+
+    Returns:
+        - source: Which table the data came from
+        - sample_records: List of sample training records
+        - columns: List of columns available
+        - feature_columns: Columns that will be used as ML features
+    """
+    try:
+        from database_adapter import get_connection
+
+        limit = min(limit, 50)  # Cap at 50
+
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # First check gex_structure_daily (primary source)
+        cursor.execute("SELECT COUNT(*) FROM gex_structure_daily")
+        gex_count = cursor.fetchone()[0] or 0
+
+        sample_records = []
+        source = None
+        columns = []
+
+        if gex_count > 0:
+            source = "gex_structure_daily"
+            cursor.execute(f"""
+                SELECT
+                    g.trade_date,
+                    g.symbol,
+                    g.spot_open,
+                    g.spot_close,
+                    g.net_gamma,
+                    g.flip_point,
+                    g.magnet_1_strike,
+                    g.magnet_1_gamma,
+                    g.call_wall,
+                    g.put_wall,
+                    g.gamma_imbalance_pct,
+                    g.price_change_pct,
+                    g.open_to_flip_distance_pct,
+                    g.open_in_pin_zone,
+                    v.vix_close
+                FROM gex_structure_daily g
+                LEFT JOIN vix_daily v ON g.trade_date = v.trade_date
+                ORDER BY g.trade_date DESC
+                LIMIT {limit}
+            """)
+            columns = [
+                'trade_date', 'symbol', 'spot_open', 'spot_close', 'net_gamma',
+                'flip_point', 'magnet_1_strike', 'magnet_1_gamma', 'call_wall',
+                'put_wall', 'gamma_imbalance_pct', 'price_change_pct',
+                'open_to_flip_distance_pct', 'open_in_pin_zone', 'vix_close'
+            ]
+            rows = cursor.fetchall()
+            for row in rows:
+                record = {}
+                for i, col in enumerate(columns):
+                    val = row[i]
+                    if hasattr(val, 'isoformat'):
+                        val = val.isoformat()
+                    elif val is not None:
+                        try:
+                            val = float(val)
+                        except (ValueError, TypeError):
+                            val = str(val)
+                    record[col] = val
+                sample_records.append(record)
+        else:
+            # Fall back to gex_history
+            cursor.execute("SELECT COUNT(*) FROM gex_history")
+            hist_count = cursor.fetchone()[0] or 0
+
+            if hist_count > 0:
+                source = "gex_history"
+                cursor.execute(f"""
+                    SELECT DISTINCT ON (DATE(timestamp))
+                        DATE(timestamp) as trade_date,
+                        symbol,
+                        spot_price,
+                        net_gex,
+                        flip_point,
+                        call_wall,
+                        put_wall,
+                        total_call_gamma,
+                        total_put_gamma,
+                        timestamp
+                    FROM gex_history
+                    ORDER BY DATE(timestamp) DESC, timestamp DESC
+                    LIMIT {limit}
+                """)
+                columns = [
+                    'trade_date', 'symbol', 'spot_price', 'net_gex', 'flip_point',
+                    'call_wall', 'put_wall', 'total_call_gamma', 'total_put_gamma', 'timestamp'
+                ]
+                rows = cursor.fetchall()
+                for row in rows:
+                    record = {}
+                    for i, col in enumerate(columns):
+                        val = row[i]
+                        if hasattr(val, 'isoformat'):
+                            val = val.isoformat()
+                        elif val is not None:
+                            try:
+                                val = float(val)
+                            except (ValueError, TypeError):
+                                val = str(val)
+                        record[col] = val
+                    sample_records.append(record)
+            else:
+                source = "none"
+
+        conn.close()
+
+        # Define which columns are used as ML features
+        feature_columns = [
+            'net_gamma', 'flip_point', 'gamma_imbalance_pct', 'open_to_flip_distance_pct',
+            'vix_close', 'magnet_1_gamma', 'call_wall', 'put_wall', 'open_in_pin_zone'
+        ]
+
+        return {
+            "success": True,
+            "data": {
+                "source": source,
+                "record_count": len(sample_records),
+                "columns": columns,
+                "feature_columns": feature_columns,
+                "sample_records": sample_records,
+                "note": "Most recent records shown. Training uses full date range."
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"GEX data preview error: {e}")
+        import traceback
+        return {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
+
+@router.get("/gex-models/data-diagnostic")
+async def diagnose_gex_training_data():
+    """
+    Comprehensive diagnostic for ORION training data availability.
+
+    Checks all possible data sources and provides actionable recommendations.
+    """
+    try:
+        from database_adapter import get_connection
+
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        diagnostics = {
+            "gex_structure_daily": {"exists": False, "count": 0, "status": "empty"},
+            "gex_history": {"exists": False, "count": 0, "status": "empty"},
+            "vix_daily": {"exists": False, "count": 0, "status": "empty"},
+            "gex_snapshots": {"exists": False, "count": 0, "status": "empty"},
+        }
+
+        # Check if tables exist and have data
+        tables_to_check = [
+            ("gex_structure_daily", "SELECT COUNT(*) FROM gex_structure_daily"),
+            ("gex_history", "SELECT COUNT(*) FROM gex_history"),
+            ("vix_daily", "SELECT COUNT(*) FROM vix_daily"),
+            ("gex_snapshots", "SELECT COUNT(*) FROM gex_snapshots"),
+        ]
+
+        for table_name, query in tables_to_check:
+            try:
+                cursor.execute(query)
+                count = cursor.fetchone()[0] or 0
+                diagnostics[table_name] = {
+                    "exists": True,
+                    "count": count,
+                    "status": "has_data" if count > 0 else "empty"
+                }
+            except Exception as e:
+                if "does not exist" in str(e).lower():
+                    diagnostics[table_name] = {
+                        "exists": False,
+                        "count": 0,
+                        "status": "table_missing"
+                    }
+                else:
+                    diagnostics[table_name] = {
+                        "exists": False,
+                        "count": 0,
+                        "status": f"error: {str(e)}"
+                    }
+
+        conn.close()
+
+        # Determine overall status and recommendations
+        recommendations = []
+        can_train = False
+
+        gex_struct = diagnostics["gex_structure_daily"]
+        gex_hist = diagnostics["gex_history"]
+        vix = diagnostics["vix_daily"]
+
+        if gex_struct["count"] >= 100:
+            can_train = True
+            recommendations.append({
+                "priority": "info",
+                "message": f"Primary source (gex_structure_daily) has {gex_struct['count']} records. Ready to train."
+            })
+        elif gex_hist["count"] >= 100:
+            can_train = True
+            recommendations.append({
+                "priority": "info",
+                "message": f"Fallback source (gex_history) has {gex_hist['count']} records. Can train using fallback."
+            })
+        else:
+            # No training data - provide solutions
+            if not gex_struct["exists"]:
+                recommendations.append({
+                    "priority": "high",
+                    "message": "Table gex_structure_daily doesn't exist. Run: python scripts/populate_gex_structures.py --create-only"
+                })
+            elif gex_struct["count"] == 0:
+                recommendations.append({
+                    "priority": "high",
+                    "message": "gex_structure_daily is empty. Run: python scripts/populate_gex_structures.py --symbol SPY --start 2024-01-01"
+                })
+
+            if not gex_hist["exists"]:
+                recommendations.append({
+                    "priority": "medium",
+                    "message": "Table gex_history doesn't exist. The data collector creates this table automatically."
+                })
+            elif gex_hist["count"] == 0:
+                recommendations.append({
+                    "priority": "medium",
+                    "message": "gex_history is empty. Start the data collector: python data/automated_data_collector.py"
+                })
+            elif gex_hist["count"] < 100:
+                recommendations.append({
+                    "priority": "medium",
+                    "message": f"gex_history has only {gex_hist['count']} records. Need 100+ for training. Data collector runs every 5 min."
+                })
+
+            if vix["count"] == 0:
+                recommendations.append({
+                    "priority": "low",
+                    "message": "VIX data missing. Run data collector or: python scripts/seed_all_tables.py --vix-only"
+                })
+
+        # Check data collector status
+        try:
+            cursor = get_connection().cursor()
+            cursor.execute("""
+                SELECT MAX(timestamp) FROM gex_history
+            """)
+            last_snapshot = cursor.fetchone()[0]
+            if last_snapshot:
+                from datetime import datetime, timezone
+                age_hours = (datetime.now(timezone.utc) - last_snapshot.replace(tzinfo=timezone.utc)).total_seconds() / 3600
+                if age_hours > 1:
+                    recommendations.append({
+                        "priority": "medium",
+                        "message": f"Last GEX snapshot was {age_hours:.1f} hours ago. Data collector may not be running."
+                    })
+        except Exception:
+            pass
+
+        return {
+            "success": True,
+            "data": {
+                "diagnostics": diagnostics,
+                "can_train": can_train,
+                "recommendations": recommendations,
+                "summary": "Ready for training" if can_train else "Insufficient training data - see recommendations"
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"GEX diagnostic error: {e}")
+        import traceback
+        return {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
+
+@router.post("/gex-models/populate-from-snapshots")
+async def populate_gex_structure_from_snapshots():
+    """
+    Populate gex_structure_daily from gex_history snapshots.
+
+    This converts intraday GEX snapshots into daily structure records
+    that can be used for ML training.
+    """
+    try:
+        from database_adapter import get_connection
+
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # First ensure the table exists
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS gex_structure_daily (
+                id SERIAL PRIMARY KEY,
+                trade_date DATE NOT NULL,
+                symbol VARCHAR(10) NOT NULL,
+                spot_open NUMERIC(12,4),
+                spot_close NUMERIC(12,4),
+                spot_high NUMERIC(12,4),
+                spot_low NUMERIC(12,4),
+                net_gamma NUMERIC(20,2),
+                total_call_gamma NUMERIC(20,2),
+                total_put_gamma NUMERIC(20,2),
+                flip_point NUMERIC(12,4),
+                magnet_1_strike NUMERIC(12,2),
+                magnet_1_gamma NUMERIC(20,2),
+                magnet_2_strike NUMERIC(12,2),
+                magnet_2_gamma NUMERIC(20,2),
+                magnet_3_strike NUMERIC(12,2),
+                magnet_3_gamma NUMERIC(20,2),
+                call_wall NUMERIC(12,2),
+                put_wall NUMERIC(12,2),
+                gamma_above_spot NUMERIC(20,2),
+                gamma_below_spot NUMERIC(20,2),
+                gamma_imbalance_pct NUMERIC(10,4),
+                num_magnets_above INTEGER,
+                num_magnets_below INTEGER,
+                nearest_magnet_strike NUMERIC(12,2),
+                nearest_magnet_distance_pct NUMERIC(10,4),
+                open_to_flip_distance_pct NUMERIC(10,4),
+                open_in_pin_zone BOOLEAN,
+                price_change_pct NUMERIC(10,4),
+                price_range_pct NUMERIC(10,4),
+                close_distance_to_flip_pct NUMERIC(10,4),
+                close_distance_to_magnet1_pct NUMERIC(10,4),
+                close_distance_to_magnet2_pct NUMERIC(10,4),
+                UNIQUE(trade_date, symbol)
+            )
+        """)
+
+        # Aggregate gex_history snapshots into daily records
+        cursor.execute("""
+            INSERT INTO gex_structure_daily (
+                trade_date, symbol, spot_open, spot_close, spot_high, spot_low,
+                net_gamma, total_call_gamma, total_put_gamma, flip_point,
+                call_wall, put_wall, price_change_pct, price_range_pct,
+                open_to_flip_distance_pct
+            )
+            SELECT
+                DATE(timestamp) as trade_date,
+                symbol,
+                (array_agg(spot_price ORDER BY timestamp))[1] as spot_open,
+                (array_agg(spot_price ORDER BY timestamp DESC))[1] as spot_close,
+                MAX(spot_price) as spot_high,
+                MIN(spot_price) as spot_low,
+                AVG(net_gex) as net_gamma,
+                AVG(total_call_gamma) as total_call_gamma,
+                AVG(total_put_gamma) as total_put_gamma,
+                AVG(flip_point) as flip_point,
+                MAX(call_wall) as call_wall,
+                MIN(put_wall) as put_wall,
+                ((array_agg(spot_price ORDER BY timestamp DESC))[1] -
+                 (array_agg(spot_price ORDER BY timestamp))[1]) /
+                NULLIF((array_agg(spot_price ORDER BY timestamp))[1], 0) * 100 as price_change_pct,
+                (MAX(spot_price) - MIN(spot_price)) /
+                NULLIF(MIN(spot_price), 0) * 100 as price_range_pct,
+                ((array_agg(spot_price ORDER BY timestamp))[1] - AVG(flip_point)) /
+                NULLIF((array_agg(spot_price ORDER BY timestamp))[1], 0) * 100 as open_to_flip_distance_pct
+            FROM gex_history
+            WHERE symbol IS NOT NULL
+            GROUP BY DATE(timestamp), symbol
+            HAVING COUNT(*) >= 1
+            ON CONFLICT (trade_date, symbol) DO UPDATE SET
+                spot_close = EXCLUDED.spot_close,
+                spot_high = EXCLUDED.spot_high,
+                spot_low = EXCLUDED.spot_low,
+                net_gamma = EXCLUDED.net_gamma,
+                price_change_pct = EXCLUDED.price_change_pct,
+                price_range_pct = EXCLUDED.price_range_pct
+        """)
+
+        rows_affected = cursor.rowcount
+        conn.commit()
+
+        # Get updated count
+        cursor.execute("SELECT COUNT(*) FROM gex_structure_daily")
+        total_count = cursor.fetchone()[0]
+
+        conn.close()
+
+        return {
+            "success": True,
+            "data": {
+                "rows_inserted_or_updated": rows_affected,
+                "total_records": total_count,
+                "message": f"Populated {rows_affected} daily records from gex_history snapshots"
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Populate from snapshots error: {e}")
+        import traceback
+        return {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }

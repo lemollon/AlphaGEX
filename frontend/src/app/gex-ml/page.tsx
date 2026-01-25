@@ -34,6 +34,7 @@ import {
   Info
 } from 'lucide-react'
 import apiClient from '@/lib/api'
+import Navigation from '@/components/Navigation'
 
 interface ModelStatus {
   is_trained: boolean
@@ -88,12 +89,22 @@ interface DataStatus {
   }
 }
 
+interface Diagnostic {
+  diagnostics: Record<string, { exists: boolean; count: number; status: string }>
+  can_train: boolean
+  recommendations: Array<{ priority: string; message: string }>
+  summary: string
+}
+
 export default function GexMLPage() {
   const [modelStatus, setModelStatus] = useState<ModelStatus | null>(null)
   const [dataStatus, setDataStatus] = useState<DataStatus | null>(null)
+  const [diagnostic, setDiagnostic] = useState<Diagnostic | null>(null)
   const [loading, setLoading] = useState(true)
   const [training, setTraining] = useState(false)
+  const [populating, setPopulating] = useState(false)
   const [trainingResult, setTrainingResult] = useState<any>(null)
+  const [populateResult, setPopulateResult] = useState<any>(null)
   const [error, setError] = useState<string | null>(null)
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
 
@@ -101,9 +112,10 @@ export default function GexMLPage() {
     setLoading(true)
     setError(null)
     try {
-      const [modelRes, dataRes] = await Promise.all([
+      const [modelRes, dataRes, diagRes] = await Promise.all([
         apiClient.getGexModelsStatus(),
-        apiClient.getGexModelsDataStatus()
+        apiClient.getGexModelsDataStatus(),
+        apiClient.getGexModelsDataDiagnostic()
       ])
 
       if (modelRes?.data?.data) {
@@ -111,6 +123,9 @@ export default function GexMLPage() {
       }
       if (dataRes?.data?.data) {
         setDataStatus(dataRes.data.data)
+      }
+      if (diagRes?.data?.data) {
+        setDiagnostic(diagRes.data.data)
       }
       setLastRefresh(new Date())
     } catch (err: any) {
@@ -143,6 +158,22 @@ export default function GexMLPage() {
     }
   }
 
+  const handlePopulate = async () => {
+    setPopulating(true)
+    setPopulateResult(null)
+    setError(null)
+    try {
+      const res = await apiClient.populateGexFromSnapshots()
+      setPopulateResult(res.data)
+      // Refresh status after populating
+      await fetchStatus()
+    } catch (err: any) {
+      setError(err.message || 'Population failed')
+    } finally {
+      setPopulating(false)
+    }
+  }
+
   const formatDate = (dateStr: string | undefined) => {
     if (!dateStr) return 'N/A'
     try {
@@ -167,8 +198,10 @@ export default function GexMLPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-6">
-      <div className="max-w-7xl mx-auto">
+    <>
+      <Navigation />
+      <main className="min-h-screen bg-black text-white px-4 pb-4 md:px-6 md:pb-6 pt-28">
+        <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-3">
@@ -375,6 +408,71 @@ export default function GexMLPage() {
                   {dataStatus?.vix_daily?.date_range || 'No data'}
                 </div>
               </div>
+
+              {/* Diagnostic Recommendations */}
+              {diagnostic && diagnostic.recommendations.length > 0 && (
+                <div className="mt-4 space-y-2">
+                  <h4 className="text-sm font-medium text-gray-300 flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-yellow-400" />
+                    Recommendations
+                  </h4>
+                  {diagnostic.recommendations.map((rec, idx) => (
+                    <div
+                      key={idx}
+                      className={`p-2 rounded text-xs ${
+                        rec.priority === 'high'
+                          ? 'bg-red-500/10 border border-red-500/30 text-red-300'
+                          : rec.priority === 'medium'
+                          ? 'bg-yellow-500/10 border border-yellow-500/30 text-yellow-300'
+                          : rec.priority === 'info'
+                          ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-300'
+                          : 'bg-gray-700/50 text-gray-400'
+                      }`}
+                    >
+                      <code className="font-mono text-[11px]">{rec.message}</code>
+                    </div>
+                  ))}
+
+                  {/* Populate from Snapshots Button */}
+                  {diagnostic.diagnostics?.gex_history?.count > 0 &&
+                   diagnostic.diagnostics?.gex_structure_daily?.count === 0 && (
+                    <button
+                      onClick={handlePopulate}
+                      disabled={populating}
+                      className={`mt-2 w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                        populating
+                          ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                          : 'bg-blue-600 hover:bg-blue-500 text-white'
+                      }`}
+                    >
+                      {populating ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          Building training data...
+                        </>
+                      ) : (
+                        <>
+                          <Database className="w-4 h-4" />
+                          Build Training Data from Snapshots
+                        </>
+                      )}
+                    </button>
+                  )}
+
+                  {/* Populate Result */}
+                  {populateResult && (
+                    <div className={`p-2 rounded text-xs ${
+                      populateResult.success
+                        ? 'bg-emerald-500/10 text-emerald-300'
+                        : 'bg-red-500/10 text-red-300'
+                    }`}>
+                      {populateResult.success
+                        ? `Built ${populateResult.data?.rows_inserted_or_updated || 0} training records`
+                        : `Error: ${populateResult.error}`}
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
@@ -571,7 +669,8 @@ export default function GexMLPage() {
             </div>
           </div>
         )}
-      </div>
-    </div>
+        </div>
+      </main>
+    </>
   )
 }
