@@ -1722,39 +1722,43 @@ async def get_gex_training_data_status():
         conn = get_connection()
         cursor = conn.cursor()
 
+        # Helper to safely query table that might not exist
+        def safe_count_query(table_name, date_col="trade_date"):
+            try:
+                if date_col == "timestamp":
+                    cursor.execute(f"""
+                        SELECT COUNT(DISTINCT DATE({date_col})), MIN(DATE({date_col})), MAX(DATE({date_col}))
+                        FROM {table_name}
+                    """)
+                else:
+                    cursor.execute(f"""
+                        SELECT COUNT(*), MIN({date_col}), MAX({date_col})
+                        FROM {table_name}
+                    """)
+                row = cursor.fetchone()
+                return row[0] if row else 0, str(row[1]) if row and row[1] else None, str(row[2]) if row and row[2] else None
+            except Exception as e:
+                if "does not exist" in str(e).lower() or "relation" in str(e).lower():
+                    conn.rollback()  # Clear the error state
+                    return 0, None, None
+                raise
+
         # Check gex_structure_daily (primary source)
-        cursor.execute("""
-            SELECT COUNT(*), MIN(trade_date), MAX(trade_date)
-            FROM gex_structure_daily
-        """)
-        gex_row = cursor.fetchone()
-        gex_count = gex_row[0] if gex_row else 0
-        gex_min = str(gex_row[1]) if gex_row and gex_row[1] else None
-        gex_max = str(gex_row[2]) if gex_row and gex_row[2] else None
+        gex_count, gex_min, gex_max = safe_count_query("gex_structure_daily", "trade_date")
 
         # Check gex_history (fallback source) - count distinct days
-        cursor.execute("""
-            SELECT COUNT(DISTINCT DATE(timestamp)), MIN(DATE(timestamp)), MAX(DATE(timestamp))
-            FROM gex_history
-        """)
-        hist_row = cursor.fetchone()
-        hist_days = hist_row[0] if hist_row else 0
-        hist_min = str(hist_row[1]) if hist_row and hist_row[1] else None
-        hist_max = str(hist_row[2]) if hist_row and hist_row[2] else None
+        hist_days, hist_min, hist_max = safe_count_query("gex_history", "timestamp")
 
         # Also get total snapshots in gex_history
-        cursor.execute("SELECT COUNT(*) FROM gex_history")
-        hist_snapshots = cursor.fetchone()[0] or 0
+        try:
+            cursor.execute("SELECT COUNT(*) FROM gex_history")
+            hist_snapshots = cursor.fetchone()[0] or 0
+        except Exception:
+            conn.rollback()
+            hist_snapshots = 0
 
         # Check vix_daily
-        cursor.execute("""
-            SELECT COUNT(*), MIN(trade_date), MAX(trade_date)
-            FROM vix_daily
-        """)
-        vix_row = cursor.fetchone()
-        vix_count = vix_row[0] if vix_row else 0
-        vix_min = str(vix_row[1]) if vix_row and vix_row[1] else None
-        vix_max = str(vix_row[2]) if vix_row and vix_row[2] else None
+        vix_count, vix_min, vix_max = safe_count_query("vix_daily", "trade_date")
 
         conn.close()
 
