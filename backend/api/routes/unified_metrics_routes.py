@@ -324,6 +324,112 @@ async def reconcile_bot_data(bot: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/api/metrics/{bot}/debug-equity")
+async def debug_equity_curve(bot: str):
+    """
+    DEBUG endpoint to diagnose equity curve issues.
+
+    Runs the same queries as get_equity_curve but returns raw diagnostic data.
+    """
+    try:
+        from database_adapter import get_connection
+
+        bot_enum = _get_bot_enum(bot)
+
+        # Table mapping
+        table_map = {
+            "ARES": "ares_positions",
+            "ATHENA": "athena_positions",
+            "TITAN": "titan_positions",
+            "PEGASUS": "pegasus_positions",
+            "ICARUS": "icarus_positions",
+        }
+        positions_table = table_map.get(bot.upper())
+
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Test 1: Simple count (no timestamp handling)
+        cursor.execute(f"""
+            SELECT status, COUNT(*), COALESCE(SUM(realized_pnl), 0)
+            FROM {positions_table}
+            GROUP BY status
+        """)
+        status_counts = cursor.fetchall()
+
+        # Test 2: Check if close_time and open_time exist
+        cursor.execute(f"""
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN close_time IS NULL THEN 1 ELSE 0 END) as null_close_time,
+                SUM(CASE WHEN open_time IS NULL THEN 1 ELSE 0 END) as null_open_time
+            FROM {positions_table}
+            WHERE status IN ('closed', 'expired', 'partial_close')
+        """)
+        null_check = cursor.fetchone()
+
+        # Test 3: Try the exact equity curve query
+        error_msg = None
+        trades_found = 0
+        try:
+            cursor.execute(f"""
+                SELECT
+                    COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago' as close_timestamp,
+                    realized_pnl,
+                    position_id
+                FROM {positions_table}
+                WHERE status IN ('closed', 'expired', 'partial_close')
+                ORDER BY COALESCE(close_time, open_time)::timestamptz ASC
+                LIMIT 5
+            """)
+            sample_trades = cursor.fetchall()
+            trades_found = len(sample_trades)
+        except Exception as e:
+            error_msg = str(e)
+            sample_trades = []
+
+        conn.close()
+
+        return {
+            "success": True,
+            "bot": bot.upper(),
+            "table": positions_table,
+            "diagnostics": {
+                "status_breakdown": [
+                    {"status": row[0], "count": row[1], "total_pnl": float(row[2])}
+                    for row in status_counts
+                ],
+                "null_timestamps": {
+                    "total_closed": null_check[0] if null_check else 0,
+                    "null_close_time": null_check[1] if null_check else 0,
+                    "null_open_time": null_check[2] if null_check else 0,
+                },
+                "equity_curve_query": {
+                    "success": error_msg is None,
+                    "error": error_msg,
+                    "trades_found": trades_found,
+                    "sample": [
+                        {
+                            "timestamp": str(t[0]) if t[0] else None,
+                            "pnl": float(t[1]) if t[1] else 0,
+                            "position_id": t[2]
+                        }
+                        for t in sample_trades
+                    ]
+                }
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        return {
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
+
 @router.get("/api/metrics/all/summary")
 async def get_all_bots_summary():
     """
