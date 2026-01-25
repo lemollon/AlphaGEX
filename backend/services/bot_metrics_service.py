@@ -961,12 +961,17 @@ class BotMetricsService:
             }
 
         except Exception as e:
-            logger.error(f"Failed to build intraday equity for {bot.value}: {e}")
+            error_msg = f"Failed to build intraday equity for {bot.value}: {e}"
+            logger.error(error_msg)
             import traceback
-            traceback.print_exc()
+            tb_str = traceback.format_exc()
+            logger.error(tb_str)
             if conn:
                 conn.close()
-            return self._empty_intraday(bot, starting_capital, target_date)
+            result = self._empty_intraday(bot, starting_capital, target_date)
+            result["error"] = error_msg
+            result["traceback"] = tb_str[:500]
+            return result
 
     def _empty_equity_curve(self, bot: BotName, starting_capital: float) -> Dict[str, Any]:
         """Return empty equity curve structure"""
