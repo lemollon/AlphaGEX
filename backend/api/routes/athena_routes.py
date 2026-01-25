@@ -1555,11 +1555,12 @@ async def get_athena_live_pnl():
 
             # Get today's realized P&L from closed positions
             # Use COALESCE to handle legacy data with NULL close_time
+            # Cast to timestamptz for proper timezone handling
             cursor.execute('''
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM athena_positions
                 WHERE status IN ('closed', 'expired', 'partial_close')
-                AND DATE(COALESCE(close_time, open_time)) = %s
+                AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
             ''', (today,))
             realized_row = cursor.fetchone()
             today_realized = float(realized_row[0]) if realized_row else 0
@@ -1705,11 +1706,12 @@ async def get_athena_live_pnl():
 
             # Get today's realized P&L
             # Use COALESCE to handle legacy data with NULL close_time
+            # Cast to timestamptz for proper timezone handling
             cursor.execute('''
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM athena_positions
                 WHERE status IN ('closed', 'expired', 'partial_close')
-                AND DATE(COALESCE(close_time, open_time)) = %s
+                AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
             ''', (today,))
             realized_row = cursor.fetchone()
             today_realized = float(realized_row[0]) if realized_row else 0
