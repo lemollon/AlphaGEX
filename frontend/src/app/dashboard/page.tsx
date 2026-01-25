@@ -27,7 +27,7 @@ export default function Dashboard() {
       <main className="pt-24 transition-all duration-300">
         <div className="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-8 py-6">
 
-          {/* Daily Manna Widget - Faith meets Finance */}
+          {/* Daily Manna Widget */}
           <div className="mb-4">
             <DailyMannaWidget />
           </div>
@@ -43,7 +43,7 @@ export default function Dashboard() {
             <MarketConditionsBanner />
           </div>
 
-          {/* Row 2: Portfolio Summary + Bot Status - Portfolio gets more space */}
+          {/* Row 2: Portfolio Summary + Bot Status */}
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 mb-4">
             <div className="lg:col-span-2">
               <PortfolioSummaryCard />
@@ -58,38 +58,34 @@ export default function Dashboard() {
             <MultiBotEquityCurve days={30} height={350} showPercentage={true} />
           </div>
 
-          {/* Row 4: Open Positions + Gamma Expiration */}
+          {/* Row 4: Open Positions + Trading Reports (Bot data together) */}
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-4">
             <AllOpenPositionsTable />
-            <GammaExpirationWidget />
-          </div>
-
-          {/* Row 5: Trading Reports + Activity Feed */}
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-4">
             <AllBotReportsSummary />
-            <TodaysActivityFeed />
           </div>
 
-          {/* Row 6: Oracle Strategy - Full width for visibility */}
-          <div className="mb-4">
+          {/* Row 5: Gamma + Oracle (Market intelligence together) */}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-4">
+            <GammaExpirationWidget />
             <OracleRecommendationWidget />
           </div>
 
-          {/* Row 7: AI/ML Systems - SAGE, QUANT, Math Optimizer, Sync Status */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+          {/* Row 6: Activity + ARGUS + Scan Feed (Monitoring together) */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+            <TodaysActivityFeed />
+            <ARGUSAlertsWidget />
+            <DashboardScanFeed />
+          </div>
+
+          {/* Row 7: AI/ML Systems */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
             <SAGEStatusWidget />
             <QuantStatusWidget />
             <MathOptimizerWidget />
             <SyncStatusWidget />
           </div>
 
-          {/* Row 8: ARGUS Alerts & Scan Feed */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-            <ARGUSAlertsWidget />
-            <DashboardScanFeed />
-          </div>
-
-          {/* Row 9: Intelligence Dashboard - Full width */}
+          {/* Row 8: Intelligence Dashboard */}
           <div>
             <IntelligenceDashboard />
           </div>
