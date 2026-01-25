@@ -12,6 +12,7 @@ import SAGEStatusWidget from '@/components/SAGEStatusWidget'
 import QuantStatusWidget from '@/components/QuantStatusWidget'
 import MathOptimizerWidget from '@/components/MathOptimizerWidget'
 import SyncStatusWidget from '@/components/SyncStatusWidget'
+import MultiBotEquityCurve from '@/components/charts/MultiBotEquityCurve'
 
 export default function Dashboard() {
   return (
@@ -37,13 +38,18 @@ export default function Dashboard() {
             <BotStatusOverview />
           </div>
 
-          {/* Row 2: Oracle & Gamma Expiration */}
+          {/* Row 2: Bot Performance Comparison - Full width equity curve */}
+          <div className="mb-4">
+            <MultiBotEquityCurve days={30} height={350} showPercentage={true} />
+          </div>
+
+          {/* Row 3: Oracle & Gamma Expiration */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
             <OracleRecommendationWidget />
             <GammaExpirationWidget />
           </div>
 
-          {/* Row 3: AI/ML Systems - SAGE, QUANT, Math Optimizer, Sync Status */}
+          {/* Row 4: AI/ML Systems - SAGE, QUANT, Math Optimizer, Sync Status */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
             <SAGEStatusWidget />
             <QuantStatusWidget />
@@ -51,13 +57,13 @@ export default function Dashboard() {
             <SyncStatusWidget />
           </div>
 
-          {/* Row 4: ARGUS Alerts & Scan Feed - Activity monitoring */}
+          {/* Row 5: ARGUS Alerts & Scan Feed - Activity monitoring */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
             <ARGUSAlertsWidget />
             <DashboardScanFeed />
           </div>
 
-          {/* Row 5: Intelligence Dashboard - Full width */}
+          {/* Row 6: Intelligence Dashboard - Full width */}
           <div>
             <IntelligenceDashboard />
           </div>
