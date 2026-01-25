@@ -249,14 +249,23 @@ def prefetch_ohlc_data(symbol: str, start_date: str, end_date: str) -> int:
             return 0
 
         count = 0
+        # Handle multi-level columns from newer yfinance versions
+        if hasattr(data.columns, 'levels'):
+            data.columns = data.columns.droplevel(1)
+
         for date, row in data.iterrows():
             date_str = date.strftime('%Y-%m-%d')
             cache_key = f"{symbol}_{date_str}"
+            # Handle both scalar and Series values
+            def safe_float(val):
+                if hasattr(val, 'iloc'):
+                    return float(val.iloc[0])
+                return float(val)
             _ohlc_cache[cache_key] = {
-                'open': float(row['Open']),
-                'high': float(row['High']),
-                'low': float(row['Low']),
-                'close': float(row['Close'])
+                'open': safe_float(row['Open']),
+                'high': safe_float(row['High']),
+                'low': safe_float(row['Low']),
+                'close': safe_float(row['Close'])
             }
             count += 1
 
