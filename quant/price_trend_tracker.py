@@ -627,70 +627,79 @@ class PriceTrendTracker:
         wall_filter_passed = False
 
         # =====================================================================
-        # STEP 1: Use trend for primary direction signal
+        # STEP 1: WALL PROXIMITY TAKES PRIORITY when near a wall
+        # This is the key fix - when price is within wall_filter_pct of a wall,
+        # the wall determines direction (expect bounce/rejection), not the trend.
+        # This matches how Oracle handles POSITIVE GEX regime.
         # =====================================================================
-        if trend and trend.derived_direction != "FLAT":
+        if wall_position.dist_to_put_wall_pct <= wall_filter_pct:
+            # Near put wall = expect bounce UP = BULLISH
+            direction = "BULLISH"
+            confidence = 0.65
+            wall_filter_passed = True
+            reasoning_parts.append(f"Near put wall support ({wall_position.dist_to_put_wall_pct:.2f}% away, threshold: {wall_filter_pct}%) - expect bounce")
+        elif wall_position.dist_to_call_wall_pct <= wall_filter_pct:
+            # Near call wall = expect rejection DOWN = BEARISH
+            direction = "BEARISH"
+            confidence = 0.65
+            wall_filter_passed = True
+            reasoning_parts.append(f"Near call wall resistance ({wall_position.dist_to_call_wall_pct:.2f}% away, threshold: {wall_filter_pct}%) - expect rejection")
+
+        # =====================================================================
+        # STEP 2: If NOT near a wall, use trend for direction
+        # =====================================================================
+        elif trend and trend.derived_direction != "FLAT":
             direction = trend.derived_direction
             confidence = trend.derived_confidence
-            reasoning_parts.append(f"Trend: {trend.reasoning}")
+            reasoning_parts.append(f"Not near wall, using trend: {trend.reasoning}")
 
         # =====================================================================
-        # STEP 2: If trend is FLAT/SIDEWAYS, use wall proximity
+        # STEP 3: If trend is also FLAT, use general wall proximity
         # =====================================================================
-        if direction == "FLAT" or (trend and trend.direction == TrendDirection.SIDEWAYS):
-            # Use wall proximity to determine direction
+        else:
+            # Use position in range to determine direction
             if wall_position.position_in_range_pct < 35:
-                # Lower third of range = near put wall = expect bounce
+                # Lower third of range = closer to put wall = lean BULLISH
                 direction = "BULLISH"
-                confidence = 0.60
-                reasoning_parts.append(f"Near put wall support ({wall_position.position_in_range_pct:.0f}% of range)")
+                confidence = 0.55
+                reasoning_parts.append(f"Lower range ({wall_position.position_in_range_pct:.0f}%), leaning bullish")
             elif wall_position.position_in_range_pct > 65:
-                # Upper third of range = near call wall = expect pullback
+                # Upper third of range = closer to call wall = lean BEARISH
                 direction = "BEARISH"
-                confidence = 0.60
-                reasoning_parts.append(f"Near call wall resistance ({wall_position.position_in_range_pct:.0f}% of range)")
+                confidence = 0.55
+                reasoning_parts.append(f"Upper range ({wall_position.position_in_range_pct:.0f}%), leaning bearish")
             else:
-                # Middle of range - still determine direction from nearest wall
+                # True middle - use nearest wall
                 if wall_position.nearest_wall == "PUT_WALL":
                     direction = "BULLISH"
-                    confidence = 0.55
-                    reasoning_parts.append(f"Mid-range, closer to put wall ({wall_position.nearest_wall_distance_pct:.1f}%)")
+                    confidence = 0.52
+                    reasoning_parts.append(f"Mid-range, slightly closer to put wall ({wall_position.nearest_wall_distance_pct:.1f}%)")
                 else:
                     direction = "BEARISH"
-                    confidence = 0.55
-                    reasoning_parts.append(f"Mid-range, closer to call wall ({wall_position.nearest_wall_distance_pct:.1f}%)")
+                    confidence = 0.52
+                    reasoning_parts.append(f"Mid-range, slightly closer to call wall ({wall_position.nearest_wall_distance_pct:.1f}%)")
 
         # =====================================================================
-        # STEP 3: Adjust for wall proximity (reduces confidence near opposite wall)
+        # STEP 4: Safety check - reduce confidence if direction conflicts with position
+        # (e.g., BULLISH but very close to call wall resistance)
         # =====================================================================
-        if direction == "BULLISH" and wall_position.position_in_range_pct > 80:
-            confidence -= 0.10
-            reasoning_parts.append("Caution: approaching call wall resistance")
-        elif direction == "BEARISH" and wall_position.position_in_range_pct < 20:
-            confidence -= 0.10
-            reasoning_parts.append("Caution: approaching put wall support")
+        if not wall_filter_passed:
+            # Only apply this check if we're NOT in a wall-triggered trade
+            if direction == "BULLISH" and wall_position.position_in_range_pct > 80:
+                confidence -= 0.10
+                reasoning_parts.append("Caution: bullish but approaching call wall resistance")
+            elif direction == "BEARISH" and wall_position.position_in_range_pct < 20:
+                confidence -= 0.10
+                reasoning_parts.append("Caution: bearish but approaching put wall support")
 
         # =====================================================================
-        # STEP 4: Wall filter check (now properly decoupled from direction)
+        # STEP 5: Log wall filter status for trades that didn't trigger from wall
         # =====================================================================
-        if direction == "BULLISH":
-            if wall_position.dist_to_put_wall_pct <= wall_filter_pct:
-                wall_filter_passed = True
-                reasoning_parts.append(f"Wall filter PASSED: {wall_position.dist_to_put_wall_pct:.2f}% from put wall (threshold: {wall_filter_pct}%)")
-            else:
+        if not wall_filter_passed:
+            if direction == "BULLISH":
                 reasoning_parts.append(f"Wall filter: {wall_position.dist_to_put_wall_pct:.2f}% from put wall (threshold: {wall_filter_pct}%)")
-        elif direction == "BEARISH":
-            if wall_position.dist_to_call_wall_pct <= wall_filter_pct:
-                wall_filter_passed = True
-                reasoning_parts.append(f"Wall filter PASSED: {wall_position.dist_to_call_wall_pct:.2f}% from call wall (threshold: {wall_filter_pct}%)")
-            else:
+            elif direction == "BEARISH":
                 reasoning_parts.append(f"Wall filter: {wall_position.dist_to_call_wall_pct:.2f}% from call wall (threshold: {wall_filter_pct}%)")
-
-        # =====================================================================
-        # STEP 5: Boost confidence if wall filter passed
-        # =====================================================================
-        if wall_filter_passed:
-            confidence = min(0.85, confidence + 0.10)
 
         reasoning = " | ".join(reasoning_parts)
 

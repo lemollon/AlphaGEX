@@ -635,29 +635,36 @@ class ATHENADatabase:
     # =========================================================================
 
     def load_config(self) -> ATHENAConfig:
-        """Load config from database, with defaults"""
+        """Load config from database, with defaults.
+
+        Uses simple key-value table with prefixed keys like 'ATHENA_wall_filter_pct'.
+        """
         config = ATHENAConfig()
         try:
             with db_connection() as conn:
                 c = conn.cursor()
+                # Query all ATHENA_ prefixed config keys
                 c.execute("""
-                    SELECT config_key, config_value
+                    SELECT key, value
                     FROM autonomous_config
-                    WHERE bot_name = 'ATHENA'
+                    WHERE key LIKE 'ATHENA_%'
                 """)
 
                 for key, value in c.fetchall():
-                    if hasattr(config, key):
-                        if key == 'mode':
-                            setattr(config, key, TradingMode(value))
-                        elif isinstance(getattr(config, key), float):
-                            setattr(config, key, float(value))
-                        elif isinstance(getattr(config, key), int):
-                            setattr(config, key, int(value))
+                    # Strip 'ATHENA_' prefix to get config attribute name
+                    attr_name = key.replace('ATHENA_', '')
+                    if hasattr(config, attr_name):
+                        if attr_name == 'mode':
+                            setattr(config, attr_name, TradingMode(value))
+                        elif isinstance(getattr(config, attr_name), float):
+                            setattr(config, attr_name, float(value))
+                        elif isinstance(getattr(config, attr_name), int):
+                            setattr(config, attr_name, int(value))
                         else:
-                            setattr(config, key, value)
+                            setattr(config, attr_name, value)
+                        logger.info(f"{self.bot_name}: Loaded {attr_name}={value} from DB")
 
-                logger.info(f"{self.bot_name}: Loaded config from DB")
+                logger.info(f"{self.bot_name}: Config loaded (wall_filter_pct={config.wall_filter_pct}%)")
         except Exception as e:
             logger.warning(f"{self.bot_name}: Using default config: {e}")
 
