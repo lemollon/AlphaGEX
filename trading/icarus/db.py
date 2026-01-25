@@ -693,29 +693,36 @@ class ICARUSDatabase:
     # =========================================================================
 
     def load_config(self) -> ICARUSConfig:
-        """Load config from database, with defaults"""
+        """Load config from database, with defaults.
+
+        Uses simple key-value table with prefixed keys like 'ICARUS_wall_filter_pct'.
+        """
         config = ICARUSConfig()
         try:
             with db_connection() as conn:
                 c = conn.cursor()
+                # Query all ICARUS_ prefixed config keys
                 c.execute("""
-                    SELECT config_key, config_value
+                    SELECT key, value
                     FROM autonomous_config
-                    WHERE bot_name = 'ICARUS'
+                    WHERE key LIKE 'ICARUS_%'
                 """)
 
                 for key, value in c.fetchall():
-                    if hasattr(config, key):
-                        if key == 'mode':
-                            setattr(config, key, TradingMode(value))
-                        elif isinstance(getattr(config, key), float):
-                            setattr(config, key, float(value))
-                        elif isinstance(getattr(config, key), int):
-                            setattr(config, key, int(value))
+                    # Strip 'ICARUS_' prefix to get config attribute name
+                    attr_name = key.replace('ICARUS_', '')
+                    if hasattr(config, attr_name):
+                        if attr_name == 'mode':
+                            setattr(config, attr_name, TradingMode(value))
+                        elif isinstance(getattr(config, attr_name), float):
+                            setattr(config, attr_name, float(value))
+                        elif isinstance(getattr(config, attr_name), int):
+                            setattr(config, attr_name, int(value))
                         else:
-                            setattr(config, key, value)
+                            setattr(config, attr_name, value)
+                        logger.info(f"{self.bot_name}: Loaded {attr_name}={value} from DB")
 
-                logger.info(f"{self.bot_name}: Loaded config from DB")
+                logger.info(f"{self.bot_name}: Config loaded (wall_filter_pct={config.wall_filter_pct}%)")
         except Exception as e:
             logger.warning(f"{self.bot_name}: Using default config: {e}")
 
