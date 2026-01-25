@@ -654,18 +654,34 @@ export default function GexMLPage() {
               Training Metrics
             </h2>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              {Object.entries(modelStatus.model_info.metrics).map(([key, value]) => (
-                <div key={key} className="p-3 bg-gray-700/30 rounded-lg">
-                  <div className="text-xs text-gray-400 mb-1">
-                    {key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+              {Object.entries(modelStatus.model_info.metrics).map(([key, value]) => {
+                // Handle nested objects by extracting accuracy or first numeric value
+                let displayValue: string
+                if (typeof value === 'number') {
+                  displayValue = value < 1 ? `${(value * 100).toFixed(1)}%` : value.toFixed(2)
+                } else if (typeof value === 'object' && value !== null) {
+                  // Extract accuracy or cv_mean from nested metrics
+                  const obj = value as Record<string, unknown>
+                  const numericValue = obj.accuracy ?? obj.cv_mean ?? obj.cv_mae ?? obj.value
+                  if (typeof numericValue === 'number') {
+                    displayValue = numericValue < 1 ? `${(numericValue * 100).toFixed(1)}%` : numericValue.toFixed(2)
+                  } else {
+                    displayValue = JSON.stringify(value).slice(0, 20) + '...'
+                  }
+                } else {
+                  displayValue = String(value)
+                }
+                return (
+                  <div key={key} className="p-3 bg-gray-700/30 rounded-lg">
+                    <div className="text-xs text-gray-400 mb-1">
+                      {key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                    </div>
+                    <div className="text-lg font-mono font-bold">
+                      {displayValue}
+                    </div>
                   </div>
-                  <div className="text-lg font-mono font-bold">
-                    {typeof value === 'number' ? (
-                      value < 1 ? `${(value * 100).toFixed(1)}%` : value.toFixed(2)
-                    ) : String(value)}
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </div>
         )}
