@@ -425,3 +425,145 @@ async def cleanup_equity_snapshots(bot: str = None, confirm: bool = False):
             except Exception:
                 pass
         return {"success": False, "error": str(e)}
+
+
+@router.get("/collector-health")
+async def get_collector_health():
+    """
+    Get data collector health status from heartbeat table.
+
+    Returns:
+        - last_heartbeat: Timestamp of last heartbeat
+        - status: Current collector status
+        - is_healthy: True if heartbeat within last 10 minutes
+        - heartbeat_age_minutes: Minutes since last heartbeat
+        - recent_heartbeats: Last 10 heartbeat records
+    """
+    from database_adapter import get_connection
+    from zoneinfo import ZoneInfo
+
+    CENTRAL_TZ = ZoneInfo("America/Chicago")
+
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Check if heartbeat table exists
+        cursor.execute("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'collector_heartbeat'
+            )
+        """)
+        table_exists = cursor.fetchone()[0]
+
+        if not table_exists:
+            conn.close()
+            return {
+                "success": True,
+                "data": {
+                    "is_healthy": False,
+                    "status": "unknown",
+                    "message": "Heartbeat table not yet created - collector may not have started",
+                    "last_heartbeat": None,
+                    "heartbeat_age_minutes": None,
+                    "recent_heartbeats": []
+                }
+            }
+
+        # Get latest heartbeat
+        cursor.execute("""
+            SELECT timestamp, status, error_message, market_open, is_holiday
+            FROM collector_heartbeat
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """)
+        latest = cursor.fetchone()
+
+        if not latest:
+            conn.close()
+            return {
+                "success": True,
+                "data": {
+                    "is_healthy": False,
+                    "status": "no_heartbeat",
+                    "message": "No heartbeat records found",
+                    "last_heartbeat": None,
+                    "heartbeat_age_minutes": None,
+                    "recent_heartbeats": []
+                }
+            }
+
+        last_timestamp, last_status, last_error, market_open, is_holiday = latest
+
+        # Calculate age
+        now = datetime.now(CENTRAL_TZ)
+        if last_timestamp.tzinfo is None:
+            last_timestamp = last_timestamp.replace(tzinfo=CENTRAL_TZ)
+        else:
+            last_timestamp = last_timestamp.astimezone(CENTRAL_TZ)
+
+        age_seconds = (now - last_timestamp).total_seconds()
+        age_minutes = age_seconds / 60
+
+        # Healthy if heartbeat within 10 minutes
+        is_healthy = age_minutes < 10
+
+        # Get recent heartbeats
+        cursor.execute("""
+            SELECT timestamp, status, error_message, market_open, is_holiday
+            FROM collector_heartbeat
+            ORDER BY timestamp DESC
+            LIMIT 10
+        """)
+        recent = cursor.fetchall()
+
+        recent_heartbeats = [
+            {
+                "timestamp": row[0].isoformat() if row[0] else None,
+                "status": row[1],
+                "error": row[2],
+                "market_open": row[3],
+                "is_holiday": row[4]
+            }
+            for row in recent
+        ]
+
+        conn.close()
+
+        # Determine health message
+        if is_healthy:
+            if last_status == "error":
+                message = f"Collector running but had recent error: {last_error[:100] if last_error else 'Unknown'}"
+            elif last_status == "holiday":
+                message = "Collector running - market holiday"
+            elif last_status == "idle" or last_status == "waiting":
+                message = "Collector running - waiting for market open"
+            else:
+                message = "Collector healthy and running"
+        else:
+            message = f"Collector may be down - last heartbeat {age_minutes:.1f} minutes ago"
+
+        return {
+            "success": True,
+            "data": {
+                "is_healthy": is_healthy,
+                "status": last_status,
+                "message": message,
+                "last_heartbeat": last_timestamp.isoformat(),
+                "heartbeat_age_minutes": round(age_minutes, 2),
+                "market_open": market_open,
+                "is_holiday": is_holiday,
+                "last_error": last_error,
+                "recent_heartbeats": recent_heartbeats
+            }
+        }
+
+    except Exception as e:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
+        return {"success": False, "error": str(e)}
