@@ -103,8 +103,10 @@ export default function GexMLPage() {
   const [loading, setLoading] = useState(true)
   const [training, setTraining] = useState(false)
   const [populating, setPopulating] = useState(false)
+  const [populatingOrat, setPopulatingOrat] = useState(false)
   const [trainingResult, setTrainingResult] = useState<any>(null)
   const [populateResult, setPopulateResult] = useState<any>(null)
+  const [oratResult, setOratResult] = useState<any>(null)
   const [error, setError] = useState<string | null>(null)
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
 
@@ -171,6 +173,29 @@ export default function GexMLPage() {
       setError(err.message || 'Population failed')
     } finally {
       setPopulating(false)
+    }
+  }
+
+  const handlePopulateFromOrat = async () => {
+    setPopulatingOrat(true)
+    setOratResult(null)
+    setError(null)
+    try {
+      // Populate both SPY and SPX from ORAT
+      const spyRes = await apiClient.populateGexFromOrat({ symbol: 'SPY', start_date: '2023-01-01', limit: 600 })
+      const spxRes = await apiClient.populateGexFromOrat({ symbol: 'SPX', start_date: '2023-01-01', limit: 600 })
+
+      setOratResult({
+        success: spyRes.data?.success && spxRes.data?.success,
+        spy: spyRes.data?.data,
+        spx: spxRes.data?.data
+      })
+      // Refresh status after populating
+      await fetchStatus()
+    } catch (err: any) {
+      setError(err.message || 'ORAT population failed')
+    } finally {
+      setPopulatingOrat(false)
     }
   }
 
@@ -433,7 +458,51 @@ export default function GexMLPage() {
                     </div>
                   ))}
 
-                  {/* Populate from Snapshots Button */}
+                  {/* Populate from ORAT Database Button - PRIMARY ACTION */}
+                  {(!dataStatus?.gex_structure_daily?.has_data || (dataStatus?.gex_structure_daily?.count || 0) < 100) && (
+                    <button
+                      onClick={handlePopulateFromOrat}
+                      disabled={populatingOrat}
+                      className={`mt-2 w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
+                        populatingOrat
+                          ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                          : 'bg-purple-600 hover:bg-purple-500 text-white'
+                      }`}
+                    >
+                      {populatingOrat ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          Populating from ORAT (may take 30-60s)...
+                        </>
+                      ) : (
+                        <>
+                          <Database className="w-4 h-4" />
+                          Populate from ORAT Database (Historical Data)
+                        </>
+                      )}
+                    </button>
+                  )}
+
+                  {/* ORAT Populate Result */}
+                  {oratResult && (
+                    <div className={`p-2 rounded text-xs ${
+                      oratResult.success
+                        ? 'bg-emerald-500/10 text-emerald-300'
+                        : 'bg-red-500/10 text-red-300'
+                    }`}>
+                      {oratResult.success ? (
+                        <>
+                          <div>SPY: {oratResult.spy?.inserted || 0} inserted, {oratResult.spy?.skipped || 0} skipped</div>
+                          <div>SPX: {oratResult.spx?.inserted || 0} inserted, {oratResult.spx?.skipped || 0} skipped</div>
+                          <div className="mt-1 font-medium">Total: {(oratResult.spy?.total_records || 0) + (oratResult.spx?.total_records || 0)} records</div>
+                        </>
+                      ) : (
+                        `Error: ${oratResult.error || 'Population failed'}`
+                      )}
+                    </div>
+                  )}
+
+                  {/* Populate from Snapshots Button - FALLBACK */}
                   {diagnostic.diagnostics?.gex_history?.count > 0 &&
                    diagnostic.diagnostics?.gex_structure_daily?.count === 0 && (
                     <button
@@ -453,7 +522,7 @@ export default function GexMLPage() {
                       ) : (
                         <>
                           <Database className="w-4 h-4" />
-                          Build Training Data from Snapshots
+                          Build from Live Snapshots (Alternative)
                         </>
                       )}
                     </button>

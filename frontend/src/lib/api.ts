@@ -557,6 +557,8 @@ export const apiClient = {
   getGexModelsDataPreview: (limit: number = 10) => api.get('/api/ml/gex-models/data-preview', { params: { limit } }),
   getGexModelsDataDiagnostic: () => api.get('/api/ml/gex-models/data-diagnostic'),
   populateGexFromSnapshots: () => api.post('/api/ml/gex-models/populate-from-snapshots'),
+  populateGexFromOrat: (params: { symbol?: string; start_date?: string; limit?: number } = {}) =>
+    api.post('/api/ml/gex-models/populate-from-orat', null, { params }),
   trainGexModels: (data: {
     symbols?: string[]
     start_date?: string
