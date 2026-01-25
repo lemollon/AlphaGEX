@@ -1,6 +1,7 @@
 'use client'
 
 import Navigation from '@/components/Navigation'
+import IntelligenceDashboard from '@/components/IntelligenceDashboard'
 import GammaExpirationWidget from '@/components/GammaExpirationWidget'
 import DailyMannaWidget from '@/components/DailyMannaWidget'
 import BotStatusOverview from '@/components/BotStatusOverview'
@@ -26,7 +27,7 @@ export default function Dashboard() {
       <main className="pt-24 transition-all duration-300">
         <div className="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-8 py-6">
 
-          {/* Daily Manna Widget */}
+          {/* Daily Manna Widget - Faith meets Finance */}
           <div className="mb-4">
             <DailyMannaWidget />
           </div>
@@ -37,55 +38,60 @@ export default function Dashboard() {
             <p className="text-text-secondary text-sm mt-1">Real-time portfolio & trading activity</p>
           </div>
 
-          {/* Market Conditions Banner */}
-          <div className="mb-6">
+          {/* Row 1: Market Conditions Banner */}
+          <div className="mb-4">
             <MarketConditionsBanner />
           </div>
 
-          {/* Row 1: Portfolio Summary + Bot Status + Oracle (3 columns) */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 mb-6">
-            <div className="lg:col-span-3">
+          {/* Row 2: Portfolio Summary + Bot Status - Portfolio gets more space */}
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 mb-4">
+            <div className="lg:col-span-2">
               <PortfolioSummaryCard />
             </div>
-            <div className="lg:col-span-6">
+            <div className="lg:col-span-3">
               <BotStatusOverview />
             </div>
-            <div className="lg:col-span-3">
-              <OracleRecommendationWidget />
-            </div>
           </div>
 
-          {/* Row 2: Equity Curve (full width) */}
-          <div className="mb-6">
-            <MultiBotEquityCurve days={30} height={280} showPercentage={true} />
+          {/* Row 3: Bot Performance Comparison - Full width equity curve */}
+          <div className="mb-4">
+            <MultiBotEquityCurve days={30} height={350} showPercentage={true} />
           </div>
 
-          {/* Row 3: Open Positions + Gamma Expiration (2 columns) */}
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-6">
+          {/* Row 4: Open Positions + Gamma Expiration */}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-4">
             <AllOpenPositionsTable />
-            <div className="max-h-[400px] overflow-auto rounded-xl border border-gray-800 bg-[#0a0a0a]">
-              <GammaExpirationWidget />
-            </div>
+            <GammaExpirationWidget />
           </div>
 
-          {/* Row 4: Trading Reports + Activity Feed (2 columns) */}
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-6">
+          {/* Row 5: Trading Reports + Activity Feed */}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-4">
             <AllBotReportsSummary />
             <TodaysActivityFeed />
           </div>
 
-          {/* Row 5: AI/ML Systems (4 columns) */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          {/* Row 6: Oracle Strategy - Full width for visibility */}
+          <div className="mb-4">
+            <OracleRecommendationWidget />
+          </div>
+
+          {/* Row 7: AI/ML Systems - SAGE, QUANT, Math Optimizer, Sync Status */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
             <SAGEStatusWidget />
             <QuantStatusWidget />
             <MathOptimizerWidget />
             <SyncStatusWidget />
           </div>
 
-          {/* Row 6: ARGUS + Scan Feed (2 columns) */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Row 8: ARGUS Alerts & Scan Feed */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
             <ARGUSAlertsWidget />
             <DashboardScanFeed />
+          </div>
+
+          {/* Row 9: Intelligence Dashboard - Full width */}
+          <div>
+            <IntelligenceDashboard />
           </div>
 
         </div>
