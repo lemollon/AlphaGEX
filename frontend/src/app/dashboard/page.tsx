@@ -1,6 +1,7 @@
 'use client'
 
 import Navigation from '@/components/Navigation'
+import IntelligenceDashboard from '@/components/IntelligenceDashboard'
 import GammaExpirationWidget from '@/components/GammaExpirationWidget'
 import DailyMannaWidget from '@/components/DailyMannaWidget'
 import BotStatusOverview from '@/components/BotStatusOverview'
@@ -37,55 +38,56 @@ export default function Dashboard() {
             <p className="text-text-secondary text-sm mt-1">Real-time portfolio & trading activity</p>
           </div>
 
-          {/* Market Conditions Banner */}
-          <div className="mb-6">
+          {/* Row 1: Market Conditions Banner */}
+          <div className="mb-4">
             <MarketConditionsBanner />
           </div>
 
-          {/* Row 1: Portfolio Summary + Bot Status + Oracle (3 columns) */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 mb-6">
-            <div className="lg:col-span-3">
+          {/* Row 2: Portfolio Summary + Bot Status */}
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 mb-4">
+            <div className="lg:col-span-2">
               <PortfolioSummaryCard />
             </div>
-            <div className="lg:col-span-6">
+            <div className="lg:col-span-3">
               <BotStatusOverview />
             </div>
-            <div className="lg:col-span-3">
-              <OracleRecommendationWidget />
-            </div>
           </div>
 
-          {/* Row 2: Equity Curve (full width) */}
-          <div className="mb-6">
-            <MultiBotEquityCurve days={30} height={280} showPercentage={true} />
+          {/* Row 3: Bot Performance Comparison - Full width equity curve */}
+          <div className="mb-4">
+            <MultiBotEquityCurve days={30} height={350} showPercentage={true} />
           </div>
 
-          {/* Row 3: Open Positions + Gamma Expiration (2 columns) */}
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-6">
+          {/* Row 4: Open Positions + Trading Reports (Bot data together) */}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-4">
             <AllOpenPositionsTable />
-            <div className="max-h-[400px] overflow-auto rounded-xl border border-gray-800 bg-[#0a0a0a]">
-              <GammaExpirationWidget />
-            </div>
-          </div>
-
-          {/* Row 4: Trading Reports + Activity Feed (2 columns) */}
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-6">
             <AllBotReportsSummary />
-            <TodaysActivityFeed />
           </div>
 
-          {/* Row 5: AI/ML Systems (4 columns) */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          {/* Row 5: Gamma + Oracle (Market intelligence together) */}
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-4">
+            <GammaExpirationWidget />
+            <OracleRecommendationWidget />
+          </div>
+
+          {/* Row 6: Activity + ARGUS + Scan Feed (Monitoring together) */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+            <TodaysActivityFeed />
+            <ARGUSAlertsWidget />
+            <DashboardScanFeed />
+          </div>
+
+          {/* Row 7: AI/ML Systems */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
             <SAGEStatusWidget />
             <QuantStatusWidget />
             <MathOptimizerWidget />
             <SyncStatusWidget />
           </div>
 
-          {/* Row 6: ARGUS + Scan Feed (2 columns) */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <ARGUSAlertsWidget />
-            <DashboardScanFeed />
+          {/* Row 8: Intelligence Dashboard */}
+          <div>
+            <IntelligenceDashboard />
           </div>
 
         </div>
