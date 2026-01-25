@@ -640,20 +640,19 @@ class BotMetricsService:
             )
 
             # Get current unrealized P&L
+            # NOTE: unrealized_pnl is calculated via MTM, not stored in positions table
+            # Just count open positions here - unrealized P&L is added separately if needed
             unrealized_pnl = 0.0
             open_count = 0
             if include_unrealized:
                 cursor.execute(f"""
-                    SELECT
-                        COALESCE(SUM(COALESCE(unrealized_pnl, 0)), 0),
-                        COUNT(*)
+                    SELECT COUNT(*)
                     FROM {positions_table}
                     WHERE status = 'open'
                 """)
-                unr_row = cursor.fetchone()
-                if unr_row:
-                    unrealized_pnl = float(unr_row[0] or 0)
-                    open_count = int(unr_row[1] or 0)
+                count_row = cursor.fetchone()
+                if count_row:
+                    open_count = int(count_row[0] or 0)
 
             conn.close()
 
