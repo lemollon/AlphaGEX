@@ -112,9 +112,30 @@ SPX options require Tradier's **production API** - the sandbox doesn't support S
 
 ## Root Cause Analysis
 
-### 1. Strategy Mismatch with Market Conditions
+### 1. Direction Prediction Accuracy (Corrected Analysis)
 
-**Problem**: Bots trade in conditions unfavorable to their strategy.
+**Key Insight**: Markets can trend in ANY GEX regime (POSITIVE, NEGATIVE, or NEUTRAL).
+
+- **POSITIVE GEX** = Trends are dampened (mean-reversion tendency), but trends still happen
+- **NEGATIVE GEX** = Trends are amplified (momentum tendency), but reversals happen too
+
+The question isn't "which regime favors which strategy" - it's **"is the direction prediction correct?"**
+
+**Direction Determination Flow** (from `trading/athena_v2/signals.py`):
+1. ML 5-model ensemble provides direction (primary)
+2. Oracle provides direction (backup)
+3. If FLAT/NEUTRAL:
+   - Compare `bullish_suitability` vs `bearish_suitability`
+   - Tie-breaker: GEX wall proximity
+   - Near PUT wall → BULLISH (support bounce expected)
+   - Near CALL wall → BEARISH (resistance rejection expected)
+4. Default to BULLISH if all else fails
+
+**Critical Question**: Is this direction logic accurate?
+
+The analysis script now includes:
+- **Direction Accuracy by GEX Regime** - Win rate for BULL/BEAR in each regime
+- **Wall Proximity vs Direction Choice** - Is the wall logic choosing the right direction?
 
 **Evidence from Code** (`quant/oracle_advisor.py`):
 
