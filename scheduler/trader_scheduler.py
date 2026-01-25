@@ -191,6 +191,100 @@ except ImportError:
     GEXSignalGenerator = None
     print("Warning: GEXSignalGenerator not available. GEX ML training will be disabled.")
 
+
+def populate_recent_gex_structures(days: int = 30) -> dict:
+    """
+    Populate recent gex_structure_daily from options_chain_snapshots.
+
+    This ensures ORION has fresh training data before ML model training.
+    Runs automatically before GEX ML training on Sundays.
+
+    Args:
+        days: Number of recent days to process (default: 30)
+
+    Returns:
+        dict with success count, failed count, and any errors
+    """
+    from datetime import timedelta
+    import traceback as tb
+
+    results = {'success': 0, 'failed': 0, 'errors': [], 'skipped': 0}
+
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+
+        # Check what snapshot data is available
+        start_date = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
+
+        cursor.execute("""
+            SELECT DISTINCT DATE(timestamp) as trade_date
+            FROM options_chain_snapshots
+            WHERE DATE(timestamp) >= %s
+            ORDER BY trade_date
+        """, (start_date,))
+
+        available_dates = [row[0] for row in cursor.fetchall()]
+
+        if not available_dates:
+            conn.close()
+            results['errors'].append("No options_chain_snapshots data available")
+            return results
+
+        # Check which dates already have gex_structure_daily data
+        cursor.execute("""
+            SELECT DISTINCT trade_date
+            FROM gex_structure_daily
+            WHERE trade_date >= %s
+        """, (start_date,))
+        existing_dates = set(row[0] for row in cursor.fetchall())
+
+        # Process only new dates
+        new_dates = [d for d in available_dates if d not in existing_dates]
+
+        if not new_dates:
+            conn.close()
+            results['skipped'] = len(available_dates)
+            return results
+
+        # Import the calculation logic
+        try:
+            from scripts.populate_gex_from_snapshots import (
+                calculate_gex_from_snapshots,
+                insert_gex_structure,
+                ensure_tables
+            )
+        except ImportError as e:
+            conn.close()
+            results['errors'].append(f"Could not import populate_gex_from_snapshots: {e}")
+            return results
+
+        # Ensure tables exist
+        ensure_tables(conn)
+
+        # Process each new date for SPY (primary training data)
+        for trade_date in new_dates:
+            try:
+                structure = calculate_gex_from_snapshots(conn, 'SPY', trade_date)
+                if structure:
+                    insert_gex_structure(conn, structure)
+                    results['success'] += 1
+                else:
+                    results['failed'] += 1
+            except Exception as e:
+                conn.rollback()
+                results['failed'] += 1
+                if len(results['errors']) < 5:
+                    results['errors'].append(f"{trade_date}: {str(e)[:100]}")
+
+        conn.close()
+
+    except Exception as e:
+        results['errors'].append(f"Database error: {str(e)[:200]}")
+        results['errors'].append(tb.format_exc()[:500])
+
+    return results
+
 # Import Auto-Validation System for ML model health monitoring and auto-retrain
 try:
     from quant.auto_validation_system import (
@@ -2297,6 +2391,9 @@ class AutonomousTraderScheduler:
 
         Training runs after market close on Sunday to have fresh models for the week.
         Models are saved to database for persistence across deploys.
+
+        PRODUCTION ENHANCEMENT: Now auto-populates recent training data from
+        options_chain_snapshots before training to ensure fresh data.
         """
         now = datetime.now(CENTRAL_TZ)
 
@@ -2308,7 +2405,21 @@ class AutonomousTraderScheduler:
             return
 
         try:
-            # Initialize generator
+            # Step 1: Auto-populate recent training data from options_chain_snapshots
+            logger.info("GEX ML: Populating recent training data from snapshots...")
+            populate_results = populate_recent_gex_structures(days=30)
+
+            if populate_results['success'] > 0:
+                logger.info(f"  ✅ Added {populate_results['success']} new days to gex_structure_daily")
+            if populate_results['skipped'] > 0:
+                logger.info(f"  ℹ️  Skipped {populate_results['skipped']} days (already populated)")
+            if populate_results['failed'] > 0:
+                logger.warning(f"  ⚠️  Failed to process {populate_results['failed']} days")
+            if populate_results['errors']:
+                for err in populate_results['errors'][:3]:
+                    logger.warning(f"     Error: {err}")
+
+            # Step 2: Initialize generator for training
             generator = GEXSignalGenerator()
 
             # Check if retraining is needed (models older than 7 days)
