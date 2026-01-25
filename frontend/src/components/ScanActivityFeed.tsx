@@ -788,11 +788,22 @@ export default function ScanActivityFeed({ scans, botName, isLoading }: ScanActi
                     NEUTRAL Regime Analysis
                   </span>
                   {scan.wall_filter_passed != null && (
-                    <span className={`text-xs px-1.5 py-0.5 rounded ${
-                      scan.wall_filter_passed ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
-                    }`}>
-                      Wall Filter: {scan.wall_filter_passed ? '✓ PASSED' : '✗ FAILED'}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${
+                        scan.wall_filter_passed ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'
+                      }`} title={scan.wall_filter_passed
+                        ? 'Price was within 1% of a GEX wall - direction based on wall proximity (high confidence)'
+                        : 'Price was NOT near a wall - direction based on trend/position analysis'
+                      }>
+                        {scan.wall_filter_passed ? '🎯 Near Wall' : '📊 Using Trend'}
+                      </span>
+                      <span className="text-[10px] text-gray-500">
+                        {scan.wall_filter_passed
+                          ? '(within 1% of GEX wall)'
+                          : '(not near wall)'
+                        }
+                      </span>
+                    </div>
                   )}
                 </div>
 
