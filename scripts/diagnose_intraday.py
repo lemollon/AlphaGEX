@@ -100,7 +100,7 @@ def run_diagnostics():
 
         cursor.execute("""
             SELECT COUNT(*) FROM ares_equity_snapshots
-            WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+            WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
         """, (today,))
         today_count = cursor.fetchone()[0]
         print(f"   Today's snapshots: {today_count}")
@@ -187,7 +187,7 @@ def run_diagnostics():
 
         cursor.execute("""
             SELECT COUNT(*) FROM titan_equity_snapshots
-            WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+            WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
         """, (today,))
         titan_today = cursor.fetchone()[0]
 

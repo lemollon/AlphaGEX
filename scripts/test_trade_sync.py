@@ -213,15 +213,13 @@ class TradeSyncValidator:
             # Use a safer query that filters out invalid timestamps
             cursor.execute("""
                 SELECT
-                    DATE(close_time::timestamp AT TIME ZONE 'America/Chicago') as trade_date,
+                    DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') as trade_date,
                     COUNT(*) as trades,
                     SUM(realized_pnl) as daily_pnl
                 FROM ares_positions
                 WHERE status IN ('closed', 'expired')
-                AND close_time IS NOT NULL
-                AND close_time ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
-                AND close_time::timestamp >= (NOW() AT TIME ZONE 'America/Chicago') - INTERVAL '30 days'
-                GROUP BY DATE(close_time::timestamp AT TIME ZONE 'America/Chicago')
+                AND COALESCE(close_time, open_time)::timestamptz >= (NOW() AT TIME ZONE 'America/Chicago') - INTERVAL '30 days'
+                GROUP BY DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago')
                 ORDER BY trade_date
             """)
             equity_data = cursor.fetchall()
@@ -371,13 +369,13 @@ class TradeSyncValidator:
             # Use Central Time for all comparisons (America/Chicago)
             cursor.execute("""
                 SELECT
-                    DATE(exit_time::timestamp AT TIME ZONE 'America/Chicago') as trade_date,
+                    DATE(COALESCE(exit_time, entry_time)::timestamptz AT TIME ZONE 'America/Chicago') as trade_date,
                     COUNT(*) as trades,
                     SUM(realized_pnl) as daily_pnl
                 FROM apache_positions
                 WHERE status IN ('closed', 'expired')
-                AND exit_time >= (NOW() AT TIME ZONE 'America/Chicago') - INTERVAL '30 days'
-                GROUP BY DATE(exit_time::timestamp AT TIME ZONE 'America/Chicago')
+                AND COALESCE(exit_time, entry_time)::timestamptz >= (NOW() AT TIME ZONE 'America/Chicago') - INTERVAL '30 days'
+                GROUP BY DATE(COALESCE(exit_time, entry_time)::timestamptz AT TIME ZONE 'America/Chicago')
                 ORDER BY trade_date
             """)
             equity_data = cursor.fetchall()
@@ -502,13 +500,13 @@ class TradeSyncValidator:
             # Use Central Time for all comparisons (America/Chicago)
             cursor.execute("""
                 SELECT
-                    DATE(close_time::timestamp AT TIME ZONE 'America/Chicago') as trade_date,
+                    DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') as trade_date,
                     COUNT(*) as trades,
                     SUM(realized_pnl) as daily_pnl
                 FROM pegasus_positions
                 WHERE status IN ('closed', 'expired')
-                AND close_time >= (NOW() AT TIME ZONE 'America/Chicago') - INTERVAL '30 days'
-                GROUP BY DATE(close_time::timestamp AT TIME ZONE 'America/Chicago')
+                AND COALESCE(close_time, open_time)::timestamptz >= (NOW() AT TIME ZONE 'America/Chicago') - INTERVAL '30 days'
+                GROUP BY DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago')
                 ORDER BY trade_date
             """)
             equity_data = cursor.fetchall()

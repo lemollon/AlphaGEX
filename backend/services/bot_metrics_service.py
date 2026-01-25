@@ -827,7 +827,7 @@ class BotMetricsService:
                 cursor.execute(f"""
                     SELECT timestamp, balance, unrealized_pnl, realized_pnl, open_positions
                     FROM {snapshots_table}
-                    WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+                    WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
                     ORDER BY timestamp ASC
                 """, (target_date,))
                 snapshots = cursor.fetchall()

@@ -247,7 +247,7 @@ def cleanup_positions(bot: str, confirm: bool = False):
     try:
         cursor.execute(f"""
             DELETE FROM {snapshot_table}
-            WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = CURRENT_DATE
+            WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = CURRENT_DATE
         """)
         deleted_snapshots = cursor.rowcount
     except Exception:

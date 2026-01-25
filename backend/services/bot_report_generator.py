@@ -428,14 +428,14 @@ def fetch_scan_activity_for_date(bot: str, report_date: date) -> List[Dict[str, 
                     SELECT *
                     FROM {source_table}
                     WHERE bot_name = %s
-                    AND DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+                    AND DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
                     ORDER BY timestamp ASC
                 """, (bot.upper(), report_date))
             else:
                 cursor.execute(f"""
                     SELECT *
                     FROM {source_table}
-                    WHERE DATE(timestamp AT TIME ZONE 'America/Chicago') = %s
+                    WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
                     ORDER BY timestamp ASC
                 """, (report_date,))
 

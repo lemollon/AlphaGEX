@@ -554,7 +554,7 @@ class ICARUSDatabase:
                 c.execute("""
                     SELECT COUNT(*)
                     FROM icarus_positions
-                    WHERE DATE(open_time AT TIME ZONE 'America/Chicago') = %s
+                    WHERE DATE(open_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
                 """, (date,))
                 return c.fetchone()[0]
         except Exception:
