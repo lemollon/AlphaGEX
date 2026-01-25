@@ -196,6 +196,13 @@ When you see these phrases, ensure COMPLETE implementation:
 8. [Frontend Development Standards](#frontend-development-standards)
 9. [Database Changes](#database-changes)
 10. [Deployment Checklist](#deployment-checklist)
+11. [Rollback & Recovery](#rollback--recovery)
+12. [Monitoring & Observability](#monitoring--observability)
+13. [Secret Management](#secret-management)
+14. [Performance Requirements](#performance-requirements)
+15. [Breaking Changes Protocol](#breaking-changes-protocol)
+16. [When to Update CLAUDE.md](#when-to-update-claudemd)
+17. [Final Verification Checklist](#final-verification-checklist)
 
 ---
 
@@ -999,6 +1006,300 @@ git revert HEAD
 git push origin main
 
 # Render will auto-deploy the revert
+```
+
+---
+
+## Rollback & Recovery
+
+### When Production Breaks
+
+**Immediate Response (within 5 minutes):**
+```bash
+# 1. Identify the breaking commit
+git log --oneline -5
+
+# 2. Revert immediately
+git revert HEAD --no-edit
+git push origin main
+
+# 3. Verify rollback deployed
+curl https://alphagex-api.onrender.com/health
+```
+
+**Root Cause Analysis (after stabilization):**
+1. Pull logs from the failure window
+2. Identify what changed (commits, config, dependencies)
+3. Write a test that would have caught the issue
+4. Fix properly with the test in place
+5. Deploy the fix (not just the revert)
+
+### Common Failure Patterns
+
+| Symptom | Likely Cause | Quick Fix |
+|---------|--------------|-----------|
+| 500 errors on all endpoints | Database connection | Check `DATABASE_URL`, restart service |
+| 500 on specific endpoint | Code bug in that route | Revert last commit touching that file |
+| Slow responses (>5s) | Missing index or N+1 query | Add index, check query with EXPLAIN |
+| Data not updating | Scheduler stopped | Check worker health, restart worker |
+| Frontend blank page | Build error or API unreachable | Check Vercel logs, verify API URL |
+
+### Database Recovery
+
+```sql
+-- Find what changed recently
+SELECT * FROM table_name
+WHERE updated_at > NOW() - INTERVAL '1 hour'
+ORDER BY updated_at DESC;
+
+-- Soft-delete bad data (don't hard delete)
+UPDATE table_name SET deleted = true WHERE condition;
+
+-- If you MUST restore from backup, coordinate with team first
+```
+
+---
+
+## Monitoring & Observability
+
+### Health Checks to Verify
+
+```bash
+# Backend health
+curl https://alphagex-api.onrender.com/health
+
+# System health (comprehensive)
+curl https://alphagex-api.onrender.com/api/system-health
+
+# Bot-specific health
+curl https://alphagex-api.onrender.com/api/ares/status
+curl https://alphagex-api.onrender.com/api/titan/status
+
+# Oracle health (includes staleness)
+curl https://alphagex-api.onrender.com/api/oracle/health
+```
+
+### What to Monitor
+
+| Metric | Warning Threshold | Critical Threshold |
+|--------|-------------------|-------------------|
+| API response time | >2 seconds | >5 seconds |
+| Error rate | >1% | >5% |
+| Database connections | >80% pool | >95% pool |
+| Worker uptime | Restart in last hour | Multiple restarts |
+| Oracle model age | >24 hours | >72 hours |
+| Data freshness | >15 min stale | >1 hour stale |
+
+### Log Patterns to Watch For
+
+```bash
+# Errors in last hour
+grep -i "error\|exception\|failed" logs/alphagex.log | tail -50
+
+# Specific bot issues
+grep "ARES.*ERROR" logs/alphagex.log | tail -20
+
+# Database connection issues
+grep -i "connection\|timeout\|pool" logs/alphagex.log | tail -20
+
+# Slow operations
+grep -E "took [0-9]{2,}\.[0-9]+s" logs/alphagex.log
+```
+
+### Adding Observability to New Code
+
+```python
+# Always log operation start/end for important functions
+async def important_operation(params):
+    logger.info(f"Starting important_operation with {params}")
+    start = time.time()
+    try:
+        result = await do_work(params)
+        logger.info(f"important_operation completed in {time.time()-start:.2f}s")
+        return result
+    except Exception as e:
+        logger.exception(f"important_operation failed after {time.time()-start:.2f}s")
+        raise
+```
+
+---
+
+## Secret Management
+
+### Rules
+
+1. **NEVER commit secrets** - No API keys, passwords, or tokens in code
+2. **Use environment variables** - All secrets via `os.getenv()`
+3. **Use .env.example** - Document required vars without real values
+4. **Rotate compromised secrets immediately** - If a secret is exposed, rotate it
+
+### Environment Variable Patterns
+
+```python
+# GOOD: Required secret with clear error
+API_KEY = os.getenv("API_KEY")
+if not API_KEY:
+    raise ValueError("API_KEY environment variable is required")
+
+# GOOD: Optional with sensible default
+DEBUG = os.getenv("DEBUG", "false").lower() == "true"
+
+# BAD: Hardcoded fallback for secret
+API_KEY = os.getenv("API_KEY", "sk-default-key-12345")  # NEVER DO THIS
+```
+
+### Checking for Leaked Secrets
+
+```bash
+# Before committing, check for potential secrets
+git diff --staged | grep -iE "(key|secret|password|token|api_key).*="
+
+# Check entire codebase
+grep -rE "(sk-|pk_|api_key.*=.*['\"][a-zA-Z0-9]{20,})" --include="*.py" .
+```
+
+### Required Environment Variables
+
+See `CLAUDE.md` for full list. Critical ones:
+- `DATABASE_URL` - PostgreSQL connection
+- `TRADIER_API_KEY` - Live trading
+- `ANTHROPIC_API_KEY` - AI features
+- `TRADING_VOLATILITY_API_KEY` - GEX data
+
+---
+
+## Performance Requirements
+
+### Response Time Targets
+
+| Endpoint Type | Target | Maximum |
+|--------------|--------|---------|
+| Health checks | <100ms | <500ms |
+| Simple reads | <200ms | <1s |
+| Complex queries | <1s | <3s |
+| ML predictions | <2s | <5s |
+| Batch operations | <10s | <30s |
+
+### Database Query Guidelines
+
+```sql
+-- Every query on large tables MUST use an index
+-- Check with EXPLAIN ANALYZE before deploying
+
+-- BAD: Full table scan
+SELECT * FROM gex_history WHERE symbol = 'SPY';
+
+-- GOOD: Uses index on (symbol, timestamp)
+SELECT * FROM gex_history
+WHERE symbol = 'SPY' AND timestamp > NOW() - INTERVAL '1 day'
+ORDER BY timestamp DESC
+LIMIT 100;
+
+-- ALWAYS limit results
+LIMIT 100  -- Default for lists
+LIMIT 1000 -- Maximum for exports
+```
+
+### Frontend Performance
+
+```typescript
+// Always paginate large lists
+const { data } = useSWR(`/api/trades?limit=50&offset=${page * 50}`)
+
+// Use appropriate refresh intervals
+{ refreshInterval: 30000 }  // 30s for dashboards
+{ refreshInterval: 5000 }   // 5s for real-time data
+{ refreshInterval: 0 }      // No auto-refresh for static data
+
+// Lazy load heavy components
+const HeavyChart = dynamic(() => import('./HeavyChart'), { ssr: false })
+```
+
+---
+
+## Breaking Changes Protocol
+
+### What Counts as a Breaking Change
+
+- Removing an API endpoint
+- Removing a field from API response
+- Changing field type or format
+- Renaming an endpoint
+- Changing required parameters
+
+### How to Handle Breaking Changes
+
+**Option 1: Versioned Endpoints (preferred for major changes)**
+```python
+# Old endpoint remains
+@router.get("/api/v1/trades")
+async def get_trades_v1(): ...
+
+# New endpoint added
+@router.get("/api/v2/trades")
+async def get_trades_v2(): ...
+```
+
+**Option 2: Deprecation Period (for minor changes)**
+```python
+# Add new field, keep old field temporarily
+return {
+    "old_field": value,      # Deprecated, remove after 2025-03-01
+    "new_field": value,      # Use this instead
+    "_deprecation_notice": "old_field will be removed 2025-03-01"
+}
+```
+
+**Option 3: Coordinate Frontend/Backend (same-day changes)**
+```bash
+# 1. Update frontend to handle both old and new format
+# 2. Deploy frontend
+# 3. Update backend
+# 4. Deploy backend
+# 5. Remove old format handling from frontend
+```
+
+### Never Break Without Warning
+
+- Add deprecation notices in response
+- Log when deprecated endpoints are used
+- Give at least 1 week notice for non-critical changes
+- Coordinate with any external consumers
+
+---
+
+## When to Update CLAUDE.md
+
+### Must Update CLAUDE.md When:
+
+- [ ] Adding a new trading bot
+- [ ] Adding a new ML system (like SAGE, Oracle)
+- [ ] Adding a new major dashboard page
+- [ ] Changing database schema significantly
+- [ ] Removing or deprecating a system
+- [ ] Changing directory structure
+- [ ] Adding new API route files
+- [ ] Changing deployment configuration
+
+### Update Format
+
+```markdown
+### New System Name - Brief Description
+
+- **Purpose**: What it does
+- **Files**: Where the code lives
+- **API Endpoints**: Key routes
+- **Database Tables**: Tables it uses
+- **Integration**: How it connects to other systems
+```
+
+### Keeping Documentation in Sync
+
+```bash
+# Before PR, check if CLAUDE.md needs update
+git diff --name-only main | grep -E "(routes|trading/|quant/|ai/)"
+
+# If any of these directories changed significantly, update CLAUDE.md
 ```
 
 ---
