@@ -169,9 +169,10 @@ def analyze_real_trading_returns():
     conn = get_connection()
 
     # Get closed positions with P&L
+    # Use COALESCE to handle legacy data with NULL closed_at
     query = """
         SELECT
-            closed_at::date as trade_date,
+            COALESCE(closed_at, opened_at)::date as trade_date,
             symbol,
             strategy,
             pnl,
@@ -180,8 +181,7 @@ def analyze_real_trading_returns():
         FROM positions
         WHERE status = 'CLOSED'
             AND pnl IS NOT NULL
-            AND closed_at IS NOT NULL
-        ORDER BY closed_at
+        ORDER BY COALESCE(closed_at, opened_at)
     """
 
     try:
@@ -191,9 +191,10 @@ def analyze_real_trading_returns():
         positions_df = pd.DataFrame()
 
     # Also get autonomous positions
+    # Use COALESCE to handle legacy data with NULL closed_date
     query2 = """
         SELECT
-            closed_date::date as trade_date,
+            COALESCE(closed_date, entry_date)::date as trade_date,
             symbol,
             strategy,
             realized_pnl as pnl,
@@ -202,8 +203,7 @@ def analyze_real_trading_returns():
         FROM autonomous_positions
         WHERE status = 'CLOSED'
             AND realized_pnl IS NOT NULL
-            AND closed_date IS NOT NULL
-        ORDER BY closed_date
+        ORDER BY COALESCE(closed_date, entry_date)
     """
 
     try:
