@@ -688,6 +688,198 @@ def analyze_bot(conn, bot_name, config):
     return results
 
 
+def analyze_backtest_drift(conn, bot_name):
+    """Compare live performance to Apache backtest benchmarks"""
+    cursor = conn.cursor()
+
+    print("\n" + "-" * 60)
+    print("12. BACKTEST VS LIVE DRIFT (Apache Benchmark)")
+    print("-" * 60)
+
+    # Apache backtest benchmarks (from the profitable backtest)
+    APACHE_BENCHMARKS = {
+        'athena': {
+            'win_rate': 0.58,  # 58% win rate
+            'avg_win_pct': 45.0,  # 45% of max profit
+            'avg_loss_pct': 35.0,  # 35% of max loss
+            'expectancy': 12.0,  # 12% expected return per trade
+            'trades_per_week': 8,  # ~8 trades per week
+        },
+        'icarus': {
+            'win_rate': 0.52,  # 52% win rate (aggressive)
+            'avg_win_pct': 40.0,
+            'avg_loss_pct': 45.0,
+            'expectancy': 5.0,  # Lower expectancy due to aggression
+            'trades_per_week': 15,
+        },
+        'titan': {
+            'win_rate': 0.72,  # 72% win rate for IC
+            'avg_win_pct': 30.0,  # Take profit at 30%
+            'avg_loss_pct': 100.0,  # Full loss when breached
+            'expectancy': 8.0,
+            'trades_per_week': 10,
+        }
+    }
+
+    benchmark = APACHE_BENCHMARKS.get(bot_name.lower())
+    if not benchmark:
+        print(f"  No benchmark data for {bot_name}")
+        return
+
+    # Get live stats
+    table = BOT_CONFIGS[bot_name]['table']
+
+    try:
+        cursor.execute(f"""
+            SELECT
+                COUNT(*) as total_trades,
+                SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as wins,
+                AVG(CASE WHEN realized_pnl > 0 THEN realized_pnl / NULLIF(max_profit, 0) * 100 END) as avg_win_pct,
+                AVG(CASE WHEN realized_pnl <= 0 THEN ABS(realized_pnl / NULLIF(max_loss, 0) * 100) END) as avg_loss_pct,
+                MIN(open_time) as first_trade,
+                MAX(open_time) as last_trade
+            FROM {table}
+            WHERE status IN ('closed', 'expired')
+            AND realized_pnl IS NOT NULL
+        """)
+
+        row = cursor.fetchone()
+        if not row or row[0] == 0:
+            print("  No live trade data available")
+            return
+
+        total, wins, avg_win_pct, avg_loss_pct, first_trade, last_trade = row
+        wins = wins or 0
+        live_win_rate = wins / total if total > 0 else 0
+
+        # Calculate weeks of trading
+        if first_trade and last_trade:
+            days = (last_trade - first_trade).days or 1
+            weeks = max(days / 7, 1)
+            trades_per_week = total / weeks
+        else:
+            trades_per_week = 0
+
+        # Calculate expectancy
+        avg_win = float(avg_win_pct or 0)
+        avg_loss = float(avg_loss_pct or 0)
+        live_expectancy = (live_win_rate * avg_win) - ((1 - live_win_rate) * avg_loss)
+
+        # Print comparison
+        print(f"\n  {'Metric':<25} {'Backtest':>12} {'Live':>12} {'Drift':>10}")
+        print("  " + "-" * 65)
+
+        def drift_indicator(backtest_val, live_val, higher_is_better=True):
+            if backtest_val == 0:
+                return "N/A"
+            drift = ((live_val - backtest_val) / backtest_val) * 100
+            if higher_is_better:
+                return f"{drift:+.0f}% {'✓' if drift >= 0 else '⚠️'}"
+            else:
+                return f"{drift:+.0f}% {'✓' if drift <= 0 else '⚠️'}"
+
+        print(f"  {'Win Rate':<25} {benchmark['win_rate']*100:>10.1f}% {live_win_rate*100:>10.1f}% {drift_indicator(benchmark['win_rate'], live_win_rate)}")
+        print(f"  {'Avg Win (% of max)':<25} {benchmark['avg_win_pct']:>10.1f}% {avg_win:>10.1f}% {drift_indicator(benchmark['avg_win_pct'], avg_win)}")
+        print(f"  {'Avg Loss (% of max)':<25} {benchmark['avg_loss_pct']:>10.1f}% {avg_loss:>10.1f}% {drift_indicator(benchmark['avg_loss_pct'], avg_loss, False)}")
+        print(f"  {'Expectancy':<25} {benchmark['expectancy']:>10.1f}% {live_expectancy:>10.1f}% {drift_indicator(benchmark['expectancy'], live_expectancy)}")
+        print(f"  {'Trades/Week':<25} {benchmark['trades_per_week']:>10.1f} {trades_per_week:>10.1f} {drift_indicator(benchmark['trades_per_week'], trades_per_week)}")
+
+        # Severity assessment
+        win_rate_drift = (live_win_rate - benchmark['win_rate']) / benchmark['win_rate'] * 100
+        if win_rate_drift < -40:
+            severity = "🔴 CRITICAL"
+        elif win_rate_drift < -20:
+            severity = "🟡 WARNING"
+        elif win_rate_drift >= 0:
+            severity = "🟢 NORMAL"
+        else:
+            severity = "🟡 DEGRADED"
+
+        print(f"\n  Overall Drift Severity: {severity}")
+
+        if live_expectancy < 0:
+            print("  ⚠️  NEGATIVE EXPECTANCY - Strategy is losing money!")
+            print("     Consider reverting to Apache backtest parameters")
+
+    except Exception as e:
+        print(f"  Error analyzing drift: {e}")
+
+
+def analyze_current_vs_apache_config(conn, bot_name):
+    """Show current config vs Apache optimal parameters"""
+    cursor = conn.cursor()
+
+    print("\n" + "-" * 60)
+    print("13. CURRENT CONFIG VS APACHE OPTIMAL")
+    print("-" * 60)
+
+    # Apache optimal parameters
+    APACHE_OPTIMAL = {
+        'wall_filter_pct': 1.0,
+        'min_win_probability': 0.55,
+        'min_confidence': 0.55,
+        'min_rr_ratio': 1.5,
+        'min_vix': 15.0,
+        'max_vix': 25.0,
+        'min_gex_ratio_bearish': 1.5,
+        'max_gex_ratio_bullish': 0.67,
+    }
+
+    try:
+        cursor.execute("""
+            SELECT config_key, config_value
+            FROM autonomous_config
+            WHERE bot_name = %s
+        """, (bot_name.upper(),))
+
+        current_config = {row[0]: row[1] for row in cursor.fetchall()}
+
+        print(f"\n  {'Parameter':<25} {'Apache Optimal':>15} {'Current':>15} {'Status'}")
+        print("  " + "-" * 70)
+
+        for key, optimal_val in APACHE_OPTIMAL.items():
+            current_val = current_config.get(key, 'not set')
+            try:
+                current_float = float(current_val) if current_val != 'not set' else None
+            except (ValueError, TypeError):
+                current_float = None
+
+            # Determine if current is more or less conservative
+            status = ""
+            if current_float is not None:
+                if key in ['min_win_probability', 'min_confidence', 'min_rr_ratio', 'min_gex_ratio_bearish']:
+                    # Higher is more conservative
+                    if current_float < optimal_val * 0.9:
+                        status = "⚠️ TOO LOOSE"
+                    elif current_float >= optimal_val:
+                        status = "✓"
+                    else:
+                        status = "~"
+                elif key in ['max_gex_ratio_bullish', 'wall_filter_pct']:
+                    # Lower is more conservative (for wall_filter, tighter is better)
+                    if key == 'wall_filter_pct' and current_float > optimal_val * 1.5:
+                        status = "⚠️ TOO LOOSE"
+                    elif current_float <= optimal_val:
+                        status = "✓"
+                    else:
+                        status = "~"
+                elif key in ['min_vix']:
+                    if current_float < optimal_val:
+                        status = "⚠️ TOO LOOSE"
+                    else:
+                        status = "✓"
+                elif key in ['max_vix']:
+                    if current_float > optimal_val:
+                        status = "⚠️ TOO LOOSE"
+                    else:
+                        status = "✓"
+
+            print(f"  {key:<25} {optimal_val:>15} {str(current_val):>15} {status}")
+
+    except Exception as e:
+        print(f"  Error fetching config: {e}")
+
+
 def generate_recommendations(all_results):
     """Generate recommendations based on analysis"""
     print("\n" + "=" * 80)
@@ -772,6 +964,12 @@ def main():
         config = BOT_CONFIGS[bot_name]
         results = analyze_bot(conn, bot_name, config)
         all_results[bot_name] = results
+
+        # Add backtest drift analysis
+        analyze_backtest_drift(conn, bot_name)
+
+        # Add config comparison
+        analyze_current_vs_apache_config(conn, bot_name)
 
     # Generate recommendations
     generate_recommendations(all_results)
