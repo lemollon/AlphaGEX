@@ -34,6 +34,7 @@ import {
   Info
 } from 'lucide-react'
 import apiClient from '@/lib/api'
+import Navigation from '@/components/Navigation'
 
 interface ModelStatus {
   is_trained: boolean
@@ -167,8 +168,10 @@ export default function GexMLPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-6">
-      <div className="max-w-7xl mx-auto">
+    <>
+      <Navigation />
+      <main className="min-h-screen bg-black text-white px-4 pb-4 md:px-6 md:pb-6 pt-28">
+        <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-3">
@@ -571,7 +574,8 @@ export default function GexMLPage() {
             </div>
           </div>
         )}
-      </div>
-    </div>
+        </div>
+      </main>
+    </>
   )
 }
