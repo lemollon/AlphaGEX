@@ -9,14 +9,15 @@ interface BotStatus {
   is_active?: boolean
   bot_status?: string
   open_positions?: number
-  today_pnl?: number
-  total_pnl?: number
+  today_pnl?: number  // May not be returned by all bots
+  total_pnl?: number  // Backend name for realized P&L
   unrealized_pnl?: number
-  realized_pnl?: number
-  win_rate?: number
-  total_trades?: number
+  realized_pnl?: number  // Alternative name
+  win_rate?: number  // Percentage from backend (0-100)
+  trade_count?: number  // Backend name for total trades
+  total_trades?: number  // Alternative name
   winning_trades?: number
-  starting_capital?: number
+  starting_capital?: number  // From config table - USE THIS, not hardcoded
   current_equity?: number
 }
 
@@ -34,12 +35,24 @@ interface BotStatusResponse {
   win_rate?: number
 }
 
-const LIVE_BOTS: { name: BotName; endpoint: string; startingCapital: number }[] = [
-  { name: 'ARES', endpoint: '/api/ares/status', startingCapital: 100000 },
-  { name: 'ATHENA', endpoint: '/api/athena/status', startingCapital: 100000 },
-  { name: 'ICARUS', endpoint: '/api/icarus/status', startingCapital: 100000 },
-  { name: 'PEGASUS', endpoint: '/api/pegasus/status', startingCapital: 200000 },
-  { name: 'TITAN', endpoint: '/api/titan/status', startingCapital: 200000 },
+// Default starting capitals - used ONLY if API doesn't return starting_capital
+// These should match the config table defaults in the backend
+const DEFAULT_STARTING_CAPITALS: Record<BotName, number> = {
+  ARES: 100000,
+  ATHENA: 100000,
+  ICARUS: 100000,
+  PEGASUS: 200000,
+  TITAN: 200000,
+  PHOENIX: 100000,
+  ATLAS: 100000,
+}
+
+const LIVE_BOTS: { name: BotName; endpoint: string }[] = [
+  { name: 'ARES', endpoint: '/api/ares/status' },
+  { name: 'ATHENA', endpoint: '/api/athena/status' },
+  { name: 'ICARUS', endpoint: '/api/icarus/status' },
+  { name: 'PEGASUS', endpoint: '/api/pegasus/status' },
+  { name: 'TITAN', endpoint: '/api/titan/status' },
 ]
 
 const fetcher = async (url: string): Promise<BotStatusResponse> => {
@@ -71,12 +84,13 @@ export default function PortfolioSummaryCard() {
 
   // Aggregate metrics across all bots
   const portfolio = useMemo(() => {
-    const botDataList = [
-      { ...normalizeData(aresData), startingCapital: 100000 },
-      { ...normalizeData(athenaData), startingCapital: 100000 },
-      { ...normalizeData(icarusData), startingCapital: 100000 },
-      { ...normalizeData(pegasusData), startingCapital: 200000 },
-      { ...normalizeData(titanData), startingCapital: 200000 },
+    // Pair each bot's data with its name for proper starting capital lookup
+    const botDataList: { name: BotName; data: BotStatus }[] = [
+      { name: 'ARES', data: normalizeData(aresData) },
+      { name: 'ATHENA', data: normalizeData(athenaData) },
+      { name: 'ICARUS', data: normalizeData(icarusData) },
+      { name: 'PEGASUS', data: normalizeData(pegasusData) },
+      { name: 'TITAN', data: normalizeData(titanData) },
     ]
 
     let totalStartingCapital = 0
@@ -86,24 +100,37 @@ export default function PortfolioSummaryCard() {
     let totalTodayPnl = 0
     let totalOpenPositions = 0
     let totalTrades = 0
-    let totalWinningTrades = 0
+    let weightedWinRateSum = 0  // For weighted average win rate
     let activeBots = 0
 
-    botDataList.forEach((bot) => {
-      totalStartingCapital += bot.startingCapital
+    botDataList.forEach(({ name, data: bot }) => {
+      // CRITICAL FIX: Use starting_capital from API response, fallback to defaults
+      // This ensures consistency with backend config table values
+      const startingCapital = bot.starting_capital || DEFAULT_STARTING_CAPITALS[name]
+      totalStartingCapital += startingCapital
 
-      // Use current_equity if available, otherwise calculate from starting + pnl
+      // Realized P&L: backend returns as total_pnl (realized_pnl is alternative)
       const realized = bot.realized_pnl || bot.total_pnl || 0
       const unrealized = bot.unrealized_pnl || 0
-      const currentEquity = bot.current_equity || (bot.startingCapital + realized + unrealized)
+
+      // Use current_equity from API if available (already includes realized + unrealized)
+      // Otherwise calculate from starting + pnl
+      const currentEquity = bot.current_equity || (startingCapital + realized + unrealized)
 
       totalCurrentEquity += currentEquity
       totalRealizedPnl += realized
       totalUnrealizedPnl += unrealized
       totalTodayPnl += bot.today_pnl || 0
       totalOpenPositions += bot.open_positions || 0
-      totalTrades += bot.total_trades || 0
-      totalWinningTrades += bot.winning_trades || 0
+
+      // CRITICAL FIX: Backend returns trade_count, not total_trades
+      const tradeCount = bot.trade_count || bot.total_trades || 0
+      totalTrades += tradeCount
+
+      // CRITICAL FIX: Use win_rate directly from API (already a percentage)
+      // Weight by trade count for accurate aggregate win rate
+      const winRate = bot.win_rate || 0
+      weightedWinRateSum += winRate * tradeCount
 
       if (bot.is_active || bot.bot_status === 'ACTIVE') {
         activeBots++
@@ -112,7 +139,9 @@ export default function PortfolioSummaryCard() {
 
     const totalPnl = totalRealizedPnl + totalUnrealizedPnl
     const totalReturnPct = totalStartingCapital > 0 ? (totalPnl / totalStartingCapital) * 100 : 0
-    const winRate = totalTrades > 0 ? (totalWinningTrades / totalTrades) * 100 : 0
+
+    // Calculate weighted average win rate across all bots
+    const winRate = totalTrades > 0 ? weightedWinRateSum / totalTrades : 0
 
     return {
       totalStartingCapital,

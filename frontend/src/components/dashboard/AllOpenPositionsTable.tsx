@@ -271,7 +271,9 @@ export default function AllOpenPositionsTable() {
                     {/* Bot */}
                     <td className="py-3 px-4">
                       <div className="flex items-center gap-2">
-                        <Icon className="w-4 h-4" style={{ color: brand.hexPrimary }} />
+                        <span style={{ color: brand.hexPrimary }}>
+                          <Icon className="w-4 h-4" />
+                        </span>
                         <span style={{ color: brand.hexPrimary }} className="font-medium">
                           {pos.bot}
                         </span>

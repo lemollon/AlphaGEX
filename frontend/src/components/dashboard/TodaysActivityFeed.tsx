@@ -274,7 +274,9 @@ export default function TodaysActivityFeed() {
                       {/* Trade Details */}
                       <div>
                         <div className="flex items-center gap-2">
-                          <Icon className="w-4 h-4" style={{ color: brand.hexPrimary }} />
+                          <span style={{ color: brand.hexPrimary }}>
+                            <Icon className="w-4 h-4" />
+                          </span>
                           <span className="font-medium text-white">
                             {trade.bot}
                           </span>

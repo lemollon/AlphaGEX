@@ -15,6 +15,18 @@ import {
 import { TrendingUp, RefreshCw, Eye, EyeOff } from 'lucide-react'
 import { BOT_BRANDS, BotName } from '@/components/trader/BotBranding'
 
+// Default starting capitals - used ONLY if API doesn't return starting_capital
+// These should match the config table defaults in the backend
+const DEFAULT_STARTING_CAPITALS: Record<BotName, number> = {
+  ARES: 100000,
+  ATHENA: 100000,
+  ICARUS: 100000,
+  PEGASUS: 200000,
+  TITAN: 200000,
+  PHOENIX: 100000,
+  ATLAS: 100000,
+}
+
 // Bot configuration with colors
 const LIVE_BOTS: { name: BotName; endpoint: string }[] = [
   { name: 'ARES', endpoint: '/api/ares/equity-curve' },
@@ -139,7 +151,8 @@ export default function MultiBotEquityCurve({
         const data = botDataMap[bot.name]
         if (data?.success && data.data?.equity_curve) {
           const curvePoint = data.data.equity_curve.find(p => p.date === date)
-          const startingCapital = data.data.starting_capital || 100000
+          // CRITICAL FIX: Use bot-specific default instead of generic 100000
+          const startingCapital = data.data.starting_capital || DEFAULT_STARTING_CAPITALS[bot.name]
 
           if (curvePoint) {
             if (showPercentage) {
@@ -174,7 +187,8 @@ export default function MultiBotEquityCurve({
     LIVE_BOTS.forEach(bot => {
       const data = botDataMap[bot.name]
       if (data?.success && data.data) {
-        const startingCapital = data.data.starting_capital || 100000
+        // CRITICAL FIX: Use bot-specific default instead of generic 100000
+        const startingCapital = data.data.starting_capital || DEFAULT_STARTING_CAPITALS[bot.name]
         stats[bot.name] = {
           totalReturn: data.data.total_return_pct || ((data.data.current_equity - startingCapital) / startingCapital) * 100,
           currentEquity: data.data.current_equity || startingCapital,
