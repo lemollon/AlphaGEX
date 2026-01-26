@@ -416,72 +416,32 @@ class TestBotLogger:
             pytest.skip("bot_logger.get_pegasus_logger not available")
 
 
-class TestPEGASUSRiskLimits:
-    """Tests for PEGASUS risk management changes (January 2025)"""
+class TestPEGASUSStrikeDistance:
+    """Tests for PEGASUS minimum 1 SD strike distance (January 2025)"""
 
-    def test_config_max_contracts_reduced(self):
-        """Test that max_contracts was reduced from 100 to 25"""
-        try:
-            from trading.pegasus.models import PEGASUSConfig
-            config = PEGASUSConfig()
-            assert config.max_contracts == 25, f"Expected 25, got {config.max_contracts}"
-        except ImportError:
-            pytest.skip("PEGASUSConfig not available")
-
-    def test_config_max_open_positions_reduced(self):
-        """Test that max_open_positions was reduced from 5 to 3"""
-        try:
-            from trading.pegasus.models import PEGASUSConfig
-            config = PEGASUSConfig()
-            assert config.max_open_positions == 3, f"Expected 3, got {config.max_open_positions}"
-        except ImportError:
-            pytest.skip("PEGASUSConfig not available")
-
-    def test_config_max_trades_per_day_exists(self):
-        """Test that max_trades_per_day was added with value 2"""
-        try:
-            from trading.pegasus.models import PEGASUSConfig
-            config = PEGASUSConfig()
-            assert hasattr(config, 'max_trades_per_day'), "max_trades_per_day not found"
-            assert config.max_trades_per_day == 2, f"Expected 2, got {config.max_trades_per_day}"
-        except ImportError:
-            pytest.skip("PEGASUSConfig not available")
-
-    def test_config_stop_loss_disabled(self):
-        """Test that stop_loss remains disabled"""
-        try:
-            from trading.pegasus.models import PEGASUSConfig
-            config = PEGASUSConfig()
-            assert config.use_stop_loss is False, "Stop loss should be disabled"
-        except ImportError:
-            pytest.skip("PEGASUSConfig not available")
-
-    def test_executor_has_portfolio_risk_method(self):
-        """Test that executor has _get_current_portfolio_risk method"""
-        try:
-            from trading.pegasus.executor import OrderExecutor
-            assert hasattr(OrderExecutor, '_get_current_portfolio_risk')
-        except ImportError:
-            pytest.skip("OrderExecutor not available")
-
-    def test_executor_portfolio_risk_cap_in_position_sizing(self):
-        """Test that position sizing includes 20% portfolio risk cap logic"""
+    def test_oracle_enforces_min_strike_distance(self):
+        """Test that Oracle get_pegasus_advice enforces minimum 1 SD strike distance"""
         try:
             import inspect
-            from trading.pegasus.executor import OrderExecutor
-            source = inspect.getsource(OrderExecutor._calculate_position_size)
-            assert 'MAX_TOTAL_PORTFOLIO_RISK_PCT' in source, "Missing portfolio risk cap constant"
-            assert '20.0' in source, "Risk cap should be 20%"
+            from quant.oracle_advisor import OracleAdvisor
+            source = inspect.getsource(OracleAdvisor.get_pegasus_advice)
+            # Check that the method calculates expected_move and enforces minimum distance
+            assert 'expected_move' in source, "Oracle should calculate expected_move for min distance"
+            assert 'min_put_strike' in source or 'min_call_strike' in source, "Oracle should enforce min strike distance"
         except ImportError:
-            pytest.skip("OrderExecutor not available")
+            pytest.skip("OracleAdvisor not available")
 
-    def test_db_has_get_trades_opened_today(self):
-        """Test that database has get_trades_opened_today method"""
+    def test_signals_enforces_min_strike_distance(self):
+        """Test that PEGASUS signals.py enforces minimum 1 SD strike distance"""
         try:
-            from trading.pegasus.db import PEGASUSDatabase
-            assert hasattr(PEGASUSDatabase, 'get_trades_opened_today')
+            import inspect
+            from trading.pegasus.signals import SignalGenerator
+            source = inspect.getsource(SignalGenerator.calculate_strikes)
+            # Check that strikes are validated against minimum distance
+            assert 'min_put_short' in source or 'min_call_short' in source, "Signals should enforce min strike distance"
+            assert '1 SD' in source or 'MINIMUM' in source, "Should document minimum distance requirement"
         except ImportError:
-            pytest.skip("PEGASUSDatabase not available")
+            pytest.skip("SignalGenerator not available")
 
 
 if __name__ == "__main__":

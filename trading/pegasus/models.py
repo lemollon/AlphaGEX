@@ -206,10 +206,9 @@ class PEGASUSConfig:
     # Risk limits
     capital: float = 200000.0  # Paper trading capital for SPX
     risk_per_trade_pct: float = 10.0
-    max_contracts: int = 25  # Reduced from 100 - conservative SPX sizing
+    max_contracts: int = 100
     min_credit: float = 0.75  # Lowered from $1.50 to capture more opportunities
-    max_open_positions: int = 3  # Reduced from 5 - limit concurrent exposure
-    max_trades_per_day: int = 2  # Prevent rapid position accumulation
+    max_open_positions: int = 5  # Allow multiple positions per day
     min_ic_suitability: float = 0.3  # Minimum IC suitability from Oracle (0.0-1.0)
 
     # Oracle thresholds
@@ -262,10 +261,6 @@ class PEGASUSConfig:
         # Position limits
         if self.max_open_positions <= 0:
             errors.append(f"max_open_positions must be > 0, got {self.max_open_positions}")
-
-        # Daily trade limits
-        if hasattr(self, 'max_trades_per_day') and self.max_trades_per_day <= 0:
-            errors.append(f"max_trades_per_day must be > 0, got {self.max_trades_per_day}")
 
         # Oracle suitability
         if self.min_ic_suitability < 0 or self.min_ic_suitability > 1:

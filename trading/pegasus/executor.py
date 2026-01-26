@@ -272,10 +272,6 @@ class OrderExecutor:
             position_id = f"PEGASUS-{now.strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
 
             contracts = self._calculate_position_size(signal.max_loss, thompson_weight)
-            if contracts == 0:
-                logger.warning("[PEGASUS] Position sizing returned 0 - portfolio risk cap reached")
-                return None
-
             max_profit = signal.total_credit * 100 * contracts
             max_loss = (self.config.spread_width - signal.total_credit) * 100 * contracts
 
@@ -340,10 +336,6 @@ class OrderExecutor:
             import json
             now = datetime.now(CENTRAL_TZ)
             contracts = self._calculate_position_size(signal.max_loss, thompson_weight)
-
-            if contracts == 0:
-                logger.warning("[PEGASUS] Position sizing returned 0 - portfolio risk cap reached")
-                return None
 
             # Execute put spread (credit spread: short > long for bull put)
             # Note: place_vertical_spread automatically determines credit/debit from strikes
@@ -676,7 +668,7 @@ class OrderExecutor:
                 avg_loss=avg_loss_pct,
                 sample_size=len(trades),
                 account_size=self.config.capital,
-                max_risk_pct=self.config.risk_per_trade_pct  # Fixed: removed 2x multiplier
+                max_risk_pct=self.config.risk_per_trade_pct * 2
             )
 
             logger.info(f"[PEGASUS KELLY] Win Rate: {win_rate:.1%}, Safe Kelly: {kelly_result['kelly_safe']:.1f}%")
@@ -686,71 +678,48 @@ class OrderExecutor:
             logger.debug(f"[KELLY] Error: {e}")
             return None
 
-    def _get_current_portfolio_risk(self) -> float:
-        """Get total max_loss from all open positions."""
-        if not self.db:
-            return 0.0
-        try:
-            positions = self.db.get_open_positions()
-            total_risk = sum(pos.max_loss for pos in positions if pos.max_loss)
-            return total_risk
-        except Exception as e:
-            logger.warning(f"[PEGASUS] Could not get portfolio risk: {e}")
-            return 0.0
-
     def _calculate_position_size(self, max_loss_per_contract: float, thompson_weight: float = 1.0) -> int:
-        """Calculate position size with TOTAL PORTFOLIO RISK CAP of 20%.
-
-        The 20% cap applies to ALL open positions combined, not per trade.
-        If you already have positions using 15% risk, new position can only use 5%.
+        """Calculate position size using Monte Carlo Kelly criterion and Thompson Sampling.
 
         Args:
             max_loss_per_contract: Maximum loss per contract in dollars
-            thompson_weight: Thompson Sampling allocation weight (0.7-1.3)
+            thompson_weight: Thompson Sampling allocation weight (0.5-2.0)
+                            - 1.0 = neutral (standard sizing)
+                            - 1.5 = bot is performing well, increase size 50%
+                            - 0.7 = bot is underperforming, reduce size 30%
 
         Returns:
-            Number of contracts to trade (minimum 1, 0 if no risk budget)
+            Number of contracts to trade (minimum 1)
         """
         capital = self.config.capital
-        MAX_TOTAL_PORTFOLIO_RISK_PCT = 20.0  # Total portfolio risk cap
 
         if max_loss_per_contract <= 0:
             return 1
 
-        # Calculate remaining risk budget
-        current_risk = self._get_current_portfolio_risk()
-        current_risk_pct = (current_risk / capital) * 100
-        remaining_risk_pct = MAX_TOTAL_PORTFOLIO_RISK_PCT - current_risk_pct
-
-        logger.info(f"[PEGASUS RISK] Current: {current_risk_pct:.1f}%, Remaining: {remaining_risk_pct:.1f}% of 20% cap")
-
-        if remaining_risk_pct <= 1.0:
-            logger.warning(f"[PEGASUS] Portfolio risk cap reached ({current_risk_pct:.1f}% >= 20%), cannot open new position")
-            return 0  # No risk budget left
-
-        # Cap per-trade risk at remaining budget or config limit, whichever is lower
-        per_trade_risk_pct = min(remaining_risk_pct, self.config.risk_per_trade_pct)
-
-        # Try Kelly-based sizing (but still respect portfolio cap)
+        # Try Kelly-based sizing first
         kelly_result = self._get_kelly_position_size()
+
         if kelly_result and kelly_result.get('kelly_safe', 0) > 0:
-            kelly_risk_pct = min(kelly_result['kelly_safe'], per_trade_risk_pct)
+            kelly_risk_pct = kelly_result['kelly_safe']
             max_risk = capital * (kelly_risk_pct / 100)
             sizing_source = "KELLY"
-            logger.info(f"[PEGASUS] Kelly sizing: {kelly_risk_pct:.1f}% (capped by remaining budget)")
+            logger.info(f"[PEGASUS] Using Kelly-safe sizing: {kelly_risk_pct:.1f}% risk")
         else:
-            max_risk = capital * (per_trade_risk_pct / 100)
+            max_risk = capital * (self.config.risk_per_trade_pct / 100)
             sizing_source = "CONFIG"
 
         # Base position size from risk calculation
         base_contracts = max_risk / max_loss_per_contract
 
-        # Apply Thompson Sampling weight (clamped to conservative bounds)
-        clamped_weight = max(0.7, min(1.3, thompson_weight))
+        # Apply Thompson Sampling weight (clamped to reasonable bounds)
+        # Weight is normalized so 20% allocation (1/5 bots) = 1.0
+        # Higher allocation = larger positions, lower = smaller
+        clamped_weight = max(0.5, min(2.0, thompson_weight))
         adjusted_contracts = int(base_contracts * clamped_weight)
 
         # Log sizing decision
-        logger.info(f"[PEGASUS {sizing_source}] Risk: ${max_risk:.0f}, Contracts: {adjusted_contracts} (max {self.config.max_contracts})")
+        if abs(thompson_weight - 1.0) > 0.05:
+            logger.info(f"[PEGASUS {sizing_source}] Thompson: weight={thompson_weight:.2f}, base={base_contracts:.1f}, adjusted={adjusted_contracts}")
 
         return max(1, min(adjusted_contracts, self.config.max_contracts))
 

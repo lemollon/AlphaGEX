@@ -3,7 +3,7 @@ PEGASUS - Main Trading Orchestrator
 =====================================
 
 SPX Iron Condor trading bot.
-Conservative risk limits: max 2 trades/day, max 3 concurrent positions, $10 spreads.
+One trade per day with $10 spreads.
 """
 
 import logging
@@ -352,16 +352,10 @@ class PEGASUSTrader(MathOptimizerMixin):
         if now > end_time:
             return False, f"After {self.config.entry_end}"
 
-        # Check position limits
+        # Check position limits instead of once-per-day restriction
         open_count = self.db.get_position_count()
         if open_count >= self.config.max_open_positions:
             return False, f"Max open positions ({self.config.max_open_positions}) reached"
-
-        # Check daily trade limit
-        today_trades = self.db.get_trades_opened_today(today)
-        max_daily = getattr(self.config, 'max_trades_per_day', 2)
-        if today_trades >= max_daily:
-            return False, f"Max daily trades ({max_daily}) reached"
 
         return True, "Ready"
 
