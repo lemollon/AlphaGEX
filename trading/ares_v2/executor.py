@@ -1056,9 +1056,11 @@ class OrderExecutor:
         try:
             from data.tradier_data_fetcher import TradierDataFetcher
             import os
-            api_key = os.environ.get('TRADIER_API_KEY') or os.environ.get('TRADIER_SANDBOX_API_KEY')
+            # Check TRADIER_PROD_API_KEY first (matches unified_config.py priority)
+            api_key = os.environ.get('TRADIER_PROD_API_KEY') or os.environ.get('TRADIER_API_KEY') or os.environ.get('TRADIER_SANDBOX_API_KEY')
             if api_key:
-                tradier = TradierDataFetcher(api_key=api_key, sandbox='SANDBOX' in (os.environ.get('TRADIER_SANDBOX_API_KEY') or ''))
+                is_sandbox = api_key == os.environ.get('TRADIER_SANDBOX_API_KEY')
+                tradier = TradierDataFetcher(api_key=api_key, sandbox=is_sandbox)
                 quote = tradier.get_quote(ticker)
                 if quote and quote.get('last'):
                     price = float(quote['last'])
