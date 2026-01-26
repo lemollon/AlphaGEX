@@ -1269,6 +1269,77 @@ async def sage_predict(request: SagePredictRequest):
         }
 
 
+def train_sage_model_internal(min_samples: int = 30, use_kronos: bool = True) -> dict:
+    """
+    Internal (non-async) SAGE training function for scheduler use.
+
+    FIX (Jan 2026): Added for scheduled SAGE training - previously only
+    available via async API endpoint.
+
+    Returns:
+        dict with success, training_method, samples_used, accuracy
+    """
+    try:
+        from quant.ares_ml_advisor import get_advisor
+
+        advisor = get_advisor()
+
+        if use_kronos:
+            # Train from KRONOS backtests
+            from backtest.zero_dte_backtest import ZeroDTEBacktester
+
+            backtester = ZeroDTEBacktester()
+            results = backtester.get_recent_results(limit=500)
+
+            if not results or len(results) < min_samples:
+                return {
+                    "success": False,
+                    "message": f"Not enough KRONOS data. Have {len(results) if results else 0}, need {min_samples}",
+                    "training_method": "kronos",
+                    "samples_used": len(results) if results else 0
+                }
+
+            metrics = advisor.train_from_kronos(results, min_samples=min_samples)
+
+            return {
+                "success": True,
+                "message": f"SAGE trained on {len(results)} KRONOS results",
+                "training_method": "kronos",
+                "samples_used": len(results),
+                "accuracy": metrics.accuracy if metrics else None,
+                "model_version": advisor.model_version
+            }
+        else:
+            # Train from live outcomes
+            metrics = advisor.retrain_from_outcomes(min_new_samples=min_samples)
+
+            if not metrics:
+                return {
+                    "success": False,
+                    "message": f"Not enough live outcomes. Need {min_samples}",
+                    "training_method": "live",
+                    "samples_used": 0
+                }
+
+            return {
+                "success": True,
+                "message": "SAGE trained on live outcomes",
+                "training_method": "live",
+                "samples_used": min_samples,
+                "accuracy": metrics.accuracy if metrics else None,
+                "model_version": advisor.model_version
+            }
+
+    except Exception as e:
+        logger.error(f"SAGE internal train error: {e}")
+        return {
+            "success": False,
+            "message": f"Training error: {str(e)}",
+            "training_method": "unknown",
+            "samples_used": 0
+        }
+
+
 @router.post("/sage/train")
 async def train_sage(min_samples: int = 30, use_kronos: bool = True):
     """
