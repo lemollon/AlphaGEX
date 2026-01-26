@@ -496,12 +496,16 @@ class SignalGenerator:
         oracle_put_strike: Optional[float] = None,
         oracle_call_strike: Optional[float] = None,
     ) -> Dict[str, float]:
-        """Calculate SPX strikes with $5 rounding
+        """Calculate SPX strikes with $5 rounding and MINIMUM 1 SD distance.
+
+        PEGASUS RULE: Strikes must ALWAYS be at least 1 SD from spot.
+        GEX walls and Oracle suggestions are only used if they are >= 1 SD away.
+        This prevents tight strikes that can blow up the account.
 
         Priority:
-        1. Oracle suggested strikes (if provided and valid)
-        2. GEX walls (if available)
-        3. SD-based strikes (fallback)
+        1. Oracle suggested strikes (if provided and valid AND >= 1 SD away)
+        2. GEX walls (if available AND >= 1 SD away)
+        3. SD-based strikes (guaranteed 1 SD minimum)
         """
         sd = self.config.sd_multiplier
         width = self.config.spread_width
@@ -509,31 +513,47 @@ class SignalGenerator:
         def round_to_5(x):
             return round(x / 5) * 5
 
+        # Ensure minimum expected move (0.5% of spot)
+        min_expected_move = spot * 0.005
+        effective_em = max(expected_move, min_expected_move)
+
+        # Calculate MINIMUM strike distances (1 SD from spot)
+        min_put_short = spot - effective_em  # 1 SD below spot
+        min_call_short = spot + effective_em  # 1 SD above spot
+
         use_oracle = False
         use_gex = False
 
-        # Priority 1: Oracle suggested strikes
+        # Priority 1: Oracle suggested strikes (ONLY if >= 1 SD away)
         if oracle_put_strike and oracle_call_strike:
-            put_dist = (spot - oracle_put_strike) / spot
-            call_dist = (oracle_call_strike - spot) / spot
-            if 0.005 <= put_dist <= 0.05 and 0.005 <= call_dist <= 0.05:
+            # Check if Oracle strikes are at least 1 SD away from spot
+            oracle_put_ok = oracle_put_strike <= min_put_short
+            oracle_call_ok = oracle_call_strike >= min_call_short
+            if oracle_put_ok and oracle_call_ok:
                 put_short = round_to_5(oracle_put_strike)
                 call_short = round_to_5(oracle_call_strike)
                 use_oracle = True
+                logger.info(f"[PEGASUS STRIKES] Using Oracle: put={put_short}, call={call_short} (>= 1 SD)")
+            else:
+                logger.info(f"[PEGASUS STRIKES] Oracle strikes too tight (put={oracle_put_strike}, call={oracle_call_strike}), using SD-based")
 
-        # Priority 2: GEX walls
+        # Priority 2: GEX walls (ONLY if >= 1 SD away)
         if not use_oracle and call_wall > 0 and put_wall > 0:
-            put_short = round_to_5(put_wall)
-            call_short = round_to_5(call_wall)
-            use_gex = True
+            gex_put_ok = put_wall <= min_put_short
+            gex_call_ok = call_wall >= min_call_short
+            if gex_put_ok and gex_call_ok:
+                put_short = round_to_5(put_wall)
+                call_short = round_to_5(call_wall)
+                use_gex = True
+                logger.info(f"[PEGASUS STRIKES] Using GEX walls: put={put_short}, call={call_short} (>= 1 SD)")
+            else:
+                logger.info(f"[PEGASUS STRIKES] GEX walls too tight (put={put_wall}, call={call_wall}), using SD-based")
 
-        # Priority 3: SD-based fallback
+        # Priority 3: SD-based (guaranteed minimum 1 SD)
         if not use_oracle and not use_gex:
-            # Ensure minimum expected move of 0.5% of spot to prevent overlapping strikes
-            min_expected_move = spot * 0.005
-            effective_em = max(expected_move, min_expected_move)
             put_short = round_to_5(spot - sd * effective_em)
             call_short = round_to_5(spot + sd * effective_em)
+            logger.info(f"[PEGASUS STRIKES] Using {sd} SD: put={put_short}, call={call_short}")
 
         put_long = put_short - width
         call_long = call_short + width
