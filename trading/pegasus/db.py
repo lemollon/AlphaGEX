@@ -451,6 +451,19 @@ class PEGASUSDatabase:
         except Exception:
             return False
 
+    def get_trades_opened_today(self, date: str) -> int:
+        """Get count of trades opened today for daily limit check"""
+        try:
+            with db_connection() as conn:
+                c = conn.cursor()
+                c.execute("""
+                    SELECT COUNT(*) FROM pegasus_positions
+                    WHERE DATE(open_time::timestamptz AT TIME ZONE 'America/Chicago') = %s
+                """, (date,))
+                return c.fetchone()[0]
+        except Exception:
+            return 0
+
     def log(self, level: str, message: str, details: Optional[Dict] = None) -> None:
         try:
             with db_connection() as conn:

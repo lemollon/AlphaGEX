@@ -668,7 +668,7 @@ class OrderExecutor:
                 avg_loss=avg_loss_pct,
                 sample_size=len(trades),
                 account_size=self.config.capital,
-                max_risk_pct=self.config.risk_per_trade_pct * 2
+                max_risk_pct=self.config.risk_per_trade_pct  # Fixed: removed 2x multiplier
             )
 
             logger.info(f"[PEGASUS KELLY] Win Rate: {win_rate:.1%}, Safe Kelly: {kelly_result['kelly_safe']:.1f}%")
@@ -711,10 +711,10 @@ class OrderExecutor:
         # Base position size from risk calculation
         base_contracts = max_risk / max_loss_per_contract
 
-        # Apply Thompson Sampling weight (clamped to reasonable bounds)
+        # Apply Thompson Sampling weight (clamped to conservative bounds)
         # Weight is normalized so 20% allocation (1/5 bots) = 1.0
-        # Higher allocation = larger positions, lower = smaller
-        clamped_weight = max(0.5, min(2.0, thompson_weight))
+        # Tightened range (0.7-1.3) prevents excessive position size swings
+        clamped_weight = max(0.7, min(1.3, thompson_weight))
         adjusted_contracts = int(base_contracts * clamped_weight)
 
         # Log sizing decision
