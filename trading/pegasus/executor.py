@@ -725,7 +725,8 @@ class OrderExecutor:
             from data.tradier_data_fetcher import TradierDataFetcher
             import os
             # Prefer production API for SPX quotes
-            prod_key = os.environ.get('TRADIER_API_KEY')
+            # Check both TRADIER_PROD_API_KEY (priority) and TRADIER_API_KEY
+            prod_key = os.environ.get('TRADIER_PROD_API_KEY') or os.environ.get('TRADIER_API_KEY')
             sandbox_key = os.environ.get('TRADIER_SANDBOX_API_KEY')
 
             # Try production first (required for SPX)

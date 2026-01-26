@@ -490,9 +490,12 @@ def _calculate_live_unrealized_pnl() -> dict:
             if not current_price or current_price <= 0:
                 try:
                     import os
-                    api_key = os.environ.get('TRADIER_API_KEY') or os.environ.get('TRADIER_SANDBOX_API_KEY')
+                    # Check TRADIER_PROD_API_KEY first (matches unified_config.py priority)
+                    api_key = os.environ.get('TRADIER_PROD_API_KEY') or os.environ.get('TRADIER_API_KEY') or os.environ.get('TRADIER_SANDBOX_API_KEY')
                     if api_key:
-                        tradier = TradierDataFetcher(api_key=api_key, sandbox='SANDBOX' in str(os.environ.get('TRADIER_SANDBOX_API_KEY', '')))
+                        # Determine sandbox mode based on which key we're using
+                        is_sandbox = api_key == os.environ.get('TRADIER_SANDBOX_API_KEY')
+                        tradier = TradierDataFetcher(api_key=api_key, sandbox=is_sandbox)
                         quote = tradier.get_quote('SPY')
                         if quote and quote.get('last'):
                             price = float(quote['last'])
@@ -2613,17 +2616,18 @@ async def get_ares_performance(
             starting_capital = float(row[0])
 
         # Get daily performance data (same format as TITAN)
+        # Note: close_time/open_time may be stored as text, so cast explicitly
         cursor.execute("""
             SELECT
-                DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') as trade_date,
+                DATE(COALESCE(close_time::timestamptz, open_time::timestamptz) AT TIME ZONE 'America/Chicago') as trade_date,
                 COUNT(*) as trades_executed,
                 SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as trades_won,
                 SUM(CASE WHEN realized_pnl <= 0 THEN 1 ELSE 0 END) as trades_lost,
                 COALESCE(SUM(realized_pnl), 0) as net_pnl
             FROM ares_positions
             WHERE status IN ('closed', 'expired', 'partial_close')
-            AND COALESCE(close_time, open_time) >= CURRENT_DATE - INTERVAL '%s days'
-            GROUP BY DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago')
+            AND COALESCE(close_time::timestamptz, open_time::timestamptz) >= CURRENT_DATE - INTERVAL '%s days'
+            GROUP BY DATE(COALESCE(close_time::timestamptz, open_time::timestamptz) AT TIME ZONE 'America/Chicago')
             ORDER BY trade_date DESC
         """, (days,))
         daily_rows = cursor.fetchall()
@@ -2640,7 +2644,7 @@ async def get_ares_performance(
                 COALESCE(MIN(realized_pnl), 0) as worst_trade
             FROM ares_positions
             WHERE status IN ('closed', 'expired', 'partial_close')
-            AND COALESCE(close_time, open_time) >= CURRENT_DATE - INTERVAL '%s days'
+            AND COALESCE(close_time::timestamptz, open_time::timestamptz) >= CURRENT_DATE - INTERVAL '%s days'
         """, (days,))
         summary_row = cursor.fetchone()
 
@@ -2651,10 +2655,10 @@ async def get_ares_performance(
 
         # Get all-time totals for high water mark and max drawdown calculation
         cursor.execute("""
-            SELECT realized_pnl, COALESCE(close_time, open_time)
+            SELECT realized_pnl, COALESCE(close_time::timestamptz, open_time::timestamptz)
             FROM ares_positions
             WHERE status IN ('closed', 'expired', 'partial_close')
-            ORDER BY COALESCE(close_time, open_time) ASC
+            ORDER BY COALESCE(close_time::timestamptz, open_time::timestamptz) ASC
         """)
         all_trades = cursor.fetchall()
 

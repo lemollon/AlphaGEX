@@ -49,14 +49,18 @@ def verify_env_vars():
     """Check required environment variables"""
     print("\n  Checking environment variables...")
 
-    prod_key = os.environ.get('TRADIER_API_KEY')
+    # Check both TRADIER_PROD_API_KEY (priority) and TRADIER_API_KEY
+    prod_key_explicit = os.environ.get('TRADIER_PROD_API_KEY')
+    prod_key_fallback = os.environ.get('TRADIER_API_KEY')
+    prod_key = prod_key_explicit or prod_key_fallback
     sandbox_key = os.environ.get('TRADIER_SANDBOX_API_KEY')
 
-    print(f"    TRADIER_API_KEY (production): {'✓ SET' if prod_key else '✗ NOT SET'}")
+    print(f"    TRADIER_PROD_API_KEY:         {'✓ SET' if prod_key_explicit else '✗ NOT SET'}")
+    print(f"    TRADIER_API_KEY (fallback):   {'✓ SET' if prod_key_fallback else '✗ NOT SET'}")
     print(f"    TRADIER_SANDBOX_API_KEY:      {'✓ SET' if sandbox_key else '✗ NOT SET'}")
 
     if not prod_key:
-        print("\n  ⚠️  WARNING: Production key not set - SPX quotes will fail!")
+        print("\n  ⚠️  WARNING: No production key (TRADIER_PROD_API_KEY or TRADIER_API_KEY) - SPX quotes will fail!")
         return False
     return True
 
@@ -68,9 +72,10 @@ def verify_spx_quote():
     try:
         from data.tradier_data_fetcher import TradierDataFetcher
 
-        prod_key = os.environ.get('TRADIER_API_KEY')
+        # Check both TRADIER_PROD_API_KEY (priority) and TRADIER_API_KEY
+        prod_key = os.environ.get('TRADIER_PROD_API_KEY') or os.environ.get('TRADIER_API_KEY')
         if not prod_key:
-            print("    ✗ No production key")
+            print("    ✗ No production key (TRADIER_PROD_API_KEY or TRADIER_API_KEY)")
             return False
 
         tradier = TradierDataFetcher(api_key=prod_key, sandbox=False)
@@ -96,7 +101,8 @@ def verify_spy_comparison():
     try:
         from data.tradier_data_fetcher import TradierDataFetcher
 
-        prod_key = os.environ.get('TRADIER_API_KEY')
+        # Check both TRADIER_PROD_API_KEY (priority) and TRADIER_API_KEY
+        prod_key = os.environ.get('TRADIER_PROD_API_KEY') or os.environ.get('TRADIER_API_KEY')
         if not prod_key:
             return False
 
