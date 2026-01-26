@@ -23,6 +23,16 @@ from backend.api.logging_config import api_logger, log_trade_entry, log_trade_ex
 router = APIRouter(prefix="/api/trader", tags=["Trader"])
 logger = logging.getLogger(__name__)
 
+# Import mark-to-market utility for fresh unrealized P&L calculation
+MTM_AVAILABLE = False
+calculate_ic_mark_to_market = None
+try:
+    from trading.mark_to_market import calculate_ic_mark_to_market
+    MTM_AVAILABLE = True
+    logger.info("Mark-to-market utility loaded for trader routes")
+except ImportError as e:
+    logger.debug(f"Mark-to-market import failed: {e}")
+
 
 def check_live_trading_enabled() -> bool:
     """
@@ -42,6 +52,109 @@ def require_live_trading():
             status_code=403,
             detail="Live trading is disabled. Set ENABLE_LIVE_TRADING=true to enable trade execution."
         )
+
+
+def _calculate_portfolio_unrealized_pnl(cursor) -> dict:
+    """
+    Calculate fresh unrealized P&L from source bot tables using MTM.
+
+    Queries each bot's open positions directly and calculates mark-to-market
+    values for accurate unrealized P&L. This bypasses stale values in the
+    unified tables.
+
+    Returns:
+        Dict with:
+        - total_unrealized_pnl: Aggregate unrealized P&L across all bots
+        - by_symbol: Unrealized P&L broken down by symbol (SPY, SPX)
+        - by_bot: Unrealized P&L by bot name
+        - method: 'mark_to_market' or 'estimation'
+    """
+    result = {
+        'total_unrealized_pnl': 0.0,
+        'by_symbol': {'SPY': 0.0, 'SPX': 0.0},
+        'by_bot': {},
+        'method': 'estimation',
+        'position_count': 0
+    }
+
+    if not MTM_AVAILABLE:
+        logger.debug("MTM not available for portfolio unrealized calculation")
+        return result
+
+    # Bot configurations: (table, symbol, credit_field)
+    bot_configs = [
+        ('ares_positions', 'ARES', 'SPY', 'total_credit'),
+        ('athena_positions', 'ATHENA', 'SPY', 'entry_price'),
+        ('icarus_positions', 'ICARUS', 'SPY', 'entry_price'),
+        ('titan_positions', 'TITAN', 'SPX', 'total_credit'),
+        ('pegasus_positions', 'PEGASUS', 'SPX', 'total_credit'),
+    ]
+
+    has_mtm = False
+
+    for table, bot_name, symbol, credit_field in bot_configs:
+        try:
+            # Query open positions with IC leg details
+            cursor.execute(f"""
+                SELECT position_id, {credit_field}, contracts, spread_width,
+                       put_short_strike, put_long_strike, call_short_strike, call_long_strike,
+                       expiration
+                FROM {table}
+                WHERE status = 'open'
+            """)
+            positions = cursor.fetchall()
+
+            bot_unrealized = 0.0
+            bot_position_count = 0
+
+            for pos in positions:
+                (pos_id, credit, contracts, spread_width,
+                 put_short, put_long, call_short, call_long, expiration) = pos
+
+                # Skip non-IC positions (ATHENA/ICARUS directional)
+                if not all([put_short, put_long, call_short, call_long]):
+                    continue
+
+                credit_val = float(credit or 0)
+                contracts_val = int(contracts or 1)
+
+                try:
+                    exp_str = expiration.strftime('%Y-%m-%d') if hasattr(expiration, 'strftime') else str(expiration)
+                    mtm = calculate_ic_mark_to_market(
+                        underlying=symbol,
+                        expiration=exp_str,
+                        put_short_strike=float(put_short),
+                        put_long_strike=float(put_long),
+                        call_short_strike=float(call_short),
+                        call_long_strike=float(call_long),
+                        contracts=contracts_val,
+                        entry_credit=credit_val,
+                        use_cache=True
+                    )
+                    if mtm.get('success'):
+                        bot_unrealized += mtm['unrealized_pnl']
+                        bot_position_count += 1
+                        has_mtm = True
+                except Exception as e:
+                    logger.debug(f"MTM failed for {bot_name} position {pos_id}: {e}")
+
+            result['by_bot'][bot_name] = round(bot_unrealized, 2)
+            result['by_symbol'][symbol] += bot_unrealized
+            result['total_unrealized_pnl'] += bot_unrealized
+            result['position_count'] += bot_position_count
+
+        except Exception as e:
+            logger.debug(f"Error querying {table} for unrealized P&L: {e}")
+            result['by_bot'][bot_name] = 0.0
+
+    # Round final values
+    result['total_unrealized_pnl'] = round(result['total_unrealized_pnl'], 2)
+    result['by_symbol']['SPY'] = round(result['by_symbol']['SPY'], 2)
+    result['by_symbol']['SPX'] = round(result['by_symbol']['SPX'], 2)
+    result['method'] = 'mark_to_market' if has_mtm else 'estimation'
+
+    return result
+
 
 # Try to import the autonomous trader
 try:
@@ -1219,10 +1332,17 @@ async def get_unified_portfolio():
         capital_row = cursor.fetchone()
         starting_capital = float(capital_row['value']) if capital_row else 1000000.0
 
+        # Calculate FRESH unrealized P&L from source bot tables using MTM
+        # This bypasses stale values in autonomous_open_positions table
+        fresh_unrealized = _calculate_portfolio_unrealized_pnl(cursor)
+        unrealized_by_symbol = fresh_unrealized.get('by_symbol', {})
+        unrealized_by_bot = fresh_unrealized.get('by_bot', {})
+        unrealized_method = fresh_unrealized.get('method', 'estimation')
+
         conn.close()
 
-        # Calculate aggregate metrics
-        total_unrealized = sum(float(p.get('unrealized_pnl', 0) or 0) for p in symbol_positions)
+        # Calculate aggregate metrics using FRESH unrealized P&L
+        total_unrealized = fresh_unrealized.get('total_unrealized_pnl', 0.0)
         total_realized = sum(float(p.get('total_pnl', 0) or 0) for p in symbol_performance)
         total_positions = sum(int(p.get('position_count', 0) or 0) for p in symbol_positions)
         total_contracts = sum(int(p.get('total_contracts', 0) or 0) for p in symbol_positions)
@@ -1253,13 +1373,16 @@ async def get_unified_portfolio():
         for sp in symbol_positions:
             # Find matching performance data
             perf = next((p for p in symbol_performance if p['symbol'] == sp['symbol']), {})
+            # Use FRESH unrealized P&L from MTM instead of stale unified table value
+            symbol_name = sp['symbol']
+            fresh_symbol_unrealized = unrealized_by_symbol.get(symbol_name, 0.0)
             symbols_breakdown.append({
-                'symbol': sp['symbol'],
+                'symbol': symbol_name,
                 'open_positions': format_decimal(sp.get('position_count', 0)),
                 'total_contracts': format_decimal(sp.get('total_contracts', 0)),
-                'unrealized_pnl': round(format_decimal(sp.get('unrealized_pnl', 0)), 2),
+                'unrealized_pnl': round(fresh_symbol_unrealized, 2),
                 'realized_pnl': round(format_decimal(perf.get('total_pnl', 0)), 2),
-                'net_pnl': round(format_decimal(sp.get('unrealized_pnl', 0)) + format_decimal(perf.get('total_pnl', 0)), 2),
+                'net_pnl': round(fresh_symbol_unrealized + format_decimal(perf.get('total_pnl', 0)), 2),
                 'trade_count': format_decimal(perf.get('trade_count', 0)),
                 'win_rate': round((format_decimal(perf.get('winners', 0)) / format_decimal(perf.get('trade_count', 1))) * 100, 1) if perf.get('trade_count', 0) > 0 else 0,
                 # Portfolio Greeks for this symbol
@@ -1312,6 +1435,7 @@ async def get_unified_portfolio():
                     "total_return_pct": round(total_return_pct, 2),
                     "realized_pnl": round(total_realized, 2),
                     "unrealized_pnl": round(total_unrealized, 2),
+                    "unrealized_pnl_method": unrealized_method,
                     "total_positions": total_positions,
                     "total_contracts": total_contracts,
                     "total_trades": total_trades,
@@ -1325,6 +1449,7 @@ async def get_unified_portfolio():
                     "description": "Aggregate Greeks exposure across all positions"
                 },
                 "by_symbol": symbols_breakdown,
+                "unrealized_by_bot": unrealized_by_bot,
                 "positions": formatted_positions,
                 "timestamp": datetime.now().isoformat()
             }
