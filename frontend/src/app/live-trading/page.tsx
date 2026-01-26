@@ -8,6 +8,10 @@ import PortfolioSummaryCard from '@/components/dashboard/PortfolioSummaryCard'
 import AllOpenPositionsTable from '@/components/dashboard/AllOpenPositionsTable'
 import MarketConditionsBanner from '@/components/dashboard/MarketConditionsBanner'
 import AllBotReportsSummary from '@/components/dashboard/AllBotReportsSummary'
+import SAGEStatusWidget from '@/components/SAGEStatusWidget'
+import QuantStatusWidget from '@/components/QuantStatusWidget'
+import MathOptimizerWidget from '@/components/MathOptimizerWidget'
+import SyncStatusWidget from '@/components/SyncStatusWidget'
 
 export default function LiveTradingDashboard() {
   return (
@@ -49,9 +53,17 @@ export default function LiveTradingDashboard() {
           </div>
 
           {/* Row 4: Open Positions + Trading Reports */}
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-4">
             <AllOpenPositionsTable />
             <AllBotReportsSummary />
+          </div>
+
+          {/* Row 5: AI/ML Systems that advise the bots */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <SAGEStatusWidget />
+            <QuantStatusWidget />
+            <MathOptimizerWidget />
+            <SyncStatusWidget />
           </div>
 
         </div>
