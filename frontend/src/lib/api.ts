@@ -991,6 +991,8 @@ export const apiClient = {
     api.get('/api/apollo/pin-risk-batch', { params: { symbols: symbols.join(',') } }),
   getApolloPinRiskHistory: (symbol: string, limit: number = 30) =>
     api.get(`/api/apollo/pin-risk-history/${symbol}`, { params: { limit } }),
+  getApolloTrackingStatus: () => api.get('/api/apollo/tracking-status'),
+  triggerApolloOutcomeTracking: () => api.post('/api/apollo/track-outcomes'),
 
   // Daily Manna - Economic news with faith-based devotionals
   getDailyManna: (forceRefresh: boolean = false) =>
