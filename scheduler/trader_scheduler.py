@@ -2378,6 +2378,245 @@ class AutonomousTraderScheduler:
         logger.info(f"QUANT: Next training scheduled for next Sunday at 5:00 PM CT")
         logger.info(f"=" * 80)
 
+    def scheduled_sage_training_logic(self):
+        """
+        SAGE (Strategic Algorithmic Guidance Engine) Training - runs WEEKLY on Sunday at 4:30 PM CT
+
+        FIX (Jan 2026): SAGE was previously only available via manual API calls.
+        This scheduled training ensures SAGE models stay fresh and the Oracle
+        receives updated probability predictions.
+
+        Training order on Sundays:
+        - 4:00 PM: SOLOMON (feedback loop)
+        - 4:30 PM: SAGE (this job)
+        - 5:00 PM: QUANT (GEX Directional)
+        - 6:00 PM: GEX ML (Probability Models)
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"SAGE (ML Advisor) Training triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        try:
+            # Try to import SAGE training module
+            from backend.api.routes.ml_routes import train_sage_model_internal
+
+            logger.info("SAGE: Starting weekly model training...")
+
+            # Train SAGE with KRONOS data as fallback
+            result = train_sage_model_internal(
+                min_samples=30,
+                use_kronos=True
+            )
+
+            if result.get('success'):
+                logger.info(f"SAGE: ✅ Training completed successfully")
+                logger.info(f"  Training method: {result.get('training_method', 'unknown')}")
+                logger.info(f"  Samples used: {result.get('samples_used', 0)}")
+                logger.info(f"  Model accuracy: {result.get('accuracy', 'N/A')}")
+
+                self._save_heartbeat('SAGE', 'TRAINING_COMPLETE', result)
+                self._record_training_history(
+                    model_name='SAGE',
+                    status='COMPLETED',
+                    accuracy_after=result.get('accuracy', 0) * 100 if result.get('accuracy') else None,
+                    training_samples=result.get('samples_used', 0),
+                    triggered_by='SCHEDULED'
+                )
+            else:
+                logger.warning(f"SAGE: ⚠️ Training not completed: {result.get('message', 'Unknown reason')}")
+                self._save_heartbeat('SAGE', 'TRAINING_SKIPPED', result)
+
+        except ImportError as e:
+            logger.warning(f"SAGE: Training module not available: {e}")
+            logger.info("SAGE: Skipping scheduled training - module import failed")
+        except Exception as e:
+            logger.error(f"SAGE: ❌ Training failed with error: {e}")
+            logger.error(traceback.format_exc())
+            self._save_heartbeat('SAGE', 'ERROR', {'error': str(e)})
+            self._record_training_history(
+                model_name='SAGE',
+                status='FAILED',
+                triggered_by='SCHEDULED',
+                error=str(e)
+            )
+
+        logger.info(f"SAGE: Next training scheduled for next Sunday at 4:30 PM CT")
+        logger.info(f"=" * 80)
+
+    def scheduled_oracle_training_logic(self):
+        """
+        ORACLE Training - runs DAILY at midnight CT
+
+        FIX (Jan 2026): Oracle training was previously only triggered via SOLOMON
+        feedback loop at 4 PM. This standalone job ensures Oracle gets trained
+        even if SOLOMON has issues.
+
+        Oracle learns from:
+        1. Live trade outcomes (primary)
+        2. Database backtests (fallback)
+        3. KRONOS backtest data (final fallback)
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"ORACLE Training triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not ORACLE_AVAILABLE or not oracle_auto_train:
+            logger.warning("ORACLE: Training module not available - skipping")
+            return
+
+        try:
+            logger.info("ORACLE: Starting daily model training...")
+
+            # Use lower threshold for daily training (10 outcomes)
+            result = oracle_auto_train(threshold_outcomes=10, force=False)
+
+            if result.get('triggered'):
+                if result.get('success'):
+                    metrics = result.get('training_metrics', {})
+                    logger.info(f"ORACLE: ✅ Training completed successfully")
+                    logger.info(f"  Method: {result.get('method', 'unknown')}")
+                    logger.info(f"  Accuracy: {metrics.get('accuracy', 'N/A')}")
+                    logger.info(f"  AUC-ROC: {metrics.get('auc_roc', 'N/A')}")
+                    logger.info(f"  Samples: {metrics.get('total_samples', 0)}")
+
+                    self._save_heartbeat('ORACLE', 'TRAINING_COMPLETE', result)
+                    self._record_training_history(
+                        model_name='ORACLE',
+                        status='COMPLETED',
+                        accuracy_after=metrics.get('accuracy', 0) * 100 if metrics.get('accuracy') else None,
+                        training_samples=metrics.get('total_samples', 0),
+                        triggered_by='SCHEDULED'
+                    )
+                else:
+                    logger.warning(f"ORACLE: ⚠️ Training triggered but failed: {result.get('error')}")
+                    self._save_heartbeat('ORACLE', 'TRAINING_FAILED', result)
+            else:
+                logger.info(f"ORACLE: ℹ️ Training not needed: {result.get('reason', 'No new outcomes')}")
+                self._save_heartbeat('ORACLE', 'TRAINING_SKIPPED', result)
+
+        except Exception as e:
+            logger.error(f"ORACLE: ❌ Training failed with error: {e}")
+            logger.error(traceback.format_exc())
+            self._save_heartbeat('ORACLE', 'ERROR', {'error': str(e)})
+            self._record_training_history(
+                model_name='ORACLE',
+                status='FAILED',
+                triggered_by='SCHEDULED',
+                error=str(e)
+            )
+
+        logger.info(f"ORACLE: Next training tomorrow at midnight CT")
+        logger.info(f"=" * 80)
+
+    def _check_startup_recovery(self):
+        """
+        FIX (Jan 2026): Check if any scheduled training was missed and run catch-up.
+
+        This addresses the systemic issue where ML training stops on holidays
+        and never restarts because scheduled jobs don't have catch-up logic.
+
+        Called during scheduler startup to recover from:
+        - Missed training due to scheduler restart
+        - Missed training due to holidays/weekends
+        - Missed training due to worker crashes
+        """
+        now = datetime.now(CENTRAL_TZ)
+        logger.info(f"=" * 80)
+        logger.info(f"STARTUP RECOVERY: Checking for missed training jobs...")
+
+        recovery_needed = []
+
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Check SAGE (weekly - should have run within 7 days)
+            cursor.execute("""
+                SELECT MAX(timestamp) FROM quant_training_history
+                WHERE model_name = 'SAGE' AND status = 'COMPLETED'
+            """)
+            row = cursor.fetchone()
+            sage_last = row[0] if row and row[0] else None
+            if not sage_last or (now.replace(tzinfo=None) - sage_last).days > 7:
+                days_since = (now.replace(tzinfo=None) - sage_last).days if sage_last else 999
+                logger.warning(f"SAGE: Last trained {days_since} days ago - OVERDUE")
+                recovery_needed.append(('SAGE', days_since))
+
+            # Check ORACLE (daily - should have run within 2 days)
+            cursor.execute("""
+                SELECT MAX(timestamp) FROM quant_training_history
+                WHERE model_name = 'ORACLE' AND status = 'COMPLETED'
+            """)
+            row = cursor.fetchone()
+            oracle_last = row[0] if row and row[0] else None
+            if not oracle_last or (now.replace(tzinfo=None) - oracle_last).days > 2:
+                days_since = (now.replace(tzinfo=None) - oracle_last).days if oracle_last else 999
+                logger.warning(f"ORACLE: Last trained {days_since} days ago - OVERDUE")
+                recovery_needed.append(('ORACLE', days_since))
+
+            # Check GEX_DIRECTIONAL (weekly - should have run within 8 days)
+            cursor.execute("""
+                SELECT MAX(timestamp) FROM quant_training_history
+                WHERE model_name = 'GEX_DIRECTIONAL' AND status = 'COMPLETED'
+            """)
+            row = cursor.fetchone()
+            quant_last = row[0] if row and row[0] else None
+            if not quant_last or (now.replace(tzinfo=None) - quant_last).days > 8:
+                days_since = (now.replace(tzinfo=None) - quant_last).days if quant_last else 999
+                logger.warning(f"GEX_DIRECTIONAL: Last trained {days_since} days ago - OVERDUE")
+                recovery_needed.append(('GEX_DIRECTIONAL', days_since))
+
+            # Check GEX ML (weekly - should have run within 8 days)
+            cursor.execute("""
+                SELECT MAX(created_at) FROM ml_models
+                WHERE model_name = 'gex_signal_generator'
+            """)
+            row = cursor.fetchone()
+            gex_ml_last = row[0] if row and row[0] else None
+            if not gex_ml_last or (now.replace(tzinfo=None) - gex_ml_last).days > 8:
+                days_since = (now.replace(tzinfo=None) - gex_ml_last).days if gex_ml_last else 999
+                logger.warning(f"GEX_ML: Last trained {days_since} days ago - OVERDUE")
+                recovery_needed.append(('GEX_ML', days_since))
+
+            conn.close()
+
+        except Exception as e:
+            logger.warning(f"STARTUP RECOVERY: Could not check training history: {e}")
+            # Continue anyway - we'll just run all training
+
+        if not recovery_needed:
+            logger.info("STARTUP RECOVERY: ✅ All ML models are fresh - no recovery needed")
+            logger.info(f"=" * 80)
+            return
+
+        logger.info(f"STARTUP RECOVERY: Found {len(recovery_needed)} overdue models")
+
+        # Run recovery training (sorted by priority - most overdue first)
+        recovery_needed.sort(key=lambda x: x[1], reverse=True)
+
+        for model_name, days_overdue in recovery_needed:
+            logger.info(f"STARTUP RECOVERY: Running catch-up training for {model_name}...")
+
+            try:
+                if model_name == 'ORACLE':
+                    self.scheduled_oracle_training_logic()
+                elif model_name == 'SAGE':
+                    self.scheduled_sage_training_logic()
+                elif model_name == 'GEX_DIRECTIONAL':
+                    self.scheduled_quant_training_logic()
+                elif model_name == 'GEX_ML':
+                    self.scheduled_gex_ml_training_logic()
+
+                logger.info(f"STARTUP RECOVERY: ✅ {model_name} catch-up complete")
+
+            except Exception as e:
+                logger.error(f"STARTUP RECOVERY: ❌ {model_name} catch-up failed: {e}")
+
+        logger.info(f"STARTUP RECOVERY: Complete")
+        logger.info(f"=" * 80)
+
     def scheduled_gex_ml_training_logic(self):
         """
         GEX ML (Probability Models) - runs WEEKLY on Sunday at 6:00 PM CT
@@ -3337,6 +3576,45 @@ class AutonomousTraderScheduler:
             logger.warning("⚠️ SOLOMON not available - Feedback loop disabled")
 
         # =================================================================
+        # ORACLE JOB: ML Training - runs DAILY at midnight CT
+        # FIX (Jan 2026): Standalone Oracle training, not dependent on SOLOMON
+        # =================================================================
+        if ORACLE_AVAILABLE:
+            self.scheduler.add_job(
+                self.scheduled_oracle_training_logic,
+                trigger=CronTrigger(
+                    hour=0,        # Midnight CT
+                    minute=0,
+                    day_of_week='mon-sun',  # Every day
+                    timezone='America/Chicago'
+                ),
+                id='oracle_training',
+                name='ORACLE - Daily ML Training',
+                replace_existing=True
+            )
+            logger.info("✅ ORACLE job scheduled (DAILY at midnight CT)")
+        else:
+            logger.warning("⚠️ ORACLE not available - training disabled")
+
+        # =================================================================
+        # SAGE JOB: ML Training - runs WEEKLY on Sunday at 4:30 PM CT
+        # FIX (Jan 2026): SAGE was previously manual-only via API
+        # =================================================================
+        self.scheduler.add_job(
+            self.scheduled_sage_training_logic,
+            trigger=CronTrigger(
+                hour=16,       # 4:30 PM CT
+                minute=30,
+                day_of_week='sun',  # Every Sunday
+                timezone='America/Chicago'
+            ),
+            id='sage_training',
+            name='SAGE - Weekly ML Advisor Training',
+            replace_existing=True
+        )
+        logger.info("✅ SAGE job scheduled (WEEKLY on Sunday at 4:30 PM CT)")
+
+        # =================================================================
         # QUANT JOB: ML Model Training - runs WEEKLY on Sunday
         # Retrains quantitative ML models to adapt to market changes:
         # - REGIME_CLASSIFIER: Market regime classification
@@ -3535,6 +3813,16 @@ class AutonomousTraderScheduler:
         self._mark_auto_restart("User started")
         self._clear_auto_restart()  # Clear immediately - we're running now
         self._save_state()  # Save running state
+
+        # =================================================================
+        # STARTUP RECOVERY: Check for missed ML training jobs
+        # FIX (Jan 2026): Jobs that stopped on holidays wouldn't restart
+        # This ensures overdue training gets caught up immediately
+        # =================================================================
+        try:
+            self._check_startup_recovery()
+        except Exception as e:
+            logger.warning(f"Startup recovery check failed (non-fatal): {e}")
 
         # =================================================================
         # STARTUP HEARTBEAT: Save initial heartbeat for all bots

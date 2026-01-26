@@ -165,6 +165,18 @@ interface ModelPerformance {
   model_version: string
 }
 
+// FIX (Jan 2026): Track outcome collection status
+interface TrackingStatus {
+  total_predictions: number
+  predictions_with_outcomes: number
+  tracking_rate: number
+  awaiting_tracking: number
+  recent_outcomes_30d: number
+  direction_accuracy_30d: number
+  magnitude_accuracy_30d: number
+  needs_attention: boolean
+}
+
 // ============================================================================
 // HELPER COMPONENTS
 // ============================================================================
@@ -654,6 +666,7 @@ export default function ApolloPage() {
   const [scanDuration, setScanDuration] = useState<number>(0)
   const [expandedStrategies, setExpandedStrategies] = useState<Record<string, boolean>>({})
   const [performance, setPerformance] = useState<ModelPerformance | null>(null)
+  const [trackingStatus, setTrackingStatus] = useState<TrackingStatus | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [scanProgress, setScanProgress] = useState<{ current: number, total: number, symbol: string } | null>(null)
   const [selectedResult, setSelectedResult] = useState<ApolloScanResult | null>(null)
@@ -667,9 +680,10 @@ export default function ApolloPage() {
 
   const popularSymbols = ['SPY', 'QQQ', 'IWM', 'DIA', 'TSLA', 'NVDA', 'AAPL', 'MSFT', 'AMD', 'META']
 
-  // Fetch model performance on mount
+  // Fetch model performance and tracking status on mount
   useEffect(() => {
     fetchPerformance()
+    fetchTrackingStatus()
   }, [])
 
   const fetchPerformance = async () => {
@@ -680,6 +694,18 @@ export default function ApolloPage() {
       }
     } catch (e) {
       console.error('Failed to fetch performance:', e)
+    }
+  }
+
+  // FIX (Jan 2026): Fetch outcome tracking status
+  const fetchTrackingStatus = async () => {
+    try {
+      const response = await apiClient.get('/api/apollo/tracking-status')
+      if (response.data?.success) {
+        setTrackingStatus(response.data.data)
+      }
+    } catch (e) {
+      console.error('Failed to fetch tracking status:', e)
     }
   }
 
@@ -1476,6 +1502,57 @@ export default function ApolloPage() {
                   </div>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Outcome Tracking Status - FIX (Jan 2026) */}
+          {trackingStatus && (
+            <div className={`bg-background-card rounded-xl p-6 border ${trackingStatus.needs_attention ? 'border-yellow-500/50' : 'border-gray-800'}`}>
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <Activity className="w-5 h-5 text-primary" />
+                  <h3 className="font-semibold">Outcome Tracking</h3>
+                </div>
+                {trackingStatus.needs_attention && (
+                  <span className="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-1 rounded">
+                    {trackingStatus.awaiting_tracking} predictions awaiting tracking
+                  </span>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div>
+                  <div className="text-xs text-gray-400">Total Predictions</div>
+                  <div className="text-xl font-mono font-bold">
+                    {trackingStatus.total_predictions}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-gray-400">With Outcomes</div>
+                  <div className="text-xl font-mono font-bold text-green-400">
+                    {trackingStatus.predictions_with_outcomes}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-gray-400">Tracking Rate</div>
+                  <div className={`text-xl font-mono font-bold ${trackingStatus.tracking_rate > 80 ? 'text-green-400' : trackingStatus.tracking_rate > 50 ? 'text-yellow-400' : 'text-red-400'}`}>
+                    {trackingStatus.tracking_rate.toFixed(1)}%
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs text-gray-400">Recent (30d)</div>
+                  <div className="text-xl font-mono font-bold">
+                    {trackingStatus.recent_outcomes_30d}
+                  </div>
+                </div>
+              </div>
+
+              {trackingStatus.tracking_rate < 50 && (
+                <div className="mt-4 text-xs text-yellow-400 bg-yellow-500/10 rounded p-2">
+                  <AlertTriangle className="w-3 h-3 inline mr-1" />
+                  Low tracking rate. Automated outcome tracking runs daily after market close.
+                </div>
+              )}
             </div>
           )}
 

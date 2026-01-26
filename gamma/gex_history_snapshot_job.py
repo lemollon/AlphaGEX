@@ -4,30 +4,132 @@ GEX History Snapshot Job
 Saves hourly/daily GEX snapshots for historical analysis and backtesting
 
 Run this as a cron job or background task to accumulate GEX history over time.
+
+FIXES (Jan 2026):
+- Added detailed error logging for diagnostics
+- Added Polygon API fallback when TradingVolatility fails
+- Added collection health tracking to database
 """
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from db.config_and_database import DB_PATH
 from database_adapter import get_connection
 from typing import Dict, Optional
+import logging
+import traceback
+
+logger = logging.getLogger(__name__)
+
+# Texas Central Time
+CENTRAL_TZ = ZoneInfo("America/Chicago")
 
 # Try to import GEX data source
+TV_API_AVAILABLE = False
 try:
     from core_classes_and_engines import TradingVolatilityAPI
     TV_API_AVAILABLE = True
-except ImportError:
-    TV_API_AVAILABLE = False
+except ImportError as e:
+    logger.warning(f"TradingVolatilityAPI not available: {e}")
 
+GEX_COPILOT_AVAILABLE = False
 try:
     from gex_copilot import calculate_gex_from_options_chain
     GEX_COPILOT_AVAILABLE = True
-except ImportError:
-    GEX_COPILOT_AVAILABLE = False
+except ImportError as e:
+    logger.warning(f"gex_copilot not available: {e}")
+
+# Polygon fallback
+POLYGON_AVAILABLE = False
+try:
+    from data.polygon_data_fetcher import PolygonDataFetcher
+    POLYGON_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"PolygonDataFetcher not available: {e}")
+
+
+def log_collection_attempt(symbol: str, source: str, success: bool, error: str = None):
+    """Log collection attempt to database for diagnostics"""
+    try:
+        conn = get_connection()
+        c = conn.cursor()
+
+        # Create tracking table if not exists
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS gex_collection_health (
+                id SERIAL PRIMARY KEY,
+                timestamp TIMESTAMPTZ DEFAULT NOW(),
+                symbol VARCHAR(10),
+                data_source VARCHAR(50),
+                success BOOLEAN,
+                error_message TEXT
+            )
+        ''')
+
+        c.execute('''
+            INSERT INTO gex_collection_health (symbol, data_source, success, error_message)
+            VALUES (%s, %s, %s, %s)
+        ''', (symbol, source, success, error[:500] if error else None))
+
+        # Keep only last 7 days of health records
+        c.execute('''
+            DELETE FROM gex_collection_health
+            WHERE timestamp < NOW() - INTERVAL '7 days'
+        ''')
+
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logger.error(f"Failed to log collection health: {e}")
+
+
+def get_gex_from_polygon(symbol: str) -> Optional[Dict]:
+    """
+    Fallback: Get GEX-like data from Polygon when TradingVolatility is unavailable.
+    This provides basic price data that can be used for trend tracking.
+    """
+    if not POLYGON_AVAILABLE:
+        return None
+
+    try:
+        from unified_config import APIConfig
+        if not APIConfig.POLYGON_API_KEY:
+            logger.warning("Polygon API key not configured")
+            return None
+
+        fetcher = PolygonDataFetcher(api_key=APIConfig.POLYGON_API_KEY)
+        quote = fetcher.get_quote(symbol)
+
+        if not quote:
+            return None
+
+        spot_price = quote.get('last') or quote.get('close') or 0
+
+        # We can't calculate real GEX from Polygon, but we can provide price data
+        # This allows the system to at least track price movement
+        return {
+            'net_gex': 0,  # Unknown without options data
+            'flip_point': spot_price,  # Approximate
+            'call_wall': spot_price * 1.02,  # Approximate 2% above
+            'put_wall': spot_price * 0.98,  # Approximate 2% below
+            'spot_price': spot_price,
+            'mm_state': 'UNKNOWN',
+            'regime': 'UNKNOWN',
+            'data_source': 'Polygon_Fallback'
+        }
+    except Exception as e:
+        logger.error(f"Polygon fallback failed: {e}")
+        return None
 
 
 def get_current_gex_data(symbol: str = 'SPY') -> Optional[Dict]:
     """
-    Get current GEX data from available sources
+    Get current GEX data from available sources with detailed error tracking.
+
+    Data source priority:
+    1. TradingVolatility API (primary - real GEX data)
+    2. Local GEX calculation (fallback)
+    3. Polygon API (emergency fallback - price only)
 
     Returns:
         {
@@ -41,11 +143,13 @@ def get_current_gex_data(symbol: str = 'SPY') -> Optional[Dict]:
             'data_source': str
         }
     """
-    # Try TradingVolatility API first
+    errors = []
+
+    # Try TradingVolatility API first (primary source)
     if TV_API_AVAILABLE:
         try:
             api = TradingVolatilityAPI()
-            gex_data = api.get_net_gamma(symbol)  # Fixed: was get_gex_data which doesn't exist
+            gex_data = api.get_net_gamma(symbol)
 
             if gex_data and not gex_data.get('error'):
                 # Determine regime from net_gex
@@ -62,6 +166,7 @@ def get_current_gex_data(symbol: str = 'SPY') -> Optional[Dict]:
                 flip = gex_data.get('flip_point', 0)
                 mm_state = 'LONG_GAMMA' if spot > flip else 'SHORT_GAMMA'
 
+                log_collection_attempt(symbol, 'TradingVolatility', True)
                 return {
                     'net_gex': net_gex,
                     'flip_point': flip,
@@ -72,8 +177,19 @@ def get_current_gex_data(symbol: str = 'SPY') -> Optional[Dict]:
                     'regime': regime,
                     'data_source': 'TradingVolatility'
                 }
+            else:
+                error_msg = gex_data.get('error', 'No data returned') if gex_data else 'API returned None'
+                errors.append(f"TradingVolatility: {error_msg}")
+                logger.warning(f"TradingVolatility API returned no valid data: {error_msg}")
+                log_collection_attempt(symbol, 'TradingVolatility', False, error_msg)
         except Exception as e:
-            print(f"⚠️  TradingVolatility API failed: {e}")
+            error_msg = f"{type(e).__name__}: {str(e)}"
+            errors.append(f"TradingVolatility: {error_msg}")
+            logger.error(f"TradingVolatility API exception: {error_msg}")
+            logger.debug(traceback.format_exc())
+            log_collection_attempt(symbol, 'TradingVolatility', False, error_msg)
+    else:
+        errors.append("TradingVolatility: Module not available")
 
     # Fallback to local calculation
     if GEX_COPILOT_AVAILABLE:
@@ -83,9 +199,9 @@ def get_current_gex_data(symbol: str = 'SPY') -> Optional[Dict]:
             if gex_data:
                 # Determine regime
                 net_gex = gex_data.get('net_gex', 0)
-                if net_gex > 1e9:  # > $1B positive
+                if net_gex > 1e9:
                     regime = 'POSITIVE'
-                elif net_gex < -1e9:  # < -$1B negative
+                elif net_gex < -1e9:
                     regime = 'NEGATIVE'
                 else:
                     regime = 'NEUTRAL'
@@ -95,6 +211,7 @@ def get_current_gex_data(symbol: str = 'SPY') -> Optional[Dict]:
                 flip = gex_data.get('flip_point', 0)
                 mm_state = 'LONG_GAMMA' if spot > flip else 'SHORT_GAMMA'
 
+                log_collection_attempt(symbol, 'LocalCalculation', True)
                 return {
                     'net_gex': net_gex,
                     'flip_point': gex_data.get('flip_point', 0),
@@ -105,10 +222,31 @@ def get_current_gex_data(symbol: str = 'SPY') -> Optional[Dict]:
                     'regime': regime,
                     'data_source': 'LocalCalculation'
                 }
+            else:
+                errors.append("LocalCalculation: No data returned")
+                log_collection_attempt(symbol, 'LocalCalculation', False, "No data returned")
         except Exception as e:
-            print(f"⚠️  Local GEX calculation failed: {e}")
+            error_msg = f"{type(e).__name__}: {str(e)}"
+            errors.append(f"LocalCalculation: {error_msg}")
+            logger.error(f"Local GEX calculation exception: {error_msg}")
+            log_collection_attempt(symbol, 'LocalCalculation', False, error_msg)
+    else:
+        errors.append("LocalCalculation: Module not available")
 
-    print("❌ No GEX data sources available")
+    # Emergency fallback: Polygon API (price tracking only)
+    polygon_data = get_gex_from_polygon(symbol)
+    if polygon_data:
+        logger.warning(f"Using Polygon fallback for {symbol} - GEX values will be approximate")
+        log_collection_attempt(symbol, 'Polygon_Fallback', True, "Fallback used - no real GEX data")
+        return polygon_data
+    else:
+        errors.append("Polygon_Fallback: Not available or failed")
+
+    # All sources failed
+    error_summary = " | ".join(errors)
+    logger.error(f"❌ All GEX data sources failed for {symbol}: {error_summary}")
+    log_collection_attempt(symbol, 'ALL_SOURCES', False, error_summary)
+    print(f"❌ No GEX data sources available: {error_summary}")
     return None
 
 
@@ -124,12 +262,16 @@ def save_gex_snapshot(symbol: str = 'SPY') -> bool:
         gex_data = get_current_gex_data(symbol)
 
         if not gex_data:
+            logger.error(f"Could not get GEX data for {symbol}")
             print("❌ Could not get GEX data")
             return False
 
-        # Save to database
+        # Save to database with timezone-aware timestamp
         conn = get_connection()
         c = conn.cursor()
+
+        # Use timezone-aware timestamp
+        now_ct = datetime.now(CENTRAL_TZ)
 
         c.execute('''
             INSERT INTO gex_history (
@@ -138,7 +280,7 @@ def save_gex_snapshot(symbol: str = 'SPY') -> bool:
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
         ''', (
-            datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            now_ct,  # Use datetime object directly for proper timezone handling
             symbol,
             gex_data['net_gex'],
             gex_data['flip_point'],
@@ -155,17 +297,25 @@ def save_gex_snapshot(symbol: str = 'SPY') -> bool:
         conn.commit()
         conn.close()
 
+        net_gex_display = gex_data['net_gex'] / 1e9 if gex_data['net_gex'] != 0 else 0
+        logger.info(f"GEX snapshot saved for {symbol}: ID={snapshot_id}, "
+                   f"Net GEX=${net_gex_display:.2f}B, Regime={gex_data['regime']}, "
+                   f"Source={gex_data['data_source']}")
+
         print(f"✅ GEX snapshot saved (ID: {snapshot_id})")
-        print(f"   Net GEX: ${gex_data['net_gex']/1e9:.2f}B")
+        print(f"   Net GEX: ${net_gex_display:.2f}B")
         print(f"   Flip Point: ${gex_data['flip_point']:.2f}")
         print(f"   Spot: ${gex_data['spot_price']:.2f}")
         print(f"   Regime: {gex_data['regime']}")
+        print(f"   Source: {gex_data['data_source']}")
 
         return True
 
     except Exception as e:
+        error_msg = f"{type(e).__name__}: {str(e)}"
+        logger.error(f"Failed to save GEX snapshot for {symbol}: {error_msg}")
+        logger.debug(traceback.format_exc())
         print(f"❌ Failed to save GEX snapshot: {e}")
-        import traceback
         traceback.print_exc()
         return False
 
