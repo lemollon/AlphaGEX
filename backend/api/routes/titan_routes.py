@@ -183,7 +183,8 @@ def _calculate_titan_unrealized_pnl(positions: list) -> dict:
             try:
                 import os
                 from data.tradier_data_fetcher import TradierDataFetcher as TDF
-                prod_key = os.environ.get('TRADIER_API_KEY')
+                # Check both TRADIER_PROD_API_KEY (priority) and TRADIER_API_KEY
+                prod_key = os.environ.get('TRADIER_PROD_API_KEY') or os.environ.get('TRADIER_API_KEY')
                 if prod_key:
                     tradier = TDF(api_key=prod_key, sandbox=False)
                     quote = tradier.get_quote('SPX')

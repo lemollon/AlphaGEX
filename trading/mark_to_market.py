@@ -37,7 +37,9 @@ def _get_tradier_client(underlying: str = None, force_production: bool = False):
         # SPX options REQUIRE production API - sandbox doesn't have SPX quotes
         requires_production = force_production or (underlying and underlying.upper() in ('SPX', 'SPXW'))
 
-        prod_key = os.environ.get('TRADIER_API_KEY')
+        # Check both TRADIER_PROD_API_KEY (priority) and TRADIER_API_KEY for production credentials
+        # This matches unified_config.py behavior where TRADIER_PROD_* takes priority
+        prod_key = os.environ.get('TRADIER_PROD_API_KEY') or os.environ.get('TRADIER_API_KEY')
         sandbox_key = os.environ.get('TRADIER_SANDBOX_API_KEY')
 
         if requires_production:
@@ -45,7 +47,7 @@ def _get_tradier_client(underlying: str = None, force_production: bool = False):
                 logger.info(f"Using Tradier PRODUCTION API for {underlying or 'option'} quotes")
                 return TradierDataFetcher(api_key=prod_key, sandbox=False)
             else:
-                logger.warning(f"SPX quotes require TRADIER_API_KEY (production) env var but it is NOT SET - only sandbox key available")
+                logger.warning(f"SPX quotes require production Tradier API key (TRADIER_PROD_API_KEY or TRADIER_API_KEY) but NEITHER is set")
                 return None
 
         # For non-SPX, prefer production but fall back to sandbox
@@ -55,7 +57,7 @@ def _get_tradier_client(underlying: str = None, force_production: bool = False):
             return TradierDataFetcher(api_key=sandbox_key, sandbox=True)
 
     except Exception as e:
-        logger.debug(f"Could not create Tradier client: {e}")
+        logger.warning(f"Could not create Tradier client: {e}")
     return None
 
 
