@@ -42,10 +42,10 @@ def _get_tradier_client(underlying: str = None, force_production: bool = False):
 
         if requires_production:
             if prod_key:
-                logger.debug(f"Using Tradier PRODUCTION API for {underlying or 'option'} quotes")
+                logger.info(f"Using Tradier PRODUCTION API for {underlying or 'option'} quotes")
                 return TradierDataFetcher(api_key=prod_key, sandbox=False)
             else:
-                logger.warning(f"SPX quotes require TRADIER_API_KEY (production) but only sandbox key available")
+                logger.warning(f"SPX quotes require TRADIER_API_KEY (production) env var but it is NOT SET - only sandbox key available")
                 return None
 
         # For non-SPX, prefer production but fall back to sandbox
@@ -125,6 +125,7 @@ def get_option_quote(symbol: str, use_cache: bool = True) -> Optional[Dict]:
     # Fetch from Tradier - use production API for SPX
     tradier = _get_tradier_client(underlying=underlying)
     if not tradier:
+        logger.warning(f"No Tradier client available for {symbol} - check TRADIER_API_KEY env var")
         return None
 
     try:
@@ -133,8 +134,10 @@ def get_option_quote(symbol: str, use_cache: bool = True) -> Optional[Dict]:
             # Cache the result
             _quote_cache[symbol] = (time.time(), quote)
             return quote
+        else:
+            logger.warning(f"Empty quote returned for {symbol} from Tradier API")
     except Exception as e:
-        logger.debug(f"Failed to fetch quote for {symbol}: {e}")
+        logger.warning(f"Failed to fetch quote for {symbol}: {e}")
 
     return None
 
@@ -182,21 +185,29 @@ def get_option_quotes_batch(symbols: List[str], use_cache: bool = True) -> Dict[
                     'markets/quotes',
                     params={'symbols': ','.join(symbols_to_fetch)}
                 )
-                quotes = response.get('quotes', {})
 
-                if 'quote' in quotes:
-                    quote_data = quotes['quote']
-                    # Handle single quote vs list
-                    if isinstance(quote_data, dict):
-                        quote_data = [quote_data]
+                if response is None:
+                    logger.warning(f"Null response from Tradier batch quote API for {len(symbols_to_fetch)} symbols")
+                else:
+                    quotes = response.get('quotes', {})
 
-                    for quote in quote_data:
-                        symbol = quote.get('symbol', '')
-                        if symbol:
-                            _quote_cache[symbol] = (time.time(), quote)
-                            results[symbol] = quote
+                    if 'quote' in quotes:
+                        quote_data = quotes['quote']
+                        # Handle single quote vs list
+                        if isinstance(quote_data, dict):
+                            quote_data = [quote_data]
+
+                        for quote in quote_data:
+                            symbol = quote.get('symbol', '')
+                            if symbol:
+                                _quote_cache[symbol] = (time.time(), quote)
+                                results[symbol] = quote
+                    else:
+                        logger.warning(f"No 'quote' key in Tradier response for symbols: {symbols_to_fetch[:3]}...")
             except Exception as e:
-                logger.debug(f"Failed to fetch batch quotes: {e}")
+                logger.warning(f"Failed to fetch batch quotes: {e}")
+        else:
+            logger.warning(f"No Tradier client for batch quote - SPX={has_spx}, check TRADIER_API_KEY env var")
 
     return results
 
