@@ -700,7 +700,7 @@ export default function ApolloPage() {
   // FIX (Jan 2026): Fetch outcome tracking status
   const fetchTrackingStatus = async () => {
     try {
-      const response = await apiClient.get('/api/apollo/tracking-status')
+      const response = await apiClient.getApolloTrackingStatus()
       if (response.data?.success) {
         setTrackingStatus(response.data.data)
       }

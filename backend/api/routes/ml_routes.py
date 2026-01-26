@@ -2573,3 +2573,182 @@ async def populate_gex_structure_from_orat(
             "error": str(e),
             "traceback": traceback.format_exc()
         }
+
+
+# ============================================================================
+# ML MODEL METADATA ENDPOINTS
+# ============================================================================
+
+@router.get("/model-metadata")
+async def get_all_model_metadata():
+    """
+    Get metadata for all ML models (active versions only).
+
+    Returns information about currently deployed models:
+    - SAGE: Trade outcome predictor
+    - ORACLE: Strategy advisor
+    - GEX_PROBABILITY: GEX probability models (ORION)
+    - GEX_DIRECTIONAL: GEX directional predictor
+
+    Part of the Complete Loop: Database → Backend API → Frontend
+    """
+    try:
+        conn = get_connection()
+        if not conn:
+            return {
+                "success": False,
+                "error": "Database connection unavailable",
+                "data": []
+            }
+
+        cursor = conn.cursor()
+
+        # Ensure table exists
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS ml_model_metadata (
+                id SERIAL PRIMARY KEY,
+                model_name VARCHAR(50) NOT NULL,
+                model_version VARCHAR(50),
+                trained_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                training_samples INTEGER,
+                accuracy DECIMAL(5,4),
+                feature_importance JSONB,
+                hyperparameters JSONB,
+                model_type VARCHAR(50),
+                is_active BOOLEAN DEFAULT TRUE,
+                deployed_at TIMESTAMPTZ DEFAULT NOW(),
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                notes TEXT
+            )
+        """)
+        conn.commit()
+
+        # Get all active models
+        cursor.execute("""
+            SELECT
+                model_name,
+                model_version,
+                trained_at,
+                training_samples,
+                accuracy,
+                feature_importance,
+                hyperparameters,
+                model_type,
+                deployed_at,
+                EXTRACT(EPOCH FROM (NOW() - trained_at)) / 3600 as hours_since_training
+            FROM ml_model_metadata
+            WHERE is_active = TRUE
+            ORDER BY model_name
+        """)
+
+        models = []
+        for row in cursor.fetchall():
+            hours_since = row[9] if row[9] else 0
+            is_stale = hours_since > 168  # More than 7 days
+
+            models.append({
+                "model_name": row[0],
+                "model_version": row[1],
+                "trained_at": row[2].isoformat() if row[2] else None,
+                "training_samples": row[3],
+                "accuracy": float(row[4]) if row[4] else None,
+                "feature_importance": row[5],
+                "hyperparameters": row[6],
+                "model_type": row[7],
+                "deployed_at": row[8].isoformat() if row[8] else None,
+                "hours_since_training": round(hours_since, 1),
+                "is_stale": is_stale,
+                "status": "stale" if is_stale else ("not_trained" if row[1] == 'not_trained' else "fresh")
+            })
+
+        cursor.close()
+        conn.close()
+
+        return {
+            "success": True,
+            "data": models,
+            "count": len(models),
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get model metadata: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "data": []
+        }
+
+
+@router.get("/model-metadata/{model_name}")
+async def get_model_metadata(model_name: str):
+    """
+    Get metadata for a specific ML model.
+
+    Args:
+        model_name: One of SAGE, ORACLE, GEX_PROBABILITY, GEX_DIRECTIONAL
+
+    Returns detailed model information including feature importance
+    and hyperparameters if available.
+    """
+    try:
+        conn = get_connection()
+        if not conn:
+            raise HTTPException(status_code=503, detail="Database unavailable")
+
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            SELECT
+                model_name,
+                model_version,
+                trained_at,
+                training_samples,
+                accuracy,
+                feature_importance,
+                hyperparameters,
+                model_type,
+                deployed_at,
+                notes,
+                EXTRACT(EPOCH FROM (NOW() - trained_at)) / 3600 as hours_since_training
+            FROM ml_model_metadata
+            WHERE model_name = %s AND is_active = TRUE
+        """, (model_name.upper(),))
+
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+
+        if not row:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Model {model_name} not found or not trained"
+            )
+
+        hours_since = row[10] if row[10] else 0
+        is_stale = hours_since > 168
+
+        return {
+            "success": True,
+            "data": {
+                "model_name": row[0],
+                "model_version": row[1],
+                "trained_at": row[2].isoformat() if row[2] else None,
+                "training_samples": row[3],
+                "accuracy": float(row[4]) if row[4] else None,
+                "feature_importance": row[5],
+                "hyperparameters": row[6],
+                "model_type": row[7],
+                "deployed_at": row[8].isoformat() if row[8] else None,
+                "notes": row[9],
+                "hours_since_training": round(hours_since, 1),
+                "is_stale": is_stale,
+                "freshness_status": "stale" if is_stale else "fresh"
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get model {model_name} metadata: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

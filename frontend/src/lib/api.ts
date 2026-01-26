@@ -573,6 +573,10 @@ export const apiClient = {
     magnets?: Array<{ strike: number; gamma: number }>
   }) => api.post('/api/ml/gex-models/predict', null, { params: data }),
 
+  // ML Model Metadata - Track deployed model versions and metrics
+  getMLModelMetadata: () => api.get('/api/ml/model-metadata'),
+  getMLModelMetadataByName: (modelName: string) => api.get(`/api/ml/model-metadata/${modelName}`),
+
   // PROMETHEUS - Standalone ML System for SPX Wheel
   getPrometheusStatus: () => api.get('/api/prometheus/status'),
   trainPrometheus: (minSamples: number = 30, calibrate: boolean = true) =>
@@ -991,6 +995,8 @@ export const apiClient = {
     api.get('/api/apollo/pin-risk-batch', { params: { symbols: symbols.join(',') } }),
   getApolloPinRiskHistory: (symbol: string, limit: number = 30) =>
     api.get(`/api/apollo/pin-risk-history/${symbol}`, { params: { limit } }),
+  getApolloTrackingStatus: () => api.get('/api/apollo/tracking-status'),
+  triggerApolloOutcomeTracking: () => api.post('/api/apollo/track-outcomes'),
 
   // Daily Manna - Economic news with faith-based devotionals
   getDailyManna: (forceRefresh: boolean = false) =>
