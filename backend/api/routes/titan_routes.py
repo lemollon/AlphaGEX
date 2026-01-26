@@ -106,7 +106,8 @@ def _calculate_titan_unrealized_pnl(positions: list) -> dict:
         'method': 'estimation',
         'pricing_source': 'estimated',
         'mtm_success_count': 0,
-        'mtm_fail_count': 0
+        'mtm_fail_count': 0,
+        'mtm_errors': []  # Track errors for debugging
     }
 
     if not positions:
@@ -158,10 +159,13 @@ def _calculate_titan_unrealized_pnl(positions: list) -> dict:
                     continue
                 else:
                     result['mtm_fail_count'] += 1
-                    logger.debug(f"MTM failed for {pos_id}: {mtm.get('error')}")
+                    error_msg = mtm.get('error', 'Unknown MTM error')
+                    result['mtm_errors'].append(f"{pos_id}: {error_msg}")
+                    logger.warning(f"MTM failed for {pos_id}: {error_msg}")
             except Exception as e:
                 result['mtm_fail_count'] += 1
-                logger.debug(f"MTM exception for {pos_id}: {e}")
+                result['mtm_errors'].append(f"{pos_id}: Exception - {str(e)}")
+                logger.warning(f"MTM exception for {pos_id}: {e}")
 
         # Fallback to estimation based on underlying price
         try:
@@ -1720,6 +1724,13 @@ async def get_titan_live_pnl():
         # net_pnl = realized + unrealized
         net_pnl = cumulative_realized + (unrealized_pnl or 0) if unrealized_pnl is not None else cumulative_realized
 
+        # Include MTM errors for debugging if present
+        mtm_errors = []
+        try:
+            mtm_errors = mtm_result.get('mtm_errors', []) if mtm_result else []
+        except NameError:
+            pass
+
         return {
             "success": True,
             "data": {
@@ -1740,6 +1751,7 @@ async def get_titan_live_pnl():
                     for p in positions
                 ],
                 "position_count": len(positions),
+                "mtm_errors": mtm_errors if mtm_errors else None,
                 "note": "Live valuation via mark-to-market" if has_live_pricing else "MTM unavailable - estimation fallback"
             }
         }
