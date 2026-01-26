@@ -1336,6 +1336,55 @@ def run_gamma_daily_summary():
         log_collection('gamma_daily_summary', 'gamma_daily_summary', False, str(e), tb)
 
 
+def run_apollo_outcome_tracking():
+    """
+    Run Apollo outcome tracking (end of day) -> apollo_outcomes table
+
+    FIX: This was missing! Apollo performance metrics weren't being populated
+    because outcomes were never being tracked automatically.
+
+    This function:
+    1. Finds predictions older than 24 hours without outcomes
+    2. Fetches actual price data to determine movement
+    3. Records direction/magnitude accuracy in apollo_outcomes
+    """
+    if not is_after_market_close():
+        return
+
+    print(f"🎯 Apollo Outcome Tracking - {datetime.now(CENTRAL_TZ).strftime('%H:%M:%S')}")
+
+    try:
+        from core.apollo_outcome_tracker import track_apollo_outcomes
+
+        results = track_apollo_outcomes(min_age_hours=24, max_age_days=7)
+
+        predictions_found = results.get('predictions_found', 0)
+        outcomes_recorded = results.get('outcomes_recorded', 0)
+        direction_accuracy = results.get('direction_accuracy', 0)
+        errors = results.get('errors', 0)
+
+        if outcomes_recorded > 0:
+            print(f"  ✅ apollo_outcomes updated: {outcomes_recorded} outcomes recorded")
+            print(f"     Direction accuracy: {direction_accuracy}%")
+            log_collection('apollo_outcome_tracking', 'apollo_outcomes', True,
+                          f"Recorded {outcomes_recorded}/{predictions_found}, accuracy: {direction_accuracy}%")
+        elif predictions_found == 0:
+            print(f"  ✅ apollo_outcomes - no untracked predictions")
+            log_collection('apollo_outcome_tracking', 'apollo_outcomes', True, "No predictions to track")
+        else:
+            print(f"  ⚠️ apollo_outcomes - found {predictions_found} predictions but recorded 0 outcomes")
+            log_collection('apollo_outcome_tracking', 'apollo_outcomes', False,
+                          f"Found {predictions_found} but recorded 0, errors: {errors}")
+    except ImportError as e:
+        print(f"  ⚠️ apollo_outcome_tracking - module not available: {e}")
+        log_collection('apollo_outcome_tracking', 'apollo_outcomes', False, f"Module not available: {e}")
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        print(f"  ❌ apollo_outcome_tracking failed: {e}\n{tb}")
+        log_collection('apollo_outcome_tracking', 'apollo_outcomes', False, str(e), tb)
+
+
 # =============================================================================
 # SCHEDULER SETUP
 # =============================================================================
@@ -1376,6 +1425,7 @@ def setup_schedule():
     schedule.every(5).minutes.do(run_gamma_daily_summary)  # gamma_daily_summary
     schedule.every(5).minutes.do(run_position_sizing)      # position_sizing_history (NEW)
     schedule.every(5).minutes.do(run_probability_calibration)  # probability_weights, calibration_history (NEW)
+    schedule.every(5).minutes.do(run_apollo_outcome_tracking)  # apollo_outcomes (FIX: Jan 2026)
 
     print("=" * 70)
     print("🚀 ALPHAGEX COMPREHENSIVE DATA COLLECTION")

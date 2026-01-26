@@ -1158,3 +1158,122 @@ async def trigger_training():
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         conn.close()
+
+
+@router.post("/track-outcomes")
+async def trigger_outcome_tracking(
+    min_age_hours: int = Query(default=24, ge=1, le=168, description="Minimum age of predictions to track (hours)"),
+    max_age_days: int = Query(default=7, ge=1, le=30, description="Maximum age of predictions to track (days)")
+):
+    """
+    Manually trigger Apollo outcome tracking.
+
+    This finds predictions older than min_age_hours that don't have outcomes yet,
+    fetches the actual price data, and records whether predictions were correct.
+
+    This endpoint was added to fix the issue where Apollo performance 30-day
+    metrics weren't showing any data because outcomes were never tracked.
+    """
+    try:
+        from core.apollo_outcome_tracker import track_apollo_outcomes
+
+        results = track_apollo_outcomes(
+            min_age_hours=min_age_hours,
+            max_age_days=max_age_days
+        )
+
+        return {
+            "success": True,
+            "data": {
+                "predictions_found": results.get('predictions_found', 0),
+                "outcomes_recorded": results.get('outcomes_recorded', 0),
+                "direction_accuracy": results.get('direction_accuracy', 0),
+                "magnitude_accuracy": results.get('magnitude_accuracy', 0),
+                "symbols_processed": results.get('symbols_processed', []),
+                "errors": results.get('errors', 0)
+            },
+            "message": f"Tracked {results.get('outcomes_recorded', 0)} outcomes",
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except ImportError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Outcome tracking module not available: {str(e)}"
+        )
+    except Exception as e:
+        logger.error(f"Outcome tracking failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/tracking-status")
+async def get_tracking_status():
+    """
+    Get Apollo outcome tracking status.
+
+    Shows how many predictions have been tracked and overall accuracy.
+    """
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=500, detail="Database unavailable")
+
+    try:
+        c = conn.cursor()
+
+        # Total predictions
+        c.execute("SELECT COUNT(*) FROM apollo_predictions")
+        total_predictions = c.fetchone()[0]
+
+        # Predictions with outcomes
+        c.execute("""
+            SELECT COUNT(DISTINCT p.prediction_id)
+            FROM apollo_predictions p
+            JOIN apollo_outcomes o ON p.prediction_id = o.prediction_id
+        """)
+        predictions_with_outcomes = c.fetchone()[0]
+
+        # Predictions awaiting tracking (>24h old without outcome)
+        c.execute("""
+            SELECT COUNT(*)
+            FROM apollo_predictions p
+            LEFT JOIN apollo_outcomes o ON p.prediction_id = o.prediction_id
+            WHERE o.id IS NULL
+              AND p.timestamp < NOW() - INTERVAL '24 hours'
+              AND p.timestamp > NOW() - INTERVAL '7 days'
+        """)
+        awaiting_tracking = c.fetchone()[0]
+
+        # Recent outcomes (last 30 days)
+        c.execute("""
+            SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN direction_correct THEN 1 ELSE 0 END) as direction_correct,
+                SUM(CASE WHEN magnitude_correct THEN 1 ELSE 0 END) as magnitude_correct
+            FROM apollo_outcomes
+            WHERE timestamp > NOW() - INTERVAL '30 days'
+        """)
+        row = c.fetchone()
+        recent_outcomes = row[0] or 0
+        direction_correct = row[1] or 0
+        magnitude_correct = row[2] or 0
+
+        return {
+            "success": True,
+            "data": {
+                "total_predictions": total_predictions,
+                "predictions_with_outcomes": predictions_with_outcomes,
+                "tracking_rate": round((predictions_with_outcomes / total_predictions * 100), 1) if total_predictions > 0 else 0,
+                "awaiting_tracking": awaiting_tracking,
+                "recent_outcomes_30d": recent_outcomes,
+                "direction_accuracy_30d": round((direction_correct / recent_outcomes * 100), 1) if recent_outcomes > 0 else 0,
+                "magnitude_accuracy_30d": round((magnitude_correct / recent_outcomes * 100), 1) if recent_outcomes > 0 else 0,
+                "needs_attention": awaiting_tracking > 0
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get tracking status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        conn.close()

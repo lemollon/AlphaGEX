@@ -870,3 +870,185 @@ async def get_0dte_gamma_comparison(symbol: str, force_refresh: bool = False):
         )
 
     return result
+
+
+@router.get("/collection-health")
+async def get_collection_health(symbol: str = "SPY", days: int = 7):
+    """
+    Get GEX collection health status.
+
+    This endpoint was added to diagnose issues where GEX history collection
+    stopped (e.g., after Christmas 2025) and never restarted.
+
+    Returns:
+        - Collection success/failure rates by data source
+        - Last successful collection timestamp
+        - Gap analysis (missing collection periods)
+        - Recent errors from collection attempts
+    """
+    conn = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+        result = {
+            "success": True,
+            "symbol": symbol,
+            "days_analyzed": days,
+            "timestamp": datetime.now().isoformat(),
+            "collection_status": {},
+            "gaps": [],
+            "recent_errors": [],
+            "recommendations": []
+        }
+
+        # Check gex_history table for recent data
+        cursor.execute("""
+            SELECT
+                MIN(timestamp) as oldest,
+                MAX(timestamp) as newest,
+                COUNT(*) as total_records,
+                COUNT(DISTINCT DATE(timestamp)) as days_with_data
+            FROM gex_history
+            WHERE symbol = %s
+              AND timestamp > NOW() - INTERVAL '%s days'
+        """, (symbol, days))
+
+        row = cursor.fetchone()
+        result["collection_status"]["gex_history"] = {
+            "oldest_record": row['oldest'].isoformat() if row['oldest'] else None,
+            "newest_record": row['newest'].isoformat() if row['newest'] else None,
+            "total_records": row['total_records'] or 0,
+            "days_with_data": row['days_with_data'] or 0,
+            "expected_days": days,
+            "coverage_pct": round((row['days_with_data'] or 0) / days * 100, 1)
+        }
+
+        # Check if there's recent data (within last 24 hours)
+        cursor.execute("""
+            SELECT COUNT(*) as recent_count
+            FROM gex_history
+            WHERE symbol = %s
+              AND timestamp > NOW() - INTERVAL '24 hours'
+        """, (symbol,))
+        recent = cursor.fetchone()
+        result["collection_status"]["recent_24h"] = recent['recent_count'] or 0
+
+        # Check collection health table if it exists
+        try:
+            cursor.execute("""
+                SELECT
+                    data_source,
+                    COUNT(*) as attempts,
+                    SUM(CASE WHEN success THEN 1 ELSE 0 END) as successes,
+                    SUM(CASE WHEN NOT success THEN 1 ELSE 0 END) as failures,
+                    MAX(CASE WHEN success THEN timestamp END) as last_success,
+                    MAX(CASE WHEN NOT success THEN timestamp END) as last_failure
+                FROM gex_collection_health
+                WHERE symbol = %s
+                  AND timestamp > NOW() - INTERVAL '%s days'
+                GROUP BY data_source
+                ORDER BY attempts DESC
+            """, (symbol, days))
+
+            health_records = cursor.fetchall()
+            result["collection_status"]["by_source"] = []
+
+            for rec in health_records:
+                attempts = rec['attempts'] or 1
+                successes = rec['successes'] or 0
+                result["collection_status"]["by_source"].append({
+                    "source": rec['data_source'],
+                    "attempts": attempts,
+                    "successes": successes,
+                    "failures": rec['failures'] or 0,
+                    "success_rate": round(successes / attempts * 100, 1),
+                    "last_success": rec['last_success'].isoformat() if rec['last_success'] else None,
+                    "last_failure": rec['last_failure'].isoformat() if rec['last_failure'] else None
+                })
+
+            # Get recent errors
+            cursor.execute("""
+                SELECT timestamp, data_source, error_message
+                FROM gex_collection_health
+                WHERE symbol = %s
+                  AND NOT success
+                  AND timestamp > NOW() - INTERVAL '3 days'
+                ORDER BY timestamp DESC
+                LIMIT 10
+            """, (symbol,))
+
+            for err in cursor.fetchall():
+                result["recent_errors"].append({
+                    "timestamp": err['timestamp'].isoformat() if err['timestamp'] else None,
+                    "source": err['data_source'],
+                    "error": err['error_message']
+                })
+
+        except Exception as e:
+            # gex_collection_health table might not exist yet
+            result["collection_status"]["health_tracking"] = f"Not available: {str(e)}"
+
+        # Identify gaps (days with no data)
+        cursor.execute("""
+            WITH date_series AS (
+                SELECT generate_series(
+                    (NOW() - INTERVAL '%s days')::date,
+                    NOW()::date,
+                    '1 day'::interval
+                )::date as date
+            ),
+            data_dates AS (
+                SELECT DISTINCT DATE(timestamp) as date
+                FROM gex_history
+                WHERE symbol = %s
+                  AND timestamp > NOW() - INTERVAL '%s days'
+            )
+            SELECT ds.date
+            FROM date_series ds
+            LEFT JOIN data_dates dd ON ds.date = dd.date
+            WHERE dd.date IS NULL
+              AND ds.date < NOW()::date  -- Exclude today
+              AND EXTRACT(DOW FROM ds.date) NOT IN (0, 6)  -- Exclude weekends
+            ORDER BY ds.date DESC
+            LIMIT 10
+        """, (days, symbol, days))
+
+        gaps = cursor.fetchall()
+        result["gaps"] = [g['date'].isoformat() for g in gaps]
+
+        # Add recommendations based on findings
+        if result["collection_status"]["recent_24h"] == 0:
+            result["recommendations"].append(
+                "No data collected in the last 24 hours. Check if collector worker is running on Render."
+            )
+
+        if len(result["gaps"]) > 0:
+            result["recommendations"].append(
+                f"Found {len(result['gaps'])} trading days with missing data. Recent gaps: {', '.join(result['gaps'][:3])}"
+            )
+
+        if len(result["recent_errors"]) > 0:
+            result["recommendations"].append(
+                f"Found {len(result['recent_errors'])} recent collection errors. Check API credentials and rate limits."
+            )
+
+        if result["collection_status"]["coverage_pct"] < 80:
+            result["recommendations"].append(
+                f"Collection coverage is only {result['collection_status']['coverage_pct']}%. "
+                "Expected ~100% on trading days. Investigate collector logs."
+            )
+
+        if not result["recommendations"]:
+            result["recommendations"].append("GEX collection appears healthy.")
+
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
