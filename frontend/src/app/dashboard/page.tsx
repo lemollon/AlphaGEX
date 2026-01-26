@@ -7,10 +7,6 @@ import DailyMannaWidget from '@/components/DailyMannaWidget'
 import OracleRecommendationWidget from '@/components/OracleRecommendationWidget'
 import ARGUSAlertsWidget from '@/components/ARGUSAlertsWidget'
 import DashboardScanFeed from '@/components/DashboardScanFeed'
-import SAGEStatusWidget from '@/components/SAGEStatusWidget'
-import QuantStatusWidget from '@/components/QuantStatusWidget'
-import MathOptimizerWidget from '@/components/MathOptimizerWidget'
-import SyncStatusWidget from '@/components/SyncStatusWidget'
 import TodaysActivityFeed from '@/components/dashboard/TodaysActivityFeed'
 
 export default function Dashboard() {
@@ -45,15 +41,7 @@ export default function Dashboard() {
             <DashboardScanFeed />
           </div>
 
-          {/* Row 3: AI/ML Systems */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-            <SAGEStatusWidget />
-            <QuantStatusWidget />
-            <MathOptimizerWidget />
-            <SyncStatusWidget />
-          </div>
-
-          {/* Row 4: Intelligence Dashboard */}
+          {/* Row 3: Intelligence Dashboard */}
           <div>
             <IntelligenceDashboard />
           </div>
