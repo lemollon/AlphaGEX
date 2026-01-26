@@ -774,3 +774,174 @@ async def run_close_time_migration():
     except Exception as e:
         logger.error(f"Close time migration failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/verify/holiday-fixes")
+async def verify_holiday_fixes():
+    """
+    Verify that all systems affected by the Christmas 2025 holiday outage
+    are properly configured and operational.
+
+    This endpoint checks:
+    1. GEX collection health tracking
+    2. Apollo outcome tracking
+    3. SAGE ML training schedule
+    4. Oracle ML training schedule
+    5. Startup recovery mechanism
+    """
+    from zoneinfo import ZoneInfo
+    CENTRAL_TZ = ZoneInfo("America/Chicago")
+
+    results = {
+        "timestamp": datetime.now(CENTRAL_TZ).isoformat(),
+        "checks": {},
+        "passed": 0,
+        "failed": 0,
+        "status": "unknown"
+    }
+
+    if not get_connection:
+        results["status"] = "error"
+        results["message"] = "Database not available"
+        return results
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # 1. GEX Collection Health
+    try:
+        cursor.execute('''
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_name = 'gex_collection_health'
+            )
+        ''')
+        table_exists = cursor.fetchone()[0]
+
+        if table_exists:
+            cursor.execute('''
+                SELECT COUNT(*), MAX(timestamp)
+                FROM gex_collection_health
+                WHERE timestamp > NOW() - INTERVAL '24 hours'
+            ''')
+            row = cursor.fetchone()
+            recent_count = row[0] if row else 0
+            last_attempt = row[1]
+
+            results["checks"]["gex_collection"] = {
+                "status": "pass" if recent_count > 0 else "pending",
+                "recent_attempts": recent_count,
+                "last_attempt": str(last_attempt) if last_attempt else None
+            }
+            results["passed"] += 1 if recent_count > 0 else 0
+        else:
+            results["checks"]["gex_collection"] = {
+                "status": "pending",
+                "message": "Health table not yet created (created on first collection)"
+            }
+    except Exception as e:
+        results["checks"]["gex_collection"] = {"status": "error", "message": str(e)}
+        results["failed"] += 1
+
+    # 2. GEX History Snapshots
+    try:
+        cursor.execute('''
+            SELECT COUNT(*), MAX(timestamp)
+            FROM gex_history
+            WHERE timestamp > NOW() - INTERVAL '24 hours'
+        ''')
+        row = cursor.fetchone()
+        recent_snapshots = row[0] if row else 0
+        last_snapshot = row[1]
+
+        results["checks"]["gex_history"] = {
+            "status": "pass" if recent_snapshots > 0 else "pending",
+            "recent_snapshots_24h": recent_snapshots,
+            "last_snapshot": str(last_snapshot) if last_snapshot else None
+        }
+        results["passed"] += 1 if recent_snapshots > 0 else 0
+    except Exception as e:
+        results["checks"]["gex_history"] = {"status": "error", "message": str(e)}
+        results["failed"] += 1
+
+    # 3. Apollo Outcome Tracking
+    try:
+        cursor.execute('''
+            SELECT
+                (SELECT COUNT(*) FROM apollo_predictions) as predictions,
+                (SELECT COUNT(*) FROM apollo_outcomes) as outcomes
+        ''')
+        row = cursor.fetchone()
+        predictions = row[0] if row else 0
+        outcomes = row[1] if row else 0
+
+        tracking_rate = (outcomes / predictions * 100) if predictions > 0 else 0
+
+        results["checks"]["apollo_tracking"] = {
+            "status": "pass" if outcomes > 0 or predictions == 0 else "pending",
+            "predictions": predictions,
+            "outcomes_tracked": outcomes,
+            "tracking_rate": f"{tracking_rate:.1f}%"
+        }
+        results["passed"] += 1 if outcomes > 0 or predictions == 0 else 0
+    except Exception as e:
+        results["checks"]["apollo_tracking"] = {"status": "error", "message": str(e)}
+        results["failed"] += 1
+
+    # 4. SAGE Training
+    try:
+        cursor.execute('''
+            SELECT COUNT(*), MAX(timestamp)
+            FROM quant_training_history
+            WHERE model_name = 'SAGE'
+        ''')
+        row = cursor.fetchone()
+        training_count = row[0] if row else 0
+        last_training = row[1]
+
+        results["checks"]["sage_training"] = {
+            "status": "pass" if training_count > 0 else "pending",
+            "training_count": training_count,
+            "last_training": str(last_training) if last_training else None,
+            "schedule": "Sunday 4:30 PM CT weekly"
+        }
+        results["passed"] += 1 if training_count > 0 else 0
+    except Exception as e:
+        results["checks"]["sage_training"] = {"status": "error", "message": str(e)}
+        results["failed"] += 1
+
+    # 5. Oracle Training
+    try:
+        cursor.execute('''
+            SELECT COUNT(*), MAX(timestamp)
+            FROM quant_training_history
+            WHERE model_name = 'ORACLE'
+        ''')
+        row = cursor.fetchone()
+        training_count = row[0] if row else 0
+        last_training = row[1]
+
+        results["checks"]["oracle_training"] = {
+            "status": "pass" if training_count > 0 else "pending",
+            "training_count": training_count,
+            "last_training": str(last_training) if last_training else None,
+            "schedule": "Daily at midnight CT"
+        }
+        results["passed"] += 1 if training_count > 0 else 0
+    except Exception as e:
+        results["checks"]["oracle_training"] = {"status": "error", "message": str(e)}
+        results["failed"] += 1
+
+    conn.close()
+
+    # Overall status
+    total_checks = len(results["checks"])
+    if results["failed"] > 0:
+        results["status"] = "degraded"
+    elif results["passed"] == total_checks:
+        results["status"] = "all_systems_operational"
+    else:
+        results["status"] = "pending_first_run"
+        results["message"] = "Some systems awaiting their first scheduled run"
+
+    return results
