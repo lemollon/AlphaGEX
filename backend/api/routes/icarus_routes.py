@@ -1650,10 +1650,11 @@ async def get_icarus_intraday_equity(date: str = None):
 
         # Get today's closed trades with timestamps for accurate intraday cumulative calculation
         # This fixes the "cliff" bug where old snapshots had NULL/incorrect realized_pnl
+        # IMPORTANT: Include 'partial_close' to capture all realized P&L
         cursor.execute("""
             SELECT COALESCE(close_time, open_time)::timestamptz, realized_pnl
             FROM icarus_positions
-            WHERE status IN ('closed', 'expired')
+            WHERE status IN ('closed', 'expired', 'partial_close')
             AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
             ORDER BY COALESCE(close_time, open_time) ASC
         """, (today,))

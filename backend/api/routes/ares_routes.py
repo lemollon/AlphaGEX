@@ -2102,10 +2102,11 @@ async def get_ares_intraday_equity(date: str = None):
 
         # Get today's closed trades with timestamps for accurate intraday cumulative calculation
         # This fixes the "cliff" bug where old snapshots had NULL/incorrect realized_pnl
+        # IMPORTANT: Include 'partial_close' to capture all realized P&L
         cursor.execute("""
             SELECT COALESCE(close_time, open_time)::timestamptz, realized_pnl
             FROM ares_positions
-            WHERE status IN ('closed', 'expired')
+            WHERE status IN ('closed', 'expired', 'partial_close')
             AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
             ORDER BY COALESCE(close_time, open_time) ASC
         """, (today,))
@@ -2454,11 +2455,11 @@ async def get_ares_live_equity_curve():
                     "equity": round(fallback_equity, 2),
                     "pnl": round(unrealized_pnl, 2),
                     "daily_pnl": round(unrealized_pnl, 2),
-                    "return_pct": round((unrealized_pnl / 100000) * 100, 2),
+                    "return_pct": round((unrealized_pnl / starting_capital) * 100, 2) if starting_capital > 0 else 0,
                     "is_live": True,
                     "source": "alphagex_fallback"
                 }],
-                "starting_capital": 100000,
+                "starting_capital": starting_capital,
                 "current_equity": round(fallback_equity, 2),
                 "total_pnl": round(unrealized_pnl, 2),
                 "total_unrealized_pnl": round(unrealized_pnl, 2),
