@@ -16,7 +16,6 @@ import {
 } from 'lucide-react'
 import { api } from '@/lib/api'
 
-// Interface matching actual API response from /api/oracle/strategy-recommendation
 interface OracleAPIResponse {
   recommended_strategy: 'IC' | 'DIRECTIONAL' | 'HOLD'
   confidence: number
@@ -35,7 +34,6 @@ interface OracleAPIResponse {
   timestamp?: string
 }
 
-// Helper to format timestamp in Central Time
 function formatCentralTime(timestamp?: string): string {
   if (!timestamp) return ''
   try {
@@ -52,7 +50,7 @@ function formatCentralTime(timestamp?: string): string {
 }
 
 export default function OracleRecommendationWidget() {
-  const [expanded, setExpanded] = useState(true)
+  const [expanded, setExpanded] = useState(false) // Default collapsed
   const [loading, setLoading] = useState(true)
   const [recommendation, setRecommendation] = useState<OracleAPIResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -63,10 +61,8 @@ export default function OracleRecommendationWidget() {
     setError(null)
     try {
       const response = await api.get('/api/oracle/strategy-recommendation')
-      // API returns object directly (not wrapped in success/data)
       const data = response.data
       if (data && (data.recommended_strategy || data.strategy)) {
-        // Normalize the response - handle both field names
         const normalized: OracleAPIResponse = {
           recommended_strategy: data.recommended_strategy || data.strategy || 'HOLD',
           confidence: data.confidence || 0,
@@ -99,7 +95,7 @@ export default function OracleRecommendationWidget() {
 
   useEffect(() => {
     fetchRecommendation()
-    const interval = setInterval(fetchRecommendation, 60000) // Refresh every minute
+    const interval = setInterval(fetchRecommendation, 60000)
     return () => clearInterval(interval)
   }, [])
 
@@ -108,32 +104,20 @@ export default function OracleRecommendationWidget() {
       case 'IC':
         return {
           label: 'Iron Condor',
-          description: 'Sell premium with ARES/PEGASUS',
-          icon: <Shield className="w-5 h-5" />,
-          color: 'success',
-          bg: 'bg-success/10',
-          border: 'border-success/30',
+          icon: <Shield className="w-4 h-4" />,
           text: 'text-success'
         }
       case 'DIRECTIONAL':
         return {
-          label: 'Directional Spread',
-          description: 'Follow trend with ATHENA',
-          icon: <TrendingUp className="w-5 h-5" />,
-          color: 'primary',
-          bg: 'bg-primary/10',
-          border: 'border-primary/30',
+          label: 'Directional',
+          icon: <TrendingUp className="w-4 h-4" />,
           text: 'text-primary'
         }
       case 'HOLD':
       default:
         return {
           label: 'Hold / Wait',
-          description: 'Market conditions unclear',
-          icon: <Minus className="w-5 h-5" />,
-          color: 'warning',
-          bg: 'bg-warning/10',
-          border: 'border-warning/30',
+          icon: <Minus className="w-4 h-4" />,
           text: 'text-warning'
         }
     }
@@ -142,7 +126,7 @@ export default function OracleRecommendationWidget() {
   const config = recommendation ? getStrategyConfig(recommendation.recommended_strategy) : null
 
   return (
-    <div className={`card bg-gradient-to-r from-info/5 to-transparent border border-info/20`}>
+    <div className="card bg-gradient-to-r from-info/5 to-transparent border border-info/20">
       <button
         onClick={() => setExpanded(!expanded)}
         className="w-full flex items-center justify-between"
@@ -160,7 +144,7 @@ export default function OracleRecommendationWidget() {
                 <>
                   <span className={config?.text}>{config?.label}</span>
                   <span className="opacity-50">|</span>
-                  <span>{recommendation.confidence}% confidence</span>
+                  <span>{Math.round(recommendation.confidence)}%</span>
                 </>
               ) : (
                 <span>Unavailable</span>
@@ -187,116 +171,74 @@ export default function OracleRecommendationWidget() {
       </button>
 
       {expanded && (
-        <div className="mt-4 pt-4 border-t border-border/50 animate-fade-in">
+        <div className="mt-3 pt-3 border-t border-border/50 animate-fade-in">
           {loading ? (
-            <div className="space-y-3">
-              <div className="h-16 bg-background-hover animate-pulse rounded-lg" />
-              <div className="h-12 bg-background-hover animate-pulse rounded-lg" />
-            </div>
+            <div className="h-12 bg-background-hover animate-pulse rounded-lg" />
           ) : error ? (
-            <div className="p-4 bg-warning/10 border border-warning/20 rounded-lg">
-              <div className="flex items-center gap-2">
-                <AlertTriangle className="w-5 h-5 text-warning" />
-                <span className="text-sm text-warning">{error}</span>
-              </div>
-              <button
-                onClick={fetchRecommendation}
-                className="mt-2 text-xs text-primary hover:underline"
-              >
-                Retry
-              </button>
+            <div className="p-2 bg-warning/10 border border-warning/20 rounded-lg flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-warning" />
+              <span className="text-xs text-warning">{error}</span>
             </div>
           ) : recommendation && config ? (
-            <div className="space-y-4">
-              {/* Main Recommendation */}
-              <div className={`p-4 rounded-lg ${config.bg} border ${config.border}`}>
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-3">
-                    <div className={config.text}>
-                      {config.icon}
-                    </div>
-                    <div>
-                      <h4 className={`font-bold ${config.text}`}>{config.label}</h4>
-                      <p className="text-xs text-text-muted">{config.description}</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className={`text-2xl font-bold ${config.text}`}>
-                      {recommendation.confidence}%
-                    </div>
-                    <div className="text-xs text-text-muted">confidence</div>
-                  </div>
-                </div>
-
-                {recommendation.reasoning && (
-                  <div className="p-3 bg-background-card/50 rounded-lg">
-                    <p className="text-sm text-text-secondary">{recommendation.reasoning}</p>
-                  </div>
-                )}
-              </div>
-
-              {/* Market Regimes */}
-              <div className="grid grid-cols-2 gap-3">
-                <div className="p-3 bg-background-hover rounded-lg">
-                  <div className="text-xs text-text-muted mb-1">VIX Regime</div>
-                  <div className={`text-sm font-semibold ${
+            <div className="space-y-2">
+              {/* Compact stats row */}
+              <div className="grid grid-cols-4 gap-2 text-center">
+                <div className="p-2 bg-background-hover rounded">
+                  <div className="text-[10px] text-text-muted">VIX</div>
+                  <div className={`text-xs font-semibold ${
                     recommendation.vix_regime?.includes('HIGH') ? 'text-danger' :
                     recommendation.vix_regime?.includes('ELEVATED') ? 'text-warning' :
                     'text-success'
                   }`}>
-                    {recommendation.vix_regime?.replace(/_/g, ' ') || 'Unknown'}
+                    {recommendation.vix_regime?.split('_')[0] || '?'}
                   </div>
                 </div>
-                <div className="p-3 bg-background-hover rounded-lg">
-                  <div className="text-xs text-text-muted mb-1">GEX Regime</div>
-                  <div className={`text-sm font-semibold ${
+                <div className="p-2 bg-background-hover rounded">
+                  <div className="text-[10px] text-text-muted">GEX</div>
+                  <div className={`text-xs font-semibold ${
                     recommendation.gex_regime?.includes('NEGATIVE') ? 'text-danger' :
                     recommendation.gex_regime?.includes('POSITIVE') ? 'text-success' :
                     'text-warning'
                   }`}>
-                    {recommendation.gex_regime?.replace(/_/g, ' ') || 'Unknown'}
+                    {recommendation.gex_regime?.split('_')[0] || '?'}
+                  </div>
+                </div>
+                <div className="p-2 bg-background-hover rounded">
+                  <div className="text-[10px] text-text-muted">IC</div>
+                  <div className={`text-xs font-semibold ${
+                    (recommendation.ic_suitability || 0) >= 0.6 ? 'text-success' :
+                    (recommendation.ic_suitability || 0) >= 0.4 ? 'text-warning' : 'text-danger'
+                  }`}>
+                    {recommendation.ic_suitability !== undefined ? `${(recommendation.ic_suitability * 100).toFixed(0)}%` : '-'}
+                  </div>
+                </div>
+                <div className="p-2 bg-background-hover rounded">
+                  <div className="text-[10px] text-text-muted">DIR</div>
+                  <div className={`text-xs font-semibold ${
+                    (recommendation.dir_suitability || 0) >= 0.6 ? 'text-success' :
+                    (recommendation.dir_suitability || 0) >= 0.4 ? 'text-warning' : 'text-danger'
+                  }`}>
+                    {recommendation.dir_suitability !== undefined ? `${(recommendation.dir_suitability * 100).toFixed(0)}%` : '-'}
                   </div>
                 </div>
               </div>
 
-              {/* Suitability Scores */}
-              {(recommendation.ic_suitability !== undefined || recommendation.dir_suitability !== undefined) && (
-                <div className="grid grid-cols-2 gap-3">
-                  {recommendation.ic_suitability !== undefined && (
-                    <div className="p-3 bg-background-hover rounded-lg">
-                      <div className="text-xs text-text-muted mb-1">IC Suitability</div>
-                      <div className={`text-sm font-semibold ${recommendation.ic_suitability >= 0.6 ? 'text-success' : recommendation.ic_suitability >= 0.4 ? 'text-warning' : 'text-danger'}`}>
-                        {(recommendation.ic_suitability * 100).toFixed(0)}%
-                      </div>
-                    </div>
-                  )}
-                  {recommendation.dir_suitability !== undefined && (
-                    <div className="p-3 bg-background-hover rounded-lg">
-                      <div className="text-xs text-text-muted mb-1">Directional Suitability</div>
-                      <div className={`text-sm font-semibold ${recommendation.dir_suitability >= 0.6 ? 'text-success' : recommendation.dir_suitability >= 0.4 ? 'text-warning' : 'text-danger'}`}>
-                        {(recommendation.dir_suitability * 100).toFixed(0)}%
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Last Updated Time */}
-              {lastUpdated && (
-                <div className="flex items-center gap-2 text-xs text-text-muted">
-                  <Clock className="w-3 h-3" />
-                  <span>Updated: {lastUpdated}</span>
-                </div>
-              )}
-
-              {/* Link to Oracle page */}
-              <Link
-                href="/oracle"
-                className="flex items-center justify-center gap-2 px-4 py-2 bg-info/10 text-info rounded-lg hover:bg-info/20 transition-colors text-sm font-medium"
-              >
-                <Brain className="w-4 h-4" />
-                View Full Oracle Analysis
-              </Link>
+              {/* Footer row */}
+              <div className="flex items-center justify-between">
+                {lastUpdated && (
+                  <div className="flex items-center gap-1 text-[10px] text-text-muted">
+                    <Clock className="w-3 h-3" />
+                    <span>{lastUpdated}</span>
+                  </div>
+                )}
+                <Link
+                  href="/oracle"
+                  className="flex items-center gap-1 px-2 py-1 bg-info/10 text-info rounded hover:bg-info/20 transition-colors text-xs font-medium"
+                >
+                  <Brain className="w-3 h-3" />
+                  Full Analysis
+                </Link>
+              </div>
             </div>
           ) : null}
         </div>
