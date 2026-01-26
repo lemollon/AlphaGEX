@@ -4,7 +4,6 @@ import Navigation from '@/components/Navigation'
 import IntelligenceDashboard from '@/components/IntelligenceDashboard'
 import GammaExpirationWidget from '@/components/GammaExpirationWidget'
 import DailyMannaWidget from '@/components/DailyMannaWidget'
-import OracleRecommendationWidget from '@/components/OracleRecommendationWidget'
 import ARGUSAlertsWidget from '@/components/ARGUSAlertsWidget'
 import DashboardScanFeed from '@/components/DashboardScanFeed'
 import TodaysActivityFeed from '@/components/dashboard/TodaysActivityFeed'
@@ -28,10 +27,9 @@ export default function Dashboard() {
             <p className="text-text-secondary text-sm mt-1">Market intelligence & system status</p>
           </div>
 
-          {/* Row 1: Gamma + Oracle (Market intelligence) */}
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-4">
+          {/* Row 1: Gamma Expiration */}
+          <div className="mb-4">
             <GammaExpirationWidget />
-            <OracleRecommendationWidget />
           </div>
 
           {/* Row 2: Activity + ARGUS + Scan Feed (Monitoring) */}
