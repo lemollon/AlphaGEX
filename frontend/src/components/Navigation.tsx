@@ -44,6 +44,7 @@ import BuildVersion from './BuildVersion'
 import { CrossButton, DedicationModal, StewardshipTagline, StewardshipBanner } from './StewardshipBanner'
 
 const navItems = [
+  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, category: 'Main' },
   { href: '/daily-manna', label: 'Daily Manna', icon: BookOpen, category: 'Main' },
   { href: '/gex', label: 'GEX Analysis', icon: TrendingUp, category: 'Analysis' },
   { href: '/gex/history', label: 'GEX History', icon: Activity, category: 'Analysis' },
@@ -58,7 +59,7 @@ const navItems = [
   { href: '/solomon', label: 'SOLOMON (Feedback Loop)', icon: BookOpen, category: 'AI & Testing' },
   { href: '/prometheus', label: 'PROMETHEUS (ML System)', icon: Flame, category: 'AI & Testing' },
   { href: '/math-optimizer', label: 'Math Optimizer', icon: Brain, category: 'AI & Testing' },
-  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, category: 'Live Trading' },
+  { href: '/live-trading', label: 'Live Trading', icon: LayoutDashboard, category: 'Live Trading' },
   { href: '/ares', label: 'ARES (SPY Iron Condor)', icon: Sword, category: 'Live Trading' },
   { href: '/athena', label: 'ATHENA (Directional Spreads)', icon: Target, category: 'Live Trading' },
   { href: '/icarus', label: 'ICARUS (Aggressive Directional)', icon: Flame, category: 'Live Trading' },
