@@ -367,9 +367,15 @@ class SignalGenerator:
         sd = max(self.config.sd_multiplier, 1.2)  # FIX: Floor at 1.2 SD for safety
         width = self.config.spread_width
 
-        # Round to $1 for SPY
-        def round_strike(x):
-            return round(x)
+        # Round strikes to nearest $1 for SPY, but AWAY from spot for safety
+        # Put strikes round DOWN (further below spot)
+        # Call strikes round UP (further above spot)
+        # This ensures strikes are AT LEAST the calculated distance from spot
+        def round_put_strike(x):
+            return math.floor(x)  # Round down = further from spot for puts
+
+        def round_call_strike(x):
+            return math.ceil(x)   # Round up = further from spot for calls
 
         # Helper to validate strike distance from spot (0.5% - 5% range)
         def is_valid_strike_distance(put_strike: float, call_strike: float) -> bool:
@@ -386,8 +392,8 @@ class SignalGenerator:
         # Priority 1: Oracle suggested strikes (must be reasonable distance from spot)
         if oracle_put_strike and oracle_call_strike:
             if is_valid_strike_distance(oracle_put_strike, oracle_call_strike):
-                put_short = round_strike(oracle_put_strike)
-                call_short = round_strike(oracle_call_strike)
+                put_short = round_put_strike(oracle_put_strike)
+                call_short = round_call_strike(oracle_call_strike)
                 use_oracle = True
                 logger.info(f"[ARES STRIKES] Using Oracle strikes: Put ${put_short}, Call ${call_short}")
             else:
@@ -399,8 +405,8 @@ class SignalGenerator:
         if not use_oracle and call_wall > 0 and put_wall > 0:
             # Validate GEX walls are reasonable distance from spot
             if is_valid_strike_distance(put_wall, call_wall):
-                put_short = round_strike(put_wall)
-                call_short = round_strike(call_wall)
+                put_short = round_put_strike(put_wall)
+                call_short = round_call_strike(call_wall)
                 use_gex = True
                 put_dist = (spot_price - put_short) / spot_price * 100
                 call_dist = (call_short - spot_price) / spot_price * 100
@@ -417,8 +423,8 @@ class SignalGenerator:
             effective_em = max(expected_move, min_expected_move)
 
             # FIX: Use 1.2 SD minimum for wider strikes (was 1.0, too tight)
-            put_short = round_strike(spot_price - sd * effective_em)
-            call_short = round_strike(spot_price + sd * effective_em)
+            put_short = round_put_strike(spot_price - sd * effective_em)
+            call_short = round_call_strike(spot_price + sd * effective_em)
 
             # Calculate actual distance for logging
             put_dist_pct = (spot_price - put_short) / spot_price * 100
@@ -438,8 +444,8 @@ class SignalGenerator:
         if call_short <= put_short:
             logger.error(f"[ARES STRIKES] Invalid strikes - overlap detected! Put ${put_short} >= Call ${call_short}")
             # Emergency fix: use wider strikes
-            put_short = round_strike(spot_price - spot_price * 0.02)  # 2% below
-            call_short = round_strike(spot_price + spot_price * 0.02)  # 2% above
+            put_short = round_put_strike(spot_price - spot_price * 0.02)  # 2% below
+            call_short = round_call_strike(spot_price + spot_price * 0.02)  # 2% above
             put_long = put_short - width
             call_long = call_short + width
             logger.warning(f"[ARES STRIKES] Emergency fallback: Put ${put_short}, Call ${call_short}")
