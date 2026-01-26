@@ -2065,7 +2065,12 @@ async def get_athena_equity_curve(days: int = 30):
     """
     CENTRAL_TZ = ZoneInfo("America/Chicago")
     starting_capital = 100000  # Default for ATHENA (SPY bot)
-    today = datetime.now(CENTRAL_TZ).strftime('%Y-%m-%d')
+    now_ct = datetime.now(CENTRAL_TZ)
+    today = now_ct.strftime('%Y-%m-%d')
+
+    # Calculate cutoff date for filtering based on days parameter
+    cutoff_date = (now_ct - timedelta(days=days)).strftime('%Y-%m-%d')
+
     unrealized_pnl = 0.0
     open_positions_count = 0
 
@@ -2221,6 +2226,34 @@ async def get_athena_equity_curve(days: int = 30):
                 "open_positions": open_positions_count
             })
 
+        # Filter equity curve to only show data within the requested days range
+        filtered_curve = [point for point in equity_curve if point["date"] >= cutoff_date]
+
+        # If we filtered out all points, add a starting point at cutoff
+        if not filtered_curve and equity_curve:
+            pre_cutoff_points = [p for p in equity_curve if p["date"] < cutoff_date]
+            if pre_cutoff_points:
+                last_pre_cutoff = pre_cutoff_points[-1]
+                filtered_curve.append({
+                    "date": cutoff_date,
+                    "timestamp": cutoff_date + "T00:00:00",
+                    "equity": last_pre_cutoff["equity"],
+                    "cumulative_pnl": last_pre_cutoff.get("cumulative_pnl", 0),
+                    "daily_pnl": 0,
+                    "trade_count": 0,
+                    "position_id": None
+                })
+            else:
+                filtered_curve.append({
+                    "date": cutoff_date,
+                    "timestamp": cutoff_date + "T00:00:00",
+                    "equity": starting_capital,
+                    "cumulative_pnl": 0,
+                    "daily_pnl": 0,
+                    "trade_count": 0,
+                    "position_id": None
+                })
+
         return {
             "success": True,
             "data": {
@@ -2229,9 +2262,10 @@ async def get_athena_equity_curve(days: int = 30):
                 "total_pnl": round(total_pnl_with_unrealized, 2),
                 "realized_pnl": round(running_pnl, 2),
                 "unrealized_pnl": round(unrealized_pnl, 2),
-                "equity_curve": equity_curve,
+                "equity_curve": filtered_curve,
                 "open_positions_count": open_positions_count,
-                "closed_positions_count": len(rows) if rows else 0
+                "closed_positions_count": len(rows) if rows else 0,
+                "days_filter": days
             }
         }
     except Exception as e:

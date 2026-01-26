@@ -946,7 +946,12 @@ async def get_pegasus_equity_curve(days: int = 30):
         days: Number of days of history (default 30)
     """
     starting_capital = 200000  # Default for PEGASUS (SPX bot)
-    today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
+    now_ct = datetime.now(ZoneInfo("America/Chicago"))
+    today = now_ct.strftime('%Y-%m-%d')
+
+    # Calculate cutoff date for filtering based on days parameter
+    cutoff_date = (now_ct - timedelta(days=days)).strftime('%Y-%m-%d')
+
     unrealized_pnl = 0.0
     open_positions_count = 0
 
@@ -1059,10 +1064,38 @@ async def get_pegasus_equity_curve(days: int = 30):
                 "open_positions": open_positions_count
             })
 
+            # Filter equity curve to only show data within the requested days range
+            filtered_curve = [point for point in equity_curve if point["date"] >= cutoff_date]
+
+            # If we filtered out all points, add a starting point at cutoff
+            if not filtered_curve and equity_curve:
+                pre_cutoff_points = [p for p in equity_curve if p["date"] < cutoff_date]
+                if pre_cutoff_points:
+                    last_pre_cutoff = pre_cutoff_points[-1]
+                    filtered_curve.append({
+                        "date": cutoff_date,
+                        "timestamp": cutoff_date + "T00:00:00",
+                        "equity": last_pre_cutoff["equity"],
+                        "pnl": last_pre_cutoff["pnl"],
+                        "daily_pnl": 0,
+                        "return_pct": last_pre_cutoff["return_pct"],
+                        "position_id": None
+                    })
+                else:
+                    filtered_curve.append({
+                        "date": cutoff_date,
+                        "timestamp": cutoff_date + "T00:00:00",
+                        "equity": starting_capital,
+                        "pnl": 0,
+                        "daily_pnl": 0,
+                        "return_pct": 0,
+                        "position_id": None
+                    })
+
             return {
                 "success": True,
                 "data": {
-                    "equity_curve": equity_curve,
+                    "equity_curve": filtered_curve,
                     "starting_capital": starting_capital,
                     "current_equity": round(current_equity_with_unrealized, 2),
                     "total_pnl": round(total_pnl_with_unrealized, 2),
@@ -1071,7 +1104,8 @@ async def get_pegasus_equity_curve(days: int = 30):
                     "total_return_pct": round((total_pnl_with_unrealized / starting_capital) * 100, 2),
                     "closed_positions_count": len(rows),
                     "open_positions_count": open_positions_count,
-                    "source": "database"
+                    "source": "database",
+                    "days_filter": days
                 }
             }
 
