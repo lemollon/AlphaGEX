@@ -352,6 +352,47 @@ class OrderExecutor:
             raise last_error
         return None
 
+    def _tradier_place_ic_with_retry(
+        self,
+        max_retries: int = 3,
+        **kwargs
+    ) -> Optional[Dict]:
+        """
+        Place a 4-leg Iron Condor order with retry logic.
+
+        Uses Tradier's native multileg order to send all 4 legs atomically.
+
+        Args:
+            max_retries: Number of retry attempts
+            **kwargs: All arguments passed to tradier.place_iron_condor()
+        """
+        if not self.tradier:
+            return None
+
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                result = self.tradier.place_iron_condor(**kwargs)
+                if result:
+                    return result
+                logger.warning(f"Tradier IC returned empty result on attempt {attempt + 1}")
+                return None
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries - 1:
+                    delay = 1.0 * (2 ** attempt)  # 1s, 2s, 4s
+                    logger.warning(
+                        f"Tradier IC API error (attempt {attempt + 1}/{max_retries}): {e}. "
+                        f"Retrying in {delay:.1f}s..."
+                    )
+                    time.sleep(delay)
+                else:
+                    logger.error(f"Tradier IC API failed after {max_retries} attempts: {e}")
+
+        if last_error:
+            raise last_error
+        return None
+
     def _tradier_get_quote_with_retry(
         self,
         symbol: str,
@@ -488,92 +529,27 @@ class OrderExecutor:
             # Apply Thompson allocation weight to position size
             contracts = self._calculate_position_size(ic_quote['max_loss_per_contract'] * 100, thompson_weight)
 
-            # Execute as two spreads (put spread + call spread)
-            # Bull Put Spread (credit) - Note: place_vertical_spread auto-detects credit/debit from strikes
+            # Execute as single 4-leg Iron Condor order (atomic - all legs fill together or none)
             # Using retry wrapper for network resilience
-            put_result = self._tradier_place_spread_with_retry(
+            ic_result = self._tradier_place_ic_with_retry(
                 symbol=self.config.ticker,
                 expiration=signal.expiration,
-                long_strike=signal.put_long,
-                short_strike=signal.put_short,
-                option_type="put",
+                put_long=signal.put_long,
+                put_short=signal.put_short,
+                call_short=signal.call_short,
+                call_long=signal.call_long,
                 quantity=contracts,
-                limit_price=round(ic_quote['put_credit'], 2),
+                limit_price=round(actual_credit, 2),
             )
 
-            if not put_result or not put_result.get('order'):
-                logger.error(f"Put spread order failed: {put_result}")
+            if not ic_result or not ic_result.get('order'):
+                logger.error(f"Iron Condor order failed: {ic_result}")
                 return None
 
-            put_order_id = str(put_result['order'].get('id', 'UNKNOWN'))
-
-            # Bear Call Spread (credit) - with retry
-            call_result = self._tradier_place_spread_with_retry(
-                symbol=self.config.ticker,
-                expiration=signal.expiration,
-                long_strike=signal.call_long,
-                short_strike=signal.call_short,
-                option_type="call",
-                quantity=contracts,
-                limit_price=round(ic_quote['call_credit'], 2),
-            )
-
-            if not call_result or not call_result.get('order'):
-                logger.error(f"Call spread order failed: {call_result}")
-                # CRITICAL: Put spread was already placed - attempt to close it
-                logger.warning(f"Attempting to rollback put spread order {put_order_id}")
-                rollback_failed = False
-                rollback_error_msg = None
-                try:
-                    # Close put spread by reversing the order (swap long/short to create debit)
-                    # Using retry wrapper for rollback - critical to succeed
-                    rollback_result = self._tradier_place_spread_with_retry(
-                        max_retries=4,  # Extra retries for critical rollback
-                        symbol=self.config.ticker,
-                        expiration=signal.expiration,
-                        long_strike=signal.put_short,  # Buy back short
-                        short_strike=signal.put_long,   # Sell long
-                        option_type="put",
-                        quantity=contracts,
-                        limit_price=round(ic_quote['put_credit'] * 1.1, 2),  # Allow slippage for rollback
-                    )
-                    if rollback_result and rollback_result.get('order'):
-                        logger.info(f"Successfully rolled back put spread order {put_order_id}")
-                    else:
-                        rollback_failed = True
-                        rollback_error_msg = f"Rollback returned: {rollback_result}"
-                        logger.error(f"CRITICAL: Failed to rollback put spread {put_order_id} - MANUAL INTERVENTION REQUIRED")
-                except Exception as rollback_error:
-                    rollback_failed = True
-                    rollback_error_msg = str(rollback_error)
-                    logger.error(f"CRITICAL: Rollback exception for {put_order_id}: {rollback_error} - MANUAL INTERVENTION REQUIRED")
-
-                # Log orphaned order if rollback failed
-                if rollback_failed and self.db:
-                    self.db.log_orphaned_order(
-                        order_id=put_order_id,
-                        order_type='put_spread',
-                        ticker=self.config.ticker,
-                        expiration=signal.expiration,
-                        strikes={
-                            'put_long': signal.put_long,
-                            'put_short': signal.put_short
-                        },
-                        contracts=contracts,
-                        reason='ROLLBACK_FAILED_AFTER_CALL_SPREAD_ERROR',
-                        error_details=rollback_error_msg
-                    )
-                    # CRITICAL: Send push notification for orphaned order requiring manual intervention
-                    self._send_orphaned_order_alert(
-                        order_id=put_order_id,
-                        order_type='put_spread',
-                        strikes={'put_long': signal.put_long, 'put_short': signal.put_short},
-                        contracts=contracts,
-                        error_msg=rollback_error_msg
-                    )
-                return None
-
-            call_order_id = str(call_result['order'].get('id', 'UNKNOWN'))
+            # Single order ID for the entire IC (use for both fields for backward compatibility)
+            ic_order_id = str(ic_result['order'].get('id', 'UNKNOWN'))
+            put_order_id = ic_order_id
+            call_order_id = ic_order_id
 
             # Calculate P&L
             spread_width = signal.put_short - signal.put_long
@@ -624,7 +600,7 @@ class OrderExecutor:
 
             logger.info(
                 f"LIVE IC: {signal.put_long}/{signal.put_short}-{signal.call_short}/{signal.call_long} "
-                f"x{contracts} @ ${actual_credit:.2f} [Put: {put_order_id}, Call: {call_order_id}]"
+                f"x{contracts} @ ${actual_credit:.2f} [Order: {ic_order_id}]"
             )
 
             return position
