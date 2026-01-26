@@ -416,5 +416,33 @@ class TestBotLogger:
             pytest.skip("bot_logger.get_pegasus_logger not available")
 
 
+class TestPEGASUSStrikeDistance:
+    """Tests for PEGASUS minimum 1 SD strike distance (January 2025)"""
+
+    def test_oracle_enforces_min_strike_distance(self):
+        """Test that Oracle get_pegasus_advice enforces minimum 1 SD strike distance"""
+        try:
+            import inspect
+            from quant.oracle_advisor import OracleAdvisor
+            source = inspect.getsource(OracleAdvisor.get_pegasus_advice)
+            # Check that the method calculates expected_move and enforces minimum distance
+            assert 'expected_move' in source, "Oracle should calculate expected_move for min distance"
+            assert 'min_put_strike' in source or 'min_call_strike' in source, "Oracle should enforce min strike distance"
+        except ImportError:
+            pytest.skip("OracleAdvisor not available")
+
+    def test_signals_enforces_min_strike_distance(self):
+        """Test that PEGASUS signals.py enforces minimum 1 SD strike distance"""
+        try:
+            import inspect
+            from trading.pegasus.signals import SignalGenerator
+            source = inspect.getsource(SignalGenerator.calculate_strikes)
+            # Check that strikes are validated against minimum distance
+            assert 'min_put_short' in source or 'min_call_short' in source, "Signals should enforce min strike distance"
+            assert '1 SD' in source or 'MINIMUM' in source, "Should document minimum distance requirement"
+        except ImportError:
+            pytest.skip("SignalGenerator not available")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -3370,15 +3370,38 @@ class OracleAdvisor:
             reasoning_parts.append(f"Poor setup: {win_prob:.1%} win probability - skip")
 
         # GEX wall-based strike suggestions for SPX
+        # PEGASUS RULE: Strikes must ALWAYS be at least 1 SD from spot
         suggested_put = None
         suggested_call = None
 
+        # Calculate 1 SD expected move (minimum strike distance)
+        import math
+        annual_factor = math.sqrt(252)
+        daily_vol = (context.vix / 100) / annual_factor if context.vix > 0 else 0.01
+        expected_move = context.spot_price * daily_vol
+        # Ensure minimum expected move of 0.5% of spot
+        expected_move = max(expected_move, context.spot_price * 0.005)
+
+        # Calculate minimum allowed strikes (1 SD from spot)
+        min_put_strike = context.spot_price - expected_move
+        min_call_strike = context.spot_price + expected_move
+
         if use_gex_walls and context.gex_put_wall > 0 and context.gex_call_wall > 0:
             # For SPX IC, use GEX walls as outer boundaries
-            # Put spread below put wall, call spread above call wall
-            suggested_put = context.gex_put_wall - spread_width
-            suggested_call = context.gex_call_wall + spread_width
-            reasoning_parts.append(f"GEX walls: Put wall {context.gex_put_wall:.0f}, Call wall {context.gex_call_wall:.0f}")
+            # But ONLY if they result in strikes >= 1 SD from spot
+            gex_put = context.gex_put_wall - spread_width
+            gex_call = context.gex_call_wall + spread_width
+
+            # Check if GEX-based strikes meet minimum distance requirement
+            if gex_put <= min_put_strike and gex_call >= min_call_strike:
+                suggested_put = gex_put
+                suggested_call = gex_call
+                reasoning_parts.append(f"GEX walls: Put {context.gex_put_wall:.0f}, Call {context.gex_call_wall:.0f} (>= 1 SD)")
+            else:
+                # GEX walls too tight - use 1 SD minimum instead
+                suggested_put = min_put_strike - spread_width
+                suggested_call = min_call_strike + spread_width
+                reasoning_parts.append(f"GEX walls too tight, using 1 SD minimum (EM=${expected_move:.0f})")
 
         # Claude AI validation (optional)
         # Fixed: Was incorrectly referencing self.claude_analyzer (doesn't exist)
