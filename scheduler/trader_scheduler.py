@@ -2510,6 +2510,130 @@ class AutonomousTraderScheduler:
         logger.info(f"ORACLE: Next training tomorrow at midnight CT")
         logger.info(f"=" * 80)
 
+    def _ensure_required_tables(self):
+        """
+        AUTO-MIGRATION: Ensure all required tables exist on startup.
+
+        This eliminates manual migration steps - tables are created automatically
+        when the scheduler starts. Follows STANDARDS.md requirement for automatic
+        data population without manual triggers.
+        """
+        conn = None
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Create ml_model_metadata table if not exists
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS ml_model_metadata (
+                    id SERIAL PRIMARY KEY,
+                    model_name VARCHAR(50) NOT NULL,
+                    model_version VARCHAR(50),
+                    trained_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    training_samples INTEGER,
+                    accuracy DECIMAL(5,4),
+                    feature_importance JSONB,
+                    hyperparameters JSONB,
+                    model_type VARCHAR(50),
+                    is_active BOOLEAN DEFAULT TRUE,
+                    deployed_at TIMESTAMPTZ DEFAULT NOW(),
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    notes TEXT
+                )
+            """)
+
+            # Create gex_collection_health table if not exists
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS gex_collection_health (
+                    id SERIAL PRIMARY KEY,
+                    timestamp TIMESTAMPTZ DEFAULT NOW(),
+                    symbol VARCHAR(10) DEFAULT 'SPY',
+                    success BOOLEAN,
+                    data_source VARCHAR(50),
+                    error_message TEXT,
+                    net_gex DECIMAL(20,2),
+                    records_saved INTEGER DEFAULT 0
+                )
+            """)
+
+            # Create apollo_outcomes table if not exists
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS apollo_outcomes (
+                    id SERIAL PRIMARY KEY,
+                    prediction_id INTEGER,
+                    symbol VARCHAR(10),
+                    prediction_timestamp TIMESTAMPTZ,
+                    outcome_timestamp TIMESTAMPTZ DEFAULT NOW(),
+                    predicted_direction VARCHAR(10),
+                    actual_direction VARCHAR(10),
+                    predicted_magnitude DECIMAL(5,2),
+                    actual_magnitude DECIMAL(5,2),
+                    direction_correct BOOLEAN,
+                    magnitude_correct BOOLEAN,
+                    price_at_prediction DECIMAL(10,2),
+                    price_at_outcome DECIMAL(10,2)
+                )
+            """)
+
+            conn.commit()
+            logger.info("STARTUP: ✅ Required tables verified/created")
+
+        except Exception as e:
+            logger.error(f"STARTUP: Failed to ensure tables: {e}")
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except:
+                    pass
+
+    def _cleanup_incomplete_gex_records(self):
+        """
+        AUTO-CLEANUP: Remove incomplete GEX history records on startup.
+
+        Incomplete records (net_gex=0, regime=NULL) occur when collection
+        fails mid-process. These pollute the data and should be removed.
+
+        Follows STANDARDS.md: automatic maintenance, no manual triggers.
+        """
+        conn = None
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Count incomplete records first
+            cursor.execute("""
+                SELECT COUNT(*) FROM gex_history
+                WHERE (net_gex = 0 OR net_gex IS NULL)
+                AND (regime IS NULL)
+            """)
+            incomplete_count = cursor.fetchone()[0]
+
+            if incomplete_count == 0:
+                logger.info("STARTUP: ✅ GEX history data is clean (no incomplete records)")
+                conn.close()
+                return
+
+            # Delete incomplete records
+            cursor.execute("""
+                DELETE FROM gex_history
+                WHERE (net_gex = 0 OR net_gex IS NULL)
+                AND (regime IS NULL)
+            """)
+            deleted = cursor.rowcount
+
+            conn.commit()
+            logger.info(f"STARTUP: 🧹 Cleaned up {deleted} incomplete GEX records")
+
+        except Exception as e:
+            logger.error(f"STARTUP: Failed to cleanup GEX records: {e}")
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except:
+                    pass
+
     def _check_startup_recovery(self):
         """
         FIX (Jan 2026): Check if any scheduled training was missed and run catch-up.
@@ -2521,11 +2645,28 @@ class AutonomousTraderScheduler:
         - Missed training due to scheduler restart
         - Missed training due to holidays/weekends
         - Missed training due to worker crashes
+
+        Also performs automatic database maintenance:
+        - Creates ml_model_metadata table if missing
+        - Cleans up incomplete GEX history records
         """
         now = datetime.now(CENTRAL_TZ)
         logger.info(f"=" * 80)
-        logger.info(f"STARTUP RECOVERY: Checking for missed training jobs...")
+        logger.info(f"STARTUP RECOVERY: Running automatic maintenance and training checks...")
 
+        # =====================================================================
+        # STEP 1: Ensure required tables exist (auto-migration)
+        # =====================================================================
+        self._ensure_required_tables()
+
+        # =====================================================================
+        # STEP 2: Clean up incomplete GEX records
+        # =====================================================================
+        self._cleanup_incomplete_gex_records()
+
+        # =====================================================================
+        # STEP 3: Check for overdue ML training
+        # =====================================================================
         recovery_needed = []
 
         try:
