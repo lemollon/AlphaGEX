@@ -2585,100 +2585,153 @@ async def save_equity_snapshot():
 
 
 @router.get("/performance")
-async def get_ares_performance():
+async def get_ares_performance(
+    days: int = Query(30, description="Number of days to include")
+):
     """
-    Get ARES performance metrics.
+    Get ARES performance metrics from database.
 
-    Returns detailed performance statistics.
+    Returns detailed performance statistics from actual trade history,
+    consistent with TITAN/PEGASUS performance endpoints.
+
+    Args:
+        days: Number of days to include in the summary (default 30)
     """
-    ares = get_ares_instance()
+    days = _resolve_query_param(days, 30)
 
-    # IMPORTANT: starting_capital is the FIXED amount the bot started with, NOT current account balance
-    # Tradier total_equity is current balance (starting + all P&L), using it here would double-count P&L
+    # IMPORTANT: starting_capital is the FIXED amount the bot started with
     starting_capital = 100000  # Default starting capital for ARES
 
-    # Try to get from config table
     try:
         conn = get_connection()
         cursor = conn.cursor()
+
+        # Get starting capital from config table
         cursor.execute("SELECT value FROM autonomous_config WHERE key = 'ares_starting_capital'")
         row = cursor.fetchone()
         if row and row[0]:
             starting_capital = float(row[0])
+
+        # Get daily performance data (same format as TITAN)
+        cursor.execute("""
+            SELECT
+                DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') as trade_date,
+                COUNT(*) as trades_executed,
+                SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as trades_won,
+                SUM(CASE WHEN realized_pnl <= 0 THEN 1 ELSE 0 END) as trades_lost,
+                COALESCE(SUM(realized_pnl), 0) as net_pnl
+            FROM ares_positions
+            WHERE status IN ('closed', 'expired', 'partial_close')
+            AND COALESCE(close_time, open_time) >= CURRENT_DATE - INTERVAL '%s days'
+            GROUP BY DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago')
+            ORDER BY trade_date DESC
+        """, (days,))
+        daily_rows = cursor.fetchall()
+
+        # Get summary for the period
+        cursor.execute("""
+            SELECT
+                COUNT(*) as total_trades,
+                SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as total_wins,
+                SUM(CASE WHEN realized_pnl <= 0 THEN 1 ELSE 0 END) as total_losses,
+                COALESCE(SUM(realized_pnl), 0) as total_pnl,
+                COALESCE(AVG(realized_pnl), 0) as avg_pnl,
+                COALESCE(MAX(realized_pnl), 0) as best_trade,
+                COALESCE(MIN(realized_pnl), 0) as worst_trade
+            FROM ares_positions
+            WHERE status IN ('closed', 'expired', 'partial_close')
+            AND COALESCE(close_time, open_time) >= CURRENT_DATE - INTERVAL '%s days'
+        """, (days,))
+        summary_row = cursor.fetchone()
+
+        # Get open positions count
+        cursor.execute("SELECT COUNT(*) FROM ares_positions WHERE status = 'open'")
+        open_count_row = cursor.fetchone()
+        open_positions = open_count_row[0] if open_count_row else 0
+
+        # Get all-time totals for high water mark and max drawdown calculation
+        cursor.execute("""
+            SELECT realized_pnl, COALESCE(close_time, open_time)
+            FROM ares_positions
+            WHERE status IN ('closed', 'expired', 'partial_close')
+            ORDER BY COALESCE(close_time, open_time) ASC
+        """)
+        all_trades = cursor.fetchall()
+
         conn.close()
-    except Exception:
-        pass
 
-    if not ares:
-        return {
-            "success": True,
-            "data": {
-                "total_trades": 0,
-                "winning_trades": 0,
-                "losing_trades": 0,
-                "win_rate": 0,
-                "total_pnl": 0,
-                "avg_pnl_per_trade": 0,
-                "best_trade": 0,
-                "worst_trade": 0,
-                "current_capital": starting_capital,
-                "return_pct": 0,
-                "high_water_mark": starting_capital,
-                "max_drawdown": 0,
-                "monthly_target": "10%",
-                "message": "ARES not yet initialized"
-            }
-        }
+        # Extract summary values
+        total_trades = summary_row[0] if summary_row else 0
+        winning_trades = summary_row[1] if summary_row else 0
+        losing_trades = summary_row[2] if summary_row else 0
+        total_pnl = float(summary_row[3]) if summary_row else 0
+        avg_pnl = float(summary_row[4]) if summary_row else 0
+        best_trade = float(summary_row[5]) if summary_row else 0
+        worst_trade = float(summary_row[6]) if summary_row else 0
 
-    try:
-        # Calculate performance metrics
-        closed_positions_list = getattr(ares, 'closed_positions', []) or []
-        winning_trades = sum(1 for pos in closed_positions_list if pos.realized_pnl > 0)
-        losing_trades = sum(1 for pos in closed_positions_list if pos.realized_pnl <= 0)
-        total_closed = len(closed_positions_list)
-
-        total_pnl = sum(pos.realized_pnl for pos in closed_positions_list)
-        avg_pnl = total_pnl / total_closed if total_closed > 0 else 0
-
-        best_trade = max((pos.realized_pnl for pos in closed_positions_list), default=0)
-        worst_trade = min((pos.realized_pnl for pos in closed_positions_list), default=0)
+        win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
         current_capital = starting_capital + total_pnl
-        return_pct = (total_pnl / starting_capital) * 100 if starting_capital > 0 else 0
+        return_pct = (total_pnl / starting_capital * 100) if starting_capital > 0 else 0
 
-        # Calculate max drawdown
+        # Calculate max drawdown from all-time trade history
         peak = starting_capital
         max_dd = 0
         running_equity = starting_capital
+        high_water_mark = starting_capital
 
-        for pos in closed_positions_list:
-            running_equity += pos.realized_pnl
+        for trade_pnl, _ in all_trades:
+            pnl = float(trade_pnl or 0)
+            running_equity += pnl
             peak = max(peak, running_equity)
+            high_water_mark = max(high_water_mark, running_equity)
             dd = (peak - running_equity) / peak * 100 if peak > 0 else 0
             max_dd = max(max_dd, dd)
+
+        # Build daily breakdown
+        daily_data = []
+        for row in daily_rows:
+            trades = row[1] or 0
+            wins = row[2] or 0
+            day_win_rate = (wins / trades * 100) if trades > 0 else 0
+            daily_data.append({
+                "date": str(row[0]),
+                "trades": trades,
+                "wins": wins,
+                "losses": row[3] or 0,
+                "win_rate": round(day_win_rate, 1),
+                "net_pnl": float(row[4]) if row[4] else 0
+            })
 
         return {
             "success": True,
             "data": {
-                "total_trades": ares.trade_count,
-                "closed_trades": total_closed,
-                "open_positions": len(ares.open_positions),
-                "winning_trades": winning_trades,
-                "losing_trades": losing_trades,
-                "win_rate": round((winning_trades / total_closed * 100) if total_closed > 0 else 0, 1),
-                "total_pnl": round(total_pnl, 2),
-                "avg_pnl_per_trade": round(avg_pnl, 2),
-                "best_trade": round(best_trade, 2),
-                "worst_trade": round(worst_trade, 2),
-                "current_capital": round(current_capital, 2),
-                "return_pct": round(return_pct, 2),
-                "high_water_mark": round(ares.high_water_mark, 2),
-                "max_drawdown_pct": round(max_dd, 2),
-                "monthly_target": "10%",
-                "strategy": "0DTE Iron Condor @ 1 SD"
+                "summary": {
+                    "total_trades": total_trades,
+                    "closed_trades": total_trades,
+                    "open_positions": open_positions,
+                    "winning_trades": winning_trades,
+                    "losing_trades": losing_trades,
+                    "win_rate": round(win_rate, 1),
+                    "total_pnl": round(total_pnl, 2),
+                    "avg_pnl_per_trade": round(avg_pnl, 2),
+                    "best_trade": round(best_trade, 2),
+                    "worst_trade": round(worst_trade, 2),
+                    "current_capital": round(current_capital, 2),
+                    "return_pct": round(return_pct, 2),
+                    "high_water_mark": round(high_water_mark, 2),
+                    "max_drawdown_pct": round(max_dd, 2),
+                    "monthly_target": "10%",
+                    "strategy": "0DTE Iron Condor @ 1 SD"
+                },
+                "daily": daily_data,
+                "days_filter": days,
+                "source": "database"
             }
         }
     except Exception as e:
         logger.error(f"Error getting ARES performance: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
