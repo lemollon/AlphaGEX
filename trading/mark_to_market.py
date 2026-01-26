@@ -221,8 +221,9 @@ def calculate_ic_mark_to_market(
     - Short call at call_short_strike (sold)
     - Long call at call_long_strike (bought)
 
-    To close: Buy back shorts, sell longs
-    Cost to close = (short_put_ask - long_put_bid) + (short_call_ask - long_call_bid)
+    Uses MID prices (avg of bid/ask) to calculate position value.
+    This gives a more accurate representation than using worst-case bid/ask
+    prices, which would show inflated losses due to spread penalty.
 
     Args:
         underlying: SPX or SPY
@@ -275,31 +276,32 @@ def calculate_ic_mark_to_market(
         return result
 
     try:
-        # Get bid/ask for each leg
-        # To close shorts: use ask (we buy back)
-        # To close longs: use bid (we sell)
+        # Get quotes for each leg
         put_short_quote = quotes[symbols['put_short']]
         put_long_quote = quotes[symbols['put_long']]
         call_short_quote = quotes[symbols['call_short']]
         call_long_quote = quotes[symbols['call_long']]
 
-        # Use mid price if bid/ask not available, fall back to last
-        def get_price(quote, side):
-            """Get price from quote - ask for shorts, bid for longs"""
-            if side == 'ask':
-                return quote.get('ask') or quote.get('last') or 0
-            else:
-                return quote.get('bid') or quote.get('last') or 0
+        # Use MID price for P&L calculation (more representative of true position value)
+        # Bid/ask spread penalty makes P&L appear worse than actual position value
+        # Iron Condors often held to expiration where settlement uses intrinsic value, not bid/ask
+        def get_mid_price(quote):
+            """Get mid price from quote, falling back to last"""
+            bid = quote.get('bid')
+            ask = quote.get('ask')
+            if bid is not None and ask is not None and bid > 0 and ask > 0:
+                return (float(bid) + float(ask)) / 2
+            return float(quote.get('last') or 0)
 
-        put_short_ask = float(get_price(put_short_quote, 'ask'))
-        put_long_bid = float(get_price(put_long_quote, 'bid'))
-        call_short_ask = float(get_price(call_short_quote, 'ask'))
-        call_long_bid = float(get_price(call_long_quote, 'bid'))
+        put_short_mid = get_mid_price(put_short_quote)
+        put_long_mid = get_mid_price(put_long_quote)
+        call_short_mid = get_mid_price(call_short_quote)
+        call_long_mid = get_mid_price(call_long_quote)
 
-        # Cost to close the IC (per contract)
-        # Buy back shorts (pay ask), sell longs (receive bid)
-        put_spread_close = put_short_ask - put_long_bid  # Debit to close put spread
-        call_spread_close = call_short_ask - call_long_bid  # Debit to close call spread
+        # Cost to close the IC using mid prices (per contract)
+        # This represents the theoretical position value without bid/ask spread penalty
+        put_spread_close = put_short_mid - put_long_mid  # Debit to close put spread
+        call_spread_close = call_short_mid - call_long_mid  # Debit to close call spread
 
         current_value = put_spread_close + call_spread_close
 
@@ -310,10 +312,10 @@ def calculate_ic_mark_to_market(
         result['current_value'] = round(current_value, 4)
         result['unrealized_pnl'] = round(unrealized_pnl, 2)
         result['leg_prices'] = {
-            'put_short_ask': put_short_ask,
-            'put_long_bid': put_long_bid,
-            'call_short_ask': call_short_ask,
-            'call_long_bid': call_long_bid,
+            'put_short_mid': put_short_mid,
+            'put_long_mid': put_long_mid,
+            'call_short_mid': call_short_mid,
+            'call_long_mid': call_long_mid,
             'put_spread_close': round(put_spread_close, 4),
             'call_spread_close': round(call_spread_close, 4),
         }
@@ -347,8 +349,9 @@ def calculate_spread_mark_to_market(
     - Long option at long_strike (bought)
     - Short option at short_strike (sold)
 
-    To close: Sell the long, buy back the short
-    Value = long_bid - short_ask
+    Uses MID prices (avg of bid/ask) to calculate position value.
+    This gives a more accurate representation than using worst-case bid/ask
+    prices, which would show inflated losses due to spread penalty.
 
     Args:
         underlying: SPY or SPX
@@ -403,18 +406,21 @@ def calculate_spread_mark_to_market(
         long_quote = quotes[symbols['long']]
         short_quote = quotes[symbols['short']]
 
-        def get_price(quote, side):
-            if side == 'ask':
-                return quote.get('ask') or quote.get('last') or 0
-            else:
-                return quote.get('bid') or quote.get('last') or 0
+        # Use MID price for P&L calculation (more representative of true position value)
+        def get_mid_price(quote):
+            """Get mid price from quote, falling back to last"""
+            bid = quote.get('bid')
+            ask = quote.get('ask')
+            if bid is not None and ask is not None and bid > 0 and ask > 0:
+                return (float(bid) + float(ask)) / 2
+            return float(quote.get('last') or 0)
 
-        long_bid = float(get_price(long_quote, 'bid'))
-        short_ask = float(get_price(short_quote, 'ask'))
+        long_mid = get_mid_price(long_quote)
+        short_mid = get_mid_price(short_quote)
 
-        # Value of the spread = what we'd receive closing
-        # Sell long (get bid), buy back short (pay ask)
-        current_value = long_bid - short_ask
+        # Value of the spread using mid prices
+        # This represents the theoretical position value without bid/ask spread penalty
+        current_value = long_mid - short_mid
 
         # Unrealized P&L = (current_value - entry_debit) * 100 * contracts
         unrealized_pnl = (current_value - entry_debit) * 100 * contracts
@@ -423,8 +429,8 @@ def calculate_spread_mark_to_market(
         result['current_value'] = round(current_value, 4)
         result['unrealized_pnl'] = round(unrealized_pnl, 2)
         result['leg_prices'] = {
-            'long_bid': long_bid,
-            'short_ask': short_ask,
+            'long_mid': long_mid,
+            'short_mid': short_mid,
         }
 
         logger.debug(
