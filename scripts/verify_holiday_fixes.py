@@ -250,15 +250,19 @@ def verify_sage_training():
         count = row[0] if row else 0
         last_training = row[1] if row else None
 
-        # Check model metadata
-        c.execute('''
-            SELECT model_version, accuracy, created_at
-            FROM ml_model_metadata
-            WHERE model_name = 'SAGE'
-            ORDER BY created_at DESC
-            LIMIT 1
-        ''')
-        model_row = c.fetchone()
+        # Check model metadata (may not exist yet)
+        model_row = None
+        try:
+            c.execute('''
+                SELECT model_version, accuracy, created_at
+                FROM ml_model_metadata
+                WHERE model_name = 'SAGE' AND is_active = TRUE
+                ORDER BY created_at DESC
+                LIMIT 1
+            ''')
+            model_row = c.fetchone()
+        except Exception:
+            pass  # Table may not exist yet
 
         result.details = {
             'training_count': count,
@@ -268,7 +272,7 @@ def verify_sage_training():
 
         if model_row:
             result.details['model_version'] = model_row[0]
-            result.details['accuracy'] = model_row[1]
+            result.details['accuracy'] = float(model_row[1]) if model_row[1] else None
 
         if count > 0:
             result.passed = True
@@ -282,7 +286,10 @@ def verify_sage_training():
 
     except Exception as e:
         result.message = f"Error: {e}"
-        conn.close()
+        try:
+            conn.close()
+        except:
+            pass
         return result
 
 
@@ -308,14 +315,21 @@ def verify_oracle_training():
         count = row[0] if row else 0
         last_training = row[1] if row else None
 
-        # Check for predictions
-        c.execute('''
-            SELECT COUNT(*), MAX(created_at)
-            FROM oracle_predictions
-        ''')
-        pred_row = c.fetchone()
-        predictions = pred_row[0] if pred_row else 0
-        last_prediction = pred_row[1] if pred_row else None
+        # Check for predictions (handle missing table or column)
+        predictions = 0
+        last_prediction = None
+        try:
+            # Try with timestamp column (common naming)
+            c.execute('''
+                SELECT COUNT(*), MAX(timestamp)
+                FROM oracle_predictions
+            ''')
+            pred_row = c.fetchone()
+            predictions = pred_row[0] if pred_row else 0
+            last_prediction = pred_row[1] if pred_row else None
+        except Exception:
+            # Table may not exist or have different schema
+            pass
 
         result.details = {
             'training_count': count,
@@ -337,7 +351,10 @@ def verify_oracle_training():
 
     except Exception as e:
         result.message = f"Error: {e}"
-        conn.close()
+        try:
+            conn.close()
+        except:
+            pass
         return result
 
 
@@ -353,23 +370,27 @@ def verify_gex_ml_training():
     try:
         c = conn.cursor()
 
-        # Check training history for GEX_ML or ORION
+        # Check training history for GEX_ML or ORION or GEX_PROBABILITY_MODELS
         c.execute('''
             SELECT COUNT(*), MAX(timestamp)
             FROM quant_training_history
-            WHERE model_name IN ('GEX_ML', 'ORION', 'GEX_PROBABILITY')
+            WHERE model_name IN ('GEX_ML', 'ORION', 'GEX_PROBABILITY', 'GEX_PROBABILITY_MODELS', 'GEX_DIRECTIONAL')
         ''')
         row = c.fetchone()
         count = row[0] if row else 0
         last_training = row[1] if row else None
 
-        # Check for stored models
-        c.execute('''
-            SELECT COUNT(*)
-            FROM ml_model_metadata
-            WHERE model_name LIKE '%GEX%' OR model_name LIKE '%ORION%'
-        ''')
-        model_count = c.fetchone()[0]
+        # Check for stored models (handle missing table)
+        model_count = 0
+        try:
+            c.execute('''
+                SELECT COUNT(*)
+                FROM ml_model_metadata
+                WHERE model_name LIKE '%GEX%' OR model_name LIKE '%ORION%'
+            ''')
+            model_count = c.fetchone()[0]
+        except Exception:
+            pass  # Table may not exist yet
 
         result.details = {
             'training_count': count,

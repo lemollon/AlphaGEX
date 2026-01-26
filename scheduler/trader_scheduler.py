@@ -2859,6 +2859,83 @@ class AutonomousTraderScheduler:
             except Exception:
                 pass
 
+        # Also update model metadata on successful training
+        if status == 'COMPLETED' and accuracy_after is not None:
+            self._update_model_metadata(
+                model_name=model_name,
+                accuracy=accuracy_after,
+                training_samples=training_samples
+            )
+
+    def _update_model_metadata(self, model_name: str, accuracy: float = None,
+                               training_samples: int = None, feature_importance: dict = None,
+                               hyperparameters: dict = None, model_type: str = None):
+        """Update ml_model_metadata table with currently deployed model info.
+
+        This tracks the active/deployed version of each ML model.
+        Called after successful training completion.
+        """
+        conn = None
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+
+            # Generate version string
+            from datetime import datetime
+            version = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+            # First, ensure table exists (create if not)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS ml_model_metadata (
+                    id SERIAL PRIMARY KEY,
+                    model_name VARCHAR(50) NOT NULL,
+                    model_version VARCHAR(50),
+                    trained_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    training_samples INTEGER,
+                    accuracy DECIMAL(5,4),
+                    feature_importance JSONB,
+                    hyperparameters JSONB,
+                    model_type VARCHAR(50),
+                    is_active BOOLEAN DEFAULT TRUE,
+                    deployed_at TIMESTAMPTZ DEFAULT NOW(),
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    notes TEXT
+                )
+            """)
+
+            # Deactivate existing active model for this name
+            cursor.execute("""
+                UPDATE ml_model_metadata
+                SET is_active = FALSE
+                WHERE model_name = %s AND is_active = TRUE
+            """, (model_name,))
+
+            # Insert new active model record
+            import json
+            feature_json = json.dumps(feature_importance) if feature_importance else None
+            hyper_json = json.dumps(hyperparameters) if hyperparameters else None
+
+            cursor.execute("""
+                INSERT INTO ml_model_metadata (
+                    model_name, model_version, trained_at, training_samples,
+                    accuracy, feature_importance, hyperparameters, model_type,
+                    is_active, deployed_at
+                ) VALUES (%s, %s, NOW(), %s, %s, %s, %s, %s, TRUE, NOW())
+            """, (model_name, version, training_samples, accuracy,
+                  feature_json, hyper_json, model_type or 'XGBoost'))
+
+            conn.commit()
+            cursor.close()
+            logger.info(f"ML_MODEL_METADATA: Updated {model_name} v{version}, accuracy={accuracy}")
+        except Exception as e:
+            logger.error(f"Failed to update model metadata for {model_name}: {e}")
+        finally:
+            try:
+                if conn:
+                    conn.close()
+            except Exception:
+                pass
+
     def scheduled_trade_sync_logic(self):
         """
         TRADE SYNC - runs every 30 minutes during market hours
