@@ -2454,15 +2454,17 @@ class OracleAdvisor:
         # Determine final advice
         advice, risk_pct = self._get_advice_from_probability(base_pred['win_probability'])
 
-        # SD multiplier - ALWAYS keep strikes at or OUTSIDE expected move
-        # Backtest showed 97% win rate with SD >= 1.0 (outside expected move)
-        # NEVER suggest SD < 1.0 - that puts strikes inside expected move = losses
+        # SD multiplier - ALWAYS keep strikes OUTSIDE expected move
+        # FIX (Jan 2025): Changed minimum from 1.0 to 1.2
+        # 1.0 SD = strikes at EXACTLY expected move boundary = breached 32% of time
+        # 1.2 SD = strikes 20% OUTSIDE expected move = better cushion
+        # Higher SD = wider strikes = lower credit but higher win rate
         if base_pred['win_probability'] >= 0.70:
-            sd_mult = 1.0  # Confident: baseline at expected move boundary
+            sd_mult = 1.2  # FIX: Was 1.0 - baseline now 20% outside expected move
         elif base_pred['win_probability'] >= 0.60:
-            sd_mult = 1.1  # Medium: slightly wider for safety
+            sd_mult = 1.3  # FIX: Was 1.1 - medium confidence gets wider strikes
         else:
-            sd_mult = 1.2  # Low confidence: wider strikes (or should SKIP)
+            sd_mult = 1.4  # FIX: Was 1.2 - low confidence = much wider for safety
 
         prediction = OraclePrediction(
             bot_name=BotName.ARES,
@@ -3443,7 +3445,7 @@ class OracleAdvisor:
             win_probability=win_prob,
             confidence=model_confidence,
             suggested_risk_pct=risk_pct,
-            suggested_sd_multiplier=1.0,  # SPX uses fixed spread widths
+            suggested_sd_multiplier=1.2,  # FIX: Was 1.0 - strikes 20% outside expected move
             reasoning=" | ".join(reasoning_parts),
             top_factors=base_pred.get('top_factors', []),
             model_version=self.model_version,

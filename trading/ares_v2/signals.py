@@ -354,52 +354,101 @@ class SignalGenerator:
 
         Priority:
         1. Oracle suggested strikes (if provided and valid)
-        2. GEX walls (if available)
-        3. SD-based strikes (fallback)
+        2. GEX walls (if available and reasonable)
+        3. SD-based strikes (with WIDENED multiplier for safety)
+
+        FIX (Jan 2025): Previously used sd_multiplier=1.0 which placed strikes
+        at EXACTLY the expected move boundary. This was too tight - 1 SD is
+        breached ~32% of the time by statistical definition. Now uses 1.2 SD
+        for SD-based fallback (20% more cushion).
         """
-        sd = self.config.sd_multiplier
+        # Use config SD multiplier, but enforce minimum of 1.2 for safety
+        # Backtests show WIDE_STRIKES preset (1.2 SD) has highest win rate
+        sd = max(self.config.sd_multiplier, 1.2)  # FIX: Floor at 1.2 SD for safety
         width = self.config.spread_width
 
-        # Round to $1 for SPY
-        def round_strike(x):
-            return round(x)
+        # Round strikes to nearest $1 for SPY, but AWAY from spot for safety
+        # Put strikes round DOWN (further below spot)
+        # Call strikes round UP (further above spot)
+        # This ensures strikes are AT LEAST the calculated distance from spot
+        def round_put_strike(x):
+            return math.floor(x)  # Round down = further from spot for puts
+
+        def round_call_strike(x):
+            return math.ceil(x)   # Round up = further from spot for calls
+
+        # Helper to validate strike distance from spot (0.5% - 5% range)
+        def is_valid_strike_distance(put_strike: float, call_strike: float) -> bool:
+            put_dist = (spot_price - put_strike) / spot_price
+            call_dist = (call_strike - spot_price) / spot_price
+            return 0.005 <= put_dist <= 0.05 and 0.005 <= call_dist <= 0.05
 
         # Determine short strikes with Oracle priority
         use_oracle = False
         use_gex = False
+        put_short = 0
+        call_short = 0
 
         # Priority 1: Oracle suggested strikes (must be reasonable distance from spot)
         if oracle_put_strike and oracle_call_strike:
-            # Validate Oracle strikes are reasonable (between 0.5% and 5% from spot)
-            put_dist = (spot_price - oracle_put_strike) / spot_price
-            call_dist = (oracle_call_strike - spot_price) / spot_price
-            if 0.005 <= put_dist <= 0.05 and 0.005 <= call_dist <= 0.05:
-                put_short = round_strike(oracle_put_strike)
-                call_short = round_strike(oracle_call_strike)
+            if is_valid_strike_distance(oracle_put_strike, oracle_call_strike):
+                put_short = round_put_strike(oracle_put_strike)
+                call_short = round_call_strike(oracle_call_strike)
                 use_oracle = True
-                logger.info(f"Using Oracle strikes: Put short ${put_short}, Call short ${call_short}")
+                logger.info(f"[ARES STRIKES] Using Oracle strikes: Put ${put_short}, Call ${call_short}")
+            else:
+                put_dist = (spot_price - oracle_put_strike) / spot_price * 100
+                call_dist = (oracle_call_strike - spot_price) / spot_price * 100
+                logger.warning(f"[ARES STRIKES] Oracle strikes rejected (put={put_dist:.1f}%, call={call_dist:.1f}% - need 0.5-5%)")
 
-        # Priority 2: GEX walls (only if Oracle not used)
+        # Priority 2: GEX walls (if Oracle not used and walls are valid)
         if not use_oracle and call_wall > 0 and put_wall > 0:
-            put_short = round_strike(put_wall)
-            call_short = round_strike(call_wall)
-            use_gex = True
-            logger.info(f"Using GEX walls: Put short ${put_short}, Call short ${call_short}")
+            # Validate GEX walls are reasonable distance from spot
+            if is_valid_strike_distance(put_wall, call_wall):
+                put_short = round_put_strike(put_wall)
+                call_short = round_call_strike(call_wall)
+                use_gex = True
+                put_dist = (spot_price - put_short) / spot_price * 100
+                call_dist = (call_short - spot_price) / spot_price * 100
+                logger.info(f"[ARES STRIKES] Using GEX walls: Put ${put_short} ({put_dist:.1f}%), Call ${call_short} ({call_dist:.1f}%)")
+            else:
+                put_dist = (spot_price - put_wall) / spot_price * 100
+                call_dist = (call_wall - spot_price) / spot_price * 100
+                logger.warning(f"[ARES STRIKES] GEX walls rejected (put={put_dist:.1f}%, call={call_dist:.1f}% - need 0.5-5%)")
 
-        # Priority 3: SD-based fallback (only if neither Oracle nor GEX)
+        # Priority 3: SD-based fallback (with WIDENED multiplier for safety)
         if not use_oracle and not use_gex:
             # Ensure minimum expected move of 0.5% of spot to prevent overlapping strikes
             min_expected_move = spot_price * 0.005  # 0.5% minimum
             effective_em = max(expected_move, min_expected_move)
-            put_short = round_strike(spot_price - sd * effective_em)
-            call_short = round_strike(spot_price + sd * effective_em)
+
+            # FIX: Use 1.2 SD minimum for wider strikes (was 1.0, too tight)
+            put_short = round_put_strike(spot_price - sd * effective_em)
+            call_short = round_call_strike(spot_price + sd * effective_em)
+
+            # Calculate actual distance for logging
+            put_dist_pct = (spot_price - put_short) / spot_price * 100
+            call_dist_pct = (call_short - spot_price) / spot_price * 100
+
+            logger.info(f"[ARES STRIKES] Using SD-based ({sd:.1f} SD): "
+                       f"Put ${put_short} ({put_dist_pct:.1f}%), Call ${call_short} ({call_dist_pct:.1f}%)")
+
             if expected_move < min_expected_move:
                 logger.warning(f"Expected move ${expected_move:.2f} too small, using minimum ${effective_em:.2f}")
-            logger.info(f"Using SD-based: Put short ${put_short}, Call short ${call_short}")
 
         # Long strikes are spread_width away from shorts
         put_long = put_short - width
         call_long = call_short + width
+
+        # Final validation - ensure strikes don't overlap
+        if call_short <= put_short:
+            logger.error(f"[ARES STRIKES] Invalid strikes - overlap detected! Put ${put_short} >= Call ${call_short}")
+            # Emergency fix: use wider strikes
+            put_short = round_put_strike(spot_price - spot_price * 0.02)  # 2% below
+            call_short = round_call_strike(spot_price + spot_price * 0.02)  # 2% above
+            put_long = put_short - width
+            call_long = call_short + width
+            logger.warning(f"[ARES STRIKES] Emergency fallback: Put ${put_short}, Call ${call_short}")
 
         return {
             'put_short': put_short,
@@ -408,7 +457,7 @@ class SignalGenerator:
             'call_long': call_long,
             'using_gex': use_gex,
             'using_oracle': use_oracle,
-            'source': 'ORACLE' if use_oracle else ('GEX' if use_gex else 'SD'),
+            'source': 'ORACLE' if use_oracle else ('GEX' if use_gex else f'SD_{sd:.1f}'),
         }
 
     def estimate_credits(
@@ -851,14 +900,27 @@ class SignalGenerator:
         logger.info(f"[ARES PASSED] {prediction_source} Win Prob {win_probability:.1%} >= threshold {self.config.min_win_probability:.1%}")
 
         # Step 4: Calculate strikes (Oracle > GEX > SD priority)
-        use_gex_walls = oracle.get('use_gex_walls', False) if oracle else False
+        # FIX: Always pass GEX walls - let calculate_strikes() decide whether to use them
+        # Previously, walls were zeroed unless Oracle explicitly set use_gex_walls=True
+        # This caused ARES to always fall back to SD-based strikes (too tight at 1.0 SD)
         oracle_put = oracle.get('suggested_put_strike') if oracle else None
         oracle_call = oracle.get('suggested_call_strike') if oracle else None
+
+        # Get GEX walls from market data - always pass them for fallback protection
+        gex_call_wall = market_data.get('call_wall', 0) or 0
+        gex_put_wall = market_data.get('put_wall', 0) or 0
+
+        # Log GEX wall availability for debugging
+        if gex_call_wall > 0 and gex_put_wall > 0:
+            logger.info(f"[ARES] GEX Walls available: Put ${gex_put_wall:.0f}, Call ${gex_call_wall:.0f}")
+        else:
+            logger.warning(f"[ARES] GEX Walls not available (put={gex_put_wall}, call={gex_call_wall})")
+
         strikes = self.calculate_strikes(
             spot_price=spot,
             expected_move=expected_move,
-            call_wall=market_data['call_wall'] if use_gex_walls else 0,
-            put_wall=market_data['put_wall'] if use_gex_walls else 0,
+            call_wall=gex_call_wall,  # Always pass walls - let calculate_strikes validate
+            put_wall=gex_put_wall,    # Always pass walls - let calculate_strikes validate
             oracle_put_strike=oracle_put,
             oracle_call_strike=oracle_call,
         )
