@@ -1705,15 +1705,11 @@ async def get_pegasus_live_pnl():
         status = pegasus.get_status()
         positions = pegasus.get_positions()
 
-        # unrealized_pnl is None when live pricing unavailable
-        unrealized_pnl = status.get('unrealized_pnl')
-        has_live_pricing = status.get('has_live_pricing', False)
-
-        # Query cumulative realized P&L from closed positions (fixes hardcoded $0 bug)
+        # Query cumulative realized P&L from closed positions
         cumulative_realized = 0.0
+        conn = get_connection()
+        cursor = conn.cursor()
         try:
-            conn = get_connection()
-            cursor = conn.cursor()
             cursor.execute('''
                 SELECT COALESCE(SUM(realized_pnl), 0)
                 FROM pegasus_positions
@@ -1721,9 +1717,41 @@ async def get_pegasus_live_pnl():
             ''')
             realized_row = cursor.fetchone()
             cumulative_realized = float(realized_row[0]) if realized_row else 0.0
-            conn.close()
         except Exception as db_err:
             logger.warning(f"Could not query realized P&L: {db_err}")
+
+        # Calculate unrealized P&L using SAME MTM method as equity curve (fixes discrepancy)
+        # Previously used estimation from trader status, now uses MTM for consistency
+        unrealized_pnl = None
+        has_live_pricing = False
+        position_details = []
+        mtm_method = 'estimation'
+
+        try:
+            # Query open positions for MTM calculation
+            cursor.execute('''
+                SELECT position_id, total_credit, contracts, spread_width,
+                       put_short_strike, put_long_strike, call_short_strike, call_long_strike,
+                       expiration
+                FROM pegasus_positions
+                WHERE status = 'open'
+            ''')
+            open_rows = cursor.fetchall()
+
+            if open_rows:
+                mtm_result = _calculate_pegasus_unrealized_pnl(open_rows)
+                if mtm_result.get('total_unrealized_pnl') is not None:
+                    unrealized_pnl = mtm_result['total_unrealized_pnl']
+                    has_live_pricing = mtm_result.get('method') == 'mark_to_market'
+                    mtm_method = mtm_result.get('method', 'estimation')
+                    position_details = mtm_result.get('positions', [])
+        except Exception as mtm_err:
+            logger.warning(f"MTM calculation failed, using trader estimation: {mtm_err}")
+            # Fallback to trader estimation
+            unrealized_pnl = status.get('unrealized_pnl')
+            has_live_pricing = status.get('has_live_pricing', False)
+
+        conn.close()
 
         # net_pnl = realized + unrealized
         net_pnl = cumulative_realized + (unrealized_pnl or 0) if unrealized_pnl is not None else cumulative_realized
@@ -1731,23 +1759,24 @@ async def get_pegasus_live_pnl():
         return {
             "success": True,
             "data": {
-                "total_unrealized_pnl": unrealized_pnl,
+                "total_unrealized_pnl": round(unrealized_pnl, 2) if unrealized_pnl is not None else None,
                 "total_realized_pnl": round(cumulative_realized, 2),
                 "net_pnl": round(net_pnl, 2),
                 "has_live_pricing": has_live_pricing,
-                "positions": [
+                "pricing_method": mtm_method,
+                "positions": position_details if position_details else [
                     {
                         'position_id': p.position_id,
                         'expiration': p.expiration,
                         'credit_received': p.total_credit * 100 * p.contracts,
                         'contracts': p.contracts,
                         'status': p.status.value,
-                        'unrealized_pnl': None  # Individual position P&L requires live pricing
+                        'unrealized_pnl': None
                     }
                     for p in positions
                 ],
                 "position_count": len(positions),
-                "note": "Live pricing available" if has_live_pricing else "Live pricing unavailable - unrealized P&L cannot be calculated"
+                "note": f"Using {mtm_method} pricing" if has_live_pricing else "MTM unavailable - using estimation"
             }
         }
     except Exception as e:
