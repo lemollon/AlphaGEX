@@ -1672,15 +1672,31 @@ async def get_titan_live_pnl():
         unrealized_pnl = status.get('unrealized_pnl')
         has_live_pricing = status.get('has_live_pricing', False)
 
-        # net_pnl = realized + unrealized (but only if unrealized is available)
-        net_pnl = unrealized_pnl if unrealized_pnl is not None else None
+        # Query cumulative realized P&L from closed positions (fixes hardcoded $0 bug)
+        cumulative_realized = 0.0
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT COALESCE(SUM(realized_pnl), 0)
+                FROM titan_positions
+                WHERE status IN ('closed', 'expired', 'partial_close')
+            ''')
+            realized_row = cursor.fetchone()
+            cumulative_realized = float(realized_row[0]) if realized_row else 0.0
+            conn.close()
+        except Exception as db_err:
+            logger.warning(f"Could not query realized P&L: {db_err}")
+
+        # net_pnl = realized + unrealized
+        net_pnl = cumulative_realized + (unrealized_pnl or 0) if unrealized_pnl is not None else cumulative_realized
 
         return {
             "success": True,
             "data": {
                 "total_unrealized_pnl": unrealized_pnl,
-                "total_realized_pnl": 0,
-                "net_pnl": net_pnl,
+                "total_realized_pnl": round(cumulative_realized, 2),
+                "net_pnl": round(net_pnl, 2),
                 "has_live_pricing": has_live_pricing,
                 "positions": [
                     {

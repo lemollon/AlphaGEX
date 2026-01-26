@@ -1231,6 +1231,28 @@ async def get_icarus_live_pnl():
 
     try:
         pnl_data = icarus.get_live_pnl()
+
+        # Query cumulative realized P&L from closed positions (fixes missing realized P&L)
+        cumulative_realized = 0.0
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT COALESCE(SUM(realized_pnl), 0)
+                FROM icarus_positions
+                WHERE status IN ('closed', 'expired', 'partial_close')
+            ''')
+            realized_row = cursor.fetchone()
+            cumulative_realized = float(realized_row[0]) if realized_row else 0.0
+            conn.close()
+        except Exception as db_err:
+            logger.warning(f"Could not query realized P&L: {db_err}")
+
+        # Add realized P&L to response
+        pnl_data['total_realized_pnl'] = round(cumulative_realized, 2)
+        unrealized = pnl_data.get('total_unrealized_pnl') or 0
+        pnl_data['net_pnl'] = round(cumulative_realized + unrealized, 2)
+
         return {
             "success": True,
             "data": pnl_data

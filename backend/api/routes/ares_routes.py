@@ -3444,6 +3444,27 @@ async def get_ares_live_pnl():
     try:
         live_pnl = ares.get_live_pnl()
 
+        # Query cumulative realized P&L from closed positions (fixes missing realized P&L)
+        cumulative_realized = 0.0
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT COALESCE(SUM(realized_pnl), 0)
+                FROM ares_positions
+                WHERE status IN ('closed', 'expired', 'partial_close')
+            ''')
+            realized_row = cursor.fetchone()
+            cumulative_realized = float(realized_row[0]) if realized_row else 0.0
+            conn.close()
+        except Exception as db_err:
+            logger.warning(f"Could not query realized P&L: {db_err}")
+
+        # Add realized P&L to response
+        live_pnl['total_realized_pnl'] = round(cumulative_realized, 2)
+        unrealized = live_pnl.get('total_unrealized_pnl') or 0
+        live_pnl['net_pnl'] = round(cumulative_realized + unrealized, 2)
+
         return {
             "success": True,
             "data": live_pnl
