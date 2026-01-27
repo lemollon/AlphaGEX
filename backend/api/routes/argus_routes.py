@@ -56,6 +56,40 @@ def set_cached(key: str, value: Any):
     _cache[key] = value
     _cache_times[key] = time.time()
 
+# ==================== DAILY RESET ====================
+# Track last reset date to ensure smoothing state is fresh each day
+_last_reset_date: Optional[date] = None
+
+
+def check_daily_reset():
+    """
+    Check if we need to reset gamma smoothing state for a new trading day.
+
+    This ensures the smoothing windows and baselines are fresh at market open,
+    preventing stale data from previous day affecting today's calculations.
+    """
+    global _last_reset_date
+
+    if not ARGUS_AVAILABLE:
+        return
+
+    today = get_central_time().date()
+    now = get_central_time()
+
+    # Reset at or after market open (8:30 AM CT) if not already reset today
+    market_open = now.replace(hour=8, minute=30, second=0, microsecond=0)
+
+    if now >= market_open and _last_reset_date != today:
+        try:
+            engine = get_argus_engine()
+            engine.reset_gamma_smoothing()
+            engine.reset_expected_move_smoothing()
+            _last_reset_date = today
+            logger.info(f"ARGUS: Daily reset completed for {today}")
+        except Exception as e:
+            logger.error(f"ARGUS: Failed daily reset: {e}")
+
+
 # Try to import ARGUS engine
 ARGUS_AVAILABLE = False
 try:
@@ -740,6 +774,9 @@ async def get_gamma_data(
     - Rate of change
     - Magnets, pin, danger zones
     """
+    # Check if we need to reset smoothing state for new trading day
+    check_daily_reset()
+
     engine = get_engine()
     if not engine:
         raise HTTPException(status_code=503, detail="ARGUS engine not available")
@@ -920,6 +957,14 @@ async def get_gamma_data(
                     confidence=snapshot.pin_probability * 100  # Convert to percentage
                 )
 
+        # Generate actionable trading signal based on gamma evolution
+        trading_signal = engine.generate_trading_signal(
+            filtered_strikes,
+            snapshot.spot_price,
+            snapshot.likely_pin,
+            snapshot.gamma_regime
+        )
+
         # Build response
         return {
             "success": True,
@@ -947,7 +992,8 @@ async def get_gamma_data(
                 "pin_probability": snapshot.pin_probability,
                 "danger_zones": snapshot.danger_zones,
                 "gamma_flips": snapshot.gamma_flips,
-                "pinning_status": snapshot.pinning_status
+                "pinning_status": snapshot.pinning_status,
+                "trading_signal": trading_signal  # Actionable trading guidance based on gamma evolution
             }
         }
 

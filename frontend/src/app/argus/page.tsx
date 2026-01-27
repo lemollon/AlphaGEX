@@ -271,6 +271,25 @@ interface GammaData {
     message?: string
     trade_idea?: string
   }
+  trading_signal?: TradingSignal
+}
+
+// Actionable trading signal based on gamma evolution patterns
+interface TradingSignal {
+  signal: 'SELL_PREMIUM' | 'BULLISH_BIAS' | 'BEARISH_BIAS' | 'BREAKOUT_LIKELY' | 'STRONG_PIN' | 'NEUTRAL_WAIT' | 'MIXED_SIGNALS' | 'NO_DATA'
+  confidence: 'HIGH' | 'MEDIUM' | 'LOW'
+  action: string
+  explanation: string
+  building_count: number
+  decaying_count: number
+  building_above_spot: number
+  building_below_spot: number
+  avg_building_strength: number
+  avg_decaying_strength: number
+  gamma_regime: string
+  target_strike?: number
+  short_strike_call?: number
+  short_strike_put?: number
 }
 
 interface DangerZoneLog {
@@ -3159,6 +3178,75 @@ export default function ArgusPage() {
                     {strikeEvolutions.length} strikes | Change since open
                   </div>
                 </div>
+
+                {/* Trading Signal Panel - Actionable guidance based on gamma evolution */}
+                {gammaData?.trading_signal && (
+                  <div className={`mt-4 p-4 rounded-lg border ${
+                    gammaData.trading_signal.confidence === 'HIGH'
+                      ? 'bg-emerald-500/10 border-emerald-500/30'
+                      : gammaData.trading_signal.confidence === 'MEDIUM'
+                        ? 'bg-yellow-500/10 border-yellow-500/30'
+                        : 'bg-gray-700/50 border-gray-600'
+                  }`}>
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Lightbulb className={`w-4 h-4 ${
+                            gammaData.trading_signal.confidence === 'HIGH'
+                              ? 'text-emerald-400'
+                              : gammaData.trading_signal.confidence === 'MEDIUM'
+                                ? 'text-yellow-400'
+                                : 'text-gray-400'
+                          }`} />
+                          <span className={`text-sm font-bold ${
+                            gammaData.trading_signal.signal === 'SELL_PREMIUM' ? 'text-emerald-400' :
+                            gammaData.trading_signal.signal === 'BULLISH_BIAS' ? 'text-cyan-400' :
+                            gammaData.trading_signal.signal === 'BEARISH_BIAS' ? 'text-rose-400' :
+                            gammaData.trading_signal.signal === 'BREAKOUT_LIKELY' ? 'text-orange-400' :
+                            gammaData.trading_signal.signal === 'STRONG_PIN' ? 'text-purple-400' :
+                            'text-gray-400'
+                          }`}>
+                            {gammaData.trading_signal.signal.replace(/_/g, ' ')}
+                          </span>
+                          <span className={`text-[10px] px-1.5 py-0.5 rounded ${
+                            gammaData.trading_signal.confidence === 'HIGH'
+                              ? 'bg-emerald-500/20 text-emerald-400'
+                              : gammaData.trading_signal.confidence === 'MEDIUM'
+                                ? 'bg-yellow-500/20 text-yellow-400'
+                                : 'bg-gray-600 text-gray-400'
+                          }`}>
+                            {gammaData.trading_signal.confidence} CONFIDENCE
+                          </span>
+                        </div>
+                        <div className="text-white font-medium text-sm mb-1">
+                          {gammaData.trading_signal.action}
+                        </div>
+                        <div className="text-gray-400 text-xs leading-relaxed">
+                          {gammaData.trading_signal.explanation}
+                        </div>
+                        {(gammaData.trading_signal.target_strike || gammaData.trading_signal.short_strike_call) && (
+                          <div className="flex items-center gap-3 mt-2 text-[11px]">
+                            {gammaData.trading_signal.target_strike && (
+                              <span className="text-gray-500">
+                                Target: <span className="text-white font-mono">${gammaData.trading_signal.target_strike}</span>
+                              </span>
+                            )}
+                            {gammaData.trading_signal.short_strike_call && (
+                              <span className="text-gray-500">
+                                Short Call: <span className="text-cyan-400 font-mono">${gammaData.trading_signal.short_strike_call}</span>
+                              </span>
+                            )}
+                            {gammaData.trading_signal.short_strike_put && (
+                              <span className="text-gray-500">
+                                Short Put: <span className="text-orange-400 font-mono">${gammaData.trading_signal.short_strike_put}</span>
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
               )
             })()}

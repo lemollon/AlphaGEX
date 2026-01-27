@@ -213,6 +213,18 @@ class ArgusEngine:
         self._previous_expected_move: Optional[float] = None
         self._ema_alpha: float = 0.3  # 30% new value, 70% previous (tunable)
 
+        # Gamma smoothing state - reduces noise from Tradier Greeks recalculations
+        # Rolling window stores recent gamma values per strike for median smoothing
+        self._gamma_window: Dict[float, List[float]] = {}  # strike -> [recent gamma values]
+        self._gamma_window_size: int = 5  # Number of readings to average
+        self._gamma_smoothing_enabled: bool = True
+        self._previous_spot_price: Optional[float] = None
+        self._max_gamma_change_pct: float = 50.0  # Max % change allowed without price move
+
+        # Market open baseline - stores first 5 minutes of readings for stable baseline
+        self._market_open_baselines: Dict[float, List[float]] = {}  # strike -> [opening values]
+        self._baseline_locked: bool = False  # Lock baseline after 5 minutes
+
     def reset_expected_move_smoothing(self):
         """
         Reset the expected move smoothing state.
@@ -239,6 +251,127 @@ class ArgusEngine:
             raise ValueError("Alpha must be between 0 (exclusive) and 1 (inclusive)")
         self._ema_alpha = alpha
         logger.info(f"Expected move EMA alpha set to {alpha}")
+
+    def set_gamma_smoothing(self, enabled: bool = True, window_size: int = 5,
+                            max_change_pct: float = 50.0):
+        """
+        Configure gamma smoothing to reduce noise from Tradier Greeks recalculations.
+
+        Args:
+            enabled: Whether to enable gamma smoothing (default True)
+            window_size: Number of recent readings to use for median (default 5)
+            max_change_pct: Maximum % change allowed in single reading without price move (default 50%)
+        """
+        self._gamma_smoothing_enabled = enabled
+        self._gamma_window_size = window_size
+        self._max_gamma_change_pct = max_change_pct
+        logger.info(f"Gamma smoothing: enabled={enabled}, window={window_size}, max_change={max_change_pct}%")
+
+    def reset_gamma_smoothing(self):
+        """
+        Reset gamma smoothing state at start of new trading day.
+        Call this when market opens to clear stale data.
+        """
+        self._gamma_window = {}
+        self._previous_spot_price = None
+        self._market_open_baselines = {}
+        self._baseline_locked = False
+        logger.debug("Gamma smoothing state reset for new trading day")
+
+    def _smooth_gamma_value(self, strike: float, raw_gamma: float, spot_price: float) -> float:
+        """
+        Apply smoothing to a raw gamma value to reduce noise.
+
+        Uses median of recent readings (robust to outliers) and validates
+        that large changes only occur when price has moved significantly.
+
+        Args:
+            strike: Strike price
+            raw_gamma: Raw gamma value from Tradier
+            spot_price: Current spot price
+
+        Returns:
+            Smoothed gamma value
+        """
+        if not self._gamma_smoothing_enabled:
+            return raw_gamma
+
+        # Initialize window for this strike if needed
+        if strike not in self._gamma_window:
+            self._gamma_window[strike] = []
+
+        window = self._gamma_window[strike]
+
+        # Check for suspicious large change without price movement
+        if window and self._previous_spot_price is not None:
+            last_gamma = window[-1]
+            if last_gamma != 0:
+                change_pct = abs((raw_gamma - last_gamma) / abs(last_gamma)) * 100
+                price_change_pct = abs((spot_price - self._previous_spot_price) / self._previous_spot_price) * 100
+
+                # If gamma changed dramatically but price didn't, dampen the change
+                if change_pct > self._max_gamma_change_pct and price_change_pct < 0.1:
+                    # Blend: 70% previous, 30% new (dampen noise)
+                    raw_gamma = 0.7 * last_gamma + 0.3 * raw_gamma
+                    logger.debug(f"Dampened gamma spike at strike {strike}: "
+                                f"{change_pct:.1f}% change with {price_change_pct:.2f}% price move")
+
+        # Add to rolling window
+        window.append(raw_gamma)
+
+        # Keep window at configured size
+        if len(window) > self._gamma_window_size:
+            window.pop(0)
+
+        # Use median for robustness to outliers
+        if len(window) >= 3:
+            smoothed = float(np.median(window))
+        else:
+            # Not enough data yet, use simple average
+            smoothed = sum(window) / len(window)
+
+        return smoothed
+
+    def _update_market_open_baseline(self, strike: float, gamma: float):
+        """
+        Update market open baseline for a strike.
+
+        Collects readings for first 5 minutes after market open to establish
+        a stable baseline (average of multiple readings, not just first snapshot).
+        """
+        from zoneinfo import ZoneInfo
+        CENTRAL_TZ = ZoneInfo("America/Chicago")
+        now = datetime.now(CENTRAL_TZ)
+        market_open = now.replace(hour=8, minute=30, second=0, microsecond=0)
+
+        # Only collect baseline in first 5 minutes after open
+        if now < market_open or (now - market_open).total_seconds() > 300:
+            if not self._baseline_locked and self._market_open_baselines:
+                self._baseline_locked = True
+                logger.info("Market open baselines locked after 5 minutes")
+            return
+
+        # Add to baseline collection
+        if strike not in self._market_open_baselines:
+            self._market_open_baselines[strike] = []
+
+        self._market_open_baselines[strike].append(gamma)
+
+    def get_market_open_baseline(self, strike: float) -> Optional[float]:
+        """
+        Get the stable market open baseline for a strike.
+
+        Returns median of first 5 minutes of readings for stability.
+        """
+        if strike not in self._market_open_baselines:
+            return None
+
+        baselines = self._market_open_baselines[strike]
+        if not baselines:
+            return None
+
+        # Use median for robustness
+        return float(np.median(baselines))
 
     def _get_ml_models(self):
         """Lazy load ML probability models"""
@@ -544,13 +677,18 @@ class ArgusEngine:
         return round(roc, 2)
 
     def calculate_roc_since_open(self, current_gamma: float,
-                                  history: List[Tuple[datetime, float]]) -> float:
+                                  history: List[Tuple[datetime, float]],
+                                  strike: float = None) -> float:
         """
         Calculate rate of change since market open (8:30 AM CT).
+
+        Uses stable baseline (median of first 5 minutes) when available,
+        falls back to first recorded value otherwise.
 
         Args:
             current_gamma: Current gamma value
             history: List of (timestamp, gamma) tuples
+            strike: Strike price (for baseline lookup)
 
         Returns:
             Rate of change as percentage since market open
@@ -569,15 +707,20 @@ class ArgusEngine:
         if now < market_open:
             return 0.0
 
-        # Find the first gamma value after market open
+        # Try to use stable baseline first (median of first 5 minutes)
         open_gamma = None
-        for timestamp, gamma in history:
-            # Handle timezone-aware comparison
-            if timestamp.tzinfo is None:
-                timestamp = timestamp.replace(tzinfo=CENTRAL_TZ)
-            if timestamp >= market_open:
-                open_gamma = gamma
-                break
+        if strike is not None:
+            open_gamma = self.get_market_open_baseline(strike)
+
+        # Fall back to first recorded value if no stable baseline
+        if open_gamma is None:
+            for timestamp, gamma in history:
+                # Handle timezone-aware comparison
+                if timestamp.tzinfo is None:
+                    timestamp = timestamp.replace(tzinfo=CENTRAL_TZ)
+                if timestamp >= market_open:
+                    open_gamma = gamma
+                    break
 
         if open_gamma is None or open_gamma == 0:
             return 0.0
@@ -765,6 +908,144 @@ class ArgusEngine:
 
         return {'is_pinning': False}
 
+    def generate_trading_signal(self, strikes: List[StrikeData], spot_price: float,
+                                 likely_pin: float, gamma_regime: str) -> Dict:
+        """
+        Generate actionable trading signal based on gamma evolution patterns.
+
+        This analyzes where gamma is building vs decaying to provide clear trading guidance:
+        - Building gamma = Strike becoming more important (price attracted)
+        - Decaying gamma = Strike losing influence (price may move away)
+
+        Returns:
+            Dict with signal, confidence, and specific trade recommendations
+        """
+        if not strikes:
+            return {
+                'signal': 'NO_DATA',
+                'confidence': 'LOW',
+                'action': 'Wait for market data',
+                'explanation': 'Insufficient data to generate signal'
+            }
+
+        # Categorize strikes by their gamma change since open
+        building_strikes = [s for s in strikes if s.roc_trading_day >= 25.0]
+        decaying_strikes = [s for s in strikes if s.roc_trading_day <= -25.0]
+        stable_strikes = [s for s in strikes if -25.0 < s.roc_trading_day < 25.0]
+
+        # Separate building above vs below spot
+        building_above = [s for s in building_strikes if s.strike > spot_price]
+        building_below = [s for s in building_strikes if s.strike < spot_price]
+        decaying_above = [s for s in decaying_strikes if s.strike > spot_price]
+        decaying_below = [s for s in decaying_strikes if s.strike < spot_price]
+
+        # Count for pattern detection
+        n_building_above = len(building_above)
+        n_building_below = len(building_below)
+        n_decaying_above = len(decaying_above)
+        n_decaying_below = len(decaying_below)
+        n_building = len(building_strikes)
+        n_decaying = len(decaying_strikes)
+
+        # Calculate average building strength
+        avg_building_pct = (sum(s.roc_trading_day for s in building_strikes) /
+                           n_building if n_building else 0)
+        avg_decaying_pct = (sum(s.roc_trading_day for s in decaying_strikes) /
+                           n_decaying if n_decaying else 0)
+
+        # Detect patterns and generate signals
+        signal_data = {
+            'building_count': n_building,
+            'decaying_count': n_decaying,
+            'building_above_spot': n_building_above,
+            'building_below_spot': n_building_below,
+            'avg_building_strength': round(avg_building_pct, 1),
+            'avg_decaying_strength': round(avg_decaying_pct, 1),
+            'gamma_regime': gamma_regime
+        }
+
+        # PATTERN 1: Symmetric building (premium selling opportunity)
+        if n_building_above >= 2 and n_building_below >= 2:
+            signal_data.update({
+                'signal': 'SELL_PREMIUM',
+                'confidence': 'HIGH' if gamma_regime == 'POSITIVE' else 'MEDIUM',
+                'action': f'Iron Condor or Iron Butterfly centered at ${likely_pin}',
+                'explanation': (f'Gamma building symmetrically above ({n_building_above} strikes) '
+                               f'and below ({n_building_below} strikes) spot. '
+                               f'Price likely to stay range-bound near ${likely_pin} pin.'),
+                'short_strike_call': building_above[0].strike if building_above else None,
+                'short_strike_put': building_below[-1].strike if building_below else None,
+            })
+
+        # PATTERN 2: Building above only (bullish bias)
+        elif n_building_above >= 2 and n_building_below == 0:
+            target_strike = building_above[0].strike if building_above else spot_price + 2
+            signal_data.update({
+                'signal': 'BULLISH_BIAS',
+                'confidence': 'HIGH' if gamma_regime == 'NEGATIVE' else 'MEDIUM',
+                'action': f'Bull call spread or call debit spread targeting ${target_strike}',
+                'explanation': (f'Gamma building above spot at {n_building_above} strikes. '
+                               f'Dealers may need to buy as price rises, accelerating move up. '
+                               f'Target: ${target_strike}'),
+                'target_strike': target_strike
+            })
+
+        # PATTERN 3: Building below only (bearish bias)
+        elif n_building_below >= 2 and n_building_above == 0:
+            target_strike = building_below[-1].strike if building_below else spot_price - 2
+            signal_data.update({
+                'signal': 'BEARISH_BIAS',
+                'confidence': 'HIGH' if gamma_regime == 'NEGATIVE' else 'MEDIUM',
+                'action': f'Bear put spread or put debit spread targeting ${target_strike}',
+                'explanation': (f'Gamma building below spot at {n_building_below} strikes. '
+                               f'Dealers may need to sell as price falls, accelerating move down. '
+                               f'Target: ${target_strike}'),
+                'target_strike': target_strike
+            })
+
+        # PATTERN 4: Widespread decay (momentum/breakout likely)
+        elif n_decaying >= 4 and n_building <= 1:
+            signal_data.update({
+                'signal': 'BREAKOUT_LIKELY',
+                'confidence': 'HIGH' if gamma_regime == 'NEGATIVE' else 'MEDIUM',
+                'action': 'Long straddle or strangle at ATM strike',
+                'explanation': (f'Gamma decaying at {n_decaying} strikes (avg: {avg_decaying_pct:.0f}%). '
+                               f'Dealer hedging reduced - price can move freely. '
+                               f'Expect larger move, direction unclear.')
+            })
+
+        # PATTERN 5: Building at pin, decaying elsewhere (strong pinning)
+        elif n_building == 1 and abs(building_strikes[0].strike - likely_pin) <= 1:
+            pin_strength = building_strikes[0].roc_trading_day
+            signal_data.update({
+                'signal': 'STRONG_PIN',
+                'confidence': 'HIGH',
+                'action': f'Sell premium around ${likely_pin} pin. Tight credit spread or butterfly.',
+                'explanation': (f'Gamma concentrating at pin ${likely_pin} (+{pin_strength:.0f}%). '
+                               f'Strong magnet effect. Price should stay tight.')
+            })
+
+        # PATTERN 6: No clear pattern but stable
+        elif n_building <= 1 and n_decaying <= 1:
+            signal_data.update({
+                'signal': 'NEUTRAL_WAIT',
+                'confidence': 'LOW',
+                'action': 'Wait for clearer pattern or trade small iron condor',
+                'explanation': 'Gamma structure stable but no strong directional signal. Wait for setup.'
+            })
+
+        # PATTERN 7: Mixed/chaotic
+        else:
+            signal_data.update({
+                'signal': 'MIXED_SIGNALS',
+                'confidence': 'LOW',
+                'action': 'Reduce position size. Consider waiting.',
+                'explanation': (f'Mixed gamma signals: {n_building} building, {n_decaying} decaying. '
+                               f'Market structure unclear - trade small or sit out.')
+            })
+
+        return signal_data
+
     def generate_alerts(self, current: GammaSnapshot, previous: Optional[GammaSnapshot]) -> List[Alert]:
         """
         Generate alerts based on current snapshot vs previous.
@@ -909,8 +1190,16 @@ class ArgusEngine:
             call_oi = strike_info.get('call_oi', 0)
             put_oi = strike_info.get('put_oi', 0)
 
-            # Calculate net gamma
-            net_gamma = self.calculate_net_gamma(call_gamma, put_gamma, call_oi, put_oi)
+            # Calculate raw net gamma
+            raw_net_gamma = self.calculate_net_gamma(call_gamma, put_gamma, call_oi, put_oi)
+
+            # Apply smoothing to reduce noise from Tradier Greeks recalculations
+            # This uses median of recent readings and dampens suspicious large swings
+            net_gamma = self._smooth_gamma_value(strike, raw_net_gamma, spot_price)
+
+            # Update market open baseline (first 5 minutes of trading)
+            self._update_market_open_baseline(strike, net_gamma)
+
             total_gamma += abs(net_gamma)
             total_net_gamma += net_gamma
 
@@ -937,7 +1226,7 @@ class ArgusEngine:
             roc_30min = self.calculate_roc(strike, net_gamma, history, minutes=30)
             roc_1hr = self.calculate_roc(strike, net_gamma, history, minutes=60)
             roc_4hr = self.calculate_roc(strike, net_gamma, history, minutes=240)
-            roc_trading_day = self.calculate_roc_since_open(net_gamma, history)
+            roc_trading_day = self.calculate_roc_since_open(net_gamma, history, strike=strike)
 
             # Calculate gamma change percentage
             gamma_change_pct = 0
@@ -1061,6 +1350,7 @@ class ArgusEngine:
         # Update state for next iteration
         self.previous_snapshot = snapshot
         self.previous_magnets = [m['strike'] for m in magnets]
+        self._previous_spot_price = spot_price  # Track for smoothing validation
 
         return snapshot
 
