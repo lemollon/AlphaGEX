@@ -33,6 +33,8 @@ try:
     from backend.services.bot_report_generator import (
         generate_report_for_bot,
         get_report_from_archive,
+        get_report_summary,
+        get_reports_bulk,
         get_archive_list,
         get_archive_stats,
         purge_old_reports,
@@ -69,6 +71,46 @@ def _parse_date(date_str: str) -> date:
 # =============================================================================
 # TODAY'S REPORT
 # =============================================================================
+
+@router.get("/{bot}/reports/today/summary")
+async def get_today_report_summary(bot: str):
+    """
+    Get a lightweight summary of today's report for dashboard display.
+
+    This endpoint is optimized for fast loading - it only returns scalar fields
+    and does NOT fetch large JSONB columns (trades_data, intraday_ticks, etc.).
+
+    Use this for dashboard widgets that don't need full trade details.
+
+    Args:
+        bot: Bot name (ares, athena, titan, pegasus, icarus)
+
+    Returns:
+        Lightweight report summary (no trade details or JSONB data)
+    """
+    if not GENERATOR_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Report generator service unavailable")
+
+    bot_lower = _validate_bot(bot)
+    today = datetime.now(CENTRAL_TZ).date()
+
+    # Get lightweight summary (NO JSONB columns)
+    summary = get_report_summary(bot_lower, today)
+    if summary:
+        return {
+            "success": True,
+            "data": summary,
+            "cached": True,
+            "message": "Report summary retrieved"
+        }
+
+    return {
+        "success": True,
+        "data": None,
+        "cached": False,
+        "message": f"No report found for {bot.upper()} today"
+    }
+
 
 @router.get("/{bot}/reports/today")
 async def get_today_report(
@@ -360,14 +402,18 @@ async def download_report(
 @router.get("/{bot}/reports/download-all")
 async def download_all_reports(
     bot: str,
-    format: str = Query("json", description="Download format: json")
+    format: str = Query("json", description="Download format: json"),
+    limit: int = Query(1000, ge=1, le=10000, description="Max reports to download")
 ):
     """
     Download all reports for a bot.
 
+    Uses bulk fetch (single query) instead of N+1 queries for performance.
+
     Args:
         bot: Bot name
         format: 'json' for ML training data
+        limit: Max reports to fetch (default 1000, max 10000)
 
     Returns:
         File download with all reports
@@ -377,25 +423,9 @@ async def download_all_reports(
 
     bot_lower = _validate_bot(bot)
 
-    # Get all reports (no pagination limit for download)
     try:
-        reports, total = get_archive_list(bot_lower, limit=10000, offset=0)
-
-        # For full download, we need complete reports not summaries
-        full_reports = []
-        for summary in reports:
-            date_str = summary.get("report_date")
-            if not date_str:
-                logger.warning(f"Skipping report with missing date: {summary}")
-                continue
-            try:
-                report_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-                full_report = get_report_from_archive(bot_lower, report_date)
-                if full_report:
-                    full_reports.append(full_report)
-            except ValueError as e:
-                logger.warning(f"Could not parse date '{date_str}': {e}")
-                continue
+        # Use bulk fetch - single query instead of N+1
+        full_reports = get_reports_bulk(bot_lower, limit=limit)
 
         if format.lower() == "json":
             content = json.dumps({
