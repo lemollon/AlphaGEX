@@ -825,29 +825,69 @@ export default function ArgusPage() {
       return
     }
 
-    const evolutions: StrikeEvolution[] = gammaData.strikes.map(strike => {
-      const strikeKey = strike.strike.toString()
-      const historyEntries = gammaHistory?.history?.[strikeKey] || []
+    // Helper to find history entries - handles both string and number keys
+    const findHistoryEntries = (strike: number): GammaHistoryEntry[] => {
+      if (!gammaHistory?.history) return []
+      const history = gammaHistory.history
+      // Try multiple key formats: "590", "590.0", 590
+      const keys = [
+        strike.toString(),
+        strike.toFixed(1),
+        strike.toFixed(2),
+        String(strike)
+      ]
+      for (const key of keys) {
+        if (history[key] && Array.isArray(history[key])) {
+          return history[key]
+        }
+      }
+      // Also try finding by parsing all keys
+      for (const [key, entries] of Object.entries(history)) {
+        if (Math.abs(parseFloat(key) - strike) < 0.01) {
+          return entries as GammaHistoryEntry[]
+        }
+      }
+      return []
+    }
 
-      // Get open gamma (first entry of the day)
-      const openGamma = historyEntries.length > 0 ? historyEntries[0].gamma : null
+    const evolutions: StrikeEvolution[] = gammaData.strikes.map(strike => {
+      const historyEntries = findHistoryEntries(strike.strike)
+
+      // Get baseline gamma - first entry we have (earliest available, not necessarily market open)
+      const baselineGamma = historyEntries.length > 0 ? historyEntries[0].gamma : null
 
       // Get prior gamma from our snapshot ref for delta overlay
       const priorGamma = previousSnapshotRef.current.get(strike.strike) ?? null
 
-      // Calculate changes
+      // Calculate changes - use roc_trading_day from strike data as fallback
       const currentGamma = strike.net_gamma
-      const changeSinceOpen = openGamma !== null ? currentGamma - openGamma : 0
-      const changeSinceOpenPct = openGamma !== null && openGamma !== 0
-        ? ((currentGamma - openGamma) / Math.abs(openGamma)) * 100
-        : 0
+      let changeSinceOpen: number
+      let changeSinceOpenPct: number
+
+      if (baselineGamma !== null) {
+        // We have history data - calculate from baseline
+        changeSinceOpen = currentGamma - baselineGamma
+        changeSinceOpenPct = baselineGamma !== 0
+          ? ((currentGamma - baselineGamma) / Math.abs(baselineGamma)) * 100
+          : 0
+      } else if (strike.roc_trading_day !== undefined && strike.roc_trading_day !== 0) {
+        // Fall back to backend's roc_trading_day (% change since market open)
+        changeSinceOpenPct = strike.roc_trading_day
+        // Estimate absolute change from percentage
+        changeSinceOpen = currentGamma * (changeSinceOpenPct / (100 + changeSinceOpenPct))
+      } else {
+        // No data available
+        changeSinceOpen = 0
+        changeSinceOpenPct = 0
+      }
+
       const deltaSincePrior = priorGamma !== null ? currentGamma - priorGamma : 0
 
-      // Build sparkline data (normalize for display)
+      // Build sparkline data
       const sparklineData = historyEntries.map(e => e.gamma)
       const sparklineTimes = historyEntries.map(e => e.time)
 
-      // Add current value to sparkline if not already there
+      // Add current value to sparkline
       if (sparklineData.length > 0) {
         sparklineData.push(currentGamma)
         sparklineTimes.push(new Date().toISOString())
@@ -855,13 +895,13 @@ export default function ArgusPage() {
 
       // Regime detection
       const isPositive = currentGamma > 0
-      const wasPositiveAtOpen = openGamma !== null ? openGamma > 0 : isPositive
-      const regimeFlipped = openGamma !== null && ((openGamma > 0) !== (currentGamma > 0))
+      const wasPositiveAtOpen = baselineGamma !== null ? baselineGamma > 0 : isPositive
+      const regimeFlipped = baselineGamma !== null && ((baselineGamma > 0) !== (currentGamma > 0))
 
       return {
         strike: strike.strike,
         currentGamma,
-        openGamma,
+        openGamma: baselineGamma,
         changeSinceOpen,
         changeSinceOpenPct,
         priorGamma,
@@ -2902,13 +2942,24 @@ export default function ArgusPage() {
             {/* GAMMA EVOLUTION CHART - Change Since Open      */}
             {/* Shows accumulated gamma changes throughout day */}
             {/* ============================================== */}
-            {strikeEvolutions.length > 0 && (
+            {strikeEvolutions.length > 0 && (() => {
+              // Check if we have actual history data or using ROC fallback
+              const strikesWithHistory = strikeEvolutions.filter(e => e.openGamma !== null).length
+              const hasHistoryData = strikesWithHistory > 0
+              const historyPct = Math.round((strikesWithHistory / strikeEvolutions.length) * 100)
+
+              return (
               <div className="bg-gray-800/50 rounded-xl p-5 mt-4">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="font-bold text-white flex items-center gap-2">
                     <Activity className="w-5 h-5 text-cyan-400" />
                     Gamma Evolution
-                    <span className="text-[10px] text-gray-500 font-normal ml-2">Change since market open (8:30 AM CT)</span>
+                    <span className="text-[10px] text-gray-500 font-normal ml-2">
+                      {hasHistoryData
+                        ? `Change since ${strikesWithHistory === strikeEvolutions.length ? 'market open' : 'first tracked'}`
+                        : 'Using ROC % from backend'
+                      }
+                    </span>
                   </h3>
                   <div className="flex items-center gap-4 text-[10px]">
                     <div className="flex items-center gap-1.5">
@@ -2927,21 +2978,21 @@ export default function ArgusPage() {
                 </div>
 
                 {/* Evolution Chart - Bars show change since open */}
-                <div className="relative h-40 flex items-center justify-center gap-1 border-b border-gray-700 mb-2">
+                <div className="relative h-32 flex items-center justify-center gap-0.5 border-b border-gray-700 mb-2">
                   {/* Zero line (center) */}
                   <div className="absolute left-0 right-0 top-1/2 border-t border-gray-600 z-0"></div>
                   <div className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] text-gray-600">0</div>
 
                   {(() => {
-                    // Calculate max change for scaling
-                    const maxChange = Math.max(
-                      ...strikeEvolutions.map(e => Math.abs(e.changeSinceOpen)),
-                      1  // Prevent division by zero
-                    )
-                    const MAX_HEIGHT_PX = 60  // Max bar height in one direction (up or down)
+                    // Calculate max change for scaling - use minimum threshold for better visibility
+                    const changes = strikeEvolutions.map(e => Math.abs(e.changeSinceOpen))
+                    const maxChange = Math.max(...changes, 1e6)  // Min 1M for scale
+                    const MAX_HEIGHT_PX = 45  // Max bar height in one direction (up or down)
 
                     return strikeEvolutions.map((evolution) => {
-                      const barHeight = Math.max(4, (Math.abs(evolution.changeSinceOpen) / maxChange) * MAX_HEIGHT_PX)
+                      // Minimum bar height of 8px for visibility, scale up from there
+                      const rawHeight = (Math.abs(evolution.changeSinceOpen) / maxChange) * MAX_HEIGHT_PX
+                      const barHeight = evolution.changeSinceOpen === 0 ? 3 : Math.max(8, rawHeight)
                       const isPositiveChange = evolution.changeSinceOpen >= 0
                       const barColor = isPositiveChange ? 'bg-cyan-500' : 'bg-orange-500'
 
@@ -2955,7 +3006,7 @@ export default function ArgusPage() {
                         <div
                           key={`evo-${evolution.strike}`}
                           className="flex flex-col items-center group cursor-pointer z-10 relative"
-                          style={{ flex: '1 1 0', maxWidth: '60px' }}
+                          style={{ flex: '1 1 0', maxWidth: '50px', minWidth: '28px' }}
                           onClick={() => {
                             const strikeData = gammaData?.strikes?.find(s => s.strike === evolution.strike)
                             if (strikeData) setSelectedStrike(strikeData)
@@ -2963,19 +3014,19 @@ export default function ArgusPage() {
                         >
                           {/* Change percentage label (top for positive, bottom for negative) */}
                           {isPositiveChange ? (
-                            <div className="text-[9px] text-cyan-400 mb-0.5 font-mono">
-                              +{safeFixed(evolution.changeSinceOpenPct, 0)}%
+                            <div className="text-[8px] text-cyan-400 mb-0.5 font-mono truncate w-full text-center">
+                              {evolution.changeSinceOpen === 0 ? '0' : `+${safeFixed(evolution.changeSinceOpenPct, 0)}%`}
                             </div>
                           ) : (
                             <div className="h-3"></div>
                           )}
 
                           {/* Bar container - positioned relative to center */}
-                          <div className="relative h-[120px] w-full flex flex-col items-center justify-center">
+                          <div className="relative h-[90px] w-full flex flex-col items-center justify-center">
                             {/* Positive change bar (grows upward from center) */}
                             {isPositiveChange && (
                               <div
-                                className={`w-5 rounded-t ${barColor} transition-all hover:opacity-80 absolute bottom-1/2`}
+                                className={`w-7 rounded-t ${barColor} transition-all hover:opacity-80 hover:w-8 absolute bottom-1/2`}
                                 style={{ height: `${barHeight}px` }}
                               >
                                 {/* Regime flip indicator */}
@@ -2988,7 +3039,7 @@ export default function ArgusPage() {
                             {/* Negative change bar (grows downward from center) */}
                             {!isPositiveChange && (
                               <div
-                                className={`w-5 rounded-b ${barColor} transition-all hover:opacity-80 absolute top-1/2`}
+                                className={`w-7 rounded-b ${barColor} transition-all hover:opacity-80 hover:w-8 absolute top-1/2`}
                                 style={{ height: `${barHeight}px` }}
                               >
                                 {/* Regime flip indicator */}
@@ -3044,8 +3095,8 @@ export default function ArgusPage() {
                           <div className="absolute -top-20 left-1/2 -translate-x-1/2 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-[10px] opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50 shadow-lg">
                             <div className="font-mono font-bold text-white">${evolution.strike}</div>
                             <div className="text-gray-400">
-                              Open: <span className={evolution.wasPositiveAtOpen ? 'text-emerald-400' : 'text-rose-400'}>
-                                {evolution.openGamma !== null ? formatGamma(evolution.openGamma) : 'N/A'}
+                              {evolution.openGamma !== null ? 'Baseline' : 'ROC'}: <span className={evolution.wasPositiveAtOpen ? 'text-emerald-400' : 'text-rose-400'}>
+                                {evolution.openGamma !== null ? formatGamma(evolution.openGamma) : `${safeFixed(evolution.changeSinceOpenPct, 1)}%`}
                               </span>
                             </div>
                             <div className="text-gray-400">
@@ -3102,11 +3153,12 @@ export default function ArgusPage() {
                     </div>
                   </div>
                   <div className="text-[10px] text-gray-500">
-                    {gammaHistory ? `${Object.keys(gammaHistory.history).length} strikes tracked` : 'Loading history...'}
+                    {strikeEvolutions.length} strikes near ATM
                   </div>
                 </div>
               </div>
-            )}
+              )
+            })()}
 
             {/* EOD Strike Summary Table */}
             {computedEodStats.length > 0 && (
