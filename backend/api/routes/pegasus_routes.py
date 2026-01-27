@@ -924,13 +924,101 @@ async def get_pegasus_positions():
                 "status": pos.status.value
             })
 
+        # ALWAYS query database for closed positions (in-memory instance only tracks open)
+        closed_positions = []
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT
+                    position_id, expiration,
+                    put_long_strike, put_short_strike, call_short_strike, call_long_strike,
+                    put_credit, call_credit, total_credit,
+                    contracts, spread_width, max_loss, close_price, realized_pnl,
+                    underlying_at_entry, vix_at_entry, status, close_reason,
+                    gex_regime, call_wall, put_wall, flip_point, net_gex,
+                    oracle_confidence, oracle_win_probability, oracle_advice,
+                    oracle_reasoning, oracle_top_factors,
+                    open_time, close_time
+                FROM pegasus_positions
+                WHERE status IN ('closed', 'expired', 'partial_close')
+                ORDER BY COALESCE(close_time, open_time) DESC
+                LIMIT 100
+            ''')
+            closed_rows = cursor.fetchall()
+            conn.close()
+
+            for row in closed_rows:
+                (pos_id, exp, put_long, put_short, call_short, call_long,
+                 put_cr, call_cr, total_cr, contracts, spread_w, max_loss, close_price, realized_pnl,
+                 underlying, vix, status, close_reason,
+                 gex_regime, call_wall, put_wall, flip_point, net_gex,
+                 oracle_confidence, oracle_win_prob, oracle_advice,
+                 oracle_reasoning, oracle_top_factors,
+                 open_time, close_time) = row
+
+                max_profit = float(total_cr or 0) * 100 * (contracts or 0)
+                return_pct = round((float(realized_pnl or 0) / max_profit) * 100, 1) if max_profit else 0
+
+                open_time_ct = None
+                if open_time:
+                    if open_time.tzinfo is None:
+                        open_time = open_time.replace(tzinfo=ZoneInfo("UTC"))
+                    open_time_ct = open_time.astimezone(ZoneInfo("America/Chicago"))
+
+                close_time_ct = None
+                if close_time:
+                    if close_time.tzinfo is None:
+                        close_time = close_time.replace(tzinfo=ZoneInfo("UTC"))
+                    close_time_ct = close_time.astimezone(ZoneInfo("America/Chicago"))
+
+                closed_positions.append({
+                    "position_id": pos_id,
+                    "ticker": "SPX",
+                    "expiration": str(exp) if exp else None,
+                    "put_long_strike": float(put_long) if put_long else 0,
+                    "put_short_strike": float(put_short) if put_short else 0,
+                    "call_short_strike": float(call_short) if call_short else 0,
+                    "call_long_strike": float(call_long) if call_long else 0,
+                    "put_spread": f"{put_long}/{put_short}P",
+                    "call_spread": f"{call_short}/{call_long}C",
+                    "contracts": contracts or 0,
+                    "spread_width": float(spread_w) if spread_w else 0,
+                    "total_credit": float(total_cr) if total_cr else 0,
+                    "max_profit": max_profit,
+                    "max_loss": float(max_loss) if max_loss else 0,
+                    "close_price": float(close_price) if close_price else 0,
+                    "realized_pnl": float(realized_pnl) if realized_pnl else 0,
+                    "return_pct": return_pct,
+                    "close_reason": close_reason,
+                    "underlying_at_entry": float(underlying) if underlying else 0,
+                    "vix_at_entry": float(vix) if vix else 0,
+                    "status": status,
+                    "gex_regime": gex_regime or "NEUTRAL",
+                    "call_wall": float(call_wall) if call_wall else 0,
+                    "put_wall": float(put_wall) if put_wall else 0,
+                    "flip_point": float(flip_point) if flip_point else 0,
+                    "net_gex": float(net_gex) if net_gex else 0,
+                    "oracle_confidence": float(oracle_confidence) if oracle_confidence else 0,
+                    "oracle_win_probability": float(oracle_win_prob) if oracle_win_prob else 0,
+                    "oracle_advice": oracle_advice or "",
+                    "oracle_reasoning": oracle_reasoning or "",
+                    "oracle_top_factors": oracle_top_factors or "",
+                    "open_time": open_time_ct.strftime('%Y-%m-%d %H:%M:%S CT') if open_time_ct else None,
+                    "open_time_iso": open_time_ct.isoformat() if open_time_ct else None,
+                    "close_time": close_time_ct.strftime('%Y-%m-%d %H:%M:%S CT') if close_time_ct else None,
+                    "close_time_iso": close_time_ct.isoformat() if close_time_ct else None,
+                })
+        except Exception as db_err:
+            logger.warning(f"Could not read closed positions from database: {db_err}")
+
         return {
             "success": True,
             "data": {
                 "open_positions": open_positions,
-                "closed_positions": [],
+                "closed_positions": closed_positions,
                 "open_count": len(open_positions),
-                "closed_count": 0
+                "closed_count": len(closed_positions)
             }
         }
     except Exception as e:
