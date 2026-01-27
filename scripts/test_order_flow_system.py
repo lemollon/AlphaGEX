@@ -171,6 +171,8 @@ def test_argus_engine():
         pressure = engine.calculate_bid_ask_pressure(mock_strikes, 585.0)
         print_result("Pressure calculation returns dict", isinstance(pressure, dict))
         print_result("Pressure has 'net_pressure'", 'net_pressure' in pressure)
+        print_result("Pressure has 'raw_pressure'", 'raw_pressure' in pressure)
+        print_result("Pressure has 'smoothing_periods'", 'smoothing_periods' in pressure)
         print_result("Pressure has 'is_valid'", 'is_valid' in pressure)
         print_result("Pressure has 'pressure_direction'", 'pressure_direction' in pressure)
 
@@ -185,7 +187,21 @@ def test_argus_engine():
         print(f"    Direction: {pressure.get('pressure_direction')}")
         print(f"    Strength: {pressure.get('pressure_strength')}")
         print(f"    Net Pressure: {pressure.get('net_pressure')}")
+        print(f"    Raw Pressure: {pressure.get('raw_pressure')}")
+        print(f"    Smoothing Periods: {pressure.get('smoothing_periods')}")
         print(f"    Is Valid: {pressure.get('is_valid')}")
+
+        # Test invalid case (insufficient depth)
+        thin_strikes = [
+            StrikeData(
+                strike=585.0, net_gamma=0.01, call_gamma=0.005, put_gamma=0.005,
+                call_bid_size=5, call_ask_size=3, put_bid_size=2, put_ask_size=4
+            ),
+        ]
+        invalid_pressure = engine.calculate_bid_ask_pressure(thin_strikes, 585.0)
+        print_result("Invalid case has 'raw_pressure'", 'raw_pressure' in invalid_pressure)
+        print_result("Invalid case has 'smoothing_periods'", 'smoothing_periods' in invalid_pressure)
+        print_result("Invalid case is_valid=False", invalid_pressure.get('is_valid') == False)
 
         print(f"\n  Sample combined signal:")
         print(f"    Signal: {volume.get('combined_signal')}")

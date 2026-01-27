@@ -1292,6 +1292,7 @@ class ArgusEngine:
 
         empty_result = {
             'net_pressure': 0.0,
+            'raw_pressure': 0.0,  # Unsmoothed value (same as net when empty)
             'pressure_direction': 'NEUTRAL',
             'pressure_strength': 'NONE',
             'call_pressure': 0.0,
@@ -1300,6 +1301,7 @@ class ArgusEngine:
             'total_ask_size': 0,
             'liquidity_score': 0.0,
             'strikes_used': 0,
+            'smoothing_periods': 0,  # No history yet
             'is_valid': False,
             'reason': '',
             'top_pressure_strikes': []
