@@ -443,6 +443,33 @@ interface EODStrikeStat {
   yesterdaySpikes?: number  // for comparison
 }
 
+// Gamma History for Evolution Chart - tracks gamma changes since market open
+interface GammaHistoryEntry {
+  time: string
+  gamma: number
+}
+
+interface GammaHistoryData {
+  history: Record<string, GammaHistoryEntry[]>  // strike -> history entries
+  minutes: number
+}
+
+// Processed strike evolution data for the Evolution Chart
+interface StrikeEvolution {
+  strike: number
+  currentGamma: number
+  openGamma: number | null  // First recorded gamma of the day (market open)
+  changeSinceOpen: number   // Absolute change in gamma
+  changeSinceOpenPct: number  // Percentage change
+  priorGamma: number | null  // Previous snapshot gamma for delta overlay
+  deltaSincePrior: number   // Change from prior snapshot
+  sparklineData: number[]   // Normalized gamma values for sparkline
+  sparklineTimes: string[]  // Timestamps for sparkline
+  isPositive: boolean       // Current gamma regime
+  wasPositiveAtOpen: boolean // Gamma regime at open
+  regimeFlipped: boolean    // Did regime flip since open
+}
+
 // 0DTE symbols supported by ARGUS (all have daily expirations Mon-Fri)
 const AVAILABLE_SYMBOLS = [
   { symbol: 'SPY', name: 'S&P 500 ETF', supported: true },
@@ -501,6 +528,11 @@ export default function ArgusPage() {
   // Next-day gamma data (tomorrow's expiration)
   const [tomorrowGammaData, setTomorrowGammaData] = useState<GammaData | null>(null)
 
+  // Gamma history for Evolution Chart (sparklines and change since open)
+  const [gammaHistory, setGammaHistory] = useState<GammaHistoryData | null>(null)
+  const [strikeEvolutions, setStrikeEvolutions] = useState<StrikeEvolution[]>([])
+  const previousSnapshotRef = useRef<Map<number, number>>(new Map())  // strike -> gamma for delta overlay
+
   // EOD Strike Statistics
   const [eodStats, setEodStats] = useState<EODStrikeStat[]>([])
 
@@ -536,9 +568,12 @@ export default function ArgusPage() {
     setLastLiveData(null)
     setGammaData(null)
     setTomorrowGammaData(null)
+    setGammaHistory(null)
+    setStrikeEvolutions([])
     setError(null)
     setSmoothedMaxGamma(1)
     previousStrikesRef.current = new Map()
+    previousSnapshotRef.current = new Map()
     initialLoadRef.current = true
   }, [selectedSymbol])
 
@@ -768,6 +803,86 @@ export default function ArgusPage() {
       // Don't clear data on error - preserve existing data
     }
   }, [selectedSymbol, getTomorrowExpiration])
+
+  // Fetch gamma history for Evolution Chart (sparklines, change since open)
+  const fetchGammaHistory = useCallback(async () => {
+    try {
+      // Fetch full trading day history (420 minutes = 7 hours)
+      const response = await apiClient.getArgusHistory(undefined, 420)
+
+      if (response.data?.success && response.data?.data?.history) {
+        setGammaHistory(response.data.data as GammaHistoryData)
+      }
+    } catch (err) {
+      console.error('[ARGUS] Error fetching gamma history:', err)
+      // Don't clear existing data on error
+    }
+  }, [])
+
+  // Process gamma history + current data into strike evolutions for the Evolution Chart
+  useEffect(() => {
+    if (!gammaData?.strikes || gammaData.strikes.length === 0) {
+      return
+    }
+
+    const evolutions: StrikeEvolution[] = gammaData.strikes.map(strike => {
+      const strikeKey = strike.strike.toString()
+      const historyEntries = gammaHistory?.history?.[strikeKey] || []
+
+      // Get open gamma (first entry of the day)
+      const openGamma = historyEntries.length > 0 ? historyEntries[0].gamma : null
+
+      // Get prior gamma from our snapshot ref for delta overlay
+      const priorGamma = previousSnapshotRef.current.get(strike.strike) ?? null
+
+      // Calculate changes
+      const currentGamma = strike.net_gamma
+      const changeSinceOpen = openGamma !== null ? currentGamma - openGamma : 0
+      const changeSinceOpenPct = openGamma !== null && openGamma !== 0
+        ? ((currentGamma - openGamma) / Math.abs(openGamma)) * 100
+        : 0
+      const deltaSincePrior = priorGamma !== null ? currentGamma - priorGamma : 0
+
+      // Build sparkline data (normalize for display)
+      const sparklineData = historyEntries.map(e => e.gamma)
+      const sparklineTimes = historyEntries.map(e => e.time)
+
+      // Add current value to sparkline if not already there
+      if (sparklineData.length > 0) {
+        sparklineData.push(currentGamma)
+        sparklineTimes.push(new Date().toISOString())
+      }
+
+      // Regime detection
+      const isPositive = currentGamma > 0
+      const wasPositiveAtOpen = openGamma !== null ? openGamma > 0 : isPositive
+      const regimeFlipped = openGamma !== null && ((openGamma > 0) !== (currentGamma > 0))
+
+      return {
+        strike: strike.strike,
+        currentGamma,
+        openGamma,
+        changeSinceOpen,
+        changeSinceOpenPct,
+        priorGamma,
+        deltaSincePrior,
+        sparklineData,
+        sparklineTimes,
+        isPositive,
+        wasPositiveAtOpen,
+        regimeFlipped
+      }
+    })
+
+    setStrikeEvolutions(evolutions)
+
+    // Update the previous snapshot ref for next delta calculation
+    const newSnapshot = new Map<number, number>()
+    gammaData.strikes.forEach(s => {
+      newSnapshot.set(s.strike, s.net_gamma)
+    })
+    previousSnapshotRef.current = newSnapshot
+  }, [gammaData, gammaHistory])
 
   const fetchDangerZoneLogs = useCallback(async () => {
     try {
@@ -1093,6 +1208,7 @@ export default function ArgusPage() {
           fetchExpirations(),
           fetchGammaData(),
           fetchTomorrowGammaData(),  // Fetch next-day data
+          fetchGammaHistory(),       // Fetch history for Evolution Chart
           fetchAlerts(),
           fetchCommentary(),
           fetchContext(),
@@ -1150,12 +1266,13 @@ export default function ArgusPage() {
         fetchBotPositions()
       }, 30000)
 
-      // Slow polling: Commentary, accuracy, patterns, tomorrow's data every 60 seconds
+      // Slow polling: Commentary, accuracy, patterns, tomorrow's data, history every 60 seconds
       slowPollRef.current = setInterval(() => {
         fetchCommentary()
         fetchAccuracyMetrics()
         fetchPatternMatches()
         fetchTomorrowGammaData()
+        fetchGammaHistory()  // Update history for Evolution Chart
       }, 60000)
     }
 
@@ -2780,6 +2897,216 @@ export default function ArgusPage() {
                 ))}
               </div>
             </div>
+
+            {/* ============================================== */}
+            {/* GAMMA EVOLUTION CHART - Change Since Open      */}
+            {/* Shows accumulated gamma changes throughout day */}
+            {/* ============================================== */}
+            {strikeEvolutions.length > 0 && (
+              <div className="bg-gray-800/50 rounded-xl p-5 mt-4">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="font-bold text-white flex items-center gap-2">
+                    <Activity className="w-5 h-5 text-cyan-400" />
+                    Gamma Evolution
+                    <span className="text-[10px] text-gray-500 font-normal ml-2">Change since market open (8:30 AM CT)</span>
+                  </h3>
+                  <div className="flex items-center gap-4 text-[10px]">
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-3 h-3 rounded bg-cyan-500"></div>
+                      <span className="text-gray-400">+Δ (Building)</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-3 h-3 rounded bg-orange-500"></div>
+                      <span className="text-gray-400">-Δ (Decaying)</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-2 h-2 rounded-full bg-purple-500"></div>
+                      <span className="text-gray-400">Regime Flip</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Evolution Chart - Bars show change since open */}
+                <div className="relative h-40 flex items-center justify-center gap-1 border-b border-gray-700 mb-2">
+                  {/* Zero line (center) */}
+                  <div className="absolute left-0 right-0 top-1/2 border-t border-gray-600 z-0"></div>
+                  <div className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] text-gray-600">0</div>
+
+                  {(() => {
+                    // Calculate max change for scaling
+                    const maxChange = Math.max(
+                      ...strikeEvolutions.map(e => Math.abs(e.changeSinceOpen)),
+                      1  // Prevent division by zero
+                    )
+                    const MAX_HEIGHT_PX = 60  // Max bar height in one direction (up or down)
+
+                    return strikeEvolutions.map((evolution) => {
+                      const barHeight = Math.max(4, (Math.abs(evolution.changeSinceOpen) / maxChange) * MAX_HEIGHT_PX)
+                      const isPositiveChange = evolution.changeSinceOpen >= 0
+                      const barColor = isPositiveChange ? 'bg-cyan-500' : 'bg-orange-500'
+
+                      // Sparkline mini-chart (last 10 data points)
+                      const sparklinePoints = evolution.sparklineData.slice(-10)
+                      const sparklineMin = Math.min(...sparklinePoints, 0)
+                      const sparklineMax = Math.max(...sparklinePoints, 1)
+                      const sparklineRange = sparklineMax - sparklineMin || 1
+
+                      return (
+                        <div
+                          key={`evo-${evolution.strike}`}
+                          className="flex flex-col items-center group cursor-pointer z-10 relative"
+                          style={{ flex: '1 1 0', maxWidth: '60px' }}
+                          onClick={() => {
+                            const strikeData = gammaData?.strikes?.find(s => s.strike === evolution.strike)
+                            if (strikeData) setSelectedStrike(strikeData)
+                          }}
+                        >
+                          {/* Change percentage label (top for positive, bottom for negative) */}
+                          {isPositiveChange ? (
+                            <div className="text-[9px] text-cyan-400 mb-0.5 font-mono">
+                              +{safeFixed(evolution.changeSinceOpenPct, 0)}%
+                            </div>
+                          ) : (
+                            <div className="h-3"></div>
+                          )}
+
+                          {/* Bar container - positioned relative to center */}
+                          <div className="relative h-[120px] w-full flex flex-col items-center justify-center">
+                            {/* Positive change bar (grows upward from center) */}
+                            {isPositiveChange && (
+                              <div
+                                className={`w-5 rounded-t ${barColor} transition-all hover:opacity-80 absolute bottom-1/2`}
+                                style={{ height: `${barHeight}px` }}
+                              >
+                                {/* Regime flip indicator */}
+                                {evolution.regimeFlipped && (
+                                  <div className="absolute -top-2 left-1/2 -translate-x-1/2 w-2 h-2 rounded-full bg-purple-500"></div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Negative change bar (grows downward from center) */}
+                            {!isPositiveChange && (
+                              <div
+                                className={`w-5 rounded-b ${barColor} transition-all hover:opacity-80 absolute top-1/2`}
+                                style={{ height: `${barHeight}px` }}
+                              >
+                                {/* Regime flip indicator */}
+                                {evolution.regimeFlipped && (
+                                  <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-2 h-2 rounded-full bg-purple-500"></div>
+                                )}
+                              </div>
+                            )}
+
+                            {/* Delta overlay - small indicator showing change from prior snapshot */}
+                            {evolution.deltaSincePrior !== 0 && (
+                              <div
+                                className={`absolute ${isPositiveChange ? 'bottom-1/2' : 'top-1/2'} left-1/2 -translate-x-1/2 text-[8px] font-mono ${
+                                  evolution.deltaSincePrior > 0 ? 'text-emerald-400' : 'text-rose-400'
+                                }`}
+                                style={{
+                                  [isPositiveChange ? 'marginBottom' : 'marginTop']: `${barHeight + 2}px`
+                                }}
+                              >
+                                {evolution.deltaSincePrior > 0 ? '↑' : '↓'}
+                              </div>
+                            )}
+
+                            {/* Sparkline - mini chart showing intraday evolution */}
+                            {sparklinePoints.length > 2 && (
+                              <div className="absolute bottom-0 left-1/2 -translate-x-1/2 w-8 h-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <svg viewBox="0 0 40 12" className="w-full h-full" preserveAspectRatio="none">
+                                  <polyline
+                                    fill="none"
+                                    stroke={evolution.isPositive ? '#10b981' : '#f43f5e'}
+                                    strokeWidth="1"
+                                    points={sparklinePoints.map((val, idx) => {
+                                      const x = (idx / (sparklinePoints.length - 1)) * 40
+                                      const y = 12 - ((val - sparklineMin) / sparklineRange) * 12
+                                      return `${x},${y}`
+                                    }).join(' ')}
+                                  />
+                                </svg>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Change percentage label (bottom for negative) */}
+                          {!isPositiveChange ? (
+                            <div className="text-[9px] text-orange-400 mt-0.5 font-mono">
+                              {safeFixed(evolution.changeSinceOpenPct, 0)}%
+                            </div>
+                          ) : (
+                            <div className="h-3"></div>
+                          )}
+
+                          {/* Tooltip on hover */}
+                          <div className="absolute -top-20 left-1/2 -translate-x-1/2 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-[10px] opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-50 shadow-lg">
+                            <div className="font-mono font-bold text-white">${evolution.strike}</div>
+                            <div className="text-gray-400">
+                              Open: <span className={evolution.wasPositiveAtOpen ? 'text-emerald-400' : 'text-rose-400'}>
+                                {evolution.openGamma !== null ? formatGamma(evolution.openGamma) : 'N/A'}
+                              </span>
+                            </div>
+                            <div className="text-gray-400">
+                              Now: <span className={evolution.isPositive ? 'text-emerald-400' : 'text-rose-400'}>
+                                {formatGamma(evolution.currentGamma)}
+                              </span>
+                            </div>
+                            <div className={evolution.changeSinceOpen >= 0 ? 'text-cyan-400' : 'text-orange-400'}>
+                              Δ: {evolution.changeSinceOpen >= 0 ? '+' : ''}{formatGamma(evolution.changeSinceOpen)}
+                              {' '}({evolution.changeSinceOpenPct >= 0 ? '+' : ''}{safeFixed(evolution.changeSinceOpenPct, 1)}%)
+                            </div>
+                            {evolution.regimeFlipped && (
+                              <div className="text-purple-400 font-medium">⚡ Regime flipped!</div>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })
+                  })()}
+                </div>
+
+                {/* Strike labels for Evolution Chart */}
+                <div className="flex justify-center gap-1">
+                  {strikeEvolutions.map((evolution) => (
+                    <div
+                      key={`evo-label-${evolution.strike}`}
+                      className={`text-[10px] font-mono text-center ${
+                        evolution.regimeFlipped ? 'text-purple-400 font-bold' : 'text-gray-600'
+                      }`}
+                      style={{ flex: '1 1 0', maxWidth: '60px' }}
+                    >
+                      {evolution.strike}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Summary stats */}
+                <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-700">
+                  <div className="flex items-center gap-4 text-[11px]">
+                    <div className="text-gray-400">
+                      Building: <span className="text-cyan-400 font-mono">
+                        {strikeEvolutions.filter(e => e.changeSinceOpen > 0).length}
+                      </span>
+                    </div>
+                    <div className="text-gray-400">
+                      Decaying: <span className="text-orange-400 font-mono">
+                        {strikeEvolutions.filter(e => e.changeSinceOpen < 0).length}
+                      </span>
+                    </div>
+                    <div className="text-gray-400">
+                      Regime Flips: <span className="text-purple-400 font-mono">
+                        {strikeEvolutions.filter(e => e.regimeFlipped).length}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="text-[10px] text-gray-500">
+                    {gammaHistory ? `${Object.keys(gammaHistory.history).length} strikes tracked` : 'Loading history...'}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* EOD Strike Summary Table */}
             {computedEodStats.length > 0 && (
