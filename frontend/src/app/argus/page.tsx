@@ -272,6 +272,7 @@ interface GammaData {
     trade_idea?: string
   }
   trading_signal?: TradingSignal
+  order_flow?: OrderFlow  // Bid/ask pressure analysis for signal confirmation
 }
 
 // Net GEX Volume - intraday flow weighted by gamma impact
@@ -282,6 +283,48 @@ interface GexVolume {
   flow_direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL'
   flow_strength: 'STRONG' | 'MODERATE' | 'WEAK' | 'NONE'
   imbalance_ratio: number      // Percentage imbalance
+  top_call_flow_strikes: Array<{strike: number, call_flow: number, call_volume: number}>
+  top_put_flow_strikes: Array<{strike: number, put_flow: number, put_volume: number}>
+}
+
+// Bid/Ask Order Flow Pressure Analysis
+interface BidAskPressure {
+  net_pressure: number           // -1 to +1 (smoothed)
+  raw_pressure: number           // -1 to +1 (unsmoothed)
+  pressure_direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL'
+  pressure_strength: 'STRONG' | 'MODERATE' | 'WEAK' | 'NONE'
+  call_pressure: number          // Call bid/ask imbalance
+  put_pressure: number           // Put bid/ask imbalance
+  total_bid_size: number         // Total contracts at bid
+  total_ask_size: number         // Total contracts at ask
+  liquidity_score: number        // 0-100 execution quality
+  strikes_used: number           // ATM strikes analyzed
+  smoothing_periods: number      // Readings in average
+  is_valid: boolean              // Signal reliability
+  reason: string                 // If invalid, why
+  top_pressure_strikes: Array<{
+    strike: number
+    call_bid_size: number
+    call_ask_size: number
+    put_bid_size: number
+    put_ask_size: number
+    call_imbalance: number
+    put_imbalance: number
+    net_pressure: number
+  }>
+}
+
+// Combined Order Flow Analysis (Volume + Bid/Ask Pressure)
+interface OrderFlow {
+  net_gex_volume: number
+  call_gex_flow: number
+  put_gex_flow: number
+  flow_direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL'
+  flow_strength: 'STRONG' | 'MODERATE' | 'WEAK' | 'NONE'
+  imbalance_ratio: number
+  bid_ask_pressure: BidAskPressure
+  combined_signal: 'STRONG_BULLISH' | 'BULLISH' | 'STRONG_BEARISH' | 'BEARISH' | 'NEUTRAL' | 'DIVERGENCE_BULLISH' | 'DIVERGENCE_BEARISH'
+  signal_confidence: 'HIGH' | 'MEDIUM' | 'LOW'
   top_call_flow_strikes: Array<{strike: number, call_flow: number, call_volume: number}>
   top_put_flow_strikes: Array<{strike: number, put_flow: number, put_volume: number}>
 }
@@ -3319,6 +3362,179 @@ export default function ArgusPage() {
                         )}
                       </div>
                     </div>
+                  </div>
+                )}
+
+                {/* Order Flow Pressure Panel */}
+                {gammaData?.order_flow?.bid_ask_pressure && (
+                  <div className={`mt-4 p-4 rounded-lg border ${
+                    !gammaData.order_flow.bid_ask_pressure.is_valid
+                      ? 'bg-gray-800/30 border-gray-700/30'
+                      : gammaData.order_flow.signal_confidence === 'HIGH'
+                        ? 'bg-gradient-to-r from-emerald-900/20 to-cyan-900/20 border-emerald-500/30'
+                        : gammaData.order_flow.signal_confidence === 'MEDIUM'
+                          ? 'bg-gradient-to-r from-yellow-900/20 to-orange-900/20 border-yellow-500/30'
+                          : 'bg-gray-800/30 border-gray-700/30'
+                  }`}>
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-2">
+                        <Layers className="w-4 h-4 text-purple-400" />
+                        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                          Order Flow Pressure
+                        </span>
+                        <span className="text-[9px] text-gray-600">(±3% ATM, smoothed)</span>
+                      </div>
+                      {gammaData.order_flow.bid_ask_pressure.is_valid ? (
+                        <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${
+                          gammaData.order_flow.combined_signal.includes('BULLISH')
+                            ? 'bg-cyan-500/20 text-cyan-400'
+                            : gammaData.order_flow.combined_signal.includes('BEARISH')
+                              ? 'bg-rose-500/20 text-rose-400'
+                              : gammaData.order_flow.combined_signal.includes('DIVERGENCE')
+                                ? 'bg-orange-500/20 text-orange-400'
+                                : 'bg-gray-600 text-gray-400'
+                        }`}>
+                          {gammaData.order_flow.combined_signal.replace(/_/g, ' ')}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-gray-600 text-gray-400">
+                          INSUFFICIENT DATA
+                        </span>
+                      )}
+                    </div>
+
+                    {gammaData.order_flow.bid_ask_pressure.is_valid ? (
+                      <>
+                        {/* Pressure Gauge */}
+                        <div className="mb-3">
+                          <div className="flex items-center justify-between text-[10px] text-gray-500 mb-1">
+                            <span>BEARISH</span>
+                            <span>NEUTRAL</span>
+                            <span>BULLISH</span>
+                          </div>
+                          <div className="relative h-3 bg-gray-700 rounded-full overflow-hidden">
+                            {/* Gradient background */}
+                            <div className="absolute inset-0 bg-gradient-to-r from-rose-600 via-gray-600 to-cyan-600 opacity-30" />
+                            {/* Center line */}
+                            <div className="absolute left-1/2 top-0 bottom-0 w-px bg-gray-500" />
+                            {/* Pressure indicator */}
+                            <div
+                              className={`absolute top-0 bottom-0 w-1 rounded-full transition-all duration-500 ${
+                                gammaData.order_flow.bid_ask_pressure.pressure_direction === 'BULLISH'
+                                  ? 'bg-cyan-400 shadow-lg shadow-cyan-400/50'
+                                  : gammaData.order_flow.bid_ask_pressure.pressure_direction === 'BEARISH'
+                                    ? 'bg-rose-400 shadow-lg shadow-rose-400/50'
+                                    : 'bg-gray-400'
+                              }`}
+                              style={{
+                                left: `${50 + (gammaData.order_flow.bid_ask_pressure.net_pressure * 50)}%`,
+                                transform: 'translateX(-50%)'
+                              }}
+                            />
+                          </div>
+                          <div className="text-center mt-1">
+                            <span className={`text-lg font-mono font-bold ${
+                              gammaData.order_flow.bid_ask_pressure.pressure_direction === 'BULLISH'
+                                ? 'text-cyan-400'
+                                : gammaData.order_flow.bid_ask_pressure.pressure_direction === 'BEARISH'
+                                  ? 'text-rose-400'
+                                  : 'text-gray-400'
+                            }`}>
+                              {gammaData.order_flow.bid_ask_pressure.net_pressure > 0 ? '+' : ''}
+                              {(gammaData.order_flow.bid_ask_pressure.net_pressure * 100).toFixed(1)}%
+                            </span>
+                            <span className={`ml-2 text-xs px-1.5 py-0.5 rounded ${
+                              gammaData.order_flow.bid_ask_pressure.pressure_strength === 'STRONG'
+                                ? 'bg-emerald-500/20 text-emerald-400'
+                                : gammaData.order_flow.bid_ask_pressure.pressure_strength === 'MODERATE'
+                                  ? 'bg-yellow-500/20 text-yellow-400'
+                                  : 'bg-gray-600 text-gray-500'
+                            }`}>
+                              {gammaData.order_flow.bid_ask_pressure.pressure_strength}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Details Grid */}
+                        <div className="grid grid-cols-2 gap-3 text-[11px]">
+                          <div className="space-y-1">
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">Call Pressure</span>
+                              <span className={`font-mono ${
+                                gammaData.order_flow.bid_ask_pressure.call_pressure > 0 ? 'text-cyan-400' : 'text-rose-400'
+                              }`}>
+                                {gammaData.order_flow.bid_ask_pressure.call_pressure > 0 ? '+' : ''}
+                                {(gammaData.order_flow.bid_ask_pressure.call_pressure * 100).toFixed(1)}%
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">Put Pressure</span>
+                              <span className={`font-mono ${
+                                gammaData.order_flow.bid_ask_pressure.put_pressure > 0 ? 'text-cyan-400' : 'text-rose-400'
+                              }`}>
+                                {gammaData.order_flow.bid_ask_pressure.put_pressure > 0 ? '+' : ''}
+                                {(gammaData.order_flow.bid_ask_pressure.put_pressure * 100).toFixed(1)}%
+                              </span>
+                            </div>
+                          </div>
+                          <div className="space-y-1">
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">Total Bid</span>
+                              <span className="font-mono text-emerald-400">
+                                {gammaData.order_flow.bid_ask_pressure.total_bid_size.toLocaleString()}
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-gray-500">Total Ask</span>
+                              <span className="font-mono text-rose-400">
+                                {gammaData.order_flow.bid_ask_pressure.total_ask_size.toLocaleString()}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Footer */}
+                        <div className="flex items-center justify-between mt-3 pt-2 border-t border-gray-700/50 text-[10px] text-gray-500">
+                          <span>
+                            Liquidity: <span className={`font-mono ${
+                              gammaData.order_flow.bid_ask_pressure.liquidity_score >= 70 ? 'text-emerald-400' :
+                              gammaData.order_flow.bid_ask_pressure.liquidity_score >= 40 ? 'text-yellow-400' :
+                              'text-rose-400'
+                            }`}>{gammaData.order_flow.bid_ask_pressure.liquidity_score}/100</span>
+                          </span>
+                          <span>
+                            {gammaData.order_flow.bid_ask_pressure.strikes_used} ATM strikes
+                          </span>
+                          <span>
+                            {gammaData.order_flow.bid_ask_pressure.smoothing_periods}/5 avg
+                          </span>
+                          <span className={`px-1.5 py-0.5 rounded ${
+                            gammaData.order_flow.signal_confidence === 'HIGH'
+                              ? 'bg-emerald-500/20 text-emerald-400'
+                              : gammaData.order_flow.signal_confidence === 'MEDIUM'
+                                ? 'bg-yellow-500/20 text-yellow-400'
+                                : 'bg-gray-600 text-gray-400'
+                          }`}>
+                            {gammaData.order_flow.signal_confidence} CONF
+                          </span>
+                        </div>
+
+                        {/* Divergence Warning */}
+                        {gammaData.order_flow.combined_signal.includes('DIVERGENCE') && (
+                          <div className="mt-2 p-2 bg-orange-500/10 border border-orange-500/30 rounded text-[10px] text-orange-400">
+                            <AlertTriangle className="w-3 h-3 inline mr-1" />
+                            {gammaData.order_flow.combined_signal === 'DIVERGENCE_BEARISH'
+                              ? 'Volume bullish but pressure bearish - potential exhaustion'
+                              : 'Volume bearish but pressure bullish - potential reversal'}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="text-center py-4 text-gray-500 text-sm">
+                        <AlertTriangle className="w-5 h-5 mx-auto mb-2 text-gray-600" />
+                        {gammaData.order_flow.bid_ask_pressure.reason}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
