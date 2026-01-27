@@ -459,11 +459,12 @@ interface StrikeEvolution {
   strike: number
   currentGamma: number
   openGamma: number | null  // First recorded gamma of the day (market open)
-  changeSinceOpen: number   // Absolute change in gamma
+  changeSinceOpen: number   // Change in gamma: current - baseline
+  smoothedChange: number    // Same as changeSinceOpen (kept for compatibility)
   changeSinceOpenPct: number  // Percentage change
   priorGamma: number | null  // Previous snapshot gamma for delta overlay
   deltaSincePrior: number   // Change from prior snapshot
-  sparklineData: number[]   // Normalized gamma values for sparkline
+  sparklineData: number[]   // Gamma values for sparkline
   sparklineTimes: string[]  // Timestamps for sparkline
   isPositive: boolean       // Current gamma regime
   wasPositiveAtOpen: boolean // Gamma regime at open
@@ -881,6 +882,7 @@ export default function ArgusPage() {
         changeSinceOpenPct = 0
       }
 
+      // Delta since prior snapshot (for the delta overlay indicator)
       const deltaSincePrior = priorGamma !== null ? currentGamma - priorGamma : 0
 
       // Build sparkline data
@@ -903,6 +905,7 @@ export default function ArgusPage() {
         currentGamma,
         openGamma: baselineGamma,
         changeSinceOpen,
+        smoothedChange: changeSinceOpen,  // Simplified: just use change since open directly
         changeSinceOpenPct,
         priorGamma,
         deltaSincePrior,
@@ -916,10 +919,10 @@ export default function ArgusPage() {
 
     setStrikeEvolutions(evolutions)
 
-    // Update the previous snapshot ref for next delta calculation
+    // Update ref for delta overlay (tracks previous gamma values)
     const newSnapshot = new Map<number, number>()
-    gammaData.strikes.forEach(s => {
-      newSnapshot.set(s.strike, s.net_gamma)
+    evolutions.forEach(e => {
+      newSnapshot.set(e.strike, e.currentGamma)
     })
     previousSnapshotRef.current = newSnapshot
   }, [gammaData, gammaHistory])
@@ -2977,20 +2980,20 @@ export default function ArgusPage() {
                   </div>
                 </div>
 
-                {/* Evolution Chart - Bars show change since open */}
+                {/* Evolution Chart - Bars show SMOOTHED change since open (less volatile than Net Gamma) */}
                 <div className="relative h-32 flex items-center justify-center gap-0.5 border-b border-gray-700 mb-2">
                   {/* Zero line (center) */}
                   <div className="absolute left-0 right-0 top-1/2 border-t border-gray-600 z-0"></div>
                   <div className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] text-gray-600">0</div>
 
                   {(() => {
-                    // Calculate max change for scaling - use minimum threshold for better visibility
+                    // Use change since open for bar heights
                     const changes = strikeEvolutions.map(e => Math.abs(e.changeSinceOpen))
                     const maxChange = Math.max(...changes, 1e6)  // Min 1M for scale
                     const MAX_HEIGHT_PX = 45  // Max bar height in one direction (up or down)
 
                     return strikeEvolutions.map((evolution) => {
-                      // Minimum bar height of 8px for visibility, scale up from there
+                      // Bar height = change from baseline (current - open)
                       const rawHeight = (Math.abs(evolution.changeSinceOpen) / maxChange) * MAX_HEIGHT_PX
                       const barHeight = evolution.changeSinceOpen === 0 ? 3 : Math.max(8, rawHeight)
                       const isPositiveChange = evolution.changeSinceOpen >= 0
@@ -3153,7 +3156,7 @@ export default function ArgusPage() {
                     </div>
                   </div>
                   <div className="text-[10px] text-gray-500">
-                    {strikeEvolutions.length} strikes near ATM
+                    {strikeEvolutions.length} strikes | Change since open
                   </div>
                 </div>
               </div>
