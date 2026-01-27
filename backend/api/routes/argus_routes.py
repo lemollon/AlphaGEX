@@ -694,7 +694,9 @@ async def fetch_gamma_data(symbol: str = "SPY", expiration: str = None) -> dict:
                 'put_price': (put_contract.last or put_contract.mid) if put_contract else 0,
                 'call_iv': call_contract.implied_volatility if call_contract else 0,
                 'put_iv': put_contract.implied_volatility if put_contract else 0,
-                'volume': (call_contract.volume if call_contract else 0) + (put_contract.volume if put_contract else 0)
+                'volume': (call_contract.volume if call_contract else 0) + (put_contract.volume if put_contract else 0),
+                'call_volume': call_contract.volume if call_contract else 0,  # Separate for GEX flow
+                'put_volume': put_contract.volume if put_contract else 0      # Separate for GEX flow
             }
 
         # Record the actual data fetch time

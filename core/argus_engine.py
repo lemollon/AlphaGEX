@@ -92,6 +92,8 @@ class StrikeData:
     roc_4hr: float = 0.0
     roc_trading_day: float = 0.0  # ROC since market open (8:30 AM CT)
     volume: int = 0
+    call_volume: int = 0  # Separate call volume for GEX flow analysis
+    put_volume: int = 0   # Separate put volume for GEX flow analysis
     call_iv: float = 0.0
     put_iv: float = 0.0
     is_magnet: bool = False
@@ -1062,6 +1064,12 @@ class ArgusEngine:
         avg_decaying_pct = (sum(s.roc_trading_day for s in decaying_strikes) /
                            n_decaying if n_decaying else 0)
 
+        # Calculate Net GEX Volume for intraday flow confirmation
+        # OI tells us about STRUCTURE (stable), Volume tells us about FLOW (intraday momentum)
+        gex_volume = self.calculate_net_gex_volume(strikes, spot_price)
+        flow_direction = gex_volume['flow_direction']
+        flow_strength = gex_volume['flow_strength']
+
         # Detect patterns and generate signals
         # Include major strikes from open for stability reference
         signal_data = {
@@ -1074,77 +1082,159 @@ class ArgusEngine:
             'gamma_regime': gamma_regime,
             'major_strikes': self._major_strikes_at_open,  # Top 5 GEX at open (stable anchors)
             'gex_locked': self._gex_levels_locked,
-            'methodology': 'GEX_RANK'  # Using OI-weighted rank changes, not noisy % changes
+            'methodology': 'GEX_RANK',  # Using OI-weighted rank changes, not noisy % changes
+            # Net GEX Volume - intraday flow data (volume weighted by gamma)
+            'gex_volume': gex_volume,
+            'flow_direction': flow_direction,
+            'flow_strength': flow_strength
         }
+
+        # Helper to adjust confidence based on volume flow confirmation
+        def adjust_confidence_with_volume(base_confidence: str, signal_type: str) -> str:
+            """
+            Boost or reduce confidence based on volume flow alignment.
+            BULLISH signal + BULLISH flow = boost
+            BEARISH signal + BEARISH flow = boost
+            SELL_PREMIUM + NEUTRAL flow = boost
+            Directional signal + OPPOSITE flow = reduce
+            """
+            if flow_strength == 'NONE':
+                return base_confidence  # No volume data, keep base confidence
+
+            # For directional signals, check alignment
+            if signal_type == 'BULLISH_BIAS':
+                if flow_direction == 'BULLISH' and flow_strength in ['STRONG', 'MODERATE']:
+                    return 'HIGH'  # Volume confirms bullish structure
+                elif flow_direction == 'BEARISH' and flow_strength in ['STRONG', 'MODERATE']:
+                    return 'LOW'  # Volume contradicts bullish structure
+            elif signal_type == 'BEARISH_BIAS':
+                if flow_direction == 'BEARISH' and flow_strength in ['STRONG', 'MODERATE']:
+                    return 'HIGH'  # Volume confirms bearish structure
+                elif flow_direction == 'BULLISH' and flow_strength in ['STRONG', 'MODERATE']:
+                    return 'LOW'  # Volume contradicts bearish structure
+            elif signal_type == 'SELL_PREMIUM':
+                if flow_direction == 'NEUTRAL' or flow_strength == 'WEAK':
+                    return 'HIGH'  # Low directional flow supports premium selling
+                elif flow_strength == 'STRONG':
+                    return 'MEDIUM'  # Strong directional flow - be cautious with IC
+            elif signal_type == 'BREAKOUT_LIKELY':
+                if flow_strength in ['STRONG', 'MODERATE']:
+                    return 'HIGH'  # Strong flow suggests momentum building
+
+            return base_confidence
+
+        # Helper to add volume context to explanation
+        def volume_context() -> str:
+            if flow_strength == 'NONE':
+                return ''
+            direction_emoji = 'call' if flow_direction == 'BULLISH' else 'put' if flow_direction == 'BEARISH' else 'balanced'
+            return f" Vol flow: {flow_strength} {flow_direction.lower()} (${gex_volume['net_gex_volume']}M net {direction_emoji} GEX)."
 
         # PATTERN 1: Symmetric building (premium selling opportunity)
         if n_building_above >= 2 and n_building_below >= 2:
+            base_conf = 'HIGH' if gamma_regime == 'POSITIVE' else 'MEDIUM'
+            final_conf = adjust_confidence_with_volume(base_conf, 'SELL_PREMIUM')
             signal_data.update({
                 'signal': 'SELL_PREMIUM',
-                'confidence': 'HIGH' if gamma_regime == 'POSITIVE' else 'MEDIUM',
+                'confidence': final_conf,
                 'action': f'Iron Condor or Iron Butterfly centered at ${likely_pin}',
                 'explanation': (f'GEX gaining importance above ({n_building_above} strikes) '
                                f'and below ({n_building_below} strikes) spot. '
-                               f'Dealers capping both directions. Range-bound near ${likely_pin}.'),
+                               f'Dealers capping both directions. Range-bound near ${likely_pin}.'
+                               f'{volume_context()}'),
                 'short_strike_call': building_above[0].strike if building_above else None,
                 'short_strike_put': building_below[-1].strike if building_below else None,
+                'volume_confirms': flow_direction == 'NEUTRAL' or flow_strength == 'WEAK'
             })
 
         # PATTERN 2: Building above only (bullish bias)
         elif n_building_above >= 2 and n_building_below == 0:
             target_strike = building_above[0].strike if building_above else spot_price + 2
+            base_conf = 'HIGH' if gamma_regime == 'NEGATIVE' else 'MEDIUM'
+            final_conf = adjust_confidence_with_volume(base_conf, 'BULLISH_BIAS')
             signal_data.update({
                 'signal': 'BULLISH_BIAS',
-                'confidence': 'HIGH' if gamma_regime == 'NEGATIVE' else 'MEDIUM',
+                'confidence': final_conf,
                 'action': f'Bull call spread or call debit spread targeting ${target_strike}',
                 'explanation': (f'GEX concentrating above spot ({n_building_above} strikes gaining rank). '
                                f'Call wall building = resistance, but dealers must buy on breakout. '
-                               f'Target: ${target_strike}'),
-                'target_strike': target_strike
+                               f'Target: ${target_strike}.{volume_context()}'),
+                'target_strike': target_strike,
+                'volume_confirms': flow_direction == 'BULLISH'
             })
 
         # PATTERN 3: Building below only (bearish bias)
         elif n_building_below >= 2 and n_building_above == 0:
             target_strike = building_below[-1].strike if building_below else spot_price - 2
+            base_conf = 'HIGH' if gamma_regime == 'NEGATIVE' else 'MEDIUM'
+            final_conf = adjust_confidence_with_volume(base_conf, 'BEARISH_BIAS')
             signal_data.update({
                 'signal': 'BEARISH_BIAS',
-                'confidence': 'HIGH' if gamma_regime == 'NEGATIVE' else 'MEDIUM',
+                'confidence': final_conf,
                 'action': f'Bear put spread or put debit spread targeting ${target_strike}',
                 'explanation': (f'GEX concentrating below spot ({n_building_below} strikes gaining rank). '
                                f'Put wall building = support, but dealers must sell on breakdown. '
-                               f'Target: ${target_strike}'),
-                'target_strike': target_strike
+                               f'Target: ${target_strike}.{volume_context()}'),
+                'target_strike': target_strike,
+                'volume_confirms': flow_direction == 'BEARISH'
             })
 
         # PATTERN 4: Widespread decay (momentum/breakout likely)
         elif n_decaying >= 4 and n_building <= 1:
+            base_conf = 'HIGH' if gamma_regime == 'NEGATIVE' else 'MEDIUM'
+            final_conf = adjust_confidence_with_volume(base_conf, 'BREAKOUT_LIKELY')
+            # Use volume flow to determine breakout direction
+            breakout_direction = ''
+            if flow_direction == 'BULLISH' and flow_strength in ['STRONG', 'MODERATE']:
+                breakout_direction = ' (likely UPWARD based on vol flow)'
+            elif flow_direction == 'BEARISH' and flow_strength in ['STRONG', 'MODERATE']:
+                breakout_direction = ' (likely DOWNWARD based on vol flow)'
             signal_data.update({
                 'signal': 'BREAKOUT_LIKELY',
-                'confidence': 'HIGH' if gamma_regime == 'NEGATIVE' else 'MEDIUM',
-                'action': 'Long straddle or strangle at ATM strike',
+                'confidence': final_conf,
+                'action': f'Long straddle or strangle at ATM strike{breakout_direction}',
                 'explanation': (f'GEX importance declining at {n_decaying} strikes. '
                                f'Dealer hedging walls weakening - less resistance to moves. '
-                               f'Expect larger range, direction unclear.')
+                               f'Expect larger range.{volume_context()}'),
+                'breakout_direction': flow_direction if flow_strength != 'NONE' else 'UNKNOWN',
+                'volume_confirms': flow_strength in ['STRONG', 'MODERATE']
             })
 
         # PATTERN 5: Building at pin, decaying elsewhere (strong pinning)
         elif n_building == 1 and abs(building_strikes[0].strike - likely_pin) <= 1:
+            # Strong pin is confirmed if flow is weak/neutral
+            final_conf = 'HIGH' if flow_strength in ['NONE', 'WEAK'] else 'MEDIUM'
             signal_data.update({
                 'signal': 'STRONG_PIN',
-                'confidence': 'HIGH',
+                'confidence': final_conf,
                 'action': f'Sell premium around ${likely_pin} pin. Tight credit spread or butterfly.',
                 'explanation': (f'GEX concentrating at pin strike ${likely_pin}. '
-                               f'Major strike holding rank - strong magnet. Tight range expected.')
+                               f'Major strike holding rank - strong magnet. Tight range expected.'
+                               f'{volume_context()}'),
+                'volume_confirms': flow_strength in ['NONE', 'WEAK']
             })
 
         # PATTERN 6: No clear pattern but stable
         elif n_building <= 1 and n_decaying <= 1:
-            signal_data.update({
-                'signal': 'NEUTRAL_WAIT',
-                'confidence': 'LOW',
-                'action': 'Wait for clearer pattern or trade small iron condor',
-                'explanation': 'Gamma structure stable but no strong directional signal. Wait for setup.'
-            })
+            # If we have strong volume flow despite stable structure, note the potential direction
+            if flow_strength in ['STRONG', 'MODERATE']:
+                signal_data.update({
+                    'signal': 'FLOW_DRIVEN',
+                    'confidence': 'MEDIUM',
+                    'action': f'Follow volume flow: {"calls" if flow_direction == "BULLISH" else "puts"} favored',
+                    'explanation': (f'Gamma structure stable but {flow_strength.lower()} {flow_direction.lower()} '
+                                   f'volume flow detected (${gex_volume["net_gex_volume"]}M). '
+                                   f'Flow may lead structure - consider directional plays aligned with flow.'),
+                    'volume_confirms': True
+                })
+            else:
+                signal_data.update({
+                    'signal': 'NEUTRAL_WAIT',
+                    'confidence': 'LOW',
+                    'action': 'Wait for clearer pattern or trade small iron condor',
+                    'explanation': f'Gamma structure stable, no strong directional signal or volume flow. Wait for setup.{volume_context()}',
+                    'volume_confirms': False
+                })
 
         # PATTERN 7: Mixed/chaotic
         else:
@@ -1153,10 +1243,114 @@ class ArgusEngine:
                 'confidence': 'LOW',
                 'action': 'Reduce position size. Consider waiting.',
                 'explanation': (f'Mixed gamma signals: {n_building} building, {n_decaying} decaying. '
-                               f'Market structure unclear - trade small or sit out.')
+                               f'Market structure unclear - trade small or sit out.{volume_context()}'),
+                'volume_confirms': False
             })
 
         return signal_data
+
+    def calculate_net_gex_volume(self, strikes: List[StrikeData], spot_price: float) -> Dict:
+        """
+        Calculate Net GEX Volume - intraday flow weighted by gamma impact.
+
+        Unlike OI-based GEX (which is stable because OI doesn't change intraday),
+        volume DOES change intraday and tells us about FLOW/MOMENTUM.
+
+        Formula:
+            Call GEX Flow = Call_Volume × |Call_Gamma| × 100 × spot²
+            Put GEX Flow = Put_Volume × |Put_Gamma| × 100 × spot²
+            Net GEX Volume = Call GEX Flow - Put GEX Flow
+
+        Positive Net GEX Volume = Bullish flow (more call gamma being traded)
+        Negative Net GEX Volume = Bearish flow (more put gamma being traded)
+
+        Returns:
+            Dict with net_gex_volume, flow_direction, and per-strike breakdown
+        """
+        if not strikes or spot_price <= 0:
+            return {
+                'net_gex_volume': 0,
+                'call_gex_flow': 0,
+                'put_gex_flow': 0,
+                'flow_direction': 'NEUTRAL',
+                'flow_strength': 'NONE',
+                'top_call_flow_strikes': [],
+                'top_put_flow_strikes': []
+            }
+
+        # Multiplier for GEX calculation
+        multiplier = 100 * spot_price * spot_price
+
+        call_gex_flow = 0
+        put_gex_flow = 0
+        strike_flows = []
+
+        for s in strikes:
+            # Calculate GEX-weighted volume for this strike
+            call_flow = s.call_volume * abs(s.call_gamma) * multiplier
+            put_flow = s.put_volume * abs(s.put_gamma) * multiplier
+
+            call_gex_flow += call_flow
+            put_gex_flow += put_flow
+
+            strike_flows.append({
+                'strike': s.strike,
+                'call_flow': round(call_flow / 1e6, 2),  # In millions
+                'put_flow': round(put_flow / 1e6, 2),
+                'net_flow': round((call_flow - put_flow) / 1e6, 2),
+                'call_volume': s.call_volume,
+                'put_volume': s.put_volume
+            })
+
+        net_gex_volume = call_gex_flow - put_gex_flow
+
+        # Normalize to millions for readability
+        net_gex_volume_m = net_gex_volume / 1e6
+        call_gex_flow_m = call_gex_flow / 1e6
+        put_gex_flow_m = put_gex_flow / 1e6
+
+        # Determine flow direction and strength
+        # Thresholds based on typical SPY 0DTE activity
+        total_flow = call_gex_flow + put_gex_flow
+        if total_flow > 0:
+            imbalance_ratio = abs(net_gex_volume) / total_flow
+        else:
+            imbalance_ratio = 0
+
+        if abs(net_gex_volume_m) < 1:  # Less than $1M net = neutral
+            flow_direction = 'NEUTRAL'
+            flow_strength = 'NONE'
+        elif net_gex_volume_m > 0:
+            flow_direction = 'BULLISH'
+            if imbalance_ratio > 0.3:  # 30%+ imbalance
+                flow_strength = 'STRONG'
+            elif imbalance_ratio > 0.15:
+                flow_strength = 'MODERATE'
+            else:
+                flow_strength = 'WEAK'
+        else:
+            flow_direction = 'BEARISH'
+            if imbalance_ratio > 0.3:
+                flow_strength = 'STRONG'
+            elif imbalance_ratio > 0.15:
+                flow_strength = 'MODERATE'
+            else:
+                flow_strength = 'WEAK'
+
+        # Get top flow strikes
+        sorted_by_call = sorted(strike_flows, key=lambda x: x['call_flow'], reverse=True)[:3]
+        sorted_by_put = sorted(strike_flows, key=lambda x: x['put_flow'], reverse=True)[:3]
+
+        return {
+            'net_gex_volume': round(net_gex_volume_m, 2),
+            'call_gex_flow': round(call_gex_flow_m, 2),
+            'put_gex_flow': round(put_gex_flow_m, 2),
+            'flow_direction': flow_direction,
+            'flow_strength': flow_strength,
+            'imbalance_ratio': round(imbalance_ratio * 100, 1),  # As percentage
+            'top_call_flow_strikes': sorted_by_call,
+            'top_put_flow_strikes': sorted_by_put
+        }
 
     def generate_alerts(self, current: GammaSnapshot, previous: Optional[GammaSnapshot]) -> List[Alert]:
         """
@@ -1358,6 +1552,8 @@ class ArgusEngine:
                 roc_4hr=roc_4hr,
                 roc_trading_day=roc_trading_day,
                 volume=strike_info.get('volume', 0),
+                call_volume=strike_info.get('call_volume', 0),  # Separate for GEX flow
+                put_volume=strike_info.get('put_volume', 0),    # Separate for GEX flow
                 call_iv=strike_info.get('call_iv', 0),
                 put_iv=strike_info.get('put_iv', 0),
                 previous_net_gamma=prev_gamma,

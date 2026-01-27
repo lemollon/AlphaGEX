@@ -274,9 +274,21 @@ interface GammaData {
   trading_signal?: TradingSignal
 }
 
-// Actionable trading signal based on gamma evolution patterns
+// Net GEX Volume - intraday flow weighted by gamma impact
+interface GexVolume {
+  net_gex_volume: number       // In millions (positive = bullish, negative = bearish)
+  call_gex_flow: number        // Total call GEX flow in millions
+  put_gex_flow: number         // Total put GEX flow in millions
+  flow_direction: 'BULLISH' | 'BEARISH' | 'NEUTRAL'
+  flow_strength: 'STRONG' | 'MODERATE' | 'WEAK' | 'NONE'
+  imbalance_ratio: number      // Percentage imbalance
+  top_call_flow_strikes: Array<{strike: number, call_flow: number, call_volume: number}>
+  top_put_flow_strikes: Array<{strike: number, put_flow: number, put_volume: number}>
+}
+
+// Actionable trading signal based on gamma evolution patterns + volume flow
 interface TradingSignal {
-  signal: 'SELL_PREMIUM' | 'BULLISH_BIAS' | 'BEARISH_BIAS' | 'BREAKOUT_LIKELY' | 'STRONG_PIN' | 'NEUTRAL_WAIT' | 'MIXED_SIGNALS' | 'NO_DATA'
+  signal: 'SELL_PREMIUM' | 'BULLISH_BIAS' | 'BEARISH_BIAS' | 'BREAKOUT_LIKELY' | 'STRONG_PIN' | 'NEUTRAL_WAIT' | 'MIXED_SIGNALS' | 'NO_DATA' | 'FLOW_DRIVEN'
   confidence: 'HIGH' | 'MEDIUM' | 'LOW'
   action: string
   explanation: string
@@ -290,6 +302,12 @@ interface TradingSignal {
   target_strike?: number
   short_strike_call?: number
   short_strike_put?: number
+  // Volume flow confirmation
+  gex_volume?: GexVolume       // Net GEX Volume data
+  flow_direction?: string      // Overall flow direction
+  flow_strength?: string       // Flow strength (STRONG/MODERATE/WEAK/NONE)
+  volume_confirms?: boolean    // Whether volume confirms the signal
+  breakout_direction?: string  // For breakout signals - direction hint from volume
 }
 
 interface DangerZoneLog {
@@ -3204,6 +3222,7 @@ export default function ArgusPage() {
                             gammaData.trading_signal.signal === 'BEARISH_BIAS' ? 'text-rose-400' :
                             gammaData.trading_signal.signal === 'BREAKOUT_LIKELY' ? 'text-orange-400' :
                             gammaData.trading_signal.signal === 'STRONG_PIN' ? 'text-purple-400' :
+                            gammaData.trading_signal.signal === 'FLOW_DRIVEN' ? 'text-amber-400' :
                             'text-gray-400'
                           }`}>
                             {gammaData.trading_signal.signal.replace(/_/g, ' ')}
@@ -3241,6 +3260,61 @@ export default function ArgusPage() {
                                 Short Put: <span className="text-orange-400 font-mono">${gammaData.trading_signal.short_strike_put}</span>
                               </span>
                             )}
+                          </div>
+                        )}
+                        {/* Net GEX Volume Flow Panel */}
+                        {gammaData.trading_signal.gex_volume && (
+                          <div className="mt-3 pt-3 border-t border-gray-700/50">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-[10px] text-gray-500 uppercase tracking-wider">Volume Flow Confirmation</span>
+                              {gammaData.trading_signal.volume_confirms !== undefined && (
+                                <span className={`text-[10px] px-2 py-0.5 rounded ${
+                                  gammaData.trading_signal.volume_confirms
+                                    ? 'bg-emerald-500/20 text-emerald-400'
+                                    : 'bg-rose-500/20 text-rose-400'
+                                }`}>
+                                  {gammaData.trading_signal.volume_confirms ? 'CONFIRMED' : 'DIVERGENT'}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-4 text-[11px]">
+                              <div className="flex items-center gap-2">
+                                <span className={`font-mono font-bold ${
+                                  gammaData.trading_signal.gex_volume.flow_direction === 'BULLISH'
+                                    ? 'text-cyan-400'
+                                    : gammaData.trading_signal.gex_volume.flow_direction === 'BEARISH'
+                                      ? 'text-rose-400'
+                                      : 'text-gray-400'
+                                }`}>
+                                  {gammaData.trading_signal.gex_volume.flow_direction === 'BULLISH' ? '↑' :
+                                   gammaData.trading_signal.gex_volume.flow_direction === 'BEARISH' ? '↓' : '→'}
+                                  {gammaData.trading_signal.gex_volume.flow_direction}
+                                </span>
+                                <span className={`px-1.5 py-0.5 rounded text-[9px] ${
+                                  gammaData.trading_signal.gex_volume.flow_strength === 'STRONG'
+                                    ? 'bg-emerald-500/20 text-emerald-400'
+                                    : gammaData.trading_signal.gex_volume.flow_strength === 'MODERATE'
+                                      ? 'bg-yellow-500/20 text-yellow-400'
+                                      : 'bg-gray-600 text-gray-500'
+                                }`}>
+                                  {gammaData.trading_signal.gex_volume.flow_strength}
+                                </span>
+                              </div>
+                              <div className="text-gray-500">
+                                Net: <span className={`font-mono ${
+                                  gammaData.trading_signal.gex_volume.net_gex_volume > 0 ? 'text-cyan-400' :
+                                  gammaData.trading_signal.gex_volume.net_gex_volume < 0 ? 'text-rose-400' : 'text-gray-400'
+                                }`}>
+                                  {gammaData.trading_signal.gex_volume.net_gex_volume > 0 ? '+' : ''}
+                                  ${gammaData.trading_signal.gex_volume.net_gex_volume}M
+                                </span>
+                              </div>
+                              <div className="text-gray-500">
+                                <span className="text-cyan-400/70">Calls ${gammaData.trading_signal.gex_volume.call_gex_flow}M</span>
+                                {' / '}
+                                <span className="text-rose-400/70">Puts ${gammaData.trading_signal.gex_volume.put_gex_flow}M</span>
+                              </div>
+                            </div>
                           </div>
                         )}
                       </div>
