@@ -2028,6 +2028,8 @@ async def persist_alerts_to_db(alerts: list):
     if not alerts:
         return
 
+    conn = None
+    cursor = None
     try:
         conn = get_connection()
         if not conn:
@@ -2063,15 +2065,26 @@ async def persist_alerts_to_db(alerts: list):
             ))
 
         conn.commit()
-        cursor.close()
-        conn.close()
         logger.debug(f"Persisted {len(alerts)} alerts to database")
     except Exception as e:
         logger.warning(f"Failed to persist alerts: {e}")
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 
 async def persist_danger_zones_to_db(danger_zones: list, spot_price: float, expiration: str):
     """Persist danger zones to database for history tracking"""
+    conn = None
+    cursor = None
     try:
         conn = get_connection()
         if not conn:
@@ -2137,12 +2150,21 @@ async def persist_danger_zones_to_db(danger_zones: list, spot_price: float, expi
             ))
 
         conn.commit()
-        cursor.close()
-        conn.close()
         count = len(danger_zones) if danger_zones else 0
         logger.debug(f"Danger zone sync: {count} active, resolved inactive ones")
     except Exception as e:
         logger.warning(f"Failed to persist danger zones: {e}")
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 
 async def persist_order_flow_to_db(
@@ -2161,6 +2183,8 @@ async def persist_order_flow_to_db(
     - Backtest validation
     - Divergence pattern research
     """
+    conn = None
+    cursor = None
     try:
         if not order_flow:
             return
@@ -2183,8 +2207,6 @@ async def persist_order_flow_to_db(
         """, (symbol,))
 
         if cursor.fetchone():
-            cursor.close()
-            conn.close()
             return  # Already have a recent reading
 
         cursor.execute("""
@@ -2226,17 +2248,27 @@ async def persist_order_flow_to_db(
             bid_ask.get('strikes_used'),
             order_flow.get('combined_signal'),
             order_flow.get('signal_confidence'),
-            bid_ask.get('is_valid', True),
+            bid_ask.get('is_valid', False),  # Default to False for safety
             gamma_regime,
             vix
         ))
 
         conn.commit()
-        cursor.close()
-        conn.close()
         logger.debug(f"Order flow persisted: {order_flow.get('combined_signal')} ({order_flow.get('signal_confidence')})")
     except Exception as e:
         logger.warning(f"Failed to persist order flow: {e}")
+    finally:
+        # Always close cursor and connection to prevent leaks
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 
 async def persist_argus_snapshot_to_db(
@@ -2260,6 +2292,8 @@ async def persist_argus_snapshot_to_db(
     - Range width changes
     - GEX momentum
     """
+    conn = None
+    cursor = None
     try:
         conn = get_connection()
         if not conn:
@@ -2277,8 +2311,6 @@ async def persist_argus_snapshot_to_db(
         """, (symbol,))
 
         if cursor.fetchone():
-            cursor.close()
-            conn.close()
             return  # Already have a recent snapshot
 
         # Insert new snapshot
@@ -2308,13 +2340,21 @@ async def persist_argus_snapshot_to_db(
         ))
 
         conn.commit()
-        cursor.close()
-        conn.close()
-
         logger.debug(f"ARGUS snapshot persisted: {symbol} spot=${spot_price:.2f} EM=${expected_move:.2f}")
 
     except Exception as e:
         logger.warning(f"Failed to persist ARGUS snapshot: {e}")
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 
 # ==================== PIN PREDICTION PERSISTENCE ====================
@@ -2334,6 +2374,8 @@ async def persist_pin_prediction_to_db(
     This ensures we track the "morning prediction" accuracy, not constantly
     updating predictions throughout the day.
     """
+    conn = None
+    cursor = None
     try:
         conn = get_connection()
         if not conn:
@@ -2351,8 +2393,6 @@ async def persist_pin_prediction_to_db(
         """, (symbol,))
 
         if cursor.fetchone():
-            cursor.close()
-            conn.close()
             logger.debug(f"Pin prediction already exists for {symbol} today, skipping")
             return False  # Already have today's prediction
 
@@ -2364,15 +2404,23 @@ async def persist_pin_prediction_to_db(
         """, (symbol, predicted_pin, gamma_regime, vix, confidence))
 
         conn.commit()
-        cursor.close()
-        conn.close()
-
         logger.info(f"ARGUS pin prediction stored: {symbol} pin=${predicted_pin:.2f} ({confidence:.0f}% confidence)")
         return True
 
     except Exception as e:
         logger.warning(f"Failed to persist pin prediction: {e}")
         return False
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 
 async def update_pin_prediction_with_actual_close(symbol: str = "SPY"):
@@ -2382,6 +2430,8 @@ async def update_pin_prediction_with_actual_close(symbol: str = "SPY"):
     Called at end of day (after 3:00 PM CT) to record the actual close
     so we can calculate prediction accuracy.
     """
+    conn = None
+    cursor = None
     try:
         conn = get_connection()
         if not conn:
@@ -2400,8 +2450,6 @@ async def update_pin_prediction_with_actual_close(symbol: str = "SPY"):
 
         row = cursor.fetchone()
         if not row:
-            cursor.close()
-            conn.close()
             logger.warning(f"No snapshot found for {symbol} today, cannot update actual close")
             return False
 
@@ -2418,8 +2466,6 @@ async def update_pin_prediction_with_actual_close(symbol: str = "SPY"):
 
         updated = cursor.rowcount
         conn.commit()
-        cursor.close()
-        conn.close()
 
         if updated > 0:
             logger.info(f"ARGUS pin prediction updated with actual close: {symbol} close=${actual_close:.2f}")
@@ -2431,6 +2477,17 @@ async def update_pin_prediction_with_actual_close(symbol: str = "SPY"):
     except Exception as e:
         logger.warning(f"Failed to update pin prediction with actual close: {e}")
         return False
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 
 async def calculate_and_store_argus_accuracy():
