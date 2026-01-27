@@ -389,5 +389,166 @@ class TestArgusPerformance:
         assert elapsed < 1.0
 
 
+class TestArgusOrderFlow:
+    """Tests for order flow pressure analysis (GAP fixes verification)"""
+
+    def test_order_flow_in_gamma_response(self):
+        """Test that order_flow is included in gamma response"""
+        response = client.get("/api/argus/gamma")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        # order_flow should be in the response
+        assert "order_flow" in data["data"]
+
+    def test_order_flow_structure(self):
+        """Test that order_flow has all required fields (GAP #5-6 fix)"""
+        response = client.get("/api/argus/gamma")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        order_flow = data["data"].get("order_flow", {})
+
+        # Top-level order flow fields
+        required_top_fields = [
+            "net_gex_volume", "call_gex_flow", "put_gex_flow",
+            "flow_direction", "flow_strength", "imbalance_ratio",
+            "combined_signal", "signal_confidence"
+        ]
+        for field in required_top_fields:
+            assert field in order_flow, f"Missing order_flow field: {field}"
+
+    def test_bid_ask_pressure_structure(self):
+        """Test bid_ask_pressure has all required fields (GAP #5-6 fix)"""
+        response = client.get("/api/argus/gamma")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        bid_ask = data["data"].get("order_flow", {}).get("bid_ask_pressure", {})
+
+        # Required bid_ask_pressure fields including GAP fixes
+        required_fields = [
+            "net_pressure", "raw_pressure",  # GAP #5 fix
+            "pressure_direction", "pressure_strength",
+            "call_pressure", "put_pressure",
+            "total_bid_size", "total_ask_size",
+            "liquidity_score", "strikes_used",
+            "smoothing_periods",  # GAP #5 fix
+            "is_valid", "reason"  # GAP #6 fix
+        ]
+        for field in required_fields:
+            assert field in bid_ask, f"Missing bid_ask_pressure field: {field}"
+
+    def test_smoothing_periods_valid(self):
+        """Test smoothing_periods is valid (GAP #1 fix)"""
+        response = client.get("/api/argus/gamma")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        bid_ask = data["data"].get("order_flow", {}).get("bid_ask_pressure", {})
+        smoothing_periods = bid_ask.get("smoothing_periods", -1)
+
+        # Should be 0-5 (5-period rolling average)
+        assert 0 <= smoothing_periods <= 5, f"Invalid smoothing_periods: {smoothing_periods}"
+
+    def test_is_valid_field_type(self):
+        """Test is_valid is boolean (GAP #6 fix)"""
+        response = client.get("/api/argus/gamma")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        bid_ask = data["data"].get("order_flow", {}).get("bid_ask_pressure", {})
+        is_valid = bid_ask.get("is_valid")
+
+        assert isinstance(is_valid, bool), f"is_valid should be bool, got {type(is_valid)}"
+
+    def test_pressure_direction_valid(self):
+        """Test pressure_direction is valid value"""
+        response = client.get("/api/argus/gamma")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        bid_ask = data["data"].get("order_flow", {}).get("bid_ask_pressure", {})
+        direction = bid_ask.get("pressure_direction", "")
+
+        valid_directions = ["BULLISH", "BEARISH", "NEUTRAL"]
+        assert direction in valid_directions, f"Invalid pressure_direction: {direction}"
+
+    def test_combined_signal_valid(self):
+        """Test combined_signal is valid value"""
+        response = client.get("/api/argus/gamma")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        order_flow = data["data"].get("order_flow", {})
+        signal = order_flow.get("combined_signal", "")
+
+        valid_signals = [
+            "NEUTRAL", "BULLISH", "BEARISH",
+            "STRONG_BULLISH", "STRONG_BEARISH",
+            "DIVERGENCE_BULLISH", "DIVERGENCE_BEARISH"
+        ]
+        assert signal in valid_signals, f"Invalid combined_signal: {signal}"
+
+
+class TestArgusErrorHandling:
+    """Tests for error handling and edge cases (GAP #2-3 fixes)"""
+
+    def test_invalid_symbol_handling(self):
+        """Test API handles invalid symbol gracefully"""
+        response = client.get("/api/argus/gamma?symbol=INVALID_SYMBOL_XYZ")
+
+        # Should return 200 with error info, not crash
+        assert response.status_code in [200, 400, 500]
+
+        data = response.json()
+        # Should have either success=False or error detail
+        if response.status_code == 200:
+            # May still succeed with default/fallback
+            assert "success" in data
+        else:
+            # Error response should have detail
+            assert "detail" in data or "message" in data
+
+    def test_data_unavailable_response_structure(self):
+        """Test data_unavailable response has required fields (GAP #2-3 fix)"""
+        # This test verifies the error response structure
+        # When data is unavailable, should return proper format
+        response = client.get("/api/argus/gamma?symbol=SPY")
+
+        data = response.json()
+
+        # If data_unavailable, check structure
+        if data.get("data_unavailable") or data.get("success") is False:
+            assert "reason" in data or "message" in data
+            assert "symbol" in data or "data" in data
+
+    def test_success_field_present(self):
+        """Test that success field is always present"""
+        response = client.get("/api/argus/gamma")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert "success" in data, "Response must have 'success' field"
+
+    def test_fetched_at_timestamp_present(self):
+        """Test that fetched_at timestamp is in response"""
+        response = client.get("/api/argus/gamma")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        if data.get("success"):
+            assert "fetched_at" in data["data"], "Response must have 'fetched_at' timestamp"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

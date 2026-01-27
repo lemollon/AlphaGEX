@@ -92,6 +92,13 @@ class StrikeData:
     roc_4hr: float = 0.0
     roc_trading_day: float = 0.0  # ROC since market open (8:30 AM CT)
     volume: int = 0
+    call_volume: int = 0  # Separate call volume for GEX flow analysis
+    put_volume: int = 0   # Separate put volume for GEX flow analysis
+    # Bid/Ask size for order flow analysis (from Tradier API)
+    call_bid_size: int = 0   # Contracts waiting at call bid (buyers)
+    call_ask_size: int = 0   # Contracts waiting at call ask (sellers)
+    put_bid_size: int = 0    # Contracts waiting at put bid (buyers)
+    put_ask_size: int = 0    # Contracts waiting at put ask (sellers)
     call_iv: float = 0.0
     put_iv: float = 0.0
     is_magnet: bool = False
@@ -213,6 +220,25 @@ class ArgusEngine:
         self._previous_expected_move: Optional[float] = None
         self._ema_alpha: float = 0.3  # 30% new value, 70% previous (tunable)
 
+        # Gamma smoothing state - reduces noise from Tradier Greeks recalculations
+        # Rolling window stores recent gamma values per strike for median smoothing
+        self._gamma_window: Dict[float, List[float]] = {}  # strike -> [recent gamma values]
+        self._gamma_window_size: int = 5  # Number of readings to average
+        self._gamma_smoothing_enabled: bool = True
+        self._previous_spot_price: Optional[float] = None
+        self._max_gamma_change_pct: float = 50.0  # Max % change allowed without price move
+
+        # Market open baseline - stores first 5 minutes of readings for stable baseline
+        self._market_open_baselines: Dict[float, List[float]] = {}  # strike -> [opening values]
+        self._baseline_locked: bool = False  # Lock baseline after 5 minutes
+
+        # Locked GEX levels at market open (like SpotGamma does for 0DTE)
+        # OI doesn't change intraday, so GEX rankings should be stable
+        self._locked_gex_rankings: Dict[float, int] = {}  # strike -> rank at open
+        self._locked_gex_values: Dict[float, float] = {}  # strike -> GEX value at open
+        self._gex_levels_locked: bool = False
+        self._major_strikes_at_open: List[float] = []  # Top 5 strikes by GEX at open
+
     def reset_expected_move_smoothing(self):
         """
         Reset the expected move smoothing state.
@@ -239,6 +265,200 @@ class ArgusEngine:
             raise ValueError("Alpha must be between 0 (exclusive) and 1 (inclusive)")
         self._ema_alpha = alpha
         logger.info(f"Expected move EMA alpha set to {alpha}")
+
+    def set_gamma_smoothing(self, enabled: bool = True, window_size: int = 5,
+                            max_change_pct: float = 50.0):
+        """
+        Configure gamma smoothing to reduce noise from Tradier Greeks recalculations.
+
+        Args:
+            enabled: Whether to enable gamma smoothing (default True)
+            window_size: Number of recent readings to use for median (default 5)
+            max_change_pct: Maximum % change allowed in single reading without price move (default 50%)
+        """
+        self._gamma_smoothing_enabled = enabled
+        self._gamma_window_size = window_size
+        self._max_gamma_change_pct = max_change_pct
+        logger.info(f"Gamma smoothing: enabled={enabled}, window={window_size}, max_change={max_change_pct}%")
+
+    def reset_gamma_smoothing(self):
+        """
+        Reset gamma smoothing state at start of new trading day.
+        Call this when market opens to clear stale data.
+        """
+        self._gamma_window = {}
+        self._previous_spot_price = None
+        self._market_open_baselines = {}
+        self._baseline_locked = False
+        # Reset locked GEX levels for new trading day
+        self._locked_gex_rankings = {}
+        self._locked_gex_values = {}
+        self._gex_levels_locked = False
+        self._major_strikes_at_open = []
+        # Reset order flow pressure smoothing history
+        self._pressure_history = []
+        logger.debug("Gamma smoothing state reset for new trading day (including pressure history)")
+
+    def lock_gex_levels_at_open(self, strikes_data: List, spot_price: float):
+        """
+        Lock GEX levels at market open (like SpotGamma does for 0DTE).
+
+        Since OI doesn't change intraday, the relative GEX rankings should be stable.
+        This prevents noisy gamma recalculations from changing which strikes are "major".
+
+        Args:
+            strikes_data: List of StrikeData objects with net_gamma populated
+            spot_price: Current spot price
+        """
+        if self._gex_levels_locked:
+            return  # Already locked
+
+        from zoneinfo import ZoneInfo
+        CENTRAL_TZ = ZoneInfo("America/Chicago")
+        now = datetime.now(CENTRAL_TZ)
+        market_open = now.replace(hour=8, minute=30, second=0, microsecond=0)
+
+        # Only lock after market open and within first 10 minutes
+        if now < market_open:
+            return
+        if (now - market_open).total_seconds() > 600:  # 10 minute window to lock
+            if not self._gex_levels_locked and self._locked_gex_values:
+                self._gex_levels_locked = True
+                logger.info(f"GEX levels locked with {len(self._locked_gex_values)} strikes")
+            return
+
+        # Calculate GEX for each strike and store
+        for strike_data in strikes_data:
+            strike = strike_data.strike
+            gex = abs(strike_data.net_gamma)  # Already OI-weighted from calculate_net_gamma
+            self._locked_gex_values[strike] = gex
+
+        # Rank strikes by GEX (highest = rank 1)
+        sorted_strikes = sorted(self._locked_gex_values.items(), key=lambda x: abs(x[1]), reverse=True)
+        for rank, (strike, _) in enumerate(sorted_strikes, 1):
+            self._locked_gex_rankings[strike] = rank
+
+        # Store top 5 as "major strikes" - these should remain major all day
+        self._major_strikes_at_open = [strike for strike, _ in sorted_strikes[:5]]
+        logger.debug(f"GEX levels captured: top 5 = {self._major_strikes_at_open}")
+
+    def get_locked_gex_rank(self, strike: float) -> Optional[int]:
+        """Get the locked GEX rank for a strike (set at market open)."""
+        return self._locked_gex_rankings.get(strike)
+
+    def is_major_strike(self, strike: float) -> bool:
+        """Check if strike was in top 5 GEX at market open."""
+        return strike in self._major_strikes_at_open
+
+    def get_gex_rank_change(self, strike: float, current_rank: int) -> int:
+        """
+        Get how much a strike's GEX rank has changed since market open.
+
+        Returns:
+            Positive = improved (moved up in ranking)
+            Negative = declined (moved down in ranking)
+            0 = no change or no baseline
+        """
+        locked_rank = self._locked_gex_rankings.get(strike)
+        if locked_rank is None:
+            return 0
+        # Lower rank number = higher importance, so improvement = negative change
+        return locked_rank - current_rank
+
+    def _smooth_gamma_value(self, strike: float, raw_gamma: float, spot_price: float) -> float:
+        """
+        Apply smoothing to a raw gamma value to reduce noise.
+
+        Uses median of recent readings (robust to outliers) and validates
+        that large changes only occur when price has moved significantly.
+
+        Args:
+            strike: Strike price
+            raw_gamma: Raw gamma value from Tradier
+            spot_price: Current spot price
+
+        Returns:
+            Smoothed gamma value
+        """
+        if not self._gamma_smoothing_enabled:
+            return raw_gamma
+
+        # Initialize window for this strike if needed
+        if strike not in self._gamma_window:
+            self._gamma_window[strike] = []
+
+        window = self._gamma_window[strike]
+
+        # Check for suspicious large change without price movement
+        if window and self._previous_spot_price is not None:
+            last_gamma = window[-1]
+            if last_gamma != 0:
+                change_pct = abs((raw_gamma - last_gamma) / abs(last_gamma)) * 100
+                price_change_pct = abs((spot_price - self._previous_spot_price) / self._previous_spot_price) * 100
+
+                # If gamma changed dramatically but price didn't, dampen the change
+                if change_pct > self._max_gamma_change_pct and price_change_pct < 0.1:
+                    # Blend: 70% previous, 30% new (dampen noise)
+                    raw_gamma = 0.7 * last_gamma + 0.3 * raw_gamma
+                    logger.debug(f"Dampened gamma spike at strike {strike}: "
+                                f"{change_pct:.1f}% change with {price_change_pct:.2f}% price move")
+
+        # Add to rolling window
+        window.append(raw_gamma)
+
+        # Keep window at configured size
+        if len(window) > self._gamma_window_size:
+            window.pop(0)
+
+        # Use median for robustness to outliers
+        if len(window) >= 3:
+            smoothed = float(np.median(window))
+        else:
+            # Not enough data yet, use simple average
+            smoothed = sum(window) / len(window)
+
+        return smoothed
+
+    def _update_market_open_baseline(self, strike: float, gamma: float):
+        """
+        Update market open baseline for a strike.
+
+        Collects readings for first 5 minutes after market open to establish
+        a stable baseline (average of multiple readings, not just first snapshot).
+        """
+        from zoneinfo import ZoneInfo
+        CENTRAL_TZ = ZoneInfo("America/Chicago")
+        now = datetime.now(CENTRAL_TZ)
+        market_open = now.replace(hour=8, minute=30, second=0, microsecond=0)
+
+        # Only collect baseline in first 5 minutes after open
+        if now < market_open or (now - market_open).total_seconds() > 300:
+            if not self._baseline_locked and self._market_open_baselines:
+                self._baseline_locked = True
+                logger.info("Market open baselines locked after 5 minutes")
+            return
+
+        # Add to baseline collection
+        if strike not in self._market_open_baselines:
+            self._market_open_baselines[strike] = []
+
+        self._market_open_baselines[strike].append(gamma)
+
+    def get_market_open_baseline(self, strike: float) -> Optional[float]:
+        """
+        Get the stable market open baseline for a strike.
+
+        Returns median of first 5 minutes of readings for stability.
+        """
+        if strike not in self._market_open_baselines:
+            return None
+
+        baselines = self._market_open_baselines[strike]
+        if not baselines:
+            return None
+
+        # Use median for robustness
+        return float(np.median(baselines))
 
     def _get_ml_models(self):
         """Lazy load ML probability models"""
@@ -544,13 +764,18 @@ class ArgusEngine:
         return round(roc, 2)
 
     def calculate_roc_since_open(self, current_gamma: float,
-                                  history: List[Tuple[datetime, float]]) -> float:
+                                  history: List[Tuple[datetime, float]],
+                                  strike: float = None) -> float:
         """
         Calculate rate of change since market open (8:30 AM CT).
+
+        Uses stable baseline (median of first 5 minutes) when available,
+        falls back to first recorded value otherwise.
 
         Args:
             current_gamma: Current gamma value
             history: List of (timestamp, gamma) tuples
+            strike: Strike price (for baseline lookup)
 
         Returns:
             Rate of change as percentage since market open
@@ -569,15 +794,20 @@ class ArgusEngine:
         if now < market_open:
             return 0.0
 
-        # Find the first gamma value after market open
+        # Try to use stable baseline first (median of first 5 minutes)
         open_gamma = None
-        for timestamp, gamma in history:
-            # Handle timezone-aware comparison
-            if timestamp.tzinfo is None:
-                timestamp = timestamp.replace(tzinfo=CENTRAL_TZ)
-            if timestamp >= market_open:
-                open_gamma = gamma
-                break
+        if strike is not None:
+            open_gamma = self.get_market_open_baseline(strike)
+
+        # Fall back to first recorded value if no stable baseline
+        if open_gamma is None:
+            for timestamp, gamma in history:
+                # Handle timezone-aware comparison
+                if timestamp.tzinfo is None:
+                    timestamp = timestamp.replace(tzinfo=CENTRAL_TZ)
+                if timestamp >= market_open:
+                    open_gamma = gamma
+                    break
 
         if open_gamma is None or open_gamma == 0:
             return 0.0
@@ -765,6 +995,677 @@ class ArgusEngine:
 
         return {'is_pinning': False}
 
+    def generate_trading_signal(self, strikes: List[StrikeData], spot_price: float,
+                                 likely_pin: float, gamma_regime: str) -> Dict:
+        """
+        Generate actionable trading signal based on GEX structure.
+
+        Uses OI-WEIGHTED GEX RANKINGS (stable because OI doesn't change intraday)
+        instead of noisy gamma % changes. This follows SpotGamma's methodology
+        of locking major levels at market open for 0DTE.
+
+        A strike is "building" if its GEX rank improved 3+ positions since open.
+        A strike is "decaying" if its GEX rank declined 3+ positions since open.
+        Major strikes (top 5 at open) stay major unless they drop to rank 10+.
+
+        Returns:
+            Dict with signal, confidence, and specific trade recommendations
+        """
+        if not strikes:
+            return {
+                'signal': 'NO_DATA',
+                'confidence': 'LOW',
+                'action': 'Wait for market data',
+                'explanation': 'Insufficient data to generate signal'
+            }
+
+        # First, lock GEX levels at open if not already locked
+        self.lock_gex_levels_at_open(strikes, spot_price)
+
+        # Calculate current GEX rankings
+        sorted_by_gex = sorted(strikes, key=lambda s: abs(s.net_gamma), reverse=True)
+        current_rankings = {s.strike: rank for rank, s in enumerate(sorted_by_gex, 1)}
+
+        # Categorize strikes by GEX RANK change (stable) instead of % change (noisy)
+        # Building = rank improved by 3+ positions (strike becoming more important)
+        # Decaying = rank declined by 3+ positions (strike losing importance)
+        building_strikes = []
+        decaying_strikes = []
+        stable_strikes = []
+
+        for s in strikes:
+            current_rank = current_rankings.get(s.strike, len(strikes))
+            rank_change = self.get_gex_rank_change(s.strike, current_rank)
+
+            # Mark major strikes (top 5 at open) - these are stable anchors
+            is_major = self.is_major_strike(s.strike)
+
+            if rank_change >= 3:  # Improved 3+ positions
+                building_strikes.append(s)
+            elif rank_change <= -3:  # Declined 3+ positions
+                # Major strikes only "decay" if they drop to rank 10+
+                if is_major and current_rank < 10:
+                    stable_strikes.append(s)  # Major strike stays stable
+                else:
+                    decaying_strikes.append(s)
+            else:
+                stable_strikes.append(s)
+
+        # Separate building above vs below spot
+        building_above = [s for s in building_strikes if s.strike > spot_price]
+        building_below = [s for s in building_strikes if s.strike < spot_price]
+        decaying_above = [s for s in decaying_strikes if s.strike > spot_price]
+        decaying_below = [s for s in decaying_strikes if s.strike < spot_price]
+
+        # Count for pattern detection
+        n_building_above = len(building_above)
+        n_building_below = len(building_below)
+        n_decaying_above = len(decaying_above)
+        n_decaying_below = len(decaying_below)
+        n_building = len(building_strikes)
+        n_decaying = len(decaying_strikes)
+
+        # Calculate average building strength
+        avg_building_pct = (sum(s.roc_trading_day for s in building_strikes) /
+                           n_building if n_building else 0)
+        avg_decaying_pct = (sum(s.roc_trading_day for s in decaying_strikes) /
+                           n_decaying if n_decaying else 0)
+
+        # Calculate Net GEX Volume for intraday flow confirmation
+        # OI tells us about STRUCTURE (stable), Volume tells us about FLOW (intraday momentum)
+        gex_volume = self.calculate_net_gex_volume(strikes, spot_price)
+        flow_direction = gex_volume['flow_direction']
+        flow_strength = gex_volume['flow_strength']
+
+        # Detect patterns and generate signals
+        # Include major strikes from open for stability reference
+        signal_data = {
+            'building_count': n_building,
+            'decaying_count': n_decaying,
+            'building_above_spot': n_building_above,
+            'building_below_spot': n_building_below,
+            'avg_building_strength': round(avg_building_pct, 1),
+            'avg_decaying_strength': round(avg_decaying_pct, 1),
+            'gamma_regime': gamma_regime,
+            'major_strikes': self._major_strikes_at_open,  # Top 5 GEX at open (stable anchors)
+            'gex_locked': self._gex_levels_locked,
+            'methodology': 'GEX_RANK',  # Using OI-weighted rank changes, not noisy % changes
+            # Net GEX Volume - intraday flow data (volume weighted by gamma)
+            'gex_volume': gex_volume,
+            'flow_direction': flow_direction,
+            'flow_strength': flow_strength
+        }
+
+        # Helper to adjust confidence based on volume flow confirmation
+        def adjust_confidence_with_volume(base_confidence: str, signal_type: str) -> str:
+            """
+            Boost or reduce confidence based on volume flow alignment.
+            BULLISH signal + BULLISH flow = boost
+            BEARISH signal + BEARISH flow = boost
+            SELL_PREMIUM + NEUTRAL flow = boost
+            Directional signal + OPPOSITE flow = reduce
+            """
+            if flow_strength == 'NONE':
+                return base_confidence  # No volume data, keep base confidence
+
+            # For directional signals, check alignment
+            if signal_type == 'BULLISH_BIAS':
+                if flow_direction == 'BULLISH' and flow_strength in ['STRONG', 'MODERATE']:
+                    return 'HIGH'  # Volume confirms bullish structure
+                elif flow_direction == 'BEARISH' and flow_strength in ['STRONG', 'MODERATE']:
+                    return 'LOW'  # Volume contradicts bullish structure
+            elif signal_type == 'BEARISH_BIAS':
+                if flow_direction == 'BEARISH' and flow_strength in ['STRONG', 'MODERATE']:
+                    return 'HIGH'  # Volume confirms bearish structure
+                elif flow_direction == 'BULLISH' and flow_strength in ['STRONG', 'MODERATE']:
+                    return 'LOW'  # Volume contradicts bearish structure
+            elif signal_type == 'SELL_PREMIUM':
+                if flow_direction == 'NEUTRAL' or flow_strength == 'WEAK':
+                    return 'HIGH'  # Low directional flow supports premium selling
+                elif flow_strength == 'STRONG':
+                    return 'MEDIUM'  # Strong directional flow - be cautious with IC
+            elif signal_type == 'BREAKOUT_LIKELY':
+                if flow_strength in ['STRONG', 'MODERATE']:
+                    return 'HIGH'  # Strong flow suggests momentum building
+
+            return base_confidence
+
+        # Helper to add volume context to explanation
+        def volume_context() -> str:
+            if flow_strength == 'NONE':
+                return ''
+            direction_emoji = 'call' if flow_direction == 'BULLISH' else 'put' if flow_direction == 'BEARISH' else 'balanced'
+            return f" Vol flow: {flow_strength} {flow_direction.lower()} (${gex_volume['net_gex_volume']}M net {direction_emoji} GEX)."
+
+        # PATTERN 1: Symmetric building (premium selling opportunity)
+        if n_building_above >= 2 and n_building_below >= 2:
+            base_conf = 'HIGH' if gamma_regime == 'POSITIVE' else 'MEDIUM'
+            final_conf = adjust_confidence_with_volume(base_conf, 'SELL_PREMIUM')
+            signal_data.update({
+                'signal': 'SELL_PREMIUM',
+                'confidence': final_conf,
+                'action': f'Iron Condor or Iron Butterfly centered at ${likely_pin}',
+                'explanation': (f'GEX gaining importance above ({n_building_above} strikes) '
+                               f'and below ({n_building_below} strikes) spot. '
+                               f'Dealers capping both directions. Range-bound near ${likely_pin}.'
+                               f'{volume_context()}'),
+                'short_strike_call': building_above[0].strike if building_above else None,
+                'short_strike_put': building_below[-1].strike if building_below else None,
+                'volume_confirms': flow_direction == 'NEUTRAL' or flow_strength == 'WEAK'
+            })
+
+        # PATTERN 2: Building above only (bullish bias)
+        elif n_building_above >= 2 and n_building_below == 0:
+            target_strike = building_above[0].strike if building_above else spot_price + 2
+            base_conf = 'HIGH' if gamma_regime == 'NEGATIVE' else 'MEDIUM'
+            final_conf = adjust_confidence_with_volume(base_conf, 'BULLISH_BIAS')
+            signal_data.update({
+                'signal': 'BULLISH_BIAS',
+                'confidence': final_conf,
+                'action': f'Bull call spread or call debit spread targeting ${target_strike}',
+                'explanation': (f'GEX concentrating above spot ({n_building_above} strikes gaining rank). '
+                               f'Call wall building = resistance, but dealers must buy on breakout. '
+                               f'Target: ${target_strike}.{volume_context()}'),
+                'target_strike': target_strike,
+                'volume_confirms': flow_direction == 'BULLISH'
+            })
+
+        # PATTERN 3: Building below only (bearish bias)
+        elif n_building_below >= 2 and n_building_above == 0:
+            target_strike = building_below[-1].strike if building_below else spot_price - 2
+            base_conf = 'HIGH' if gamma_regime == 'NEGATIVE' else 'MEDIUM'
+            final_conf = adjust_confidence_with_volume(base_conf, 'BEARISH_BIAS')
+            signal_data.update({
+                'signal': 'BEARISH_BIAS',
+                'confidence': final_conf,
+                'action': f'Bear put spread or put debit spread targeting ${target_strike}',
+                'explanation': (f'GEX concentrating below spot ({n_building_below} strikes gaining rank). '
+                               f'Put wall building = support, but dealers must sell on breakdown. '
+                               f'Target: ${target_strike}.{volume_context()}'),
+                'target_strike': target_strike,
+                'volume_confirms': flow_direction == 'BEARISH'
+            })
+
+        # PATTERN 4: Widespread decay (momentum/breakout likely)
+        elif n_decaying >= 4 and n_building <= 1:
+            base_conf = 'HIGH' if gamma_regime == 'NEGATIVE' else 'MEDIUM'
+            final_conf = adjust_confidence_with_volume(base_conf, 'BREAKOUT_LIKELY')
+            # Use volume flow to determine breakout direction
+            breakout_direction = ''
+            if flow_direction == 'BULLISH' and flow_strength in ['STRONG', 'MODERATE']:
+                breakout_direction = ' (likely UPWARD based on vol flow)'
+            elif flow_direction == 'BEARISH' and flow_strength in ['STRONG', 'MODERATE']:
+                breakout_direction = ' (likely DOWNWARD based on vol flow)'
+            signal_data.update({
+                'signal': 'BREAKOUT_LIKELY',
+                'confidence': final_conf,
+                'action': f'Long straddle or strangle at ATM strike{breakout_direction}',
+                'explanation': (f'GEX importance declining at {n_decaying} strikes. '
+                               f'Dealer hedging walls weakening - less resistance to moves. '
+                               f'Expect larger range.{volume_context()}'),
+                'breakout_direction': flow_direction if flow_strength != 'NONE' else 'UNKNOWN',
+                'volume_confirms': flow_strength in ['STRONG', 'MODERATE']
+            })
+
+        # PATTERN 5: Building at pin, decaying elsewhere (strong pinning)
+        elif n_building == 1 and abs(building_strikes[0].strike - likely_pin) <= 1:
+            # Strong pin is confirmed if flow is weak/neutral
+            final_conf = 'HIGH' if flow_strength in ['NONE', 'WEAK'] else 'MEDIUM'
+            signal_data.update({
+                'signal': 'STRONG_PIN',
+                'confidence': final_conf,
+                'action': f'Sell premium around ${likely_pin} pin. Tight credit spread or butterfly.',
+                'explanation': (f'GEX concentrating at pin strike ${likely_pin}. '
+                               f'Major strike holding rank - strong magnet. Tight range expected.'
+                               f'{volume_context()}'),
+                'volume_confirms': flow_strength in ['NONE', 'WEAK']
+            })
+
+        # PATTERN 6: No clear pattern but stable
+        elif n_building <= 1 and n_decaying <= 1:
+            # If we have strong volume flow despite stable structure, note the potential direction
+            if flow_strength in ['STRONG', 'MODERATE']:
+                signal_data.update({
+                    'signal': 'FLOW_DRIVEN',
+                    'confidence': 'MEDIUM',
+                    'action': f'Follow volume flow: {"calls" if flow_direction == "BULLISH" else "puts"} favored',
+                    'explanation': (f'Gamma structure stable but {flow_strength.lower()} {flow_direction.lower()} '
+                                   f'volume flow detected (${gex_volume["net_gex_volume"]}M). '
+                                   f'Flow may lead structure - consider directional plays aligned with flow.'),
+                    'volume_confirms': True
+                })
+            else:
+                signal_data.update({
+                    'signal': 'NEUTRAL_WAIT',
+                    'confidence': 'LOW',
+                    'action': 'Wait for clearer pattern or trade small iron condor',
+                    'explanation': f'Gamma structure stable, no strong directional signal or volume flow. Wait for setup.{volume_context()}',
+                    'volume_confirms': False
+                })
+
+        # PATTERN 7: Mixed/chaotic
+        else:
+            signal_data.update({
+                'signal': 'MIXED_SIGNALS',
+                'confidence': 'LOW',
+                'action': 'Reduce position size. Consider waiting.',
+                'explanation': (f'Mixed gamma signals: {n_building} building, {n_decaying} decaying. '
+                               f'Market structure unclear - trade small or sit out.{volume_context()}'),
+                'volume_confirms': False
+            })
+
+        return signal_data
+
+    def calculate_bid_ask_pressure(self, strikes: List[StrikeData], spot_price: float,
+                                     atm_range_pct: float = 0.03, min_depth: int = 100,
+                                     update_smoothing: bool = True) -> Dict:
+        """
+        Analyze bid/ask size imbalance to determine order flow pressure.
+
+        NOISE REDUCTION:
+        - Only uses strikes within ±3% of spot (ATM focus for liquidity)
+        - Requires minimum depth threshold to avoid thin markets
+        - Smooths readings using 5-period rolling average
+        - Gamma-weights pressure so high-impact strikes matter more
+
+        Args:
+            strikes: List of StrikeData objects
+            spot_price: Current spot price
+            atm_range_pct: Percentage range from ATM to include (default 3%)
+            min_depth: Minimum total contracts for valid signal (default 100)
+            update_smoothing: If False, skip adding to pressure history (use for cached data)
+
+        Bid/Ask Size Interpretation:
+        - bid_size >> ask_size = Buyers stacked up = BULLISH pressure (demand > supply)
+        - ask_size >> bid_size = Sellers stacked up = BEARISH pressure (supply > demand)
+
+        This differs from volume (what traded) - bid/ask size shows what's WAITING to trade.
+
+        For options market context:
+        - Call bid_size high = Buyers want calls = BULLISH
+        - Call ask_size high = Sellers offering calls = NEUTRAL/covered calls
+        - Put bid_size high = Buyers want puts = BEARISH/hedging
+        - Put ask_size high = Sellers offering puts = BULLISH (selling insurance)
+
+        Args:
+            strikes: List of StrikeData objects
+            spot_price: Current spot price
+            atm_range_pct: Percentage range from ATM to include (default 3%)
+            min_depth: Minimum total contracts for valid signal (default 100)
+
+        Returns:
+            Dict with pressure metrics and per-strike breakdown
+        """
+        # Initialize pressure history if not exists
+        if not hasattr(self, '_pressure_history'):
+            self._pressure_history = []
+
+        empty_result = {
+            'net_pressure': 0.0,
+            'raw_pressure': 0.0,  # Unsmoothed value (same as net when empty)
+            'pressure_direction': 'NEUTRAL',
+            'pressure_strength': 'NONE',
+            'call_pressure': 0.0,
+            'put_pressure': 0.0,
+            'total_bid_size': 0,
+            'total_ask_size': 0,
+            'liquidity_score': 0.0,
+            'strikes_used': 0,
+            'smoothing_periods': 0,  # No history yet
+            'is_valid': False,
+            'reason': '',
+            'top_pressure_strikes': []
+        }
+
+        if not strikes or spot_price <= 0:
+            empty_result['reason'] = 'No strikes or invalid spot price'
+            return empty_result
+
+        # FILTER 1: Only use strikes within ±3% of spot (ATM focus)
+        atm_min = spot_price * (1 - atm_range_pct)
+        atm_max = spot_price * (1 + atm_range_pct)
+        atm_strikes = [s for s in strikes if atm_min <= s.strike <= atm_max]
+
+        if not atm_strikes:
+            empty_result['reason'] = f'No strikes within ±{atm_range_pct*100:.0f}% of spot'
+            return empty_result
+
+        total_call_bid = 0
+        total_call_ask = 0
+        total_put_bid = 0
+        total_put_ask = 0
+        strike_pressure = []
+
+        for s in atm_strikes:
+            # Aggregate bid/ask sizes
+            total_call_bid += s.call_bid_size
+            total_call_ask += s.call_ask_size
+            total_put_bid += s.put_bid_size
+            total_put_ask += s.put_ask_size
+
+            # Calculate per-strike pressure weighted by gamma
+            # Higher gamma = more market impact = weight the pressure more
+            gamma_weight = abs(s.net_gamma) + 0.0001  # Avoid division by zero
+
+            # Call pressure: bid - ask (positive = buyers dominate)
+            call_imbalance = s.call_bid_size - s.call_ask_size
+            # Put pressure: ask - bid (positive = sellers dominate = bullish for market)
+            put_imbalance = s.put_ask_size - s.put_bid_size
+
+            # Net bullish pressure at this strike
+            strike_net_pressure = (call_imbalance + put_imbalance) * gamma_weight
+
+            strike_pressure.append({
+                'strike': s.strike,
+                'call_bid_size': s.call_bid_size,
+                'call_ask_size': s.call_ask_size,
+                'put_bid_size': s.put_bid_size,
+                'put_ask_size': s.put_ask_size,
+                'call_imbalance': call_imbalance,
+                'put_imbalance': put_imbalance,
+                'net_pressure': round(strike_net_pressure, 2),
+                'gamma_weight': round(gamma_weight, 6)
+            })
+
+        # Calculate aggregate pressure metrics
+        total_bid = total_call_bid + total_put_bid
+        total_ask = total_call_ask + total_put_ask
+        total_depth = total_bid + total_ask
+
+        # FILTER 2: Minimum depth threshold
+        if total_depth < min_depth:
+            empty_result['total_bid_size'] = total_bid
+            empty_result['total_ask_size'] = total_ask
+            empty_result['strikes_used'] = len(atm_strikes)
+            empty_result['reason'] = f'Insufficient depth ({total_depth} < {min_depth} contracts)'
+            return empty_result
+
+        # Call pressure: buyers vs sellers in calls
+        # Positive = more call buyers = bullish
+        if total_call_bid + total_call_ask > 0:
+            call_pressure = (total_call_bid - total_call_ask) / (total_call_bid + total_call_ask)
+        else:
+            call_pressure = 0.0
+
+        # Put pressure: sellers vs buyers in puts
+        # Positive put_ask (selling puts) = bullish, positive put_bid (buying puts) = bearish
+        if total_put_bid + total_put_ask > 0:
+            put_pressure = (total_put_ask - total_put_bid) / (total_put_bid + total_put_ask)
+        else:
+            put_pressure = 0.0
+
+        # Net pressure combines call buying pressure and put selling pressure
+        # Both are bullish signals
+        raw_net_pressure = (call_pressure + put_pressure) / 2
+
+        # SMOOTHING: Add to history and compute rolling average
+        # Only update history with fresh data to prevent cache corruption
+        if update_smoothing:
+            self._pressure_history.append(raw_net_pressure)
+            # Keep only last 5 readings for smoothing
+            if len(self._pressure_history) > 5:
+                self._pressure_history = self._pressure_history[-5:]
+
+        # Smoothed pressure = average of last N readings (or raw if no history)
+        if self._pressure_history:
+            smoothed_pressure = sum(self._pressure_history) / len(self._pressure_history)
+        else:
+            smoothed_pressure = raw_net_pressure
+
+        # Determine pressure direction and strength from SMOOTHED value
+        if abs(smoothed_pressure) < 0.1:
+            pressure_direction = 'NEUTRAL'
+            pressure_strength = 'NONE'
+        elif smoothed_pressure > 0:
+            pressure_direction = 'BULLISH'
+            if smoothed_pressure > 0.4:
+                pressure_strength = 'STRONG'
+            elif smoothed_pressure > 0.2:
+                pressure_strength = 'MODERATE'
+            else:
+                pressure_strength = 'WEAK'
+        else:
+            pressure_direction = 'BEARISH'
+            if smoothed_pressure < -0.4:
+                pressure_strength = 'STRONG'
+            elif smoothed_pressure < -0.2:
+                pressure_strength = 'MODERATE'
+            else:
+                pressure_strength = 'WEAK'
+
+        # Liquidity score: higher = more liquid = easier execution
+        # Based on total depth available in ATM zone
+        liquidity_score = min(100, total_depth / 100)  # Normalize to 0-100
+
+        # Top pressure strikes (highest absolute net pressure)
+        sorted_by_pressure = sorted(strike_pressure, key=lambda x: abs(x['net_pressure']), reverse=True)[:5]
+
+        return {
+            'net_pressure': round(smoothed_pressure, 3),
+            'raw_pressure': round(raw_net_pressure, 3),  # Unsmoothed for reference
+            'pressure_direction': pressure_direction,
+            'pressure_strength': pressure_strength,
+            'call_pressure': round(call_pressure, 3),
+            'put_pressure': round(put_pressure, 3),
+            'total_bid_size': total_bid,
+            'total_ask_size': total_ask,
+            'liquidity_score': round(liquidity_score, 1),
+            'strikes_used': len(atm_strikes),
+            'smoothing_periods': len(self._pressure_history),
+            'is_valid': True,
+            'reason': 'OK',
+            'top_pressure_strikes': sorted_by_pressure
+        }
+
+    def calculate_net_gex_volume(self, strikes: List[StrikeData], spot_price: float,
+                                   update_smoothing: bool = True) -> Dict:
+        """
+        Calculate Net GEX Volume - intraday flow weighted by gamma impact.
+
+        Unlike OI-based GEX (which is stable because OI doesn't change intraday),
+        volume DOES change intraday and tells us about FLOW/MOMENTUM.
+
+        Args:
+            strikes: List of StrikeData objects
+            spot_price: Current spot price
+            update_smoothing: If False, skip adding to pressure history (use for cached data)
+
+        Formula:
+            Call GEX Flow = Call_Volume × |Call_Gamma| × 100 × spot²
+            Put GEX Flow = Put_Volume × |Put_Gamma| × 100 × spot²
+            Net GEX Volume = Call GEX Flow - Put GEX Flow
+
+        Enhanced with bid/ask pressure for confirmation:
+            - Volume shows what TRADED
+            - Bid/ask size shows what's WAITING to trade
+            - Combined signal is more reliable
+
+        Positive Net GEX Volume = Bullish flow (more call gamma being traded)
+        Negative Net GEX Volume = Bearish flow (more put gamma being traded)
+
+        Returns:
+            Dict with net_gex_volume, flow_direction, bid/ask pressure, and per-strike breakdown
+        """
+        # Empty result with properly structured bid_ask_pressure
+        empty_bid_ask = {
+            'net_pressure': 0.0,
+            'raw_pressure': 0.0,
+            'pressure_direction': 'NEUTRAL',
+            'pressure_strength': 'NONE',
+            'call_pressure': 0.0,
+            'put_pressure': 0.0,
+            'total_bid_size': 0,
+            'total_ask_size': 0,
+            'liquidity_score': 0.0,
+            'strikes_used': 0,
+            'smoothing_periods': 0,
+            'is_valid': False,
+            'reason': 'No data',
+            'top_pressure_strikes': []
+        }
+
+        if not strikes or spot_price <= 0:
+            return {
+                'net_gex_volume': 0,
+                'call_gex_flow': 0,
+                'put_gex_flow': 0,
+                'flow_direction': 'NEUTRAL',
+                'flow_strength': 'NONE',
+                'imbalance_ratio': 0,
+                'bid_ask_pressure': empty_bid_ask,
+                'combined_signal': 'NEUTRAL',
+                'signal_confidence': 'LOW',
+                'top_call_flow_strikes': [],
+                'top_put_flow_strikes': []
+            }
+
+        # Multiplier for GEX calculation
+        multiplier = 100 * spot_price * spot_price
+
+        call_gex_flow = 0
+        put_gex_flow = 0
+        strike_flows = []
+
+        for s in strikes:
+            # Calculate GEX-weighted volume for this strike
+            call_flow = s.call_volume * abs(s.call_gamma) * multiplier
+            put_flow = s.put_volume * abs(s.put_gamma) * multiplier
+
+            call_gex_flow += call_flow
+            put_gex_flow += put_flow
+
+            strike_flows.append({
+                'strike': s.strike,
+                'call_flow': round(call_flow / 1e6, 2),  # In millions
+                'put_flow': round(put_flow / 1e6, 2),
+                'net_flow': round((call_flow - put_flow) / 1e6, 2),
+                'call_volume': s.call_volume,
+                'put_volume': s.put_volume,
+                # Include bid/ask size for transparency
+                'call_bid_size': s.call_bid_size,
+                'call_ask_size': s.call_ask_size,
+                'put_bid_size': s.put_bid_size,
+                'put_ask_size': s.put_ask_size
+            })
+
+        net_gex_volume = call_gex_flow - put_gex_flow
+
+        # Normalize to millions for readability
+        net_gex_volume_m = net_gex_volume / 1e6
+        call_gex_flow_m = call_gex_flow / 1e6
+        put_gex_flow_m = put_gex_flow / 1e6
+
+        # Determine flow direction and strength
+        # Thresholds based on typical SPY 0DTE activity
+        total_flow = call_gex_flow + put_gex_flow
+        if total_flow > 0:
+            imbalance_ratio = abs(net_gex_volume) / total_flow
+        else:
+            imbalance_ratio = 0
+
+        if abs(net_gex_volume_m) < 1:  # Less than $1M net = neutral
+            flow_direction = 'NEUTRAL'
+            flow_strength = 'NONE'
+        elif net_gex_volume_m > 0:
+            flow_direction = 'BULLISH'
+            if imbalance_ratio > 0.3:  # 30%+ imbalance
+                flow_strength = 'STRONG'
+            elif imbalance_ratio > 0.15:
+                flow_strength = 'MODERATE'
+            else:
+                flow_strength = 'WEAK'
+        else:
+            flow_direction = 'BEARISH'
+            if imbalance_ratio > 0.3:
+                flow_strength = 'STRONG'
+            elif imbalance_ratio > 0.15:
+                flow_strength = 'MODERATE'
+            else:
+                flow_strength = 'WEAK'
+
+        # Calculate bid/ask pressure for confirmation
+        bid_ask_pressure = self.calculate_bid_ask_pressure(strikes, spot_price, update_smoothing=update_smoothing)
+
+        # Combine volume flow with bid/ask pressure for final signal
+        # Agreement = high confidence, disagreement = caution
+        combined_signal, signal_confidence = self._combine_flow_signals(
+            flow_direction, flow_strength,
+            bid_ask_pressure['pressure_direction'],
+            bid_ask_pressure['pressure_strength']
+        )
+
+        # Get top flow strikes
+        sorted_by_call = sorted(strike_flows, key=lambda x: x['call_flow'], reverse=True)[:3]
+        sorted_by_put = sorted(strike_flows, key=lambda x: x['put_flow'], reverse=True)[:3]
+
+        return {
+            'net_gex_volume': round(net_gex_volume_m, 2),
+            'call_gex_flow': round(call_gex_flow_m, 2),
+            'put_gex_flow': round(put_gex_flow_m, 2),
+            'flow_direction': flow_direction,
+            'flow_strength': flow_strength,
+            'imbalance_ratio': round(imbalance_ratio * 100, 1),  # As percentage
+            'bid_ask_pressure': bid_ask_pressure,
+            'combined_signal': combined_signal,
+            'signal_confidence': signal_confidence,
+            'top_call_flow_strikes': sorted_by_call,
+            'top_put_flow_strikes': sorted_by_put
+        }
+
+    def _combine_flow_signals(
+        self,
+        volume_direction: str,
+        volume_strength: str,
+        pressure_direction: str,
+        pressure_strength: str
+    ) -> Tuple[str, str]:
+        """
+        Combine volume flow direction with bid/ask pressure for final signal.
+
+        Agreement between volume and pressure = HIGH confidence
+        Disagreement = LOW confidence (proceed with caution)
+
+        Returns:
+            Tuple of (combined_signal, confidence)
+        """
+        # Both neutral
+        if volume_direction == 'NEUTRAL' and pressure_direction == 'NEUTRAL':
+            return 'NEUTRAL', 'HIGH'
+
+        # Full agreement
+        if volume_direction == pressure_direction:
+            # Both bullish
+            if volume_direction == 'BULLISH':
+                if volume_strength == 'STRONG' or pressure_strength == 'STRONG':
+                    return 'STRONG_BULLISH', 'HIGH'
+                elif volume_strength == 'MODERATE' or pressure_strength == 'MODERATE':
+                    return 'BULLISH', 'HIGH'
+                else:
+                    return 'BULLISH', 'MEDIUM'
+            # Both bearish
+            else:
+                if volume_strength == 'STRONG' or pressure_strength == 'STRONG':
+                    return 'STRONG_BEARISH', 'HIGH'
+                elif volume_strength == 'MODERATE' or pressure_strength == 'MODERATE':
+                    return 'BEARISH', 'HIGH'
+                else:
+                    return 'BEARISH', 'MEDIUM'
+
+        # One neutral, one directional - trust the directional one with medium confidence
+        if volume_direction == 'NEUTRAL':
+            return pressure_direction, 'MEDIUM'
+        if pressure_direction == 'NEUTRAL':
+            return volume_direction, 'MEDIUM'
+
+        # Disagreement - volume says one thing, pressure says another
+        # This is a DIVERGENCE - important signal of potential reversal
+        # Volume = what happened, Pressure = what's building
+        # If volume is bullish but pressure is bearish, bulls are exhausting
+        if volume_direction == 'BULLISH' and pressure_direction == 'BEARISH':
+            return 'DIVERGENCE_BEARISH', 'LOW'  # Bullish exhaustion
+        else:
+            return 'DIVERGENCE_BULLISH', 'LOW'  # Bearish exhaustion
+
     def generate_alerts(self, current: GammaSnapshot, previous: Optional[GammaSnapshot]) -> List[Alert]:
         """
         Generate alerts based on current snapshot vs previous.
@@ -909,8 +1810,16 @@ class ArgusEngine:
             call_oi = strike_info.get('call_oi', 0)
             put_oi = strike_info.get('put_oi', 0)
 
-            # Calculate net gamma
-            net_gamma = self.calculate_net_gamma(call_gamma, put_gamma, call_oi, put_oi)
+            # Calculate raw net gamma
+            raw_net_gamma = self.calculate_net_gamma(call_gamma, put_gamma, call_oi, put_oi)
+
+            # Apply smoothing to reduce noise from Tradier Greeks recalculations
+            # This uses median of recent readings and dampens suspicious large swings
+            net_gamma = self._smooth_gamma_value(strike, raw_net_gamma, spot_price)
+
+            # Update market open baseline (first 5 minutes of trading)
+            self._update_market_open_baseline(strike, net_gamma)
+
             total_gamma += abs(net_gamma)
             total_net_gamma += net_gamma
 
@@ -937,7 +1846,7 @@ class ArgusEngine:
             roc_30min = self.calculate_roc(strike, net_gamma, history, minutes=30)
             roc_1hr = self.calculate_roc(strike, net_gamma, history, minutes=60)
             roc_4hr = self.calculate_roc(strike, net_gamma, history, minutes=240)
-            roc_trading_day = self.calculate_roc_since_open(net_gamma, history)
+            roc_trading_day = self.calculate_roc_since_open(net_gamma, history, strike=strike)
 
             # Calculate gamma change percentage
             gamma_change_pct = 0
@@ -957,6 +1866,13 @@ class ArgusEngine:
                 roc_4hr=roc_4hr,
                 roc_trading_day=roc_trading_day,
                 volume=strike_info.get('volume', 0),
+                call_volume=strike_info.get('call_volume', 0),  # Separate for GEX flow
+                put_volume=strike_info.get('put_volume', 0),    # Separate for GEX flow
+                # Bid/ask size for order flow pressure analysis
+                call_bid_size=strike_info.get('call_bid_size', 0),
+                call_ask_size=strike_info.get('call_ask_size', 0),
+                put_bid_size=strike_info.get('put_bid_size', 0),
+                put_ask_size=strike_info.get('put_ask_size', 0),
                 call_iv=strike_info.get('call_iv', 0),
                 put_iv=strike_info.get('put_iv', 0),
                 previous_net_gamma=prev_gamma,
@@ -1024,6 +1940,10 @@ class ArgusEngine:
         previous_regime = self.previous_snapshot.gamma_regime if self.previous_snapshot else None
         regime_flipped = previous_regime is not None and gamma_regime != previous_regime
 
+        # Lock GEX levels at market open (like SpotGamma does for 0DTE)
+        # This ensures major strikes remain stable throughout the day
+        self.lock_gex_levels_at_open(strikes_data, spot_price)
+
         # Identify magnets, pin, and danger zones
         magnets = self.identify_magnets(strikes_data)
         likely_pin, pin_probability = self.identify_pin_strike(strikes_data, spot_price)
@@ -1061,6 +1981,7 @@ class ArgusEngine:
         # Update state for next iteration
         self.previous_snapshot = snapshot
         self.previous_magnets = [m['strike'] for m in magnets]
+        self._previous_spot_price = spot_price  # Track for smoothing validation
 
         return snapshot
 

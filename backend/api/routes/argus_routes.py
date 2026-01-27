@@ -56,6 +56,40 @@ def set_cached(key: str, value: Any):
     _cache[key] = value
     _cache_times[key] = time.time()
 
+# ==================== DAILY RESET ====================
+# Track last reset date to ensure smoothing state is fresh each day
+_last_reset_date: Optional[date] = None
+
+
+def check_daily_reset():
+    """
+    Check if we need to reset gamma smoothing state for a new trading day.
+
+    This ensures the smoothing windows and baselines are fresh at market open,
+    preventing stale data from previous day affecting today's calculations.
+    """
+    global _last_reset_date
+
+    if not ARGUS_AVAILABLE:
+        return
+
+    today = get_central_time().date()
+    now = get_central_time()
+
+    # Reset at or after market open (8:30 AM CT) if not already reset today
+    market_open = now.replace(hour=8, minute=30, second=0, microsecond=0)
+
+    if now >= market_open and _last_reset_date != today:
+        try:
+            engine = get_argus_engine()
+            engine.reset_gamma_smoothing()
+            engine.reset_expected_move_smoothing()
+            _last_reset_date = today
+            logger.info(f"ARGUS: Daily reset completed for {today}")
+        except Exception as e:
+            logger.error(f"ARGUS: Failed daily reset: {e}")
+
+
 # Try to import ARGUS engine
 ARGUS_AVAILABLE = False
 try:
@@ -92,6 +126,8 @@ _history_loaded: Dict[str, bool] = {}  # Track if we've loaded history from DB p
 
 def ensure_all_argus_tables():
     """Create all Argus tables if they don't exist"""
+    conn = None
+    cursor = None
     try:
         conn = get_connection()
         if not conn:
@@ -227,14 +263,66 @@ def ensure_all_argus_tables():
             ON argus_accuracy(metric_date DESC)
         """)
 
+        # 7. argus_order_flow_history - bid/ask pressure tracking
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS argus_order_flow_history (
+                id SERIAL PRIMARY KEY,
+                symbol VARCHAR(10) NOT NULL DEFAULT 'SPY',
+                recorded_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                spot_price DECIMAL(10, 2),
+                -- Volume flow metrics
+                net_gex_volume DECIMAL(12, 2),
+                call_gex_flow DECIMAL(12, 2),
+                put_gex_flow DECIMAL(12, 2),
+                flow_direction VARCHAR(10),
+                flow_strength VARCHAR(10),
+                -- Bid/Ask pressure metrics (smoothed)
+                net_pressure DECIMAL(6, 4),
+                raw_pressure DECIMAL(6, 4),
+                pressure_direction VARCHAR(10),
+                pressure_strength VARCHAR(10),
+                call_pressure DECIMAL(6, 4),
+                put_pressure DECIMAL(6, 4),
+                -- Depth metrics
+                total_bid_size INTEGER,
+                total_ask_size INTEGER,
+                liquidity_score DECIMAL(5, 1),
+                strikes_used INTEGER,
+                -- Combined signal
+                combined_signal VARCHAR(30),
+                signal_confidence VARCHAR(10),
+                is_valid BOOLEAN DEFAULT TRUE,
+                -- Context
+                gamma_regime VARCHAR(20),
+                vix DECIMAL(6, 2)
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_argus_order_flow_recorded_at
+            ON argus_order_flow_history(symbol, recorded_at DESC)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_argus_order_flow_signal
+            ON argus_order_flow_history(combined_signal, signal_confidence)
+        """)
+
         conn.commit()
-        cursor.close()
-        conn.close()
-        logger.info("ARGUS: All tables ensured (6 tables)")
+        logger.info("ARGUS: All tables ensured (7 tables)")
         return True
     except Exception as e:
         logger.error(f"Failed to create ARGUS tables: {e}")
         return False
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 
 def ensure_gamma_history_table():
@@ -250,6 +338,8 @@ def persist_gamma_history(engine, symbol: str = "SPY"):
     if not engine or not engine.history:
         return
 
+    conn = None
+    cursor = None
     try:
         conn = get_connection()
         if not conn:
@@ -288,13 +378,22 @@ def persist_gamma_history(engine, symbol: str = "SPY"):
                 inserted += 1
 
         conn.commit()
-        cursor.close()
-        conn.close()
 
         if inserted > 0:
             logger.debug(f"ARGUS: Persisted {inserted} gamma history entries for {symbol}")
     except Exception as e:
         logger.warning(f"Failed to persist gamma history: {e}")
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 
 def load_gamma_history(engine, symbol: str = "SPY"):
@@ -311,6 +410,9 @@ def load_gamma_history(engine, symbol: str = "SPY"):
         logger.debug(f"ARGUS: Gamma history already loaded for {symbol}, skipping")
         return
 
+    conn = None
+    cursor = None
+    rows = []
     try:
         conn = get_connection()
         if not conn:
@@ -329,34 +431,43 @@ def load_gamma_history(engine, symbol: str = "SPY"):
         """, (symbol,))
 
         rows = cursor.fetchall()
-        cursor.close()
-        conn.close()
-
-        if not rows:
-            logger.debug(f"ARGUS: No recent gamma history found for {symbol}")
-            _history_loaded[symbol] = True
-            return
-
-        # Populate engine history
-        for strike, gamma_value, recorded_at in rows:
-            strike_float = float(strike)
-            if strike_float not in engine.history:
-                engine.history[strike_float] = []
-
-            # Ensure timezone awareness
-            if recorded_at.tzinfo is None:
-                recorded_at = recorded_at.replace(tzinfo=CENTRAL_TZ)
-
-            engine.history[strike_float].append((recorded_at, float(gamma_value)))
-
-        _history_loaded[symbol] = True
-        unique_strikes = len(engine.history)
-        total_entries = sum(len(h) for h in engine.history.values())
-        logger.info(f"ARGUS: Loaded gamma history for {symbol}: {unique_strikes} strikes, {total_entries} entries")
-
     except Exception as e:
         logger.warning(f"Failed to load gamma history: {e}")
         _history_loaded[symbol] = True  # Prevent repeated failures
+        return
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
+
+    if not rows:
+        logger.debug(f"ARGUS: No recent gamma history found for {symbol}")
+        _history_loaded[symbol] = True
+        return
+
+    # Populate engine history
+    for strike, gamma_value, recorded_at in rows:
+        strike_float = float(strike)
+        if strike_float not in engine.history:
+            engine.history[strike_float] = []
+
+        # Ensure timezone awareness
+        if recorded_at.tzinfo is None:
+            recorded_at = recorded_at.replace(tzinfo=CENTRAL_TZ)
+
+        engine.history[strike_float].append((recorded_at, float(gamma_value)))
+
+    _history_loaded[symbol] = True
+    unique_strikes = len(engine.history)
+    total_entries = sum(len(h) for h in engine.history.values())
+    logger.info(f"ARGUS: Loaded gamma history for {symbol}: {unique_strikes} strikes, {total_entries} entries")
 
 
 def cleanup_old_gamma_history():
@@ -365,6 +476,8 @@ def cleanup_old_gamma_history():
     Called periodically to prevent table bloat.
     Keeps full trading day data for ROC calculations.
     """
+    conn = None
+    cursor = None
     try:
         conn = get_connection()
         if not conn:
@@ -377,13 +490,22 @@ def cleanup_old_gamma_history():
         """)
         deleted = cursor.rowcount
         conn.commit()
-        cursor.close()
-        conn.close()
 
         if deleted > 0:
             logger.debug(f"ARGUS: Cleaned up {deleted} old gamma history entries")
     except Exception as e:
         logger.warning(f"Failed to cleanup gamma history: {e}")
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 
 def get_engine() -> Optional[ArgusEngine]:
@@ -660,7 +782,14 @@ async def fetch_gamma_data(symbol: str = "SPY", expiration: str = None) -> dict:
                 'put_price': (put_contract.last or put_contract.mid) if put_contract else 0,
                 'call_iv': call_contract.implied_volatility if call_contract else 0,
                 'put_iv': put_contract.implied_volatility if put_contract else 0,
-                'volume': (call_contract.volume if call_contract else 0) + (put_contract.volume if put_contract else 0)
+                'volume': (call_contract.volume if call_contract else 0) + (put_contract.volume if put_contract else 0),
+                'call_volume': call_contract.volume if call_contract else 0,  # Separate for GEX flow
+                'put_volume': put_contract.volume if put_contract else 0,     # Separate for GEX flow
+                # Bid/ask size for order flow pressure analysis
+                'call_bid_size': call_contract.bid_size if call_contract else 0,
+                'call_ask_size': call_contract.ask_size if call_contract else 0,
+                'put_bid_size': put_contract.bid_size if put_contract else 0,
+                'put_ask_size': put_contract.ask_size if put_contract else 0
             }
 
         # Record the actual data fetch time
@@ -740,6 +869,9 @@ async def get_gamma_data(
     - Rate of change
     - Magnets, pin, danger zones
     """
+    # Check if we need to reset smoothing state for new trading day
+    check_daily_reset()
+
     engine = get_engine()
     if not engine:
         raise HTTPException(status_code=503, detail="ARGUS engine not available")
@@ -777,6 +909,31 @@ async def get_gamma_data(
                 "fetched_at": raw_data.get('fetched_at', format_central_timestamp())
             }
 
+        # GAP FIX: Validate spot_price before proceeding
+        # If spot_price is 0 or invalid, ATM calculations will fail (any strike would be "ATM")
+        spot_price = raw_data.get('spot_price', 0)
+        use_previous_due_to_invalid_price = False
+        if not spot_price or spot_price <= 0:
+            logger.warning(f"ARGUS: Invalid spot price ({spot_price}) - cannot calculate ATM range")
+            # Try to use previous snapshot if available
+            if engine.previous_snapshot and engine.previous_snapshot.spot_price > 0:
+                logger.info("ARGUS: Using previous snapshot due to invalid spot price")
+                snapshot = engine.previous_snapshot
+                use_previous_due_to_invalid_price = True
+                # Update raw_data for downstream functions that use it
+                raw_data['spot_price'] = snapshot.spot_price
+                raw_data['vix'] = snapshot.vix
+            else:
+                return {
+                    "success": False,
+                    "data_unavailable": True,
+                    "reason": "Invalid spot price",
+                    "message": f"Spot price is invalid ({spot_price}). Market data may be unavailable.",
+                    "symbol": symbol,
+                    "expiration_date": expiration,
+                    "fetched_at": raw_data.get('fetched_at', format_central_timestamp())
+                }
+
         # CRITICAL: Only process through engine if data is FRESH (not cached)
         # Re-processing cached data causes ROC to become 0 because the same gamma values
         # get added to history with new timestamps, making rate of change appear as 0
@@ -788,7 +945,13 @@ async def get_gamma_data(
         # This prevents ROC from constantly recalculating on stale after-hours data
         market_open = is_market_hours()
 
-        if not market_open and engine.previous_snapshot:
+        # Skip re-processing if we already used previous snapshot due to invalid spot price
+        if use_previous_due_to_invalid_price:
+            # Already set snapshot above, skip processing
+            # Treat as cached to prevent smoothing updates and database persistence
+            is_cached = True
+            logger.debug("ARGUS: Skipping re-processing, using previous snapshot due to invalid spot price")
+        elif not market_open and engine.previous_snapshot:
             # Market closed - use existing snapshot, don't reprocess
             logger.debug(f"ARGUS: Market closed - using existing snapshot to prevent ROC recalculation")
             snapshot = engine.previous_snapshot
@@ -920,6 +1083,29 @@ async def get_gamma_data(
                     confidence=snapshot.pin_probability * 100  # Convert to percentage
                 )
 
+        # Generate actionable trading signal based on gamma evolution
+        trading_signal = engine.generate_trading_signal(
+            filtered_strikes,
+            snapshot.spot_price,
+            snapshot.likely_pin,
+            snapshot.gamma_regime
+        )
+
+        # Calculate order flow analysis using bid/ask size data
+        # This provides additional signal confirmation based on order book depth
+        # IMPORTANT: Only update smoothing history with fresh data to prevent cache corruption
+        order_flow = engine.calculate_net_gex_volume(filtered_strikes, snapshot.spot_price, update_smoothing=not is_cached)
+
+        # Persist order flow data for historical analysis (only for fresh data)
+        if not is_cached and order_flow:
+            await persist_order_flow_to_db(
+                symbol=symbol,
+                spot_price=snapshot.spot_price,
+                order_flow=order_flow,
+                gamma_regime=snapshot.gamma_regime,
+                vix=raw_data.get('vix', 0)
+            )
+
         # Build response
         return {
             "success": True,
@@ -947,7 +1133,9 @@ async def get_gamma_data(
                 "pin_probability": snapshot.pin_probability,
                 "danger_zones": snapshot.danger_zones,
                 "gamma_flips": snapshot.gamma_flips,
-                "pinning_status": snapshot.pinning_status
+                "pinning_status": snapshot.pinning_status,
+                "trading_signal": trading_signal,  # Actionable trading guidance based on gamma evolution
+                "order_flow": order_flow  # Bid/ask pressure analysis for signal confirmation
             }
         }
 
@@ -992,6 +1180,8 @@ async def get_expected_move_change(current_em: float, current_vix: float, spot_p
     open_em = None
     open_spot = None
 
+    conn = None
+    cursor = None
     try:
         conn = get_connection()
         if conn:
@@ -1022,11 +1212,19 @@ async def get_expected_move_change(current_em: float, current_vix: float, spot_p
             if row:
                 open_em = float(row[0])
                 open_spot = float(row[1]) if row[1] else None
-
-            cursor.close()
-            conn.close()
     except Exception as e:
         logger.warning(f"Could not fetch prior expected move: {e}")
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
     # Use cached/current values if DB not available
     if prior_em is None:
@@ -1161,6 +1359,8 @@ async def get_market_structure_changes(
     prior_call_wall = None
     prior_put_wall = None
 
+    conn = None
+    cursor = None
     try:
         conn = get_connection()
         if conn:
@@ -1199,11 +1399,19 @@ async def get_market_structure_changes(
                 # If we didn't get prior_spot from argus_snapshots, use gex_history
                 if prior_spot is None and row[3]:
                     prior_spot = float(row[3])
-
-            cursor.close()
-            conn.close()
     except Exception as e:
         logger.warning(f"Could not fetch prior day structure: {e}")
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
     # =========================================================================
     # SIGNAL 1: FLIP POINT MOVEMENT
@@ -1917,6 +2125,8 @@ async def persist_alerts_to_db(alerts: list):
     if not alerts:
         return
 
+    conn = None
+    cursor = None
     try:
         conn = get_connection()
         if not conn:
@@ -1952,15 +2162,26 @@ async def persist_alerts_to_db(alerts: list):
             ))
 
         conn.commit()
-        cursor.close()
-        conn.close()
         logger.debug(f"Persisted {len(alerts)} alerts to database")
     except Exception as e:
         logger.warning(f"Failed to persist alerts: {e}")
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 
 async def persist_danger_zones_to_db(danger_zones: list, spot_price: float, expiration: str):
     """Persist danger zones to database for history tracking"""
+    conn = None
+    cursor = None
     try:
         conn = get_connection()
         if not conn:
@@ -2026,12 +2247,125 @@ async def persist_danger_zones_to_db(danger_zones: list, spot_price: float, expi
             ))
 
         conn.commit()
-        cursor.close()
-        conn.close()
         count = len(danger_zones) if danger_zones else 0
         logger.debug(f"Danger zone sync: {count} active, resolved inactive ones")
     except Exception as e:
         logger.warning(f"Failed to persist danger zones: {e}")
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
+
+
+async def persist_order_flow_to_db(
+    symbol: str,
+    spot_price: float,
+    order_flow: dict,
+    gamma_regime: str = None,
+    vix: float = None
+):
+    """
+    Persist order flow pressure data to database for historical analysis.
+
+    Stores both volume flow and bid/ask pressure metrics for:
+    - Historical pattern analysis
+    - Signal accuracy tracking
+    - Backtest validation
+    - Divergence pattern research
+    """
+    conn = None
+    cursor = None
+    try:
+        if not order_flow:
+            return
+
+        conn = get_connection()
+        if not conn:
+            return
+
+        cursor = conn.cursor()
+
+        # Only persist valid signals (or invalid ones for analysis)
+        bid_ask = order_flow.get('bid_ask_pressure', {})
+
+        # Check if we already have a reading in the last 30 seconds (prevent duplicates)
+        cursor.execute("""
+            SELECT id FROM argus_order_flow_history
+            WHERE symbol = %s
+            AND recorded_at > NOW() - INTERVAL '30 seconds'
+            LIMIT 1
+        """, (symbol,))
+
+        if cursor.fetchone():
+            return  # Already have a recent reading
+
+        cursor.execute("""
+            INSERT INTO argus_order_flow_history (
+                symbol, recorded_at, spot_price,
+                net_gex_volume, call_gex_flow, put_gex_flow,
+                flow_direction, flow_strength,
+                net_pressure, raw_pressure, pressure_direction, pressure_strength,
+                call_pressure, put_pressure,
+                total_bid_size, total_ask_size, liquidity_score, strikes_used,
+                combined_signal, signal_confidence, is_valid,
+                gamma_regime, vix
+            ) VALUES (
+                %s, NOW(), %s,
+                %s, %s, %s,
+                %s, %s,
+                %s, %s, %s, %s,
+                %s, %s,
+                %s, %s, %s, %s,
+                %s, %s, %s,
+                %s, %s
+            )
+        """, (
+            symbol, spot_price,
+            order_flow.get('net_gex_volume'),
+            order_flow.get('call_gex_flow'),
+            order_flow.get('put_gex_flow'),
+            order_flow.get('flow_direction'),
+            order_flow.get('flow_strength'),
+            bid_ask.get('net_pressure'),
+            bid_ask.get('raw_pressure'),
+            bid_ask.get('pressure_direction'),
+            bid_ask.get('pressure_strength'),
+            bid_ask.get('call_pressure'),
+            bid_ask.get('put_pressure'),
+            bid_ask.get('total_bid_size'),
+            bid_ask.get('total_ask_size'),
+            bid_ask.get('liquidity_score'),
+            bid_ask.get('strikes_used'),
+            order_flow.get('combined_signal'),
+            order_flow.get('signal_confidence'),
+            bid_ask.get('is_valid', False),  # Default to False for safety
+            gamma_regime,
+            vix
+        ))
+
+        conn.commit()
+        logger.debug(f"Order flow persisted: {order_flow.get('combined_signal')} ({order_flow.get('signal_confidence')})")
+    except Exception as e:
+        logger.warning(f"Failed to persist order flow: {e}")
+    finally:
+        # Always close cursor and connection to prevent leaks
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 
 async def persist_argus_snapshot_to_db(
@@ -2055,6 +2389,8 @@ async def persist_argus_snapshot_to_db(
     - Range width changes
     - GEX momentum
     """
+    conn = None
+    cursor = None
     try:
         conn = get_connection()
         if not conn:
@@ -2072,8 +2408,6 @@ async def persist_argus_snapshot_to_db(
         """, (symbol,))
 
         if cursor.fetchone():
-            cursor.close()
-            conn.close()
             return  # Already have a recent snapshot
 
         # Insert new snapshot
@@ -2103,13 +2437,21 @@ async def persist_argus_snapshot_to_db(
         ))
 
         conn.commit()
-        cursor.close()
-        conn.close()
-
         logger.debug(f"ARGUS snapshot persisted: {symbol} spot=${spot_price:.2f} EM=${expected_move:.2f}")
 
     except Exception as e:
         logger.warning(f"Failed to persist ARGUS snapshot: {e}")
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 
 # ==================== PIN PREDICTION PERSISTENCE ====================
@@ -2129,6 +2471,8 @@ async def persist_pin_prediction_to_db(
     This ensures we track the "morning prediction" accuracy, not constantly
     updating predictions throughout the day.
     """
+    conn = None
+    cursor = None
     try:
         conn = get_connection()
         if not conn:
@@ -2146,8 +2490,6 @@ async def persist_pin_prediction_to_db(
         """, (symbol,))
 
         if cursor.fetchone():
-            cursor.close()
-            conn.close()
             logger.debug(f"Pin prediction already exists for {symbol} today, skipping")
             return False  # Already have today's prediction
 
@@ -2159,15 +2501,23 @@ async def persist_pin_prediction_to_db(
         """, (symbol, predicted_pin, gamma_regime, vix, confidence))
 
         conn.commit()
-        cursor.close()
-        conn.close()
-
         logger.info(f"ARGUS pin prediction stored: {symbol} pin=${predicted_pin:.2f} ({confidence:.0f}% confidence)")
         return True
 
     except Exception as e:
         logger.warning(f"Failed to persist pin prediction: {e}")
         return False
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 
 async def update_pin_prediction_with_actual_close(symbol: str = "SPY"):
@@ -2177,6 +2527,8 @@ async def update_pin_prediction_with_actual_close(symbol: str = "SPY"):
     Called at end of day (after 3:00 PM CT) to record the actual close
     so we can calculate prediction accuracy.
     """
+    conn = None
+    cursor = None
     try:
         conn = get_connection()
         if not conn:
@@ -2195,8 +2547,6 @@ async def update_pin_prediction_with_actual_close(symbol: str = "SPY"):
 
         row = cursor.fetchone()
         if not row:
-            cursor.close()
-            conn.close()
             logger.warning(f"No snapshot found for {symbol} today, cannot update actual close")
             return False
 
@@ -2213,8 +2563,6 @@ async def update_pin_prediction_with_actual_close(symbol: str = "SPY"):
 
         updated = cursor.rowcount
         conn.commit()
-        cursor.close()
-        conn.close()
 
         if updated > 0:
             logger.info(f"ARGUS pin prediction updated with actual close: {symbol} close=${actual_close:.2f}")
@@ -2226,6 +2574,17 @@ async def update_pin_prediction_with_actual_close(symbol: str = "SPY"):
     except Exception as e:
         logger.warning(f"Failed to update pin prediction with actual close: {e}")
         return False
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 
 async def calculate_and_store_argus_accuracy():
