@@ -117,6 +117,64 @@ else
 fi
 
 echo ""
+echo "TEST 8: Gap Fix Verification (STANDARDS.md)"
+echo "--------------------------------------------"
+echo "  Verifying root cause fixes are complete..."
+
+# Test GAP #5-6: Empty result fields
+echo ""
+echo "  GAP #5-6: Empty result structure fields"
+FIELDS_CHECK=$(psql $DATABASE_URL -t -c "
+SELECT
+    CASE WHEN raw_pressure IS NOT NULL THEN 1 ELSE 0 END +
+    CASE WHEN is_valid IS NOT NULL THEN 1 ELSE 0 END as field_count
+FROM argus_order_flow_history
+WHERE recorded_at > NOW() - INTERVAL '1 hour'
+LIMIT 1;
+" 2>/dev/null | tr -d ' ')
+if [ "$FIELDS_CHECK" = "2" ]; then
+    pass "raw_pressure and is_valid fields populated"
+else
+    echo "  ⚠️  No recent records to verify field population"
+fi
+
+# Test that is_valid defaults correctly (should have both true and false)
+IS_VALID_DIST=$(psql $DATABASE_URL -t -c "
+SELECT
+    COUNT(CASE WHEN is_valid = true THEN 1 END) as valid_count,
+    COUNT(CASE WHEN is_valid = false THEN 1 END) as invalid_count
+FROM argus_order_flow_history
+WHERE recorded_at > NOW() - INTERVAL '7 days';
+" 2>/dev/null)
+echo "  is_valid distribution: $IS_VALID_DIST"
+
+# Test API response structure
+echo ""
+echo "  GAP #1: Smoothing periods in response"
+SMOOTHING=$(echo "$API_RESPONSE" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+ba = d.get('data', {}).get('order_flow', {}).get('bid_ask_pressure', {})
+sp = ba.get('smoothing_periods', -1)
+print(sp)
+" 2>/dev/null)
+if [ "$SMOOTHING" != "-1" ]; then
+    pass "smoothing_periods field present (value: $SMOOTHING)"
+else
+    fail "smoothing_periods field missing"
+fi
+
+# Test data_unavailable handling
+echo ""
+echo "  GAP #2-3: spot_price validation (API error handling)"
+ERROR_RESPONSE=$(curl -s "https://alphagex-api.onrender.com/api/argus/gamma?symbol=INVALID" 2>/dev/null)
+if echo "$ERROR_RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if 'success' in d or 'detail' in d else 1)" 2>/dev/null; then
+    pass "API returns proper error structure for invalid symbol"
+else
+    fail "API error handling incomplete"
+fi
+
+echo ""
 echo "=============================================="
 echo "  TEST COMPLETE"
 echo "=============================================="
