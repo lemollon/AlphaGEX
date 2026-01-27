@@ -215,6 +215,9 @@ BOT_SCAN_SOURCES = {
     'icarus': 'scan_activity',
 }
 
+# Cache for column existence checks (avoids repeated information_schema queries)
+_COLUMN_EXISTENCE_CACHE: Dict[str, bool] = {}
+
 # Database connection
 try:
     from database_adapter import get_connection
@@ -368,15 +371,20 @@ def fetch_closed_trades_for_date(bot: str, report_date: date) -> List[Dict[str, 
         with _db_connection() as conn:
             cursor = conn.cursor()
 
-            # Cast close_time to timestamptz for proper timezone handling
-            # Use COALESCE to fall back to open_time if close_time is NULL
+            # Use range query instead of DATE() function for better index usage
+            # Convert report_date to timestamp range in Central Time
+            start_of_day = datetime.combine(report_date, datetime.min.time())
+            end_of_day = datetime.combine(report_date + timedelta(days=1), datetime.min.time())
+
+            # Query uses range comparison which can leverage indexes on close_time/open_time
             cursor.execute(f"""
                 SELECT *
                 FROM {table}
                 WHERE status IN ('closed', 'expired', 'partial_close')
-                AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
-                ORDER BY COALESCE(close_time, open_time)::timestamptz ASC
-            """, (report_date,))
+                AND COALESCE(close_time, open_time) >= %s::timestamp AT TIME ZONE 'America/Chicago'
+                AND COALESCE(close_time, open_time) < %s::timestamp AT TIME ZONE 'America/Chicago'
+                ORDER BY COALESCE(close_time, open_time) ASC
+            """, (start_of_day, end_of_day))
 
             columns = [desc[0] for desc in cursor.description]
             trades = []
@@ -401,6 +409,28 @@ def fetch_closed_trades_for_date(bot: str, report_date: date) -> List[Dict[str, 
         return []
 
 
+def _check_column_exists(cursor, table_name: str, column_name: str) -> bool:
+    """
+    Check if a column exists in a table, with caching.
+
+    Uses module-level cache to avoid repeated information_schema queries.
+    """
+    cache_key = f"{table_name}.{column_name}"
+
+    if cache_key in _COLUMN_EXISTENCE_CACHE:
+        return _COLUMN_EXISTENCE_CACHE[cache_key]
+
+    cursor.execute("""
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = %s AND column_name = %s
+    """, (table_name, column_name))
+    exists = cursor.fetchone() is not None
+
+    _COLUMN_EXISTENCE_CACHE[cache_key] = exists
+    return exists
+
+
 def fetch_scan_activity_for_date(bot: str, report_date: date) -> List[Dict[str, Any]]:
     """
     Fetch scan activity for a bot on a specific date.
@@ -421,29 +451,31 @@ def fetch_scan_activity_for_date(bot: str, report_date: date) -> List[Dict[str, 
         with _db_connection() as conn:
             cursor = conn.cursor()
 
-            # Check if table exists and has bot_name column
-            cursor.execute("""
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_name = %s AND column_name = 'bot_name'
-            """, (source_table,))
-            has_bot_column = cursor.fetchone() is not None
+            # Use cached column check (avoids repeated information_schema queries)
+            has_bot_column = _check_column_exists(cursor, source_table, 'bot_name')
+
+            # Use range query instead of DATE() function for better index usage
+            # Convert report_date to timestamp range in Central Time
+            start_of_day = datetime.combine(report_date, datetime.min.time())
+            end_of_day = datetime.combine(report_date + timedelta(days=1), datetime.min.time())
 
             if has_bot_column:
                 cursor.execute(f"""
                     SELECT *
                     FROM {source_table}
                     WHERE bot_name = %s
-                    AND DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
+                    AND timestamp >= %s::timestamp AT TIME ZONE 'America/Chicago'
+                    AND timestamp < %s::timestamp AT TIME ZONE 'America/Chicago'
                     ORDER BY timestamp ASC
-                """, (bot.upper(), report_date))
+                """, (bot.upper(), start_of_day, end_of_day))
             else:
                 cursor.execute(f"""
                     SELECT *
                     FROM {source_table}
-                    WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
+                    WHERE timestamp >= %s::timestamp AT TIME ZONE 'America/Chicago'
+                    AND timestamp < %s::timestamp AT TIME ZONE 'America/Chicago'
                     ORDER BY timestamp ASC
-                """, (report_date,))
+                """, (start_of_day, end_of_day))
 
             columns = [desc[0] for desc in cursor.description]
             scans = []
