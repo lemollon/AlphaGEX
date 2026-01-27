@@ -47,12 +47,13 @@ interface ReportResponse {
   message?: string
 }
 
+// Use lightweight summary endpoint - much faster than full report
 const LIVE_BOTS: { name: BotName; endpoint: string; reportLink: string; brandColor: string }[] = [
-  { name: 'ARES', endpoint: '/api/trader/ares/reports/today', reportLink: '/ares/reports', brandColor: 'amber' },
-  { name: 'ATHENA', endpoint: '/api/trader/athena/reports/today', reportLink: '/athena/reports', brandColor: 'cyan' },
-  { name: 'ICARUS', endpoint: '/api/trader/icarus/reports/today', reportLink: '/icarus/reports', brandColor: 'orange' },
-  { name: 'PEGASUS', endpoint: '/api/trader/pegasus/reports/today', reportLink: '/pegasus/reports', brandColor: 'blue' },
-  { name: 'TITAN', endpoint: '/api/trader/titan/reports/today', reportLink: '/titan/reports', brandColor: 'violet' },
+  { name: 'ARES', endpoint: '/api/trader/ares/reports/today/summary', reportLink: '/ares/reports', brandColor: 'amber' },
+  { name: 'ATHENA', endpoint: '/api/trader/athena/reports/today/summary', reportLink: '/athena/reports', brandColor: 'cyan' },
+  { name: 'ICARUS', endpoint: '/api/trader/icarus/reports/today/summary', reportLink: '/icarus/reports', brandColor: 'orange' },
+  { name: 'PEGASUS', endpoint: '/api/trader/pegasus/reports/today/summary', reportLink: '/pegasus/reports', brandColor: 'blue' },
+  { name: 'TITAN', endpoint: '/api/trader/titan/reports/today/summary', reportLink: '/titan/reports', brandColor: 'violet' },
 ]
 
 // Fetches cached report from database - NO Claude API call

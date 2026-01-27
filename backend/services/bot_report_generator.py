@@ -215,6 +215,9 @@ BOT_SCAN_SOURCES = {
     'icarus': 'scan_activity',
 }
 
+# Cache for column existence checks (avoids repeated information_schema queries)
+_COLUMN_EXISTENCE_CACHE: Dict[str, bool] = {}
+
 # Database connection
 try:
     from database_adapter import get_connection
@@ -310,6 +313,12 @@ def _ensure_report_tables_exist():
                 ON {table_name}(report_date)
             """)
 
+            # Create index for total_pnl (used in best/worst day queries)
+            cursor.execute(f"""
+                CREATE INDEX IF NOT EXISTS {table_name}_pnl_idx
+                ON {table_name}(total_pnl)
+            """)
+
             logger.info(f"Ensured table {table_name} exists")
 
         conn.commit()
@@ -362,15 +371,20 @@ def fetch_closed_trades_for_date(bot: str, report_date: date) -> List[Dict[str, 
         with _db_connection() as conn:
             cursor = conn.cursor()
 
-            # Cast close_time to timestamptz for proper timezone handling
-            # Use COALESCE to fall back to open_time if close_time is NULL
+            # Use range query instead of DATE() function for better index usage
+            # Convert report_date to timestamp range in Central Time
+            start_of_day = datetime.combine(report_date, datetime.min.time())
+            end_of_day = datetime.combine(report_date + timedelta(days=1), datetime.min.time())
+
+            # Query uses range comparison which can leverage indexes on close_time/open_time
             cursor.execute(f"""
                 SELECT *
                 FROM {table}
                 WHERE status IN ('closed', 'expired', 'partial_close')
-                AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
-                ORDER BY COALESCE(close_time, open_time)::timestamptz ASC
-            """, (report_date,))
+                AND COALESCE(close_time, open_time) >= %s::timestamp AT TIME ZONE 'America/Chicago'
+                AND COALESCE(close_time, open_time) < %s::timestamp AT TIME ZONE 'America/Chicago'
+                ORDER BY COALESCE(close_time, open_time) ASC
+            """, (start_of_day, end_of_day))
 
             columns = [desc[0] for desc in cursor.description]
             trades = []
@@ -395,6 +409,28 @@ def fetch_closed_trades_for_date(bot: str, report_date: date) -> List[Dict[str, 
         return []
 
 
+def _check_column_exists(cursor, table_name: str, column_name: str) -> bool:
+    """
+    Check if a column exists in a table, with caching.
+
+    Uses module-level cache to avoid repeated information_schema queries.
+    """
+    cache_key = f"{table_name}.{column_name}"
+
+    if cache_key in _COLUMN_EXISTENCE_CACHE:
+        return _COLUMN_EXISTENCE_CACHE[cache_key]
+
+    cursor.execute("""
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = %s AND column_name = %s
+    """, (table_name, column_name))
+    exists = cursor.fetchone() is not None
+
+    _COLUMN_EXISTENCE_CACHE[cache_key] = exists
+    return exists
+
+
 def fetch_scan_activity_for_date(bot: str, report_date: date) -> List[Dict[str, Any]]:
     """
     Fetch scan activity for a bot on a specific date.
@@ -415,29 +451,31 @@ def fetch_scan_activity_for_date(bot: str, report_date: date) -> List[Dict[str, 
         with _db_connection() as conn:
             cursor = conn.cursor()
 
-            # Check if table exists and has bot_name column
-            cursor.execute("""
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_name = %s AND column_name = 'bot_name'
-            """, (source_table,))
-            has_bot_column = cursor.fetchone() is not None
+            # Use cached column check (avoids repeated information_schema queries)
+            has_bot_column = _check_column_exists(cursor, source_table, 'bot_name')
+
+            # Use range query instead of DATE() function for better index usage
+            # Convert report_date to timestamp range in Central Time
+            start_of_day = datetime.combine(report_date, datetime.min.time())
+            end_of_day = datetime.combine(report_date + timedelta(days=1), datetime.min.time())
 
             if has_bot_column:
                 cursor.execute(f"""
                     SELECT *
                     FROM {source_table}
                     WHERE bot_name = %s
-                    AND DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
+                    AND timestamp >= %s::timestamp AT TIME ZONE 'America/Chicago'
+                    AND timestamp < %s::timestamp AT TIME ZONE 'America/Chicago'
                     ORDER BY timestamp ASC
-                """, (bot.upper(), report_date))
+                """, (bot.upper(), start_of_day, end_of_day))
             else:
                 cursor.execute(f"""
                     SELECT *
                     FROM {source_table}
-                    WHERE DATE(timestamp::timestamptz AT TIME ZONE 'America/Chicago') = %s
+                    WHERE timestamp >= %s::timestamp AT TIME ZONE 'America/Chicago'
+                    AND timestamp < %s::timestamp AT TIME ZONE 'America/Chicago'
                     ORDER BY timestamp ASC
-                """, (report_date,))
+                """, (start_of_day, end_of_day))
 
             columns = [desc[0] for desc in cursor.description]
             scans = []
@@ -1237,6 +1275,146 @@ def get_report_from_archive(bot: str, report_date: date) -> Optional[Dict[str, A
         return None
 
 
+def get_report_summary(bot: str, report_date: date) -> Optional[Dict[str, Any]]:
+    """
+    Retrieve a lightweight summary of a report from the archive.
+
+    This is optimized for dashboard display - fetches only scalar fields,
+    NOT the large JSONB columns (trades_data, intraday_ticks, etc.).
+
+    Args:
+        bot: Bot name
+        report_date: Date to retrieve
+
+    Returns:
+        Report summary dict or None if not found
+    """
+    if not DB_AVAILABLE:
+        return None
+
+    try:
+        with _db_connection() as conn:
+            cursor = conn.cursor()
+
+            table_name = f"{bot.lower()}_daily_reports"
+
+            # Only fetch lightweight columns - NO JSONB
+            cursor.execute(f"""
+                SELECT
+                    report_date,
+                    daily_summary,
+                    lessons_learned,
+                    total_pnl,
+                    trade_count,
+                    win_count,
+                    loss_count,
+                    generated_at,
+                    generation_model,
+                    generation_duration_ms,
+                    input_tokens,
+                    output_tokens,
+                    total_tokens,
+                    estimated_cost_usd
+                FROM {table_name}
+                WHERE report_date = %s
+            """, (report_date,))
+
+            row = cursor.fetchone()
+
+            if not row:
+                return None
+
+            return {
+                "report_date": row[0].isoformat() if isinstance(row[0], date) else row[0],
+                "daily_summary": row[1],
+                "lessons_learned": row[2] or [],
+                "total_pnl": float(row[3]) if row[3] else 0,
+                "trade_count": row[4] or 0,
+                "win_count": row[5] or 0,
+                "loss_count": row[6] or 0,
+                "generated_at": row[7].isoformat() if isinstance(row[7], datetime) else row[7],
+                "generation_model": row[8],
+                "generation_duration_ms": row[9],
+                "input_tokens": row[10] or 0,
+                "output_tokens": row[11] or 0,
+                "total_tokens": row[12] or 0,
+                "estimated_cost_usd": float(row[13]) if row[13] else 0
+            }
+
+    except Exception as e:
+        logger.error(f"Error retrieving report summary: {e}")
+        return None
+
+
+def get_reports_bulk(bot: str, limit: int = 1000) -> List[Dict[str, Any]]:
+    """
+    Fetch multiple full reports in a single query.
+
+    This is optimized for bulk download - fetches all data in one round trip
+    instead of N+1 queries.
+
+    Args:
+        bot: Bot name
+        limit: Max reports to fetch (default 1000)
+
+    Returns:
+        List of full report dicts
+    """
+    if not DB_AVAILABLE:
+        return []
+
+    try:
+        with _db_connection() as conn:
+            cursor = conn.cursor()
+
+            table_name = f"{bot.lower()}_daily_reports"
+
+            # Fetch all columns for all reports in one query
+            cursor.execute(f"""
+                SELECT *
+                FROM {table_name}
+                ORDER BY report_date DESC
+                LIMIT %s
+            """, (limit,))
+
+            columns = [desc[0] for desc in cursor.description]
+            reports = []
+
+            for row in cursor.fetchall():
+                report = dict(zip(columns, row))
+
+                # Convert JSONB/text columns
+                for key in ['trades_data', 'intraday_ticks', 'scan_activity', 'market_context', 'trade_analyses']:
+                    if key in report and isinstance(report[key], str):
+                        try:
+                            report[key] = json.loads(report[key])
+                        except json.JSONDecodeError:
+                            report[key] = {} if key.endswith('ticks') or key.endswith('context') else []
+
+                # Convert date/datetime columns
+                for key in ['report_date']:
+                    if key in report and isinstance(report[key], date):
+                        report[key] = report[key].isoformat()
+
+                for key in ['generated_at', 'archived_at']:
+                    if key in report and isinstance(report[key], datetime):
+                        report[key] = report[key].isoformat()
+
+                # Convert Decimal columns
+                for key in ['total_pnl', 'estimated_cost_usd']:
+                    if key in report and isinstance(report[key], Decimal):
+                        report[key] = float(report[key])
+
+                reports.append(report)
+
+            logger.info(f"Bulk fetched {len(reports)} reports for {bot}")
+            return reports
+
+    except Exception as e:
+        logger.error(f"Error bulk fetching reports: {e}")
+        return []
+
+
 def get_archive_list(
     bot: str,
     limit: int = 30,
@@ -1267,7 +1445,7 @@ def get_archive_list(
             count_row = cursor.fetchone()
             total = count_row[0] if count_row else 0
 
-            # Get summaries
+            # Get summaries (lightweight - no JSONB or large text arrays)
             cursor.execute(f"""
                 SELECT
                     report_date,
@@ -1275,7 +1453,6 @@ def get_archive_list(
                     trade_count,
                     win_count,
                     loss_count,
-                    lessons_learned,
                     generated_at,
                     input_tokens,
                     output_tokens,
@@ -1294,12 +1471,11 @@ def get_archive_list(
                     "trade_count": row[2] or 0,
                     "win_count": row[3] or 0,
                     "loss_count": row[4] or 0,
-                    "lessons_learned": row[5] or [],
-                    "generated_at": row[6].isoformat() if isinstance(row[6], datetime) else row[6],
-                    "input_tokens": row[7] or 0,
-                    "output_tokens": row[8] or 0,
-                    "total_tokens": row[9] or 0,
-                    "estimated_cost_usd": float(row[10]) if row[10] else 0
+                    "generated_at": row[5].isoformat() if isinstance(row[5], datetime) else row[5],
+                    "input_tokens": row[6] or 0,
+                    "output_tokens": row[7] or 0,
+                    "total_tokens": row[8] or 0,
+                    "estimated_cost_usd": float(row[9]) if row[9] else 0
                 })
 
             return reports, total
@@ -1329,22 +1505,59 @@ def get_archive_stats(bot: str) -> Dict[str, Any]:
 
             table_name = f"{bot.lower()}_daily_reports"
 
-            # Get aggregate stats
+            # Single optimized query with subqueries for best/worst day
+            # This replaces 3 separate queries with 1
             cursor.execute(f"""
+                WITH stats AS (
+                    SELECT
+                        COUNT(*) as total_reports,
+                        MIN(report_date) as oldest_date,
+                        MAX(report_date) as newest_date,
+                        COALESCE(SUM(trade_count), 0) as total_trades,
+                        COALESCE(SUM(win_count), 0) as total_wins,
+                        COALESCE(SUM(loss_count), 0) as total_losses,
+                        COALESCE(SUM(total_pnl), 0) as total_pnl_all_time,
+                        AVG(total_pnl) as avg_daily_pnl,
+                        COALESCE(SUM(input_tokens), 0) as total_input_tokens,
+                        COALESCE(SUM(output_tokens), 0) as total_output_tokens,
+                        COALESCE(SUM(total_tokens), 0) as total_tokens,
+                        COALESCE(SUM(estimated_cost_usd), 0) as total_cost_usd
+                    FROM {table_name}
+                ),
+                best AS (
+                    SELECT report_date, total_pnl
+                    FROM {table_name}
+                    WHERE total_pnl IS NOT NULL
+                    ORDER BY total_pnl DESC
+                    LIMIT 1
+                ),
+                worst AS (
+                    SELECT report_date, total_pnl
+                    FROM {table_name}
+                    WHERE total_pnl IS NOT NULL
+                    ORDER BY total_pnl ASC
+                    LIMIT 1
+                )
                 SELECT
-                    COUNT(*) as total_reports,
-                    MIN(report_date) as oldest_date,
-                    MAX(report_date) as newest_date,
-                    COALESCE(SUM(trade_count), 0) as total_trades,
-                    COALESCE(SUM(win_count), 0) as total_wins,
-                    COALESCE(SUM(loss_count), 0) as total_losses,
-                    COALESCE(SUM(total_pnl), 0) as total_pnl_all_time,
-                    AVG(total_pnl) as avg_daily_pnl,
-                    COALESCE(SUM(input_tokens), 0) as total_input_tokens,
-                    COALESCE(SUM(output_tokens), 0) as total_output_tokens,
-                    COALESCE(SUM(total_tokens), 0) as total_tokens,
-                    COALESCE(SUM(estimated_cost_usd), 0) as total_cost_usd
-                FROM {table_name}
+                    s.total_reports,
+                    s.oldest_date,
+                    s.newest_date,
+                    s.total_trades,
+                    s.total_wins,
+                    s.total_losses,
+                    s.total_pnl_all_time,
+                    s.avg_daily_pnl,
+                    s.total_input_tokens,
+                    s.total_output_tokens,
+                    s.total_tokens,
+                    s.total_cost_usd,
+                    b.report_date as best_date,
+                    b.total_pnl as best_pnl,
+                    w.report_date as worst_date,
+                    w.total_pnl as worst_pnl
+                FROM stats s
+                LEFT JOIN best b ON true
+                LEFT JOIN worst w ON true
             """)
 
             row = cursor.fetchone()
@@ -1361,44 +1574,21 @@ def get_archive_stats(bot: str) -> Dict[str, Any]:
                 "total_losses": row[5] or 0,
                 "total_pnl": float(row[6]) if row[6] else 0,
                 "avg_daily_pnl": float(row[7]) if row[7] else 0,
-                "best_day": None,
-                "worst_day": None,
                 # Cost tracking
                 "total_input_tokens": row[8] or 0,
                 "total_output_tokens": row[9] or 0,
                 "total_tokens": row[10] or 0,
-                "total_cost_usd": float(row[11]) if row[11] else 0
+                "total_cost_usd": float(row[11]) if row[11] else 0,
+                # Best/worst from same query
+                "best_day": {
+                    "date": row[12].isoformat() if row[12] else None,
+                    "pnl": float(row[13]) if row[13] else 0
+                } if row[12] else None,
+                "worst_day": {
+                    "date": row[14].isoformat() if row[14] else None,
+                    "pnl": float(row[15]) if row[15] else 0
+                } if row[14] else None
             }
-
-            # Get best day
-            cursor.execute(f"""
-                SELECT report_date, total_pnl
-                FROM {table_name}
-                WHERE total_pnl IS NOT NULL
-                ORDER BY total_pnl DESC
-                LIMIT 1
-            """)
-            best_row = cursor.fetchone()
-            if best_row:
-                stats["best_day"] = {
-                    "date": best_row[0].isoformat() if best_row[0] else None,
-                    "pnl": float(best_row[1]) if best_row[1] else 0
-                }
-
-            # Get worst day
-            cursor.execute(f"""
-                SELECT report_date, total_pnl
-                FROM {table_name}
-                WHERE total_pnl IS NOT NULL
-                ORDER BY total_pnl ASC
-                LIMIT 1
-            """)
-            worst_row = cursor.fetchone()
-            if worst_row:
-                stats["worst_day"] = {
-                    "date": worst_row[0].isoformat() if worst_row[0] else None,
-                    "pnl": float(worst_row[1]) if worst_row[1] else 0
-                }
 
             return stats
 
