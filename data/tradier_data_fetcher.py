@@ -62,6 +62,8 @@ class OptionContract:
     mid: float = 0.0
     volume: int = 0
     open_interest: int = 0
+    bid_size: int = 0
+    ask_size: int = 0
 
     # Greeks
     delta: float = 0.0
@@ -280,7 +282,7 @@ class TradierDataFetcher:
             symbol: Stock symbol (SPY, SPX) or option OCC symbol
 
         Returns:
-            Quote data including bid, ask, last, volume
+            Quote data including bid, ask, last, volume, bidsize, asksize
         """
         response = self._make_request('GET', 'markets/quotes', params={'symbols': symbol})
         if response is None:
@@ -399,6 +401,8 @@ class TradierDataFetcher:
                 mid=(float(opt.get('bid', 0) or 0) + float(opt.get('ask', 0) or 0)) / 2,
                 volume=int(opt.get('volume', 0) or 0),
                 open_interest=int(opt.get('open_interest', 0) or 0),
+                bid_size=int(opt.get('bidsize', 0) or 0),
+                ask_size=int(opt.get('asksize', 0) or 0),
                 delta=float(greeks_data.get('delta', 0) or 0),
                 gamma=float(greeks_data.get('gamma', 0) or 0),
                 theta=float(greeks_data.get('theta', 0) or 0),
