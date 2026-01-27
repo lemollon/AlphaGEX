@@ -459,7 +459,8 @@ interface StrikeEvolution {
   strike: number
   currentGamma: number
   openGamma: number | null  // First recorded gamma of the day (market open)
-  changeSinceOpen: number   // Absolute change in gamma
+  changeSinceOpen: number   // Absolute change in gamma (raw, instant)
+  smoothedChange: number    // EMA-smoothed change (for stable bar display)
   changeSinceOpenPct: number  // Percentage change
   priorGamma: number | null  // Previous snapshot gamma for delta overlay
   deltaSincePrior: number   // Change from prior snapshot
@@ -532,6 +533,8 @@ export default function ArgusPage() {
   const [gammaHistory, setGammaHistory] = useState<GammaHistoryData | null>(null)
   const [strikeEvolutions, setStrikeEvolutions] = useState<StrikeEvolution[]>([])
   const previousSnapshotRef = useRef<Map<number, number>>(new Map())  // strike -> gamma for delta overlay
+  const smoothedEvolutionRef = useRef<Map<number, number>>(new Map())  // strike -> smoothed change value (EMA)
+  const EVOLUTION_EMA_ALPHA = 0.1  // 10% new value, 90% previous - very smooth for trend visibility
 
   // EOD Strike Statistics
   const [eodStats, setEodStats] = useState<EODStrikeStat[]>([])
@@ -574,6 +577,7 @@ export default function ArgusPage() {
     setSmoothedMaxGamma(1)
     previousStrikesRef.current = new Map()
     previousSnapshotRef.current = new Map()
+    smoothedEvolutionRef.current = new Map()
     initialLoadRef.current = true
   }, [selectedSymbol])
 
@@ -881,6 +885,18 @@ export default function ArgusPage() {
         changeSinceOpenPct = 0
       }
 
+      // Apply EMA smoothing to change value - makes Evolution chart show TREND not instant changes
+      // This is the key difference from Net Gamma chart: Evolution shows accumulated/smoothed trend
+      const previousSmoothed = smoothedEvolutionRef.current.get(strike.strike)
+      let smoothedChange: number
+      if (previousSmoothed === undefined) {
+        // First time seeing this strike - use raw value
+        smoothedChange = changeSinceOpen
+      } else {
+        // Apply EMA: new = alpha * current + (1 - alpha) * previous
+        smoothedChange = EVOLUTION_EMA_ALPHA * changeSinceOpen + (1 - EVOLUTION_EMA_ALPHA) * previousSmoothed
+      }
+
       const deltaSincePrior = priorGamma !== null ? currentGamma - priorGamma : 0
 
       // Build sparkline data
@@ -903,6 +919,7 @@ export default function ArgusPage() {
         currentGamma,
         openGamma: baselineGamma,
         changeSinceOpen,
+        smoothedChange,
         changeSinceOpenPct,
         priorGamma,
         deltaSincePrior,
@@ -916,12 +933,15 @@ export default function ArgusPage() {
 
     setStrikeEvolutions(evolutions)
 
-    // Update the previous snapshot ref for next delta calculation
+    // Update refs for next calculation
     const newSnapshot = new Map<number, number>()
-    gammaData.strikes.forEach(s => {
-      newSnapshot.set(s.strike, s.net_gamma)
+    const newSmoothed = new Map<number, number>()
+    evolutions.forEach(e => {
+      newSnapshot.set(e.strike, e.currentGamma)
+      newSmoothed.set(e.strike, e.smoothedChange)
     })
     previousSnapshotRef.current = newSnapshot
+    smoothedEvolutionRef.current = newSmoothed
   }, [gammaData, gammaHistory])
 
   const fetchDangerZoneLogs = useCallback(async () => {
@@ -2977,23 +2997,23 @@ export default function ArgusPage() {
                   </div>
                 </div>
 
-                {/* Evolution Chart - Bars show change since open */}
+                {/* Evolution Chart - Bars show SMOOTHED change since open (less volatile than Net Gamma) */}
                 <div className="relative h-32 flex items-center justify-center gap-0.5 border-b border-gray-700 mb-2">
                   {/* Zero line (center) */}
                   <div className="absolute left-0 right-0 top-1/2 border-t border-gray-600 z-0"></div>
                   <div className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] text-gray-600">0</div>
 
                   {(() => {
-                    // Calculate max change for scaling - use minimum threshold for better visibility
-                    const changes = strikeEvolutions.map(e => Math.abs(e.changeSinceOpen))
-                    const maxChange = Math.max(...changes, 1e6)  // Min 1M for scale
+                    // Use SMOOTHED changes for scaling - this makes the chart show TREND not instant volatility
+                    const smoothedChanges = strikeEvolutions.map(e => Math.abs(e.smoothedChange))
+                    const maxChange = Math.max(...smoothedChanges, 1e6)  // Min 1M for scale
                     const MAX_HEIGHT_PX = 45  // Max bar height in one direction (up or down)
 
                     return strikeEvolutions.map((evolution) => {
-                      // Minimum bar height of 8px for visibility, scale up from there
-                      const rawHeight = (Math.abs(evolution.changeSinceOpen) / maxChange) * MAX_HEIGHT_PX
-                      const barHeight = evolution.changeSinceOpen === 0 ? 3 : Math.max(8, rawHeight)
-                      const isPositiveChange = evolution.changeSinceOpen >= 0
+                      // Use smoothedChange for bar height - this is EMA smoothed so less volatile
+                      const rawHeight = (Math.abs(evolution.smoothedChange) / maxChange) * MAX_HEIGHT_PX
+                      const barHeight = evolution.smoothedChange === 0 ? 3 : Math.max(8, rawHeight)
+                      const isPositiveChange = evolution.smoothedChange >= 0
                       const barColor = isPositiveChange ? 'bg-cyan-500' : 'bg-orange-500'
 
                       // Sparkline mini-chart (last 10 data points)
@@ -3133,17 +3153,17 @@ export default function ArgusPage() {
                   ))}
                 </div>
 
-                {/* Summary stats */}
+                {/* Summary stats - uses smoothed values to match chart */}
                 <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-700">
                   <div className="flex items-center gap-4 text-[11px]">
                     <div className="text-gray-400">
                       Building: <span className="text-cyan-400 font-mono">
-                        {strikeEvolutions.filter(e => e.changeSinceOpen > 0).length}
+                        {strikeEvolutions.filter(e => e.smoothedChange > 0).length}
                       </span>
                     </div>
                     <div className="text-gray-400">
                       Decaying: <span className="text-orange-400 font-mono">
-                        {strikeEvolutions.filter(e => e.changeSinceOpen < 0).length}
+                        {strikeEvolutions.filter(e => e.smoothedChange < 0).length}
                       </span>
                     </div>
                     <div className="text-gray-400">
@@ -3153,7 +3173,7 @@ export default function ArgusPage() {
                     </div>
                   </div>
                   <div className="text-[10px] text-gray-500">
-                    {strikeEvolutions.length} strikes near ATM
+                    {strikeEvolutions.length} strikes | EMA smoothed
                   </div>
                 </div>
               </div>
