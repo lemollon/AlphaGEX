@@ -94,6 +94,11 @@ class StrikeData:
     volume: int = 0
     call_volume: int = 0  # Separate call volume for GEX flow analysis
     put_volume: int = 0   # Separate put volume for GEX flow analysis
+    # Bid/Ask size for order flow analysis (from Tradier API)
+    call_bid_size: int = 0   # Contracts waiting at call bid (buyers)
+    call_ask_size: int = 0   # Contracts waiting at call ask (sellers)
+    put_bid_size: int = 0    # Contracts waiting at put bid (buyers)
+    put_ask_size: int = 0    # Contracts waiting at put ask (sellers)
     call_iv: float = 0.0
     put_iv: float = 0.0
     is_magnet: bool = False
@@ -1249,6 +1254,137 @@ class ArgusEngine:
 
         return signal_data
 
+    def calculate_bid_ask_pressure(self, strikes: List[StrikeData], spot_price: float) -> Dict:
+        """
+        Analyze bid/ask size imbalance to determine order flow pressure.
+
+        Bid/Ask Size Interpretation:
+        - bid_size >> ask_size = Buyers stacked up = BULLISH pressure (demand > supply)
+        - ask_size >> bid_size = Sellers stacked up = BEARISH pressure (supply > demand)
+
+        This differs from volume (what traded) - bid/ask size shows what's WAITING to trade.
+
+        For options market context:
+        - Call bid_size high = Buyers want calls = BULLISH
+        - Call ask_size high = Sellers offering calls = NEUTRAL/covered calls
+        - Put bid_size high = Buyers want puts = BEARISH/hedging
+        - Put ask_size high = Sellers offering puts = BULLISH (selling insurance)
+
+        Returns:
+            Dict with pressure metrics and per-strike breakdown
+        """
+        if not strikes or spot_price <= 0:
+            return {
+                'net_pressure': 0.0,
+                'pressure_direction': 'NEUTRAL',
+                'pressure_strength': 'NONE',
+                'call_pressure': 0.0,
+                'put_pressure': 0.0,
+                'total_bid_size': 0,
+                'total_ask_size': 0,
+                'liquidity_score': 0.0,
+                'top_pressure_strikes': []
+            }
+
+        total_call_bid = 0
+        total_call_ask = 0
+        total_put_bid = 0
+        total_put_ask = 0
+        strike_pressure = []
+
+        for s in strikes:
+            # Aggregate bid/ask sizes
+            total_call_bid += s.call_bid_size
+            total_call_ask += s.call_ask_size
+            total_put_bid += s.put_bid_size
+            total_put_ask += s.put_ask_size
+
+            # Calculate per-strike pressure weighted by gamma
+            # Higher gamma = more market impact = weight the pressure more
+            gamma_weight = abs(s.net_gamma) + 0.0001  # Avoid division by zero
+
+            # Call pressure: bid - ask (positive = buyers dominate)
+            call_imbalance = s.call_bid_size - s.call_ask_size
+            # Put pressure: ask - bid (positive = sellers dominate = bullish for market)
+            put_imbalance = s.put_ask_size - s.put_bid_size
+
+            # Net bullish pressure at this strike
+            strike_net_pressure = (call_imbalance + put_imbalance) * gamma_weight
+
+            strike_pressure.append({
+                'strike': s.strike,
+                'call_bid_size': s.call_bid_size,
+                'call_ask_size': s.call_ask_size,
+                'put_bid_size': s.put_bid_size,
+                'put_ask_size': s.put_ask_size,
+                'call_imbalance': call_imbalance,
+                'put_imbalance': put_imbalance,
+                'net_pressure': round(strike_net_pressure, 2),
+                'gamma_weight': round(gamma_weight, 6)
+            })
+
+        # Calculate aggregate pressure metrics
+        total_bid = total_call_bid + total_put_bid
+        total_ask = total_call_ask + total_put_ask
+
+        # Call pressure: buyers vs sellers in calls
+        # Positive = more call buyers = bullish
+        if total_call_bid + total_call_ask > 0:
+            call_pressure = (total_call_bid - total_call_ask) / (total_call_bid + total_call_ask)
+        else:
+            call_pressure = 0.0
+
+        # Put pressure: sellers vs buyers in puts
+        # Positive put_ask (selling puts) = bullish, positive put_bid (buying puts) = bearish
+        if total_put_bid + total_put_ask > 0:
+            put_pressure = (total_put_ask - total_put_bid) / (total_put_bid + total_put_ask)
+        else:
+            put_pressure = 0.0
+
+        # Net pressure combines call buying pressure and put selling pressure
+        # Both are bullish signals
+        net_pressure = (call_pressure + put_pressure) / 2
+
+        # Determine pressure direction and strength
+        if abs(net_pressure) < 0.1:
+            pressure_direction = 'NEUTRAL'
+            pressure_strength = 'NONE'
+        elif net_pressure > 0:
+            pressure_direction = 'BULLISH'
+            if net_pressure > 0.4:
+                pressure_strength = 'STRONG'
+            elif net_pressure > 0.2:
+                pressure_strength = 'MODERATE'
+            else:
+                pressure_strength = 'WEAK'
+        else:
+            pressure_direction = 'BEARISH'
+            if net_pressure < -0.4:
+                pressure_strength = 'STRONG'
+            elif net_pressure < -0.2:
+                pressure_strength = 'MODERATE'
+            else:
+                pressure_strength = 'WEAK'
+
+        # Liquidity score: higher = more liquid = easier execution
+        # Based on total depth available
+        liquidity_score = min(100, (total_bid + total_ask) / 100)  # Normalize to 0-100
+
+        # Top pressure strikes (highest absolute net pressure)
+        sorted_by_pressure = sorted(strike_pressure, key=lambda x: abs(x['net_pressure']), reverse=True)[:5]
+
+        return {
+            'net_pressure': round(net_pressure, 3),
+            'pressure_direction': pressure_direction,
+            'pressure_strength': pressure_strength,
+            'call_pressure': round(call_pressure, 3),
+            'put_pressure': round(put_pressure, 3),
+            'total_bid_size': total_bid,
+            'total_ask_size': total_ask,
+            'liquidity_score': round(liquidity_score, 1),
+            'top_pressure_strikes': sorted_by_pressure
+        }
+
     def calculate_net_gex_volume(self, strikes: List[StrikeData], spot_price: float) -> Dict:
         """
         Calculate Net GEX Volume - intraday flow weighted by gamma impact.
@@ -1261,11 +1397,16 @@ class ArgusEngine:
             Put GEX Flow = Put_Volume × |Put_Gamma| × 100 × spot²
             Net GEX Volume = Call GEX Flow - Put GEX Flow
 
+        Enhanced with bid/ask pressure for confirmation:
+            - Volume shows what TRADED
+            - Bid/ask size shows what's WAITING to trade
+            - Combined signal is more reliable
+
         Positive Net GEX Volume = Bullish flow (more call gamma being traded)
         Negative Net GEX Volume = Bearish flow (more put gamma being traded)
 
         Returns:
-            Dict with net_gex_volume, flow_direction, and per-strike breakdown
+            Dict with net_gex_volume, flow_direction, bid/ask pressure, and per-strike breakdown
         """
         if not strikes or spot_price <= 0:
             return {
@@ -1274,6 +1415,9 @@ class ArgusEngine:
                 'put_gex_flow': 0,
                 'flow_direction': 'NEUTRAL',
                 'flow_strength': 'NONE',
+                'bid_ask_pressure': {},
+                'combined_signal': 'NEUTRAL',
+                'signal_confidence': 'LOW',
                 'top_call_flow_strikes': [],
                 'top_put_flow_strikes': []
             }
@@ -1299,7 +1443,12 @@ class ArgusEngine:
                 'put_flow': round(put_flow / 1e6, 2),
                 'net_flow': round((call_flow - put_flow) / 1e6, 2),
                 'call_volume': s.call_volume,
-                'put_volume': s.put_volume
+                'put_volume': s.put_volume,
+                # Include bid/ask size for transparency
+                'call_bid_size': s.call_bid_size,
+                'call_ask_size': s.call_ask_size,
+                'put_bid_size': s.put_bid_size,
+                'put_ask_size': s.put_ask_size
             })
 
         net_gex_volume = call_gex_flow - put_gex_flow
@@ -1337,6 +1486,17 @@ class ArgusEngine:
             else:
                 flow_strength = 'WEAK'
 
+        # Calculate bid/ask pressure for confirmation
+        bid_ask_pressure = self.calculate_bid_ask_pressure(strikes, spot_price)
+
+        # Combine volume flow with bid/ask pressure for final signal
+        # Agreement = high confidence, disagreement = caution
+        combined_signal, signal_confidence = self._combine_flow_signals(
+            flow_direction, flow_strength,
+            bid_ask_pressure['pressure_direction'],
+            bid_ask_pressure['pressure_strength']
+        )
+
         # Get top flow strikes
         sorted_by_call = sorted(strike_flows, key=lambda x: x['call_flow'], reverse=True)[:3]
         sorted_by_put = sorted(strike_flows, key=lambda x: x['put_flow'], reverse=True)[:3]
@@ -1348,9 +1508,66 @@ class ArgusEngine:
             'flow_direction': flow_direction,
             'flow_strength': flow_strength,
             'imbalance_ratio': round(imbalance_ratio * 100, 1),  # As percentage
+            'bid_ask_pressure': bid_ask_pressure,
+            'combined_signal': combined_signal,
+            'signal_confidence': signal_confidence,
             'top_call_flow_strikes': sorted_by_call,
             'top_put_flow_strikes': sorted_by_put
         }
+
+    def _combine_flow_signals(
+        self,
+        volume_direction: str,
+        volume_strength: str,
+        pressure_direction: str,
+        pressure_strength: str
+    ) -> Tuple[str, str]:
+        """
+        Combine volume flow direction with bid/ask pressure for final signal.
+
+        Agreement between volume and pressure = HIGH confidence
+        Disagreement = LOW confidence (proceed with caution)
+
+        Returns:
+            Tuple of (combined_signal, confidence)
+        """
+        # Both neutral
+        if volume_direction == 'NEUTRAL' and pressure_direction == 'NEUTRAL':
+            return 'NEUTRAL', 'HIGH'
+
+        # Full agreement
+        if volume_direction == pressure_direction:
+            # Both bullish
+            if volume_direction == 'BULLISH':
+                if volume_strength == 'STRONG' or pressure_strength == 'STRONG':
+                    return 'STRONG_BULLISH', 'HIGH'
+                elif volume_strength == 'MODERATE' or pressure_strength == 'MODERATE':
+                    return 'BULLISH', 'HIGH'
+                else:
+                    return 'BULLISH', 'MEDIUM'
+            # Both bearish
+            else:
+                if volume_strength == 'STRONG' or pressure_strength == 'STRONG':
+                    return 'STRONG_BEARISH', 'HIGH'
+                elif volume_strength == 'MODERATE' or pressure_strength == 'MODERATE':
+                    return 'BEARISH', 'HIGH'
+                else:
+                    return 'BEARISH', 'MEDIUM'
+
+        # One neutral, one directional - trust the directional one with medium confidence
+        if volume_direction == 'NEUTRAL':
+            return pressure_direction, 'MEDIUM'
+        if pressure_direction == 'NEUTRAL':
+            return volume_direction, 'MEDIUM'
+
+        # Disagreement - volume says one thing, pressure says another
+        # This is a DIVERGENCE - important signal of potential reversal
+        # Volume = what happened, Pressure = what's building
+        # If volume is bullish but pressure is bearish, bulls are exhausting
+        if volume_direction == 'BULLISH' and pressure_direction == 'BEARISH':
+            return 'DIVERGENCE_BEARISH', 'LOW'  # Bullish exhaustion
+        else:
+            return 'DIVERGENCE_BULLISH', 'LOW'  # Bearish exhaustion
 
     def generate_alerts(self, current: GammaSnapshot, previous: Optional[GammaSnapshot]) -> List[Alert]:
         """
@@ -1554,6 +1771,11 @@ class ArgusEngine:
                 volume=strike_info.get('volume', 0),
                 call_volume=strike_info.get('call_volume', 0),  # Separate for GEX flow
                 put_volume=strike_info.get('put_volume', 0),    # Separate for GEX flow
+                # Bid/ask size for order flow pressure analysis
+                call_bid_size=strike_info.get('call_bid_size', 0),
+                call_ask_size=strike_info.get('call_ask_size', 0),
+                put_bid_size=strike_info.get('put_bid_size', 0),
+                put_ask_size=strike_info.get('put_ask_size', 0),
                 call_iv=strike_info.get('call_iv', 0),
                 put_iv=strike_info.get('put_iv', 0),
                 previous_net_gamma=prev_gamma,

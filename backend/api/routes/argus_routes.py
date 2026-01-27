@@ -696,7 +696,12 @@ async def fetch_gamma_data(symbol: str = "SPY", expiration: str = None) -> dict:
                 'put_iv': put_contract.implied_volatility if put_contract else 0,
                 'volume': (call_contract.volume if call_contract else 0) + (put_contract.volume if put_contract else 0),
                 'call_volume': call_contract.volume if call_contract else 0,  # Separate for GEX flow
-                'put_volume': put_contract.volume if put_contract else 0      # Separate for GEX flow
+                'put_volume': put_contract.volume if put_contract else 0,     # Separate for GEX flow
+                # Bid/ask size for order flow pressure analysis
+                'call_bid_size': call_contract.bid_size if call_contract else 0,
+                'call_ask_size': call_contract.ask_size if call_contract else 0,
+                'put_bid_size': put_contract.bid_size if put_contract else 0,
+                'put_ask_size': put_contract.ask_size if put_contract else 0
             }
 
         # Record the actual data fetch time
@@ -967,6 +972,10 @@ async def get_gamma_data(
             snapshot.gamma_regime
         )
 
+        # Calculate order flow analysis using bid/ask size data
+        # This provides additional signal confirmation based on order book depth
+        order_flow = engine.calculate_net_gex_volume(filtered_strikes, snapshot.spot_price)
+
         # Build response
         return {
             "success": True,
@@ -995,7 +1004,8 @@ async def get_gamma_data(
                 "danger_zones": snapshot.danger_zones,
                 "gamma_flips": snapshot.gamma_flips,
                 "pinning_status": snapshot.pinning_status,
-                "trading_signal": trading_signal  # Actionable trading guidance based on gamma evolution
+                "trading_signal": trading_signal,  # Actionable trading guidance based on gamma evolution
+                "order_flow": order_flow  # Bid/ask pressure analysis for signal confirmation
             }
         }
 
