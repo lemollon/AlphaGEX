@@ -64,8 +64,8 @@ class TestDatabaseTableCreation:
 
         result = _ensure_report_tables_exist()
 
-        # Should have been called for each bot (table + index = 2 calls per bot)
-        assert mock_cursor.execute.call_count == len(VALID_BOTS) * 2
+        # Should have been called for each bot (table + date_idx + pnl_idx = 3 calls per bot)
+        assert mock_cursor.execute.call_count == len(VALID_BOTS) * 3
         assert mock_conn.commit.called
         assert mock_conn.close.called
 
