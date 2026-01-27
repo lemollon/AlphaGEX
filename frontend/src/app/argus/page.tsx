@@ -459,12 +459,12 @@ interface StrikeEvolution {
   strike: number
   currentGamma: number
   openGamma: number | null  // First recorded gamma of the day (market open)
-  changeSinceOpen: number   // Absolute change in gamma (raw, point-in-time)
-  smoothedChange: number    // ACCUMULATED change - running sum of all deltas since open
+  changeSinceOpen: number   // Change in gamma: current - baseline
+  smoothedChange: number    // Same as changeSinceOpen (kept for compatibility)
   changeSinceOpenPct: number  // Percentage change
   priorGamma: number | null  // Previous snapshot gamma for delta overlay
   deltaSincePrior: number   // Change from prior snapshot
-  sparklineData: number[]   // Normalized gamma values for sparkline
+  sparklineData: number[]   // Gamma values for sparkline
   sparklineTimes: string[]  // Timestamps for sparkline
   isPositive: boolean       // Current gamma regime
   wasPositiveAtOpen: boolean // Gamma regime at open
@@ -533,7 +533,6 @@ export default function ArgusPage() {
   const [gammaHistory, setGammaHistory] = useState<GammaHistoryData | null>(null)
   const [strikeEvolutions, setStrikeEvolutions] = useState<StrikeEvolution[]>([])
   const previousSnapshotRef = useRef<Map<number, number>>(new Map())  // strike -> gamma for delta overlay
-  const accumulatedEvolutionRef = useRef<Map<number, number>>(new Map())  // strike -> accumulated/cumulative change (running sum)
 
   // EOD Strike Statistics
   const [eodStats, setEodStats] = useState<EODStrikeStat[]>([])
@@ -576,7 +575,6 @@ export default function ArgusPage() {
     setSmoothedMaxGamma(1)
     previousStrikesRef.current = new Map()
     previousSnapshotRef.current = new Map()
-    accumulatedEvolutionRef.current = new Map()
     initialLoadRef.current = true
   }, [selectedSymbol])
 
@@ -884,22 +882,8 @@ export default function ArgusPage() {
         changeSinceOpenPct = 0
       }
 
-      // Calculate delta since prior snapshot (for accumulation)
+      // Delta since prior snapshot (for the delta overlay indicator)
       const deltaSincePrior = priorGamma !== null ? currentGamma - priorGamma : 0
-
-      // ACCUMULATED CHANGES: Running sum of all deltas throughout the day
-      // This is the key difference from Net Gamma chart: Evolution shows CUMULATIVE change, not point-in-time
-      const previousAccumulated = accumulatedEvolutionRef.current.get(strike.strike)
-      let accumulatedChange: number
-      if (previousAccumulated === undefined) {
-        // First time seeing this strike - start with current change from baseline
-        accumulatedChange = changeSinceOpen
-      } else {
-        // Add the delta to running total
-        accumulatedChange = previousAccumulated + deltaSincePrior
-      }
-      // Use accumulatedChange for bar display (replaces smoothedChange)
-      const smoothedChange = accumulatedChange
 
       // Build sparkline data
       const sparklineData = historyEntries.map(e => e.gamma)
@@ -921,7 +905,7 @@ export default function ArgusPage() {
         currentGamma,
         openGamma: baselineGamma,
         changeSinceOpen,
-        smoothedChange,
+        smoothedChange: changeSinceOpen,  // Simplified: just use change since open directly
         changeSinceOpenPct,
         priorGamma,
         deltaSincePrior,
@@ -935,15 +919,12 @@ export default function ArgusPage() {
 
     setStrikeEvolutions(evolutions)
 
-    // Update refs for next calculation
+    // Update ref for delta overlay (tracks previous gamma values)
     const newSnapshot = new Map<number, number>()
-    const newAccumulated = new Map<number, number>()
     evolutions.forEach(e => {
       newSnapshot.set(e.strike, e.currentGamma)
-      newAccumulated.set(e.strike, e.smoothedChange)  // Store accumulated change for next iteration
     })
     previousSnapshotRef.current = newSnapshot
-    accumulatedEvolutionRef.current = newAccumulated
   }, [gammaData, gammaHistory])
 
   const fetchDangerZoneLogs = useCallback(async () => {
@@ -3006,16 +2987,16 @@ export default function ArgusPage() {
                   <div className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] text-gray-600">0</div>
 
                   {(() => {
-                    // Use ACCUMULATED changes for scaling - running sum of all deltas since market open
-                    const accumulatedChanges = strikeEvolutions.map(e => Math.abs(e.smoothedChange))
-                    const maxChange = Math.max(...accumulatedChanges, 1e6)  // Min 1M for scale
+                    // Use change since open for bar heights
+                    const changes = strikeEvolutions.map(e => Math.abs(e.changeSinceOpen))
+                    const maxChange = Math.max(...changes, 1e6)  // Min 1M for scale
                     const MAX_HEIGHT_PX = 45  // Max bar height in one direction (up or down)
 
                     return strikeEvolutions.map((evolution) => {
-                      // Use smoothedChange for bar height - this is ACCUMULATED (running sum of all deltas)
-                      const rawHeight = (Math.abs(evolution.smoothedChange) / maxChange) * MAX_HEIGHT_PX
-                      const barHeight = evolution.smoothedChange === 0 ? 3 : Math.max(8, rawHeight)
-                      const isPositiveChange = evolution.smoothedChange >= 0
+                      // Bar height = change from baseline (current - open)
+                      const rawHeight = (Math.abs(evolution.changeSinceOpen) / maxChange) * MAX_HEIGHT_PX
+                      const barHeight = evolution.changeSinceOpen === 0 ? 3 : Math.max(8, rawHeight)
+                      const isPositiveChange = evolution.changeSinceOpen >= 0
                       const barColor = isPositiveChange ? 'bg-cyan-500' : 'bg-orange-500'
 
                       // Sparkline mini-chart (last 10 data points)
@@ -3126,11 +3107,9 @@ export default function ArgusPage() {
                                 {formatGamma(evolution.currentGamma)}
                               </span>
                             </div>
-                            <div className={evolution.smoothedChange >= 0 ? 'text-cyan-400' : 'text-orange-400'}>
-                              Accum: {evolution.smoothedChange >= 0 ? '+' : ''}{formatGamma(evolution.smoothedChange)}
-                            </div>
-                            <div className="text-gray-500 text-[9px]">
-                              Last Δ: {evolution.deltaSincePrior >= 0 ? '+' : ''}{formatGamma(evolution.deltaSincePrior)}
+                            <div className={evolution.changeSinceOpen >= 0 ? 'text-cyan-400' : 'text-orange-400'}>
+                              Δ: {evolution.changeSinceOpen >= 0 ? '+' : ''}{formatGamma(evolution.changeSinceOpen)}
+                              {' '}({evolution.changeSinceOpenPct >= 0 ? '+' : ''}{safeFixed(evolution.changeSinceOpenPct, 1)}%)
                             </div>
                             {evolution.regimeFlipped && (
                               <div className="text-purple-400 font-medium">⚡ Regime flipped!</div>
@@ -3157,17 +3136,17 @@ export default function ArgusPage() {
                   ))}
                 </div>
 
-                {/* Summary stats - uses smoothed values to match chart */}
+                {/* Summary stats */}
                 <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-700">
                   <div className="flex items-center gap-4 text-[11px]">
                     <div className="text-gray-400">
                       Building: <span className="text-cyan-400 font-mono">
-                        {strikeEvolutions.filter(e => e.smoothedChange > 0).length}
+                        {strikeEvolutions.filter(e => e.changeSinceOpen > 0).length}
                       </span>
                     </div>
                     <div className="text-gray-400">
                       Decaying: <span className="text-orange-400 font-mono">
-                        {strikeEvolutions.filter(e => e.smoothedChange < 0).length}
+                        {strikeEvolutions.filter(e => e.changeSinceOpen < 0).length}
                       </span>
                     </div>
                     <div className="text-gray-400">
@@ -3177,7 +3156,7 @@ export default function ArgusPage() {
                     </div>
                   </div>
                   <div className="text-[10px] text-gray-500">
-                    {strikeEvolutions.length} strikes | Accumulated changes
+                    {strikeEvolutions.length} strikes | Change since open
                   </div>
                 </div>
               </div>
