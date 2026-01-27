@@ -3102,7 +3102,7 @@ export default function ArgusPage() {
                     </div>
                   </div>
                   <div className="text-[10px] text-gray-500">
-                    {gammaHistory ? `${Object.keys(gammaHistory.history).length} strikes tracked` : 'Loading history...'}
+                    {strikeEvolutions.length} strikes near ATM
                   </div>
                 </div>
               </div>
