@@ -295,7 +295,9 @@ class ArgusEngine:
         self._locked_gex_values = {}
         self._gex_levels_locked = False
         self._major_strikes_at_open = []
-        logger.debug("Gamma smoothing state reset for new trading day")
+        # Reset order flow pressure smoothing history
+        self._pressure_history = []
+        logger.debug("Gamma smoothing state reset for new trading day (including pressure history)")
 
     def lock_gex_levels_at_open(self, strikes_data: List, spot_price: float):
         """
@@ -1465,6 +1467,24 @@ class ArgusEngine:
         Returns:
             Dict with net_gex_volume, flow_direction, bid/ask pressure, and per-strike breakdown
         """
+        # Empty result with properly structured bid_ask_pressure
+        empty_bid_ask = {
+            'net_pressure': 0.0,
+            'raw_pressure': 0.0,
+            'pressure_direction': 'NEUTRAL',
+            'pressure_strength': 'NONE',
+            'call_pressure': 0.0,
+            'put_pressure': 0.0,
+            'total_bid_size': 0,
+            'total_ask_size': 0,
+            'liquidity_score': 0.0,
+            'strikes_used': 0,
+            'smoothing_periods': 0,
+            'is_valid': False,
+            'reason': 'No data',
+            'top_pressure_strikes': []
+        }
+
         if not strikes or spot_price <= 0:
             return {
                 'net_gex_volume': 0,
@@ -1472,7 +1492,8 @@ class ArgusEngine:
                 'put_gex_flow': 0,
                 'flow_direction': 'NEUTRAL',
                 'flow_strength': 'NONE',
-                'bid_ask_pressure': {},
+                'imbalance_ratio': 0,
+                'bid_ask_pressure': empty_bid_ask,
                 'combined_signal': 'NEUTRAL',
                 'signal_confidence': 'LOW',
                 'top_call_flow_strikes': [],

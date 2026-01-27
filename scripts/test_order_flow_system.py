@@ -203,6 +203,12 @@ def test_argus_engine():
         print_result("Invalid case has 'smoothing_periods'", 'smoothing_periods' in invalid_pressure)
         print_result("Invalid case is_valid=False", invalid_pressure.get('is_valid') == False)
 
+        # Test empty strikes case (edge case)
+        empty_volume = engine.calculate_net_gex_volume([], 585.0)
+        print_result("Empty strikes: has bid_ask_pressure dict", isinstance(empty_volume.get('bid_ask_pressure'), dict))
+        print_result("Empty strikes: bid_ask_pressure.is_valid=False", empty_volume.get('bid_ask_pressure', {}).get('is_valid') == False)
+        print_result("Empty strikes: has imbalance_ratio", 'imbalance_ratio' in empty_volume)
+
         print(f"\n  Sample combined signal:")
         print(f"    Signal: {volume.get('combined_signal')}")
         print(f"    Confidence: {volume.get('signal_confidence')}")
