@@ -126,6 +126,8 @@ _history_loaded: Dict[str, bool] = {}  # Track if we've loaded history from DB p
 
 def ensure_all_argus_tables():
     """Create all Argus tables if they don't exist"""
+    conn = None
+    cursor = None
     try:
         conn = get_connection()
         if not conn:
@@ -305,13 +307,22 @@ def ensure_all_argus_tables():
         """)
 
         conn.commit()
-        cursor.close()
-        conn.close()
         logger.info("ARGUS: All tables ensured (7 tables)")
         return True
     except Exception as e:
         logger.error(f"Failed to create ARGUS tables: {e}")
         return False
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 
 def ensure_gamma_history_table():
@@ -327,6 +338,8 @@ def persist_gamma_history(engine, symbol: str = "SPY"):
     if not engine or not engine.history:
         return
 
+    conn = None
+    cursor = None
     try:
         conn = get_connection()
         if not conn:
@@ -365,13 +378,22 @@ def persist_gamma_history(engine, symbol: str = "SPY"):
                 inserted += 1
 
         conn.commit()
-        cursor.close()
-        conn.close()
 
         if inserted > 0:
             logger.debug(f"ARGUS: Persisted {inserted} gamma history entries for {symbol}")
     except Exception as e:
         logger.warning(f"Failed to persist gamma history: {e}")
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 
 def load_gamma_history(engine, symbol: str = "SPY"):
@@ -388,6 +410,9 @@ def load_gamma_history(engine, symbol: str = "SPY"):
         logger.debug(f"ARGUS: Gamma history already loaded for {symbol}, skipping")
         return
 
+    conn = None
+    cursor = None
+    rows = []
     try:
         conn = get_connection()
         if not conn:
@@ -406,34 +431,43 @@ def load_gamma_history(engine, symbol: str = "SPY"):
         """, (symbol,))
 
         rows = cursor.fetchall()
-        cursor.close()
-        conn.close()
-
-        if not rows:
-            logger.debug(f"ARGUS: No recent gamma history found for {symbol}")
-            _history_loaded[symbol] = True
-            return
-
-        # Populate engine history
-        for strike, gamma_value, recorded_at in rows:
-            strike_float = float(strike)
-            if strike_float not in engine.history:
-                engine.history[strike_float] = []
-
-            # Ensure timezone awareness
-            if recorded_at.tzinfo is None:
-                recorded_at = recorded_at.replace(tzinfo=CENTRAL_TZ)
-
-            engine.history[strike_float].append((recorded_at, float(gamma_value)))
-
-        _history_loaded[symbol] = True
-        unique_strikes = len(engine.history)
-        total_entries = sum(len(h) for h in engine.history.values())
-        logger.info(f"ARGUS: Loaded gamma history for {symbol}: {unique_strikes} strikes, {total_entries} entries")
-
     except Exception as e:
         logger.warning(f"Failed to load gamma history: {e}")
         _history_loaded[symbol] = True  # Prevent repeated failures
+        return
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
+
+    if not rows:
+        logger.debug(f"ARGUS: No recent gamma history found for {symbol}")
+        _history_loaded[symbol] = True
+        return
+
+    # Populate engine history
+    for strike, gamma_value, recorded_at in rows:
+        strike_float = float(strike)
+        if strike_float not in engine.history:
+            engine.history[strike_float] = []
+
+        # Ensure timezone awareness
+        if recorded_at.tzinfo is None:
+            recorded_at = recorded_at.replace(tzinfo=CENTRAL_TZ)
+
+        engine.history[strike_float].append((recorded_at, float(gamma_value)))
+
+    _history_loaded[symbol] = True
+    unique_strikes = len(engine.history)
+    total_entries = sum(len(h) for h in engine.history.values())
+    logger.info(f"ARGUS: Loaded gamma history for {symbol}: {unique_strikes} strikes, {total_entries} entries")
 
 
 def cleanup_old_gamma_history():
@@ -442,6 +476,8 @@ def cleanup_old_gamma_history():
     Called periodically to prevent table bloat.
     Keeps full trading day data for ROC calculations.
     """
+    conn = None
+    cursor = None
     try:
         conn = get_connection()
         if not conn:
@@ -454,13 +490,22 @@ def cleanup_old_gamma_history():
         """)
         deleted = cursor.rowcount
         conn.commit()
-        cursor.close()
-        conn.close()
 
         if deleted > 0:
             logger.debug(f"ARGUS: Cleaned up {deleted} old gamma history entries")
     except Exception as e:
         logger.warning(f"Failed to cleanup gamma history: {e}")
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
 
 def get_engine() -> Optional[ArgusEngine]:
@@ -864,6 +909,29 @@ async def get_gamma_data(
                 "fetched_at": raw_data.get('fetched_at', format_central_timestamp())
             }
 
+        # GAP FIX: Validate spot_price before proceeding
+        # If spot_price is 0 or invalid, ATM calculations will fail (any strike would be "ATM")
+        spot_price = raw_data.get('spot_price', 0)
+        if not spot_price or spot_price <= 0:
+            logger.warning(f"ARGUS: Invalid spot price ({spot_price}) - cannot calculate ATM range")
+            # Try to use previous snapshot if available
+            if engine.previous_snapshot and engine.previous_snapshot.spot_price > 0:
+                logger.info("ARGUS: Using previous snapshot due to invalid spot price")
+                snapshot = engine.previous_snapshot
+                # Skip to response building with cached snapshot
+                raw_data['spot_price'] = snapshot.spot_price
+                raw_data['vix'] = snapshot.vix
+            else:
+                return {
+                    "success": False,
+                    "data_unavailable": True,
+                    "reason": "Invalid spot price",
+                    "message": f"Spot price is invalid ({spot_price}). Market data may be unavailable.",
+                    "symbol": symbol,
+                    "expiration_date": expiration,
+                    "fetched_at": raw_data.get('fetched_at', format_central_timestamp())
+                }
+
         # CRITICAL: Only process through engine if data is FRESH (not cached)
         # Re-processing cached data causes ROC to become 0 because the same gamma values
         # get added to history with new timestamps, making rate of change appear as 0
@@ -1017,7 +1085,8 @@ async def get_gamma_data(
 
         # Calculate order flow analysis using bid/ask size data
         # This provides additional signal confirmation based on order book depth
-        order_flow = engine.calculate_net_gex_volume(filtered_strikes, snapshot.spot_price)
+        # IMPORTANT: Only update smoothing history with fresh data to prevent cache corruption
+        order_flow = engine.calculate_net_gex_volume(filtered_strikes, snapshot.spot_price, update_smoothing=not is_cached)
 
         # Persist order flow data for historical analysis (only for fresh data)
         if not is_cached and order_flow:
@@ -1103,6 +1172,8 @@ async def get_expected_move_change(current_em: float, current_vix: float, spot_p
     open_em = None
     open_spot = None
 
+    conn = None
+    cursor = None
     try:
         conn = get_connection()
         if conn:
@@ -1133,11 +1204,19 @@ async def get_expected_move_change(current_em: float, current_vix: float, spot_p
             if row:
                 open_em = float(row[0])
                 open_spot = float(row[1]) if row[1] else None
-
-            cursor.close()
-            conn.close()
     except Exception as e:
         logger.warning(f"Could not fetch prior expected move: {e}")
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
     # Use cached/current values if DB not available
     if prior_em is None:
@@ -1272,6 +1351,8 @@ async def get_market_structure_changes(
     prior_call_wall = None
     prior_put_wall = None
 
+    conn = None
+    cursor = None
     try:
         conn = get_connection()
         if conn:
@@ -1310,11 +1391,19 @@ async def get_market_structure_changes(
                 # If we didn't get prior_spot from argus_snapshots, use gex_history
                 if prior_spot is None and row[3]:
                     prior_spot = float(row[3])
-
-            cursor.close()
-            conn.close()
     except Exception as e:
         logger.warning(f"Could not fetch prior day structure: {e}")
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
 
     # =========================================================================
     # SIGNAL 1: FLIP POINT MOVEMENT

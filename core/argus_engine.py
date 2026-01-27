@@ -1257,7 +1257,8 @@ class ArgusEngine:
         return signal_data
 
     def calculate_bid_ask_pressure(self, strikes: List[StrikeData], spot_price: float,
-                                     atm_range_pct: float = 0.03, min_depth: int = 100) -> Dict:
+                                     atm_range_pct: float = 0.03, min_depth: int = 100,
+                                     update_smoothing: bool = True) -> Dict:
         """
         Analyze bid/ask size imbalance to determine order flow pressure.
 
@@ -1266,6 +1267,13 @@ class ArgusEngine:
         - Requires minimum depth threshold to avoid thin markets
         - Smooths readings using 5-period rolling average
         - Gamma-weights pressure so high-impact strikes matter more
+
+        Args:
+            strikes: List of StrikeData objects
+            spot_price: Current spot price
+            atm_range_pct: Percentage range from ATM to include (default 3%)
+            min_depth: Minimum total contracts for valid signal (default 100)
+            update_smoothing: If False, skip adding to pressure history (use for cached data)
 
         Bid/Ask Size Interpretation:
         - bid_size >> ask_size = Buyers stacked up = BULLISH pressure (demand > supply)
@@ -1391,13 +1399,18 @@ class ArgusEngine:
         raw_net_pressure = (call_pressure + put_pressure) / 2
 
         # SMOOTHING: Add to history and compute rolling average
-        self._pressure_history.append(raw_net_pressure)
-        # Keep only last 5 readings for smoothing
-        if len(self._pressure_history) > 5:
-            self._pressure_history = self._pressure_history[-5:]
+        # Only update history with fresh data to prevent cache corruption
+        if update_smoothing:
+            self._pressure_history.append(raw_net_pressure)
+            # Keep only last 5 readings for smoothing
+            if len(self._pressure_history) > 5:
+                self._pressure_history = self._pressure_history[-5:]
 
-        # Smoothed pressure = average of last N readings
-        smoothed_pressure = sum(self._pressure_history) / len(self._pressure_history)
+        # Smoothed pressure = average of last N readings (or raw if no history)
+        if self._pressure_history:
+            smoothed_pressure = sum(self._pressure_history) / len(self._pressure_history)
+        else:
+            smoothed_pressure = raw_net_pressure
 
         # Determine pressure direction and strength from SMOOTHED value
         if abs(smoothed_pressure) < 0.1:
@@ -1444,12 +1457,18 @@ class ArgusEngine:
             'top_pressure_strikes': sorted_by_pressure
         }
 
-    def calculate_net_gex_volume(self, strikes: List[StrikeData], spot_price: float) -> Dict:
+    def calculate_net_gex_volume(self, strikes: List[StrikeData], spot_price: float,
+                                   update_smoothing: bool = True) -> Dict:
         """
         Calculate Net GEX Volume - intraday flow weighted by gamma impact.
 
         Unlike OI-based GEX (which is stable because OI doesn't change intraday),
         volume DOES change intraday and tells us about FLOW/MOMENTUM.
+
+        Args:
+            strikes: List of StrikeData objects
+            spot_price: Current spot price
+            update_smoothing: If False, skip adding to pressure history (use for cached data)
 
         Formula:
             Call GEX Flow = Call_Volume × |Call_Gamma| × 100 × spot²
@@ -1565,7 +1584,7 @@ class ArgusEngine:
                 flow_strength = 'WEAK'
 
         # Calculate bid/ask pressure for confirmation
-        bid_ask_pressure = self.calculate_bid_ask_pressure(strikes, spot_price)
+        bid_ask_pressure = self.calculate_bid_ask_pressure(strikes, spot_price, update_smoothing=update_smoothing)
 
         # Combine volume flow with bid/ask pressure for final signal
         # Agreement = high confidence, disagreement = caution
