@@ -261,10 +261,53 @@ def ensure_all_argus_tables():
             ON argus_accuracy(metric_date DESC)
         """)
 
+        # 7. argus_order_flow_history - bid/ask pressure tracking
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS argus_order_flow_history (
+                id SERIAL PRIMARY KEY,
+                symbol VARCHAR(10) NOT NULL DEFAULT 'SPY',
+                recorded_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                spot_price DECIMAL(10, 2),
+                -- Volume flow metrics
+                net_gex_volume DECIMAL(12, 2),
+                call_gex_flow DECIMAL(12, 2),
+                put_gex_flow DECIMAL(12, 2),
+                flow_direction VARCHAR(10),
+                flow_strength VARCHAR(10),
+                -- Bid/Ask pressure metrics (smoothed)
+                net_pressure DECIMAL(6, 4),
+                raw_pressure DECIMAL(6, 4),
+                pressure_direction VARCHAR(10),
+                pressure_strength VARCHAR(10),
+                call_pressure DECIMAL(6, 4),
+                put_pressure DECIMAL(6, 4),
+                -- Depth metrics
+                total_bid_size INTEGER,
+                total_ask_size INTEGER,
+                liquidity_score DECIMAL(5, 1),
+                strikes_used INTEGER,
+                -- Combined signal
+                combined_signal VARCHAR(30),
+                signal_confidence VARCHAR(10),
+                is_valid BOOLEAN DEFAULT TRUE,
+                -- Context
+                gamma_regime VARCHAR(20),
+                vix DECIMAL(6, 2)
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_argus_order_flow_recorded_at
+            ON argus_order_flow_history(symbol, recorded_at DESC)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_argus_order_flow_signal
+            ON argus_order_flow_history(combined_signal, signal_confidence)
+        """)
+
         conn.commit()
         cursor.close()
         conn.close()
-        logger.info("ARGUS: All tables ensured (6 tables)")
+        logger.info("ARGUS: All tables ensured (7 tables)")
         return True
     except Exception as e:
         logger.error(f"Failed to create ARGUS tables: {e}")
@@ -975,6 +1018,16 @@ async def get_gamma_data(
         # Calculate order flow analysis using bid/ask size data
         # This provides additional signal confirmation based on order book depth
         order_flow = engine.calculate_net_gex_volume(filtered_strikes, snapshot.spot_price)
+
+        # Persist order flow data for historical analysis (only for fresh data)
+        if not is_cached and order_flow:
+            await persist_order_flow_to_db(
+                symbol=symbol,
+                spot_price=snapshot.spot_price,
+                order_flow=order_flow,
+                gamma_regime=snapshot.gamma_regime,
+                vix=raw_data.get('vix', 0)
+            )
 
         # Build response
         return {
@@ -2090,6 +2143,100 @@ async def persist_danger_zones_to_db(danger_zones: list, spot_price: float, expi
         logger.debug(f"Danger zone sync: {count} active, resolved inactive ones")
     except Exception as e:
         logger.warning(f"Failed to persist danger zones: {e}")
+
+
+async def persist_order_flow_to_db(
+    symbol: str,
+    spot_price: float,
+    order_flow: dict,
+    gamma_regime: str = None,
+    vix: float = None
+):
+    """
+    Persist order flow pressure data to database for historical analysis.
+
+    Stores both volume flow and bid/ask pressure metrics for:
+    - Historical pattern analysis
+    - Signal accuracy tracking
+    - Backtest validation
+    - Divergence pattern research
+    """
+    try:
+        if not order_flow:
+            return
+
+        conn = get_connection()
+        if not conn:
+            return
+
+        cursor = conn.cursor()
+
+        # Only persist valid signals (or invalid ones for analysis)
+        bid_ask = order_flow.get('bid_ask_pressure', {})
+
+        # Check if we already have a reading in the last 30 seconds (prevent duplicates)
+        cursor.execute("""
+            SELECT id FROM argus_order_flow_history
+            WHERE symbol = %s
+            AND recorded_at > NOW() - INTERVAL '30 seconds'
+            LIMIT 1
+        """, (symbol,))
+
+        if cursor.fetchone():
+            cursor.close()
+            conn.close()
+            return  # Already have a recent reading
+
+        cursor.execute("""
+            INSERT INTO argus_order_flow_history (
+                symbol, recorded_at, spot_price,
+                net_gex_volume, call_gex_flow, put_gex_flow,
+                flow_direction, flow_strength,
+                net_pressure, raw_pressure, pressure_direction, pressure_strength,
+                call_pressure, put_pressure,
+                total_bid_size, total_ask_size, liquidity_score, strikes_used,
+                combined_signal, signal_confidence, is_valid,
+                gamma_regime, vix
+            ) VALUES (
+                %s, NOW(), %s,
+                %s, %s, %s,
+                %s, %s,
+                %s, %s, %s, %s,
+                %s, %s,
+                %s, %s, %s, %s,
+                %s, %s, %s,
+                %s, %s
+            )
+        """, (
+            symbol, spot_price,
+            order_flow.get('net_gex_volume'),
+            order_flow.get('call_gex_flow'),
+            order_flow.get('put_gex_flow'),
+            order_flow.get('flow_direction'),
+            order_flow.get('flow_strength'),
+            bid_ask.get('net_pressure'),
+            bid_ask.get('raw_pressure'),
+            bid_ask.get('pressure_direction'),
+            bid_ask.get('pressure_strength'),
+            bid_ask.get('call_pressure'),
+            bid_ask.get('put_pressure'),
+            bid_ask.get('total_bid_size'),
+            bid_ask.get('total_ask_size'),
+            bid_ask.get('liquidity_score'),
+            bid_ask.get('strikes_used'),
+            order_flow.get('combined_signal'),
+            order_flow.get('signal_confidence'),
+            bid_ask.get('is_valid', True),
+            gamma_regime,
+            vix
+        ))
+
+        conn.commit()
+        cursor.close()
+        conn.close()
+        logger.debug(f"Order flow persisted: {order_flow.get('combined_signal')} ({order_flow.get('signal_confidence')})")
+    except Exception as e:
+        logger.warning(f"Failed to persist order flow: {e}")
 
 
 async def persist_argus_snapshot_to_db(
