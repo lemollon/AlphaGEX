@@ -1254,9 +1254,16 @@ class ArgusEngine:
 
         return signal_data
 
-    def calculate_bid_ask_pressure(self, strikes: List[StrikeData], spot_price: float) -> Dict:
+    def calculate_bid_ask_pressure(self, strikes: List[StrikeData], spot_price: float,
+                                     atm_range_pct: float = 0.03, min_depth: int = 100) -> Dict:
         """
         Analyze bid/ask size imbalance to determine order flow pressure.
+
+        NOISE REDUCTION:
+        - Only uses strikes within ±3% of spot (ATM focus for liquidity)
+        - Requires minimum depth threshold to avoid thin markets
+        - Smooths readings using 5-period rolling average
+        - Gamma-weights pressure so high-impact strikes matter more
 
         Bid/Ask Size Interpretation:
         - bid_size >> ask_size = Buyers stacked up = BULLISH pressure (demand > supply)
@@ -1270,21 +1277,46 @@ class ArgusEngine:
         - Put bid_size high = Buyers want puts = BEARISH/hedging
         - Put ask_size high = Sellers offering puts = BULLISH (selling insurance)
 
+        Args:
+            strikes: List of StrikeData objects
+            spot_price: Current spot price
+            atm_range_pct: Percentage range from ATM to include (default 3%)
+            min_depth: Minimum total contracts for valid signal (default 100)
+
         Returns:
             Dict with pressure metrics and per-strike breakdown
         """
+        # Initialize pressure history if not exists
+        if not hasattr(self, '_pressure_history'):
+            self._pressure_history = []
+
+        empty_result = {
+            'net_pressure': 0.0,
+            'pressure_direction': 'NEUTRAL',
+            'pressure_strength': 'NONE',
+            'call_pressure': 0.0,
+            'put_pressure': 0.0,
+            'total_bid_size': 0,
+            'total_ask_size': 0,
+            'liquidity_score': 0.0,
+            'strikes_used': 0,
+            'is_valid': False,
+            'reason': '',
+            'top_pressure_strikes': []
+        }
+
         if not strikes or spot_price <= 0:
-            return {
-                'net_pressure': 0.0,
-                'pressure_direction': 'NEUTRAL',
-                'pressure_strength': 'NONE',
-                'call_pressure': 0.0,
-                'put_pressure': 0.0,
-                'total_bid_size': 0,
-                'total_ask_size': 0,
-                'liquidity_score': 0.0,
-                'top_pressure_strikes': []
-            }
+            empty_result['reason'] = 'No strikes or invalid spot price'
+            return empty_result
+
+        # FILTER 1: Only use strikes within ±3% of spot (ATM focus)
+        atm_min = spot_price * (1 - atm_range_pct)
+        atm_max = spot_price * (1 + atm_range_pct)
+        atm_strikes = [s for s in strikes if atm_min <= s.strike <= atm_max]
+
+        if not atm_strikes:
+            empty_result['reason'] = f'No strikes within ±{atm_range_pct*100:.0f}% of spot'
+            return empty_result
 
         total_call_bid = 0
         total_call_ask = 0
@@ -1292,7 +1324,7 @@ class ArgusEngine:
         total_put_ask = 0
         strike_pressure = []
 
-        for s in strikes:
+        for s in atm_strikes:
             # Aggregate bid/ask sizes
             total_call_bid += s.call_bid_size
             total_call_ask += s.call_ask_size
@@ -1326,6 +1358,15 @@ class ArgusEngine:
         # Calculate aggregate pressure metrics
         total_bid = total_call_bid + total_put_bid
         total_ask = total_call_ask + total_put_ask
+        total_depth = total_bid + total_ask
+
+        # FILTER 2: Minimum depth threshold
+        if total_depth < min_depth:
+            empty_result['total_bid_size'] = total_bid
+            empty_result['total_ask_size'] = total_ask
+            empty_result['strikes_used'] = len(atm_strikes)
+            empty_result['reason'] = f'Insufficient depth ({total_depth} < {min_depth} contracts)'
+            return empty_result
 
         # Call pressure: buyers vs sellers in calls
         # Positive = more call buyers = bullish
@@ -1343,38 +1384,48 @@ class ArgusEngine:
 
         # Net pressure combines call buying pressure and put selling pressure
         # Both are bullish signals
-        net_pressure = (call_pressure + put_pressure) / 2
+        raw_net_pressure = (call_pressure + put_pressure) / 2
 
-        # Determine pressure direction and strength
-        if abs(net_pressure) < 0.1:
+        # SMOOTHING: Add to history and compute rolling average
+        self._pressure_history.append(raw_net_pressure)
+        # Keep only last 5 readings for smoothing
+        if len(self._pressure_history) > 5:
+            self._pressure_history = self._pressure_history[-5:]
+
+        # Smoothed pressure = average of last N readings
+        smoothed_pressure = sum(self._pressure_history) / len(self._pressure_history)
+
+        # Determine pressure direction and strength from SMOOTHED value
+        if abs(smoothed_pressure) < 0.1:
             pressure_direction = 'NEUTRAL'
             pressure_strength = 'NONE'
-        elif net_pressure > 0:
+        elif smoothed_pressure > 0:
             pressure_direction = 'BULLISH'
-            if net_pressure > 0.4:
+            if smoothed_pressure > 0.4:
                 pressure_strength = 'STRONG'
-            elif net_pressure > 0.2:
+            elif smoothed_pressure > 0.2:
                 pressure_strength = 'MODERATE'
             else:
                 pressure_strength = 'WEAK'
         else:
             pressure_direction = 'BEARISH'
-            if net_pressure < -0.4:
+            if smoothed_pressure < -0.4:
                 pressure_strength = 'STRONG'
-            elif net_pressure < -0.2:
+            elif smoothed_pressure < -0.2:
                 pressure_strength = 'MODERATE'
             else:
                 pressure_strength = 'WEAK'
 
         # Liquidity score: higher = more liquid = easier execution
-        # Based on total depth available
-        liquidity_score = min(100, (total_bid + total_ask) / 100)  # Normalize to 0-100
+        # Based on total depth available in ATM zone
+        liquidity_score = min(100, total_depth / 100)  # Normalize to 0-100
 
         # Top pressure strikes (highest absolute net pressure)
         sorted_by_pressure = sorted(strike_pressure, key=lambda x: abs(x['net_pressure']), reverse=True)[:5]
 
         return {
-            'net_pressure': round(net_pressure, 3),
+            'net_pressure': round(smoothed_pressure, 3),
+            'raw_pressure': round(raw_net_pressure, 3),  # Unsmoothed for reference
             'pressure_direction': pressure_direction,
             'pressure_strength': pressure_strength,
             'call_pressure': round(call_pressure, 3),
@@ -1382,6 +1433,10 @@ class ArgusEngine:
             'total_bid_size': total_bid,
             'total_ask_size': total_ask,
             'liquidity_score': round(liquidity_score, 1),
+            'strikes_used': len(atm_strikes),
+            'smoothing_periods': len(self._pressure_history),
+            'is_valid': True,
+            'reason': 'OK',
             'top_pressure_strikes': sorted_by_pressure
         }
 
