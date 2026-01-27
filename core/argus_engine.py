@@ -225,6 +225,13 @@ class ArgusEngine:
         self._market_open_baselines: Dict[float, List[float]] = {}  # strike -> [opening values]
         self._baseline_locked: bool = False  # Lock baseline after 5 minutes
 
+        # Locked GEX levels at market open (like SpotGamma does for 0DTE)
+        # OI doesn't change intraday, so GEX rankings should be stable
+        self._locked_gex_rankings: Dict[float, int] = {}  # strike -> rank at open
+        self._locked_gex_values: Dict[float, float] = {}  # strike -> GEX value at open
+        self._gex_levels_locked: bool = False
+        self._major_strikes_at_open: List[float] = []  # Top 5 strikes by GEX at open
+
     def reset_expected_move_smoothing(self):
         """
         Reset the expected move smoothing state.
@@ -276,7 +283,78 @@ class ArgusEngine:
         self._previous_spot_price = None
         self._market_open_baselines = {}
         self._baseline_locked = False
+        # Reset locked GEX levels for new trading day
+        self._locked_gex_rankings = {}
+        self._locked_gex_values = {}
+        self._gex_levels_locked = False
+        self._major_strikes_at_open = []
         logger.debug("Gamma smoothing state reset for new trading day")
+
+    def lock_gex_levels_at_open(self, strikes_data: List, spot_price: float):
+        """
+        Lock GEX levels at market open (like SpotGamma does for 0DTE).
+
+        Since OI doesn't change intraday, the relative GEX rankings should be stable.
+        This prevents noisy gamma recalculations from changing which strikes are "major".
+
+        Args:
+            strikes_data: List of StrikeData objects with net_gamma populated
+            spot_price: Current spot price
+        """
+        if self._gex_levels_locked:
+            return  # Already locked
+
+        from zoneinfo import ZoneInfo
+        CENTRAL_TZ = ZoneInfo("America/Chicago")
+        now = datetime.now(CENTRAL_TZ)
+        market_open = now.replace(hour=8, minute=30, second=0, microsecond=0)
+
+        # Only lock after market open and within first 10 minutes
+        if now < market_open:
+            return
+        if (now - market_open).total_seconds() > 600:  # 10 minute window to lock
+            if not self._gex_levels_locked and self._locked_gex_values:
+                self._gex_levels_locked = True
+                logger.info(f"GEX levels locked with {len(self._locked_gex_values)} strikes")
+            return
+
+        # Calculate GEX for each strike and store
+        for strike_data in strikes_data:
+            strike = strike_data.strike
+            gex = abs(strike_data.net_gamma)  # Already OI-weighted from calculate_net_gamma
+            self._locked_gex_values[strike] = gex
+
+        # Rank strikes by GEX (highest = rank 1)
+        sorted_strikes = sorted(self._locked_gex_values.items(), key=lambda x: abs(x[1]), reverse=True)
+        for rank, (strike, _) in enumerate(sorted_strikes, 1):
+            self._locked_gex_rankings[strike] = rank
+
+        # Store top 5 as "major strikes" - these should remain major all day
+        self._major_strikes_at_open = [strike for strike, _ in sorted_strikes[:5]]
+        logger.debug(f"GEX levels captured: top 5 = {self._major_strikes_at_open}")
+
+    def get_locked_gex_rank(self, strike: float) -> Optional[int]:
+        """Get the locked GEX rank for a strike (set at market open)."""
+        return self._locked_gex_rankings.get(strike)
+
+    def is_major_strike(self, strike: float) -> bool:
+        """Check if strike was in top 5 GEX at market open."""
+        return strike in self._major_strikes_at_open
+
+    def get_gex_rank_change(self, strike: float, current_rank: int) -> int:
+        """
+        Get how much a strike's GEX rank has changed since market open.
+
+        Returns:
+            Positive = improved (moved up in ranking)
+            Negative = declined (moved down in ranking)
+            0 = no change or no baseline
+        """
+        locked_rank = self._locked_gex_rankings.get(strike)
+        if locked_rank is None:
+            return 0
+        # Lower rank number = higher importance, so improvement = negative change
+        return locked_rank - current_rank
 
     def _smooth_gamma_value(self, strike: float, raw_gamma: float, spot_price: float) -> float:
         """
@@ -911,11 +989,15 @@ class ArgusEngine:
     def generate_trading_signal(self, strikes: List[StrikeData], spot_price: float,
                                  likely_pin: float, gamma_regime: str) -> Dict:
         """
-        Generate actionable trading signal based on gamma evolution patterns.
+        Generate actionable trading signal based on GEX structure.
 
-        This analyzes where gamma is building vs decaying to provide clear trading guidance:
-        - Building gamma = Strike becoming more important (price attracted)
-        - Decaying gamma = Strike losing influence (price may move away)
+        Uses OI-WEIGHTED GEX RANKINGS (stable because OI doesn't change intraday)
+        instead of noisy gamma % changes. This follows SpotGamma's methodology
+        of locking major levels at market open for 0DTE.
+
+        A strike is "building" if its GEX rank improved 3+ positions since open.
+        A strike is "decaying" if its GEX rank declined 3+ positions since open.
+        Major strikes (top 5 at open) stay major unless they drop to rank 10+.
 
         Returns:
             Dict with signal, confidence, and specific trade recommendations
@@ -928,10 +1010,37 @@ class ArgusEngine:
                 'explanation': 'Insufficient data to generate signal'
             }
 
-        # Categorize strikes by their gamma change since open
-        building_strikes = [s for s in strikes if s.roc_trading_day >= 25.0]
-        decaying_strikes = [s for s in strikes if s.roc_trading_day <= -25.0]
-        stable_strikes = [s for s in strikes if -25.0 < s.roc_trading_day < 25.0]
+        # First, lock GEX levels at open if not already locked
+        self.lock_gex_levels_at_open(strikes, spot_price)
+
+        # Calculate current GEX rankings
+        sorted_by_gex = sorted(strikes, key=lambda s: abs(s.net_gamma), reverse=True)
+        current_rankings = {s.strike: rank for rank, s in enumerate(sorted_by_gex, 1)}
+
+        # Categorize strikes by GEX RANK change (stable) instead of % change (noisy)
+        # Building = rank improved by 3+ positions (strike becoming more important)
+        # Decaying = rank declined by 3+ positions (strike losing importance)
+        building_strikes = []
+        decaying_strikes = []
+        stable_strikes = []
+
+        for s in strikes:
+            current_rank = current_rankings.get(s.strike, len(strikes))
+            rank_change = self.get_gex_rank_change(s.strike, current_rank)
+
+            # Mark major strikes (top 5 at open) - these are stable anchors
+            is_major = self.is_major_strike(s.strike)
+
+            if rank_change >= 3:  # Improved 3+ positions
+                building_strikes.append(s)
+            elif rank_change <= -3:  # Declined 3+ positions
+                # Major strikes only "decay" if they drop to rank 10+
+                if is_major and current_rank < 10:
+                    stable_strikes.append(s)  # Major strike stays stable
+                else:
+                    decaying_strikes.append(s)
+            else:
+                stable_strikes.append(s)
 
         # Separate building above vs below spot
         building_above = [s for s in building_strikes if s.strike > spot_price]
@@ -954,6 +1063,7 @@ class ArgusEngine:
                            n_decaying if n_decaying else 0)
 
         # Detect patterns and generate signals
+        # Include major strikes from open for stability reference
         signal_data = {
             'building_count': n_building,
             'decaying_count': n_decaying,
@@ -961,7 +1071,10 @@ class ArgusEngine:
             'building_below_spot': n_building_below,
             'avg_building_strength': round(avg_building_pct, 1),
             'avg_decaying_strength': round(avg_decaying_pct, 1),
-            'gamma_regime': gamma_regime
+            'gamma_regime': gamma_regime,
+            'major_strikes': self._major_strikes_at_open,  # Top 5 GEX at open (stable anchors)
+            'gex_locked': self._gex_levels_locked,
+            'methodology': 'GEX_RANK'  # Using OI-weighted rank changes, not noisy % changes
         }
 
         # PATTERN 1: Symmetric building (premium selling opportunity)
@@ -970,9 +1083,9 @@ class ArgusEngine:
                 'signal': 'SELL_PREMIUM',
                 'confidence': 'HIGH' if gamma_regime == 'POSITIVE' else 'MEDIUM',
                 'action': f'Iron Condor or Iron Butterfly centered at ${likely_pin}',
-                'explanation': (f'Gamma building symmetrically above ({n_building_above} strikes) '
+                'explanation': (f'GEX gaining importance above ({n_building_above} strikes) '
                                f'and below ({n_building_below} strikes) spot. '
-                               f'Price likely to stay range-bound near ${likely_pin} pin.'),
+                               f'Dealers capping both directions. Range-bound near ${likely_pin}.'),
                 'short_strike_call': building_above[0].strike if building_above else None,
                 'short_strike_put': building_below[-1].strike if building_below else None,
             })
@@ -984,8 +1097,8 @@ class ArgusEngine:
                 'signal': 'BULLISH_BIAS',
                 'confidence': 'HIGH' if gamma_regime == 'NEGATIVE' else 'MEDIUM',
                 'action': f'Bull call spread or call debit spread targeting ${target_strike}',
-                'explanation': (f'Gamma building above spot at {n_building_above} strikes. '
-                               f'Dealers may need to buy as price rises, accelerating move up. '
+                'explanation': (f'GEX concentrating above spot ({n_building_above} strikes gaining rank). '
+                               f'Call wall building = resistance, but dealers must buy on breakout. '
                                f'Target: ${target_strike}'),
                 'target_strike': target_strike
             })
@@ -997,8 +1110,8 @@ class ArgusEngine:
                 'signal': 'BEARISH_BIAS',
                 'confidence': 'HIGH' if gamma_regime == 'NEGATIVE' else 'MEDIUM',
                 'action': f'Bear put spread or put debit spread targeting ${target_strike}',
-                'explanation': (f'Gamma building below spot at {n_building_below} strikes. '
-                               f'Dealers may need to sell as price falls, accelerating move down. '
+                'explanation': (f'GEX concentrating below spot ({n_building_below} strikes gaining rank). '
+                               f'Put wall building = support, but dealers must sell on breakdown. '
                                f'Target: ${target_strike}'),
                 'target_strike': target_strike
             })
@@ -1009,20 +1122,19 @@ class ArgusEngine:
                 'signal': 'BREAKOUT_LIKELY',
                 'confidence': 'HIGH' if gamma_regime == 'NEGATIVE' else 'MEDIUM',
                 'action': 'Long straddle or strangle at ATM strike',
-                'explanation': (f'Gamma decaying at {n_decaying} strikes (avg: {avg_decaying_pct:.0f}%). '
-                               f'Dealer hedging reduced - price can move freely. '
-                               f'Expect larger move, direction unclear.')
+                'explanation': (f'GEX importance declining at {n_decaying} strikes. '
+                               f'Dealer hedging walls weakening - less resistance to moves. '
+                               f'Expect larger range, direction unclear.')
             })
 
         # PATTERN 5: Building at pin, decaying elsewhere (strong pinning)
         elif n_building == 1 and abs(building_strikes[0].strike - likely_pin) <= 1:
-            pin_strength = building_strikes[0].roc_trading_day
             signal_data.update({
                 'signal': 'STRONG_PIN',
                 'confidence': 'HIGH',
                 'action': f'Sell premium around ${likely_pin} pin. Tight credit spread or butterfly.',
-                'explanation': (f'Gamma concentrating at pin ${likely_pin} (+{pin_strength:.0f}%). '
-                               f'Strong magnet effect. Price should stay tight.')
+                'explanation': (f'GEX concentrating at pin strike ${likely_pin}. '
+                               f'Major strike holding rank - strong magnet. Tight range expected.')
             })
 
         # PATTERN 6: No clear pattern but stable
@@ -1312,6 +1424,10 @@ class ArgusEngine:
         gamma_regime = self.classify_gamma_regime(total_net_gamma)
         previous_regime = self.previous_snapshot.gamma_regime if self.previous_snapshot else None
         regime_flipped = previous_regime is not None and gamma_regime != previous_regime
+
+        # Lock GEX levels at market open (like SpotGamma does for 0DTE)
+        # This ensures major strikes remain stable throughout the day
+        self.lock_gex_levels_at_open(strikes_data, spot_price)
 
         # Identify magnets, pin, and danger zones
         magnets = self.identify_magnets(strikes_data)
