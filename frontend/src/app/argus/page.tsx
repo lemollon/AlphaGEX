@@ -2927,21 +2927,21 @@ export default function ArgusPage() {
                 </div>
 
                 {/* Evolution Chart - Bars show change since open */}
-                <div className="relative h-40 flex items-center justify-center gap-1 border-b border-gray-700 mb-2">
+                <div className="relative h-32 flex items-center justify-center gap-0.5 border-b border-gray-700 mb-2">
                   {/* Zero line (center) */}
                   <div className="absolute left-0 right-0 top-1/2 border-t border-gray-600 z-0"></div>
                   <div className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] text-gray-600">0</div>
 
                   {(() => {
-                    // Calculate max change for scaling
-                    const maxChange = Math.max(
-                      ...strikeEvolutions.map(e => Math.abs(e.changeSinceOpen)),
-                      1  // Prevent division by zero
-                    )
-                    const MAX_HEIGHT_PX = 60  // Max bar height in one direction (up or down)
+                    // Calculate max change for scaling - use minimum threshold for better visibility
+                    const changes = strikeEvolutions.map(e => Math.abs(e.changeSinceOpen))
+                    const maxChange = Math.max(...changes, 1e6)  // Min 1M for scale
+                    const MAX_HEIGHT_PX = 45  // Max bar height in one direction (up or down)
 
                     return strikeEvolutions.map((evolution) => {
-                      const barHeight = Math.max(4, (Math.abs(evolution.changeSinceOpen) / maxChange) * MAX_HEIGHT_PX)
+                      // Minimum bar height of 8px for visibility, scale up from there
+                      const rawHeight = (Math.abs(evolution.changeSinceOpen) / maxChange) * MAX_HEIGHT_PX
+                      const barHeight = evolution.changeSinceOpen === 0 ? 3 : Math.max(8, rawHeight)
                       const isPositiveChange = evolution.changeSinceOpen >= 0
                       const barColor = isPositiveChange ? 'bg-cyan-500' : 'bg-orange-500'
 
@@ -2955,7 +2955,7 @@ export default function ArgusPage() {
                         <div
                           key={`evo-${evolution.strike}`}
                           className="flex flex-col items-center group cursor-pointer z-10 relative"
-                          style={{ flex: '1 1 0', maxWidth: '60px' }}
+                          style={{ flex: '1 1 0', maxWidth: '50px', minWidth: '28px' }}
                           onClick={() => {
                             const strikeData = gammaData?.strikes?.find(s => s.strike === evolution.strike)
                             if (strikeData) setSelectedStrike(strikeData)
@@ -2963,19 +2963,19 @@ export default function ArgusPage() {
                         >
                           {/* Change percentage label (top for positive, bottom for negative) */}
                           {isPositiveChange ? (
-                            <div className="text-[9px] text-cyan-400 mb-0.5 font-mono">
-                              +{safeFixed(evolution.changeSinceOpenPct, 0)}%
+                            <div className="text-[8px] text-cyan-400 mb-0.5 font-mono truncate w-full text-center">
+                              {evolution.changeSinceOpen === 0 ? '0' : `+${safeFixed(evolution.changeSinceOpenPct, 0)}%`}
                             </div>
                           ) : (
                             <div className="h-3"></div>
                           )}
 
                           {/* Bar container - positioned relative to center */}
-                          <div className="relative h-[120px] w-full flex flex-col items-center justify-center">
+                          <div className="relative h-[90px] w-full flex flex-col items-center justify-center">
                             {/* Positive change bar (grows upward from center) */}
                             {isPositiveChange && (
                               <div
-                                className={`w-5 rounded-t ${barColor} transition-all hover:opacity-80 absolute bottom-1/2`}
+                                className={`w-7 rounded-t ${barColor} transition-all hover:opacity-80 hover:w-8 absolute bottom-1/2`}
                                 style={{ height: `${barHeight}px` }}
                               >
                                 {/* Regime flip indicator */}
@@ -2988,7 +2988,7 @@ export default function ArgusPage() {
                             {/* Negative change bar (grows downward from center) */}
                             {!isPositiveChange && (
                               <div
-                                className={`w-5 rounded-b ${barColor} transition-all hover:opacity-80 absolute top-1/2`}
+                                className={`w-7 rounded-b ${barColor} transition-all hover:opacity-80 hover:w-8 absolute top-1/2`}
                                 style={{ height: `${barHeight}px` }}
                               >
                                 {/* Regime flip indicator */}
