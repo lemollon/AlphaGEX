@@ -912,13 +912,15 @@ async def get_gamma_data(
         # GAP FIX: Validate spot_price before proceeding
         # If spot_price is 0 or invalid, ATM calculations will fail (any strike would be "ATM")
         spot_price = raw_data.get('spot_price', 0)
+        use_previous_due_to_invalid_price = False
         if not spot_price or spot_price <= 0:
             logger.warning(f"ARGUS: Invalid spot price ({spot_price}) - cannot calculate ATM range")
             # Try to use previous snapshot if available
             if engine.previous_snapshot and engine.previous_snapshot.spot_price > 0:
                 logger.info("ARGUS: Using previous snapshot due to invalid spot price")
                 snapshot = engine.previous_snapshot
-                # Skip to response building with cached snapshot
+                use_previous_due_to_invalid_price = True
+                # Update raw_data for downstream functions that use it
                 raw_data['spot_price'] = snapshot.spot_price
                 raw_data['vix'] = snapshot.vix
             else:
@@ -943,7 +945,13 @@ async def get_gamma_data(
         # This prevents ROC from constantly recalculating on stale after-hours data
         market_open = is_market_hours()
 
-        if not market_open and engine.previous_snapshot:
+        # Skip re-processing if we already used previous snapshot due to invalid spot price
+        if use_previous_due_to_invalid_price:
+            # Already set snapshot above, skip processing
+            # Treat as cached to prevent smoothing updates and database persistence
+            is_cached = True
+            logger.debug("ARGUS: Skipping re-processing, using previous snapshot due to invalid spot price")
+        elif not market_open and engine.previous_snapshot:
             # Market closed - use existing snapshot, don't reprocess
             logger.debug(f"ARGUS: Market closed - using existing snapshot to prevent ROC recalculation")
             snapshot = engine.previous_snapshot
