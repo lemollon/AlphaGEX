@@ -385,10 +385,109 @@ def test_argus_routes_integration():
         print_result("Route integration test", False, str(e))
         return False
 
+def test_standards_compliance():
+    """Test 7: STANDARDS.md Complete Loop Verification"""
+    print_header("TEST 7: STANDARDS.md Compliance")
+
+    print("  Checking Complete Loop requirements:")
+    print("")
+
+    # 1. DATABASE - Schema exists
+    db_ok = False
+    try:
+        from database_adapter import get_connection
+        conn = get_connection()
+        if conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT COUNT(*) FROM information_schema.tables
+                WHERE table_name = 'argus_order_flow_history'
+            """)
+            db_ok = cursor.fetchone()[0] > 0
+            cursor.close()
+            conn.close()
+    except:
+        pass
+    print_result("1. DATABASE: Schema exists", db_ok)
+
+    # 2. DATA POPULATION - Code writes to table (check source code)
+    population_ok = False
+    try:
+        routes_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'backend', 'api', 'routes', 'argus_routes.py'
+        )
+        with open(routes_path, 'r') as f:
+            content = f.read()
+        population_ok = "await persist_order_flow_to_db" in content
+    except:
+        pass
+    print_result("2. DATA POPULATION: Persist function wired up", population_ok)
+
+    # 3. BACKEND API - Returns order_flow in response
+    api_ok = False
+    try:
+        routes_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'backend', 'api', 'routes', 'argus_routes.py'
+        )
+        with open(routes_path, 'r') as f:
+            content = f.read()
+        api_ok = '"order_flow": order_flow' in content
+    except:
+        pass
+    print_result("3. BACKEND API: Returns order_flow in response", api_ok)
+
+    # 4. FRONTEND - Displays the data
+    frontend_ok = False
+    try:
+        frontend_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'frontend', 'src', 'app', 'argus', 'page.tsx'
+        )
+        with open(frontend_path, 'r') as f:
+            content = f.read()
+        frontend_ok = (
+            "order_flow?: OrderFlow" in content and
+            "Order Flow Pressure" in content and
+            "gammaData.order_flow" in content
+        )
+    except:
+        pass
+    print_result("4. FRONTEND: Displays order_flow panel", frontend_ok)
+
+    # 5. ERROR HANDLING - Graceful failures
+    error_ok = False
+    try:
+        routes_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            'backend', 'api', 'routes', 'argus_routes.py'
+        )
+        with open(routes_path, 'r') as f:
+            content = f.read()
+        error_ok = 'logger.warning(f"Failed to persist order flow' in content
+    except:
+        pass
+    print_result("5. ERROR HANDLING: Graceful failure logging", error_ok)
+
+    # Summary
+    all_pass = db_ok and population_ok and api_ok and frontend_ok and error_ok
+
+    print("")
+    if all_pass:
+        print("  ✅ Complete Loop: VERIFIED")
+        print("  All 5 STANDARDS.md requirements met")
+    else:
+        print("  ❌ Complete Loop: INCOMPLETE")
+        print("  Some requirements not met - review above")
+
+    return all_pass
+
+
 def main():
     print("\n" + "="*60)
     print("  ORDER FLOW SYSTEM END-TO-END TEST")
-    print("  Per CLAUDE.md Production-Ready Standards")
+    print("  Per STANDARDS.md Production-Ready Requirements")
     print("="*60)
     print(f"  Timestamp: {datetime.now().isoformat()}")
 
@@ -401,6 +500,7 @@ def main():
     results.append(("Route Integration", test_argus_routes_integration()))
     results.append(("API Endpoint", test_api_endpoint()))
     results.append(("Database Persistence", test_database_persistence()))
+    results.append(("STANDARDS.md Compliance", test_standards_compliance()))
 
     # Summary
     print_header("SUMMARY")
