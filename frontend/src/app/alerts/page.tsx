@@ -4,6 +4,7 @@ import { logger } from '@/lib/logger'
 
 import { useState } from 'react'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import { apiClient } from '@/lib/api'
 import { useAlerts, useAlertHistory } from '@/lib/hooks/useMarketData'
 import {
@@ -44,6 +45,7 @@ interface AlertHistory {
 }
 
 export default function AlertsPage() {
+  const sidebarPadding = useSidebarPadding()
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [loading, setLoading] = useState(false)
   const [checking, setChecking] = useState(false)
@@ -179,7 +181,7 @@ export default function AlertsPage() {
     <div className="min-h-screen">
       <Navigation />
 
-      <main className="pt-24 transition-all duration-300">
+      <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Header */}
         <div className="flex items-center justify-between mb-8">

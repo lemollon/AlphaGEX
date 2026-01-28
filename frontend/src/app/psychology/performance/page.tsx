@@ -6,12 +6,14 @@ import { useState, useEffect } from 'react'
 import { TrendingUp, TrendingDown, BarChart3, Activity, PlayCircle, Filter, ChevronDown, Target, Zap } from 'lucide-react'
 import { LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import CoolEmptyState from '@/components/CoolEmptyState'
 import TrendBuildingPlaceholder from '@/components/TrendBuildingPlaceholder'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
 export default function PsychologyPerformance() {
+  const sidebarPadding = useSidebarPadding()
   const [overview, setOverview] = useState<any>(null)
   const [patterns, setPatterns] = useState<any[]>([])
   const [signals, setSignals] = useState<any[]>([])
@@ -125,7 +127,7 @@ export default function PsychologyPerformance() {
     return (
       <div className="min-h-screen bg-gray-950 text-white">
         <Navigation />
-        <main className="pt-24">
+        <main className={`pt-24 ${sidebarPadding}`}>
           <div className="container mx-auto px-4 py-8">
             <div className="flex items-center justify-center py-20">
               <div className="animate-spin rounded-full h-12 w-12 border-4 border-purple-500 border-t-transparent" />
@@ -140,7 +142,7 @@ export default function PsychologyPerformance() {
     return (
       <div className="min-h-screen bg-gray-950 text-white">
         <Navigation />
-        <main className="pt-24">
+        <main className={`pt-24 ${sidebarPadding}`}>
           <div className="container mx-auto px-4 py-8">
             <div className="bg-red-500/10 border border-red-500 rounded-lg p-6 text-red-400">
               {error}
@@ -155,7 +157,7 @@ export default function PsychologyPerformance() {
     <div className="min-h-screen bg-gray-950 text-white">
       <Navigation />
 
-      <main className="pt-24">
+      <main className={`pt-24 ${sidebarPadding}`}>
         <div className="container mx-auto px-4 py-8 space-y-6">
 
           {/* Header */}

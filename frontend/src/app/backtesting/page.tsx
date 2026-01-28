@@ -5,6 +5,7 @@ import { logger } from '@/lib/logger'
 import { useState, useEffect, useCallback } from 'react'
 import { TestTube, TrendingUp, TrendingDown, Activity, BarChart3, PlayCircle, RefreshCw, AlertTriangle, Calendar, Clock, Loader2, CheckCircle, XCircle, Download } from 'lucide-react'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import SmartStrategyPicker from '@/components/SmartStrategyPicker'
 import { apiClient } from '@/lib/api'
 
@@ -45,6 +46,7 @@ interface BacktestJob {
 }
 
 export default function BacktestingPage() {
+  const sidebarPadding = useSidebarPadding()
   const [results, setResults] = useState<BacktestResult[]>([])
   const [loading, setLoading] = useState(true)
   const [running, setRunning] = useState(false)
@@ -185,7 +187,7 @@ export default function BacktestingPage() {
     return (
       <div className="min-h-screen bg-gray-950 text-white">
         <Navigation />
-        <main className="pt-24">
+        <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
           <div className="container mx-auto px-4 py-8">
             <div className="flex items-center justify-center py-20">
               <div className="animate-spin rounded-full h-12 w-12 border-4 border-purple-500 border-t-transparent" />
@@ -200,7 +202,7 @@ export default function BacktestingPage() {
     return (
       <div className="min-h-screen bg-gray-950 text-white">
         <Navigation />
-        <main className="pt-24">
+        <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
           <div className="container mx-auto px-4 py-8">
             <div className="bg-red-500/10 border border-red-500 rounded-lg p-6 text-red-400">
               {error}
@@ -215,7 +217,7 @@ export default function BacktestingPage() {
     <div className="min-h-screen bg-gray-950 text-white">
       <Navigation />
 
-      <main className="pt-24">
+      <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
         <div className="container mx-auto px-4 py-8 space-y-6">
 
           {/* Header */}

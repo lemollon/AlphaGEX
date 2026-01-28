@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { Activity, Shield, AlertTriangle, BarChart3, Clock, Zap, Target, RefreshCw, ChevronLeft, ChevronRight, AlertCircle } from 'lucide-react'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import { useVIX, useVIXHedgeSignal, useVIXSignalHistory } from '@/lib/hooks/useMarketData'
 
 interface VIXData {
@@ -59,6 +60,7 @@ interface SignalHistory {
 const ITEMS_PER_PAGE = 10
 
 export default function VIXDashboard() {
+  const sidebarPadding = useSidebarPadding()
   // Pagination state
   const [currentPage, setCurrentPage] = useState(0)
 
@@ -135,7 +137,7 @@ export default function VIXDashboard() {
   return (
     <div className="min-h-screen">
       <Navigation />
-      <main className="pt-24 transition-all duration-300">
+      <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="space-y-6">
             {/* Header */}

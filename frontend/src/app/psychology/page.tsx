@@ -5,6 +5,7 @@ import { logger } from '@/lib/logger'
 import { useState, useEffect } from 'react'
 import { Brain, AlertTriangle, TrendingUp, TrendingDown, Target, Clock, Shield, Zap, RefreshCw, Activity, Calendar, Sparkles, BarChart3, Eye, EyeOff, PlayCircle, TrendingUpIcon } from 'lucide-react'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import TradingGuide from '@/components/TradingGuide'
 import PsychologyNotifications from '@/components/PsychologyNotifications'
 import InfoTooltip from '@/components/InfoTooltip'
@@ -139,6 +140,7 @@ interface BacktestStats {
 }
 
 export default function PsychologyTrapDetection() {
+  const sidebarPadding = useSidebarPadding()
   const [symbol, setSymbol] = useState('SPY')
   const [isAdvancedView, setIsAdvancedView] = useState(false)
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true)
@@ -277,7 +279,7 @@ export default function PsychologyTrapDetection() {
     <div className="min-h-screen bg-gray-950 text-white">
       <Navigation />
 
-      <main className="pt-24 transition-all duration-300">
+      <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
         <div className="container mx-auto px-4 py-8 space-y-6">
           {/* Header */}
         <div className="flex items-center justify-between">

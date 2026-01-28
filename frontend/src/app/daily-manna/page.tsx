@@ -4,6 +4,7 @@ import { logger } from '@/lib/logger'
 
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import { apiClient } from '@/lib/api'
 import { useDailyManna, useDailyMannaComments } from '@/lib/hooks/useMarketData'
 import {
@@ -71,6 +72,7 @@ interface Comment {
 }
 
 export default function DailyMannaPage() {
+  const sidebarPadding = useSidebarPadding()
   // SWR hooks for data fetching with caching
   const { data: mannaResponse, error: mannaError, isLoading, mutate: refreshManna } = useDailyManna()
   const { data: commentsResponse, mutate: refreshComments } = useDailyMannaComments()
@@ -242,7 +244,7 @@ export default function DailyMannaPage() {
     return (
       <div className="min-h-screen">
         <Navigation />
-        <main className="pt-24 transition-all duration-300">
+        <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
           <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-4">
               <div className="relative">
@@ -269,7 +271,7 @@ export default function DailyMannaPage() {
     <div className="min-h-screen print:bg-white">
       <Navigation />
 
-      <main className="pt-24 transition-all duration-300">
+      <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           {/* Header */}
           <div className="text-center mb-8 print:mb-4">

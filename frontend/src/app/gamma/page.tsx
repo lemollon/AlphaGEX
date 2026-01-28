@@ -5,6 +5,7 @@ import { logger } from '@/lib/logger'
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { Zap, TrendingUp, TrendingDown, Activity, BarChart3, Target, Clock, AlertCircle, RefreshCw, Calendar } from 'lucide-react'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import { apiClient } from '@/lib/api'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { useDataCache } from '@/hooks/useDataCache'
@@ -60,6 +61,7 @@ interface GammaIntelligence {
 }
 
 export default function GammaIntelligence() {
+  const sidebarPadding = useSidebarPadding()
   const router = useRouter()
   const [symbol, setSymbol] = useState('SPY')
 
@@ -250,7 +252,7 @@ export default function GammaIntelligence() {
   return (
     <div className="min-h-screen">
       <Navigation />
-      <main className="pt-24 transition-all duration-300">
+      <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="space-y-6">
           {/* Header */}

@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { MessageSquare, Send, Sparkles, TrendingUp, BarChart3, Zap, Clock, User, Bot } from 'lucide-react'
 import Navigation from '../../components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import { apiClient } from '../../lib/api'
 
 // GEXIS Configuration
@@ -75,6 +76,7 @@ interface Message {
 }
 
 export default function AICopilot() {
+  const sidebarPadding = useSidebarPadding()
   const [messages, setMessages] = useState<Message[]>([
     {
       id: '1',
@@ -186,7 +188,7 @@ export default function AICopilot() {
   return (
     <div className="min-h-screen">
       <Navigation />
-      <main className="pt-24 transition-all duration-300">
+      <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="h-[calc(100vh-12rem)] flex flex-col">
             {/* Header */}
