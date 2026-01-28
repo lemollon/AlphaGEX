@@ -180,7 +180,7 @@ function CustomTooltip({ active, payload, label }: any) {
       </p>
       {data.daily_pnl !== undefined && (
         <p className={`text-sm font-medium ${data.daily_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-          {data.daily_pnl >= 0 ? '+' : ''}${data.daily_pnl?.toLocaleString()} today
+          {data.daily_pnl >= 0 ? '+' : ''}${data.daily_pnl?.toLocaleString()} {data.trade_count === 1 ? 'trade' : 'day'}
         </p>
       )}
       {data.drawdown_pct > 0 && (

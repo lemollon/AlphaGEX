@@ -1750,6 +1750,19 @@ async def get_ares_equity_curve(days: int = 30):
             ''')
             open_positions = cursor.fetchall()
             open_positions_count = len(open_positions)
+
+            # Get today's realized P&L for the daily_pnl field
+            today_realized = 0.0
+            cursor.execute('''
+                SELECT COALESCE(SUM(realized_pnl), 0)
+                FROM ares_positions
+                WHERE status IN ('closed', 'expired', 'partial_close')
+                AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
+            ''', (today,))
+            today_realized_row = cursor.fetchone()
+            if today_realized_row:
+                today_realized = float(today_realized_row[0] or 0)
+
             conn.close()
 
             # Calculate unrealized P&L from open positions using MTM
@@ -1826,6 +1839,9 @@ async def get_ares_equity_curve(days: int = 30):
             total_pnl_with_unrealized = cumulative_pnl + unrealized_pnl
             current_equity_with_unrealized = starting_capital + total_pnl_with_unrealized
 
+            # Today's daily_pnl = today's realized + current unrealized
+            today_daily_pnl = today_realized + unrealized_pnl
+
             # Always add today's data point if we have open positions or closed positions
             if open_positions_count > 0 or rows:
                 now = datetime.now(ZoneInfo("America/Chicago"))
@@ -1838,7 +1854,7 @@ async def get_ares_equity_curve(days: int = 30):
                     "pnl": round(total_pnl_with_unrealized, 2),
                     "realized_pnl": round(cumulative_pnl, 2),
                     "unrealized_pnl": round(unrealized_pnl, 2),
-                    "daily_pnl": round(unrealized_pnl, 2),
+                    "daily_pnl": round(today_daily_pnl, 2),
                     "return_pct": round((total_pnl_with_unrealized / starting_capital) * 100, 2),
                     "open_positions": open_positions_count
                 })
@@ -1990,6 +2006,17 @@ async def get_ares_equity_curve(days: int = 30):
         current_equity_with_unrealized = starting_capital + total_pnl_with_unrealized
         now = datetime.now(ZoneInfo("America/Chicago"))
 
+        # Calculate today's realized P&L from in-memory closed positions
+        today_str = now.strftime('%Y-%m-%d')
+        today_realized = sum(
+            float(pos.realized_pnl or 0)
+            for pos in closed_positions_list
+            if str(pos.close_date or pos.expiration)[:10] == today_str
+        )
+
+        # Today's daily_pnl = today's realized + current unrealized
+        today_daily_pnl = today_realized + unrealized_pnl
+
         # Add today's data point with unrealized P&L
         equity_curve.append({
             "date": today,
@@ -1998,7 +2025,7 @@ async def get_ares_equity_curve(days: int = 30):
             "pnl": round(total_pnl_with_unrealized, 2),
             "realized_pnl": round(cumulative_pnl, 2),
             "unrealized_pnl": round(unrealized_pnl, 2),
-            "daily_pnl": round(unrealized_pnl, 2),
+            "daily_pnl": round(today_daily_pnl, 2),
             "return_pct": round((total_pnl_with_unrealized / starting_capital) * 100, 2),
             "open_positions": open_positions_count
         })

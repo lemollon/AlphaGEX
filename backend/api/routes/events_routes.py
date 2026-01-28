@@ -821,15 +821,36 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
             unrealized_pnl = _calculate_bot_unrealized_pnl(cursor, bot_filter)
             if unrealized_pnl != 0:
                 today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
-                equity = starting_capital + unrealized_pnl
+
+                # Calculate today's realized P&L (might be 0 if rows is empty, but be explicit)
+                today_realized = 0.0
+                if bot_filter and bot_filter.upper() in bot_tables:
+                    table_name = bot_tables[bot_filter.upper()]
+                    try:
+                        cursor.execute(f"""
+                            SELECT COALESCE(SUM(realized_pnl), 0)
+                            FROM {table_name}
+                            WHERE status IN ('closed', 'expired', 'partial_close')
+                            AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
+                        """, (today,))
+                        today_row = cursor.fetchone()
+                        if today_row:
+                            today_realized = float(today_row[0] or 0)
+                    except Exception:
+                        pass
+
+                today_daily_pnl = today_realized + unrealized_pnl
+                total_pnl = today_realized + unrealized_pnl
+                equity = starting_capital + total_pnl
                 return [{
                     'date': today,
                     'equity': round(equity, 2),
-                    'daily_pnl': round(unrealized_pnl, 2),
-                    'cumulative_pnl': round(unrealized_pnl, 2),
+                    'daily_pnl': round(today_daily_pnl, 2),
+                    'cumulative_pnl': round(total_pnl, 2),
                     'drawdown_pct': 0,
                     'trade_count': 0,
                     'unrealized_pnl': round(unrealized_pnl, 2),
+                    'day_realized': round(today_realized, 2),
                     'open_positions': True
                 }]
             return []
@@ -908,6 +929,23 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
         today = datetime.now(ZoneInfo("America/Chicago")).strftime('%Y-%m-%d')
         unrealized_pnl = _calculate_bot_unrealized_pnl(cursor, bot_filter)
 
+        # Calculate today's realized P&L for the daily_pnl field
+        today_realized = 0.0
+        if bot_filter and bot_filter.upper() in bot_tables:
+            table_name = bot_tables[bot_filter.upper()]
+            try:
+                cursor.execute(f"""
+                    SELECT COALESCE(SUM(realized_pnl), 0)
+                    FROM {table_name}
+                    WHERE status IN ('closed', 'expired', 'partial_close')
+                    AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
+                """, (today,))
+                today_row = cursor.fetchone()
+                if today_row:
+                    today_realized = float(today_row[0] or 0)
+            except Exception:
+                pass  # Fall back to 0 if query fails
+
         if unrealized_pnl != 0 or (equity_curve and equity_curve[-1]['date'] != today):
             total_pnl_with_unrealized = cumulative_pnl + unrealized_pnl
             equity_with_unrealized = starting_capital + total_pnl_with_unrealized
@@ -926,14 +964,17 @@ def get_equity_curve_data(days: int = 90, bot_filter: str = None, timeframe: str
                 equity_curve[-1]['unrealized_pnl'] = round(unrealized_pnl, 2)
             else:
                 # Add new today entry
+                # today's daily_pnl = today's realized + current unrealized
+                today_daily_pnl = today_realized + unrealized_pnl
                 equity_curve.append({
                     'date': today,
                     'equity': round(equity_with_unrealized, 2),
-                    'daily_pnl': round(unrealized_pnl, 2),
+                    'daily_pnl': round(today_daily_pnl, 2),
                     'cumulative_pnl': round(total_pnl_with_unrealized, 2),
                     'drawdown_pct': round(drawdown_pct, 2),
                     'trade_count': 0,
                     'unrealized_pnl': round(unrealized_pnl, 2),
+                    'day_realized': round(today_realized, 2),
                     'open_positions': True
                 })
 

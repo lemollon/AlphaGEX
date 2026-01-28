@@ -639,9 +639,20 @@ class BotMetricsService:
                 f"from table {positions_table}"
             )
 
-            # Get current unrealized P&L
-            # NOTE: unrealized_pnl is calculated via MTM, not stored in positions table
-            # Just count open positions here - unrealized P&L is added separately if needed
+            # Get today's realized P&L for the daily_pnl field
+            today_realized = 0.0
+            cursor.execute(f"""
+                SELECT COALESCE(SUM(realized_pnl), 0)
+                FROM {positions_table}
+                WHERE status IN ('closed', 'expired', 'partial_close')
+                AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
+            """, (today,))
+            today_row = cursor.fetchone()
+            if today_row:
+                today_realized = float(today_row[0] or 0)
+
+            # Get current unrealized P&L using mark-to-market (MTM)
+            # This must be calculated from live option prices, not from stale DB values
             unrealized_pnl = 0.0
             open_count = 0
             if include_unrealized:
@@ -653,6 +664,77 @@ class BotMetricsService:
                 count_row = cursor.fetchone()
                 if count_row:
                     open_count = int(count_row[0] or 0)
+
+                # Calculate unrealized P&L using MTM for open positions
+                if open_count > 0 and MTM_AVAILABLE:
+                    try:
+                        # Iron Condor bots: ARES, TITAN, PEGASUS
+                        if bot in [BotName.ARES, BotName.TITAN, BotName.PEGASUS]:
+                            underlying = 'SPY' if bot == BotName.ARES else 'SPX'
+                            cursor.execute(f"""
+                                SELECT position_id, total_credit, contracts, spread_width,
+                                       put_short_strike, put_long_strike, call_short_strike, call_long_strike,
+                                       expiration
+                                FROM {positions_table}
+                                WHERE status = 'open'
+                            """)
+                            open_positions = cursor.fetchall()
+
+                            for pos in open_positions:
+                                pos_id, credit, contracts, spread_w, put_short, put_long, call_short, call_long, exp = pos
+                                if not all([credit, contracts, put_short, put_long, call_short, call_long, exp]):
+                                    continue
+                                try:
+                                    exp_str = str(exp) if not isinstance(exp, str) else exp
+                                    mtm = calculate_ic_mark_to_market(
+                                        underlying=underlying,
+                                        expiration=exp_str,
+                                        put_short_strike=float(put_short),
+                                        put_long_strike=float(put_long),
+                                        call_short_strike=float(call_short),
+                                        call_long_strike=float(call_long),
+                                        contracts=int(contracts),
+                                        entry_credit=float(credit),
+                                        use_cache=True
+                                    )
+                                    if mtm.get('success') and mtm.get('unrealized_pnl') is not None:
+                                        unrealized_pnl += mtm['unrealized_pnl']
+                                except Exception as pos_err:
+                                    logger.debug(f"MTM failed for {bot.value} position {pos_id}: {pos_err}")
+
+                        # Directional spread bots: ATHENA, ICARUS
+                        elif bot in [BotName.ATHENA, BotName.ICARUS]:
+                            cursor.execute(f"""
+                                SELECT position_id, spread_type, entry_debit, contracts,
+                                       long_strike, short_strike, expiration
+                                FROM {positions_table}
+                                WHERE status = 'open'
+                            """)
+                            open_positions = cursor.fetchall()
+
+                            for pos in open_positions:
+                                pos_id, spread_type, debit, contracts, long_strike, short_strike, exp = pos
+                                if not all([debit, contracts, long_strike, short_strike, exp]):
+                                    continue
+                                try:
+                                    exp_str = str(exp) if not isinstance(exp, str) else exp
+                                    mtm = calculate_spread_mark_to_market(
+                                        underlying='SPY',
+                                        expiration=exp_str,
+                                        long_strike=float(long_strike),
+                                        short_strike=float(short_strike),
+                                        spread_type=spread_type or 'call_debit',
+                                        contracts=int(contracts),
+                                        entry_debit=float(debit),
+                                        use_cache=True
+                                    )
+                                    if mtm.get('success') and mtm.get('unrealized_pnl') is not None:
+                                        unrealized_pnl += mtm['unrealized_pnl']
+                                except Exception as pos_err:
+                                    logger.debug(f"MTM failed for {bot.value} position {pos_id}: {pos_err}")
+
+                    except Exception as mtm_err:
+                        logger.warning(f"MTM calculation failed for {bot.value} equity curve: {mtm_err}")
 
             conn.close()
 
@@ -722,12 +804,15 @@ class BotMetricsService:
             total_pnl = cumulative_pnl + unrealized_pnl
             current_equity = starting_capital + total_pnl
 
+            # Today's daily_pnl = today's realized + current unrealized
+            today_daily_pnl = today_realized + unrealized_pnl
+
             # Always add today's point if we have data
             if trades_data or open_count > 0:
                 equity_curve.append(EquityCurvePoint(
                     date=today,
                     equity=round(current_equity, 2),
-                    daily_pnl=round(unrealized_pnl, 2),
+                    daily_pnl=round(today_daily_pnl, 2),
                     cumulative_pnl=round(total_pnl, 2),
                     realized_pnl=round(cumulative_pnl, 2),
                     unrealized_pnl=round(unrealized_pnl, 2),
@@ -749,6 +834,9 @@ class BotMetricsService:
                     "total_pnl": round(total_pnl, 2),
                     "realized_pnl": round(cumulative_pnl, 2),
                     "unrealized_pnl": round(unrealized_pnl, 2),
+                    "day_pnl": round(today_daily_pnl, 2),
+                    "day_realized": round(today_realized, 2),
+                    "day_unrealized": round(unrealized_pnl, 2),
                     "max_drawdown_pct": round(max_drawdown, 2),
                     "total_return_pct": round((total_pnl / starting_capital) * 100, 2) if starting_capital > 0 else 0,
                     "total_trades": sum(p.trade_count for p in equity_curve),
