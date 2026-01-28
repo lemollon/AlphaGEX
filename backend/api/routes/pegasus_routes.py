@@ -1099,15 +1099,36 @@ async def get_pegasus_equity_curve(days: int = 30):
             unrealized_pnl = mtm_result['total_unrealized_pnl']
             logger.debug(f"PEGASUS equity-curve: unrealized=${unrealized_pnl:.2f} via {mtm_result['method']}")
 
-        # Build equity curve - one point per trade for granular visualization
+        # Build equity curve - one point per DATE for consistent daily P&L display
+        # CRITICAL FIX: Aggregate trades by date so daily_pnl shows the day's total,
+        # not just the last trade's P&L. This ensures:
+        # equity[today] - equity[yesterday] = daily_pnl[today]
         equity_curve = []
         cumulative_pnl = 0
 
         if rows:
+            # Group trades by date
+            trades_by_date = {}
+            for row in rows:
+                close_timestamp, pnl, pos_id = row
+                if close_timestamp:
+                    if hasattr(close_timestamp, 'strftime'):
+                        date_str = close_timestamp.strftime('%Y-%m-%d')
+                    else:
+                        date_str = str(close_timestamp)[:10]
+                else:
+                    date_str = today
+
+                if date_str not in trades_by_date:
+                    trades_by_date[date_str] = []
+                trades_by_date[date_str].append((close_timestamp, pnl, pos_id))
+
+            # Sort dates chronologically
+            sorted_dates = sorted(trades_by_date.keys())
+
             # Add starting point before first trade
-            first_timestamp = rows[0][0]
-            if first_timestamp:
-                first_date = first_timestamp.strftime('%Y-%m-%d') if hasattr(first_timestamp, 'strftime') else str(first_timestamp)[:10]
+            if sorted_dates:
+                first_date = sorted_dates[0]
                 equity_curve.append({
                     "date": first_date,
                     "timestamp": first_date + "T00:00:00",
@@ -1115,36 +1136,26 @@ async def get_pegasus_equity_curve(days: int = 30):
                     "pnl": 0,
                     "daily_pnl": 0,
                     "return_pct": 0,
-                    "position_id": None
+                    "trade_count": 0
                 })
 
-            # Create one data point per trade
-            for row in rows:
-                close_timestamp, pnl, pos_id = row
-                trade_pnl = float(pnl or 0)
-                cumulative_pnl += trade_pnl
-                current_equity = starting_capital + cumulative_pnl
+            # Create one data point per DATE with aggregated daily P&L
+            for date_str in sorted_dates:
+                day_trades = trades_by_date[date_str]
+                day_pnl = sum(float(pnl or 0) for _, pnl, _ in day_trades)
+                day_trade_count = len(day_trades)
 
-                # Format timestamp for frontend
-                if close_timestamp:
-                    if hasattr(close_timestamp, 'isoformat'):
-                        timestamp_str = close_timestamp.isoformat()
-                        date_str = close_timestamp.strftime('%Y-%m-%d')
-                    else:
-                        timestamp_str = str(close_timestamp)
-                        date_str = str(close_timestamp)[:10]
-                else:
-                    timestamp_str = today + "T00:00:00"
-                    date_str = today
+                cumulative_pnl += day_pnl
+                current_equity = starting_capital + cumulative_pnl
 
                 equity_curve.append({
                     "date": date_str,
-                    "timestamp": timestamp_str,
+                    "timestamp": date_str + "T15:00:00",  # End of trading day
                     "equity": round(current_equity, 2),
                     "pnl": round(cumulative_pnl, 2),
-                    "daily_pnl": round(trade_pnl, 2),
+                    "daily_pnl": round(day_pnl, 2),
                     "return_pct": round((cumulative_pnl / starting_capital) * 100, 2),
-                    "position_id": pos_id
+                    "trade_count": day_trade_count
                 })
 
         # Add today's entry with unrealized P&L from open positions
