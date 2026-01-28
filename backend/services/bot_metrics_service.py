@@ -738,34 +738,56 @@ class BotMetricsService:
 
             conn.close()
 
-            # Build equity curve - one point per trade for granular visualization
+            # Build equity curve - one point per DATE for consistent daily P&L display
+            # CRITICAL FIX: Aggregate trades by date so daily_pnl shows the day's total,
+            # not just the last trade's P&L. This ensures:
+            # equity[today] - equity[yesterday] = daily_pnl[today]
             cumulative_pnl = 0.0
             high_water = starting_capital
             total_trade_count = 0
 
-            # Add starting point before first trade
-            if trades_data:
-                first_timestamp = trades_data[0][0]
-                if first_timestamp:
-                    first_date = first_timestamp.strftime('%Y-%m-%d') if hasattr(first_timestamp, 'strftime') else str(first_timestamp)[:10]
-                    equity_curve.append(EquityCurvePoint(
-                        date=first_date,
-                        equity=starting_capital,
-                        daily_pnl=0,
-                        cumulative_pnl=0,
-                        realized_pnl=0,
-                        unrealized_pnl=0,
-                        drawdown_pct=0,
-                        trade_count=0,
-                        return_pct=0
-                    ))
-
-            # Create one data point per trade
+            # Group trades by date
+            trades_by_date: Dict[str, List[tuple]] = {}
             for close_timestamp, pnl, position_id in trades_data:
-                trade_pnl = float(pnl or 0)
-                cumulative_pnl += trade_pnl
+                if close_timestamp:
+                    if hasattr(close_timestamp, 'strftime'):
+                        date_str = close_timestamp.strftime('%Y-%m-%d')
+                    else:
+                        date_str = str(close_timestamp)[:10]
+                else:
+                    date_str = today
+
+                if date_str not in trades_by_date:
+                    trades_by_date[date_str] = []
+                trades_by_date[date_str].append((close_timestamp, pnl, position_id))
+
+            # Sort dates chronologically
+            sorted_dates = sorted(trades_by_date.keys())
+
+            # Add starting point before first trade
+            if sorted_dates:
+                first_date = sorted_dates[0]
+                equity_curve.append(EquityCurvePoint(
+                    date=first_date,
+                    equity=starting_capital,
+                    daily_pnl=0,
+                    cumulative_pnl=0,
+                    realized_pnl=0,
+                    unrealized_pnl=0,
+                    drawdown_pct=0,
+                    trade_count=0,
+                    return_pct=0
+                ))
+
+            # Create one data point per DATE with aggregated daily P&L
+            for date_str in sorted_dates:
+                day_trades = trades_by_date[date_str]
+                day_pnl = sum(float(pnl or 0) for _, pnl, _ in day_trades)
+                day_trade_count = len(day_trades)
+
+                cumulative_pnl += day_pnl
                 current_equity = starting_capital + cumulative_pnl
-                total_trade_count += 1
+                total_trade_count += day_trade_count
 
                 # Update high water mark
                 if current_equity > high_water:
@@ -779,24 +801,15 @@ class BotMetricsService:
 
                 return_pct = round((cumulative_pnl / starting_capital) * 100, 2) if starting_capital > 0 else 0
 
-                # Format timestamp for frontend
-                if close_timestamp:
-                    if hasattr(close_timestamp, 'strftime'):
-                        date_str = close_timestamp.strftime('%Y-%m-%d')
-                    else:
-                        date_str = str(close_timestamp)[:10]
-                else:
-                    date_str = today
-
                 equity_curve.append(EquityCurvePoint(
                     date=date_str,
                     equity=round(current_equity, 2),
-                    daily_pnl=round(trade_pnl, 2),
+                    daily_pnl=round(day_pnl, 2),
                     cumulative_pnl=round(cumulative_pnl, 2),
                     realized_pnl=round(cumulative_pnl, 2),
                     unrealized_pnl=0,
                     drawdown_pct=drawdown_pct,
-                    trade_count=1,  # Each point represents one trade
+                    trade_count=day_trade_count,
                     return_pct=return_pct
                 ))
 
