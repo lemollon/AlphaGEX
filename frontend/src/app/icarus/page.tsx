@@ -7,6 +7,7 @@ import {
   Shield, Crosshair, Settings, Wallet, History, LayoutDashboard, Download, Flame, FileText
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import ScanActivityFeed from '@/components/ScanActivityFeed'
 import { useToast } from '@/components/ui/Toast'
 import { apiClient } from '@/lib/api'
@@ -395,6 +396,7 @@ function PositionCard({ position, isOpen }: { position: SpreadPosition; isOpen: 
 // ==============================================================================
 
 export default function IcarusPage() {
+  const sidebarPadding = useSidebarPadding()
   const [activeTab, setActiveTab] = useState<IcarusTabId>('portfolio')
   const { addToast } = useToast()
 
@@ -499,7 +501,7 @@ export default function IcarusPage() {
   return (
     <>
       <Navigation />
-      <main className="min-h-screen bg-black text-white px-4 pb-4 md:px-6 md:pb-6 pt-28">
+      <main className={`min-h-screen bg-black text-white px-4 pb-4 md:px-6 md:pb-6 pt-24 transition-all duration-300 ${sidebarPadding}`}>
         <div className="max-w-7xl mx-auto space-y-6">
 
           {/* Header - Branded */}

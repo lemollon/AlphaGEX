@@ -5,6 +5,7 @@ import { logger } from '@/lib/logger'
 import { useState, useEffect } from 'react'
 import { Search, TrendingUp, TrendingDown, Target, DollarSign, Clock, CheckCircle, XCircle, AlertCircle, History, BarChart3, RefreshCw } from 'lucide-react'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import { apiClient } from '@/lib/api'
 import { useDataCache } from '@/hooks/useDataCache'
 import { dataStore } from '@/lib/dataStore'
@@ -58,6 +59,7 @@ interface ScanRun {
 }
 
 export default function MultiSymbolScanner() {
+  const sidebarPadding = useSidebarPadding()
   const [loading, setLoading] = useState(false)
   const [selectedSymbols, setSelectedSymbols] = useState<string[]>(['SPY', 'QQQ', 'IWM'])
   const [customSymbol, setCustomSymbol] = useState('')
@@ -291,7 +293,7 @@ export default function MultiSymbolScanner() {
     <div className="min-h-screen">
       <Navigation />
 
-      <main className="pt-24 transition-all duration-300">
+      <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Header */}
         <div className="mb-6">

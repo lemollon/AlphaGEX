@@ -4,6 +4,7 @@ import { logger } from '@/lib/logger'
 
 import { useState } from 'react'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import { apiClient } from '@/lib/api'
 import {
   Calculator,
@@ -45,6 +46,7 @@ interface CalculationResult {
 }
 
 export default function PositionSizingPage() {
+  const sidebarPadding = useSidebarPadding()
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<CalculationResult | null>(null)
 
@@ -105,7 +107,7 @@ export default function PositionSizingPage() {
     <div className="min-h-screen">
       <Navigation />
 
-      <main className="pt-24 transition-all duration-300">
+      <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Header */}
         <div className="mb-8">

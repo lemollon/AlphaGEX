@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react'
 import { Building2, DollarSign, TrendingUp, TrendingDown, Activity, Shield, AlertTriangle, Target, BarChart3, PieChart, Briefcase, Clock, History } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import { apiClient } from '@/lib/api'
 
 interface SPXStatus {
@@ -60,6 +61,7 @@ interface EquityPoint {
 }
 
 export default function SPXInstitutionalTrader() {
+  const sidebarPadding = useSidebarPadding()
   const [loading, setLoading] = useState(true)
   const [status, setStatus] = useState<SPXStatus | null>(null)
   const [performance, setPerformance] = useState<SPXPerformance | null>(null)
@@ -222,7 +224,7 @@ export default function SPXInstitutionalTrader() {
   return (
     <div className="min-h-screen">
       <Navigation />
-      <main className="pt-24 transition-all duration-300">
+      <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="space-y-6">
             {/* Header */}

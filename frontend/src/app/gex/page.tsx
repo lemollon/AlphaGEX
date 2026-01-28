@@ -4,6 +4,7 @@ import { logger } from '@/lib/logger'
 
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import LoadingWithTips from '@/components/LoadingWithTips'
 import GEXProfileChart from '@/components/GEXProfileChartPlotly'
 import { apiClient } from '@/lib/api'
@@ -84,6 +85,7 @@ interface ProbabilityData {
 }
 
 export default function GEXAnalysisPage() {
+  const sidebarPadding = useSidebarPadding()
   const [tickers, setTickers] = useState<string[]>(DEFAULT_TICKERS)
   const [tickerData, setTickerData] = useState<Record<string, TickerData>>({})
   const [gexLevels, setGexLevels] = useState<Record<string, GEXLevel[]>>({})
@@ -431,7 +433,7 @@ export default function GEXAnalysisPage() {
     <div className="min-h-screen">
       <Navigation />
 
-      <main className="pt-24 transition-all duration-300">
+      <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           {/* Header */}
           <div className="mb-8">

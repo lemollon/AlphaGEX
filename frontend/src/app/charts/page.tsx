@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { BarChart3, TrendingUp, TrendingDown, Activity, RefreshCw } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import { apiClient } from '@/lib/api'
 
 interface PricePoint {
@@ -16,6 +17,7 @@ interface PricePoint {
 }
 
 export default function AdvancedCharts() {
+  const sidebarPadding = useSidebarPadding()
   const [loading, setLoading] = useState(true)
   const [priceData, setPriceData] = useState<PricePoint[]>([])
   const [symbol, setSymbol] = useState('SPY')
@@ -50,7 +52,7 @@ export default function AdvancedCharts() {
   return (
     <div className="min-h-screen">
       <Navigation />
-      <main className="pt-24 transition-all duration-300">
+      <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="space-y-6">
             {/* Header */}

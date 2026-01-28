@@ -9,6 +9,7 @@ import {
   Database, Info, Percent, Shield, Zap, Search
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import EnhancedEquityCurve from '@/components/backtest/EnhancedEquityCurve'
 import { apiClient } from '@/lib/api'
 import {
@@ -115,6 +116,7 @@ interface BacktestResult {
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
 export default function ZeroDTEBacktestPage() {
+  const sidebarPadding = useSidebarPadding()
   // Configuration state
   const [config, setConfig] = useState<BacktestConfig>({
     start_date: '2022-01-01',
@@ -880,7 +882,7 @@ export default function ZeroDTEBacktestPage() {
     <div className="min-h-screen bg-gray-950 text-white">
       <Navigation />
 
-      <main className="pt-24">
+      <main className={`pt-24 ${sidebarPadding}`}>
         <div className="container mx-auto px-4 py-8 space-y-6">
 
           {/* Header */}

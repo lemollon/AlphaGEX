@@ -5,6 +5,7 @@ import { logger } from '@/lib/logger'
 import { useState, useEffect } from 'react'
 import { TrendingUp, Target, Activity, Zap, LineChart, Brain, Trophy, AlertCircle, CheckCircle, BarChart3, PieChart } from 'lucide-react'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import { apiClient } from '@/lib/api'
 
 interface StrikePerformanceData {
@@ -74,6 +75,7 @@ interface LiveRecommendation {
 }
 
 export default function StrategyOptimizer() {
+  const sidebarPadding = useSidebarPadding()
   const [loading, setLoading] = useState(true)
   const [selectedStrategy, setSelectedStrategy] = useState<string>('all')
   const [serviceUnavailable, setServiceUnavailable] = useState(false)
@@ -199,7 +201,7 @@ export default function StrategyOptimizer() {
     return (
       <div className="min-h-screen">
         <Navigation />
-        <main className="pt-24 transition-all duration-300">
+        <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             <div className="card text-center py-12">
               <AlertCircle className="w-16 h-16 text-warning mx-auto mb-4" />
@@ -227,7 +229,7 @@ export default function StrategyOptimizer() {
   return (
     <div className="min-h-screen">
       <Navigation />
-      <main className="pt-24 transition-all duration-300">
+      <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="space-y-6">
             {/* Header */}

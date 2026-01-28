@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Activity, TrendingUp, TrendingDown, BarChart3, RefreshCw, AlertTriangle, Clock, Zap, Target, ArrowUpDown, Database, ExternalLink, CheckCircle, XCircle } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend, ReferenceLine } from 'recharts'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import { apiClient } from '@/lib/api'
 
 // ============ INTERFACES ============
@@ -107,6 +108,7 @@ interface ComparisonHistory {
 // ============ COMPONENT ============
 
 export default function VolatilityComparison() {
+  const sidebarPadding = useSidebarPadding()
   const [loading, setLoading] = useState(true)
   const [symbol, setSymbol] = useState('SPY')
 
@@ -330,7 +332,7 @@ export default function VolatilityComparison() {
   return (
     <div className="min-h-screen">
       <Navigation />
-      <main className="pt-24 transition-all duration-300">
+      <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="space-y-6">
             {/* Header */}

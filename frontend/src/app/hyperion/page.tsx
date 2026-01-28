@@ -45,6 +45,7 @@ import {
   AlertCircle
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import OrionStatusBadge from '@/components/OrionStatusBadge'
 import { HyperionEnhancedPanel } from '@/components/HyperionEnhancements'
 import { apiClient } from '@/lib/api'
@@ -207,6 +208,7 @@ const WEEKLY_SYMBOLS = [
 ]
 
 export default function HyperionPage() {
+  const sidebarPadding = useSidebarPadding()
   const [gammaData, setGammaData] = useState<GammaData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -498,7 +500,7 @@ export default function HyperionPage() {
     <div className="min-h-screen bg-background">
       <Navigation />
 
-      <main className="pt-24 px-4 sm:px-6 lg:px-8 max-w-[1600px] mx-auto pb-8">
+      <main className={`pt-24 px-4 sm:px-6 lg:px-8 max-w-[1600px] mx-auto pb-8 ${sidebarPadding}`}>
         {/* Header */}
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
           <div className="flex items-center gap-4">

@@ -6,6 +6,7 @@ import { useState, useEffect, Fragment, useMemo } from 'react'
 import { Bot, Play, Pause, Square, Settings, TrendingUp, TrendingDown, Activity, DollarSign, Target, AlertTriangle, CheckCircle, XCircle, Clock, Wifi, WifiOff, Shield, BarChart3, Calendar, Zap, Brain, RefreshCw, Power, PowerOff, History, Cpu, ChevronDown, ChevronUp } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area, ReferenceLine } from 'recharts'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import ExportButtons from '@/components/trader/ExportButtons'
 import DecisionLogViewer from '@/components/trader/DecisionLogViewer'
 import { apiClient } from '@/lib/api'
@@ -268,6 +269,7 @@ interface AILogEntry {
 }
 
 export default function AutonomousTrader() {
+  const sidebarPadding = useSidebarPadding()
   const [loading, setLoading] = useState(true)
   const [traderStatus, setTraderStatus] = useState<TraderStatus>({
     is_active: false,
@@ -1220,7 +1222,7 @@ export default function AutonomousTrader() {
   return (
     <div className="min-h-screen">
       <Navigation />
-      <main className="pt-24 transition-all duration-300">
+      <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="space-y-6">
             {/* Header */}

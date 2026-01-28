@@ -8,6 +8,7 @@ import {
   FileText, Activity
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import DecisionLogViewer from '@/components/trader/DecisionLogViewer'
 import { apiClient, api } from '@/lib/api'
 
@@ -80,6 +81,7 @@ interface StrategyExplanation {
 }
 
 export default function SPXWheelPage() {
+  const sidebarPadding = useSidebarPadding()
   const [mlStatus, setMlStatus] = useState<MLStatus | null>(null)
   const [strategyExplanation, setStrategyExplanation] = useState<StrategyExplanation | null>(null)
   const [backtestSummary, setBacktestSummary] = useState<BacktestSummary | null>(null)
@@ -197,7 +199,7 @@ export default function SPXWheelPage() {
     return (
       <div className="min-h-screen bg-gray-950 text-white">
         <Navigation />
-        <main className="pt-24">
+        <main className={`pt-24 ${sidebarPadding}`}>
           <div className="container mx-auto px-4 py-8">
             <div className="flex items-center justify-center py-20">
               <div className="animate-spin rounded-full h-12 w-12 border-4 border-blue-500 border-t-transparent" />
@@ -212,7 +214,7 @@ export default function SPXWheelPage() {
     <div className="min-h-screen bg-gray-950 text-white">
       <Navigation />
 
-      <main className="pt-24">
+      <main className={`pt-24 ${sidebarPadding}`}>
         <div className="container mx-auto px-4 py-8 space-y-6">
 
           {/* Header */}

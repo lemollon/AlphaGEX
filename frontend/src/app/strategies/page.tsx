@@ -4,6 +4,7 @@ import { logger } from '@/lib/logger'
 
 import { useState, useEffect } from 'react'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import { apiClient } from '@/lib/api'
 import {
   TrendingUp,
@@ -72,6 +73,7 @@ interface ComparisonData {
 }
 
 export default function StrategyComparisonPage() {
+  const sidebarPadding = useSidebarPadding()
   const [loading, setLoading] = useState(false)
   const [comparisonData, setComparisonData] = useState<ComparisonData | null>(null)
   const [symbol, setSymbol] = useState('SPY')
@@ -125,7 +127,7 @@ export default function StrategyComparisonPage() {
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
       <Navigation />
 
-      <main className="pt-24 transition-all duration-300">
+      <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
         <div className="container mx-auto px-4 py-8">
         {/* Header */}
         <div className="mb-8">
