@@ -2133,6 +2133,18 @@ async def get_athena_equity_curve(days: int = 30):
             open_positions = c.fetchall()
             open_positions_count = len(open_positions)
 
+            # Get today's realized P&L for the daily_pnl field
+            today_realized = 0.0
+            c.execute("""
+                SELECT COALESCE(SUM(realized_pnl), 0)
+                FROM athena_positions
+                WHERE status IN ('closed', 'expired', 'partial_close')
+                AND DATE(COALESCE(close_time, open_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
+            """, (today,))
+            today_realized_row = c.fetchone()
+            if today_realized_row:
+                today_realized = float(today_realized_row[0] or 0)
+
         except Exception:
             # Fall back to legacy table (apache_positions uses exit_time instead of close_time)
             # Don't filter on exit_time IS NOT NULL - may have legacy data issues
@@ -2148,6 +2160,21 @@ async def get_athena_equity_curve(days: int = 30):
             rows = c.fetchall()
             open_positions = []
             open_positions_count = 0
+
+            # Get today's realized P&L for the daily_pnl field (legacy table)
+            today_realized = 0.0
+            try:
+                c.execute("""
+                    SELECT COALESCE(SUM(realized_pnl), 0)
+                    FROM apache_positions
+                    WHERE status IN ('closed', 'expired', 'partial_close')
+                    AND DATE(COALESCE(exit_time, entry_time)::timestamptz AT TIME ZONE 'America/Chicago') = %s
+                """, (today,))
+                today_realized_row = c.fetchone()
+                if today_realized_row:
+                    today_realized = float(today_realized_row[0] or 0)
+            except Exception:
+                pass
 
         conn.close()
 
@@ -2233,13 +2260,16 @@ async def get_athena_equity_curve(days: int = 30):
         current_equity_with_unrealized = starting_capital + total_pnl_with_unrealized
         now = datetime.now(CENTRAL_TZ)
 
+        # Today's daily_pnl = today's realized + current unrealized
+        today_daily_pnl = today_realized + unrealized_pnl
+
         # Always add today's data point if we have open positions or closed positions
         if open_positions_count > 0 or rows:
             equity_curve.append({
                 "date": today,
                 "timestamp": now.isoformat(),
                 "cumulative_pnl": round(total_pnl_with_unrealized, 2),
-                "daily_pnl": round(unrealized_pnl, 2),
+                "daily_pnl": round(today_daily_pnl, 2),
                 "trade_count": 0,
                 "equity": round(current_equity_with_unrealized, 2),
                 "realized_pnl": round(running_pnl, 2),
