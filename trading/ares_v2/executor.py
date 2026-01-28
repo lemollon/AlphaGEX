@@ -1179,14 +1179,16 @@ class OrderExecutor:
             return position.total_credit * max(0.1, 0.5 - proximity_factor * 0.3)
 
         # If price breaches a short strike, IC gains value (loss for us)
+        # BUG FIX: Removed arbitrary +0.2 buffer that caused unrealized losses to be
+        # overstated vs actual settlement. Now uses pure intrinsic value.
         elif current_price <= position.put_short_strike:
             # Put side is ITM
             intrinsic = position.put_short_strike - current_price
-            return min(position.spread_width, intrinsic + position.total_credit * 0.2)
+            return min(position.spread_width, intrinsic)
         else:
             # Call side is ITM
             intrinsic = current_price - position.call_short_strike
-            return min(position.spread_width, intrinsic + position.total_credit * 0.2)
+            return min(position.spread_width, intrinsic)
 
     def get_position_current_value(self, position: IronCondorPosition) -> Optional[float]:
         """Get current value of an IC position"""

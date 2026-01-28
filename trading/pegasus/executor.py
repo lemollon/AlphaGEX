@@ -758,7 +758,12 @@ class OrderExecutor:
         return None
 
     def _estimate_ic_value(self, position: IronCondorPosition, current_price: float) -> float:
-        """Estimate current IC value"""
+        """Estimate current IC value.
+
+        BUG FIX: Removed arbitrary +0.2 buffer from breached position calculation.
+        This buffer caused unrealized losses to be overstated vs actual settlement.
+        Now uses pure intrinsic value to match _calculate_cash_settlement_value().
+        """
         if position.put_short_strike < current_price < position.call_short_strike:
             put_dist = (current_price - position.put_short_strike) / position.spread_width
             call_dist = (position.call_short_strike - current_price) / position.spread_width
@@ -766,10 +771,10 @@ class OrderExecutor:
             return position.total_credit * max(0.1, 0.5 - factor * 0.3)
         elif current_price <= position.put_short_strike:
             intrinsic = position.put_short_strike - current_price
-            return min(position.spread_width, intrinsic + position.total_credit * 0.2)
+            return min(position.spread_width, intrinsic)
         else:
             intrinsic = current_price - position.call_short_strike
-            return min(position.spread_width, intrinsic + position.total_credit * 0.2)
+            return min(position.spread_width, intrinsic)
 
     def get_position_current_value(self, position: IronCondorPosition) -> Optional[float]:
         current_price = self._get_current_spx_price()
