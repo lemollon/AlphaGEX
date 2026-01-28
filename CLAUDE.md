@@ -578,10 +578,25 @@ When wall break is HIGH, it overrides other signals with `CALL_WALL_BREAK_IMMINE
 - Width change: ±5% = significant
 - Intraday EM change: ±3% = significant
 
+**Actionable Trade Recommendations** (`/api/argus/trade-action`):
+Instead of generic "BULLISH" signals, provides executable trades:
+- Exact trade structure: "SELL SPY 588/586 PUT SPREAD @ $0.45 credit"
+- Position sizing based on account size and risk tolerance
+- THE WHY: Reasoning for each decision (gamma regime, order flow, VIX)
+- Entry triggers and exit rules (profit target, stop loss, time stop)
+- Four scenarios: Iron Condor, Put/Call Credit Spread, Debit Spread
+
+**Signal Tracking** (`/api/argus/signals/*`):
+Track hypothetical performance of ARGUS recommendations:
+- Log signals manually or auto-log all non-WAIT signals
+- Outcome detection at market close (WIN/LOSS based on strike placement)
+- Performance stats: win rate, total P&L, avg win/loss, by action type
+- Recent signals list with status indicators
+
 **Files**:
-- Backend: `backend/api/routes/argus_routes.py` (~2K lines)
-- Frontend: `frontend/src/app/argus/page.tsx` (~2.5K lines)
-- Engine: `core/argus_engine.py` (~1K lines)
+- Backend: `backend/api/routes/argus_routes.py` (~5.5K lines)
+- Frontend: `frontend/src/app/argus/page.tsx` (~4.8K lines)
+- Engine: `core/argus_engine.py` (~1.7K lines)
 
 **API Endpoints**:
 ```
@@ -590,6 +605,11 @@ GET  /api/argus/history            # Historical gamma for sparklines
 GET  /api/argus/danger-zones       # Active danger zone alerts
 GET  /api/argus/pattern-matching   # Historical pattern analysis
 POST /api/argus/commentary         # Generate AI commentary
+GET  /api/argus/trade-action       # Actionable trade with strikes, sizing, WHY
+POST /api/argus/signals/log        # Log signal for tracking
+GET  /api/argus/signals/recent     # Recent signals with outcomes
+GET  /api/argus/signals/performance # Win rate, P&L, stats
+POST /api/argus/signals/update-outcomes # Update open signal outcomes
 ```
 
 ### Key Dashboard Components
@@ -629,6 +649,11 @@ GET  /api/argus/danger-zones    # Active danger zone alerts (BUILDING/COLLAPSING
 GET  /api/argus/pattern-matching # Historical pattern analysis
 GET  /api/argus/gamma-flip-history # Regime flip history
 POST /api/argus/commentary      # Generate AI commentary
+GET  /api/argus/trade-action    # Actionable trade recommendation with strikes, sizing, WHY
+POST /api/argus/signals/log     # Log signal for performance tracking
+GET  /api/argus/signals/recent  # Recent signals with outcomes
+GET  /api/argus/signals/performance # Win rate, total P&L, stats by action type
+POST /api/argus/signals/update-outcomes # Update open signal outcomes
 
 # Trading Bots (8 bots, 100+ endpoints total)
 GET  /api/ares/status           # ARES bot status
