@@ -42,6 +42,7 @@ import {
 import { apiClient } from '@/lib/api'
 import BuildVersion from './BuildVersion'
 import { CrossButton, DedicationModal, StewardshipTagline, StewardshipBanner } from './StewardshipBanner'
+import { useSidebar } from '@/contexts/SidebarContext'
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, category: 'Main' },
@@ -85,8 +86,8 @@ const navItems = [
 
 export default function Navigation() {
   const pathname = usePathname()
-  const [isPinned, setIsPinned] = useState(false)
-  const [isHovered, setIsHovered] = useState(false)
+  // Use shared sidebar context for state
+  const { isPinned, setIsPinned, isHovered, setIsHovered, isExpanded } = useSidebar()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [spyPrice, setSpyPrice] = useState<number | null>(null)
   const [vixPrice, setVixPrice] = useState<number | null>(null)
@@ -94,23 +95,10 @@ export default function Navigation() {
   const [apiConnected, setApiConnected] = useState(true)
   const [dedicationModalOpen, setDedicationModalOpen] = useState(false)
 
-  // Load pinned state from localStorage
-  useEffect(() => {
-    const savedPinned = localStorage.getItem('sidebarPinned')
-    if (savedPinned !== null) {
-      setIsPinned(savedPinned === 'true')
-    }
-  }, [])
-
-  // Save pinned state to localStorage
+  // Toggle pin state (localStorage is handled by SidebarContext)
   const togglePin = () => {
-    const newPinned = !isPinned
-    setIsPinned(newPinned)
-    localStorage.setItem('sidebarPinned', String(newPinned))
+    setIsPinned(!isPinned)
   }
-
-  // Sidebar is expanded when pinned OR hovered (on desktop)
-  const isExpanded = isPinned || isHovered
 
   // Fetch SPY/VIX prices and market status with 30-second auto-refresh during market hours
   useEffect(() => {

@@ -5,6 +5,7 @@ import { SWRConfig } from 'swr'
 import FloatingChatbot from './FloatingChatbot'
 import { ToastProvider } from './ui/Toast'
 import { swrConfig, prefetchMarketData } from '@/lib/hooks/useMarketData'
+import { SidebarProvider } from '@/contexts/SidebarContext'
 
 interface ClientProvidersProps {
   children: React.ReactNode
@@ -23,10 +24,12 @@ export default function ClientProviders({ children }: ClientProvidersProps) {
 
   return (
     <SWRConfig value={swrConfig}>
-      <ToastProvider>
-        {children}
-        <FloatingChatbot />
-      </ToastProvider>
+      <SidebarProvider>
+        <ToastProvider>
+          {children}
+          <FloatingChatbot />
+        </ToastProvider>
+      </SidebarProvider>
     </SWRConfig>
   )
 }

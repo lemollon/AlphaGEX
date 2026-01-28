@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, Component, ErrorInfo, ReactNode } from 'react'
 import { Eye, Brain, Activity, RefreshCw, Trash2, CheckCircle, XCircle, AlertCircle, AlertTriangle, ShieldAlert, Sparkles, FileText, History, TrendingUp, BarChart3, Download, Zap, Bot, MessageSquare, Settings, Play, Clock, Target, ChevronDown, ChevronUp, Crosshair } from 'lucide-react'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import DecisionLogViewer from '@/components/trader/DecisionLogViewer'
 import EquityCurveChart from '@/components/charts/EquityCurveChart'
 import { apiClient } from '@/lib/api'
@@ -384,6 +385,8 @@ function ClaudeAnalysisPanel({ analysis }: { analysis: any }) {
 }
 
 export default function OraclePage() {
+  const sidebarPadding = useSidebarPadding()
+
   // SWR hooks for data fetching with caching
   const { data: statusRes, error: statusError, isLoading: statusLoading, isValidating: statusValidating, mutate: mutateStatus } = useOracleStatus()
   const { data: logsRes, isValidating: logsValidating, mutate: mutateLogs } = useOracleLogs()
@@ -598,7 +601,7 @@ export default function OraclePage() {
   return (
     <div className="min-h-screen">
       <Navigation />
-      <main className="pt-24 transition-all duration-300">
+      <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           {/* Header */}
           <div className="mb-8">

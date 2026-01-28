@@ -7,13 +7,16 @@ import DailyMannaWidget from '@/components/DailyMannaWidget'
 import ARGUSAlertsWidget from '@/components/ARGUSAlertsWidget'
 import DashboardScanFeed from '@/components/DashboardScanFeed'
 import TodaysActivityFeed from '@/components/dashboard/TodaysActivityFeed'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 
 export default function Dashboard() {
+  const sidebarPadding = useSidebarPadding()
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-background to-background-deep">
       <Navigation />
 
-      <main className="pt-24 transition-all duration-300">
+      <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
         <div className="max-w-[1800px] mx-auto px-4 sm:px-6 lg:px-8 py-6">
 
           {/* Daily Manna Widget */}

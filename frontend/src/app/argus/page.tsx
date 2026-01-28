@@ -52,6 +52,7 @@ import {
   Sun
 } from 'lucide-react'
 import Navigation from '@/components/Navigation'
+import { useSidebarPadding } from '@/hooks/useSidebarPadding'
 import OrionStatusBadge from '@/components/OrionStatusBadge'
 import { ArgusEnhancedPanel } from '@/components/ArgusEnhancements'
 import { apiClient } from '@/lib/api'
@@ -680,6 +681,7 @@ const safeNum = (value: number | null | undefined, fallback: number = 0): number
   value ?? fallback
 
 export default function ArgusPage() {
+  const sidebarPadding = useSidebarPadding()
   const [gammaData, setGammaData] = useState<GammaData | null>(null)
   const [lastLiveData, setLastLiveData] = useState<GammaData | null>(null)  // Preserve last live data during market hours
   const [expirations, setExpirations] = useState<Expiration[]>([])
@@ -1898,7 +1900,7 @@ export default function ArgusPage() {
     return (
       <div className="min-h-screen bg-background">
         <Navigation />
-        <main className="pt-24 px-4 max-w-7xl mx-auto">
+        <main className={`pt-24 px-4 max-w-7xl mx-auto transition-all duration-300 ${sidebarPadding}`}>
           <div className="flex items-center justify-center h-64">
             <div className="text-center">
               <RefreshCw className="w-10 h-10 text-purple-500 animate-spin mx-auto mb-4" />
@@ -1913,7 +1915,7 @@ export default function ArgusPage() {
   return (
     <div className="min-h-screen bg-background">
       <Navigation />
-      <main className="pt-24 px-4 sm:px-6 lg:px-8 max-w-[1600px] mx-auto pb-8">
+      <main className={`pt-24 px-4 sm:px-6 lg:px-8 max-w-[1600px] mx-auto pb-8 transition-all duration-300 ${sidebarPadding}`}>
 
         {/* Header */}
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">

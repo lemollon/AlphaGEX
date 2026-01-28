@@ -7,6 +7,7 @@ import { AlertTriangle, TrendingUp, TrendingDown, Clock, Zap, Target, Calendar, 
 import Navigation from '@/components/Navigation'
 import { apiClient } from '@/lib/api'
 import { useRouter } from 'next/navigation'
+import { useSidebar } from '@/contexts/SidebarContext'
 
 interface DirectionalPrediction {
   direction: string
@@ -57,6 +58,7 @@ interface GammaExpirationData {
 
 export default function GammaExpirationTracker() {
   const router = useRouter()
+  const { isExpanded } = useSidebar()
   const [symbol, setSymbol] = useState('SPY')
   const [data, setData] = useState<GammaExpirationData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -165,13 +167,18 @@ export default function GammaExpirationTracker() {
   // Get week dates for display
   const weekDates = getCurrentWeekDates()
 
+  // Dynamic sidebar padding class
+  const sidebarPadding = isExpanded ? 'lg:pl-72' : 'lg:pl-24'
+
   if (loading) {
     return (
       <div className="min-h-screen">
         <Navigation />
-        <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          <div className="flex items-center justify-center h-64">
-            <RefreshCw className="w-8 h-8 text-primary animate-spin" />
+        <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <div className="flex items-center justify-center h-64">
+              <RefreshCw className="w-8 h-8 text-primary animate-spin" />
+            </div>
           </div>
         </main>
       </div>
@@ -182,7 +189,7 @@ export default function GammaExpirationTracker() {
     return (
       <div className="min-h-screen">
         <Navigation />
-        <main className="pt-24 transition-all duration-300">
+        <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             <div className="bg-danger/10 border border-danger/30 rounded-lg p-6 text-center">
               <AlertTriangle className="w-12 h-12 text-danger mx-auto mb-4" />
@@ -205,7 +212,7 @@ export default function GammaExpirationTracker() {
   return (
     <div className="min-h-screen">
       <Navigation />
-      <main className="pt-24 transition-all duration-300">
+      <main className={`pt-24 transition-all duration-300 ${sidebarPadding}`}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="space-y-6">
           {/* Header */}
