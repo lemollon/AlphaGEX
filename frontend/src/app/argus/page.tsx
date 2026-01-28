@@ -560,6 +560,55 @@ const AVAILABLE_SYMBOLS = [
   { symbol: 'DIA', name: 'Dow Jones ETF', supported: true },
 ]
 
+// Actionable Trade Recommendation from /api/argus/trade-action
+interface ActionableTrade {
+  action: string
+  direction: string
+  confidence: number
+  trade_description: string
+  trade: {
+    type: string
+    symbol: string
+    short_strike?: number
+    long_strike?: number
+    put_spread?: { short: number; long: number }
+    call_spread?: { short: number; long: number }
+    credit?: number
+    debit?: number
+    expiration: string
+  } | null
+  why: string[]
+  sizing: {
+    contracts: number
+    max_loss: string
+    max_profit: string
+    risk_reward: string
+    account_risk_pct: string
+  }
+  entry: string
+  exit: {
+    profit_target: string
+    stop_loss: string
+    time_stop?: string
+    adjustment?: string
+  }
+  market_context: {
+    spot: number
+    vix: number
+    expected_move: number
+    gamma_regime: string
+    order_flow: string
+    flow_confidence: string
+    flip_point: number
+    call_wall: number | null
+    put_wall: number | null
+  }
+  reason?: string
+  context?: Record<string, string | number>
+  suggestions?: string[]
+  timestamp: string
+}
+
 // =============================================================================
 // SAFE UTILITY FUNCTIONS - Prevent crashes from null/undefined values
 // =============================================================================
@@ -605,6 +654,10 @@ export default function ArgusPage() {
   const [emTrend, setEmTrend] = useState<EMTrendPoint[]>([])
   const [showAccuracyPanel, setShowAccuracyPanel] = useState(true)
   const [showTradeIdeas, setShowTradeIdeas] = useState(true)
+  const [actionableTrade, setActionableTrade] = useState<ActionableTrade | null>(null)
+  const [showActionableTrade, setShowActionableTrade] = useState(true)
+  const [accountSize, setAccountSize] = useState<number>(50000)
+  const [riskPerTrade, setRiskPerTrade] = useState<number>(1.0)
 
   // Next-day gamma data (tomorrow's expiration)
   const [tomorrowGammaData, setTomorrowGammaData] = useState<GammaData | null>(null)
@@ -1137,6 +1190,18 @@ export default function ArgusPage() {
     }
   }, [])
 
+  // Fetch actionable trade recommendation
+  const fetchActionableTrade = useCallback(async () => {
+    try {
+      const response = await apiClient.getArgusTradeAction(selectedSymbol, accountSize, riskPerTrade, 2)
+      if (response.data?.success && response.data?.data) {
+        setActionableTrade(response.data.data)
+      }
+    } catch (err) {
+      console.error('[ARGUS] Error fetching actionable trade:', err)
+    }
+  }, [selectedSymbol, accountSize, riskPerTrade])
+
   // Generate trade ideas based on current gamma structure
   const generateTradeIdeas = useCallback(() => {
     if (!gammaData) return
@@ -1340,7 +1405,8 @@ export default function ArgusPage() {
           fetchGammaFlips30m(),
           fetchAccuracyMetrics(),
           fetchBotPositions(),
-          fetchPatternMatches()
+          fetchPatternMatches(),
+          fetchActionableTrade()     // Fetch actionable trade recommendation
         ])
       } catch (err) {
         console.error('Error fetching initial data:', err)
@@ -1379,14 +1445,15 @@ export default function ArgusPage() {
         fetchDangerZoneLogs()
       }, 15000)
 
-      // Medium polling: Alerts, context, trends, flips, bots every 30 seconds
+      // Medium polling: Alerts, context, trends, flips, bots, trade action every 30 seconds
       mediumPollRef.current = setInterval(() => {
-        console.log('[ARGUS] Medium poll: fetching alerts, context, trends, flips, bots')
+        console.log('[ARGUS] Medium poll: fetching alerts, context, trends, flips, bots, trade action')
         fetchAlerts()
         fetchContext()
         fetchStrikeTrends()
         fetchGammaFlips30m()
         fetchBotPositions()
+        fetchActionableTrade()
       }, 30000)
 
       // Slow polling: Commentary, accuracy, patterns, tomorrow's data, history every 60 seconds
@@ -2542,6 +2609,183 @@ export default function ArgusPage() {
             </div>
           </div>
         </div>
+
+        {/* ACTIONABLE TRADE RECOMMENDATION - The "What to Do" Panel */}
+        {showActionableTrade && actionableTrade && (
+          <div className="mb-6">
+            <div className={`rounded-xl p-5 border-2 ${
+              actionableTrade.action === 'WAIT'
+                ? 'bg-gray-800/50 border-gray-600/50'
+                : actionableTrade.direction?.includes('BULLISH')
+                ? 'bg-gradient-to-r from-emerald-900/40 to-cyan-900/30 border-emerald-500/50'
+                : actionableTrade.direction?.includes('BEARISH')
+                ? 'bg-gradient-to-r from-rose-900/40 to-orange-900/30 border-rose-500/50'
+                : 'bg-gradient-to-r from-indigo-900/40 to-purple-900/30 border-indigo-500/50'
+            }`}>
+              {/* Header */}
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                    actionableTrade.action === 'WAIT' ? 'bg-gray-700' :
+                    actionableTrade.direction?.includes('BULLISH') ? 'bg-emerald-500' :
+                    actionableTrade.direction?.includes('BEARISH') ? 'bg-rose-500' : 'bg-indigo-500'
+                  }`}>
+                    {actionableTrade.action === 'WAIT' ? (
+                      <Clock className="w-5 h-5 text-white" />
+                    ) : actionableTrade.direction?.includes('BULLISH') ? (
+                      <TrendingUp className="w-5 h-5 text-white" />
+                    ) : actionableTrade.direction?.includes('BEARISH') ? (
+                      <TrendingDown className="w-5 h-5 text-white" />
+                    ) : (
+                      <Target className="w-5 h-5 text-white" />
+                    )}
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-lg text-white flex items-center gap-2">
+                      Actionable Trade
+                      <span className={`text-xs px-2 py-0.5 rounded font-bold ${
+                        actionableTrade.action === 'WAIT' ? 'bg-gray-600 text-gray-300' :
+                        actionableTrade.confidence >= 75 ? 'bg-emerald-500 text-white' :
+                        actionableTrade.confidence >= 60 ? 'bg-yellow-500 text-black' : 'bg-orange-500 text-white'
+                      }`}>
+                        {actionableTrade.confidence}% CONF
+                      </span>
+                    </h3>
+                    <p className="text-sm text-gray-400">{actionableTrade.action} • {actionableTrade.direction}</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowActionableTrade(!showActionableTrade)}
+                  className="text-xs text-gray-500 hover:text-white"
+                >
+                  Hide
+                </button>
+              </div>
+
+              {actionableTrade.action !== 'WAIT' && actionableTrade.trade ? (
+                <>
+                  {/* THE TRADE - Big and prominent */}
+                  <div className="bg-black/40 rounded-lg p-4 mb-4 border border-white/10">
+                    <div className="text-xs text-gray-500 mb-1">THE TRADE</div>
+                    <div className="text-xl font-bold font-mono text-white">
+                      {actionableTrade.trade_description}
+                    </div>
+                  </div>
+
+                  {/* Risk/Reward Grid */}
+                  <div className="grid grid-cols-4 gap-3 mb-4">
+                    <div className="bg-black/30 rounded-lg p-3 text-center">
+                      <div className="text-xs text-gray-500 mb-1">Contracts</div>
+                      <div className="text-xl font-bold text-white">{actionableTrade.sizing?.contracts}</div>
+                    </div>
+                    <div className="bg-black/30 rounded-lg p-3 text-center">
+                      <div className="text-xs text-gray-500 mb-1">Max Profit</div>
+                      <div className="text-xl font-bold text-emerald-400">{actionableTrade.sizing?.max_profit}</div>
+                    </div>
+                    <div className="bg-black/30 rounded-lg p-3 text-center">
+                      <div className="text-xs text-gray-500 mb-1">Max Loss</div>
+                      <div className="text-xl font-bold text-rose-400">{actionableTrade.sizing?.max_loss}</div>
+                    </div>
+                    <div className="bg-black/30 rounded-lg p-3 text-center">
+                      <div className="text-xs text-gray-500 mb-1">Risk/Reward</div>
+                      <div className="text-xl font-bold text-cyan-400">{actionableTrade.sizing?.risk_reward}</div>
+                    </div>
+                  </div>
+
+                  {/* THE WHY - Collapsible reasoning */}
+                  <div className="mb-4">
+                    <div className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+                      <Brain className="w-3 h-3" />
+                      WHY THIS TRADE
+                    </div>
+                    <div className="space-y-1">
+                      {actionableTrade.why?.map((reason, idx) => (
+                        <div key={idx} className="flex items-start gap-2 text-sm">
+                          <span className="text-cyan-400 mt-0.5">→</span>
+                          <span className="text-gray-300">{reason}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Entry & Exit Rules */}
+                  <div className="grid grid-cols-2 gap-4 mb-4">
+                    <div className="bg-black/30 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+                        <ArrowRight className="w-3 h-3 text-emerald-400" />
+                        ENTRY
+                      </div>
+                      <div className="text-sm text-white">{actionableTrade.entry}</div>
+                    </div>
+                    <div className="bg-black/30 rounded-lg p-3">
+                      <div className="text-xs text-gray-500 mb-2 flex items-center gap-1">
+                        <Target className="w-3 h-3 text-cyan-400" />
+                        EXIT RULES
+                      </div>
+                      <div className="space-y-1 text-sm">
+                        {actionableTrade.exit?.profit_target && (
+                          <div className="text-emerald-400">✓ {actionableTrade.exit.profit_target}</div>
+                        )}
+                        {actionableTrade.exit?.stop_loss && (
+                          <div className="text-rose-400">✗ {actionableTrade.exit.stop_loss}</div>
+                        )}
+                        {actionableTrade.exit?.time_stop && (
+                          <div className="text-yellow-400">⏰ {actionableTrade.exit.time_stop}</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Account Settings */}
+                  <div className="flex items-center gap-4 pt-3 border-t border-white/10">
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-gray-500">Account:</label>
+                      <input
+                        type="number"
+                        value={accountSize}
+                        onChange={(e) => setAccountSize(Number(e.target.value))}
+                        className="w-24 bg-black/30 border border-gray-600 rounded px-2 py-1 text-sm text-white"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <label className="text-xs text-gray-500">Risk %:</label>
+                      <input
+                        type="number"
+                        value={riskPerTrade}
+                        onChange={(e) => setRiskPerTrade(Number(e.target.value))}
+                        step="0.5"
+                        min="0.5"
+                        max="5"
+                        className="w-16 bg-black/30 border border-gray-600 rounded px-2 py-1 text-sm text-white"
+                      />
+                    </div>
+                    <button
+                      onClick={fetchActionableTrade}
+                      className="ml-auto text-xs bg-cyan-500/20 text-cyan-400 px-3 py-1 rounded hover:bg-cyan-500/30"
+                    >
+                      Recalculate
+                    </button>
+                  </div>
+                </>
+              ) : (
+                /* WAIT state */
+                <div className="text-center py-6">
+                  <p className="text-gray-400 mb-3">{actionableTrade.reason}</p>
+                  {actionableTrade.suggestions && (
+                    <div className="text-left bg-black/30 rounded-lg p-4 mt-4">
+                      <div className="text-xs text-gray-500 mb-2">SUGGESTIONS</div>
+                      {actionableTrade.suggestions.map((s, i) => (
+                        <div key={i} className="text-sm text-gray-300 flex items-center gap-2 mb-1">
+                          <span className="text-cyan-400">→</span> {s}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Trade Ideas Section */}
         <div className="mb-6">

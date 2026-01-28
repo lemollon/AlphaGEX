@@ -4442,6 +4442,410 @@ async def get_trade_setups(symbol: str = Query(default="SPY")):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ==================== ACTIONABLE TRADE RECOMMENDATIONS ====================
+
+@router.get("/trade-action")
+async def get_trade_action(
+    symbol: str = Query(default="SPY"),
+    account_size: float = Query(default=50000, description="Account size in dollars"),
+    risk_per_trade_pct: float = Query(default=1.0, description="Max risk per trade as % of account (1-5%)"),
+    spread_width: int = Query(default=2, description="Width of spreads in dollars (1-5)")
+):
+    """
+    Generate ACTIONABLE trade recommendation with specific strikes, sizing, and reasoning.
+
+    Unlike generic signals ("BULLISH"), this returns executable trades:
+    - Exact strikes to trade
+    - Credit/debit target
+    - Position size based on your risk tolerance
+    - Entry trigger and exit rules
+    - THE WHY: Reasoning behind each decision
+
+    Example output:
+    "SELL SPY 588/586 PUT SPREAD for $0.45 credit"
+    "WHY: Positive gamma at 590 creates support, order flow 72% bullish, VIX 16 = thin premium"
+    "SIZE: 3 contracts at 1% risk ($500 max loss)"
+    "EXIT: Take profit at $0.22 (50%), Stop at $1.35 (3x credit)"
+    """
+    engine = get_engine()
+    if not engine:
+        raise HTTPException(status_code=503, detail="ARGUS engine not available")
+
+    try:
+        # Validate inputs
+        risk_per_trade_pct = max(0.5, min(5.0, risk_per_trade_pct))
+        spread_width = max(1, min(5, spread_width))
+        max_risk_dollars = account_size * (risk_per_trade_pct / 100)
+
+        # Get current gamma snapshot with all data
+        snapshot = engine.get_gamma_snapshot(symbol)
+        if not snapshot or 'strikes' not in snapshot:
+            return {
+                "success": True,
+                "data": {
+                    "action": "WAIT",
+                    "reason": "No gamma data available - market may be closed",
+                    "trade": None
+                }
+            }
+
+        # Extract key data
+        spot = snapshot.get('spot_price', 0)
+        vix = snapshot.get('vix', 20)
+        expected_move = snapshot.get('expected_move', 0)
+        expected_move_pct = (expected_move / spot * 100) if spot > 0 else 1.0
+        gamma_regime = snapshot.get('gamma_regime', 'NEUTRAL')
+        flip_point = snapshot.get('flip_point', spot)
+        strikes_data = snapshot.get('strikes', [])
+
+        # Get order flow data if available
+        order_flow = snapshot.get('order_flow', {})
+        flow_signal = order_flow.get('combined_signal', 'NEUTRAL')
+        flow_confidence = order_flow.get('signal_confidence', 'LOW')
+        net_pressure = order_flow.get('net_pressure', 0)
+
+        # Find gamma walls (key levels)
+        call_wall = None
+        put_wall = None
+        max_call_gamma = 0
+        max_put_gamma = 0
+
+        for s in strikes_data:
+            strike = s.get('strike', 0)
+            net_gamma = s.get('net_gamma', 0)
+            if strike > spot and net_gamma > max_call_gamma:
+                max_call_gamma = net_gamma
+                call_wall = strike
+            elif strike < spot and abs(net_gamma) > max_put_gamma:
+                max_put_gamma = abs(net_gamma)
+                put_wall = strike
+
+        # Calculate distances
+        dist_to_call_pct = ((call_wall - spot) / spot * 100) if call_wall and spot > 0 else 999
+        dist_to_put_pct = ((spot - put_wall) / spot * 100) if put_wall and spot > 0 else 999
+        dist_to_flip_pct = abs(spot - flip_point) / spot * 100 if spot > 0 else 0
+        spot_vs_flip = "ABOVE" if spot > flip_point else "BELOW"
+
+        # =====================================================================
+        # DECISION ENGINE - Generate specific trade recommendation
+        # =====================================================================
+
+        trade_type = None
+        direction = None
+        short_strike = None
+        long_strike = None
+        estimated_credit = 0
+        confidence = 0
+        why_parts = []
+        entry_trigger = ""
+        exit_rules = {}
+
+        # VIX-based credit estimation (rough approximation for 0DTE)
+        # Higher VIX = higher premiums, closer strikes = higher credit
+        def estimate_credit(distance_pct: float, is_call: bool) -> float:
+            """Estimate credit for a spread based on distance and VIX"""
+            # Base credit scales with VIX (higher vol = more premium)
+            base = 0.20 + (vix - 15) * 0.03
+            # Closer to ATM = more credit
+            distance_factor = max(0.3, 1.0 - (distance_pct / 2))
+            credit = base * distance_factor * (spread_width / 2)
+            return round(max(0.15, min(1.50, credit)), 2)
+
+        # =====================================================================
+        # SCENARIO 1: IRON CONDOR - Neutral/Range-bound conditions
+        # =====================================================================
+        if gamma_regime == "POSITIVE" and dist_to_call_pct > 0.5 and dist_to_put_pct > 0.5:
+            # Positive gamma + price between walls = premium selling opportunity
+
+            trade_type = "IRON_CONDOR"
+            direction = "NEUTRAL"
+
+            # Use gamma walls as short strikes (natural support/resistance)
+            short_put = put_wall if put_wall else round(spot - expected_move, 0)
+            short_call = call_wall if call_wall else round(spot + expected_move, 0)
+
+            # Credit estimation
+            put_credit = estimate_credit(dist_to_put_pct, False)
+            call_credit = estimate_credit(dist_to_call_pct, True)
+            estimated_credit = round(put_credit + call_credit, 2)
+
+            # Confidence based on multiple factors
+            base_conf = 60
+            if gamma_regime == "POSITIVE":
+                base_conf += 15
+            if flow_signal in ['NEUTRAL', 'DIVERGENCE_BULLISH', 'DIVERGENCE_BEARISH']:
+                base_conf += 10  # Balanced flow good for IC
+            if vix < 20:
+                base_conf += 5
+            if dist_to_call_pct > 0.7 and dist_to_put_pct > 0.7:
+                base_conf += 10
+            confidence = min(95, base_conf)
+
+            # THE WHY
+            why_parts = [
+                f"GAMMA REGIME: {gamma_regime} = dealers will dampen moves (mean reversion)",
+                f"SUPPORT: Put wall at ${put_wall:.0f} ({dist_to_put_pct:.1f}% below spot) provides floor",
+                f"RESISTANCE: Call wall at ${call_wall:.0f} ({dist_to_call_pct:.1f}% above spot) provides ceiling",
+                f"ORDER FLOW: {flow_signal} ({flow_confidence}) - {'confirms range-bound' if flow_signal == 'NEUTRAL' else 'watch for direction'}",
+                f"VIX: {vix:.1f} - {'premium thin, need tighter strikes' if vix < 16 else 'good premium available' if vix < 25 else 'elevated, widen strikes'}"
+            ]
+
+            entry_trigger = f"Enter when SPY trades between ${put_wall:.0f}-${call_wall:.0f} range"
+            exit_rules = {
+                "profit_target": f"Close at 50% profit (${estimated_credit * 0.5:.2f} debit)",
+                "stop_loss": f"Close if spread value hits ${estimated_credit * 2.5:.2f} (2.5x credit)",
+                "time_stop": "Close by 3:00 PM CT if still open (0DTE time decay accelerates)"
+            }
+
+        # =====================================================================
+        # SCENARIO 2: PUT CREDIT SPREAD - Bullish bias
+        # =====================================================================
+        elif (flow_signal in ['STRONG_BULLISH', 'BULLISH'] and flow_confidence in ['HIGH', 'MEDIUM']) or \
+             (gamma_regime == "POSITIVE" and spot_vs_flip == "ABOVE" and dist_to_flip_pct > 0.3):
+
+            trade_type = "PUT_CREDIT_SPREAD"
+            direction = "BULLISH"
+
+            # Short strike at put wall (support), long below
+            short_strike = put_wall if put_wall else round(spot - expected_move * 0.5, 0)
+            long_strike = short_strike - spread_width
+            estimated_credit = estimate_credit(dist_to_put_pct, False)
+
+            # Confidence
+            base_conf = 55
+            if flow_signal == 'STRONG_BULLISH':
+                base_conf += 20
+            elif flow_signal == 'BULLISH':
+                base_conf += 12
+            if gamma_regime == "POSITIVE":
+                base_conf += 10
+            if spot_vs_flip == "ABOVE":
+                base_conf += 8
+            if dist_to_put_pct > 0.5:
+                base_conf += 5
+            confidence = min(90, base_conf)
+
+            # THE WHY
+            why_parts = [
+                f"ORDER FLOW: {flow_signal} ({flow_confidence}) - buyers dominating, {abs(net_pressure):.1f} net pressure",
+                f"GAMMA REGIME: {gamma_regime} - {'supports stability' if gamma_regime == 'POSITIVE' else 'momentum possible'}",
+                f"POSITION: Spot ${spot:.2f} is {spot_vs_flip} flip point ${flip_point:.2f} ({dist_to_flip_pct:.1f}% away)",
+                f"SUPPORT: Put wall at ${short_strike:.0f} acts as dealer-defended floor",
+                f"VIX: {vix:.1f} implies ${expected_move:.2f} expected move ({expected_move_pct:.1f}%)"
+            ]
+
+            entry_trigger = f"Enter on pullback to ${short_strike + spread_width:.0f} or better"
+            exit_rules = {
+                "profit_target": f"Close at 50% profit (${estimated_credit * 0.5:.2f} debit)",
+                "stop_loss": f"Close if spread hits ${min(spread_width * 0.8, estimated_credit * 3):.2f}",
+                "adjustment": f"Roll down if SPY breaks ${short_strike:.0f} with momentum"
+            }
+
+        # =====================================================================
+        # SCENARIO 3: CALL CREDIT SPREAD - Bearish bias
+        # =====================================================================
+        elif (flow_signal in ['STRONG_BEARISH', 'BEARISH'] and flow_confidence in ['HIGH', 'MEDIUM']) or \
+             (gamma_regime == "POSITIVE" and spot_vs_flip == "BELOW" and dist_to_flip_pct > 0.3):
+
+            trade_type = "CALL_CREDIT_SPREAD"
+            direction = "BEARISH"
+
+            # Short strike at call wall (resistance), long above
+            short_strike = call_wall if call_wall else round(spot + expected_move * 0.5, 0)
+            long_strike = short_strike + spread_width
+            estimated_credit = estimate_credit(dist_to_call_pct, True)
+
+            # Confidence
+            base_conf = 55
+            if flow_signal == 'STRONG_BEARISH':
+                base_conf += 20
+            elif flow_signal == 'BEARISH':
+                base_conf += 12
+            if gamma_regime == "POSITIVE":
+                base_conf += 10
+            if spot_vs_flip == "BELOW":
+                base_conf += 8
+            if dist_to_call_pct > 0.5:
+                base_conf += 5
+            confidence = min(90, base_conf)
+
+            # THE WHY
+            why_parts = [
+                f"ORDER FLOW: {flow_signal} ({flow_confidence}) - sellers dominating, {abs(net_pressure):.1f} net pressure",
+                f"GAMMA REGIME: {gamma_regime} - {'supports stability' if gamma_regime == 'POSITIVE' else 'momentum possible'}",
+                f"POSITION: Spot ${spot:.2f} is {spot_vs_flip} flip point ${flip_point:.2f} ({dist_to_flip_pct:.1f}% away)",
+                f"RESISTANCE: Call wall at ${short_strike:.0f} acts as dealer-defended ceiling",
+                f"VIX: {vix:.1f} implies ${expected_move:.2f} expected move ({expected_move_pct:.1f}%)"
+            ]
+
+            entry_trigger = f"Enter on rally to ${short_strike - spread_width:.0f} or better"
+            exit_rules = {
+                "profit_target": f"Close at 50% profit (${estimated_credit * 0.5:.2f} debit)",
+                "stop_loss": f"Close if spread hits ${min(spread_width * 0.8, estimated_credit * 3):.2f}",
+                "adjustment": f"Roll up if SPY breaks ${short_strike:.0f} with momentum"
+            }
+
+        # =====================================================================
+        # SCENARIO 4: DEBIT SPREAD - Breakout conditions
+        # =====================================================================
+        elif gamma_regime == "NEGATIVE" and (dist_to_call_pct < 0.3 or dist_to_put_pct < 0.3):
+
+            is_call_break = dist_to_call_pct < dist_to_put_pct
+
+            if is_call_break:
+                trade_type = "CALL_DEBIT_SPREAD"
+                direction = "BULLISH_BREAKOUT"
+                long_strike = round(spot, 0)
+                short_strike = long_strike + spread_width
+                estimated_debit = spread_width * 0.45  # Rough ATM debit estimate
+            else:
+                trade_type = "PUT_DEBIT_SPREAD"
+                direction = "BEARISH_BREAKDOWN"
+                long_strike = round(spot, 0)
+                short_strike = long_strike - spread_width
+                estimated_debit = spread_width * 0.45
+
+            # Confidence for breakout
+            base_conf = 50
+            if gamma_regime == "NEGATIVE":
+                base_conf += 15  # Negative gamma amplifies moves
+            if (is_call_break and flow_signal in ['BULLISH', 'STRONG_BULLISH']) or \
+               (not is_call_break and flow_signal in ['BEARISH', 'STRONG_BEARISH']):
+                base_conf += 15
+            confidence = min(85, base_conf)
+
+            estimated_credit = -estimated_debit  # Negative = debit
+
+            wall_type = "call" if is_call_break else "put"
+            wall_strike = call_wall if is_call_break else put_wall
+            why_parts = [
+                f"GAMMA REGIME: NEGATIVE = breakouts accelerate (dealers chase, not stabilize)",
+                f"WALL PROXIMITY: Price {dist_to_call_pct if is_call_break else dist_to_put_pct:.1f}% from {wall_type} wall at ${wall_strike:.0f}",
+                f"ORDER FLOW: {flow_signal} - {'confirms breakout direction' if ((is_call_break and 'BULLISH' in flow_signal) or (not is_call_break and 'BEARISH' in flow_signal)) else 'watch for confirmation'}",
+                f"EXPECTED MOVE: ${expected_move:.2f} ({expected_move_pct:.1f}%) - breakout could exceed this"
+            ]
+
+            target_move = expected_move * 1.5
+            entry_trigger = f"Enter on {wall_type} wall break at ${wall_strike:.0f}"
+            exit_rules = {
+                "profit_target": f"Target ${target_move:.2f} move, close at 100% gain",
+                "stop_loss": f"Close if move fails and price returns inside ${wall_strike:.0f}",
+                "time_stop": "Close by 2:30 PM if not profitable (breakouts need momentum)"
+            }
+
+        # =====================================================================
+        # DEFAULT: WAIT - No clear edge
+        # =====================================================================
+        else:
+            return {
+                "success": True,
+                "data": {
+                    "action": "WAIT",
+                    "reason": "No clear edge - conditions do not favor a high-probability trade",
+                    "context": {
+                        "gamma_regime": gamma_regime,
+                        "order_flow": flow_signal,
+                        "flow_confidence": flow_confidence,
+                        "vix": vix,
+                        "spot": spot,
+                        "dist_to_call_wall": f"{dist_to_call_pct:.1f}%",
+                        "dist_to_put_wall": f"{dist_to_put_pct:.1f}%"
+                    },
+                    "suggestions": [
+                        "Wait for order flow to align with gamma structure",
+                        "Look for price to approach a gamma wall for clearer setup",
+                        f"Current range: ${put_wall:.0f} - ${call_wall:.0f}" if put_wall and call_wall else "Walls not defined"
+                    ],
+                    "trade": None
+                }
+            }
+
+        # =====================================================================
+        # POSITION SIZING
+        # =====================================================================
+        max_loss_per_contract = (spread_width - abs(estimated_credit)) * 100 if estimated_credit > 0 else abs(estimated_credit) * 100
+        contracts = max(1, int(max_risk_dollars / max_loss_per_contract)) if max_loss_per_contract > 0 else 1
+        actual_max_loss = max_loss_per_contract * contracts
+        actual_max_profit = abs(estimated_credit) * 100 * contracts if estimated_credit > 0 else (spread_width - abs(estimated_credit)) * 100 * contracts
+
+        # Build trade structure
+        if trade_type == "IRON_CONDOR":
+            trade_structure = {
+                "type": "IRON_CONDOR",
+                "symbol": symbol,
+                "put_spread": {
+                    "short": short_put,
+                    "long": short_put - spread_width
+                },
+                "call_spread": {
+                    "short": short_call,
+                    "long": short_call + spread_width
+                },
+                "credit": estimated_credit,
+                "expiration": "0DTE"
+            }
+            trade_description = f"SELL {symbol} {short_put - spread_width}/{short_put}p - {short_call}/{short_call + spread_width}c IC @ ${estimated_credit:.2f} credit"
+        elif trade_type in ["PUT_CREDIT_SPREAD", "CALL_CREDIT_SPREAD"]:
+            trade_structure = {
+                "type": trade_type,
+                "symbol": symbol,
+                "short_strike": short_strike,
+                "long_strike": long_strike,
+                "credit": estimated_credit,
+                "expiration": "0DTE"
+            }
+            spread_notation = f"{long_strike}/{short_strike}p" if "PUT" in trade_type else f"{short_strike}/{long_strike}c"
+            trade_description = f"SELL {symbol} {spread_notation} @ ${estimated_credit:.2f} credit"
+        else:
+            trade_structure = {
+                "type": trade_type,
+                "symbol": symbol,
+                "long_strike": long_strike,
+                "short_strike": short_strike,
+                "debit": abs(estimated_credit),
+                "expiration": "0DTE"
+            }
+            spread_notation = f"{long_strike}/{short_strike}c" if "CALL" in trade_type else f"{long_strike}/{short_strike}p"
+            trade_description = f"BUY {symbol} {spread_notation} @ ${abs(estimated_credit):.2f} debit"
+
+        return {
+            "success": True,
+            "data": {
+                "action": trade_type,
+                "direction": direction,
+                "confidence": confidence,
+                "trade_description": trade_description,
+                "trade": trade_structure,
+                "why": why_parts,
+                "sizing": {
+                    "contracts": contracts,
+                    "max_loss": f"${actual_max_loss:.0f}",
+                    "max_profit": f"${actual_max_profit:.0f}",
+                    "risk_reward": f"1:{actual_max_profit/actual_max_loss:.1f}" if actual_max_loss > 0 else "N/A",
+                    "account_risk_pct": f"{(actual_max_loss / account_size * 100):.1f}%"
+                },
+                "entry": entry_trigger,
+                "exit": exit_rules,
+                "market_context": {
+                    "spot": spot,
+                    "vix": vix,
+                    "expected_move": expected_move,
+                    "gamma_regime": gamma_regime,
+                    "order_flow": flow_signal,
+                    "flow_confidence": flow_confidence,
+                    "flip_point": flip_point,
+                    "call_wall": call_wall,
+                    "put_wall": put_wall
+                },
+                "timestamp": format_central_timestamp()
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error generating trade action: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ==================== OPTIMAL STRIKE RECOMMENDATIONS ====================
 
 @router.get("/optimal-strikes")
