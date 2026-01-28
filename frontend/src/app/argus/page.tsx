@@ -2888,7 +2888,7 @@ export default function ArgusPage() {
                     </div>
                   </>
                 ) : (
-                  /* WAIT state - compact */}
+                  /* WAIT state - compact */
                   <div className="text-center py-4">
                     <p className="text-gray-400 text-sm mb-2">{actionableTrade.reason}</p>
                     {actionableTrade.suggestions && (
