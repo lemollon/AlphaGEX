@@ -306,8 +306,79 @@ def ensure_all_argus_tables():
             ON argus_order_flow_history(combined_signal, signal_confidence)
         """)
 
+        # 8. argus_trade_signals - Track generated trade recommendations and outcomes
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS argus_trade_signals (
+                id SERIAL PRIMARY KEY,
+                symbol VARCHAR(10) NOT NULL DEFAULT 'SPY',
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+
+                -- Signal details
+                action VARCHAR(30) NOT NULL,
+                direction VARCHAR(30),
+                confidence INTEGER,
+                trade_description TEXT,
+
+                -- Trade structure (JSON for flexibility)
+                trade_structure JSONB,
+
+                -- Pricing at signal time
+                spot_at_signal DECIMAL(10, 2),
+                credit_target DECIMAL(6, 2),
+
+                -- Strikes
+                short_strike DECIMAL(10, 2),
+                long_strike DECIMAL(10, 2),
+                put_short DECIMAL(10, 2),
+                put_long DECIMAL(10, 2),
+                call_short DECIMAL(10, 2),
+                call_long DECIMAL(10, 2),
+
+                -- Market context at signal time
+                vix_at_signal DECIMAL(6, 2),
+                gamma_regime VARCHAR(20),
+                order_flow VARCHAR(30),
+                flow_confidence VARCHAR(10),
+
+                -- Sizing
+                contracts INTEGER,
+                max_profit DECIMAL(10, 2),
+                max_loss DECIMAL(10, 2),
+
+                -- Exit rules
+                profit_target_price DECIMAL(6, 2),
+                stop_loss_price DECIMAL(6, 2),
+
+                -- Outcome tracking
+                status VARCHAR(20) DEFAULT 'OPEN',  -- OPEN, WIN, LOSS, EXPIRED, CANCELLED
+                outcome_reason VARCHAR(50),  -- profit_target, stop_loss, time_expired, manual
+                closed_at TIMESTAMP WITH TIME ZONE,
+                spot_at_close DECIMAL(10, 2),
+                actual_pnl DECIMAL(10, 2),
+                pnl_percent DECIMAL(6, 2),
+
+                -- Analytics
+                time_to_resolution INTEGER,  -- minutes from open to close
+                hit_profit_target BOOLEAN,
+                hit_stop_loss BOOLEAN,
+                expired_in_profit BOOLEAN
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_argus_trade_signals_created
+            ON argus_trade_signals(symbol, created_at DESC)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_argus_trade_signals_status
+            ON argus_trade_signals(status, created_at DESC)
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_argus_trade_signals_action
+            ON argus_trade_signals(action, status)
+        """)
+
         conn.commit()
-        logger.info("ARGUS: All tables ensured (7 tables)")
+        logger.info("ARGUS: All tables ensured (8 tables)")
         return True
     except Exception as e:
         logger.error(f"Failed to create ARGUS tables: {e}")
@@ -4844,6 +4915,520 @@ async def get_trade_action(
     except Exception as e:
         logger.error(f"Error generating trade action: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== SIGNAL TRACKING & PERFORMANCE ====================
+
+def _log_signal_to_db(signal_data: dict, symbol: str = "SPY") -> Optional[int]:
+    """
+    Log a trade signal to the database for tracking.
+    Returns the signal ID if successful.
+    """
+    conn = None
+    cursor = None
+    try:
+        conn = get_connection()
+        if not conn:
+            return None
+        cursor = conn.cursor()
+
+        # Extract data from signal
+        action = signal_data.get('action', 'UNKNOWN')
+        direction = signal_data.get('direction')
+        confidence = signal_data.get('confidence', 0)
+        trade_desc = signal_data.get('trade_description', '')
+        trade = signal_data.get('trade', {}) or {}
+        sizing = signal_data.get('sizing', {}) or {}
+        context = signal_data.get('market_context', {}) or {}
+        exit_rules = signal_data.get('exit', {}) or {}
+
+        # Parse sizing values (remove $ and convert)
+        max_profit = float(sizing.get('max_profit', '$0').replace('$', '').replace(',', '')) if sizing.get('max_profit') else 0
+        max_loss = float(sizing.get('max_loss', '$0').replace('$', '').replace(',', '')) if sizing.get('max_loss') else 0
+
+        # Extract strikes based on trade type
+        short_strike = trade.get('short_strike')
+        long_strike = trade.get('long_strike')
+        put_short = trade.get('put_spread', {}).get('short') if trade.get('put_spread') else None
+        put_long = trade.get('put_spread', {}).get('long') if trade.get('put_spread') else None
+        call_short = trade.get('call_spread', {}).get('short') if trade.get('call_spread') else None
+        call_long = trade.get('call_spread', {}).get('long') if trade.get('call_spread') else None
+
+        # Credit/debit
+        credit = trade.get('credit') or trade.get('debit', 0)
+        if trade.get('debit'):
+            credit = -trade.get('debit')  # Negative for debits
+
+        # Parse profit target and stop from exit rules
+        # e.g., "Close at 50% profit ($0.22 debit)" -> 0.22
+        profit_target_price = None
+        stop_loss_price = None
+        if exit_rules.get('profit_target'):
+            import re
+            match = re.search(r'\$([0-9.]+)', exit_rules['profit_target'])
+            if match:
+                profit_target_price = float(match.group(1))
+        if exit_rules.get('stop_loss'):
+            import re
+            match = re.search(r'\$([0-9.]+)', exit_rules['stop_loss'])
+            if match:
+                stop_loss_price = float(match.group(1))
+
+        cursor.execute("""
+            INSERT INTO argus_trade_signals (
+                symbol, action, direction, confidence, trade_description,
+                trade_structure, spot_at_signal, credit_target,
+                short_strike, long_strike, put_short, put_long, call_short, call_long,
+                vix_at_signal, gamma_regime, order_flow, flow_confidence,
+                contracts, max_profit, max_loss,
+                profit_target_price, stop_loss_price,
+                status
+            ) VALUES (
+                %s, %s, %s, %s, %s,
+                %s, %s, %s,
+                %s, %s, %s, %s, %s, %s,
+                %s, %s, %s, %s,
+                %s, %s, %s,
+                %s, %s,
+                'OPEN'
+            ) RETURNING id
+        """, (
+            symbol, action, direction, confidence, trade_desc,
+            json.dumps(trade), context.get('spot'), credit,
+            short_strike, long_strike, put_short, put_long, call_short, call_long,
+            context.get('vix'), context.get('gamma_regime'), context.get('order_flow'), context.get('flow_confidence'),
+            sizing.get('contracts', 1), max_profit, max_loss,
+            profit_target_price, stop_loss_price
+        ))
+
+        signal_id = cursor.fetchone()[0]
+        conn.commit()
+        logger.info(f"ARGUS: Logged signal #{signal_id}: {action} {direction}")
+        return signal_id
+
+    except Exception as e:
+        logger.error(f"Failed to log signal: {e}")
+        if conn:
+            conn.rollback()
+        return None
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
+
+
+def _update_signal_outcomes(symbol: str = "SPY", current_spot: float = None):
+    """
+    Check open signals and update their outcomes based on current price.
+    Called periodically to track simulated performance.
+    """
+    conn = None
+    cursor = None
+    try:
+        conn = get_connection()
+        if not conn:
+            return
+
+        cursor = conn.cursor()
+
+        # Get open signals
+        cursor.execute("""
+            SELECT id, action, credit_target, profit_target_price, stop_loss_price,
+                   spot_at_signal, max_profit, max_loss, created_at,
+                   put_short, call_short, short_strike
+            FROM argus_trade_signals
+            WHERE symbol = %s AND status = 'OPEN'
+            AND created_at > NOW() - INTERVAL '1 day'
+            ORDER BY created_at DESC
+        """, (symbol,))
+        open_signals = cursor.fetchall()
+
+        if not open_signals:
+            return
+
+        # Get current spot if not provided
+        if not current_spot:
+            engine = get_engine()
+            if engine:
+                snapshot = engine.get_gamma_snapshot(symbol)
+                current_spot = snapshot.get('spot_price', 0) if snapshot else 0
+
+        if not current_spot or current_spot <= 0:
+            return
+
+        now = get_central_time()
+        market_close = now.replace(hour=15, minute=0, second=0, microsecond=0)
+
+        for signal in open_signals:
+            signal_id, action, credit, profit_target, stop_loss, spot_at_signal, max_profit, max_loss, created_at, put_short, call_short, short_strike = signal
+
+            status = None
+            outcome_reason = None
+            actual_pnl = 0
+            hit_profit = False
+            hit_stop = False
+            expired_profit = False
+
+            # Determine reference strike for P&L calculation
+            ref_strike = put_short or call_short or short_strike or spot_at_signal
+
+            # For credit spreads: profit if price stays away from short strike
+            # Simplified: track if price moved favorably
+            if action in ['IRON_CONDOR', 'PUT_CREDIT_SPREAD', 'CALL_CREDIT_SPREAD']:
+                # Credit received is max profit if expires OTM
+                if credit and credit > 0:
+                    # Check if market closed (0DTE expired)
+                    if now >= market_close:
+                        # Check if strikes were breached
+                        if action == 'IRON_CONDOR':
+                            # Win if price between put_short and call_short
+                            if put_short and call_short:
+                                if put_short <= current_spot <= call_short:
+                                    status = 'WIN'
+                                    outcome_reason = 'expired_otm'
+                                    actual_pnl = max_profit
+                                    expired_profit = True
+                                else:
+                                    status = 'LOSS'
+                                    outcome_reason = 'expired_itm'
+                                    actual_pnl = -max_loss
+                        elif action == 'PUT_CREDIT_SPREAD':
+                            # Win if price above put_short
+                            if ref_strike and current_spot >= ref_strike:
+                                status = 'WIN'
+                                outcome_reason = 'expired_otm'
+                                actual_pnl = max_profit
+                                expired_profit = True
+                            else:
+                                status = 'LOSS'
+                                outcome_reason = 'expired_itm'
+                                actual_pnl = -max_loss
+                        elif action == 'CALL_CREDIT_SPREAD':
+                            # Win if price below call_short
+                            if ref_strike and current_spot <= ref_strike:
+                                status = 'WIN'
+                                outcome_reason = 'expired_otm'
+                                actual_pnl = max_profit
+                                expired_profit = True
+                            else:
+                                status = 'LOSS'
+                                outcome_reason = 'expired_itm'
+                                actual_pnl = -max_loss
+
+            elif action in ['CALL_DEBIT_SPREAD', 'PUT_DEBIT_SPREAD']:
+                # For debit spreads: profit if price moves in direction
+                if now >= market_close:
+                    if action == 'CALL_DEBIT_SPREAD':
+                        if current_spot > spot_at_signal:
+                            status = 'WIN'
+                            outcome_reason = 'price_moved_favorable'
+                            actual_pnl = max_profit * min(1.0, (current_spot - spot_at_signal) / spot_at_signal * 50)
+                        else:
+                            status = 'LOSS'
+                            outcome_reason = 'price_moved_unfavorable'
+                            actual_pnl = -max_loss
+                    else:  # PUT_DEBIT_SPREAD
+                        if current_spot < spot_at_signal:
+                            status = 'WIN'
+                            outcome_reason = 'price_moved_favorable'
+                            actual_pnl = max_profit * min(1.0, (spot_at_signal - current_spot) / spot_at_signal * 50)
+                        else:
+                            status = 'LOSS'
+                            outcome_reason = 'price_moved_unfavorable'
+                            actual_pnl = -max_loss
+
+            # Update if status changed
+            if status:
+                time_to_resolution = int((now - created_at).total_seconds() / 60) if created_at else None
+                pnl_pct = (actual_pnl / max_loss * 100) if max_loss else 0
+
+                cursor.execute("""
+                    UPDATE argus_trade_signals
+                    SET status = %s, outcome_reason = %s, closed_at = %s,
+                        spot_at_close = %s, actual_pnl = %s, pnl_percent = %s,
+                        time_to_resolution = %s, hit_profit_target = %s,
+                        hit_stop_loss = %s, expired_in_profit = %s
+                    WHERE id = %s
+                """, (
+                    status, outcome_reason, now, current_spot, actual_pnl, pnl_pct,
+                    time_to_resolution, hit_profit, hit_stop, expired_profit, signal_id
+                ))
+
+        conn.commit()
+
+    except Exception as e:
+        logger.error(f"Failed to update signal outcomes: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if cursor:
+            try:
+                cursor.close()
+            except:
+                pass
+        if conn:
+            try:
+                conn.close()
+            except:
+                pass
+
+
+@router.post("/signals/log")
+async def log_trade_signal(
+    symbol: str = Query(default="SPY"),
+    signal_data: dict = None
+):
+    """
+    Log a trade signal for performance tracking.
+    Called when user clicks "Execute" or signal is generated.
+    """
+    if not signal_data:
+        raise HTTPException(status_code=400, detail="signal_data required")
+
+    signal_id = _log_signal_to_db(signal_data, symbol)
+
+    return {
+        "success": signal_id is not None,
+        "signal_id": signal_id,
+        "message": f"Signal logged as #{signal_id}" if signal_id else "Failed to log signal"
+    }
+
+
+@router.get("/signals/recent")
+async def get_recent_signals(
+    symbol: str = Query(default="SPY"),
+    limit: int = Query(default=20, le=100),
+    status: str = Query(default=None, description="Filter by status: OPEN, WIN, LOSS, EXPIRED")
+):
+    """
+    Get recent trade signals with their outcomes.
+    """
+    conn = None
+    cursor = None
+    try:
+        conn = get_connection()
+        if not conn:
+            return {"success": True, "data": {"signals": [], "message": "Database not available"}}
+
+        cursor = conn.cursor()
+
+        query = """
+            SELECT id, created_at, action, direction, confidence, trade_description,
+                   spot_at_signal, credit_target, vix_at_signal, gamma_regime,
+                   contracts, max_profit, max_loss,
+                   status, outcome_reason, closed_at, spot_at_close, actual_pnl, pnl_percent,
+                   time_to_resolution
+            FROM argus_trade_signals
+            WHERE symbol = %s
+        """
+        params = [symbol]
+
+        if status:
+            query += " AND status = %s"
+            params.append(status)
+
+        query += " ORDER BY created_at DESC LIMIT %s"
+        params.append(limit)
+
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+
+        signals = []
+        for row in rows:
+            signals.append({
+                "id": row[0],
+                "created_at": row[1].isoformat() if row[1] else None,
+                "action": row[2],
+                "direction": row[3],
+                "confidence": row[4],
+                "trade_description": row[5],
+                "spot_at_signal": float(row[6]) if row[6] else None,
+                "credit": float(row[7]) if row[7] else None,
+                "vix": float(row[8]) if row[8] else None,
+                "gamma_regime": row[9],
+                "contracts": row[10],
+                "max_profit": float(row[11]) if row[11] else None,
+                "max_loss": float(row[12]) if row[12] else None,
+                "status": row[13],
+                "outcome_reason": row[14],
+                "closed_at": row[15].isoformat() if row[15] else None,
+                "spot_at_close": float(row[16]) if row[16] else None,
+                "actual_pnl": float(row[17]) if row[17] else None,
+                "pnl_percent": float(row[18]) if row[18] else None,
+                "time_to_resolution": row[19]
+            })
+
+        return {
+            "success": True,
+            "data": {
+                "signals": signals,
+                "count": len(signals)
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get recent signals: {e}")
+        return {"success": False, "error": str(e)}
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@router.get("/signals/performance")
+async def get_signal_performance(
+    symbol: str = Query(default="SPY"),
+    days: int = Query(default=30, le=365)
+):
+    """
+    Get performance statistics for ARGUS trade signals.
+
+    Returns:
+    - Total signals, wins, losses
+    - Win rate
+    - Total P&L (simulated)
+    - Average win/loss
+    - Best/worst trade
+    - Performance by action type
+    """
+    conn = None
+    cursor = None
+    try:
+        conn = get_connection()
+        if not conn:
+            return {"success": True, "data": {"message": "Database not available"}}
+
+        cursor = conn.cursor()
+
+        # Overall stats
+        cursor.execute("""
+            SELECT
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE status = 'WIN') as wins,
+                COUNT(*) FILTER (WHERE status = 'LOSS') as losses,
+                COUNT(*) FILTER (WHERE status = 'OPEN') as open_signals,
+                COALESCE(SUM(actual_pnl), 0) as total_pnl,
+                COALESCE(AVG(actual_pnl) FILTER (WHERE status = 'WIN'), 0) as avg_win,
+                COALESCE(AVG(actual_pnl) FILTER (WHERE status = 'LOSS'), 0) as avg_loss,
+                COALESCE(MAX(actual_pnl), 0) as best_trade,
+                COALESCE(MIN(actual_pnl), 0) as worst_trade,
+                COALESCE(AVG(time_to_resolution) FILTER (WHERE status IN ('WIN', 'LOSS')), 0) as avg_resolution_time
+            FROM argus_trade_signals
+            WHERE symbol = %s
+            AND created_at > NOW() - INTERVAL '%s days'
+        """, (symbol, days))
+
+        row = cursor.fetchone()
+        total, wins, losses, open_count, total_pnl, avg_win, avg_loss, best, worst, avg_time = row
+
+        win_rate = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 0
+
+        # Stats by action type
+        cursor.execute("""
+            SELECT
+                action,
+                COUNT(*) as total,
+                COUNT(*) FILTER (WHERE status = 'WIN') as wins,
+                COUNT(*) FILTER (WHERE status = 'LOSS') as losses,
+                COALESCE(SUM(actual_pnl), 0) as total_pnl
+            FROM argus_trade_signals
+            WHERE symbol = %s
+            AND created_at > NOW() - INTERVAL '%s days'
+            AND status IN ('WIN', 'LOSS')
+            GROUP BY action
+            ORDER BY total DESC
+        """, (symbol, days))
+
+        by_action = []
+        for r in cursor.fetchall():
+            action_wins = r[2] or 0
+            action_losses = r[3] or 0
+            action_wr = (action_wins / (action_wins + action_losses) * 100) if (action_wins + action_losses) > 0 else 0
+            by_action.append({
+                "action": r[0],
+                "total": r[1],
+                "wins": action_wins,
+                "losses": action_losses,
+                "win_rate": round(action_wr, 1),
+                "total_pnl": float(r[4]) if r[4] else 0
+            })
+
+        # Recent performance (daily P&L for last 7 days)
+        cursor.execute("""
+            SELECT
+                DATE(closed_at) as trade_date,
+                COUNT(*) as trades,
+                COALESCE(SUM(actual_pnl), 0) as daily_pnl,
+                COUNT(*) FILTER (WHERE status = 'WIN') as wins
+            FROM argus_trade_signals
+            WHERE symbol = %s
+            AND closed_at > NOW() - INTERVAL '7 days'
+            AND status IN ('WIN', 'LOSS')
+            GROUP BY DATE(closed_at)
+            ORDER BY trade_date DESC
+        """, (symbol,))
+
+        daily_pnl = []
+        for r in cursor.fetchall():
+            daily_pnl.append({
+                "date": r[0].isoformat() if r[0] else None,
+                "trades": r[1],
+                "pnl": float(r[2]) if r[2] else 0,
+                "wins": r[3]
+            })
+
+        return {
+            "success": True,
+            "data": {
+                "summary": {
+                    "total_signals": total,
+                    "wins": wins,
+                    "losses": losses,
+                    "open": open_count,
+                    "win_rate": round(win_rate, 1),
+                    "total_pnl": round(float(total_pnl), 2),
+                    "avg_win": round(float(avg_win), 2),
+                    "avg_loss": round(float(avg_loss), 2),
+                    "best_trade": round(float(best), 2),
+                    "worst_trade": round(float(worst), 2),
+                    "avg_resolution_minutes": round(float(avg_time), 0)
+                },
+                "by_action": by_action,
+                "daily_pnl": daily_pnl,
+                "period_days": days
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to get signal performance: {e}")
+        return {"success": False, "error": str(e)}
+    finally:
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
+
+
+@router.post("/signals/update-outcomes")
+async def update_signal_outcomes(symbol: str = Query(default="SPY")):
+    """
+    Manually trigger outcome updates for open signals.
+    Called periodically or at market close.
+    """
+    try:
+        _update_signal_outcomes(symbol)
+        return {"success": True, "message": "Outcomes updated"}
+    except Exception as e:
+        logger.error(f"Failed to update outcomes: {e}")
+        return {"success": False, "error": str(e)}
 
 
 # ==================== OPTIMAL STRIKE RECOMMENDATIONS ====================

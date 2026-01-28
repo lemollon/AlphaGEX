@@ -1081,6 +1081,15 @@ export const apiClient = {
         spread_width: spreadWidth
       }
     }),
+  // Signal tracking & performance
+  logArgusSignal: (symbol: string, signalData: object) =>
+    api.post('/api/argus/signals/log', signalData, { params: { symbol } }),
+  getArgusRecentSignals: (symbol?: string, limit?: number, status?: string) =>
+    api.get('/api/argus/signals/recent', { params: { symbol, limit, status } }),
+  getArgusSignalPerformance: (symbol?: string, days?: number) =>
+    api.get('/api/argus/signals/performance', { params: { symbol, days } }),
+  updateArgusSignalOutcomes: (symbol?: string) =>
+    api.post('/api/argus/signals/update-outcomes', {}, { params: { symbol } }),
 
   // HYPERION - Weekly Gamma visualization for stocks/ETFs (Enhanced)
   getHyperionGamma: (symbol?: string, expiration?: string) =>
