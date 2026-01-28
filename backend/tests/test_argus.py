@@ -550,5 +550,171 @@ class TestArgusErrorHandling:
             assert "fetched_at" in data["data"], "Response must have 'fetched_at' timestamp"
 
 
+class TestArgusTradeAction:
+    """Tests for /api/argus/trade-action endpoint (Actionable Trade Recommendations)"""
+
+    def test_trade_action_returns_200(self):
+        """Test trade-action endpoint responds"""
+        response = client.get("/api/argus/trade-action?symbol=SPY")
+        assert response.status_code == 200
+
+    def test_trade_action_has_success_field(self):
+        """Test response has success field"""
+        response = client.get("/api/argus/trade-action?symbol=SPY")
+        data = response.json()
+        assert "success" in data
+
+    def test_trade_action_has_action_field(self):
+        """Test response has action field"""
+        response = client.get("/api/argus/trade-action?symbol=SPY")
+        data = response.json()
+        assert data.get("success") is True
+        assert "action" in data.get("data", {})
+
+    def test_trade_action_accepts_parameters(self):
+        """Test endpoint accepts account_size and risk parameters"""
+        response = client.get(
+            "/api/argus/trade-action",
+            params={
+                "symbol": "SPY",
+                "account_size": 100000,
+                "risk_per_trade_pct": 2.0,
+                "spread_width": 3
+            }
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data.get("success") is True
+
+    def test_trade_action_wait_has_reason(self):
+        """Test WAIT response has reason field"""
+        response = client.get("/api/argus/trade-action?symbol=SPY")
+        data = response.json()
+
+        if data.get("success") and data.get("data", {}).get("action") == "WAIT":
+            assert "reason" in data["data"], "WAIT response must have 'reason' field"
+
+    def test_trade_action_actionable_has_structure(self):
+        """Test actionable trade response has required structure"""
+        response = client.get("/api/argus/trade-action?symbol=SPY")
+        data = response.json()
+
+        if data.get("success"):
+            result = data.get("data", {})
+            action = result.get("action")
+
+            if action and action != "WAIT":
+                assert "direction" in result, "Must have direction"
+                assert "confidence" in result, "Must have confidence"
+                assert "trade_description" in result, "Must have trade_description"
+                assert "trade" in result, "Must have trade structure"
+                assert "why" in result, "Must have 'why' reasoning"
+                assert "sizing" in result, "Must have sizing"
+                assert "entry" in result, "Must have entry"
+                assert "exit" in result, "Must have exit rules"
+
+    def test_trade_action_sizing_structure(self):
+        """Test sizing has required fields"""
+        response = client.get("/api/argus/trade-action?symbol=SPY")
+        data = response.json()
+
+        if data.get("success"):
+            result = data.get("data", {})
+            if result.get("action") != "WAIT":
+                sizing = result.get("sizing", {})
+                assert "contracts" in sizing, "Sizing must have contracts"
+                assert "max_loss" in sizing, "Sizing must have max_loss"
+                assert "max_profit" in sizing, "Sizing must have max_profit"
+                assert "risk_reward" in sizing, "Sizing must have risk_reward"
+
+    def test_trade_action_exit_rules(self):
+        """Test exit rules has required fields"""
+        response = client.get("/api/argus/trade-action?symbol=SPY")
+        data = response.json()
+
+        if data.get("success"):
+            result = data.get("data", {})
+            if result.get("action") != "WAIT":
+                exit_rules = result.get("exit", {})
+                assert "profit_target" in exit_rules, "Exit must have profit_target"
+                assert "stop_loss" in exit_rules, "Exit must have stop_loss"
+
+
+class TestArgusSignalTracking:
+    """Tests for /api/argus/signals/* endpoints (Signal Performance Tracking)"""
+
+    def test_signals_recent_returns_200(self):
+        """Test signals/recent endpoint responds"""
+        response = client.get("/api/argus/signals/recent?symbol=SPY")
+        assert response.status_code == 200
+
+    def test_signals_recent_has_signals_array(self):
+        """Test response has signals array"""
+        response = client.get("/api/argus/signals/recent?symbol=SPY")
+        data = response.json()
+
+        if data.get("success"):
+            assert "signals" in data.get("data", {}), "Must have signals array"
+            assert isinstance(data["data"]["signals"], list), "Signals must be array"
+
+    def test_signals_performance_returns_200(self):
+        """Test signals/performance endpoint responds"""
+        response = client.get("/api/argus/signals/performance?symbol=SPY")
+        assert response.status_code == 200
+
+    def test_signals_performance_has_summary(self):
+        """Test performance response has summary structure"""
+        response = client.get("/api/argus/signals/performance?symbol=SPY")
+        data = response.json()
+
+        if data.get("success"):
+            result = data.get("data", {})
+            assert "summary" in result, "Must have summary"
+            summary = result["summary"]
+            assert "total_signals" in summary
+            assert "wins" in summary
+            assert "losses" in summary
+            assert "win_rate" in summary
+            assert "total_pnl" in summary
+
+    def test_signals_performance_has_by_action(self):
+        """Test performance has by_action breakdown"""
+        response = client.get("/api/argus/signals/performance?symbol=SPY")
+        data = response.json()
+
+        if data.get("success"):
+            result = data.get("data", {})
+            assert "by_action" in result, "Must have by_action"
+            assert isinstance(result["by_action"], list), "by_action must be array"
+
+    def test_signals_log_accepts_post(self):
+        """Test signals/log endpoint accepts POST"""
+        test_signal = {
+            "action": "TEST_SIGNAL",
+            "direction": "NEUTRAL",
+            "confidence": 50,
+            "trade_description": "Test signal - do not trade",
+            "trade": {"type": "TEST", "symbol": "SPY"},
+            "sizing": {"contracts": 1, "max_loss": "$100", "max_profit": "$50"},
+            "entry": "Test",
+            "exit": {"profit_target": "50%", "stop_loss": "2x"},
+            "market_context": {"spot": 590, "vix": 18}
+        }
+
+        response = client.post(
+            "/api/argus/signals/log",
+            params={"symbol": "SPY"},
+            json=test_signal
+        )
+        assert response.status_code == 200
+
+    def test_signals_update_outcomes_accepts_post(self):
+        """Test signals/update-outcomes endpoint accepts POST"""
+        response = client.post("/api/argus/signals/update-outcomes?symbol=SPY")
+        assert response.status_code == 200
+        data = response.json()
+        assert "success" in data
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

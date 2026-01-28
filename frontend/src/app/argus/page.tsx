@@ -560,6 +560,110 @@ const AVAILABLE_SYMBOLS = [
   { symbol: 'DIA', name: 'Dow Jones ETF', supported: true },
 ]
 
+// Actionable Trade Recommendation from /api/argus/trade-action
+interface ActionableTrade {
+  action: string
+  direction: string
+  confidence: number
+  trade_description: string
+  trade: {
+    type: string
+    symbol: string
+    short_strike?: number
+    long_strike?: number
+    put_spread?: { short: number; long: number }
+    call_spread?: { short: number; long: number }
+    credit?: number
+    debit?: number
+    expiration: string
+  } | null
+  why: string[]
+  sizing: {
+    contracts: number
+    max_loss: string
+    max_profit: string
+    risk_reward: string
+    account_risk_pct: string
+  }
+  entry: string
+  exit: {
+    profit_target: string
+    stop_loss: string
+    time_stop?: string
+    adjustment?: string
+  }
+  market_context: {
+    spot: number
+    vix: number
+    expected_move: number
+    gamma_regime: string
+    order_flow: string
+    flow_confidence: string
+    flip_point: number
+    call_wall: number | null
+    put_wall: number | null
+  }
+  reason?: string
+  context?: Record<string, string | number>
+  suggestions?: string[]
+  timestamp: string
+}
+
+// Signal Performance from /api/argus/signals/performance
+interface SignalPerformance {
+  summary: {
+    total_signals: number
+    wins: number
+    losses: number
+    open: number
+    win_rate: number
+    total_pnl: number
+    avg_win: number
+    avg_loss: number
+    best_trade: number
+    worst_trade: number
+    avg_resolution_minutes: number
+  }
+  by_action: Array<{
+    action: string
+    total: number
+    wins: number
+    losses: number
+    win_rate: number
+    total_pnl: number
+  }>
+  daily_pnl: Array<{
+    date: string
+    trades: number
+    pnl: number
+    wins: number
+  }>
+  period_days: number
+}
+
+interface RecentSignal {
+  id: number
+  created_at: string
+  action: string
+  direction: string
+  confidence: number
+  trade_description: string
+  spot_at_signal: number
+  credit: number
+  vix: number
+  gamma_regime: string
+  contracts: number
+  max_profit: number
+  max_loss: number
+  status: 'OPEN' | 'WIN' | 'LOSS' | 'EXPIRED'
+  outcome_reason: string | null
+  closed_at: string | null
+  spot_at_close: number | null
+  actual_pnl: number | null
+  pnl_percent: number | null
+  time_to_resolution: number | null
+}
+
 // =============================================================================
 // SAFE UTILITY FUNCTIONS - Prevent crashes from null/undefined values
 // =============================================================================
@@ -605,6 +709,14 @@ export default function ArgusPage() {
   const [emTrend, setEmTrend] = useState<EMTrendPoint[]>([])
   const [showAccuracyPanel, setShowAccuracyPanel] = useState(true)
   const [showTradeIdeas, setShowTradeIdeas] = useState(true)
+  const [actionableTrade, setActionableTrade] = useState<ActionableTrade | null>(null)
+  const [showActionableTrade, setShowActionableTrade] = useState(true)
+  const [accountSize, setAccountSize] = useState<number>(50000)
+  const [riskPerTrade, setRiskPerTrade] = useState<number>(1.0)
+  const [signalPerformance, setSignalPerformance] = useState<SignalPerformance | null>(null)
+  const [recentSignals, setRecentSignals] = useState<RecentSignal[]>([])
+  const [showPerformancePanel, setShowPerformancePanel] = useState(true)
+  const [autoLogSignals, setAutoLogSignals] = useState(false)
 
   // Next-day gamma data (tomorrow's expiration)
   const [tomorrowGammaData, setTomorrowGammaData] = useState<GammaData | null>(null)
@@ -1137,6 +1249,69 @@ export default function ArgusPage() {
     }
   }, [])
 
+  // Fetch actionable trade recommendation
+  const fetchActionableTrade = useCallback(async () => {
+    try {
+      const response = await apiClient.getArgusTradeAction(selectedSymbol, accountSize, riskPerTrade, 2)
+      if (response.data?.success && response.data?.data) {
+        const newTrade = response.data.data
+
+        // Auto-log signal if enabled and it's a trade (not WAIT)
+        if (autoLogSignals && newTrade.action !== 'WAIT' && newTrade.trade) {
+          try {
+            await apiClient.logArgusSignal(selectedSymbol, newTrade)
+          } catch (logErr) {
+            console.error('[ARGUS] Error auto-logging signal:', logErr)
+          }
+        }
+
+        setActionableTrade(newTrade)
+      }
+    } catch (err) {
+      console.error('[ARGUS] Error fetching actionable trade:', err)
+    }
+  }, [selectedSymbol, accountSize, riskPerTrade, autoLogSignals])
+
+  // Fetch signal performance stats
+  const fetchSignalPerformance = useCallback(async () => {
+    try {
+      const response = await apiClient.getArgusSignalPerformance(selectedSymbol, 30)
+      if (response.data?.success && response.data?.data) {
+        setSignalPerformance(response.data.data)
+      }
+    } catch (err) {
+      console.error('[ARGUS] Error fetching signal performance:', err)
+    }
+  }, [selectedSymbol])
+
+  // Fetch recent signals
+  const fetchRecentSignals = useCallback(async () => {
+    try {
+      const response = await apiClient.getArgusRecentSignals(selectedSymbol, 10)
+      if (response.data?.success && response.data?.data?.signals) {
+        setRecentSignals(response.data.data.signals)
+      }
+    } catch (err) {
+      console.error('[ARGUS] Error fetching recent signals:', err)
+    }
+  }, [selectedSymbol])
+
+  // Log current signal manually
+  const logCurrentSignal = useCallback(async () => {
+    if (!actionableTrade || actionableTrade.action === 'WAIT') return
+
+    try {
+      const response = await apiClient.logArgusSignal(selectedSymbol, actionableTrade)
+      if (response.data?.success) {
+        // Refresh signals after logging
+        fetchRecentSignals()
+        fetchSignalPerformance()
+      }
+    } catch (err) {
+      console.error('[ARGUS] Error logging signal:', err)
+    }
+  }, [actionableTrade, selectedSymbol, fetchRecentSignals, fetchSignalPerformance])
+
   // Generate trade ideas based on current gamma structure
   const generateTradeIdeas = useCallback(() => {
     if (!gammaData) return
@@ -1340,7 +1515,10 @@ export default function ArgusPage() {
           fetchGammaFlips30m(),
           fetchAccuracyMetrics(),
           fetchBotPositions(),
-          fetchPatternMatches()
+          fetchPatternMatches(),
+          fetchActionableTrade(),    // Fetch actionable trade recommendation
+          fetchSignalPerformance(),  // Fetch signal performance stats
+          fetchRecentSignals()       // Fetch recent signals
         ])
       } catch (err) {
         console.error('Error fetching initial data:', err)
@@ -1379,23 +1557,26 @@ export default function ArgusPage() {
         fetchDangerZoneLogs()
       }, 15000)
 
-      // Medium polling: Alerts, context, trends, flips, bots every 30 seconds
+      // Medium polling: Alerts, context, trends, flips, bots, trade action every 30 seconds
       mediumPollRef.current = setInterval(() => {
-        console.log('[ARGUS] Medium poll: fetching alerts, context, trends, flips, bots')
+        console.log('[ARGUS] Medium poll: fetching alerts, context, trends, flips, bots, trade action')
         fetchAlerts()
         fetchContext()
         fetchStrikeTrends()
         fetchGammaFlips30m()
         fetchBotPositions()
+        fetchActionableTrade()
       }, 30000)
 
-      // Slow polling: Commentary, accuracy, patterns, tomorrow's data, history every 60 seconds
+      // Slow polling: Commentary, accuracy, patterns, performance, tomorrow's data, history every 60 seconds
       slowPollRef.current = setInterval(() => {
         fetchCommentary()
         fetchAccuracyMetrics()
         fetchPatternMatches()
         fetchTomorrowGammaData()
         fetchGammaHistory()  // Update history for Evolution Chart
+        fetchSignalPerformance()  // Update signal performance stats
+        fetchRecentSignals()      // Update recent signals
       }, 60000)
     }
 
@@ -2541,6 +2722,299 @@ export default function ArgusPage() {
               {timeToExpiry || '--:--'}
             </div>
           </div>
+        </div>
+
+        {/* ACTIONABLE TRADE + PERFORMANCE - Two Column Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+          {/* Actionable Trade Panel - Takes 2/3 */}
+          {showActionableTrade && actionableTrade && (
+            <div className="lg:col-span-2">
+              <div className={`rounded-xl p-4 border ${
+                actionableTrade.action === 'WAIT'
+                  ? 'bg-gray-800/50 border-gray-600/50'
+                  : actionableTrade.direction?.includes('BULLISH')
+                  ? 'bg-gradient-to-r from-emerald-900/40 to-cyan-900/30 border-emerald-500/50'
+                  : actionableTrade.direction?.includes('BEARISH')
+                  ? 'bg-gradient-to-r from-rose-900/40 to-orange-900/30 border-rose-500/50'
+                  : 'bg-gradient-to-r from-indigo-900/40 to-purple-900/30 border-indigo-500/50'
+              }`}>
+                {/* Compact Header */}
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
+                      actionableTrade.action === 'WAIT' ? 'bg-gray-700' :
+                      actionableTrade.direction?.includes('BULLISH') ? 'bg-emerald-500' :
+                      actionableTrade.direction?.includes('BEARISH') ? 'bg-rose-500' : 'bg-indigo-500'
+                    }`}>
+                      {actionableTrade.action === 'WAIT' ? (
+                        <Clock className="w-4 h-4 text-white" />
+                      ) : actionableTrade.direction?.includes('BULLISH') ? (
+                        <TrendingUp className="w-4 h-4 text-white" />
+                      ) : actionableTrade.direction?.includes('BEARISH') ? (
+                        <TrendingDown className="w-4 h-4 text-white" />
+                      ) : (
+                        <Target className="w-4 h-4 text-white" />
+                      )}
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-white flex items-center gap-2">
+                        Actionable Trade
+                        <span className={`text-xs px-2 py-0.5 rounded font-bold ${
+                          actionableTrade.action === 'WAIT' ? 'bg-gray-600 text-gray-300' :
+                          actionableTrade.confidence >= 75 ? 'bg-emerald-500 text-white' :
+                          actionableTrade.confidence >= 60 ? 'bg-yellow-500 text-black' : 'bg-orange-500 text-white'
+                        }`}>
+                          {actionableTrade.confidence}%
+                        </span>
+                      </h3>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {actionableTrade.action !== 'WAIT' && (
+                      <button
+                        onClick={logCurrentSignal}
+                        className="text-xs bg-indigo-500/20 text-indigo-400 px-2 py-1 rounded hover:bg-indigo-500/30"
+                        title="Log this signal for tracking"
+                      >
+                        Log Signal
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {actionableTrade.action !== 'WAIT' && actionableTrade.trade ? (
+                  <>
+                    {/* THE TRADE - Prominent */}
+                    <div className="bg-black/40 rounded-lg p-3 mb-3 border border-white/10">
+                      <div className="text-lg font-bold font-mono text-white">
+                        {actionableTrade.trade_description}
+                      </div>
+                    </div>
+
+                    {/* Compact Risk Grid */}
+                    <div className="grid grid-cols-4 gap-2 mb-3">
+                      <div className="bg-black/30 rounded p-2 text-center">
+                        <div className="text-[10px] text-gray-500">Contracts</div>
+                        <div className="text-lg font-bold text-white">{actionableTrade.sizing?.contracts}</div>
+                      </div>
+                      <div className="bg-black/30 rounded p-2 text-center">
+                        <div className="text-[10px] text-gray-500">Max Profit</div>
+                        <div className="text-lg font-bold text-emerald-400">{actionableTrade.sizing?.max_profit}</div>
+                      </div>
+                      <div className="bg-black/30 rounded p-2 text-center">
+                        <div className="text-[10px] text-gray-500">Max Loss</div>
+                        <div className="text-lg font-bold text-rose-400">{actionableTrade.sizing?.max_loss}</div>
+                      </div>
+                      <div className="bg-black/30 rounded p-2 text-center">
+                        <div className="text-[10px] text-gray-500">R:R</div>
+                        <div className="text-lg font-bold text-cyan-400">{actionableTrade.sizing?.risk_reward}</div>
+                      </div>
+                    </div>
+
+                    {/* WHY + EXIT in 2 columns */}
+                    <div className="grid grid-cols-2 gap-3 mb-3">
+                      {/* WHY (compact) */}
+                      <div className="bg-black/20 rounded-lg p-2">
+                        <div className="text-[10px] text-gray-500 mb-1 flex items-center gap-1">
+                          <Brain className="w-3 h-3" /> WHY
+                        </div>
+                        <div className="space-y-0.5 text-xs text-gray-300 max-h-24 overflow-y-auto">
+                          {actionableTrade.why?.slice(0, 3).map((reason, idx) => (
+                            <div key={idx} className="flex items-start gap-1">
+                              <span className="text-cyan-400">•</span>
+                              <span className="line-clamp-2">{reason.split(':')[0]}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      {/* EXIT */}
+                      <div className="bg-black/20 rounded-lg p-2">
+                        <div className="text-[10px] text-gray-500 mb-1 flex items-center gap-1">
+                          <Target className="w-3 h-3" /> EXIT
+                        </div>
+                        <div className="space-y-0.5 text-xs">
+                          {actionableTrade.exit?.profit_target && (
+                            <div className="text-emerald-400 truncate">✓ {actionableTrade.exit.profit_target}</div>
+                          )}
+                          {actionableTrade.exit?.stop_loss && (
+                            <div className="text-rose-400 truncate">✗ {actionableTrade.exit.stop_loss}</div>
+                          )}
+                          {actionableTrade.exit?.time_stop && (
+                            <div className="text-yellow-400 truncate">⏰ {actionableTrade.exit.time_stop}</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Compact Settings Row */}
+                    <div className="flex items-center gap-3 pt-2 border-t border-white/10 text-xs">
+                      <div className="flex items-center gap-1">
+                        <span className="text-gray-500">Acct:</span>
+                        <input
+                          type="number"
+                          value={accountSize}
+                          onChange={(e) => setAccountSize(Number(e.target.value))}
+                          className="w-20 bg-black/30 border border-gray-600 rounded px-1 py-0.5 text-white"
+                        />
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <span className="text-gray-500">Risk:</span>
+                        <input
+                          type="number"
+                          value={riskPerTrade}
+                          onChange={(e) => setRiskPerTrade(Number(e.target.value))}
+                          step="0.5"
+                          min="0.5"
+                          max="5"
+                          className="w-12 bg-black/30 border border-gray-600 rounded px-1 py-0.5 text-white"
+                        />
+                        <span className="text-gray-500">%</span>
+                      </div>
+                      <label className="flex items-center gap-1 ml-auto cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={autoLogSignals}
+                          onChange={(e) => setAutoLogSignals(e.target.checked)}
+                          className="w-3 h-3"
+                        />
+                        <span className="text-gray-400">Auto-log</span>
+                      </label>
+                      <button
+                        onClick={fetchActionableTrade}
+                        className="bg-cyan-500/20 text-cyan-400 px-2 py-0.5 rounded hover:bg-cyan-500/30"
+                      >
+                        Refresh
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  /* WAIT state - compact */
+                  <div className="text-center py-4">
+                    <p className="text-gray-400 text-sm mb-2">{actionableTrade.reason}</p>
+                    {actionableTrade.suggestions && (
+                      <div className="text-left text-xs space-y-1">
+                        {actionableTrade.suggestions.slice(0, 2).map((s, i) => (
+                          <div key={i} className="text-gray-300 flex items-center gap-1">
+                            <span className="text-cyan-400">→</span> {s}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Performance Panel - Takes 1/3 */}
+          {showPerformancePanel && (
+            <div className="lg:col-span-1">
+              <div className="bg-gray-800/50 rounded-xl p-4 border border-gray-700/50 h-full">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-bold text-white flex items-center gap-2 text-sm">
+                    <BarChart3 className="w-4 h-4 text-indigo-400" />
+                    Signal Performance
+                  </h3>
+                  <span className="text-[10px] text-gray-500">30d</span>
+                </div>
+
+                {signalPerformance?.summary ? (
+                  <>
+                    {/* Win Rate Circle */}
+                    <div className="flex items-center justify-center mb-3">
+                      <div className="relative w-20 h-20">
+                        <svg className="w-full h-full transform -rotate-90">
+                          <circle
+                            cx="40" cy="40" r="35"
+                            stroke="currentColor"
+                            strokeWidth="6"
+                            fill="none"
+                            className="text-gray-700"
+                          />
+                          <circle
+                            cx="40" cy="40" r="35"
+                            stroke="currentColor"
+                            strokeWidth="6"
+                            fill="none"
+                            strokeDasharray={`${signalPerformance.summary.win_rate * 2.2} 220`}
+                            className={signalPerformance.summary.win_rate >= 50 ? 'text-emerald-500' : 'text-rose-500'}
+                          />
+                        </svg>
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <div className="text-center">
+                            <div className={`text-xl font-bold ${signalPerformance.summary.win_rate >= 50 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                              {signalPerformance.summary.win_rate.toFixed(0)}%
+                            </div>
+                            <div className="text-[10px] text-gray-500">Win Rate</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Stats Grid */}
+                    <div className="grid grid-cols-2 gap-2 mb-3">
+                      <div className="bg-black/30 rounded p-2 text-center">
+                        <div className="text-[10px] text-gray-500">Total P&L</div>
+                        <div className={`text-sm font-bold ${signalPerformance.summary.total_pnl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          ${signalPerformance.summary.total_pnl.toFixed(0)}
+                        </div>
+                      </div>
+                      <div className="bg-black/30 rounded p-2 text-center">
+                        <div className="text-[10px] text-gray-500">Trades</div>
+                        <div className="text-sm font-bold text-white">
+                          {signalPerformance.summary.wins}W / {signalPerformance.summary.losses}L
+                        </div>
+                      </div>
+                      <div className="bg-black/30 rounded p-2 text-center">
+                        <div className="text-[10px] text-gray-500">Avg Win</div>
+                        <div className="text-sm font-bold text-emerald-400">
+                          ${signalPerformance.summary.avg_win.toFixed(0)}
+                        </div>
+                      </div>
+                      <div className="bg-black/30 rounded p-2 text-center">
+                        <div className="text-[10px] text-gray-500">Avg Loss</div>
+                        <div className="text-sm font-bold text-rose-400">
+                          ${Math.abs(signalPerformance.summary.avg_loss).toFixed(0)}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Recent Signals (compact list) */}
+                    {recentSignals.length > 0 && (
+                      <div>
+                        <div className="text-[10px] text-gray-500 mb-1">Recent Signals</div>
+                        <div className="space-y-1 max-h-24 overflow-y-auto">
+                          {recentSignals.slice(0, 4).map((sig) => (
+                            <div key={sig.id} className="flex items-center justify-between text-xs bg-black/20 rounded px-2 py-1">
+                              <div className="flex items-center gap-1">
+                                <span className={`w-1.5 h-1.5 rounded-full ${
+                                  sig.status === 'WIN' ? 'bg-emerald-500' :
+                                  sig.status === 'LOSS' ? 'bg-rose-500' :
+                                  sig.status === 'OPEN' ? 'bg-yellow-500' : 'bg-gray-500'
+                                }`} />
+                                <span className="text-gray-300 truncate max-w-[100px]">{sig.action}</span>
+                              </div>
+                              <span className={`font-mono ${
+                                (sig.actual_pnl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'
+                              }`}>
+                                {sig.status === 'OPEN' ? 'OPEN' : `$${(sig.actual_pnl || 0).toFixed(0)}`}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="text-center py-8 text-gray-500 text-sm">
+                    <BarChart3 className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                    <p>No signals tracked yet</p>
+                    <p className="text-xs mt-1">Click "Log Signal" to start tracking</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Trade Ideas Section */}

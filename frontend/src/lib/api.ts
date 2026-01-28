@@ -1072,6 +1072,24 @@ export const apiClient = {
   getArgusDangerZoneLogs: () => api.get('/api/argus/danger-zones/log'),
   getArgusStrikeTrends: () => api.get('/api/argus/strike-trends'),
   getArgusGammaFlips: () => api.get('/api/argus/gamma-flips'),
+  getArgusTradeAction: (symbol?: string, accountSize?: number, riskPct?: number, spreadWidth?: number) =>
+    api.get('/api/argus/trade-action', {
+      params: {
+        symbol,
+        account_size: accountSize,
+        risk_per_trade_pct: riskPct,
+        spread_width: spreadWidth
+      }
+    }),
+  // Signal tracking & performance
+  logArgusSignal: (symbol: string, signalData: object) =>
+    api.post('/api/argus/signals/log', signalData, { params: { symbol } }),
+  getArgusRecentSignals: (symbol?: string, limit?: number, status?: string) =>
+    api.get('/api/argus/signals/recent', { params: { symbol, limit, status } }),
+  getArgusSignalPerformance: (symbol?: string, days?: number) =>
+    api.get('/api/argus/signals/performance', { params: { symbol, days } }),
+  updateArgusSignalOutcomes: (symbol?: string) =>
+    api.post('/api/argus/signals/update-outcomes', {}, { params: { symbol } }),
 
   // HYPERION - Weekly Gamma visualization for stocks/ETFs (Enhanced)
   getHyperionGamma: (symbol?: string, expiration?: string) =>

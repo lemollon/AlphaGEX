@@ -27,9 +27,10 @@ fi
 echo ""
 echo "TEST 2: Table Has Required Columns"
 echo "-----------------------------------"
-COLUMNS=$(psql $DATABASE_URL -t -c "SELECT column_name FROM information_schema.columns WHERE table_name = 'argus_order_flow_history' ORDER BY ordinal_position;" 2>/dev/null)
+# Use sed to strip leading/trailing whitespace from each line
+COLUMNS=$(psql $DATABASE_URL -t -c "SELECT column_name FROM information_schema.columns WHERE table_name = 'argus_order_flow_history' ORDER BY ordinal_position;" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 for col in net_pressure raw_pressure combined_signal signal_confidence total_bid_size total_ask_size; do
-    if echo "$COLUMNS" | grep -q "$col"; then
+    if echo "$COLUMNS" | grep -qw "$col"; then
         pass "Column '$col' exists"
     else
         fail "Column '$col' missing"
