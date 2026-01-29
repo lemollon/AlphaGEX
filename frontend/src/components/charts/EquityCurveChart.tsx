@@ -120,6 +120,8 @@ interface IntradayEquityData {
   high_of_day: number
   low_of_day: number
   snapshots_count: number
+  today_closed_count?: number  // Number of trades closed today
+  open_positions_count?: number  // Number of currently open positions
 }
 
 interface EquityCurveChartProps {
@@ -724,31 +726,170 @@ export default function EquityCurveChart({
         </div>
       )}
 
-      {/* Intraday Info Banner */}
-      {viewMode === 'intraday' && intradayData && (
-        <div className="px-4 py-2 border-b border-gray-800 bg-gray-900/50 flex items-center justify-between text-xs">
-          <div className="flex items-center gap-4">
-            <span className="text-gray-400">
-              High: <span className="text-green-400 font-medium">${intradayData.high_of_day?.toLocaleString()}</span>
-            </span>
-            <span className="text-gray-400">
-              Low: <span className="text-red-400 font-medium">${intradayData.low_of_day?.toLocaleString()}</span>
-            </span>
-            <span className="text-gray-400">
-              Current: <span className="text-white font-medium">${intradayData.current_equity?.toLocaleString()}</span>
-              {/* Show note if snapshots might be stale */}
-              {intradayData.snapshots_count === 0 && (
-                <span className="text-yellow-500 ml-1" title="No snapshots recorded today - showing realized P&L only">
-                  (realized only)
+      {/* Intraday P&L Breakdown Panel - Shows CLEAR distinction between realized and unrealized */}
+      {viewMode === 'intraday' && intradayData && (() => {
+        // Use backend-provided counts (preferred) or fall back to last data point
+        const lastDataPoint = intradayData.data_points?.[intradayData.data_points.length - 1]
+        const openPositionsCount = intradayData.open_positions_count ?? lastDataPoint?.open_positions ?? 0
+        const closedTradesCount = intradayData.today_closed_count ?? 0
+        const dayRealized = intradayData.day_realized ?? 0
+        const dayUnrealized = intradayData.day_unrealized ?? 0
+        const hasClosedTrades = closedTradesCount > 0 || dayRealized !== 0
+        const hasOpenPositions = openPositionsCount > 0
+
+        return (
+        <div className="px-4 py-3 border-b border-gray-800 bg-gray-900/50">
+          {/* P&L Breakdown Cards */}
+          <div className="grid grid-cols-2 gap-3 mb-3">
+            {/* Realized P&L - Closed Trades */}
+            <div className={`rounded-lg p-3 border ${
+              !hasClosedTrades
+                ? 'bg-gray-500/10 border-gray-500/30'
+                : dayRealized >= 0
+                  ? 'bg-green-500/10 border-green-500/30'
+                  : 'bg-red-500/10 border-red-500/30'
+            }`}>
+              <div className="flex items-center gap-2 mb-1">
+                <div className={`w-2 h-2 rounded-full ${
+                  !hasClosedTrades
+                    ? 'bg-gray-400'
+                    : dayRealized >= 0 ? 'bg-green-400' : 'bg-red-400'
+                }`} />
+                <span className="text-xs text-gray-400 font-medium uppercase tracking-wide">
+                  Realized P&L
                 </span>
-              )}
+                <span className={`text-xs px-1.5 py-0.5 rounded border ${
+                  hasClosedTrades
+                    ? 'bg-gray-800 text-gray-300 border-gray-700'
+                    : 'bg-gray-800 text-gray-500 border-gray-700'
+                }`}>
+                  {hasClosedTrades
+                    ? `${closedTradesCount} Trade${closedTradesCount !== 1 ? 's' : ''} Closed Today`
+                    : 'No Trades Closed'}
+                </span>
+              </div>
+              <div className={`text-xl font-bold ${
+                !hasClosedTrades
+                  ? 'text-gray-400'
+                  : dayRealized >= 0 ? 'text-green-400' : 'text-red-400'
+              }`}>
+                {!hasClosedTrades
+                  ? '$0'
+                  : `${dayRealized >= 0 ? '+' : ''}$${dayRealized.toLocaleString()}`}
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                {!hasClosedTrades
+                  ? '— No trades closed today yet'
+                  : dayRealized >= 0
+                    ? `✓ Profit${closedTradesCount !== 1 ? 's' : ''} locked in from ${closedTradesCount} closed trade${closedTradesCount !== 1 ? 's' : ''}`
+                    : `✗ Loss${closedTradesCount !== 1 ? 'es' : ''} realized from ${closedTradesCount} closed trade${closedTradesCount !== 1 ? 's' : ''}`}
+              </p>
+            </div>
+
+            {/* Unrealized P&L - Open Positions */}
+            <div className={`rounded-lg p-3 border ${
+              !hasOpenPositions
+                ? 'bg-gray-500/10 border-gray-500/30'
+                : dayUnrealized >= 0
+                  ? 'bg-green-500/10 border-green-500/30'
+                  : 'bg-red-500/10 border-red-500/30'
+            }`}>
+              <div className="flex items-center gap-2 mb-1">
+                <div className={`w-2 h-2 rounded-full ${
+                  !hasOpenPositions
+                    ? 'bg-gray-400'
+                    : dayUnrealized >= 0 ? 'bg-green-400 animate-pulse' : 'bg-red-400 animate-pulse'
+                }`} />
+                <span className="text-xs text-gray-400 font-medium uppercase tracking-wide">
+                  Unrealized P&L
+                </span>
+                <span className={`text-xs px-1.5 py-0.5 rounded border ${
+                  hasOpenPositions
+                    ? 'bg-blue-500/20 text-blue-400 border-blue-500/30'
+                    : 'bg-gray-800 text-gray-400 border-gray-700'
+                }`}>
+                  {hasOpenPositions
+                    ? `${openPositionsCount} Open Position${openPositionsCount > 1 ? 's' : ''}`
+                    : 'No Open Positions'}
+                </span>
+              </div>
+              <div className={`text-xl font-bold ${
+                !hasOpenPositions
+                  ? 'text-gray-400'
+                  : dayUnrealized >= 0 ? 'text-green-400' : 'text-red-400'
+              }`}>
+                {!hasOpenPositions
+                  ? '$0'
+                  : `${dayUnrealized >= 0 ? '+' : ''}$${dayUnrealized.toLocaleString()}`}
+              </div>
+              <p className="text-xs text-gray-500 mt-1">
+                {!hasOpenPositions
+                  ? '— No open positions currently'
+                  : dayUnrealized >= 0
+                    ? `↑ Open position${openPositionsCount > 1 ? 's are' : ' is'} profitable`
+                    : `↓ Open position${openPositionsCount > 1 ? 's are' : ' is'} underwater`}
+              </p>
+            </div>
+          </div>
+
+          {/* Explanation Banner - Shows when realized positive but unrealized negative */}
+          {(intradayData.day_realized ?? 0) > 0 && (intradayData.day_unrealized ?? 0) < 0 && (
+            <div className="mb-3 p-2 rounded-lg bg-blue-500/10 border border-blue-500/30">
+              <p className="text-xs text-blue-300">
+                <span className="font-semibold">Why is the curve going up?</span> You've locked in{' '}
+                <span className="text-green-400 font-bold">+${(intradayData.day_realized ?? 0).toLocaleString()}</span>{' '}
+                from closed trades today. The open position is{' '}
+                <span className="text-red-400 font-bold">${(intradayData.day_unrealized ?? 0).toLocaleString()}</span>{' '}
+                underwater, but that hasn't erased your realized gains. Net P&L:{' '}
+                <span className={`font-bold ${(intradayData.day_pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {(intradayData.day_pnl ?? 0) >= 0 ? '+' : ''}${(intradayData.day_pnl ?? 0).toLocaleString()}
+                </span>
+              </p>
+            </div>
+          )}
+
+          {/* Explanation Banner - Shows when realized negative but unrealized positive */}
+          {(intradayData.day_realized ?? 0) < 0 && (intradayData.day_unrealized ?? 0) > 0 && (
+            <div className="mb-3 p-2 rounded-lg bg-yellow-500/10 border border-yellow-500/30">
+              <p className="text-xs text-yellow-300">
+                <span className="font-semibold">P&L Breakdown:</span> Closed trades show{' '}
+                <span className="text-red-400 font-bold">${(intradayData.day_realized ?? 0).toLocaleString()}</span>{' '}
+                in realized losses. However, your open position is currently{' '}
+                <span className="text-green-400 font-bold">+${(intradayData.day_unrealized ?? 0).toLocaleString()}</span>{' '}
+                in profit (unrealized). Net P&L:{' '}
+                <span className={`font-bold ${(intradayData.day_pnl ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {(intradayData.day_pnl ?? 0) >= 0 ? '+' : ''}${(intradayData.day_pnl ?? 0).toLocaleString()}
+                </span>
+              </p>
+            </div>
+          )}
+
+          {/* High/Low/Current Stats Row */}
+          <div className="flex items-center justify-between text-xs">
+            <div className="flex items-center gap-4">
+              <span className="text-gray-400">
+                High: <span className="text-green-400 font-medium">${intradayData.high_of_day?.toLocaleString()}</span>
+              </span>
+              <span className="text-gray-400">
+                Low: <span className="text-red-400 font-medium">${intradayData.low_of_day?.toLocaleString()}</span>
+              </span>
+              <span className="text-gray-400">
+                Current: <span className="text-white font-medium">${intradayData.current_equity?.toLocaleString()}</span>
+                {/* Show note if snapshots might be stale */}
+                {intradayData.snapshots_count === 0 && (
+                  <span className="text-yellow-500 ml-1" title="No snapshots recorded today - showing realized P&L only">
+                    (realized only)
+                  </span>
+                )}
+              </span>
+            </div>
+            <span className="text-gray-500">
+              Snapshots every 5 min, refreshing every 30 sec
             </span>
           </div>
-          <span className="text-gray-500">
-            Snapshots every 5 min, refreshing every 30 sec
-          </span>
         </div>
-      )}
+        )
+      })()}
 
       {/* Main Chart */}
       <div className="p-4" style={{ height }}>

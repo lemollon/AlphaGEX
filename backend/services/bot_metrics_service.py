@@ -1057,6 +1057,8 @@ class BotMetricsService:
                 "high_of_day": round(high_of_day, 2),
                 "low_of_day": round(low_of_day, 2),
                 "snapshots_count": len(snapshots),
+                "today_closed_count": today_closed_count,  # Number of trades closed today
+                "open_positions_count": open_count,  # Number of currently open positions
                 "capital_source": capital_config.capital_source,
                 "capital_config": capital_config.to_dict()
             }
@@ -1130,6 +1132,8 @@ class BotMetricsService:
             "high_of_day": starting_capital,
             "low_of_day": starting_capital,
             "snapshots_count": 0,
+            "today_closed_count": 0,  # Number of trades closed today
+            "open_positions_count": 0,  # Number of currently open positions
             "capital_source": "default",
             "message": "No intraday data found"
         }
