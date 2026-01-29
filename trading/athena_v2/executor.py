@@ -454,20 +454,45 @@ class OrderExecutor:
         position: SpreadPosition,
         reason: str
     ) -> Tuple[bool, float, float]:
-        """Close paper position with simulated pricing"""
-        try:
-            # Get current underlying price
-            current_price = self._get_current_price()
-            if not current_price:
-                logger.warning(
-                    f"Could not fetch current price for {position.position_id}, "
-                    f"using entry price ${position.underlying_at_entry:.2f} for P&L calculation. "
-                    f"This may result in inaccurate P&L!"
-                )
-                current_price = position.underlying_at_entry
+        """Close paper position with simulated pricing.
 
-            # Estimate current spread value
-            close_price = self._estimate_spread_value(position, current_price)
+        BUG FIX: Uses mark-to-market for consistency with unrealized P&L display.
+        Previously used simplified estimation which gave different values than
+        what was shown during the day, causing confusion.
+        """
+        try:
+            # Try mark-to-market first for consistency with unrealized P&L display
+            close_price = None
+            try:
+                from trading.mark_to_market import calculate_spread_mark_to_market
+                spread_type_str = "BULL_CALL" if position.spread_type == SpreadType.BULL_CALL else "BEAR_PUT"
+                mtm = calculate_spread_mark_to_market(
+                    underlying=position.ticker,
+                    expiration=position.expiration,
+                    long_strike=position.long_strike,
+                    short_strike=position.short_strike,
+                    spread_type=spread_type_str,
+                    contracts=position.contracts,
+                    entry_debit=position.entry_debit,
+                    use_cache=False  # Fresh prices for closing
+                )
+                if mtm.get('success') and mtm.get('current_value') is not None:
+                    close_price = mtm['current_value']
+                    logger.info(f"ATHENA PAPER CLOSE MTM: {position.position_id} close_value=${close_price:.4f}")
+            except Exception as e:
+                logger.debug(f"MTM failed for paper close, using estimation: {e}")
+
+            # Fallback to estimation if MTM fails
+            if close_price is None:
+                current_price = self._get_current_price()
+                if not current_price:
+                    logger.warning(
+                        f"Could not fetch current price for {position.position_id}, "
+                        f"using entry price ${position.underlying_at_entry:.2f} for P&L calculation. "
+                        f"This may result in inaccurate P&L!"
+                    )
+                    current_price = position.underlying_at_entry
+                close_price = self._estimate_spread_value(position, current_price)
 
             # Calculate P&L
             # For debit spreads: P&L = (close_value - entry_debit) * 100 * contracts
