@@ -4569,11 +4569,18 @@ async def get_trade_action(
         flip_point = snapshot.get('flip_point', spot)
         strikes_data = snapshot.get('strikes', [])
 
-        # Get order flow data if available
-        order_flow = snapshot.get('order_flow', {})
+        # Calculate order flow from StrikeData objects (not from snapshot which doesn't include it)
+        # The GammaSnapshot.to_dict() doesn't include order_flow, so we must calculate it
+        order_flow = {}
+        if engine.previous_snapshot and engine.previous_snapshot.strikes:
+            order_flow = engine.calculate_net_gex_volume(
+                engine.previous_snapshot.strikes,
+                spot,
+                update_smoothing=False  # Don't corrupt history with repeated reads
+            )
         flow_signal = order_flow.get('combined_signal', 'NEUTRAL')
         flow_confidence = order_flow.get('signal_confidence', 'LOW')
-        net_pressure = order_flow.get('net_pressure', 0)
+        net_pressure = order_flow.get('bid_ask_pressure', {}).get('net_pressure', 0)
 
         # Find gamma walls (key levels)
         call_wall = None
