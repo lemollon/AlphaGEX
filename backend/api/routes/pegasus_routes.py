@@ -210,11 +210,15 @@ def _calculate_pegasus_unrealized_pnl(positions: list) -> dict:
                 factor = min(put_dist, call_dist) / 2
                 current_value = total_credit * max(0.1, 0.5 - factor * 0.3)
             elif spx_price <= put_short:
+                # BUG FIX: Remove arbitrary +0.2 buffer that caused unrealized losses
+                # to be overstated vs actual settlement. Settlement uses pure intrinsic
+                # value for SPX European-style cash settlement.
                 intrinsic = put_short - spx_price
-                current_value = min(spread_width, intrinsic + total_credit * 0.2)
+                current_value = min(spread_width, intrinsic)
             else:
+                # BUG FIX: Same fix for call side breach
                 intrinsic = spx_price - call_short
-                current_value = min(spread_width, intrinsic + total_credit * 0.2)
+                current_value = min(spread_width, intrinsic)
 
             pos_unrealized = (total_credit - current_value) * 100 * contracts
             pos_result['unrealized_pnl'] = round(pos_unrealized, 2)
