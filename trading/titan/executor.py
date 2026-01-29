@@ -465,10 +465,32 @@ class OrderExecutor:
                     f"IC value=${close_value:.2f}"
                 )
             else:
-                current_price = self._get_current_spx_price()
-                if not current_price:
-                    current_price = position.underlying_at_entry
-                close_value = self._estimate_ic_value(position, current_price)
+                # BUG FIX: Use mark-to-market for early closes for consistency with unrealized P&L display
+                close_value = None
+                try:
+                    from trading.mark_to_market import calculate_ic_mark_to_market
+                    mtm = calculate_ic_mark_to_market(
+                        underlying="SPX",
+                        expiration=position.expiration,
+                        put_short=position.put_short_strike,
+                        put_long=position.put_long_strike,
+                        call_short=position.call_short_strike,
+                        call_long=position.call_long_strike,
+                        contracts=position.contracts,
+                        entry_credit=position.total_credit,
+                        use_cache=False
+                    )
+                    if mtm.get('success') and mtm.get('current_value') is not None:
+                        close_value = mtm['current_value']
+                        logger.info(f"TITAN PAPER CLOSE MTM: {position.position_id} close_value=${close_value:.4f}")
+                except Exception as e:
+                    logger.debug(f"MTM failed for paper close, using estimation: {e}")
+
+                if close_value is None:
+                    current_price = self._get_current_spx_price()
+                    if not current_price:
+                        current_price = position.underlying_at_entry
+                    close_value = self._estimate_ic_value(position, current_price)
 
             pnl = (position.total_credit - close_value) * 100 * position.contracts
 
