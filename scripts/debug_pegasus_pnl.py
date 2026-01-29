@@ -202,3 +202,39 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def check_yesterday():
+    """Check yesterday's positions in detail"""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    yesterday = (datetime.now(CT) - timedelta(days=1)).strftime('%Y-%m-%d')
+    
+    print(f"\n{'='*80}")
+    print(f"YESTERDAY'S POSITIONS ({yesterday}) - DETAILED")
+    print("="*80)
+    
+    cursor.execute('''
+        SELECT position_id, total_credit, contracts, close_price, realized_pnl,
+               close_reason, put_short_strike, call_short_strike, underlying_at_entry
+        FROM pegasus_positions
+        WHERE DATE(close_time AT TIME ZONE 'America/Chicago') = %s
+        ORDER BY close_time
+    ''', (yesterday,))
+    
+    rows = cursor.fetchall()
+    print(f"\n{'Position':<25} {'Credit':<8} {'Close$':<10} {'PnL':<12} {'Reason':<20} {'Put Short':<10} {'Call Short':<10}")
+    print("-" * 110)
+    
+    for row in rows:
+        pos_id, credit, contracts, close_price, pnl, reason, put_short, call_short, underlying = row
+        credit = float(credit or 0)
+        close_price = float(close_price or 0)
+        pnl = float(pnl or 0)
+        print(f"{pos_id:<25} ${credit:<7.2f} ${close_price:<9.4f} ${pnl:<11.2f} {reason or 'N/A':<20} {float(put_short or 0):<10.0f} {float(call_short or 0):<10.0f}")
+    
+    conn.close()
+
+if __name__ == "__main__":
+    check_yesterday()

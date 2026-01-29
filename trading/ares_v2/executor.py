@@ -633,12 +633,35 @@ class OrderExecutor:
     ) -> Tuple[bool, float, float]:
         """Close paper position with simulated pricing"""
         try:
-            current_price = self._get_current_price()
-            if not current_price:
-                current_price = position.underlying_at_entry
+            # BUG FIX: Use mark-to-market for consistency with unrealized P&L display
+            # The old estimation formula gave values inconsistent with what unrealized showed,
+            # causing positions showing -$3k unrealized to suddenly "close" as a +$2k win.
+            close_price = None
+            try:
+                from trading.mark_to_market import calculate_ic_mark_to_market
+                mtm = calculate_ic_mark_to_market(
+                    underlying="SPY",
+                    expiration=position.expiration,
+                    put_short=position.put_short_strike,
+                    put_long=position.put_long_strike,
+                    call_short=position.call_short_strike,
+                    call_long=position.call_long_strike,
+                    contracts=position.contracts,
+                    entry_credit=position.total_credit,
+                    use_cache=False
+                )
+                if mtm.get('success') and mtm.get('current_value') is not None:
+                    close_price = mtm['current_value']
+                    logger.info(f"PAPER CLOSE MTM: {position.position_id} close_value=${close_price:.4f}")
+            except Exception as e:
+                logger.debug(f"MTM failed for paper close, using estimation: {e}")
 
-            # Estimate current IC value
-            close_price = self._estimate_ic_value(position, current_price)
+            # Fallback to estimation if MTM fails
+            if close_price is None:
+                current_price = self._get_current_price()
+                if not current_price:
+                    current_price = position.underlying_at_entry
+                close_price = self._estimate_ic_value(position, current_price)
 
             # P&L = credit received - debit to close
             # For IC: we received total_credit, now we pay close_price to close
