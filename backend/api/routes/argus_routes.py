@@ -1162,10 +1162,9 @@ async def get_gamma_data(
             snapshot.gamma_regime
         )
 
-        # Calculate order flow analysis using bid/ask size data
-        # This provides additional signal confirmation based on order book depth
-        # IMPORTANT: Only update smoothing history with fresh data to prevent cache corruption
-        order_flow = engine.calculate_net_gex_volume(filtered_strikes, snapshot.spot_price, update_smoothing=not is_cached)
+        # Order flow is now calculated in process_options_chain() and stored in snapshot
+        # This provides signal confirmation based on volume-weighted gamma flow + bid/ask pressure
+        order_flow = snapshot.order_flow
 
         # Persist order flow data for historical analysis (only for fresh data)
         if not is_cached and order_flow:
@@ -4569,15 +4568,8 @@ async def get_trade_action(
         flip_point = snapshot.get('flip_point', spot)
         strikes_data = snapshot.get('strikes', [])
 
-        # Calculate order flow from StrikeData objects (not from snapshot which doesn't include it)
-        # The GammaSnapshot.to_dict() doesn't include order_flow, so we must calculate it
-        order_flow = {}
-        if engine.previous_snapshot and engine.previous_snapshot.strikes:
-            order_flow = engine.calculate_net_gex_volume(
-                engine.previous_snapshot.strikes,
-                spot,
-                update_smoothing=False  # Don't corrupt history with repeated reads
-            )
+        # Get order flow data (now included in GammaSnapshot from process_options_chain)
+        order_flow = snapshot.get('order_flow', {})
         flow_signal = order_flow.get('combined_signal', 'NEUTRAL')
         flow_confidence = order_flow.get('signal_confidence', 'LOW')
         net_pressure = order_flow.get('bid_ask_pressure', {}).get('net_pressure', 0)
