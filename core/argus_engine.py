@@ -135,6 +135,7 @@ class GammaSnapshot:
     danger_zones: List[Dict]
     gamma_flips: List[Dict]
     pinning_status: Dict = field(default_factory=lambda: {'is_pinning': False})
+    order_flow: Dict = field(default_factory=dict)  # Order flow analysis (combined_signal, flow_confidence, etc.)
 
     def to_dict(self) -> Dict:
         return {
@@ -155,7 +156,8 @@ class GammaSnapshot:
             'pin_probability': self.pin_probability,
             'danger_zones': self.danger_zones,
             'gamma_flips': self.gamma_flips,
-            'pinning_status': self.pinning_status
+            'pinning_status': self.pinning_status,
+            'order_flow': self.order_flow
         }
 
 
@@ -1952,6 +1954,10 @@ class ArgusEngine:
         # Detect pinning condition (no danger zones = stable gamma = likely pinning)
         pinning_status = self.detect_pinning_condition(strikes_data, spot_price, likely_pin, danger_zones)
 
+        # Calculate order flow analysis (volume-weighted gamma flow + bid/ask pressure)
+        # This provides signal confirmation based on intraday trading activity
+        order_flow = self.calculate_net_gex_volume(strikes_data, spot_price, update_smoothing=True)
+
         # Create snapshot
         symbol = options_data.get('symbol', 'SPY')  # Get symbol from data, default to SPY
         snapshot = GammaSnapshot(
@@ -1972,7 +1978,8 @@ class ArgusEngine:
             pin_probability=pin_probability,
             danger_zones=danger_zones,
             gamma_flips=gamma_flips,
-            pinning_status=pinning_status
+            pinning_status=pinning_status,
+            order_flow=order_flow
         )
 
         # Generate alerts
