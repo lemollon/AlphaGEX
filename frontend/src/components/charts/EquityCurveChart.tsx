@@ -743,7 +743,7 @@ export default function EquityCurveChart({
                   Realized P&L
                 </span>
                 <span className="text-xs px-1.5 py-0.5 rounded bg-gray-800 text-gray-400">
-                  Closed Trades
+                  Closed Trades Today
                 </span>
               </div>
               <div className={`text-xl font-bold ${
@@ -772,7 +772,7 @@ export default function EquityCurveChart({
                   Unrealized P&L
                 </span>
                 <span className="text-xs px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30">
-                  Open Position
+                  Open Positions Today
                 </span>
               </div>
               <div className={`text-xl font-bold ${
