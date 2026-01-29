@@ -1406,7 +1406,9 @@ async def get_titan_intraday_equity(date: str = None):
             "starting_equity": market_open_equity,  # Equity at market open (starting_capital + prev realized)
             "high_of_day": round(high_of_day, 2),
             "low_of_day": round(low_of_day, 2),
-            "snapshots_count": len(snapshots)
+            "snapshots_count": len(snapshots),
+            "today_closed_count": today_closed_count,
+            "open_positions_count": len(open_positions)
         }
 
     except Exception as e:
@@ -1433,7 +1435,9 @@ async def get_titan_intraday_equity(date: str = None):
             "starting_equity": starting_capital,
             "high_of_day": starting_capital,
             "low_of_day": starting_capital,
-            "snapshots_count": 0
+            "snapshots_count": 0,
+            "today_closed_count": 0,
+            "open_positions_count": 0
         }
 
 

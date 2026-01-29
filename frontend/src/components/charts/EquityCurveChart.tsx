@@ -120,6 +120,8 @@ interface IntradayEquityData {
   high_of_day: number
   low_of_day: number
   snapshots_count: number
+  today_closed_count?: number  // Number of trades closed today
+  open_positions_count?: number  // Number of currently open positions
 }
 
 interface EquityCurveChartProps {
@@ -726,12 +728,13 @@ export default function EquityCurveChart({
 
       {/* Intraday P&L Breakdown Panel - Shows CLEAR distinction between realized and unrealized */}
       {viewMode === 'intraday' && intradayData && (() => {
-        // Get open positions count from last data point
+        // Use backend-provided counts (preferred) or fall back to last data point
         const lastDataPoint = intradayData.data_points?.[intradayData.data_points.length - 1]
-        const openPositionsCount = lastDataPoint?.open_positions ?? 0
+        const openPositionsCount = intradayData.open_positions_count ?? lastDataPoint?.open_positions ?? 0
+        const closedTradesCount = intradayData.today_closed_count ?? 0
         const dayRealized = intradayData.day_realized ?? 0
         const dayUnrealized = intradayData.day_unrealized ?? 0
-        const hasClosedTrades = dayRealized !== 0
+        const hasClosedTrades = closedTradesCount > 0 || dayRealized !== 0
         const hasOpenPositions = openPositionsCount > 0
 
         return (
@@ -755,8 +758,14 @@ export default function EquityCurveChart({
                 <span className="text-xs text-gray-400 font-medium uppercase tracking-wide">
                   Realized P&L
                 </span>
-                <span className="text-xs px-1.5 py-0.5 rounded bg-gray-800 text-gray-400">
-                  Closed Trades Today
+                <span className={`text-xs px-1.5 py-0.5 rounded border ${
+                  hasClosedTrades
+                    ? 'bg-gray-800 text-gray-300 border-gray-700'
+                    : 'bg-gray-800 text-gray-500 border-gray-700'
+                }`}>
+                  {hasClosedTrades
+                    ? `${closedTradesCount} Trade${closedTradesCount !== 1 ? 's' : ''} Closed Today`
+                    : 'No Trades Closed'}
                 </span>
               </div>
               <div className={`text-xl font-bold ${
@@ -772,8 +781,8 @@ export default function EquityCurveChart({
                 {!hasClosedTrades
                   ? '— No trades closed today yet'
                   : dayRealized >= 0
-                    ? '✓ Profits locked in from closed trades'
-                    : '✗ Losses realized from closed trades'}
+                    ? `✓ Profit${closedTradesCount !== 1 ? 's' : ''} locked in from ${closedTradesCount} closed trade${closedTradesCount !== 1 ? 's' : ''}`
+                    : `✗ Loss${closedTradesCount !== 1 ? 'es' : ''} realized from ${closedTradesCount} closed trade${closedTradesCount !== 1 ? 's' : ''}`}
               </p>
             </div>
 
