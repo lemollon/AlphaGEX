@@ -725,19 +725,32 @@ export default function EquityCurveChart({
       )}
 
       {/* Intraday P&L Breakdown Panel - Shows CLEAR distinction between realized and unrealized */}
-      {viewMode === 'intraday' && intradayData && (
+      {viewMode === 'intraday' && intradayData && (() => {
+        // Get open positions count from last data point
+        const lastDataPoint = intradayData.data_points?.[intradayData.data_points.length - 1]
+        const openPositionsCount = lastDataPoint?.open_positions ?? 0
+        const dayRealized = intradayData.day_realized ?? 0
+        const dayUnrealized = intradayData.day_unrealized ?? 0
+        const hasClosedTrades = dayRealized !== 0
+        const hasOpenPositions = openPositionsCount > 0
+
+        return (
         <div className="px-4 py-3 border-b border-gray-800 bg-gray-900/50">
           {/* P&L Breakdown Cards */}
           <div className="grid grid-cols-2 gap-3 mb-3">
             {/* Realized P&L - Closed Trades */}
             <div className={`rounded-lg p-3 border ${
-              (intradayData.day_realized ?? 0) >= 0
-                ? 'bg-green-500/10 border-green-500/30'
-                : 'bg-red-500/10 border-red-500/30'
+              !hasClosedTrades
+                ? 'bg-gray-500/10 border-gray-500/30'
+                : dayRealized >= 0
+                  ? 'bg-green-500/10 border-green-500/30'
+                  : 'bg-red-500/10 border-red-500/30'
             }`}>
               <div className="flex items-center gap-2 mb-1">
                 <div className={`w-2 h-2 rounded-full ${
-                  (intradayData.day_realized ?? 0) >= 0 ? 'bg-green-400' : 'bg-red-400'
+                  !hasClosedTrades
+                    ? 'bg-gray-400'
+                    : dayRealized >= 0 ? 'bg-green-400' : 'bg-red-400'
                 }`} />
                 <span className="text-xs text-gray-400 font-medium uppercase tracking-wide">
                   Realized P&L
@@ -747,43 +760,65 @@ export default function EquityCurveChart({
                 </span>
               </div>
               <div className={`text-xl font-bold ${
-                (intradayData.day_realized ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'
+                !hasClosedTrades
+                  ? 'text-gray-400'
+                  : dayRealized >= 0 ? 'text-green-400' : 'text-red-400'
               }`}>
-                {(intradayData.day_realized ?? 0) >= 0 ? '+' : ''}${(intradayData.day_realized ?? 0).toLocaleString()}
+                {!hasClosedTrades
+                  ? '$0'
+                  : `${dayRealized >= 0 ? '+' : ''}$${dayRealized.toLocaleString()}`}
               </div>
               <p className="text-xs text-gray-500 mt-1">
-                {(intradayData.day_realized ?? 0) >= 0
-                  ? '✓ Profits locked in from closed positions'
-                  : '✗ Losses realized from closed positions'}
+                {!hasClosedTrades
+                  ? '— No trades closed today yet'
+                  : dayRealized >= 0
+                    ? '✓ Profits locked in from closed trades'
+                    : '✗ Losses realized from closed trades'}
               </p>
             </div>
 
             {/* Unrealized P&L - Open Positions */}
             <div className={`rounded-lg p-3 border ${
-              (intradayData.day_unrealized ?? 0) >= 0
-                ? 'bg-green-500/10 border-green-500/30'
-                : 'bg-red-500/10 border-red-500/30'
+              !hasOpenPositions
+                ? 'bg-gray-500/10 border-gray-500/30'
+                : dayUnrealized >= 0
+                  ? 'bg-green-500/10 border-green-500/30'
+                  : 'bg-red-500/10 border-red-500/30'
             }`}>
               <div className="flex items-center gap-2 mb-1">
-                <div className={`w-2 h-2 rounded-full animate-pulse ${
-                  (intradayData.day_unrealized ?? 0) >= 0 ? 'bg-green-400' : 'bg-red-400'
+                <div className={`w-2 h-2 rounded-full ${
+                  !hasOpenPositions
+                    ? 'bg-gray-400'
+                    : dayUnrealized >= 0 ? 'bg-green-400 animate-pulse' : 'bg-red-400 animate-pulse'
                 }`} />
                 <span className="text-xs text-gray-400 font-medium uppercase tracking-wide">
                   Unrealized P&L
                 </span>
-                <span className="text-xs px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-400 border border-blue-500/30">
-                  Open Positions Today
+                <span className={`text-xs px-1.5 py-0.5 rounded border ${
+                  hasOpenPositions
+                    ? 'bg-blue-500/20 text-blue-400 border-blue-500/30'
+                    : 'bg-gray-800 text-gray-400 border-gray-700'
+                }`}>
+                  {hasOpenPositions
+                    ? `${openPositionsCount} Open Position${openPositionsCount > 1 ? 's' : ''}`
+                    : 'No Open Positions'}
                 </span>
               </div>
               <div className={`text-xl font-bold ${
-                (intradayData.day_unrealized ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'
+                !hasOpenPositions
+                  ? 'text-gray-400'
+                  : dayUnrealized >= 0 ? 'text-green-400' : 'text-red-400'
               }`}>
-                {(intradayData.day_unrealized ?? 0) >= 0 ? '+' : ''}${(intradayData.day_unrealized ?? 0).toLocaleString()}
+                {!hasOpenPositions
+                  ? '$0'
+                  : `${dayUnrealized >= 0 ? '+' : ''}$${dayUnrealized.toLocaleString()}`}
               </div>
               <p className="text-xs text-gray-500 mt-1">
-                {(intradayData.day_unrealized ?? 0) >= 0
-                  ? '↑ Current open position is profitable'
-                  : '↓ Current open position is underwater'}
+                {!hasOpenPositions
+                  ? '— No open positions currently'
+                  : dayUnrealized >= 0
+                    ? `↑ Open position${openPositionsCount > 1 ? 's are' : ' is'} profitable`
+                    : `↓ Open position${openPositionsCount > 1 ? 's are' : ' is'} underwater`}
               </p>
             </div>
           </div>
@@ -844,7 +879,8 @@ export default function EquityCurveChart({
             </span>
           </div>
         </div>
-      )}
+        )
+      })()}
 
       {/* Main Chart */}
       <div className="p-4" style={{ height }}>
