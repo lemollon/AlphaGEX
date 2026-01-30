@@ -1150,3 +1150,391 @@ async def get_transparency_summary():
     except Exception as e:
         logger.error(f"Error getting transparency summary: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==============================================================================
+# PROMETHEUS IC TRADING ENDPOINTS
+# ==============================================================================
+# These endpoints handle the Iron Condor trading side of PROMETHEUS - trading
+# with borrowed capital from box spreads to generate returns.
+# ==============================================================================
+
+# Import IC components
+PrometheusICTrader = None
+PrometheusICConfig = None
+try:
+    from trading.prometheus.trader import PrometheusICTrader
+    from trading.prometheus.models import PrometheusICConfig, ICPositionStatus
+    logger.info("PROMETHEUS IC Trader modules loaded successfully")
+except ImportError as e:
+    logger.warning(f"PROMETHEUS IC Trader modules not available: {e}")
+
+
+# ========== IC Pydantic Models ==========
+
+class ICConfigUpdateRequest(BaseModel):
+    """Request model for IC configuration updates"""
+    enabled: Optional[bool] = Field(None, description="Enable/disable IC trading")
+    ticker: Optional[str] = Field(None, description="Underlying to trade (SPX)")
+    spread_width: Optional[float] = Field(None, description="IC spread width")
+    short_put_delta: Optional[float] = Field(None, description="Target delta for short put")
+    short_call_delta: Optional[float] = Field(None, description="Target delta for short call")
+    max_positions: Optional[int] = Field(None, description="Max concurrent IC positions")
+    max_trades_per_day: Optional[int] = Field(None, description="Max daily IC trades")
+    require_oracle_approval: Optional[bool] = Field(None, description="Require Oracle approval")
+    min_oracle_confidence: Optional[float] = Field(None, description="Min Oracle confidence")
+    stop_loss_pct: Optional[float] = Field(None, description="Stop loss % of max loss")
+    profit_target_pct: Optional[float] = Field(None, description="Profit target % of max profit")
+
+
+class ICClosePositionRequest(BaseModel):
+    """Request to close an IC position"""
+    position_id: str = Field(..., description="IC position ID to close")
+    reason: str = Field("manual", description="Reason for closing")
+
+
+# ========== IC Status & Configuration ==========
+
+@router.get("/ic/status")
+async def get_ic_status():
+    """
+    Get comprehensive PROMETHEUS IC trading status.
+
+    Returns:
+    - Trading enabled/disabled
+    - Open positions and unrealized P&L
+    - Performance metrics
+    - Available capital for new trades
+    """
+    if not PrometheusICTrader:
+        raise HTTPException(status_code=503, detail="PROMETHEUS IC Trader not available")
+
+    try:
+        trader = PrometheusICTrader()
+        status = trader.get_status()
+        return {
+            "available": True,
+            "status": status,
+        }
+    except Exception as e:
+        logger.error(f"Error getting IC status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ic/config")
+async def get_ic_config():
+    """Get current IC trading configuration"""
+    if not PrometheusICTrader:
+        raise HTTPException(status_code=503, detail="PROMETHEUS IC Trader not available")
+
+    try:
+        trader = PrometheusICTrader()
+        return {
+            "available": True,
+            "config": trader.config.to_dict() if hasattr(trader.config, 'to_dict') else {
+                'enabled': trader.config.enabled,
+                'mode': trader.config.mode.value,
+                'ticker': trader.config.ticker,
+                'spread_width': trader.config.spread_width,
+                'short_put_delta': trader.config.short_put_delta,
+                'short_call_delta': trader.config.short_call_delta,
+                'max_positions': trader.config.max_positions,
+                'max_trades_per_day': trader.config.max_trades_per_day,
+                'require_oracle_approval': trader.config.require_oracle_approval,
+                'min_oracle_confidence': trader.config.min_oracle_confidence,
+                'stop_loss_pct': trader.config.stop_loss_pct,
+                'profit_target_pct': trader.config.profit_target_pct,
+            },
+        }
+    except Exception as e:
+        logger.error(f"Error getting IC config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/ic/config")
+async def update_ic_config(request: ICConfigUpdateRequest):
+    """Update IC trading configuration"""
+    if not PrometheusICTrader:
+        raise HTTPException(status_code=503, detail="PROMETHEUS IC Trader not available")
+
+    try:
+        trader = PrometheusICTrader()
+        updates = request.dict(exclude_none=True)
+
+        # Apply updates to config
+        for key, value in updates.items():
+            if hasattr(trader.config, key):
+                setattr(trader.config, key, value)
+
+        # Save to database
+        trader.db.save_ic_config(trader.config)
+
+        return {
+            "success": True,
+            "updated_fields": list(updates.keys()),
+            "config": trader.config.to_dict() if hasattr(trader.config, 'to_dict') else updates,
+        }
+    except Exception as e:
+        logger.error(f"Error updating IC config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ========== IC Positions ==========
+
+@router.get("/ic/positions")
+async def get_ic_positions():
+    """
+    Get all open IC positions with current metrics.
+
+    Each position includes:
+    - Strikes and expiration
+    - Entry credit and current value
+    - Unrealized P&L
+    - Oracle confidence at entry
+    """
+    if not PrometheusICTrader:
+        raise HTTPException(status_code=503, detail="PROMETHEUS IC Trader not available")
+
+    try:
+        trader = PrometheusICTrader()
+        positions = trader.get_positions()
+        return {
+            "available": True,
+            "count": len(positions),
+            "positions": positions,
+        }
+    except Exception as e:
+        logger.error(f"Error getting IC positions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ic/positions/{position_id}")
+async def get_ic_position(position_id: str):
+    """Get a specific IC position by ID"""
+    if not PrometheusICTrader:
+        raise HTTPException(status_code=503, detail="PROMETHEUS IC Trader not available")
+
+    try:
+        trader = PrometheusICTrader()
+        position = trader.db.get_ic_position(position_id)
+
+        if not position:
+            raise HTTPException(status_code=404, detail="Position not found")
+
+        return {
+            "available": True,
+            "position": trader._position_to_dict(position),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting IC position: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/ic/positions/close")
+async def close_ic_position(request: ICClosePositionRequest):
+    """Manually close an IC position"""
+    if not PrometheusICTrader:
+        raise HTTPException(status_code=503, detail="PROMETHEUS IC Trader not available")
+
+    try:
+        trader = PrometheusICTrader()
+        result = trader.close_position(request.position_id, request.reason)
+        return result
+    except Exception as e:
+        logger.error(f"Error closing IC position: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ========== IC Closed Trades & Performance ==========
+
+@router.get("/ic/closed-trades")
+async def get_ic_closed_trades(limit: int = Query(50, ge=1, le=500)):
+    """Get closed IC trade history"""
+    if not PrometheusICTrader:
+        raise HTTPException(status_code=503, detail="PROMETHEUS IC Trader not available")
+
+    try:
+        trader = PrometheusICTrader()
+        trades = trader.get_closed_trades(limit)
+        return {
+            "available": True,
+            "count": len(trades),
+            "trades": trades,
+        }
+    except Exception as e:
+        logger.error(f"Error getting closed IC trades: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ic/performance")
+async def get_ic_performance():
+    """
+    Get IC trading performance metrics.
+
+    Includes:
+    - Win rate and total P&L
+    - Average win/loss amounts
+    - Profit factor
+    - Today's stats
+    - Streak information
+    """
+    if not PrometheusICTrader:
+        raise HTTPException(status_code=503, detail="PROMETHEUS IC Trader not available")
+
+    try:
+        trader = PrometheusICTrader()
+        performance = trader.db.get_ic_performance()
+        return {
+            "available": True,
+            "performance": performance,
+        }
+    except Exception as e:
+        logger.error(f"Error getting IC performance: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ic/equity-curve")
+async def get_ic_equity_curve(limit: int = Query(100, ge=1, le=500)):
+    """Get IC trading equity curve data"""
+    if not PrometheusICTrader:
+        raise HTTPException(status_code=503, detail="PROMETHEUS IC Trader not available")
+
+    try:
+        trader = PrometheusICTrader()
+        curve = trader.get_equity_curve(limit)
+        return {
+            "available": True,
+            "count": len(curve),
+            "data": curve,
+        }
+    except Exception as e:
+        logger.error(f"Error getting IC equity curve: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ========== IC Signals ==========
+
+@router.get("/ic/signals/recent")
+async def get_recent_ic_signals(limit: int = Query(50, ge=1, le=200)):
+    """Get recent IC trading signals (both executed and skipped)"""
+    if not PrometheusICTrader:
+        raise HTTPException(status_code=503, detail="PROMETHEUS IC Trader not available")
+
+    try:
+        trader = PrometheusICTrader()
+        signals = trader.db.get_recent_ic_signals(limit)
+        return {
+            "available": True,
+            "count": len(signals),
+            "signals": signals,
+        }
+    except Exception as e:
+        logger.error(f"Error getting IC signals: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ========== IC Operations ==========
+
+@router.post("/ic/operations/run-cycle")
+async def run_ic_trading_cycle():
+    """
+    Manually trigger an IC trading cycle.
+
+    This will:
+    1. Check exit conditions on all open positions
+    2. Generate new signals if capital is available
+    3. Execute approved signals
+    """
+    if not PrometheusICTrader:
+        raise HTTPException(status_code=503, detail="PROMETHEUS IC Trader not available")
+
+    try:
+        trader = PrometheusICTrader()
+        result = trader.run_trading_cycle()
+        return {
+            "available": True,
+            "result": result,
+        }
+    except Exception as e:
+        logger.error(f"Error running IC cycle: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/ic/operations/update-mtm")
+async def update_ic_mtm():
+    """
+    Update mark-to-market for all open IC positions.
+
+    Uses real-time Tradier production quotes to calculate
+    current values and unrealized P&L.
+    """
+    if not PrometheusICTrader:
+        raise HTTPException(status_code=503, detail="PROMETHEUS IC Trader not available")
+
+    try:
+        from trading.prometheus.trader import run_prometheus_ic_mtm_update
+        result = run_prometheus_ic_mtm_update()
+        return {
+            "available": True,
+            "result": result,
+        }
+    except Exception as e:
+        logger.error(f"Error updating IC MTM: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ========== Combined Performance ==========
+
+@router.get("/combined/performance")
+async def get_combined_performance():
+    """
+    Get combined performance for both box spreads and IC trading.
+
+    This is the key metric: Are IC returns > borrowing costs?
+
+    Returns:
+    - Box spread borrowing metrics
+    - IC trading performance
+    - Net profit calculation
+    - ROI on borrowed capital
+    """
+    if not PrometheusTrader or not PrometheusICTrader:
+        raise HTTPException(status_code=503, detail="PROMETHEUS modules not available")
+
+    try:
+        from trading.prometheus.db import PrometheusDatabase
+        db = PrometheusDatabase()
+        summary = db.get_combined_performance_summary()
+
+        return {
+            "available": True,
+            "summary": {
+                "summary_time": summary.summary_time.isoformat() if summary.summary_time else None,
+                # Box Spread Metrics
+                "box_spread": {
+                    "total_positions": summary.total_box_positions,
+                    "total_borrowed": summary.total_borrowed,
+                    "total_borrowing_cost": summary.total_borrowing_cost,
+                    "average_borrowing_rate": summary.average_borrowing_rate,
+                },
+                # IC Trading Metrics
+                "ic_trading": {
+                    "total_trades": summary.total_ic_trades,
+                    "win_rate": summary.ic_win_rate,
+                    "total_premium_collected": summary.total_ic_premium_collected,
+                    "total_realized_pnl": summary.total_ic_realized_pnl,
+                    "total_unrealized_pnl": summary.total_ic_unrealized_pnl,
+                    "avg_return_per_trade": summary.average_ic_return_per_trade,
+                },
+                # Combined
+                "net_profit": summary.net_profit,
+                "roi_on_borrowed_capital": summary.roi_on_borrowed_capital,
+                "monthly_return_rate": summary.monthly_return_rate,
+                "vs_margin_borrowing_savings": summary.vs_margin_borrowing,
+            },
+        }
+    except Exception as e:
+        logger.error(f"Error getting combined performance: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

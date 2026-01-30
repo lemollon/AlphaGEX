@@ -15,6 +15,9 @@ from .models import (
     BoxSpreadSignal,
     BorrowingCostAnalysis,
     PrometheusConfig,
+    # IC Trading Models
+    PrometheusICSignal,
+    PrometheusICConfig,
 )
 
 logger = logging.getLogger(__name__)
@@ -948,4 +951,558 @@ margin for smaller positions.
             is_favorable=is_favorable,
             recommendation=recommendation,
             reasoning=reasoning,
+        )
+
+
+# ==============================================================================
+# PROMETHEUS IC SIGNAL GENERATOR
+# ==============================================================================
+# Generates Iron Condor signals using borrowed capital from box spreads.
+# This is the "returns side" of the PROMETHEUS system - IC trading generates
+# the returns that (should) exceed the box spread borrowing costs.
+# ==============================================================================
+
+# Oracle import for IC trading decisions
+try:
+    from quant.oracle_advisor import OracleAdvisor, MarketContext, GEXRegime
+    ORACLE_AVAILABLE = True
+except ImportError:
+    ORACLE_AVAILABLE = False
+    OracleAdvisor = None
+    MarketContext = None
+    GEXRegime = None
+
+# GEX calculator for gamma regime
+try:
+    from data.gex_calculator import TradierGEXCalculator
+    GEX_AVAILABLE = True
+except ImportError:
+    GEX_AVAILABLE = False
+    TradierGEXCalculator = None
+
+
+class PrometheusICSignalGenerator:
+    """
+    Generates Iron Condor signals for PROMETHEUS trading.
+
+    EDUCATIONAL NOTE - IC Signal Generation:
+    ========================================
+    Iron Condors profit when the underlying stays within a range.
+    Signal generation involves:
+
+    1. Check market conditions (VIX, gamma regime)
+    2. Get Oracle approval for IC trading
+    3. Select strikes based on delta targeting (~10 delta)
+    4. Calculate position size based on available capital
+    5. Generate signal with full audit trail
+
+    The goal: Generate consistent premium income that exceeds
+    the borrowing cost from box spreads.
+    """
+
+    def __init__(self, config: PrometheusICConfig = None):
+        self.config = config or PrometheusICConfig()
+        self._init_components()
+
+    def _init_components(self) -> None:
+        """Initialize Oracle and GEX components"""
+        # Oracle for IC trade approval
+        self.oracle = None
+        if ORACLE_AVAILABLE:
+            try:
+                self.oracle = OracleAdvisor()
+                logger.info("PROMETHEUS IC: Oracle initialized")
+            except Exception as e:
+                logger.warning(f"PROMETHEUS IC: Oracle init failed: {e}")
+
+        # GEX calculator for gamma regime
+        self.gex_calculator = None
+        if GEX_AVAILABLE:
+            try:
+                self.gex_calculator = TradierGEXCalculator(sandbox=False)
+                logger.info("PROMETHEUS IC: GEX Calculator initialized")
+            except Exception as e:
+                logger.warning(f"PROMETHEUS IC: GEX init failed: {e}")
+
+    def get_market_data(self) -> Optional[Dict[str, Any]]:
+        """Get current market data for IC signal generation"""
+        try:
+            # Get spot price
+            spot = None
+            vix = None
+            gex_data = {}
+
+            if tradier:
+                # Get SPX quote
+                quote = tradier.get_quote(self.config.ticker)
+                if quote:
+                    spot = quote.get('last', quote.get('bid', 0))
+
+                # Get VIX
+                vix_quote = tradier.get_quote('VIX')
+                if vix_quote:
+                    vix = vix_quote.get('last', 20.0)
+
+            if not spot:
+                # Fallback to GEX calculator
+                if self.gex_calculator:
+                    gex = self.gex_calculator.calculate_gex(self.config.ticker)
+                    if gex:
+                        spot = gex.get('spot_price', 0)
+                        gex_data = gex
+
+            if not spot:
+                logger.warning("PROMETHEUS IC: No spot price available")
+                return None
+
+            vix = vix or 20.0
+
+            # Get GEX data if not already fetched
+            if not gex_data and self.gex_calculator:
+                gex_data = self.gex_calculator.calculate_gex(self.config.ticker) or {}
+
+            # Calculate expected move
+            expected_move = self._calculate_expected_move(spot, vix)
+
+            return {
+                'spot_price': spot,
+                'vix': vix,
+                'expected_move': expected_move,
+                'call_wall': gex_data.get('call_wall', 0),
+                'put_wall': gex_data.get('put_wall', 0),
+                'gex_regime': gex_data.get('regime', 'NEUTRAL'),
+                'flip_point': gex_data.get('flip_point', 0),
+                'net_gex': gex_data.get('net_gex', 0),
+                'timestamp': datetime.now(CENTRAL_TZ),
+            }
+
+        except Exception as e:
+            logger.error(f"PROMETHEUS IC: Market data error: {e}")
+            return None
+
+    def _calculate_expected_move(self, spot: float, vix: float) -> float:
+        """Calculate 1 SD expected move"""
+        annual_factor = math.sqrt(252)
+        daily_vol = (vix / 100) / annual_factor
+        return round(spot * daily_vol, 2)
+
+    def get_oracle_advice(self, market_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Get Oracle advice for IC trading.
+
+        PROMETHEUS requires Oracle approval before opening IC positions.
+        This ensures we only trade when conditions are favorable.
+        """
+        if not self.oracle or not ORACLE_AVAILABLE:
+            logger.warning("PROMETHEUS IC: Oracle not available")
+            return None
+
+        try:
+            # Build MarketContext
+            gex_regime_str = market_data.get('gex_regime', 'NEUTRAL').upper()
+            try:
+                gex_regime = GEXRegime[gex_regime_str] if gex_regime_str in GEXRegime.__members__ else GEXRegime.NEUTRAL
+            except (KeyError, AttributeError):
+                gex_regime = GEXRegime.NEUTRAL
+
+            spot = market_data['spot_price']
+            context = MarketContext(
+                spot_price=spot,
+                vix=market_data['vix'],
+                gex_call_wall=market_data.get('call_wall', 0),
+                gex_put_wall=market_data.get('put_wall', 0),
+                gex_regime=gex_regime,
+                gex_flip_point=market_data.get('flip_point', 0),
+                gex_net=market_data.get('net_gex', 0),
+                expected_move_pct=(market_data.get('expected_move', 0) / spot * 100) if spot else 0,
+            )
+
+            # Get IC advice from Oracle (using PEGASUS method since we're trading SPX ICs)
+            prediction = self.oracle.get_pegasus_advice(
+                context=context,
+                use_gex_walls=True,
+                use_claude_validation=False,  # Skip Claude for speed
+                spread_width=self.config.spread_width,
+            )
+
+            if not prediction:
+                return None
+
+            # Extract top_factors as list of dicts
+            top_factors = []
+            if hasattr(prediction, 'top_factors') and prediction.top_factors:
+                for factor_name, impact in prediction.top_factors:
+                    top_factors.append({'factor': factor_name, 'impact': impact})
+
+            return {
+                'confidence': prediction.confidence,
+                'win_probability': prediction.win_probability,
+                'advice': prediction.advice.value if prediction.advice else 'HOLD',
+                'top_factors': top_factors,
+                'suggested_sd_multiplier': prediction.suggested_sd_multiplier,
+                'suggested_put_strike': getattr(prediction, 'suggested_put_strike', None),
+                'suggested_call_strike': getattr(prediction, 'suggested_call_strike', None),
+                'reasoning': prediction.reasoning or '',
+                'ic_suitability': getattr(prediction, 'ic_suitability', 0),
+            }
+
+        except Exception as e:
+            logger.error(f"PROMETHEUS IC: Oracle error: {e}")
+            return None
+
+    def check_vix_filter(self, vix: float) -> Tuple[bool, str]:
+        """Check if VIX is within acceptable range for IC trading"""
+        if vix < self.config.min_vix:
+            return False, f"VIX {vix:.1f} below minimum {self.config.min_vix} (premiums too thin)"
+        if vix > self.config.max_vix:
+            return False, f"VIX {vix:.1f} above maximum {self.config.max_vix} (too risky)"
+        return True, f"VIX {vix:.1f} within acceptable range"
+
+    def calculate_strikes(
+        self,
+        spot: float,
+        expected_move: float,
+        call_wall: float = 0,
+        put_wall: float = 0,
+        oracle_put_strike: Optional[float] = None,
+        oracle_call_strike: Optional[float] = None,
+    ) -> Dict[str, float]:
+        """
+        Calculate IC strikes with SPX $5 rounding.
+
+        Priority:
+        1. Oracle suggested strikes (if valid)
+        2. GEX walls (if available)
+        3. Delta-based strikes (fallback)
+        """
+        width = self.config.spread_width  # $25 for PROMETHEUS
+
+        def round_to_5(x):
+            return round(x / 5) * 5
+
+        use_oracle = False
+        use_gex = False
+
+        # Priority 1: Oracle suggested strikes
+        if oracle_put_strike and oracle_call_strike:
+            put_dist = (spot - oracle_put_strike) / spot
+            call_dist = (oracle_call_strike - spot) / spot
+            if 0.003 <= put_dist <= 0.05 and 0.003 <= call_dist <= 0.05:
+                put_short = round_to_5(oracle_put_strike)
+                call_short = round_to_5(oracle_call_strike)
+                use_oracle = True
+
+        # Priority 2: GEX walls
+        if not use_oracle and call_wall > 0 and put_wall > 0:
+            put_short = round_to_5(put_wall)
+            call_short = round_to_5(call_wall)
+            use_gex = True
+
+        # Priority 3: Delta-based fallback (~10 delta = ~1.0-1.2 SD)
+        if not use_oracle and not use_gex:
+            # ~10 delta is approximately 1.0-1.2 standard deviations
+            sd_multiplier = 1.0
+            min_expected_move = spot * 0.005
+            effective_em = max(expected_move, min_expected_move)
+            put_short = round_to_5(spot - sd_multiplier * effective_em)
+            call_short = round_to_5(spot + sd_multiplier * effective_em)
+
+        put_long = put_short - width
+        call_long = call_short + width
+
+        return {
+            'put_short': put_short,
+            'put_long': put_long,
+            'call_short': call_short,
+            'call_long': call_long,
+            'using_gex': use_gex,
+            'using_oracle': use_oracle,
+            'source': 'ORACLE' if use_oracle else ('GEX' if use_gex else 'DELTA'),
+        }
+
+    def estimate_credits(
+        self,
+        spot: float,
+        expected_move: float,
+        put_short: float,
+        call_short: float,
+        vix: float
+    ) -> Dict[str, float]:
+        """Estimate IC credits for SPX"""
+        width = self.config.spread_width
+
+        put_dist = (spot - put_short) / expected_move if expected_move > 0 else 1
+        call_dist = (call_short - spot) / expected_move if expected_move > 0 else 1
+        vol_factor = vix / 20.0
+
+        # SPX typically has good premiums
+        put_credit = width * 0.025 * vol_factor / max(put_dist, 0.5)
+        call_credit = width * 0.025 * vol_factor / max(call_dist, 0.5)
+
+        put_credit = max(0.30, min(put_credit, width * 0.35))
+        call_credit = max(0.30, min(call_credit, width * 0.35))
+
+        total = put_credit + call_credit
+        max_profit = total * 100
+        max_loss = (width - total) * 100
+
+        return {
+            'put_credit': round(put_credit, 2),
+            'call_credit': round(call_credit, 2),
+            'total_credit': round(total, 2),
+            'max_profit': round(max_profit, 2),
+            'max_loss': round(max_loss, 2),
+        }
+
+    def calculate_position_size(
+        self,
+        available_capital: float,
+        max_loss_per_contract: float
+    ) -> int:
+        """
+        Calculate position size based on available capital and risk limits.
+
+        PROMETHEUS uses conservative sizing since it's trading with borrowed capital.
+        """
+        # Max capital at risk per trade
+        max_risk = available_capital * (self.config.max_capital_per_trade_pct / 100)
+
+        # Contracts based on max loss
+        contracts = int(max_risk / max_loss_per_contract)
+
+        # Apply limits
+        contracts = max(1, min(contracts, 10))  # 1-10 contracts
+
+        return contracts
+
+    def generate_signal(
+        self,
+        source_box_position_id: str,
+        available_capital: float,
+    ) -> Optional[PrometheusICSignal]:
+        """
+        Generate an Iron Condor signal for PROMETHEUS.
+
+        Args:
+            source_box_position_id: ID of the box spread funding this trade
+            available_capital: Capital available for this trade
+
+        Returns:
+            PrometheusICSignal if conditions are favorable, None otherwise
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        # Get market data
+        market = self.get_market_data()
+        if not market:
+            logger.warning("PROMETHEUS IC: No market data available")
+            return None
+
+        spot = market['spot_price']
+        vix = market['vix']
+
+        # VIX filter
+        can_trade, vix_reason = self.check_vix_filter(vix)
+        if not can_trade:
+            logger.info(f"PROMETHEUS IC: {vix_reason}")
+            return self._create_skip_signal(
+                now, source_box_position_id, market, vix_reason
+            )
+
+        # Get Oracle advice
+        oracle = self.get_oracle_advice(market)
+        if not oracle:
+            logger.warning("PROMETHEUS IC: No Oracle advice available")
+            return self._create_skip_signal(
+                now, source_box_position_id, market, "Oracle not available"
+            )
+
+        oracle_advice = oracle.get('advice', 'HOLD')
+        oracle_confidence = oracle.get('confidence', 0)
+        oracle_win_prob = oracle.get('win_probability', 0)
+
+        # Check Oracle approval if required
+        if self.config.require_oracle_approval:
+            oracle_approved = oracle_advice in ('TRADE_FULL', 'TRADE_REDUCED', 'ENTER')
+
+            if not oracle_approved:
+                skip_reason = f"Oracle says {oracle_advice} (confidence: {oracle_confidence:.0%})"
+                logger.info(f"PROMETHEUS IC: {skip_reason}")
+                return self._create_skip_signal(
+                    now, source_box_position_id, market, skip_reason, oracle
+                )
+
+            if oracle_confidence < self.config.min_oracle_confidence:
+                skip_reason = f"Oracle confidence {oracle_confidence:.0%} below min {self.config.min_oracle_confidence:.0%}"
+                logger.info(f"PROMETHEUS IC: {skip_reason}")
+                return self._create_skip_signal(
+                    now, source_box_position_id, market, skip_reason, oracle
+                )
+
+            if oracle_win_prob < self.config.min_win_probability:
+                skip_reason = f"Win probability {oracle_win_prob:.0%} below min {self.config.min_win_probability:.0%}"
+                logger.info(f"PROMETHEUS IC: {skip_reason}")
+                return self._create_skip_signal(
+                    now, source_box_position_id, market, skip_reason, oracle
+                )
+        else:
+            oracle_approved = True
+
+        # Calculate strikes
+        strikes = self.calculate_strikes(
+            spot,
+            market['expected_move'],
+            market.get('call_wall', 0),
+            market.get('put_wall', 0),
+            oracle.get('suggested_put_strike'),
+            oracle.get('suggested_call_strike'),
+        )
+
+        # Estimate credits
+        pricing = self.estimate_credits(
+            spot,
+            market['expected_move'],
+            strikes['put_short'],
+            strikes['call_short'],
+            vix,
+        )
+
+        # Calculate position size
+        contracts = self.calculate_position_size(
+            available_capital,
+            pricing['max_loss']
+        )
+
+        total_credit = pricing['total_credit']
+        max_loss = pricing['max_loss'] * contracts
+        margin_required = self.config.spread_width * 100 * contracts
+
+        # Calculate expiration (0DTE or next available)
+        if self.config.prefer_0dte:
+            # Today's expiration for 0DTE
+            expiration = now.strftime('%Y-%m-%d')
+            dte = 0
+        else:
+            # Next Friday
+            days_until_friday = (4 - now.weekday()) % 7
+            if days_until_friday == 0 and now.hour >= 15:
+                days_until_friday = 7
+            exp_date = now + timedelta(days=days_until_friday)
+            expiration = exp_date.strftime('%Y-%m-%d')
+            dte = days_until_friday
+
+        # Calculate probability of profit (approximate from delta)
+        # ~10 delta short strikes = ~80% PoP for IC
+        put_dist_pct = abs(spot - strikes['put_short']) / spot * 100
+        call_dist_pct = abs(strikes['call_short'] - spot) / spot * 100
+        avg_dist = (put_dist_pct + call_dist_pct) / 2
+        pop = min(0.85, 0.5 + avg_dist * 5)  # Rough approximation
+
+        # Build reasoning
+        reasoning_parts = [
+            f"Oracle: {oracle_advice} ({oracle_confidence:.0%})",
+            f"Win Prob: {oracle_win_prob:.0%}",
+            f"VIX: {vix:.1f}",
+            f"Strikes via {strikes['source']}",
+        ]
+        if oracle.get('top_factors'):
+            top_factor = oracle['top_factors'][0]
+            reasoning_parts.append(f"Top: {top_factor['factor']}")
+
+        logger.info(
+            f"PROMETHEUS IC: Signal generated - "
+            f"{strikes['put_short']}/{strikes['put_long']} PUT, "
+            f"{strikes['call_short']}/{strikes['call_long']} CALL, "
+            f"credit=${total_credit:.2f}, contracts={contracts}"
+        )
+
+        return PrometheusICSignal(
+            signal_id=f"PROM-IC-{now.strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}",
+            signal_time=now,
+            source_box_position_id=source_box_position_id,
+            ticker=self.config.ticker,
+            spot_price=spot,
+            # Put spread
+            put_short_strike=strikes['put_short'],
+            put_long_strike=strikes['put_long'],
+            put_spread_width=self.config.spread_width,
+            # Call spread
+            call_short_strike=strikes['call_short'],
+            call_long_strike=strikes['call_long'],
+            call_spread_width=self.config.spread_width,
+            # Expiration
+            expiration=expiration,
+            dte=dte,
+            # Pricing
+            put_spread_credit=pricing['put_credit'],
+            call_spread_credit=pricing['call_credit'],
+            total_credit=total_credit,
+            max_loss=pricing['max_loss'],
+            # Risk metrics
+            probability_of_profit=pop,
+            delta_of_short_put=-self.config.short_put_delta,
+            delta_of_short_call=self.config.short_call_delta,
+            # Sizing
+            contracts=contracts,
+            margin_required=margin_required,
+            capital_at_risk=max_loss,
+            # Oracle
+            oracle_approved=oracle_approved,
+            oracle_confidence=oracle_confidence,
+            oracle_reasoning=" | ".join(reasoning_parts),
+            # Market context
+            vix_level=vix,
+            gamma_regime=market.get('gex_regime', 'NEUTRAL'),
+            gex_regime=market.get('gex_regime', 'NEUTRAL'),
+            # Validity
+            is_valid=True,
+            skip_reason="",
+        )
+
+    def _create_skip_signal(
+        self,
+        signal_time: datetime,
+        source_box_position_id: str,
+        market: Dict[str, Any],
+        skip_reason: str,
+        oracle: Dict[str, Any] = None,
+    ) -> PrometheusICSignal:
+        """Create a signal that was skipped (for audit trail)"""
+        return PrometheusICSignal(
+            signal_id=f"PROM-IC-SKIP-{signal_time.strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}",
+            signal_time=signal_time,
+            source_box_position_id=source_box_position_id,
+            ticker=self.config.ticker,
+            spot_price=market.get('spot_price', 0),
+            # Empty strikes
+            put_short_strike=0,
+            put_long_strike=0,
+            put_spread_width=0,
+            call_short_strike=0,
+            call_long_strike=0,
+            call_spread_width=0,
+            expiration="",
+            dte=0,
+            # Empty pricing
+            put_spread_credit=0,
+            call_spread_credit=0,
+            total_credit=0,
+            max_loss=0,
+            probability_of_profit=0,
+            delta_of_short_put=0,
+            delta_of_short_call=0,
+            contracts=0,
+            margin_required=0,
+            capital_at_risk=0,
+            # Oracle context
+            oracle_approved=False,
+            oracle_confidence=oracle.get('confidence', 0) if oracle else 0,
+            oracle_reasoning=oracle.get('reasoning', '') if oracle else '',
+            # Market context
+            vix_level=market.get('vix', 0),
+            gamma_regime=market.get('gex_regime', 'NEUTRAL'),
+            gex_regime=market.get('gex_regime', 'NEUTRAL'),
+            # Skipped
+            is_valid=False,
+            skip_reason=skip_reason,
         )

@@ -56,10 +56,10 @@ interface Position {
 }
 
 export default function PrometheusBoxDashboard() {
-  const [activeTab, setActiveTab] = useState<'overview' | 'positions' | 'analytics' | 'education'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'positions' | 'ic-trading' | 'analytics' | 'education'>('overview')
   const [equityView, setEquityView] = useState<'historical' | 'intraday'>('historical')
 
-  // Data fetching
+  // Data fetching - Box Spread
   const { data: status, error: statusError } = useSWR('/api/prometheus-box/status', fetcher, { refreshInterval: 30000 })
   const { data: positions } = useSWR('/api/prometheus-box/positions', fetcher, { refreshInterval: 30000 })
   const { data: rateAnalysis } = useSWR('/api/prometheus-box/analytics/rates', fetcher, { refreshInterval: 60000 })
@@ -68,7 +68,15 @@ export default function PrometheusBoxDashboard() {
   const { data: intradayEquity } = useSWR('/api/prometheus-box/equity-curve/intraday', fetcher, { refreshInterval: 30000 })
   const { data: interestRates } = useSWR('/api/prometheus-box/analytics/interest-rates', fetcher, { refreshInterval: 300000 })
 
-  // IC Bot positions for capital deployment tracking
+  // IC Trading data
+  const { data: icStatus } = useSWR('/api/prometheus-box/ic/status', fetcher, { refreshInterval: 30000 })
+  const { data: icPositions } = useSWR('/api/prometheus-box/ic/positions', fetcher, { refreshInterval: 15000 })
+  const { data: icPerformance } = useSWR('/api/prometheus-box/ic/performance', fetcher, { refreshInterval: 30000 })
+  const { data: icClosedTrades } = useSWR('/api/prometheus-box/ic/closed-trades?limit=20', fetcher, { refreshInterval: 60000 })
+  const { data: icEquityCurve } = useSWR('/api/prometheus-box/ic/equity-curve', fetcher, { refreshInterval: 60000 })
+  const { data: combinedPerformance } = useSWR('/api/prometheus-box/combined/performance', fetcher, { refreshInterval: 60000 })
+
+  // IC Bot positions for capital deployment tracking (legacy - to be removed)
   const { data: aresPositions } = useSWR('/api/ares/positions', fetcher, { refreshInterval: 30000 })
   const { data: titanPositions } = useSWR('/api/titan/positions', fetcher, { refreshInterval: 30000 })
   const { data: pegasusPositions } = useSWR('/api/pegasus/positions', fetcher, { refreshInterval: 30000 })
@@ -145,15 +153,21 @@ export default function PrometheusBoxDashboard() {
       <div className="bg-gray-800 border-b border-gray-700">
         <div className="max-w-7xl mx-auto px-6">
           <div className="flex gap-1">
-            {['overview', 'positions', 'analytics', 'education'].map((tab) => (
+            {[
+              { key: 'overview', label: 'Overview' },
+              { key: 'positions', label: 'Box Spreads' },
+              { key: 'ic-trading', label: 'IC Trading' },
+              { key: 'analytics', label: 'Analytics' },
+              { key: 'education', label: 'Education' },
+            ].map((tab) => (
               <button
-                key={tab}
-                onClick={() => setActiveTab(tab as any)}
+                key={tab.key}
+                onClick={() => setActiveTab(tab.key as any)}
                 className={`px-6 py-3 font-medium transition-colors ${
-                  activeTab === tab ? 'bg-orange-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                  activeTab === tab.key ? 'bg-orange-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'
                 }`}
               >
-                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                {tab.label}
               </button>
             ))}
           </div>
@@ -764,6 +778,251 @@ export default function PrometheusBoxDashboard() {
                       <div className="text-4xl mb-4">📦</div>
                       <p className="text-lg">No Open Positions</p>
                       <p className="text-sm mt-2">PROMETHEUS scans for opportunities daily at 9:30 AM CT</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* IC Trading Tab */}
+            {activeTab === 'ic-trading' && (
+              <div className="space-y-6">
+                {/* IC Status Header */}
+                <div className="bg-gradient-to-br from-orange-900/30 to-gray-800 rounded-lg p-6 border border-orange-500/50">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-3">
+                      <div className="text-3xl">📊</div>
+                      <div>
+                        <h2 className="text-xl font-bold">Iron Condor Trading</h2>
+                        <p className="text-sm text-gray-400">Trading with borrowed capital from box spreads</p>
+                      </div>
+                    </div>
+                    <div className={`px-3 py-1 rounded-full text-sm font-medium ${
+                      icStatus?.status?.enabled ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                    }`}>
+                      {icStatus?.status?.enabled ? 'ENABLED' : 'DISABLED'}
+                    </div>
+                  </div>
+
+                  {/* Quick Stats */}
+                  <div className="grid md:grid-cols-5 gap-4">
+                    <div className="bg-gray-700/50 rounded-lg p-4">
+                      <div className="text-xs text-gray-400 mb-1">Open Positions</div>
+                      <div className="text-2xl font-bold">{icStatus?.status?.open_positions || 0}</div>
+                    </div>
+                    <div className="bg-gray-700/50 rounded-lg p-4">
+                      <div className="text-xs text-gray-400 mb-1">Unrealized P&L</div>
+                      <div className={`text-2xl font-bold ${(icStatus?.status?.total_unrealized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {formatCurrency(icStatus?.status?.total_unrealized_pnl || 0)}
+                      </div>
+                    </div>
+                    <div className="bg-gray-700/50 rounded-lg p-4">
+                      <div className="text-xs text-gray-400 mb-1">Available Capital</div>
+                      <div className="text-2xl font-bold text-blue-400">
+                        {formatCurrency(icStatus?.status?.available_capital || 0)}
+                      </div>
+                    </div>
+                    <div className="bg-gray-700/50 rounded-lg p-4">
+                      <div className="text-xs text-gray-400 mb-1">Todays Trades</div>
+                      <div className="text-2xl font-bold">{icStatus?.status?.daily_trades || 0} / {icStatus?.status?.max_daily_trades || 3}</div>
+                    </div>
+                    <div className="bg-gray-700/50 rounded-lg p-4">
+                      <div className="text-xs text-gray-400 mb-1">Can Trade?</div>
+                      <div className={`text-2xl font-bold ${icStatus?.status?.can_trade ? 'text-green-400' : 'text-yellow-400'}`}>
+                        {icStatus?.status?.can_trade ? 'YES' : 'NO'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Combined Performance - The Key Metric */}
+                <div className="bg-gray-800 rounded-lg p-6 border-2 border-orange-500/30">
+                  <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                    <span>Combined Performance</span>
+                    <span className="text-sm font-normal text-gray-400">(Are IC returns &gt; borrowing costs?)</span>
+                  </h3>
+                  <div className="grid md:grid-cols-4 gap-4">
+                    <div className="bg-gray-700/50 rounded-lg p-4">
+                      <div className="text-xs text-gray-400 mb-1">Total Borrowed</div>
+                      <div className="text-xl font-bold text-blue-400">
+                        {formatCurrency(combinedPerformance?.summary?.box_spread?.total_borrowed || 0)}
+                      </div>
+                    </div>
+                    <div className="bg-gray-700/50 rounded-lg p-4">
+                      <div className="text-xs text-gray-400 mb-1">Borrowing Cost</div>
+                      <div className="text-xl font-bold text-red-400">
+                        -{formatCurrency(combinedPerformance?.summary?.box_spread?.total_borrowing_cost || 0)}
+                      </div>
+                    </div>
+                    <div className="bg-gray-700/50 rounded-lg p-4">
+                      <div className="text-xs text-gray-400 mb-1">IC Returns</div>
+                      <div className="text-xl font-bold text-green-400">
+                        +{formatCurrency(combinedPerformance?.summary?.ic_trading?.total_realized_pnl || 0)}
+                      </div>
+                    </div>
+                    <div className={`rounded-lg p-4 ${
+                      (combinedPerformance?.summary?.net_profit || 0) >= 0
+                        ? 'bg-green-500/20 border border-green-500/50'
+                        : 'bg-red-500/20 border border-red-500/50'
+                    }`}>
+                      <div className="text-xs text-gray-300 mb-1">NET PROFIT</div>
+                      <div className={`text-2xl font-bold ${(combinedPerformance?.summary?.net_profit || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {formatCurrency(combinedPerformance?.summary?.net_profit || 0)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* IC Performance Stats */}
+                <div className="bg-gray-800 rounded-lg p-6">
+                  <h3 className="text-lg font-bold mb-4">IC Trading Performance</h3>
+                  <div className="grid md:grid-cols-6 gap-4">
+                    <div className="bg-gray-700/50 rounded-lg p-4">
+                      <div className="text-xs text-gray-400 mb-1">Total Trades</div>
+                      <div className="text-xl font-bold">{icPerformance?.performance?.closed_trades?.total || 0}</div>
+                    </div>
+                    <div className="bg-gray-700/50 rounded-lg p-4">
+                      <div className="text-xs text-gray-400 mb-1">Win Rate</div>
+                      <div className={`text-xl font-bold ${
+                        (icPerformance?.performance?.closed_trades?.win_rate || 0) >= 0.5 ? 'text-green-400' : 'text-red-400'
+                      }`}>
+                        {formatPct((icPerformance?.performance?.closed_trades?.win_rate || 0) * 100)}
+                      </div>
+                    </div>
+                    <div className="bg-gray-700/50 rounded-lg p-4">
+                      <div className="text-xs text-gray-400 mb-1">Profit Factor</div>
+                      <div className={`text-xl font-bold ${
+                        (icPerformance?.performance?.closed_trades?.profit_factor || 0) >= 1 ? 'text-green-400' : 'text-red-400'
+                      }`}>
+                        {(icPerformance?.performance?.closed_trades?.profit_factor || 0).toFixed(2)}
+                      </div>
+                    </div>
+                    <div className="bg-gray-700/50 rounded-lg p-4">
+                      <div className="text-xs text-gray-400 mb-1">Total P&L</div>
+                      <div className={`text-xl font-bold ${
+                        (icPerformance?.performance?.closed_trades?.total_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'
+                      }`}>
+                        {formatCurrency(icPerformance?.performance?.closed_trades?.total_pnl || 0)}
+                      </div>
+                    </div>
+                    <div className="bg-gray-700/50 rounded-lg p-4">
+                      <div className="text-xs text-gray-400 mb-1">Avg Win</div>
+                      <div className="text-xl font-bold text-green-400">
+                        {formatCurrency(icPerformance?.performance?.closed_trades?.best_trade || 0)}
+                      </div>
+                    </div>
+                    <div className="bg-gray-700/50 rounded-lg p-4">
+                      <div className="text-xs text-gray-400 mb-1">Avg Loss</div>
+                      <div className="text-xl font-bold text-red-400">
+                        {formatCurrency(icPerformance?.performance?.closed_trades?.worst_trade || 0)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Open IC Positions */}
+                <div className="bg-gray-800 rounded-lg p-6">
+                  <h3 className="text-lg font-bold mb-4">Open IC Positions ({icPositions?.count || 0})</h3>
+                  {icPositions?.positions?.length > 0 ? (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-gray-400 border-b border-gray-700">
+                            <th className="text-left py-2 px-3">Position</th>
+                            <th className="text-left py-2 px-3">Put Spread</th>
+                            <th className="text-left py-2 px-3">Call Spread</th>
+                            <th className="text-left py-2 px-3">Exp/DTE</th>
+                            <th className="text-right py-2 px-3">Credit</th>
+                            <th className="text-right py-2 px-3">Current</th>
+                            <th className="text-right py-2 px-3">P&L</th>
+                            <th className="text-left py-2 px-3">Oracle</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {icPositions.positions.map((pos: any) => (
+                            <tr key={pos.position_id} className="border-b border-gray-700/50 hover:bg-gray-700/30">
+                              <td className="py-3 px-3">
+                                <div className="font-mono text-xs">{pos.position_id?.slice(0, 16)}</div>
+                                <div className="text-xs text-gray-400">{pos.contracts} contracts</div>
+                              </td>
+                              <td className="py-3 px-3 font-mono">{pos.put_spread}</td>
+                              <td className="py-3 px-3 font-mono">{pos.call_spread}</td>
+                              <td className="py-3 px-3">
+                                <div>{pos.expiration}</div>
+                                <div className="text-xs text-gray-400">{pos.dte} DTE</div>
+                              </td>
+                              <td className="py-3 px-3 text-right text-green-400">
+                                ${pos.entry_credit?.toFixed(2)}
+                              </td>
+                              <td className="py-3 px-3 text-right">
+                                ${pos.current_value?.toFixed(2)}
+                              </td>
+                              <td className={`py-3 px-3 text-right font-bold ${
+                                (pos.unrealized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'
+                              }`}>
+                                {formatCurrency(pos.unrealized_pnl || 0)}
+                                <div className="text-xs text-gray-400">{pos.pnl_pct?.toFixed(1)}%</div>
+                              </td>
+                              <td className="py-3 px-3">
+                                <div className={`text-xs ${pos.oracle_confidence >= 0.7 ? 'text-green-400' : 'text-yellow-400'}`}>
+                                  {formatPct((pos.oracle_confidence || 0) * 100)}
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="p-8 text-center text-gray-400">
+                      <div className="text-4xl mb-4">📊</div>
+                      <p className="text-lg">No Open IC Positions</p>
+                      <p className="text-sm mt-2">IC trades are generated every 10 minutes when Oracle approves</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* Recent Closed Trades */}
+                <div className="bg-gray-800 rounded-lg p-6">
+                  <h3 className="text-lg font-bold mb-4">Recent Closed Trades</h3>
+                  {icClosedTrades?.trades?.length > 0 ? (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-gray-400 border-b border-gray-700">
+                            <th className="text-left py-2 px-3">Close Time</th>
+                            <th className="text-left py-2 px-3">Strikes</th>
+                            <th className="text-right py-2 px-3">Entry</th>
+                            <th className="text-right py-2 px-3">Exit</th>
+                            <th className="text-right py-2 px-3">P&L</th>
+                            <th className="text-left py-2 px-3">Reason</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {icClosedTrades.trades.slice(0, 10).map((trade: any, idx: number) => (
+                            <tr key={idx} className="border-b border-gray-700/50 hover:bg-gray-700/30">
+                              <td className="py-2 px-3 text-xs">
+                                {trade.close_time ? new Date(trade.close_time).toLocaleString() : '-'}
+                              </td>
+                              <td className="py-2 px-3 font-mono text-xs">
+                                P:{trade.put_short_strike}/{trade.put_long_strike} C:{trade.call_short_strike}/{trade.call_long_strike}
+                              </td>
+                              <td className="py-2 px-3 text-right">${trade.entry_credit?.toFixed(2)}</td>
+                              <td className="py-2 px-3 text-right">${trade.exit_price?.toFixed(2)}</td>
+                              <td className={`py-2 px-3 text-right font-bold ${
+                                (trade.realized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'
+                              }`}>
+                                {formatCurrency(trade.realized_pnl || 0)}
+                              </td>
+                              <td className="py-2 px-3 text-xs text-gray-400">{trade.close_reason}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="p-8 text-center text-gray-400">
+                      <p>No closed trades yet</p>
                     </div>
                   )}
                 </div>
