@@ -27,6 +27,12 @@ from .models import (
     TradingMode,
     DailyBriefing,
     RollDecision,
+    # IC Trading Models
+    ICPositionStatus,
+    PrometheusICSignal,
+    PrometheusICPosition,
+    PrometheusICConfig,
+    PrometheusPerformanceSummary,
 )
 
 logger = logging.getLogger(__name__)
@@ -396,6 +402,184 @@ class PrometheusDatabase:
                     total_costs_accrued DECIMAL(15, 2),          -- Borrowing costs accrued
 
                     details JSONB                                -- Full position-level MTM details
+                )
+            """)
+
+            # ==================================================================
+            # IC TRADING TABLES
+            # ==================================================================
+            # These tables support PROMETHEUS's own Iron Condor trading
+            # using capital borrowed via box spreads.
+            # ==================================================================
+
+            # IC Positions table - Active Iron Condor positions
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS prometheus_ic_positions (
+                    id SERIAL PRIMARY KEY,
+                    position_id VARCHAR(50) UNIQUE NOT NULL,
+                    source_box_position_id VARCHAR(50),          -- Links to box spread funding this
+
+                    -- Underlying
+                    ticker VARCHAR(10) NOT NULL,
+
+                    -- Put spread leg
+                    put_short_strike DECIMAL(10, 2),
+                    put_long_strike DECIMAL(10, 2),
+                    put_short_symbol VARCHAR(50),
+                    put_long_symbol VARCHAR(50),
+                    put_spread_order_id VARCHAR(50),
+
+                    -- Call spread leg
+                    call_short_strike DECIMAL(10, 2),
+                    call_long_strike DECIMAL(10, 2),
+                    call_short_symbol VARCHAR(50),
+                    call_long_symbol VARCHAR(50),
+                    call_spread_order_id VARCHAR(50),
+
+                    -- Spread details
+                    spread_width DECIMAL(10, 2),
+                    expiration DATE,
+                    dte_at_entry INTEGER,
+                    current_dte INTEGER,
+
+                    -- Execution
+                    contracts INTEGER,
+                    entry_credit DECIMAL(10, 4),                 -- Credit per contract
+                    total_credit_received DECIMAL(15, 2),        -- entry_credit × contracts × 100
+                    max_loss DECIMAL(15, 2),                     -- (width - credit) × contracts × 100
+
+                    -- Mark-to-market
+                    current_value DECIMAL(15, 2),                -- Current cost to close
+                    unrealized_pnl DECIMAL(15, 2),               -- Credit - current_value
+
+                    -- Exit details
+                    exit_price DECIMAL(10, 4) DEFAULT 0,
+                    realized_pnl DECIMAL(15, 2) DEFAULT 0,
+
+                    -- Market context at entry
+                    spot_at_entry DECIMAL(10, 2),
+                    vix_at_entry DECIMAL(6, 2),
+                    gamma_regime_at_entry VARCHAR(20),
+
+                    -- Oracle decision context
+                    oracle_confidence DECIMAL(5, 4),
+                    oracle_reasoning TEXT,
+
+                    -- Risk management
+                    stop_loss_pct DECIMAL(6, 2) DEFAULT 200,
+                    profit_target_pct DECIMAL(6, 2) DEFAULT 50,
+                    time_stop_dte INTEGER DEFAULT 0,
+
+                    -- Status
+                    status VARCHAR(30) DEFAULT 'open',
+                    open_time TIMESTAMP WITH TIME ZONE,
+                    close_time TIMESTAMP WITH TIME ZONE,
+                    close_reason VARCHAR(100),
+
+                    -- Timestamps
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )
+            """)
+
+            # IC Closed Trades table - Historical IC trades
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS prometheus_ic_closed_trades (
+                    id SERIAL PRIMARY KEY,
+                    position_id VARCHAR(50) UNIQUE NOT NULL,
+                    source_box_position_id VARCHAR(50),
+
+                    ticker VARCHAR(10),
+                    put_short_strike DECIMAL(10, 2),
+                    put_long_strike DECIMAL(10, 2),
+                    call_short_strike DECIMAL(10, 2),
+                    call_long_strike DECIMAL(10, 2),
+                    spread_width DECIMAL(10, 2),
+                    expiration DATE,
+                    dte_at_entry INTEGER,
+
+                    contracts INTEGER,
+                    entry_credit DECIMAL(10, 4),
+                    exit_price DECIMAL(10, 4),
+                    realized_pnl DECIMAL(15, 2),
+
+                    spot_at_entry DECIMAL(10, 2),
+                    vix_at_entry DECIMAL(6, 2),
+                    gamma_regime VARCHAR(20),
+                    oracle_confidence DECIMAL(5, 4),
+
+                    open_time TIMESTAMP WITH TIME ZONE,
+                    close_time TIMESTAMP WITH TIME ZONE,
+                    close_reason VARCHAR(100),
+                    hold_duration_minutes INTEGER,
+
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )
+            """)
+
+            # IC Signals table - Generated IC trading signals
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS prometheus_ic_signals (
+                    id SERIAL PRIMARY KEY,
+                    signal_id VARCHAR(50) UNIQUE NOT NULL,
+                    signal_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    source_box_position_id VARCHAR(50),
+
+                    ticker VARCHAR(10),
+                    spot_price DECIMAL(10, 2),
+
+                    -- Put spread
+                    put_short_strike DECIMAL(10, 2),
+                    put_long_strike DECIMAL(10, 2),
+                    put_spread_credit DECIMAL(10, 4),
+
+                    -- Call spread
+                    call_short_strike DECIMAL(10, 2),
+                    call_long_strike DECIMAL(10, 2),
+                    call_spread_credit DECIMAL(10, 4),
+
+                    -- Total IC
+                    expiration DATE,
+                    dte INTEGER,
+                    total_credit DECIMAL(10, 4),
+                    max_loss DECIMAL(15, 2),
+
+                    -- Risk metrics
+                    probability_of_profit DECIMAL(5, 4),
+                    delta_of_short_put DECIMAL(6, 4),
+                    delta_of_short_call DECIMAL(6, 4),
+
+                    -- Sizing
+                    contracts INTEGER,
+                    margin_required DECIMAL(15, 2),
+                    capital_at_risk DECIMAL(15, 2),
+
+                    -- Oracle decision
+                    oracle_approved BOOLEAN,
+                    oracle_confidence DECIMAL(5, 4),
+                    oracle_reasoning TEXT,
+
+                    -- Market context
+                    vix_level DECIMAL(6, 2),
+                    gamma_regime VARCHAR(20),
+                    gex_regime VARCHAR(20),
+
+                    -- Execution status
+                    was_executed BOOLEAN DEFAULT FALSE,
+                    skip_reason VARCHAR(500),
+                    executed_position_id VARCHAR(50),
+
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )
+            """)
+
+            # IC Config table - IC trading configuration
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS prometheus_ic_config (
+                    id SERIAL PRIMARY KEY,
+                    config_key VARCHAR(50) UNIQUE DEFAULT 'default',
+                    config_data JSONB NOT NULL,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
                 )
             """)
 
@@ -964,12 +1148,20 @@ class PrometheusDatabase:
         return config.capital
 
     def get_equity_curve(self, limit: int = 100) -> List[Dict[str, Any]]:
-        """Get historical equity curve data"""
+        """
+        Get historical equity curve data.
+
+        STANDARDS.md COMPLIANCE:
+        - Query ALL closed trades (no LIMIT in SQL) to ensure accurate cumulative P&L
+        - Calculate running total across all trades
+        - Only limit the OUTPUT, not the SQL query
+        """
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
 
-            # Get closed positions for equity curve
+            # CRITICAL: No LIMIT in SQL - query ALL closed positions
+            # Then filter output only (per STANDARDS.md)
             cursor.execute("""
                 SELECT
                     DATE(close_time AT TIME ZONE 'America/Chicago') as trade_date,
@@ -979,8 +1171,7 @@ class PrometheusDatabase:
                 WHERE status = 'closed' AND close_time IS NOT NULL
                 GROUP BY DATE(close_time AT TIME ZONE 'America/Chicago')
                 ORDER BY trade_date ASC
-                LIMIT %s
-            """, (limit,))
+            """)
 
             rows = cursor.fetchall()
             cursor.close()
@@ -989,6 +1180,7 @@ class PrometheusDatabase:
             cumulative_pnl = 0
             equity_curve = []
 
+            # Calculate cumulative across ALL trades
             for row in rows:
                 cumulative_pnl += float(row[1] or 0)
                 equity_curve.append({
@@ -999,7 +1191,8 @@ class PrometheusDatabase:
                     'positions_closed': row[2],
                 })
 
-            return equity_curve
+            # Limit OUTPUT only (return most recent points)
+            return equity_curve[-limit:] if len(equity_curve) > limit else equity_curve
 
         except Exception as e:
             logger.error(f"Error getting equity curve: {e}")
@@ -1261,3 +1454,757 @@ class PrometheusDatabase:
         except Exception as e:
             logger.error(f"Error getting performance summary: {e}")
             return {}
+
+    # ==========================================================================
+    # IC TRADING DATABASE METHODS
+    # ==========================================================================
+    # These methods support PROMETHEUS's own Iron Condor trading using
+    # capital borrowed via box spreads.
+    # ==========================================================================
+
+    # ========== IC Configuration Methods ==========
+
+    def load_ic_config(self) -> PrometheusICConfig:
+        """Load IC trading configuration from database or return defaults"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT config_data FROM prometheus_ic_config
+                WHERE config_key = 'default'
+            """)
+            row = cursor.fetchone()
+            cursor.close()
+
+            if row and row[0]:
+                return PrometheusICConfig.from_dict(row[0])
+            return PrometheusICConfig()
+
+        except Exception as e:
+            logger.error(f"Error loading IC config: {e}")
+            return PrometheusICConfig()
+
+    def save_ic_config(self, config: PrometheusICConfig) -> bool:
+        """Save IC trading configuration to database"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO prometheus_ic_config (config_key, config_data, updated_at)
+                VALUES ('default', %s, NOW())
+                ON CONFLICT (config_key)
+                DO UPDATE SET config_data = %s, updated_at = NOW()
+            """, (json.dumps(config.to_dict()), json.dumps(config.to_dict())))
+            conn.commit()
+            cursor.close()
+            return True
+        except Exception as e:
+            logger.error(f"Error saving IC config: {e}")
+            return False
+
+    # ========== IC Position Methods ==========
+
+    def get_open_ic_positions(self) -> List[PrometheusICPosition]:
+        """Get all open IC positions"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM prometheus_ic_positions
+                WHERE status IN ('open', 'pending', 'closing')
+                ORDER BY open_time DESC
+            """)
+            rows = cursor.fetchall()
+            columns = [desc[0] for desc in cursor.description]
+            cursor.close()
+
+            positions = []
+            for row in rows:
+                data = dict(zip(columns, row))
+                positions.append(self._row_to_ic_position(data))
+            return positions
+
+        except Exception as e:
+            logger.error(f"Error getting open IC positions: {e}")
+            return []
+
+    def get_ic_position(self, position_id: str) -> Optional[PrometheusICPosition]:
+        """Get a specific IC position by ID"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM prometheus_ic_positions
+                WHERE position_id = %s
+            """, (position_id,))
+            row = cursor.fetchone()
+            columns = [desc[0] for desc in cursor.description]
+            cursor.close()
+
+            if row:
+                data = dict(zip(columns, row))
+                return self._row_to_ic_position(data)
+            return None
+
+        except Exception as e:
+            logger.error(f"Error getting IC position {position_id}: {e}")
+            return None
+
+    def save_ic_position(self, position: PrometheusICPosition) -> bool:
+        """Save a new or updated IC position"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO prometheus_ic_positions (
+                    position_id, source_box_position_id, ticker,
+                    put_short_strike, put_long_strike, put_short_symbol, put_long_symbol,
+                    put_spread_order_id,
+                    call_short_strike, call_long_strike, call_short_symbol, call_long_symbol,
+                    call_spread_order_id,
+                    spread_width, expiration, dte_at_entry, current_dte,
+                    contracts, entry_credit, total_credit_received, max_loss,
+                    current_value, unrealized_pnl, exit_price, realized_pnl,
+                    spot_at_entry, vix_at_entry, gamma_regime_at_entry,
+                    oracle_confidence, oracle_reasoning,
+                    stop_loss_pct, profit_target_pct, time_stop_dte,
+                    status, open_time, close_time, close_reason
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s
+                )
+                ON CONFLICT (position_id) DO UPDATE SET
+                    current_dte = EXCLUDED.current_dte,
+                    current_value = EXCLUDED.current_value,
+                    unrealized_pnl = EXCLUDED.unrealized_pnl,
+                    exit_price = EXCLUDED.exit_price,
+                    realized_pnl = EXCLUDED.realized_pnl,
+                    status = EXCLUDED.status,
+                    close_time = EXCLUDED.close_time,
+                    close_reason = EXCLUDED.close_reason,
+                    updated_at = NOW()
+            """, (
+                position.position_id, position.source_box_position_id, position.ticker,
+                position.put_short_strike, position.put_long_strike,
+                position.put_short_symbol, position.put_long_symbol,
+                position.put_spread_order_id,
+                position.call_short_strike, position.call_long_strike,
+                position.call_short_symbol, position.call_long_symbol,
+                position.call_spread_order_id,
+                position.spread_width, position.expiration, position.dte_at_entry,
+                position.current_dte,
+                position.contracts, position.entry_credit, position.total_credit_received,
+                position.max_loss,
+                position.current_value, position.unrealized_pnl,
+                position.exit_price, position.realized_pnl,
+                position.spot_at_entry, position.vix_at_entry, position.gamma_regime_at_entry,
+                position.oracle_confidence_at_entry, position.oracle_reasoning,
+                position.stop_loss_pct, position.profit_target_pct, position.time_stop_dte,
+                position.status.value, position.open_time, position.close_time,
+                position.close_reason
+            ))
+            conn.commit()
+            cursor.close()
+            return True
+
+        except Exception as e:
+            logger.error(f"Error saving IC position: {e}")
+            return False
+
+    def close_ic_position(
+        self,
+        position_id: str,
+        exit_price: float,
+        close_reason: str
+    ) -> bool:
+        """
+        Close an IC position and move to closed trades table.
+
+        This method:
+        1. Updates the position status to closed
+        2. Calculates realized P&L
+        3. Copies the record to closed_trades table
+        4. Updates the source box spread's IC returns
+        """
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            # Get current position data
+            cursor.execute("""
+                SELECT * FROM prometheus_ic_positions
+                WHERE position_id = %s
+            """, (position_id,))
+            row = cursor.fetchone()
+
+            if not row:
+                logger.error(f"IC position {position_id} not found")
+                return False
+
+            columns = [desc[0] for desc in cursor.description]
+            data = dict(zip(columns, row))
+
+            # Calculate realized P&L
+            entry_credit = float(data['entry_credit'] or 0)
+            contracts = int(data['contracts'] or 0)
+            # P&L = (entry_credit - exit_price) × contracts × 100
+            realized_pnl = (entry_credit - exit_price) * contracts * 100
+
+            # Calculate hold duration
+            open_time = data['open_time']
+            now = datetime.now(CENTRAL_TZ)
+            hold_duration_minutes = 0
+            if open_time:
+                hold_duration_minutes = int((now - open_time).total_seconds() / 60)
+
+            # Update the position
+            cursor.execute("""
+                UPDATE prometheus_ic_positions
+                SET status = 'closed',
+                    exit_price = %s,
+                    realized_pnl = %s,
+                    close_time = NOW(),
+                    close_reason = %s,
+                    updated_at = NOW()
+                WHERE position_id = %s
+            """, (exit_price, realized_pnl, close_reason, position_id))
+
+            # Insert into closed trades table
+            cursor.execute("""
+                INSERT INTO prometheus_ic_closed_trades (
+                    position_id, source_box_position_id, ticker,
+                    put_short_strike, put_long_strike, call_short_strike, call_long_strike,
+                    spread_width, expiration, dte_at_entry,
+                    contracts, entry_credit, exit_price, realized_pnl,
+                    spot_at_entry, vix_at_entry, gamma_regime, oracle_confidence,
+                    open_time, close_time, close_reason, hold_duration_minutes
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW(), %s, %s
+                )
+                ON CONFLICT (position_id) DO NOTHING
+            """, (
+                position_id, data['source_box_position_id'], data['ticker'],
+                data['put_short_strike'], data['put_long_strike'],
+                data['call_short_strike'], data['call_long_strike'],
+                data['spread_width'], data['expiration'], data['dte_at_entry'],
+                contracts, entry_credit, exit_price, realized_pnl,
+                data['spot_at_entry'], data['vix_at_entry'],
+                data['gamma_regime_at_entry'], data['oracle_confidence'],
+                open_time, close_reason, hold_duration_minutes
+            ))
+
+            # Update the source box spread's IC returns
+            source_box_id = data['source_box_position_id']
+            if source_box_id:
+                cursor.execute("""
+                    UPDATE prometheus_positions
+                    SET total_ic_returns = COALESCE(total_ic_returns, 0) + %s,
+                        net_profit = COALESCE(total_ic_returns, 0) + %s - COALESCE(borrowing_cost, 0),
+                        updated_at = NOW()
+                    WHERE position_id = %s
+                """, (realized_pnl, realized_pnl, source_box_id))
+
+            conn.commit()
+            cursor.close()
+
+            logger.info(
+                f"Closed IC position {position_id}: exit=${exit_price:.4f}, "
+                f"P&L=${realized_pnl:,.2f}, reason={close_reason}"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"Error closing IC position {position_id}: {e}")
+            return False
+
+    def expire_ic_position(self, position_id: str, expired_worthless: bool = True) -> bool:
+        """
+        Mark an IC position as expired.
+
+        If expired_worthless=True, the position is a full winner (kept all credit).
+        Otherwise, some assignment/exercise occurred.
+        """
+        exit_price = 0.0 if expired_worthless else None
+        close_reason = "Expired worthless - max profit" if expired_worthless else "Expired with exercise"
+
+        if exit_price is None:
+            # Need to calculate exit price if not worthless
+            position = self.get_ic_position(position_id)
+            if position:
+                # This would require actual price calculation
+                exit_price = position.entry_credit  # Break even as fallback
+            else:
+                exit_price = 0.0
+
+        return self.close_ic_position(position_id, exit_price, close_reason)
+
+    def _row_to_ic_position(self, data: Dict[str, Any]) -> PrometheusICPosition:
+        """Convert database row to PrometheusICPosition object"""
+        return PrometheusICPosition(
+            position_id=data['position_id'],
+            source_box_position_id=data['source_box_position_id'] or '',
+            ticker=data['ticker'],
+            put_short_strike=float(data['put_short_strike'] or 0),
+            put_long_strike=float(data['put_long_strike'] or 0),
+            call_short_strike=float(data['call_short_strike'] or 0),
+            call_long_strike=float(data['call_long_strike'] or 0),
+            spread_width=float(data['spread_width'] or 0),
+            put_short_symbol=data['put_short_symbol'] or '',
+            put_long_symbol=data['put_long_symbol'] or '',
+            call_short_symbol=data['call_short_symbol'] or '',
+            call_long_symbol=data['call_long_symbol'] or '',
+            put_spread_order_id=data['put_spread_order_id'] or '',
+            call_spread_order_id=data['call_spread_order_id'] or '',
+            expiration=str(data['expiration']),
+            dte_at_entry=int(data['dte_at_entry'] or 0),
+            current_dte=int(data['current_dte'] or 0),
+            contracts=int(data['contracts'] or 0),
+            entry_credit=float(data['entry_credit'] or 0),
+            total_credit_received=float(data['total_credit_received'] or 0),
+            max_loss=float(data['max_loss'] or 0),
+            current_value=float(data['current_value'] or 0),
+            unrealized_pnl=float(data['unrealized_pnl'] or 0),
+            exit_price=float(data['exit_price'] or 0),
+            realized_pnl=float(data['realized_pnl'] or 0),
+            spot_at_entry=float(data['spot_at_entry'] or 0),
+            vix_at_entry=float(data['vix_at_entry'] or 0),
+            gamma_regime_at_entry=data['gamma_regime_at_entry'] or '',
+            oracle_confidence_at_entry=float(data['oracle_confidence'] or 0),
+            oracle_reasoning=data['oracle_reasoning'] or '',
+            status=ICPositionStatus(data['status']) if data['status'] else ICPositionStatus.OPEN,
+            open_time=data['open_time'],
+            close_time=data.get('close_time'),
+            close_reason=data.get('close_reason', ''),
+            stop_loss_pct=float(data['stop_loss_pct'] or 200),
+            profit_target_pct=float(data['profit_target_pct'] or 50),
+            time_stop_dte=int(data['time_stop_dte'] or 0),
+        )
+
+    # ========== IC Signal Methods ==========
+
+    def log_ic_signal(
+        self,
+        signal: PrometheusICSignal,
+        was_executed: bool,
+        executed_position_id: str = None
+    ) -> bool:
+        """Log a generated IC signal"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO prometheus_ic_signals (
+                    signal_id, signal_time, source_box_position_id,
+                    ticker, spot_price,
+                    put_short_strike, put_long_strike, put_spread_credit,
+                    call_short_strike, call_long_strike, call_spread_credit,
+                    expiration, dte, total_credit, max_loss,
+                    probability_of_profit, delta_of_short_put, delta_of_short_call,
+                    contracts, margin_required, capital_at_risk,
+                    oracle_approved, oracle_confidence, oracle_reasoning,
+                    vix_level, gamma_regime, gex_regime,
+                    was_executed, skip_reason, executed_position_id
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                )
+            """, (
+                signal.signal_id, signal.signal_time, signal.source_box_position_id,
+                signal.ticker, signal.spot_price,
+                signal.put_short_strike, signal.put_long_strike, signal.put_spread_credit,
+                signal.call_short_strike, signal.call_long_strike, signal.call_spread_credit,
+                signal.expiration, signal.dte, signal.total_credit, signal.max_loss,
+                signal.probability_of_profit, signal.delta_of_short_put, signal.delta_of_short_call,
+                signal.contracts, signal.margin_required, signal.capital_at_risk,
+                signal.oracle_approved, signal.oracle_confidence, signal.oracle_reasoning,
+                signal.vix_level, signal.gamma_regime, signal.gex_regime,
+                was_executed, signal.skip_reason if not was_executed else '',
+                executed_position_id
+            ))
+            conn.commit()
+            cursor.close()
+            return True
+
+        except Exception as e:
+            logger.error(f"Error logging IC signal: {e}")
+            return False
+
+    def get_recent_ic_signals(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Get recent IC signals for display"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM prometheus_ic_signals
+                ORDER BY signal_time DESC
+                LIMIT %s
+            """, (limit,))
+            rows = cursor.fetchall()
+            columns = [desc[0] for desc in cursor.description]
+            cursor.close()
+
+            return [dict(zip(columns, row)) for row in rows]
+
+        except Exception as e:
+            logger.error(f"Error getting IC signals: {e}")
+            return []
+
+    # ========== IC Closed Trades Methods ==========
+
+    def get_ic_closed_trades(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get closed IC trades history"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT * FROM prometheus_ic_closed_trades
+                ORDER BY close_time DESC
+                LIMIT %s
+            """, (limit,))
+            rows = cursor.fetchall()
+            columns = [desc[0] for desc in cursor.description]
+            cursor.close()
+
+            return [dict(zip(columns, row)) for row in rows]
+
+        except Exception as e:
+            logger.error(f"Error getting closed IC trades: {e}")
+            return []
+
+    # ========== IC Performance Methods ==========
+
+    def get_ic_performance(self) -> Dict[str, Any]:
+        """Get IC trading performance metrics"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            # Get closed trades stats
+            cursor.execute("""
+                SELECT
+                    COUNT(*) as total_trades,
+                    SUM(CASE WHEN realized_pnl > 0 THEN 1 ELSE 0 END) as winners,
+                    SUM(CASE WHEN realized_pnl < 0 THEN 1 ELSE 0 END) as losers,
+                    SUM(realized_pnl) as total_pnl,
+                    AVG(realized_pnl) as avg_pnl,
+                    SUM(CASE WHEN realized_pnl > 0 THEN realized_pnl ELSE 0 END) as total_wins,
+                    SUM(CASE WHEN realized_pnl < 0 THEN ABS(realized_pnl) ELSE 0 END) as total_losses,
+                    AVG(hold_duration_minutes) as avg_hold_minutes,
+                    MAX(realized_pnl) as best_trade,
+                    MIN(realized_pnl) as worst_trade
+                FROM prometheus_ic_closed_trades
+            """)
+            closed_stats = cursor.fetchone()
+
+            # Get open positions stats
+            cursor.execute("""
+                SELECT
+                    COUNT(*) as open_count,
+                    SUM(unrealized_pnl) as total_unrealized,
+                    SUM(total_credit_received) as total_credit_outstanding
+                FROM prometheus_ic_positions
+                WHERE status IN ('open', 'pending')
+            """)
+            open_stats = cursor.fetchone()
+
+            # Get today's stats
+            cursor.execute("""
+                SELECT
+                    COUNT(*) as trades_today,
+                    SUM(realized_pnl) as pnl_today
+                FROM prometheus_ic_closed_trades
+                WHERE DATE(close_time AT TIME ZONE 'America/Chicago') =
+                      DATE(NOW() AT TIME ZONE 'America/Chicago')
+            """)
+            today_stats = cursor.fetchone()
+
+            # Get streak data
+            cursor.execute("""
+                SELECT realized_pnl > 0 as is_win
+                FROM prometheus_ic_closed_trades
+                ORDER BY close_time DESC
+                LIMIT 20
+            """)
+            recent_results = cursor.fetchall()
+
+            cursor.close()
+
+            # Calculate streaks
+            current_streak = 0
+            current_streak_type = None
+            max_win_streak = 0
+            max_loss_streak = 0
+            win_streak = 0
+            loss_streak = 0
+
+            for (is_win,) in recent_results:
+                if current_streak_type is None:
+                    current_streak_type = is_win
+                    current_streak = 1
+                elif is_win == current_streak_type:
+                    current_streak += 1
+                else:
+                    break
+
+            for (is_win,) in recent_results:
+                if is_win:
+                    win_streak += 1
+                    loss_streak = 0
+                    max_win_streak = max(max_win_streak, win_streak)
+                else:
+                    loss_streak += 1
+                    win_streak = 0
+                    max_loss_streak = max(max_loss_streak, loss_streak)
+
+            total_trades = int(closed_stats[0] or 0)
+            winners = int(closed_stats[1] or 0)
+            losers = int(closed_stats[2] or 0)
+            win_rate = winners / total_trades if total_trades > 0 else 0
+
+            total_wins = float(closed_stats[5] or 0)
+            total_losses = float(closed_stats[6] or 0)
+            profit_factor = total_wins / total_losses if total_losses > 0 else 0
+
+            return {
+                'closed_trades': {
+                    'total': total_trades,
+                    'winners': winners,
+                    'losers': losers,
+                    'win_rate': win_rate,
+                    'total_pnl': float(closed_stats[3] or 0),
+                    'avg_pnl': float(closed_stats[4] or 0),
+                    'total_wins': total_wins,
+                    'total_losses': total_losses,
+                    'profit_factor': profit_factor,
+                    'avg_hold_minutes': float(closed_stats[7] or 0),
+                    'best_trade': float(closed_stats[8] or 0),
+                    'worst_trade': float(closed_stats[9] or 0),
+                },
+                'open_positions': {
+                    'count': int(open_stats[0] or 0),
+                    'unrealized_pnl': float(open_stats[1] or 0),
+                    'credit_outstanding': float(open_stats[2] or 0),
+                },
+                'today': {
+                    'trades': int(today_stats[0] or 0),
+                    'pnl': float(today_stats[1] or 0),
+                },
+                'streaks': {
+                    'current': current_streak,
+                    'current_type': 'win' if current_streak_type else 'loss',
+                    'max_win_streak': max_win_streak,
+                    'max_loss_streak': max_loss_streak,
+                },
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting IC performance: {e}")
+            return {}
+
+    def get_ic_equity_curve(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Get IC trading equity curve data.
+
+        STANDARDS.md COMPLIANCE:
+        - Query ALL closed trades (no LIMIT in SQL) to ensure accurate cumulative P&L
+        - Calculate running total across all trades
+        - Only limit the OUTPUT, not the SQL query
+        - Include equity (starting capital + cumulative)
+        """
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            # CRITICAL: No LIMIT in SQL - query ALL closed trades
+            # Then filter output only (per STANDARDS.md)
+            cursor.execute("""
+                SELECT
+                    close_time,
+                    realized_pnl,
+                    position_id
+                FROM prometheus_ic_closed_trades
+                WHERE close_time IS NOT NULL
+                ORDER BY close_time ASC
+            """)
+
+            rows = cursor.fetchall()
+            cursor.close()
+
+            # Get IC starting capital from config
+            ic_config = self.load_ic_config()
+            starting_capital = ic_config.starting_capital if ic_config else 100000.0
+
+            cumulative_pnl = 0
+            equity_curve = []
+
+            # Calculate cumulative across ALL trades
+            for row in rows:
+                cumulative_pnl += float(row[1] or 0)
+                equity_curve.append({
+                    'time': row[0].isoformat() if row[0] else None,
+                    'trade_pnl': float(row[1] or 0),
+                    'cumulative_pnl': cumulative_pnl,
+                    'equity': starting_capital + cumulative_pnl,
+                    'position_id': row[2],
+                })
+
+            # Limit OUTPUT only (return most recent points)
+            return equity_curve[-limit:] if len(equity_curve) > limit else equity_curve
+
+        except Exception as e:
+            logger.error(f"Error getting IC equity curve: {e}")
+            return []
+
+    def get_daily_ic_trades_count(self) -> int:
+        """Get number of IC trades made today (for daily limit checking)"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT COUNT(*) FROM prometheus_ic_positions
+                WHERE DATE(open_time AT TIME ZONE 'America/Chicago') =
+                      DATE(NOW() AT TIME ZONE 'America/Chicago')
+            """)
+            count = cursor.fetchone()[0]
+            cursor.close()
+            return int(count or 0)
+
+        except Exception as e:
+            logger.error(f"Error getting daily IC trade count: {e}")
+            return 0
+
+    def get_last_ic_trade_time(self) -> Optional[datetime]:
+        """Get the time of the last IC trade (for cooldown checking)"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT open_time FROM prometheus_ic_positions
+                ORDER BY open_time DESC
+                LIMIT 1
+            """)
+            row = cursor.fetchone()
+            cursor.close()
+            return row[0] if row else None
+
+        except Exception as e:
+            logger.error(f"Error getting last IC trade time: {e}")
+            return None
+
+    def get_last_ic_trade_result(self) -> Optional[Dict[str, Any]]:
+        """Get the result of the last closed IC trade (for cooldown logic)"""
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT position_id, realized_pnl, close_time, close_reason
+                FROM prometheus_ic_closed_trades
+                ORDER BY close_time DESC
+                LIMIT 1
+            """)
+            row = cursor.fetchone()
+            cursor.close()
+
+            if row:
+                return {
+                    'position_id': row[0],
+                    'realized_pnl': float(row[1] or 0),
+                    'close_time': row[2],
+                    'close_reason': row[3],
+                    'was_winner': float(row[1] or 0) > 0,
+                }
+            return None
+
+        except Exception as e:
+            logger.error(f"Error getting last IC trade result: {e}")
+            return None
+
+    # ========== Combined Performance Summary ==========
+
+    def get_combined_performance_summary(self) -> PrometheusPerformanceSummary:
+        """
+        Get combined performance for both box spreads and IC trading.
+
+        This is the key metric: Are IC returns > borrowing costs?
+        """
+        try:
+            box_perf = self.get_performance_summary()
+            ic_perf = self.get_ic_performance()
+
+            now = datetime.now(CENTRAL_TZ)
+
+            # Box spread metrics
+            total_box = box_perf.get('closed_positions', {}).get('total', 0) + \
+                        box_perf.get('open_positions', {}).get('total', 0)
+            total_borrowed = box_perf.get('open_positions', {}).get('total_borrowed', 0) + \
+                            box_perf.get('closed_positions', {}).get('total_pnl', 0)  # approximate
+            total_borrowing_cost = box_perf.get('closed_positions', {}).get('total_borrowing_cost', 0) + \
+                                   box_perf.get('open_positions', {}).get('accrued_costs', 0)
+            avg_rate = box_perf.get('closed_positions', {}).get('avg_implied_rate', 0)
+
+            # IC metrics
+            ic_closed = ic_perf.get('closed_trades', {})
+            total_ic_trades = ic_closed.get('total', 0)
+            ic_win_rate = ic_closed.get('win_rate', 0)
+            total_ic_premium = ic_closed.get('total_wins', 0)  # Total premium collected
+            total_ic_realized = ic_closed.get('total_pnl', 0)
+            total_ic_unrealized = ic_perf.get('open_positions', {}).get('unrealized_pnl', 0)
+            avg_ic_return = ic_closed.get('avg_pnl', 0)
+
+            # Combined
+            net_profit = total_ic_realized - total_borrowing_cost
+            roi = net_profit / total_borrowed if total_borrowed > 0 else 0
+
+            # Approximate monthly return
+            monthly_return = roi * 30 / 365  # Rough annualization
+
+            return PrometheusPerformanceSummary(
+                summary_time=now,
+                total_box_positions=total_box,
+                total_borrowed=total_borrowed,
+                total_borrowing_cost=total_borrowing_cost,
+                average_borrowing_rate=avg_rate,
+                borrowing_cost_to_date=total_borrowing_cost,
+                total_ic_trades=total_ic_trades,
+                ic_win_rate=ic_win_rate,
+                total_ic_premium_collected=total_ic_premium,
+                total_ic_realized_pnl=total_ic_realized,
+                total_ic_unrealized_pnl=total_ic_unrealized,
+                average_ic_return_per_trade=avg_ic_return,
+                net_profit=net_profit,
+                roi_on_borrowed_capital=roi,
+                monthly_return_rate=monthly_return,
+                max_drawdown=0,  # Would need more complex calculation
+                sharpe_ratio=0,  # Would need daily returns
+                win_streak=ic_perf.get('streaks', {}).get('max_win_streak', 0),
+                loss_streak=ic_perf.get('streaks', {}).get('max_loss_streak', 0),
+                vs_margin_borrowing=total_borrowed * 0.03,  # Assume 3% margin savings
+                vs_buy_and_hold_spx=0,  # Would need SPX tracking
+            )
+
+        except Exception as e:
+            logger.error(f"Error getting combined performance: {e}")
+            return PrometheusPerformanceSummary(
+                summary_time=datetime.now(CENTRAL_TZ),
+                total_box_positions=0,
+                total_borrowed=0,
+                total_borrowing_cost=0,
+                average_borrowing_rate=0,
+                borrowing_cost_to_date=0,
+                total_ic_trades=0,
+                ic_win_rate=0,
+                total_ic_premium_collected=0,
+                total_ic_realized_pnl=0,
+                total_ic_unrealized_pnl=0,
+                average_ic_return_per_trade=0,
+                net_profit=0,
+                roi_on_borrowed_capital=0,
+                monthly_return_rate=0,
+                max_drawdown=0,
+                sharpe_ratio=0,
+                win_streak=0,
+                loss_streak=0,
+                vs_margin_borrowing=0,
+                vs_buy_and_hold_spx=0,
+            )

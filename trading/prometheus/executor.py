@@ -28,6 +28,11 @@ from .models import (
     PrometheusConfig,
     PositionStatus,
     TradingMode,
+    # IC Trading Models
+    PrometheusICSignal,
+    PrometheusICPosition,
+    PrometheusICConfig,
+    ICPositionStatus,
 )
 from .db import PrometheusDatabase
 
@@ -1285,3 +1290,518 @@ BENEFITS OF ROLLING:
 - Avoid expiration settlement complexity
 """
         }
+
+
+# ==============================================================================
+# PROMETHEUS IC EXECUTOR
+# ==============================================================================
+# Handles order placement and position management for Iron Condor trades.
+# This is the "execution engine" for the IC trading side of PROMETHEUS.
+# ==============================================================================
+
+def get_ic_quotes(
+    ticker: str,
+    expiration: str,
+    put_short: float,
+    put_long: float,
+    call_short: float,
+    call_long: float,
+    use_cache: bool = True
+) -> Dict[str, Any]:
+    """
+    Fetch real-time quotes for all 4 legs of an Iron Condor from Tradier PRODUCTION API.
+
+    Returns dict with quotes, mid prices, total credit, and implied metrics.
+    """
+    global _quote_cache
+
+    result = {
+        'success': False,
+        'quotes': {},
+        'mid_prices': {},
+        'put_spread_credit': None,
+        'call_spread_credit': None,
+        'total_credit': None,
+        'quote_time': datetime.now(CENTRAL_TZ).isoformat(),
+        'source': 'unknown',
+        'error': None,
+    }
+
+    # Build OCC symbols for all 4 legs
+    symbols = {
+        'put_short': build_occ_symbol(ticker, expiration, put_short, 'put'),
+        'put_long': build_occ_symbol(ticker, expiration, put_long, 'put'),
+        'call_short': build_occ_symbol(ticker, expiration, call_short, 'call'),
+        'call_long': build_occ_symbol(ticker, expiration, call_long, 'call'),
+    }
+
+    logger.info(f"Fetching IC quotes for {ticker} P {put_long}/{put_short} C {call_short}/{call_long} exp {expiration}")
+
+    # Check cache first
+    cached_quotes = {}
+    symbols_to_fetch = []
+
+    if use_cache:
+        for leg, sym in symbols.items():
+            if sym in _quote_cache:
+                cache_time, cached_quote = _quote_cache[sym]
+                if time.time() - cache_time < CACHE_TTL_SECONDS:
+                    cached_quotes[leg] = cached_quote
+                else:
+                    symbols_to_fetch.append((leg, sym))
+            else:
+                symbols_to_fetch.append((leg, sym))
+    else:
+        symbols_to_fetch = [(leg, sym) for leg, sym in symbols.items()]
+
+    if len(cached_quotes) == 4:
+        result['quotes'] = cached_quotes
+        result['source'] = 'cache'
+    else:
+        # Fetch from Tradier PRODUCTION API
+        tradier = _get_production_tradier_client(ticker)
+
+        if tradier:
+            try:
+                response = tradier._make_request(
+                    'GET',
+                    'markets/quotes',
+                    params={'symbols': ','.join([symbols[leg] for leg in symbols.keys()])}
+                )
+
+                if response and 'quotes' in response:
+                    quotes_data = response['quotes']
+                    if 'quote' in quotes_data:
+                        quote_list = quotes_data['quote']
+                        if isinstance(quote_list, dict):
+                            quote_list = [quote_list]
+
+                        fetched_quotes = {}
+                        for quote in quote_list:
+                            quote_symbol = quote.get('symbol', '')
+                            for leg, sym in symbols.items():
+                                if quote_symbol == sym:
+                                    fetched_quotes[leg] = quote
+                                    _quote_cache[sym] = (time.time(), quote)
+
+                        result['quotes'] = {**cached_quotes, **fetched_quotes}
+                        result['source'] = 'tradier_production'
+                else:
+                    result['error'] = "Empty response from Tradier API"
+            except Exception as e:
+                result['error'] = f"Tradier API error: {str(e)}"
+        else:
+            result['error'] = "No production Tradier client available"
+            result['source'] = 'simulated'
+
+    # Check if we have all 4 legs
+    if len(result['quotes']) == 4:
+        try:
+            def get_mid(quote):
+                bid = quote.get('bid', 0) or 0
+                ask = quote.get('ask', 0) or 0
+                if bid > 0 and ask > 0:
+                    return (float(bid) + float(ask)) / 2
+                return float(quote.get('last', 0) or 0)
+
+            result['mid_prices'] = {leg: get_mid(quote) for leg, quote in result['quotes'].items()}
+
+            # Calculate IC credit
+            # Put spread: sell put_short, buy put_long -> receive credit
+            put_spread_credit = result['mid_prices']['put_short'] - result['mid_prices']['put_long']
+            # Call spread: sell call_short, buy call_long -> receive credit
+            call_spread_credit = result['mid_prices']['call_short'] - result['mid_prices']['call_long']
+
+            result['put_spread_credit'] = round(max(0, put_spread_credit), 4)
+            result['call_spread_credit'] = round(max(0, call_spread_credit), 4)
+            result['total_credit'] = round(result['put_spread_credit'] + result['call_spread_credit'], 4)
+
+            result['success'] = True
+            logger.info(
+                f"IC quotes: put_credit={result['put_spread_credit']}, "
+                f"call_credit={result['call_spread_credit']}, "
+                f"total={result['total_credit']}"
+            )
+        except Exception as e:
+            result['error'] = f"Calculation error: {str(e)}"
+    else:
+        missing = [leg for leg in symbols.keys() if leg not in result['quotes']]
+        result['error'] = f"Missing quotes for legs: {missing}"
+
+    return result
+
+
+def calculate_ic_mark_to_market(
+    ticker: str,
+    expiration: str,
+    put_short: float,
+    put_long: float,
+    call_short: float,
+    call_long: float,
+    contracts: int,
+    entry_credit: float,
+    use_cache: bool = True
+) -> Dict[str, Any]:
+    """
+    Calculate mark-to-market value for an open IC position.
+
+    For a short IC position:
+    - We received a credit when we opened
+    - Current value = what we'd pay to close = sum of mid prices
+    - Unrealized P&L = (entry_credit - current_close_cost) * 100 * contracts
+    """
+    result = {
+        'success': False,
+        'current_value': None,
+        'unrealized_pnl': None,
+        'quotes': {},
+        'method': 'mark_to_market',
+        'quote_source': 'unknown',
+        'timestamp': datetime.now(CENTRAL_TZ).isoformat(),
+        'error': None,
+    }
+
+    quote_result = get_ic_quotes(
+        ticker, expiration, put_short, put_long, call_short, call_long, use_cache
+    )
+
+    if not quote_result['success']:
+        result['error'] = quote_result.get('error', 'Failed to get quotes')
+        result['quote_source'] = quote_result.get('source', 'failed')
+        return result
+
+    result['quotes'] = quote_result['quotes']
+    result['quote_source'] = quote_result['source']
+
+    try:
+        # Current cost to close = buy back spreads at mid
+        current_value = quote_result['total_credit']
+
+        # Unrealized P&L = (credit received - cost to close) * 100 * contracts
+        unrealized_pnl = (entry_credit - current_value) * 100 * contracts
+
+        result['success'] = True
+        result['current_value'] = round(current_value, 4)
+        result['unrealized_pnl'] = round(unrealized_pnl, 2)
+        result['put_spread_value'] = quote_result['put_spread_credit']
+        result['call_spread_value'] = quote_result['call_spread_credit']
+
+        logger.info(
+            f"IC MTM: entry=${entry_credit:.4f}, current=${current_value:.4f}, "
+            f"unrealized=${unrealized_pnl:.2f}"
+        )
+    except Exception as e:
+        result['error'] = str(e)
+
+    return result
+
+
+class PrometheusICExecutor:
+    """
+    Executes Iron Condor orders for PROMETHEUS.
+
+    This handles:
+    - Order placement for IC trades
+    - Position mark-to-market
+    - Stop loss and profit target monitoring
+    - Position closing
+    """
+
+    def __init__(
+        self,
+        config: PrometheusICConfig,
+        db: PrometheusDatabase
+    ):
+        self.config = config
+        self.db = db
+        self.tradier = _get_production_tradier_client(config.ticker)
+
+    def execute_signal(
+        self,
+        signal: PrometheusICSignal
+    ) -> Optional[PrometheusICPosition]:
+        """
+        Execute an IC signal and create a position.
+
+        Returns the created position or None if execution fails.
+        """
+        if not signal.is_valid:
+            logger.warning(f"Cannot execute invalid signal: {signal.skip_reason}")
+            return None
+
+        now = datetime.now(CENTRAL_TZ)
+        position_id = f"PROM-IC-{now.strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6].upper()}"
+
+        # Build option symbols
+        symbols = self._build_option_symbols(signal)
+
+        logger.info(f"Executing IC signal {signal.signal_id}")
+        logger.info(f"  Put spread: {signal.put_long_strike}/{signal.put_short_strike}")
+        logger.info(f"  Call spread: {signal.call_short_strike}/{signal.call_long_strike}")
+        logger.info(f"  Contracts: {signal.contracts}")
+
+        # Execute orders
+        if self.config.mode == TradingMode.LIVE and self.tradier:
+            put_order = self._execute_put_spread(signal, symbols)
+            call_order = self._execute_call_spread(signal, symbols)
+
+            if not put_order or not call_order:
+                logger.error("Failed to execute one or both spread orders")
+                return None
+
+            put_order_id = put_order.get('id', 'LIVE-PUT')
+            call_order_id = call_order.get('id', 'LIVE-CALL')
+        else:
+            # Paper trading - use real production quotes
+            put_order_id = f"PAPER-PUT-{uuid.uuid4().hex[:8]}"
+            call_order_id = f"PAPER-CALL-{uuid.uuid4().hex[:8]}"
+
+            real_quotes = get_ic_quotes(
+                signal.ticker,
+                signal.expiration,
+                signal.put_short_strike,
+                signal.put_long_strike,
+                signal.call_short_strike,
+                signal.call_long_strike,
+                use_cache=False
+            )
+
+            if real_quotes['success']:
+                signal.put_spread_credit = real_quotes['put_spread_credit']
+                signal.call_spread_credit = real_quotes['call_spread_credit']
+                signal.total_credit = real_quotes['total_credit']
+                logger.info(
+                    f"PAPER TRADING with REAL quotes: credit=${real_quotes['total_credit']:.4f}"
+                )
+            else:
+                logger.warning(f"Using estimated pricing: {real_quotes.get('error')}")
+
+        # Calculate totals
+        total_credit_received = signal.total_credit * signal.contracts * 100
+        max_loss = (signal.put_spread_width - signal.total_credit) * signal.contracts * 100
+
+        # Create position object
+        position = PrometheusICPosition(
+            position_id=position_id,
+            source_box_position_id=signal.source_box_position_id,
+            ticker=signal.ticker,
+            put_short_strike=signal.put_short_strike,
+            put_long_strike=signal.put_long_strike,
+            call_short_strike=signal.call_short_strike,
+            call_long_strike=signal.call_long_strike,
+            spread_width=signal.put_spread_width,
+            put_short_symbol=symbols['put_short'],
+            put_long_symbol=symbols['put_long'],
+            call_short_symbol=symbols['call_short'],
+            call_long_symbol=symbols['call_long'],
+            put_spread_order_id=put_order_id,
+            call_spread_order_id=call_order_id,
+            expiration=signal.expiration,
+            dte_at_entry=signal.dte,
+            current_dte=signal.dte,
+            contracts=signal.contracts,
+            entry_credit=signal.total_credit,
+            total_credit_received=total_credit_received,
+            max_loss=max_loss,
+            current_value=signal.total_credit,
+            unrealized_pnl=0.0,
+            spot_at_entry=signal.spot_price,
+            vix_at_entry=signal.vix_level,
+            gamma_regime_at_entry=signal.gamma_regime,
+            oracle_confidence_at_entry=signal.oracle_confidence,
+            oracle_reasoning=signal.oracle_reasoning,
+            status=ICPositionStatus.OPEN,
+            open_time=now,
+            stop_loss_pct=self.config.stop_loss_pct,
+            profit_target_pct=self.config.profit_target_pct,
+            time_stop_dte=self.config.time_stop_dte,
+        )
+
+        # Save position
+        if self.db.save_ic_position(position):
+            logger.info(f"IC Position {position_id} saved successfully")
+
+            # Log the signal
+            self.db.log_ic_signal(signal, was_executed=True, executed_position_id=position_id)
+
+            # Log the action
+            self.db.log_action(
+                action="IC_POSITION_OPENED",
+                message=f"Opened IC position {position_id}",
+                level="INFO",
+                details={
+                    'signal_id': signal.signal_id,
+                    'put_spread': f"{signal.put_long_strike}/{signal.put_short_strike}",
+                    'call_spread': f"{signal.call_short_strike}/{signal.call_long_strike}",
+                    'total_credit': signal.total_credit,
+                    'contracts': signal.contracts,
+                    'oracle_confidence': signal.oracle_confidence,
+                },
+                position_id=position_id,
+                signal_id=signal.signal_id,
+            )
+
+            return position
+        else:
+            logger.error(f"Failed to save IC position {position_id}")
+            return None
+
+    def _build_option_symbols(self, signal: PrometheusICSignal) -> Dict[str, str]:
+        """Build OCC symbols for all 4 IC legs"""
+        return {
+            'put_short': build_occ_symbol(signal.ticker, signal.expiration, signal.put_short_strike, 'put'),
+            'put_long': build_occ_symbol(signal.ticker, signal.expiration, signal.put_long_strike, 'put'),
+            'call_short': build_occ_symbol(signal.ticker, signal.expiration, signal.call_short_strike, 'call'),
+            'call_long': build_occ_symbol(signal.ticker, signal.expiration, signal.call_long_strike, 'call'),
+        }
+
+    def _execute_put_spread(
+        self,
+        signal: PrometheusICSignal,
+        symbols: Dict[str, str]
+    ) -> Optional[Dict[str, Any]]:
+        """Execute the put spread leg (sell put_short, buy put_long for credit)"""
+        if not self.tradier:
+            return {'id': 'PAPER-PUT', 'status': 'filled'}
+
+        try:
+            order = {
+                'class': 'multileg',
+                'symbol': signal.ticker,
+                'type': 'credit',
+                'duration': 'day',
+                'price': signal.put_spread_credit,
+                'option_symbol': [symbols['put_short'], symbols['put_long']],
+                'side': ['sell_to_open', 'buy_to_open'],
+                'quantity': [signal.contracts, signal.contracts],
+            }
+            return self.tradier.place_multileg_order(order)
+        except Exception as e:
+            logger.error(f"Error executing put spread: {e}")
+            return None
+
+    def _execute_call_spread(
+        self,
+        signal: PrometheusICSignal,
+        symbols: Dict[str, str]
+    ) -> Optional[Dict[str, Any]]:
+        """Execute the call spread leg (sell call_short, buy call_long for credit)"""
+        if not self.tradier:
+            return {'id': 'PAPER-CALL', 'status': 'filled'}
+
+        try:
+            order = {
+                'class': 'multileg',
+                'symbol': signal.ticker,
+                'type': 'credit',
+                'duration': 'day',
+                'price': signal.call_spread_credit,
+                'option_symbol': [symbols['call_short'], symbols['call_long']],
+                'side': ['sell_to_open', 'buy_to_open'],
+                'quantity': [signal.contracts, signal.contracts],
+            }
+            return self.tradier.place_multileg_order(order)
+        except Exception as e:
+            logger.error(f"Error executing call spread: {e}")
+            return None
+
+    def update_position_mtm(self, position_id: str) -> Optional[PrometheusICPosition]:
+        """Update mark-to-market for a position"""
+        position = self.db.get_ic_position(position_id)
+        if not position:
+            return None
+
+        mtm = calculate_ic_mark_to_market(
+            ticker=position.ticker,
+            expiration=position.expiration,
+            put_short=position.put_short_strike,
+            put_long=position.put_long_strike,
+            call_short=position.call_short_strike,
+            call_long=position.call_long_strike,
+            contracts=position.contracts,
+            entry_credit=position.entry_credit,
+            use_cache=False
+        )
+
+        if mtm['success']:
+            position.current_value = mtm['current_value']
+            position.unrealized_pnl = mtm['unrealized_pnl']
+
+            # Update DTE
+            exp_date = datetime.strptime(position.expiration, '%Y-%m-%d').date()
+            position.current_dte = (exp_date - date.today()).days
+
+            self.db.save_ic_position(position)
+
+        return position
+
+    def check_exit_conditions(
+        self,
+        position: PrometheusICPosition
+    ) -> Tuple[bool, str]:
+        """
+        Check if position should be closed based on exit conditions.
+
+        Returns (should_close, reason)
+        """
+        # Update MTM first
+        self.update_position_mtm(position.position_id)
+        position = self.db.get_ic_position(position.position_id)
+
+        if not position:
+            return False, "Position not found"
+
+        # Check profit target
+        if position.unrealized_pnl >= position.total_credit_received * (position.profit_target_pct / 100):
+            return True, f"Profit target reached ({position.profit_target_pct}%)"
+
+        # Check stop loss
+        max_loss_threshold = position.max_loss * (position.stop_loss_pct / 100)
+        if position.unrealized_pnl <= -max_loss_threshold:
+            return True, f"Stop loss triggered ({position.stop_loss_pct}% of max loss)"
+
+        # Check time stop
+        if position.current_dte <= position.time_stop_dte:
+            return True, f"Time stop reached ({position.current_dte} DTE <= {position.time_stop_dte})"
+
+        # Check expiration
+        if position.current_dte <= 0:
+            return True, "Position at expiration"
+
+        return False, ""
+
+    def close_position(
+        self,
+        position_id: str,
+        close_reason: str = "manual"
+    ) -> bool:
+        """Close an IC position"""
+        position = self.db.get_ic_position(position_id)
+        if not position:
+            logger.warning(f"IC position {position_id} not found")
+            return False
+
+        logger.info(f"Closing IC position {position_id}: {close_reason}")
+
+        # Get current price for exit
+        mtm = calculate_ic_mark_to_market(
+            ticker=position.ticker,
+            expiration=position.expiration,
+            put_short=position.put_short_strike,
+            put_long=position.put_long_strike,
+            call_short=position.call_short_strike,
+            call_long=position.call_long_strike,
+            contracts=position.contracts,
+            entry_credit=position.entry_credit,
+            use_cache=False
+        )
+
+        exit_price = mtm.get('current_value', position.entry_credit) if mtm['success'] else position.entry_credit
+
+        # Execute closing orders in live mode
+        if self.config.mode == TradingMode.LIVE and self.tradier:
+            # Would execute buy-to-close orders here
+            pass
+
+        # Close in database
+        return self.db.close_ic_position(position_id, exit_price, close_reason)

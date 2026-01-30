@@ -147,6 +147,18 @@ except ImportError:
     PrometheusTradingMode = None
     print("Warning: PROMETHEUS Box Spread not available. Synthetic borrowing will be disabled.")
 
+# Import PROMETHEUS IC Trader (Iron Condor trading with borrowed capital)
+try:
+    from trading.prometheus.trader import PrometheusICTrader, run_prometheus_ic_cycle
+    from trading.prometheus.models import PrometheusICConfig
+    PROMETHEUS_IC_AVAILABLE = True
+except ImportError:
+    PROMETHEUS_IC_AVAILABLE = False
+    PrometheusICTrader = None
+    PrometheusICConfig = None
+    run_prometheus_ic_cycle = None
+    print("Warning: PROMETHEUS IC Trader not available. IC trading will be disabled.")
+
 # Import mark-to-market utilities for accurate equity snapshots
 MTM_AVAILABLE = False
 try:
@@ -518,6 +530,19 @@ class AutonomousTraderScheduler:
             except Exception as e:
                 logger.warning(f"PROMETHEUS initialization failed: {e}")
                 self.prometheus_trader = None
+
+        # PROMETHEUS IC - Iron Condor trading with borrowed capital
+        # Uses capital from box spreads to trade SPX Iron Condors
+        # This is the "returns engine" of the PROMETHEUS system
+        self.prometheus_ic_trader = None
+        if PROMETHEUS_IC_AVAILABLE:
+            try:
+                ic_config = PrometheusICConfig()
+                self.prometheus_ic_trader = PrometheusICTrader(config=ic_config)
+                logger.info(f"✅ PROMETHEUS IC initialized (SPX Iron Condors with borrowed capital, PAPER mode)")
+            except Exception as e:
+                logger.warning(f"PROMETHEUS IC initialization failed: {e}")
+                self.prometheus_ic_trader = None
 
         # Log capital allocation summary
         logger.info(f"📊 CAPITAL ALLOCATION:")
@@ -2111,6 +2136,77 @@ class AutonomousTraderScheduler:
 
         except Exception as e:
             logger.error(f"ERROR in PROMETHEUS Rate Analysis: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_prometheus_ic_cycle(self):
+        """
+        PROMETHEUS IC Trading Cycle - runs every 10 minutes during market hours.
+
+        This is the main trading loop for PROMETHEUS Iron Condors that use
+        borrowed capital from box spreads to generate returns.
+
+        The cycle:
+        1. Checks exit conditions on all open IC positions
+        2. Generates new signals when capital is available
+        3. Executes approved signals
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"PROMETHEUS IC Trading Cycle triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.is_market_open():
+            logger.info("Market is CLOSED. Skipping PROMETHEUS IC trading cycle.")
+            return
+
+        if not self.prometheus_ic_trader:
+            logger.warning("PROMETHEUS IC trader not available - skipping trading cycle")
+            return
+
+        try:
+            result = self.prometheus_ic_trader.run_trading_cycle()
+
+            if result.get('skip_reason'):
+                logger.info(f"PROMETHEUS IC: {result['skip_reason']}")
+            else:
+                logger.info(f"PROMETHEUS IC Cycle completed:")
+                logger.info(f"  Positions checked: {result.get('positions_checked', 0)}")
+                logger.info(f"  Positions closed: {result.get('positions_closed', 0)}")
+                if result.get('new_position'):
+                    logger.info(f"  New position opened: {result['new_position']}")
+                if result.get('errors'):
+                    for err in result['errors']:
+                        logger.warning(f"  Error: {err}")
+
+        except Exception as e:
+            logger.error(f"ERROR in PROMETHEUS IC Trading Cycle: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_prometheus_ic_mtm_update(self):
+        """
+        PROMETHEUS IC Mark-to-Market Update - runs every 30 minutes.
+
+        Updates the current value and unrealized P&L for all open IC positions
+        using real-time quotes from Tradier production API.
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"PROMETHEUS IC MTM Update triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.is_market_open():
+            logger.info("Market is CLOSED. Skipping PROMETHEUS IC MTM update.")
+            return
+
+        if not self.prometheus_ic_trader:
+            logger.warning("PROMETHEUS IC trader not available - skipping MTM update")
+            return
+
+        try:
+            from trading.prometheus.trader import run_prometheus_ic_mtm_update
+            result = run_prometheus_ic_mtm_update()
+            logger.info(f"PROMETHEUS IC MTM: Updated {result.get('updated', 0)}/{result.get('total', 0)} positions")
+
+        except Exception as e:
+            logger.error(f"ERROR in PROMETHEUS IC MTM Update: {str(e)}")
             logger.error(traceback.format_exc())
 
     def scheduled_argus_logic(self):
@@ -3910,6 +4006,39 @@ class AutonomousTraderScheduler:
             logger.info("✅ PROMETHEUS rate analysis job scheduled (hourly)")
         else:
             logger.warning("⚠️ PROMETHEUS not available - box spread synthetic borrowing disabled")
+
+        # =================================================================
+        # PROMETHEUS IC JOB: Iron Condor Trading Cycle - runs every 10 minutes
+        # Trades SPX Iron Condors using borrowed capital from box spreads
+        # This generates the returns that (should) exceed borrowing costs
+        # =================================================================
+        if self.prometheus_ic_trader:
+            self.scheduler.add_job(
+                self.scheduled_prometheus_ic_cycle,
+                trigger=IntervalTrigger(
+                    minutes=10,
+                    timezone='America/Chicago'
+                ),
+                id='prometheus_ic_trading',
+                name='PROMETHEUS IC - Iron Condor Trading (10-min intervals)',
+                replace_existing=True
+            )
+            logger.info("✅ PROMETHEUS IC job scheduled (every 10 min, checks market hours internally)")
+
+            # PROMETHEUS IC MTM Update - runs every 30 minutes
+            self.scheduler.add_job(
+                self.scheduled_prometheus_ic_mtm_update,
+                trigger=IntervalTrigger(
+                    minutes=30,
+                    timezone='America/Chicago'
+                ),
+                id='prometheus_ic_mtm',
+                name='PROMETHEUS IC - MTM Update (30-min intervals)',
+                replace_existing=True
+            )
+            logger.info("✅ PROMETHEUS IC MTM job scheduled (every 30 min)")
+        else:
+            logger.warning("⚠️ PROMETHEUS IC not available - IC trading with borrowed capital disabled")
 
         # =================================================================
         # ARGUS JOB: Commentary Generation - runs every 5 minutes

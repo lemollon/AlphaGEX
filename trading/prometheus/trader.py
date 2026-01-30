@@ -19,10 +19,15 @@ from .models import (
     PositionStatus,
     BoxSpreadStatus,
     TradingMode,
+    # IC Trading Models
+    PrometheusICSignal,
+    PrometheusICPosition,
+    PrometheusICConfig,
+    ICPositionStatus,
 )
 from .db import PrometheusDatabase
-from .signals import BoxSpreadSignalGenerator
-from .executor import BoxSpreadExecutor
+from .signals import BoxSpreadSignalGenerator, PrometheusICSignalGenerator
+from .executor import BoxSpreadExecutor, PrometheusICExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -851,3 +856,369 @@ def run_prometheus_signal_scan():
     """Run PROMETHEUS signal scan - called weekly or on-demand"""
     trader = PrometheusTrader()
     return trader.run_signal_scan()
+
+
+# ==============================================================================
+# PROMETHEUS IC TRADER
+# ==============================================================================
+# Orchestrates the Iron Condor trading side of PROMETHEUS.
+# This is the "returns engine" that generates premium income from borrowed capital.
+# ==============================================================================
+
+class PrometheusICTrader:
+    """
+    Main orchestrator for PROMETHEUS Iron Condor trading.
+
+    EDUCATIONAL NOTE - IC Trading in PROMETHEUS:
+    ============================================
+    While the PrometheusTrader handles long-term box spread borrowing,
+    the PrometheusICTrader handles daily IC trading that generates returns
+    to exceed the borrowing costs.
+
+    Schedule:
+    - Run every 5-15 minutes during market hours
+    - Check exit conditions on all open positions
+    - Generate new signals when capital is available
+    - Execute approved signals
+
+    Key Differences from Other IC Bots (TITAN, PEGASUS):
+    - Uses borrowed capital from box spreads
+    - All returns are tracked against specific box positions
+    - Conservative sizing to protect borrowed capital
+    - Requires Oracle approval before trading
+    """
+
+    def __init__(self, config: Optional[PrometheusICConfig] = None):
+        self.db = PrometheusDatabase(bot_name="PROMETHEUS_IC")
+        self.config = config or self.db.load_ic_config()
+        self.signal_gen = PrometheusICSignalGenerator(self.config)
+        self.executor = PrometheusICExecutor(self.config, self.db)
+
+    def run_trading_cycle(self) -> Dict[str, Any]:
+        """
+        Run a complete IC trading cycle.
+
+        This is the main entry point, called every 5-15 minutes.
+        """
+        now = datetime.now(CENTRAL_TZ)
+        logger.info(f"PROMETHEUS IC trading cycle starting at {now}")
+
+        result = {
+            'cycle_time': now,
+            'positions_checked': 0,
+            'positions_closed': 0,
+            'new_position': None,
+            'signal_generated': False,
+            'cooldown_active': False,
+            'errors': [],
+        }
+
+        try:
+            # Check if enabled
+            if not self.config.enabled:
+                result['skip_reason'] = "IC trading disabled"
+                return result
+
+            # Check if in trading window
+            if not self._in_trading_window():
+                result['skip_reason'] = "Outside trading window"
+                return result
+
+            # Step 1: Check exit conditions on all open positions
+            exit_results = self._check_all_exits()
+            result['positions_checked'] = exit_results['checked']
+            result['positions_closed'] = exit_results['closed']
+
+            # Step 2: Check for new trading opportunity
+            if self._can_open_new_position():
+                signal_result = self._generate_and_execute_signal()
+                result['signal_generated'] = signal_result.get('signal_generated', False)
+                result['new_position'] = signal_result.get('new_position')
+                if signal_result.get('error'):
+                    result['errors'].append(signal_result['error'])
+            else:
+                result['cooldown_active'] = True
+                result['skip_reason'] = self._get_skip_reason()
+
+            logger.info(f"PROMETHEUS IC cycle complete: {result['positions_closed']} closed, new={bool(result['new_position'])}")
+
+        except Exception as e:
+            logger.error(f"PROMETHEUS IC trading cycle error: {e}")
+            result['errors'].append(str(e))
+
+        return result
+
+    def _check_all_exits(self) -> Dict[str, Any]:
+        """Check exit conditions on all open IC positions"""
+        positions = self.db.get_open_ic_positions()
+        checked = 0
+        closed = 0
+
+        for position in positions:
+            try:
+                checked += 1
+                should_close, reason = self.executor.check_exit_conditions(position)
+
+                if should_close:
+                    success = self.executor.close_position(position.position_id, reason)
+                    if success:
+                        closed += 1
+                        logger.info(f"Closed IC position {position.position_id}: {reason}")
+
+            except Exception as e:
+                logger.error(f"Error checking position {position.position_id}: {e}")
+
+        return {'checked': checked, 'closed': closed}
+
+    def _can_open_new_position(self) -> bool:
+        """Check if we can open a new IC position"""
+        # Check max positions
+        open_positions = self.db.get_open_ic_positions()
+        if len(open_positions) >= self.config.max_positions:
+            return False
+
+        # Check daily limit
+        daily_trades = self.db.get_daily_ic_trades_count()
+        if daily_trades >= self.config.max_trades_per_day:
+            return False
+
+        # Check cooldown
+        if self._in_cooldown():
+            return False
+
+        # Check available capital
+        available = self._get_available_capital()
+        if available < self.config.min_capital_per_trade:
+            return False
+
+        return True
+
+    def _get_skip_reason(self) -> str:
+        """Get reason for not opening new position"""
+        open_positions = self.db.get_open_ic_positions()
+        if len(open_positions) >= self.config.max_positions:
+            return f"At max positions ({self.config.max_positions})"
+
+        daily_trades = self.db.get_daily_ic_trades_count()
+        if daily_trades >= self.config.max_trades_per_day:
+            return f"Daily trade limit reached ({self.config.max_trades_per_day})"
+
+        if self._in_cooldown():
+            return "In cooldown period after recent trade"
+
+        available = self._get_available_capital()
+        if available < self.config.min_capital_per_trade:
+            return f"Insufficient capital (${available:,.2f} < ${self.config.min_capital_per_trade:,.2f})"
+
+        return "Unknown"
+
+    def _in_cooldown(self) -> bool:
+        """Check if in cooldown period after last trade"""
+        last_trade_time = self.db.get_last_ic_trade_time()
+        if not last_trade_time:
+            return False
+
+        cooldown_minutes = self.config.cooldown_minutes_after_trade
+        cooldown_end = last_trade_time + timedelta(minutes=cooldown_minutes)
+        return datetime.now(CENTRAL_TZ) < cooldown_end
+
+    def _get_available_capital(self) -> float:
+        """Get capital available for IC trading from box spreads"""
+        # Get all open box spread positions
+        box_positions = self.db.get_open_positions()  # Box spreads
+        if not box_positions:
+            return 0.0
+
+        # Calculate total capital available for IC trading
+        total_available = 0.0
+        for box in box_positions:
+            # Use the total cash deployed minus any already allocated to open IC positions
+            total_available += box.total_cash_deployed
+
+        # Subtract capital currently in use by open IC positions
+        ic_positions = self.db.get_open_ic_positions()
+        for ic in ic_positions:
+            total_available -= ic.total_credit_received  # Margin tied up
+
+        return max(0, total_available)
+
+    def _get_source_box_position(self) -> Optional[str]:
+        """Get the box position ID to link new IC trades to"""
+        box_positions = self.db.get_open_positions()
+        if not box_positions:
+            return None
+
+        # Use the most recently opened box position
+        sorted_boxes = sorted(box_positions, key=lambda p: p.open_time, reverse=True)
+        return sorted_boxes[0].position_id
+
+    def _generate_and_execute_signal(self) -> Dict[str, Any]:
+        """Generate an IC signal and execute if approved"""
+        result = {
+            'signal_generated': False,
+            'new_position': None,
+            'error': None,
+        }
+
+        # Get source box position
+        source_box_id = self._get_source_box_position()
+        if not source_box_id:
+            result['error'] = "No open box spread position to fund IC trade"
+            return result
+
+        # Get available capital
+        available_capital = self._get_available_capital()
+
+        # Generate signal
+        signal = self.signal_gen.generate_signal(
+            source_box_position_id=source_box_id,
+            available_capital=available_capital,
+        )
+
+        if not signal:
+            result['error'] = "Failed to generate signal"
+            return result
+
+        result['signal_generated'] = True
+
+        # Log the signal regardless of validity
+        self.db.log_ic_signal(signal, was_executed=False)
+
+        if not signal.is_valid:
+            result['error'] = f"Signal invalid: {signal.skip_reason}"
+            return result
+
+        # Execute the signal
+        position = self.executor.execute_signal(signal)
+        if position:
+            result['new_position'] = position.position_id
+
+            # Update the box position's IC returns tracking
+            self.db.log_action(
+                action="IC_TRADE_EXECUTED",
+                message=f"IC trade {position.position_id} linked to box {source_box_id}",
+                level="INFO",
+                details={
+                    'ic_position_id': position.position_id,
+                    'source_box_id': source_box_id,
+                    'credit_received': position.total_credit_received,
+                    'oracle_confidence': signal.oracle_confidence,
+                },
+                position_id=source_box_id,
+            )
+        else:
+            result['error'] = "Failed to execute signal"
+
+        return result
+
+    def _in_trading_window(self) -> bool:
+        """Check if within IC trading hours"""
+        now = datetime.now(CENTRAL_TZ)
+
+        # Check if weekend
+        if now.weekday() >= 5:
+            return False
+
+        current_time = now.time()
+        start = datetime.strptime(self.config.entry_start, '%H:%M').time()
+        end = datetime.strptime(self.config.entry_end, '%H:%M').time()
+
+        return start <= current_time <= end
+
+    # ========== Status & Monitoring ==========
+
+    def get_status(self) -> Dict[str, Any]:
+        """Get comprehensive IC trading status"""
+        ic_positions = self.db.get_open_ic_positions()
+        ic_performance = self.db.get_ic_performance()
+
+        total_unrealized = sum(p.unrealized_pnl for p in ic_positions)
+        total_credit = sum(p.total_credit_received for p in ic_positions)
+
+        return {
+            'enabled': self.config.enabled,
+            'mode': self.config.mode.value,
+            'ticker': self.config.ticker,
+            'open_positions': len(ic_positions),
+            'total_credit_outstanding': total_credit,
+            'total_unrealized_pnl': total_unrealized,
+            'performance': ic_performance,
+            'in_trading_window': self._in_trading_window(),
+            'in_cooldown': self._in_cooldown(),
+            'available_capital': self._get_available_capital(),
+            'can_trade': self._can_open_new_position(),
+            'daily_trades': self.db.get_daily_ic_trades_count(),
+            'max_daily_trades': self.config.max_trades_per_day,
+            'last_updated': datetime.now(CENTRAL_TZ).isoformat(),
+        }
+
+    def get_positions(self) -> List[Dict[str, Any]]:
+        """Get all open IC positions"""
+        positions = self.db.get_open_ic_positions()
+        return [self._position_to_dict(p) for p in positions]
+
+    def _position_to_dict(self, position: PrometheusICPosition) -> Dict[str, Any]:
+        """Convert IC position to dictionary"""
+        return {
+            'position_id': position.position_id,
+            'source_box_position_id': position.source_box_position_id,
+            'ticker': position.ticker,
+            'put_spread': f"{position.put_long_strike}/{position.put_short_strike}",
+            'call_spread': f"{position.call_short_strike}/{position.call_long_strike}",
+            'spread_width': position.spread_width,
+            'expiration': position.expiration,
+            'dte': position.current_dte,
+            'contracts': position.contracts,
+            'entry_credit': position.entry_credit,
+            'total_credit_received': position.total_credit_received,
+            'max_loss': position.max_loss,
+            'current_value': position.current_value,
+            'unrealized_pnl': position.unrealized_pnl,
+            'pnl_pct': (position.unrealized_pnl / position.total_credit_received * 100) if position.total_credit_received else 0,
+            'status': position.status.value,
+            'open_time': position.open_time.isoformat() if position.open_time else None,
+            'oracle_confidence': position.oracle_confidence_at_entry,
+        }
+
+    def close_position(self, position_id: str, reason: str = "manual") -> Dict[str, Any]:
+        """Manually close an IC position"""
+        success = self.executor.close_position(position_id, reason)
+        return {
+            'success': success,
+            'position_id': position_id,
+            'close_reason': reason,
+        }
+
+    def get_equity_curve(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Get IC trading equity curve"""
+        return self.db.get_ic_equity_curve(limit)
+
+    def get_closed_trades(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """Get closed IC trade history"""
+        return self.db.get_ic_closed_trades(limit)
+
+
+# Convenience functions for scheduler
+def run_prometheus_ic_cycle():
+    """Run the PROMETHEUS IC trading cycle - called every 5-15 minutes"""
+    trader = PrometheusICTrader()
+    return trader.run_trading_cycle()
+
+
+def run_prometheus_ic_mtm_update():
+    """Update mark-to-market for all open IC positions"""
+    db = PrometheusDatabase(bot_name="PROMETHEUS_IC")
+    config = db.load_ic_config()
+    executor = PrometheusICExecutor(config, db)
+
+    positions = db.get_open_ic_positions()
+    updated = 0
+
+    for position in positions:
+        try:
+            executor.update_position_mtm(position.position_id)
+            updated += 1
+        except Exception as e:
+            logger.error(f"MTM update failed for {position.position_id}: {e}")
+
+    return {'updated': updated, 'total': len(positions)}
