@@ -194,14 +194,289 @@ export default function PrometheusBoxDashboard() {
             {/* Overview Tab */}
             {activeTab === 'overview' && (
               <div className="space-y-6">
-                {/* Daily Briefing */}
-                {dailyBriefing && (
+
+                {/* SECTION 1: How It Works - Visual Architecture */}
+                <div className="bg-gradient-to-br from-gray-800 to-gray-900 rounded-lg p-6 border border-orange-900/50">
+                  <h2 className="text-2xl font-bold mb-2 flex items-center gap-2">
+                    🏗️ How PROMETHEUS Works
+                  </h2>
+                  <p className="text-gray-400 mb-6">
+                    PROMETHEUS borrows money cheaply using box spreads, then deploys that capital to your Iron Condor bots to generate returns.
+                  </p>
+
+                  {/* Visual Architecture Diagram */}
+                  <div className="bg-black/40 rounded-lg p-6 font-mono text-sm overflow-x-auto">
+                    <pre className="text-gray-300 whitespace-pre">
+{`┌─────────────────────────────────────────────────────────────────────────────┐
+│                           PROMETHEUS ARCHITECTURE                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  STEP 1: BORROW CAPITAL                    STEP 2: DEPLOY TO IC BOTS
+  ══════════════════════                    ════════════════════════
+
+  ┌──────────────────────┐                  ┌─────────────────────────────────┐
+  │    📦 BOX SPREAD     │                  │     💰 CAPITAL DEPLOYMENT       │
+  │    (SPX Options)     │                  │                                 │
+  │                      │                  │   ┌───────┐  35%   ┌─────────┐  │
+  │  Sell Call Spread    │   You Receive    │   │ ARES  │───────▶│ SPY 0DTE│  │
+  │  + Sell Put Spread   │───────────────▶  │   │ $175K │        │Iron Cond│  │
+  │  = CREDIT TODAY      │    $500,000      │   └───────┘        └─────────┘  │
+  │                      │                  │                                 │
+  │  Example:            │                  │   ┌───────┐  35%   ┌─────────┐  │
+  │  5900/5950 Box       │                  │   │ TITAN │───────▶│ SPX Aggr│  │
+  │  180 days to expiry  │                  │   │ $175K │        │Iron Cond│  │
+  │  @ 4.5% implied rate │                  │   └───────┘        └─────────┘  │
+  └──────────────────────┘                  │                                 │
+           │                                │   ┌───────┐  20%   ┌─────────┐  │
+           │ At Expiration                  │   │PEGASUS│───────▶│ SPX Wkly│  │
+           │ You Owe $505,625               │   │ $100K │        │Iron Cond│  │
+           ▼                                │   └───────┘        └─────────┘  │
+  ┌──────────────────────┐                  │                                 │
+  │ 📊 BORROWING COST    │                  │   ┌───────┐  10%                │
+  │ $5,625 over 180 days │                  │   │RESERVE│ (Safety buffer)     │
+  │ = 4.5% annual rate   │                  │   │ $50K  │                     │
+  │ (vs 8.5% margin!)    │                  │   └───────┘                     │
+  └──────────────────────┘                  └─────────────────────────────────┘
+
+  STEP 3: GENERATE RETURNS                  STEP 4: PROFIT CALCULATION
+  ════════════════════════                  ═════════════════════════
+
+  ┌─────────────────────────────────┐       ┌─────────────────────────────────┐
+  │     📈 IC BOT RETURNS           │       │     ✨ YOUR PROFIT              │
+  │                                 │       │                                 │
+  │  ARES trades daily 0DTE ICs     │       │  IC Bot Returns:    +$15,000    │
+  │  → Target: 2-4% monthly         │       │  Borrowing Cost:     -$5,625    │
+  │                                 │       │  ─────────────────────────────  │
+  │  TITAN trades aggressive ICs    │       │  NET PROFIT:         +$9,375    │
+  │  → Target: 2-4% monthly         │       │                                 │
+  │                                 │       │  ROI on borrowed capital:       │
+  │  PEGASUS trades weekly ICs      │       │  $9,375 / $500,000 = 1.875%     │
+  │  → Target: 1-3% monthly         │       │  (over ~6 months)               │
+  │                                 │       │                                 │
+  └─────────────────────────────────┘       └─────────────────────────────────┘`}
+                    </pre>
+                  </div>
+
+                  {/* The Profit Equation */}
+                  <div className="mt-6 bg-green-900/20 border border-green-700/50 rounded-lg p-4">
+                    <h3 className="text-lg font-bold text-green-400 mb-2">💡 The Profit Equation</h3>
+                    <div className="text-center text-xl font-mono py-4 bg-black/30 rounded">
+                      <span className="text-green-400">PROFIT</span>
+                      <span className="text-gray-400"> = </span>
+                      <span className="text-blue-400">IC Bot Returns</span>
+                      <span className="text-gray-400"> − </span>
+                      <span className="text-red-400">Box Spread Borrowing Cost</span>
+                    </div>
+                    <p className="text-sm text-gray-400 mt-3">
+                      <strong>Why this works:</strong> Box spreads let you borrow at ~4-5% annual rate, while broker margin costs ~8-9%.
+                      Your IC bots typically return 2-4% monthly. As long as IC returns exceed the borrowing cost, you profit.
+                    </p>
+                  </div>
+                </div>
+
+                {/* SECTION 2: Live System Status */}
+                <div className="bg-gray-800 rounded-lg p-6">
+                  <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                    ⚡ Live System Status
+                  </h2>
+
+                  <div className="grid md:grid-cols-2 gap-6">
+                    {/* Trading Mode & Schedule */}
+                    <div className="bg-gray-700/50 rounded-lg p-4">
+                      <h3 className="font-medium text-gray-300 mb-3">Trading Configuration</h3>
+                      <div className="space-y-2 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Mode:</span>
+                          <span className={`font-medium ${status?.mode === 'live' ? 'text-green-400' : 'text-yellow-400'}`}>
+                            {status?.mode?.toUpperCase() || 'PAPER'} TRADING
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Underlying:</span>
+                          <span className="text-white">SPX (European-style options)</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Strike Width:</span>
+                          <span className="text-white">$50 (default)</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Target DTE:</span>
+                          <span className="text-white">90-180 days</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Max Positions:</span>
+                          <span className="text-white">{status?.config?.max_positions || 3}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Scheduler Info */}
+                    <div className="bg-gray-700/50 rounded-lg p-4">
+                      <h3 className="font-medium text-gray-300 mb-3">Automated Trading Schedule</h3>
+                      <div className="space-y-2 text-sm">
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Daily Cycle:</span>
+                          <span className="text-white">9:30 AM CT</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Signal Scans:</span>
+                          <span className="text-white">Weekly (Mondays)</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Equity Snapshots:</span>
+                          <span className="text-white">Every 30 minutes</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Roll Check:</span>
+                          <span className="text-white">Daily (positions {'<'} 30 DTE)</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Open Positions:</span>
+                          <span className="text-blue-400 font-medium">{positions?.count || 0}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Current Activity */}
+                  <div className="mt-4 p-4 bg-blue-900/20 border border-blue-700/30 rounded-lg">
+                    <div className="flex items-center gap-2">
+                      <div className={`w-3 h-3 rounded-full ${(positions?.count || 0) > 0 ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`}></div>
+                      <span className="text-sm">
+                        {(positions?.count || 0) > 0
+                          ? `Active: ${positions?.count} box spread position(s) generating capital for IC bots`
+                          : 'Idle: No open positions. System will scan for opportunities on next scheduled run.'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* SECTION 3: Rate Comparison - When is it worth borrowing? */}
+                {rateAnalysis && (
                   <div className="bg-gray-800 rounded-lg p-6">
                     <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-                      📋 Daily Briefing
+                      📊 Is Borrowing Worth It Right Now?
                     </h2>
 
-                    {/* Recommendations */}
+                    <div className="grid md:grid-cols-4 gap-4 mb-4">
+                      <div className="bg-blue-900/30 rounded-lg p-4 text-center">
+                        <div className="text-xs text-gray-400 mb-1">Box Spread Rate</div>
+                        <div className="text-2xl font-bold text-blue-400">
+                          {formatPct(rateAnalysis.box_implied_rate)}
+                        </div>
+                        <div className="text-xs text-gray-500">What you pay to borrow</div>
+                      </div>
+                      <div className="bg-red-900/30 rounded-lg p-4 text-center">
+                        <div className="text-xs text-gray-400 mb-1">Margin Rate</div>
+                        <div className="text-2xl font-bold text-red-400">
+                          {formatPct(rateAnalysis.broker_margin_rate)}
+                        </div>
+                        <div className="text-xs text-gray-500">Traditional borrowing</div>
+                      </div>
+                      <div className="bg-green-900/30 rounded-lg p-4 text-center">
+                        <div className="text-xs text-gray-400 mb-1">Your Savings</div>
+                        <div className="text-2xl font-bold text-green-400">
+                          {formatPct(Math.abs(rateAnalysis.spread_to_margin))}
+                        </div>
+                        <div className="text-xs text-gray-500">vs margin borrowing</div>
+                      </div>
+                      <div className="bg-purple-900/30 rounded-lg p-4 text-center">
+                        <div className="text-xs text-gray-400 mb-1">Break-Even</div>
+                        <div className="text-2xl font-bold text-purple-400">
+                          {formatPct(rateAnalysis.box_implied_rate / 12)}
+                        </div>
+                        <div className="text-xs text-gray-500">Monthly IC return needed</div>
+                      </div>
+                    </div>
+
+                    <div className={`p-4 rounded-lg ${
+                      rateAnalysis.is_favorable ? 'bg-green-900/30 border border-green-700/50' : 'bg-yellow-900/30 border border-yellow-700/50'
+                    }`}>
+                      <div className={`font-medium flex items-center gap-2 ${
+                        rateAnalysis.is_favorable ? 'text-green-400' : 'text-yellow-400'
+                      }`}>
+                        {rateAnalysis.is_favorable ? '✅' : '⚠️'} {rateAnalysis.recommendation}
+                      </div>
+                      <p className="text-sm text-gray-300 mt-2">
+                        {rateAnalysis.reasoning}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* SECTION 4: Where Does the Money Go? */}
+                {capitalFlow && (
+                  <div className="bg-gray-800 rounded-lg p-6">
+                    <h2 className="text-xl font-bold mb-2 flex items-center gap-2">
+                      💰 Where Does the Borrowed Capital Go?
+                    </h2>
+                    <p className="text-gray-400 text-sm mb-4">
+                      When PROMETHEUS borrows via box spreads, it deploys the capital to these Iron Condor bots to generate returns:
+                    </p>
+
+                    <div className="grid md:grid-cols-3 gap-4">
+                      {[
+                        { name: 'ARES', pct: 35, desc: 'SPY 0DTE Iron Condors', color: 'red' },
+                        { name: 'TITAN', pct: 35, desc: 'SPX Aggressive Iron Condors', color: 'blue' },
+                        { name: 'PEGASUS', pct: 20, desc: 'SPX Weekly Iron Condors', color: 'purple' },
+                      ].map((bot) => {
+                        const data = capitalFlow.deployment_summary?.[bot.name.toLowerCase()] || { deployed: 0, returns: 0, roi: 0 }
+                        return (
+                          <div key={bot.name} className={`bg-${bot.color}-900/20 border border-${bot.color}-700/30 rounded-lg p-4`}>
+                            <div className="flex justify-between items-start mb-2">
+                              <div>
+                                <div className="font-bold text-lg">{bot.name}</div>
+                                <div className="text-xs text-gray-400">{bot.desc}</div>
+                              </div>
+                              <div className="text-xs bg-gray-700 px-2 py-1 rounded">
+                                {bot.pct}% allocation
+                              </div>
+                            </div>
+                            <div className="mt-3 space-y-1 text-sm">
+                              <div className="flex justify-between">
+                                <span className="text-gray-400">Deployed:</span>
+                                <span className="font-medium">{formatCurrency(data.deployed)}</span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-gray-400">Returns:</span>
+                                <span className={`font-medium ${data.returns >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                  {formatCurrency(data.returns)}
+                                </span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-gray-400">ROI:</span>
+                                <span className={`font-medium ${data.roi >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                  {formatPct(data.roi)}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+
+                    {/* Reserve */}
+                    <div className="mt-4 bg-gray-700/30 rounded-lg p-4">
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <div className="font-medium">🛡️ Reserve (10%)</div>
+                          <div className="text-xs text-gray-400">Safety buffer for margin & emergencies</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="font-medium">{formatCurrency(capitalFlow.reserve || 0)}</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* SECTION 5: Daily Briefing (at bottom) */}
+                {dailyBriefing && (dailyBriefing.actions?.recommendations?.length > 0 || dailyBriefing.actions?.warnings?.length > 0 || dailyBriefing.daily_tip) && (
+                  <div className="bg-gray-800 rounded-lg p-6">
+                    <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                      📋 Today&apos;s Briefing
+                    </h2>
+
                     {dailyBriefing.actions?.recommendations?.length > 0 && (
                       <div className="mb-4">
                         <h3 className="text-sm font-medium text-green-400 mb-2">Recommendations</h3>
@@ -215,7 +490,6 @@ export default function PrometheusBoxDashboard() {
                       </div>
                     )}
 
-                    {/* Warnings */}
                     {dailyBriefing.actions?.warnings?.length > 0 && (
                       <div className="mb-4">
                         <h3 className="text-sm font-medium text-yellow-400 mb-2">Warnings</h3>
@@ -229,98 +503,12 @@ export default function PrometheusBoxDashboard() {
                       </div>
                     )}
 
-                    {/* Tip of the Day */}
-                    {dailyBriefing.education?.daily_tip && (
-                      <div className="bg-blue-900/30 rounded-lg p-4 mt-4">
+                    {(dailyBriefing.education?.daily_tip || dailyBriefing.daily_tip) && (
+                      <div className="bg-blue-900/30 rounded-lg p-4">
                         <h3 className="text-sm font-medium text-blue-400 mb-2">💡 Tip of the Day</h3>
-                        <p className="text-sm text-gray-300">{dailyBriefing.education.daily_tip}</p>
+                        <p className="text-sm text-gray-300">{dailyBriefing.education?.daily_tip || dailyBriefing.daily_tip}</p>
                       </div>
                     )}
-                  </div>
-                )}
-
-                {/* Rate Analysis */}
-                {rateAnalysis && (
-                  <div className="bg-gray-800 rounded-lg p-6">
-                    <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-                      📊 Current Rate Analysis
-                    </h2>
-
-                    <div className="grid md:grid-cols-3 gap-6">
-                      <div>
-                        <div className="text-sm text-gray-400">Box Spread Implied Rate</div>
-                        <div className="text-2xl font-bold text-blue-400">
-                          {formatPct(rateAnalysis.box_implied_rate)}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-sm text-gray-400">Broker Margin Rate</div>
-                        <div className="text-2xl font-bold text-red-400">
-                          {formatPct(rateAnalysis.broker_margin_rate)}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-sm text-gray-400">Your Savings</div>
-                        <div className="text-2xl font-bold text-green-400">
-                          {formatPct(Math.abs(rateAnalysis.spread_to_margin))}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className={`mt-4 p-4 rounded-lg ${
-                      rateAnalysis.is_favorable ? 'bg-green-900/30' : 'bg-yellow-900/30'
-                    }`}>
-                      <div className={`font-medium ${
-                        rateAnalysis.is_favorable ? 'text-green-400' : 'text-yellow-400'
-                      }`}>
-                        {rateAnalysis.recommendation}
-                      </div>
-                      <p className="text-sm text-gray-300 mt-1 whitespace-pre-wrap">
-                        {rateAnalysis.reasoning}
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                {/* Capital Flow */}
-                {capitalFlow && (
-                  <div className="bg-gray-800 rounded-lg p-6">
-                    <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
-                      💰 Capital Flow to IC Bots
-                    </h2>
-
-                    <div className="space-y-4">
-                      {['ares', 'titan', 'pegasus'].map((bot) => {
-                        const data = capitalFlow.deployment_summary?.[bot]
-                        if (!data) return null
-                        return (
-                          <div key={bot} className="bg-gray-700/50 rounded-lg p-4">
-                            <div className="flex justify-between items-center">
-                              <div className="font-medium text-lg">
-                                {bot.toUpperCase()}
-                              </div>
-                              <div className={`text-sm px-2 py-1 rounded ${
-                                data.roi > 0 ? 'bg-green-900/50 text-green-400' : 'bg-gray-600 text-gray-300'
-                              }`}>
-                                ROI: {formatPct(data.roi)}
-                              </div>
-                            </div>
-                            <div className="grid grid-cols-2 gap-4 mt-2 text-sm">
-                              <div>
-                                <span className="text-gray-400">Deployed: </span>
-                                <span>{formatCurrency(data.deployed)}</span>
-                              </div>
-                              <div>
-                                <span className="text-gray-400">Returns: </span>
-                                <span className={data.returns >= 0 ? 'text-green-400' : 'text-red-400'}>
-                                  {formatCurrency(data.returns)}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                        )
-                      })}
-                    </div>
                   </div>
                 )}
               </div>
@@ -337,7 +525,7 @@ export default function PrometheusBoxDashboard() {
                     </p>
                   </div>
 
-                  {positions?.open_positions?.length > 0 ? (
+                  {positions?.positions?.length > 0 ? (
                     <div className="overflow-x-auto">
                       <table className="w-full">
                         <thead className="bg-gray-700/50">
@@ -353,7 +541,7 @@ export default function PrometheusBoxDashboard() {
                           </tr>
                         </thead>
                         <tbody>
-                          {positions.open_positions.map((pos: Position) => (
+                          {positions.positions.map((pos: Position) => (
                             <tr key={pos.position_id} className="border-t border-gray-700 hover:bg-gray-700/30">
                               <td className="px-4 py-3">
                                 <div className="font-medium">{pos.position_id}</div>
