@@ -253,6 +253,67 @@ async def get_position_detail(position_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/closed-trades")
+async def get_closed_trades(limit: int = Query(100, ge=1, le=500)):
+    """
+    Get closed box spread positions (trade history).
+
+    Returns closed positions with realized P&L, matching STANDARDS.md requirements.
+    Each closed trade includes:
+    - Position details (strikes, expiration, contracts)
+    - Borrowing cost analysis (implied rate, total cost)
+    - IC returns from deployed capital
+    - Final realized P&L (net profit)
+    - Close time and reason
+    """
+    if not PrometheusTrader:
+        raise HTTPException(status_code=503, detail="PROMETHEUS Box Spread not available")
+
+    try:
+        trader = PrometheusTrader()
+        closed = trader.db.get_closed_positions(limit)
+
+        # Format dates for JSON serialization
+        for trade in closed:
+            if trade.get('open_time'):
+                trade['open_time'] = trade['open_time'].isoformat() if hasattr(trade['open_time'], 'isoformat') else str(trade['open_time'])
+            if trade.get('close_time'):
+                trade['close_time'] = trade['close_time'].isoformat() if hasattr(trade['close_time'], 'isoformat') else str(trade['close_time'])
+            if trade.get('expiration'):
+                trade['expiration'] = str(trade['expiration'])
+
+        return {
+            "closed_trades": closed,
+            "count": len(closed),
+        }
+    except Exception as e:
+        logger.error(f"Error getting closed trades: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/scan-activity")
+async def get_scan_activity(limit: int = Query(50, ge=1, le=200)):
+    """
+    Get scan activity history (alias for signals/recent).
+
+    Returns signal scan history matching STANDARDS.md bot requirements.
+    Each scan includes signal details and whether it was executed.
+    """
+    if not PrometheusTrader:
+        raise HTTPException(status_code=503, detail="PROMETHEUS Box Spread not available")
+
+    try:
+        trader = PrometheusTrader()
+        signals = trader.db.get_recent_signals(limit)
+        return {
+            "scans": signals,
+            "count": len(signals),
+        }
+    except Exception as e:
+        logger.error(f"Error getting scan activity: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/positions/close")
 async def close_position(request: ClosePositionRequest):
     """

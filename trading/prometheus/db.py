@@ -515,6 +515,53 @@ class PrometheusDatabase:
             logger.error(f"Error getting position {position_id}: {e}")
             return None
 
+    def get_closed_positions(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Get closed box spread positions.
+
+        Returns closed positions with realized P&L for trade history analysis.
+        This follows the STANDARDS.md requirement for /closed-trades endpoint.
+        """
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT
+                    position_id,
+                    ticker,
+                    lower_strike,
+                    upper_strike,
+                    strike_width,
+                    expiration,
+                    contracts,
+                    entry_credit,
+                    total_credit_received,
+                    borrowing_cost,
+                    implied_annual_rate,
+                    total_ic_returns,
+                    net_profit as realized_pnl,
+                    open_time,
+                    close_time,
+                    close_reason,
+                    status,
+                    dte_at_entry,
+                    spot_at_entry,
+                    vix_at_entry
+                FROM prometheus_positions
+                WHERE status = 'closed'
+                ORDER BY close_time DESC
+                LIMIT %s
+            """, (limit,))
+            rows = cursor.fetchall()
+            columns = [desc[0] for desc in cursor.description]
+            cursor.close()
+
+            return [dict(zip(columns, row)) for row in rows]
+
+        except Exception as e:
+            logger.error(f"Error getting closed positions: {e}")
+            return []
+
     def save_position(self, position: BoxSpreadPosition) -> bool:
         """Save a new or updated position"""
         try:
