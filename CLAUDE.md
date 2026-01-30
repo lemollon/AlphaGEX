@@ -347,19 +347,41 @@ AlphaGEX operates 8 specialized trading bots, all advised by the Oracle ML syste
 - **Strategy**: Aggressive directional variant of ATHENA on SPY
 - **Files**: `trading/icarus/`, `backend/api/routes/icarus_routes.py`
 
-### PROMETHEUS - Box Spread Synthetic Borrowing ✓ PAPER
+### PROMETHEUS - Standalone Box Spread + IC Trading ✓ PAPER
+A self-contained two-part system: borrows capital via box spreads, then trades Iron Condors with that capital.
+
+**Part 1: Box Spread Manager**
 - **Schedule**: Daily at 9:30 AM CT (position management cycle)
-- **Strategy**: Synthetic borrowing via SPX box spreads to fund IC bot capital
+- **Strategy**: Synthetic borrowing via SPX box spreads
 - **Parameters**: 50pt strike width default, 90+ DTE, 30-day roll threshold
-- **Files**: `trading/prometheus/`, `backend/api/routes/prometheus_box_routes.py`
-- **Dashboard**: `/prometheus-box` - 5 tabs (Overview, Positions, Analytics, Education, Calculator)
-- **Key Features**:
+
+**Part 2: IC Trader**
+- **Schedule**: Every 5-15 min during market hours
+- **Strategy**: Iron Condors using borrowed capital to generate returns
+- **Parameters**: Oracle-approved trades, 0DTE-1DTE SPX options
+
+**Files**: `trading/prometheus/`, `backend/api/routes/prometheus_box_routes.py`
+**Dashboard**: `/prometheus-box` - 5 tabs (Overview, Positions, Analytics, Education, Calculator)
+
+**Key Features**:
   - Production Tradier API quotes for realistic paper trading
   - Real-time mark-to-market with actual bid/ask spreads
-  - Capital deployment tracking to ARES, TITAN, PEGASUS
+  - PROMETHEUS trades its own ICs (not deploying to ARES/TITAN/PEGASUS)
   - Rolling interest rate transparency and daily briefings
+  - Combined performance tracking: IC returns vs borrowing costs
   - Educational mode with comprehensive explanations
-- **30+ API endpoints** including MTM, roll decisions, live quotes
+
+**IC Trading Endpoints** (per STANDARDS.md Bot-Specific Requirements):
+- `/ic/status` - IC trading status and configuration
+- `/ic/positions` - Open IC positions with unrealized P&L
+- `/ic/closed-trades` - IC trade history
+- `/ic/equity-curve` - Historical IC equity curve
+- `/ic/equity-curve/intraday` - Today's IC equity snapshots
+- `/ic/performance` - IC win rate, P&L, statistics
+- `/ic/logs` - IC activity log for audit trail
+- `/ic/signals/recent` - Recent IC signals (scan activity)
+
+**60+ API endpoints** including Box Spread MTM, IC trading, combined performance
 
 ### PHOENIX - 0DTE Options ⚠️ PAPER (Partial Implementation)
 - **Schedule**: Every 5 min during market hours
@@ -1026,5 +1048,5 @@ When the user says any of these, ensure full end-to-end implementation:
 
 ---
 
-*Last Updated: January 15, 2025*
-*Updated metrics, deprecated systems documented, file paths corrected for v2 bot architecture*
+*Last Updated: January 30, 2026*
+*PROMETHEUS updated to standalone system with IC trading (no longer deploys to ARES/TITAN/PEGASUS)*

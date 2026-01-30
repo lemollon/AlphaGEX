@@ -68,12 +68,15 @@ export default function PrometheusBoxDashboard() {
   const { data: intradayEquity } = useSWR('/api/prometheus-box/equity-curve/intraday', fetcher, { refreshInterval: 30000 })
   const { data: interestRates } = useSWR('/api/prometheus-box/analytics/interest-rates', fetcher, { refreshInterval: 300000 })
 
-  // IC Trading data
+  // IC Trading data - All required endpoints per STANDARDS.md
   const { data: icStatus } = useSWR('/api/prometheus-box/ic/status', fetcher, { refreshInterval: 30000 })
   const { data: icPositions } = useSWR('/api/prometheus-box/ic/positions', fetcher, { refreshInterval: 15000 })
   const { data: icPerformance } = useSWR('/api/prometheus-box/ic/performance', fetcher, { refreshInterval: 30000 })
   const { data: icClosedTrades } = useSWR('/api/prometheus-box/ic/closed-trades?limit=20', fetcher, { refreshInterval: 60000 })
   const { data: icEquityCurve } = useSWR('/api/prometheus-box/ic/equity-curve', fetcher, { refreshInterval: 60000 })
+  const { data: icIntradayEquity } = useSWR('/api/prometheus-box/ic/equity-curve/intraday', fetcher, { refreshInterval: 30000 })
+  const { data: icLogs } = useSWR('/api/prometheus-box/ic/logs?limit=50', fetcher, { refreshInterval: 30000 })
+  const { data: icSignals } = useSWR('/api/prometheus-box/ic/signals/recent?limit=20', fetcher, { refreshInterval: 30000 })
   const { data: combinedPerformance } = useSWR('/api/prometheus-box/combined/performance', fetcher, { refreshInterval: 60000 })
 
   // IC Bot positions for capital deployment tracking (legacy - to be removed)
@@ -420,29 +423,26 @@ export default function PrometheusBoxDashboard() {
                             </div>
                           </div>
 
-                          {/* Capital Deployment Summary */}
+                          {/* PROMETHEUS IC Trading Summary */}
                           <div className="bg-black/40 rounded-lg p-4">
-                            <h3 className="text-sm font-medium text-gray-400 mb-3">CAPITAL DEPLOYED TO IC BOTS</h3>
-                            <div className="grid grid-cols-4 gap-3">
+                            <h3 className="text-sm font-medium text-gray-400 mb-3">IC TRADING WITH BORROWED CAPITAL</h3>
+                            <div className="grid grid-cols-3 gap-3">
                               <div className="text-center">
-                                <div className="text-xs text-gray-500">ARES</div>
-                                <div className="text-lg font-bold text-blue-400">{formatCurrency(pos.cash_deployed_to_ares)}</div>
-                                <div className="text-xs text-green-400">+{formatCurrency(pos.returns_from_ares)}</div>
+                                <div className="text-xs text-gray-500">Capital Available</div>
+                                <div className="text-lg font-bold text-orange-400">{formatCurrency(pos.total_cash_deployed)}</div>
+                                <div className="text-xs text-gray-400">from box spread</div>
                               </div>
                               <div className="text-center">
-                                <div className="text-xs text-gray-500">TITAN</div>
-                                <div className="text-lg font-bold text-purple-400">{formatCurrency(pos.cash_deployed_to_titan)}</div>
-                                <div className="text-xs text-green-400">+{formatCurrency(pos.returns_from_titan)}</div>
+                                <div className="text-xs text-gray-500">IC Returns</div>
+                                <div className={`text-lg font-bold ${pos.total_ic_returns >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                  {formatCurrency(pos.total_ic_returns)}
+                                </div>
+                                <div className="text-xs text-gray-400">realized + unrealized</div>
                               </div>
                               <div className="text-center">
-                                <div className="text-xs text-gray-500">PEGASUS</div>
-                                <div className="text-lg font-bold text-green-400">{formatCurrency(pos.cash_deployed_to_pegasus)}</div>
-                                <div className="text-xs text-green-400">+{formatCurrency(pos.returns_from_pegasus)}</div>
-                              </div>
-                              <div className="text-center">
-                                <div className="text-xs text-gray-500">Reserve</div>
-                                <div className="text-lg font-bold text-gray-400">{formatCurrency(pos.cash_held_in_reserve)}</div>
-                                <div className="text-xs text-gray-500">buffer</div>
+                                <div className="text-xs text-gray-500">Borrowing Cost</div>
+                                <div className="text-lg font-bold text-red-400">{formatCurrency(pos.cost_accrued_to_date)}</div>
+                                <div className="text-xs text-gray-400">accrued to date</div>
                               </div>
                             </div>
                           </div>
@@ -536,28 +536,28 @@ export default function PrometheusBoxDashboard() {
                         </div>
                       </div>
 
-                      {/* Capital Allocation Plan */}
+                      {/* PROMETHEUS IC Trading Settings */}
                       <div className="mt-6 bg-black/30 rounded-lg p-4">
-                        <h3 className="text-sm font-medium text-gray-400 mb-3">CAPITAL DEPLOYMENT PLAN</h3>
+                        <h3 className="text-sm font-medium text-gray-400 mb-3">IC TRADING CONFIGURATION</h3>
                         <p className="text-xs text-gray-500 mb-3">
-                          When cash is received from selling a box spread, it will be deployed to IC bots as follows:
+                          PROMETHEUS uses borrowed capital to trade its own Iron Condors on SPX.
                         </p>
                         <div className="grid grid-cols-4 gap-2">
-                          <div className="bg-blue-900/30 rounded p-3 text-center">
-                            <div className="text-xs text-gray-500">ARES</div>
-                            <div className="text-lg font-bold text-blue-400">{status?.config?.allocations?.ares_pct || 35}%</div>
+                          <div className="bg-orange-900/30 rounded p-3 text-center">
+                            <div className="text-xs text-gray-500">Ticker</div>
+                            <div className="text-lg font-bold text-orange-400">SPX</div>
                           </div>
-                          <div className="bg-purple-900/30 rounded p-3 text-center">
-                            <div className="text-xs text-gray-500">TITAN</div>
-                            <div className="text-lg font-bold text-purple-400">{status?.config?.allocations?.titan_pct || 35}%</div>
+                          <div className="bg-orange-900/30 rounded p-3 text-center">
+                            <div className="text-xs text-gray-500">Strategy</div>
+                            <div className="text-lg font-bold text-orange-400">0DTE IC</div>
                           </div>
-                          <div className="bg-green-900/30 rounded p-3 text-center">
-                            <div className="text-xs text-gray-500">PEGASUS</div>
-                            <div className="text-lg font-bold text-green-400">{status?.config?.allocations?.pegasus_pct || 20}%</div>
+                          <div className="bg-orange-900/30 rounded p-3 text-center">
+                            <div className="text-xs text-gray-500">Max Positions</div>
+                            <div className="text-lg font-bold text-orange-400">3</div>
                           </div>
-                          <div className="bg-gray-700/50 rounded p-3 text-center">
-                            <div className="text-xs text-gray-500">Reserve</div>
-                            <div className="text-lg font-bold text-gray-400">{status?.config?.allocations?.reserve_pct || 10}%</div>
+                          <div className="bg-orange-900/30 rounded p-3 text-center">
+                            <div className="text-xs text-gray-500">Cycle</div>
+                            <div className="text-lg font-bold text-orange-400">10 min</div>
                           </div>
                         </div>
                       </div>
@@ -583,7 +583,7 @@ export default function PrometheusBoxDashboard() {
                           </div>
                         </div>
                         <div className="mt-3 text-xs text-gray-500 border-t border-gray-700 pt-3">
-                          <strong>The Goal:</strong> Borrow at ~4-5% via box spread, deploy to IC bots earning ~20-40%/year, profit the difference.
+                          <strong>The Goal:</strong> Borrow at ~4-5% via box spread, trade SPX Iron Condors earning ~20-40%/year, profit the difference.
                         </div>
                       </div>
                     </div>
@@ -625,49 +625,43 @@ export default function PrometheusBoxDashboard() {
                   </div>
                 )}
 
-                {/* Capital Deployment */}
-                {capitalFlow && (
-                  <div className="bg-gray-800 rounded-lg p-6">
-                    <h2 className="text-xl font-bold mb-4">Capital Deployment to IC Bots</h2>
-                    <div className="grid md:grid-cols-3 gap-4">
-                      {[
-                        { name: 'ARES', pct: 35, desc: 'SPY 0DTE IC', color: 'red', data: capitalFlow.deployment_summary?.ares },
-                        { name: 'TITAN', pct: 35, desc: 'SPX Aggressive IC', color: 'blue', data: capitalFlow.deployment_summary?.titan },
-                        { name: 'PEGASUS', pct: 20, desc: 'SPX Weekly IC', color: 'purple', data: capitalFlow.deployment_summary?.pegasus },
-                      ].map((bot) => (
-                        <div key={bot.name} className="bg-gray-700/50 rounded-lg p-4">
-                          <div className="flex justify-between items-start mb-2">
-                            <div className="font-bold text-lg">{bot.name}</div>
-                            <div className="text-xs bg-gray-600 px-2 py-1 rounded">{bot.pct}%</div>
-                          </div>
-                          <div className="text-xs text-gray-400 mb-3">{bot.desc}</div>
-                          <div className="space-y-1 text-sm">
-                            <div className="flex justify-between">
-                              <span className="text-gray-400">Deployed:</span>
-                              <span>{formatCurrency(bot.data?.deployed || 0)}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-gray-400">Returns:</span>
-                              <span className={(bot.data?.returns || 0) >= 0 ? 'text-green-400' : 'text-red-400'}>
-                                {formatCurrency(bot.data?.returns || 0)}
-                              </span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-gray-400">ROI:</span>
-                              <span className={(bot.data?.roi || 0) >= 0 ? 'text-green-400' : 'text-red-400'}>
-                                {formatPct(bot.data?.roi || 0)}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
+                {/* PROMETHEUS IC Trading Status */}
+                <div className="bg-gray-800 rounded-lg p-6">
+                  <div className="flex justify-between items-center mb-4">
+                    <h2 className="text-xl font-bold">PROMETHEUS IC Trading</h2>
+                    <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+                      icStatus?.status?.enabled ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'
+                    }`}>
+                      {icStatus?.status?.enabled ? 'ACTIVE' : 'STANDBY'}
+                    </span>
+                  </div>
+                  <p className="text-sm text-gray-400 mb-4">
+                    Trades SPX 0DTE Iron Condors using capital from box spread borrowing.
+                  </p>
+                  <div className="grid md:grid-cols-4 gap-4">
+                    <div className="bg-orange-900/30 rounded-lg p-4 text-center">
+                      <div className="text-xs text-gray-400 mb-1">Open Positions</div>
+                      <div className="text-2xl font-bold text-orange-400">{icStatus?.status?.open_positions || 0}</div>
                     </div>
-                    {/* Reserve note */}
-                    <div className="mt-4 text-sm text-gray-400 bg-gray-700/30 rounded-lg p-3">
-                      <span className="text-gray-500">+10% Reserve Buffer:</span> Held for margin calls and emergency adjustments
+                    <div className="bg-gray-700/50 rounded-lg p-4 text-center">
+                      <div className="text-xs text-gray-400 mb-1">Today&apos;s Trades</div>
+                      <div className="text-2xl font-bold">{icStatus?.status?.daily_trades || 0} / {icStatus?.status?.max_daily_trades || 5}</div>
+                    </div>
+                    <div className="bg-gray-700/50 rounded-lg p-4 text-center">
+                      <div className="text-xs text-gray-400 mb-1">Unrealized P&L</div>
+                      <div className={`text-2xl font-bold ${(icStatus?.status?.total_unrealized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {formatCurrency(icStatus?.status?.total_unrealized_pnl || 0)}
+                      </div>
+                    </div>
+                    <div className="bg-gray-700/50 rounded-lg p-4 text-center">
+                      <div className="text-xs text-gray-400 mb-1">Available Capital</div>
+                      <div className="text-2xl font-bold text-blue-400">{formatCurrency(icStatus?.status?.available_capital || 0)}</div>
                     </div>
                   </div>
-                )}
+                  <div className="mt-4 text-sm text-gray-400 bg-gray-700/30 rounded-lg p-3">
+                    IC trading runs every 10 minutes when Oracle approves. See the <strong>IC Trading</strong> tab for details.
+                  </div>
+                </div>
 
                 {/* System Performance Summary */}
                 <div className="bg-gray-800 rounded-lg p-6">
@@ -1026,6 +1020,166 @@ export default function PrometheusBoxDashboard() {
                     </div>
                   )}
                 </div>
+
+                {/* IC Intraday Equity - per STANDARDS.md */}
+                <div className="bg-gray-800 rounded-lg p-6">
+                  <h3 className="text-lg font-bold mb-4">IC Intraday Equity ({icIntradayEquity?.date || 'Today'})</h3>
+                  {icIntradayEquity?.snapshots?.length > 0 ? (
+                    <div className="space-y-4">
+                      <div className="grid md:grid-cols-4 gap-4">
+                        <div className="bg-gray-700/50 rounded-lg p-3">
+                          <div className="text-xs text-gray-400">Market Open</div>
+                          <div className="text-lg font-bold text-blue-400">
+                            {formatCurrency(icIntradayEquity.snapshots[0]?.total_equity || 0)}
+                          </div>
+                        </div>
+                        <div className="bg-gray-700/50 rounded-lg p-3">
+                          <div className="text-xs text-gray-400">Current</div>
+                          <div className="text-lg font-bold">
+                            {formatCurrency(icIntradayEquity.snapshots[icIntradayEquity.snapshots.length - 1]?.total_equity || 0)}
+                          </div>
+                        </div>
+                        <div className="bg-gray-700/50 rounded-lg p-3">
+                          <div className="text-xs text-gray-400">Day Change</div>
+                          <div className={`text-lg font-bold ${
+                            (icIntradayEquity.snapshots[icIntradayEquity.snapshots.length - 1]?.total_equity || 0) -
+                            (icIntradayEquity.snapshots[0]?.total_equity || 0) >= 0 ? 'text-green-400' : 'text-red-400'
+                          }`}>
+                            {formatCurrency(
+                              (icIntradayEquity.snapshots[icIntradayEquity.snapshots.length - 1]?.total_equity || 0) -
+                              (icIntradayEquity.snapshots[0]?.total_equity || 0)
+                            )}
+                          </div>
+                        </div>
+                        <div className="bg-gray-700/50 rounded-lg p-3">
+                          <div className="text-xs text-gray-400">Snapshots</div>
+                          <div className="text-lg font-bold text-blue-400">{icIntradayEquity.count || 0}</div>
+                        </div>
+                      </div>
+                      <div className="overflow-x-auto max-h-40">
+                        <table className="w-full text-xs">
+                          <thead className="sticky top-0 bg-gray-800">
+                            <tr className="text-gray-400 border-b border-gray-700">
+                              <th className="text-left py-1 px-2">Time</th>
+                              <th className="text-right py-1 px-2">Equity</th>
+                              <th className="text-right py-1 px-2">Unrealized</th>
+                              <th className="text-right py-1 px-2">Positions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {icIntradayEquity.snapshots.slice(-10).map((snap: any, idx: number) => (
+                              <tr key={idx} className="border-b border-gray-700/30">
+                                <td className="py-1 px-2">{new Date(snap.time).toLocaleTimeString()}</td>
+                                <td className="py-1 px-2 text-right">{formatCurrency(snap.total_equity)}</td>
+                                <td className={`py-1 px-2 text-right ${snap.unrealized_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                  {formatCurrency(snap.unrealized_pnl)}
+                                </td>
+                                <td className="py-1 px-2 text-right">{snap.open_positions}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-4 text-center text-gray-400 text-sm">
+                      <p>No intraday snapshots yet. Data appears during market hours.</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* IC Signals (Scan Activity) - per STANDARDS.md */}
+                <div className="bg-gray-800 rounded-lg p-6">
+                  <h3 className="text-lg font-bold mb-4">Recent IC Signals ({icSignals?.count || 0})</h3>
+                  {icSignals?.signals?.length > 0 ? (
+                    <div className="overflow-x-auto max-h-60">
+                      <table className="w-full text-sm">
+                        <thead className="sticky top-0 bg-gray-800">
+                          <tr className="text-gray-400 border-b border-gray-700">
+                            <th className="text-left py-2 px-3">Time</th>
+                            <th className="text-left py-2 px-3">Structure</th>
+                            <th className="text-right py-2 px-3">Credit</th>
+                            <th className="text-right py-2 px-3">Oracle</th>
+                            <th className="text-left py-2 px-3">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {icSignals.signals.map((signal: any, idx: number) => (
+                            <tr key={idx} className="border-b border-gray-700/50 hover:bg-gray-700/30">
+                              <td className="py-2 px-3 text-xs">
+                                {signal.signal_time ? new Date(signal.signal_time).toLocaleTimeString() : '-'}
+                              </td>
+                              <td className="py-2 px-3 font-mono text-xs">
+                                {signal.put_long_strike}/{signal.put_short_strike} - {signal.call_short_strike}/{signal.call_long_strike}
+                              </td>
+                              <td className="py-2 px-3 text-right text-green-400">${signal.total_credit?.toFixed(2) || '0.00'}</td>
+                              <td className="py-2 px-3 text-right">
+                                <span className={signal.oracle_approved ? 'text-green-400' : 'text-red-400'}>
+                                  {signal.oracle_confidence ? `${(signal.oracle_confidence * 100).toFixed(0)}%` : '-'}
+                                </span>
+                              </td>
+                              <td className="py-2 px-3">
+                                <span className={`px-2 py-0.5 rounded text-xs ${
+                                  signal.was_executed ? 'bg-green-500/20 text-green-400' : 'bg-gray-500/20 text-gray-400'
+                                }`}>
+                                  {signal.was_executed ? 'EXECUTED' : signal.skip_reason || 'SKIPPED'}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="p-4 text-center text-gray-400 text-sm">
+                      <p>No signals generated yet. Signals appear during market hours when conditions are met.</p>
+                    </div>
+                  )}
+                </div>
+
+                {/* IC Activity Logs - per STANDARDS.md */}
+                <div className="bg-gray-800 rounded-lg p-6">
+                  <h3 className="text-lg font-bold mb-4">IC Activity Log ({icLogs?.count || 0})</h3>
+                  {icLogs?.logs?.length > 0 ? (
+                    <div className="overflow-x-auto max-h-60">
+                      <table className="w-full text-sm">
+                        <thead className="sticky top-0 bg-gray-800">
+                          <tr className="text-gray-400 border-b border-gray-700">
+                            <th className="text-left py-2 px-3">Time</th>
+                            <th className="text-left py-2 px-3">Action</th>
+                            <th className="text-left py-2 px-3">Message</th>
+                            <th className="text-left py-2 px-3">Position</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {icLogs.logs.map((log: any, idx: number) => (
+                            <tr key={idx} className="border-b border-gray-700/50 hover:bg-gray-700/30">
+                              <td className="py-2 px-3 text-xs">
+                                {log.time ? new Date(log.time).toLocaleTimeString() : '-'}
+                              </td>
+                              <td className="py-2 px-3">
+                                <span className={`px-2 py-0.5 rounded text-xs ${
+                                  log.action?.includes('OPENED') ? 'bg-green-500/20 text-green-400' :
+                                  log.action?.includes('CLOSED') ? 'bg-blue-500/20 text-blue-400' :
+                                  log.action?.includes('ERROR') ? 'bg-red-500/20 text-red-400' :
+                                  'bg-gray-500/20 text-gray-400'
+                                }`}>
+                                  {log.action}
+                                </span>
+                              </td>
+                              <td className="py-2 px-3 text-xs text-gray-300 max-w-xs truncate">{log.message}</td>
+                              <td className="py-2 px-3 font-mono text-xs text-gray-400">{log.position_id || '-'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="p-4 text-center text-gray-400 text-sm">
+                      <p>No activity logs yet. Logs appear when IC trading actions occur.</p>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -1336,78 +1490,80 @@ export default function PrometheusBoxDashboard() {
                   )}
                 </div>
 
-                {/* IC Bot Attribution */}
+                {/* PROMETHEUS IC Trading Performance */}
                 <div className="bg-gray-800 rounded-lg p-6">
-                  <h2 className="text-xl font-bold mb-4">IC Bot Performance Attribution</h2>
+                  <h2 className="text-xl font-bold mb-4">PROMETHEUS IC Trading Performance</h2>
                   <div className="grid md:grid-cols-3 gap-4">
-                    {/* ARES */}
-                    <div className="bg-gray-700/50 rounded-lg p-4">
+                    {/* IC Statistics */}
+                    <div className="bg-orange-900/30 rounded-lg p-4">
                       <div className="flex justify-between items-center mb-3">
-                        <h3 className="font-bold">ARES</h3>
-                        <span className="text-xs text-gray-400">SPY 0DTE</span>
+                        <h3 className="font-bold text-orange-400">IC Trading</h3>
+                        <span className="text-xs text-gray-400">SPX 0DTE</span>
                       </div>
                       <div className="space-y-2 text-sm">
                         <div className="flex justify-between">
-                          <span className="text-gray-400">Allocated:</span>
-                          <span>{formatCurrency(capitalFlow?.deployment_summary?.ares?.deployed || 0)}</span>
+                          <span className="text-gray-400">Total Trades:</span>
+                          <span>{icPerformance?.performance?.closed_trades?.total || 0}</span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="text-gray-400">Returns:</span>
-                          <span className={(capitalFlow?.deployment_summary?.ares?.returns || 0) >= 0 ? 'text-green-400' : 'text-red-400'}>
-                            {formatCurrency(capitalFlow?.deployment_summary?.ares?.returns || 0)}
+                          <span className="text-gray-400">Win Rate:</span>
+                          <span className={(icPerformance?.performance?.closed_trades?.win_rate || 0) >= 0.5 ? 'text-green-400' : 'text-red-400'}>
+                            {formatPct((icPerformance?.performance?.closed_trades?.win_rate || 0) * 100)}
                           </span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-gray-400">Open Positions:</span>
-                          <span>{aresPositions?.positions?.length || 0}</span>
+                          <span>{icStatus?.status?.open_positions || 0}</span>
                         </div>
                       </div>
                     </div>
 
-                    {/* TITAN */}
+                    {/* Returns */}
                     <div className="bg-gray-700/50 rounded-lg p-4">
                       <div className="flex justify-between items-center mb-3">
-                        <h3 className="font-bold">TITAN</h3>
-                        <span className="text-xs text-gray-400">SPX Aggressive</span>
+                        <h3 className="font-bold">Returns</h3>
+                        <span className="text-xs text-gray-400">All IC Trades</span>
                       </div>
                       <div className="space-y-2 text-sm">
                         <div className="flex justify-between">
-                          <span className="text-gray-400">Allocated:</span>
-                          <span>{formatCurrency(capitalFlow?.deployment_summary?.titan?.deployed || 0)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Returns:</span>
-                          <span className={(capitalFlow?.deployment_summary?.titan?.returns || 0) >= 0 ? 'text-green-400' : 'text-red-400'}>
-                            {formatCurrency(capitalFlow?.deployment_summary?.titan?.returns || 0)}
+                          <span className="text-gray-400">Realized P&L:</span>
+                          <span className={(icPerformance?.performance?.closed_trades?.total_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}>
+                            {formatCurrency(icPerformance?.performance?.closed_trades?.total_pnl || 0)}
                           </span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="text-gray-400">Open Positions:</span>
-                          <span>{titanPositions?.positions?.length || 0}</span>
+                          <span className="text-gray-400">Unrealized P&L:</span>
+                          <span className={(icStatus?.status?.total_unrealized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}>
+                            {formatCurrency(icStatus?.status?.total_unrealized_pnl || 0)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">Profit Factor:</span>
+                          <span>{(icPerformance?.performance?.closed_trades?.profit_factor || 0).toFixed(2)}</span>
                         </div>
                       </div>
                     </div>
 
-                    {/* PEGASUS */}
+                    {/* Net Performance */}
                     <div className="bg-gray-700/50 rounded-lg p-4">
                       <div className="flex justify-between items-center mb-3">
-                        <h3 className="font-bold">PEGASUS</h3>
-                        <span className="text-xs text-gray-400">SPX Weekly</span>
+                        <h3 className="font-bold">Net Performance</h3>
+                        <span className="text-xs text-gray-400">vs Borrowing Cost</span>
                       </div>
                       <div className="space-y-2 text-sm">
                         <div className="flex justify-between">
-                          <span className="text-gray-400">Allocated:</span>
-                          <span>{formatCurrency(capitalFlow?.deployment_summary?.pegasus?.deployed || 0)}</span>
+                          <span className="text-gray-400">IC Returns:</span>
+                          <span className="text-green-400">+{formatCurrency(combinedPerformance?.summary?.ic_trading?.total_realized_pnl || 0)}</span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="text-gray-400">Returns:</span>
-                          <span className={(capitalFlow?.deployment_summary?.pegasus?.returns || 0) >= 0 ? 'text-green-400' : 'text-red-400'}>
-                            {formatCurrency(capitalFlow?.deployment_summary?.pegasus?.returns || 0)}
+                          <span className="text-gray-400">Borrowing Cost:</span>
+                          <span className="text-red-400">-{formatCurrency(combinedPerformance?.summary?.box_spread?.total_borrowing_cost || 0)}</span>
+                        </div>
+                        <div className="flex justify-between font-bold border-t border-gray-600 pt-2">
+                          <span className="text-gray-300">Net Profit:</span>
+                          <span className={(combinedPerformance?.summary?.net_profit || 0) >= 0 ? 'text-green-400' : 'text-red-400'}>
+                            {formatCurrency(combinedPerformance?.summary?.net_profit || 0)}
                           </span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">Open Positions:</span>
-                          <span>{pegasusPositions?.positions?.length || 0}</span>
                         </div>
                       </div>
                     </div>
@@ -1436,23 +1592,19 @@ export default function PrometheusBoxDashboard() {
                       </div>
                     </div>
                     <div>
-                      <h3 className="text-sm font-medium text-red-400 mb-2">Outflows</h3>
+                      <h3 className="text-sm font-medium text-red-400 mb-2">Costs &amp; Outflows</h3>
                       <div className="space-y-2 text-sm">
                         <div className="flex justify-between">
-                          <span className="text-gray-400">ARES Deployment:</span>
-                          <span>{formatCurrency(capitalFlow?.deployment_summary?.ares?.deployed || 0)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">TITAN Deployment:</span>
-                          <span>{formatCurrency(capitalFlow?.deployment_summary?.titan?.deployed || 0)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-400">PEGASUS Deployment:</span>
-                          <span>{formatCurrency(capitalFlow?.deployment_summary?.pegasus?.deployed || 0)}</span>
+                          <span className="text-gray-400">Box Spread Owed:</span>
+                          <span>{formatCurrency(positions?.positions?.[0]?.total_owed_at_expiration || 0)}</span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-gray-400">Borrowing Costs:</span>
                           <span className="text-red-400">-{formatCurrency(totalBorrowingCosts)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-gray-400">IC Capital at Risk:</span>
+                          <span>{formatCurrency(icStatus?.status?.total_capital_at_risk || 0)}</span>
                         </div>
                         <div className="border-t border-gray-700 pt-2 flex justify-between font-medium">
                           <span>Net P&L:</span>
@@ -1523,52 +1675,31 @@ export default function PrometheusBoxDashboard() {
                       <div className="hidden md:block absolute top-1/2 -right-2 transform translate-x-1/2 -translate-y-1/2 text-3xl text-gray-500">→</div>
                     </div>
 
-                    {/* Step 2: Deploy */}
+                    {/* Step 2: Trade */}
                     <div className="relative">
-                      <div className="bg-gradient-to-br from-purple-900/50 to-purple-800/30 rounded-xl p-6 border border-purple-500/30 h-full">
-                        <div className="absolute -top-3 -left-3 w-10 h-10 bg-purple-600 rounded-full flex items-center justify-center text-white font-bold text-lg shadow-lg">2</div>
+                      <div className="bg-gradient-to-br from-orange-900/50 to-orange-800/30 rounded-xl p-6 border border-orange-500/30 h-full">
+                        <div className="absolute -top-3 -left-3 w-10 h-10 bg-orange-600 rounded-full flex items-center justify-center text-white font-bold text-lg shadow-lg">2</div>
                         <div className="text-center mb-4 pt-2">
-                          <div className="text-4xl mb-2">💰</div>
-                          <h3 className="text-xl font-bold text-purple-400">DEPLOY</h3>
+                          <div className="text-4xl mb-2">📊</div>
+                          <h3 className="text-xl font-bold text-orange-400">TRADE IC</h3>
                         </div>
                         <div className="bg-black/40 rounded-lg p-4">
-                          <div className="text-sm text-center mb-3 text-gray-300">Capital Allocation</div>
+                          <div className="text-sm text-center mb-3 text-gray-300">PROMETHEUS IC Trading</div>
                           <div className="space-y-3">
                             <div className="relative">
                               <div className="flex justify-between text-xs mb-1">
-                                <span className="text-red-400 font-medium">ARES</span>
-                                <span>35%</span>
+                                <span className="text-orange-400 font-medium">SPX Iron Condors</span>
+                                <span>0DTE</span>
                               </div>
                               <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-                                <div className="h-full bg-red-500 rounded-full" style={{ width: '35%' }}></div>
+                                <div className="h-full bg-orange-500 rounded-full" style={{ width: '100%' }}></div>
                               </div>
                             </div>
-                            <div className="relative">
-                              <div className="flex justify-between text-xs mb-1">
-                                <span className="text-blue-400 font-medium">TITAN</span>
-                                <span>35%</span>
-                              </div>
-                              <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-                                <div className="h-full bg-blue-500 rounded-full" style={{ width: '35%' }}></div>
-                              </div>
-                            </div>
-                            <div className="relative">
-                              <div className="flex justify-between text-xs mb-1">
-                                <span className="text-purple-400 font-medium">PEGASUS</span>
-                                <span>20%</span>
-                              </div>
-                              <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-                                <div className="h-full bg-purple-500 rounded-full" style={{ width: '20%' }}></div>
-                              </div>
-                            </div>
-                            <div className="relative">
-                              <div className="flex justify-between text-xs mb-1">
-                                <span className="text-gray-400 font-medium">RESERVE</span>
-                                <span>10%</span>
-                              </div>
-                              <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
-                                <div className="h-full bg-gray-500 rounded-full" style={{ width: '10%' }}></div>
-                              </div>
+                            <div className="text-xs text-gray-400 mt-2 space-y-1">
+                              <div>• Oracle-approved trades only</div>
+                              <div>• 10 delta short strikes</div>
+                              <div>• Every 10 minutes</div>
+                              <div>• Max 3 positions</div>
                             </div>
                           </div>
                         </div>

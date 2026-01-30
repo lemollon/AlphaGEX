@@ -940,6 +940,13 @@ class PrometheusICTrader:
                 result['cooldown_active'] = True
                 result['skip_reason'] = self._get_skip_reason()
 
+            # Step 3: Record equity snapshot (per STANDARDS.md)
+            try:
+                self.db.record_ic_equity_snapshot()
+            except Exception as e:
+                logger.warning(f"Failed to record IC equity snapshot: {e}")
+                result['errors'].append(f"Equity snapshot failed: {e}")
+
             logger.info(f"PROMETHEUS IC cycle complete: {result['positions_closed']} closed, new={bool(result['new_position'])}")
 
         except Exception as e:
