@@ -154,46 +154,227 @@ export default function PrometheusBoxDashboard() {
             {/* Overview Tab */}
             {activeTab === 'overview' && (
               <div className="space-y-6">
-                {/* Architecture Diagram */}
-                <div className="bg-gradient-to-br from-gray-800 to-gray-900 rounded-lg p-6 border border-orange-900/50">
-                  <h2 className="text-2xl font-bold mb-4">How PROMETHEUS Works</h2>
-                  <div className="bg-black/40 rounded-lg p-6 font-mono text-sm overflow-x-auto">
-                    <pre className="text-gray-300 whitespace-pre">
-{`┌─────────────────────────────────────────────────────────────────────────────┐
-│                           PROMETHEUS ARCHITECTURE                            │
-└─────────────────────────────────────────────────────────────────────────────┘
+                {/* Active Position Details - Show when positions exist */}
+                {positions?.positions?.length > 0 && (
+                  <div className="bg-gradient-to-br from-orange-900/30 to-gray-800 rounded-lg p-6 border border-orange-500/50">
+                    <div className="flex items-center justify-between mb-4">
+                      <h2 className="text-2xl font-bold">Active Box Spread Position</h2>
+                      <span className="px-3 py-1 bg-green-600 text-white rounded-full text-sm font-medium">LIVE</span>
+                    </div>
 
-  STEP 1: BORROW                              STEP 2: DEPLOY
-  ════════════════                            ══════════════
+                    {positions.positions.map((pos: Position) => {
+                      // Calculate derived metrics
+                      const faceValue = pos.strike_width * 100 * pos.contracts
+                      const creditReceived = pos.total_credit_received
+                      const owedAtExpiration = pos.total_owed_at_expiration || faceValue
+                      const daysElapsed = 90 - pos.current_dte // Assuming 90 DTE start
+                      const totalDays = 90
+                      const progressPct = Math.min(100, Math.max(0, (daysElapsed / totalDays) * 100))
+                      const dailyAccrual = pos.borrowing_cost / (totalDays - pos.current_dte || 1)
+                      const projectedTotalCost = (pos.borrowing_cost / Math.max(1, daysElapsed)) * totalDays
+                      const breakEvenICReturn = pos.borrowing_cost
+                      const isAboveBreakEven = pos.total_ic_returns >= breakEvenICReturn
+                      const netROI = creditReceived > 0 ? (pos.net_profit / creditReceived) * 100 : 0
 
-  ┌──────────────────────┐                    ┌─────────────────────────────────┐
-  │    📦 BOX SPREAD     │                    │     💰 CAPITAL ALLOCATION       │
-  │    (SPX Options)     │                    │                                 │
-  │                      │   Credit           │   ┌───────┐  35%   ┌─────────┐  │
-  │  Sell Call Spread    │──────────────────▶ │   │ ARES  │───────▶│ SPY 0DTE│  │
-  │  + Sell Put Spread   │                    │   └───────┘        │   IC    │  │
-  │  = CASH TODAY        │                    │                    └─────────┘  │
-  │                      │                    │   ┌───────┐  35%   ┌─────────┐  │
-  │  Rate: ~4.5%/yr      │                    │   │ TITAN │───────▶│SPX Aggr │  │
-  │  (vs 8.5% margin)    │                    │   └───────┘        │   IC    │  │
-  └──────────────────────┘                    │                    └─────────┘  │
-                                              │   ┌───────┐  20%   ┌─────────┐  │
-  STEP 3: PROFIT                              │   │PEGASUS│───────▶│SPX Weekly│ │
-  ══════════════                              │   └───────┘        │   IC    │  │
-                                              │                    └─────────┘  │
-  IC Returns - Borrowing Cost = NET PROFIT    │   ┌───────┐  10%                │
-                                              │   │RESERVE│ (Margin buffer)     │
-  Target: IC bots return 2-4%/month           │   └───────┘                     │
-  Cost: Box spread ~0.4%/month                └─────────────────────────────────┘
-  Spread: +1.6-3.6%/month profit potential`}
-                    </pre>
+                      return (
+                        <div key={pos.position_id} className="space-y-6">
+                          {/* Position Structure */}
+                          <div className="grid md:grid-cols-2 gap-6">
+                            {/* Left: Position Details */}
+                            <div className="space-y-4">
+                              <div className="bg-black/40 rounded-lg p-4">
+                                <h3 className="text-sm font-medium text-gray-400 mb-3">POSITION STRUCTURE</h3>
+                                <div className="grid grid-cols-2 gap-4">
+                                  <div>
+                                    <div className="text-xs text-gray-500">Ticker</div>
+                                    <div className="text-xl font-bold text-white">{pos.ticker}</div>
+                                  </div>
+                                  <div>
+                                    <div className="text-xs text-gray-500">Contracts</div>
+                                    <div className="text-xl font-bold text-white">{pos.contracts}</div>
+                                  </div>
+                                </div>
+                                <div className="mt-4 pt-4 border-t border-gray-700">
+                                  <div className="text-xs text-gray-500 mb-2">Strike Range</div>
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-2xl font-bold text-blue-400">${pos.lower_strike}</span>
+                                    <span className="text-gray-500">→</span>
+                                    <span className="text-2xl font-bold text-purple-400">${pos.upper_strike}</span>
+                                    <span className="ml-2 text-sm text-gray-400">({pos.strike_width}pt width)</span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Expiration & Timeline */}
+                              <div className="bg-black/40 rounded-lg p-4">
+                                <h3 className="text-sm font-medium text-gray-400 mb-3">EXPIRATION TIMELINE</h3>
+                                <div className="flex justify-between items-center mb-2">
+                                  <span className="text-gray-500 text-sm">Opened</span>
+                                  <span className="font-bold text-lg">{pos.expiration}</span>
+                                  <span className="text-gray-500 text-sm">Expires</span>
+                                </div>
+                                {/* Progress Bar */}
+                                <div className="relative h-4 bg-gray-700 rounded-full overflow-hidden mb-2">
+                                  <div
+                                    className="absolute left-0 top-0 h-full bg-gradient-to-r from-orange-600 to-orange-400 transition-all"
+                                    style={{ width: `${progressPct}%` }}
+                                  />
+                                  <div className="absolute inset-0 flex items-center justify-center text-xs font-bold text-white">
+                                    {Math.round(progressPct)}% elapsed
+                                  </div>
+                                </div>
+                                <div className="flex justify-between text-sm">
+                                  <span className="text-gray-400">{daysElapsed > 0 ? daysElapsed : 0} days elapsed</span>
+                                  <span className={`font-bold ${pos.current_dte <= 30 ? 'text-yellow-400' : 'text-white'}`}>
+                                    {pos.current_dte} DTE remaining
+                                  </span>
+                                </div>
+                                {pos.current_dte <= 30 && (
+                                  <div className="mt-2 px-3 py-2 bg-yellow-900/50 border border-yellow-600/50 rounded text-sm text-yellow-400">
+                                    ⚠️ Position approaching roll threshold (30 DTE)
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Right: Financial Summary */}
+                            <div className="space-y-4">
+                              <div className="bg-black/40 rounded-lg p-4">
+                                <h3 className="text-sm font-medium text-gray-400 mb-3">FINANCIAL SUMMARY</h3>
+                                <div className="space-y-3">
+                                  <div className="flex justify-between items-center">
+                                    <span className="text-gray-400">Credit Received</span>
+                                    <span className="text-xl font-bold text-green-400">{formatCurrency(creditReceived)}</span>
+                                  </div>
+                                  <div className="flex justify-between items-center">
+                                    <span className="text-gray-400">Face Value (owed at exp)</span>
+                                    <span className="text-xl font-bold text-red-400">{formatCurrency(owedAtExpiration)}</span>
+                                  </div>
+                                  <div className="border-t border-gray-700 pt-3 flex justify-between items-center">
+                                    <span className="text-gray-400">Implied Annual Rate</span>
+                                    <span className="text-xl font-bold text-blue-400">{formatPct(pos.implied_annual_rate)}</span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="bg-black/40 rounded-lg p-4">
+                                <h3 className="text-sm font-medium text-gray-400 mb-3">BORROWING COST ACCRUAL</h3>
+                                <div className="space-y-3">
+                                  <div className="flex justify-between items-center">
+                                    <span className="text-gray-400">Accrued to Date</span>
+                                    <span className="text-lg font-bold text-red-400">{formatCurrency(pos.borrowing_cost)}</span>
+                                  </div>
+                                  <div className="flex justify-between items-center text-sm">
+                                    <span className="text-gray-500">Daily Accrual Rate</span>
+                                    <span className="text-gray-300">~{formatCurrency(dailyAccrual)}/day</span>
+                                  </div>
+                                  <div className="flex justify-between items-center text-sm">
+                                    <span className="text-gray-500">Projected Total Cost</span>
+                                    <span className="text-gray-300">{formatCurrency(projectedTotalCost)}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Break-Even Analysis */}
+                          <div className="bg-black/40 rounded-lg p-4">
+                            <h3 className="text-sm font-medium text-gray-400 mb-3">BREAK-EVEN ANALYSIS</h3>
+                            <div className="grid md:grid-cols-4 gap-4">
+                              <div className={`rounded-lg p-4 text-center ${isAboveBreakEven ? 'bg-green-900/30 border border-green-600/50' : 'bg-red-900/30 border border-red-600/50'}`}>
+                                <div className="text-xs text-gray-400 mb-1">Status</div>
+                                <div className={`text-2xl font-bold ${isAboveBreakEven ? 'text-green-400' : 'text-red-400'}`}>
+                                  {isAboveBreakEven ? 'PROFITABLE' : 'BELOW B/E'}
+                                </div>
+                              </div>
+                              <div className="bg-gray-700/50 rounded-lg p-4 text-center">
+                                <div className="text-xs text-gray-400 mb-1">IC Returns Needed</div>
+                                <div className="text-xl font-bold text-yellow-400">{formatCurrency(breakEvenICReturn)}</div>
+                                <div className="text-xs text-gray-500">to break even</div>
+                              </div>
+                              <div className="bg-gray-700/50 rounded-lg p-4 text-center">
+                                <div className="text-xs text-gray-400 mb-1">Actual IC Returns</div>
+                                <div className="text-xl font-bold text-green-400">{formatCurrency(pos.total_ic_returns)}</div>
+                                <div className="text-xs text-gray-500">earned so far</div>
+                              </div>
+                              <div className="bg-gray-700/50 rounded-lg p-4 text-center">
+                                <div className="text-xs text-gray-400 mb-1">Net ROI</div>
+                                <div className={`text-xl font-bold ${netROI >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                  {formatPct(netROI)}
+                                </div>
+                                <div className="text-xs text-gray-500">on credit received</div>
+                              </div>
+                            </div>
+
+                            {/* Visual Break-Even Bar */}
+                            <div className="mt-4">
+                              <div className="flex justify-between text-xs text-gray-400 mb-1">
+                                <span>$0</span>
+                                <span>Break-Even: {formatCurrency(breakEvenICReturn)}</span>
+                                <span>{formatCurrency(breakEvenICReturn * 2)}</span>
+                              </div>
+                              <div className="relative h-6 bg-gray-700 rounded-full overflow-hidden">
+                                {/* Break-even marker */}
+                                <div className="absolute left-1/2 top-0 bottom-0 w-0.5 bg-yellow-400 z-10" />
+                                {/* Actual returns bar */}
+                                <div
+                                  className={`absolute left-0 top-0 h-full transition-all ${isAboveBreakEven ? 'bg-gradient-to-r from-green-600 to-green-400' : 'bg-gradient-to-r from-red-600 to-red-400'}`}
+                                  style={{ width: `${Math.min(100, (pos.total_ic_returns / (breakEvenICReturn * 2)) * 100)}%` }}
+                                />
+                              </div>
+                              <div className="text-center mt-2 text-sm">
+                                <span className="text-gray-400">IC Returns: </span>
+                                <span className={isAboveBreakEven ? 'text-green-400' : 'text-red-400'}>
+                                  {formatCurrency(pos.total_ic_returns)}
+                                </span>
+                                <span className="text-gray-400"> | Net P&L: </span>
+                                <span className={pos.net_profit >= 0 ? 'text-green-400' : 'text-red-400'}>
+                                  {formatCurrency(pos.net_profit)}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Assignment Risk */}
+                          <div className="flex items-center justify-between bg-gray-700/30 rounded-lg p-4">
+                            <div className="flex items-center gap-3">
+                              <span className="text-gray-400">Early Assignment Risk:</span>
+                              <span className={`px-3 py-1 rounded font-medium ${
+                                pos.early_assignment_risk === 'LOW' ? 'bg-green-900/50 text-green-400' :
+                                pos.early_assignment_risk === 'MEDIUM' ? 'bg-yellow-900/50 text-yellow-400' :
+                                'bg-red-900/50 text-red-400'
+                              }`}>
+                                {pos.early_assignment_risk}
+                              </span>
+                            </div>
+                            <div className="text-sm text-gray-400">
+                              SPX = European-style (no early exercise)
+                            </div>
+                          </div>
+                        </div>
+                      )
+                    })}
                   </div>
-                </div>
+                )}
+
+                {/* No Position State */}
+                {(!positions?.positions || positions.positions.length === 0) && (
+                  <div className="bg-gray-800 rounded-lg p-8 text-center border border-gray-700">
+                    <div className="text-5xl mb-4">📦</div>
+                    <h2 className="text-2xl font-bold mb-2">No Active Position</h2>
+                    <p className="text-gray-400 mb-4">PROMETHEUS scans for favorable box spread opportunities daily at 9:30 AM CT</p>
+                    {rateAnalysis && (
+                      <div className={`inline-block px-4 py-2 rounded-lg ${rateAnalysis.is_favorable ? 'bg-green-900/50 text-green-400' : 'bg-yellow-900/50 text-yellow-400'}`}>
+                        Current rates are {rateAnalysis.is_favorable ? 'FAVORABLE' : 'UNFAVORABLE'} for new positions
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Rate Analysis */}
                 {rateAnalysis && (
                   <div className="bg-gray-800 rounded-lg p-6">
-                    <h2 className="text-xl font-bold mb-4">Current Rate Analysis</h2>
+                    <h2 className="text-xl font-bold mb-4">Current Rate Environment</h2>
                     <div className="grid md:grid-cols-4 gap-4 mb-4">
                       <div className="bg-blue-900/30 rounded-lg p-4 text-center">
                         <div className="text-xs text-gray-400 mb-1">Box Spread Rate</div>
@@ -228,7 +409,7 @@ export default function PrometheusBoxDashboard() {
                 {/* Capital Deployment */}
                 {capitalFlow && (
                   <div className="bg-gray-800 rounded-lg p-6">
-                    <h2 className="text-xl font-bold mb-4">Capital Deployment</h2>
+                    <h2 className="text-xl font-bold mb-4">Capital Deployment to IC Bots</h2>
                     <div className="grid md:grid-cols-3 gap-4">
                       {[
                         { name: 'ARES', pct: 35, desc: 'SPY 0DTE IC', color: 'red', data: capitalFlow.deployment_summary?.ares },
@@ -262,8 +443,52 @@ export default function PrometheusBoxDashboard() {
                         </div>
                       ))}
                     </div>
+                    {/* Reserve note */}
+                    <div className="mt-4 text-sm text-gray-400 bg-gray-700/30 rounded-lg p-3">
+                      <span className="text-gray-500">+10% Reserve Buffer:</span> Held for margin calls and emergency adjustments
+                    </div>
                   </div>
                 )}
+
+                {/* System Performance Summary */}
+                <div className="bg-gray-800 rounded-lg p-6">
+                  <h2 className="text-xl font-bold mb-4">System Performance Summary</h2>
+                  <div className="grid md:grid-cols-4 gap-4">
+                    <div className="bg-gradient-to-br from-blue-900/40 to-blue-900/20 rounded-lg p-4 text-center border border-blue-700/30">
+                      <div className="text-xs text-blue-300 mb-1">Total Capital Working</div>
+                      <div className="text-2xl font-bold text-white">{formatCurrency(totalBorrowed)}</div>
+                    </div>
+                    <div className="bg-gradient-to-br from-green-900/40 to-green-900/20 rounded-lg p-4 text-center border border-green-700/30">
+                      <div className="text-xs text-green-300 mb-1">Gross IC Returns</div>
+                      <div className="text-2xl font-bold text-green-400">{formatCurrency(totalICReturns)}</div>
+                    </div>
+                    <div className="bg-gradient-to-br from-red-900/40 to-red-900/20 rounded-lg p-4 text-center border border-red-700/30">
+                      <div className="text-xs text-red-300 mb-1">Borrowing Costs</div>
+                      <div className="text-2xl font-bold text-red-400">{formatCurrency(totalBorrowingCosts)}</div>
+                    </div>
+                    <div className={`bg-gradient-to-br ${netPnL >= 0 ? 'from-emerald-900/40 to-emerald-900/20 border-emerald-700/30' : 'from-rose-900/40 to-rose-900/20 border-rose-700/30'} rounded-lg p-4 text-center border`}>
+                      <div className={`text-xs ${netPnL >= 0 ? 'text-emerald-300' : 'text-rose-300'} mb-1`}>Net Profit</div>
+                      <div className={`text-2xl font-bold ${netPnL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(netPnL)}</div>
+                    </div>
+                  </div>
+                  {/* ROI bar */}
+                  {totalBorrowed > 0 && (
+                    <div className="mt-4 pt-4 border-t border-gray-700">
+                      <div className="flex justify-between text-sm mb-2">
+                        <span className="text-gray-400">Return on Borrowed Capital</span>
+                        <span className={`font-bold ${returnOnBorrowed >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                          {formatPct(returnOnBorrowed)}
+                        </span>
+                      </div>
+                      <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full transition-all ${returnOnBorrowed >= 0 ? 'bg-green-500' : 'bg-red-500'}`}
+                          style={{ width: `${Math.min(100, Math.abs(returnOnBorrowed) * 10)}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -663,60 +888,232 @@ export default function PrometheusBoxDashboard() {
 
             {/* Education Tab */}
             {activeTab === 'education' && (
-              <div className="space-y-6">
-                {/* What is a Box Spread */}
-                <div className="bg-gray-800 rounded-lg p-6">
-                  <h2 className="text-2xl font-bold mb-4 text-orange-400">What is a Box Spread?</h2>
+              <div className="space-y-8">
+                {/* Hero Section */}
+                <div className="bg-gradient-to-r from-orange-900/50 via-red-900/30 to-orange-900/50 rounded-xl p-8 border border-orange-500/30">
+                  <div className="text-center mb-6">
+                    <h1 className="text-4xl font-bold text-white mb-2">PROMETHEUS</h1>
+                    <p className="text-xl text-orange-300">Box Spread Synthetic Borrowing System</p>
+                    <p className="text-gray-400 mt-2 max-w-2xl mx-auto">
+                      Borrow capital at institutional rates using options, deploy to Iron Condor bots,
+                      profit from the spread between borrowing cost and trading returns.
+                    </p>
+                  </div>
+                </div>
+
+                {/* System Architecture - Visual Flow */}
+                <div className="bg-gray-800 rounded-xl p-6">
+                  <h2 className="text-2xl font-bold mb-6 text-center">System Architecture</h2>
+
+                  {/* 3-Step Visual Flow */}
+                  <div className="grid md:grid-cols-3 gap-4 mb-8">
+                    {/* Step 1: Borrow */}
+                    <div className="relative">
+                      <div className="bg-gradient-to-br from-blue-900/50 to-blue-800/30 rounded-xl p-6 border border-blue-500/30 h-full">
+                        <div className="absolute -top-3 -left-3 w-10 h-10 bg-blue-600 rounded-full flex items-center justify-center text-white font-bold text-lg shadow-lg">1</div>
+                        <div className="text-center mb-4 pt-2">
+                          <div className="text-4xl mb-2">📦</div>
+                          <h3 className="text-xl font-bold text-blue-400">BORROW</h3>
+                        </div>
+                        <div className="bg-black/40 rounded-lg p-4">
+                          <div className="text-sm text-center mb-3 text-gray-300">SPX Box Spread</div>
+                          <div className="space-y-2 text-xs">
+                            <div className="flex justify-between items-center bg-green-900/30 rounded px-2 py-1">
+                              <span className="text-green-400">BUY</span>
+                              <span>Call @ K1</span>
+                            </div>
+                            <div className="flex justify-between items-center bg-red-900/30 rounded px-2 py-1">
+                              <span className="text-red-400">SELL</span>
+                              <span>Call @ K2</span>
+                            </div>
+                            <div className="flex justify-between items-center bg-green-900/30 rounded px-2 py-1">
+                              <span className="text-green-400">BUY</span>
+                              <span>Put @ K2</span>
+                            </div>
+                            <div className="flex justify-between items-center bg-red-900/30 rounded px-2 py-1">
+                              <span className="text-red-400">SELL</span>
+                              <span>Put @ K1</span>
+                            </div>
+                          </div>
+                          <div className="text-center mt-4 pt-3 border-t border-gray-700">
+                            <span className="text-green-400 font-bold">= NET CREDIT</span>
+                          </div>
+                        </div>
+                      </div>
+                      {/* Arrow */}
+                      <div className="hidden md:block absolute top-1/2 -right-2 transform translate-x-1/2 -translate-y-1/2 text-3xl text-gray-500">→</div>
+                    </div>
+
+                    {/* Step 2: Deploy */}
+                    <div className="relative">
+                      <div className="bg-gradient-to-br from-purple-900/50 to-purple-800/30 rounded-xl p-6 border border-purple-500/30 h-full">
+                        <div className="absolute -top-3 -left-3 w-10 h-10 bg-purple-600 rounded-full flex items-center justify-center text-white font-bold text-lg shadow-lg">2</div>
+                        <div className="text-center mb-4 pt-2">
+                          <div className="text-4xl mb-2">💰</div>
+                          <h3 className="text-xl font-bold text-purple-400">DEPLOY</h3>
+                        </div>
+                        <div className="bg-black/40 rounded-lg p-4">
+                          <div className="text-sm text-center mb-3 text-gray-300">Capital Allocation</div>
+                          <div className="space-y-3">
+                            <div className="relative">
+                              <div className="flex justify-between text-xs mb-1">
+                                <span className="text-red-400 font-medium">ARES</span>
+                                <span>35%</span>
+                              </div>
+                              <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+                                <div className="h-full bg-red-500 rounded-full" style={{ width: '35%' }}></div>
+                              </div>
+                            </div>
+                            <div className="relative">
+                              <div className="flex justify-between text-xs mb-1">
+                                <span className="text-blue-400 font-medium">TITAN</span>
+                                <span>35%</span>
+                              </div>
+                              <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+                                <div className="h-full bg-blue-500 rounded-full" style={{ width: '35%' }}></div>
+                              </div>
+                            </div>
+                            <div className="relative">
+                              <div className="flex justify-between text-xs mb-1">
+                                <span className="text-purple-400 font-medium">PEGASUS</span>
+                                <span>20%</span>
+                              </div>
+                              <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+                                <div className="h-full bg-purple-500 rounded-full" style={{ width: '20%' }}></div>
+                              </div>
+                            </div>
+                            <div className="relative">
+                              <div className="flex justify-between text-xs mb-1">
+                                <span className="text-gray-400 font-medium">RESERVE</span>
+                                <span>10%</span>
+                              </div>
+                              <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+                                <div className="h-full bg-gray-500 rounded-full" style={{ width: '10%' }}></div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      {/* Arrow */}
+                      <div className="hidden md:block absolute top-1/2 -right-2 transform translate-x-1/2 -translate-y-1/2 text-3xl text-gray-500">→</div>
+                    </div>
+
+                    {/* Step 3: Profit */}
+                    <div className="relative">
+                      <div className="bg-gradient-to-br from-green-900/50 to-green-800/30 rounded-xl p-6 border border-green-500/30 h-full">
+                        <div className="absolute -top-3 -left-3 w-10 h-10 bg-green-600 rounded-full flex items-center justify-center text-white font-bold text-lg shadow-lg">3</div>
+                        <div className="text-center mb-4 pt-2">
+                          <div className="text-4xl mb-2">📈</div>
+                          <h3 className="text-xl font-bold text-green-400">PROFIT</h3>
+                        </div>
+                        <div className="bg-black/40 rounded-lg p-4">
+                          <div className="text-sm text-center mb-3 text-gray-300">Net Calculation</div>
+                          <div className="space-y-3 text-sm">
+                            <div className="flex justify-between items-center">
+                              <span className="text-gray-400">IC Returns</span>
+                              <span className="text-green-400 font-bold">+2-4%/mo</span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <span className="text-gray-400">Borrow Cost</span>
+                              <span className="text-red-400 font-bold">-0.4%/mo</span>
+                            </div>
+                            <div className="border-t border-gray-600 pt-3 flex justify-between items-center">
+                              <span className="font-medium">Net Profit</span>
+                              <span className="text-green-400 font-bold text-lg">+1.6-3.6%</span>
+                            </div>
+                          </div>
+                          <div className="text-center mt-3 text-xs text-gray-500">per month</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Why It Works */}
+                  <div className="bg-black/30 rounded-lg p-4 text-center">
+                    <p className="text-gray-300">
+                      <span className="text-orange-400 font-medium">The Edge:</span> Borrow at
+                      <span className="text-blue-400 font-bold"> ~4.5%/year</span> via box spreads vs
+                      <span className="text-red-400 font-bold"> 8-9%/year</span> margin rate.
+                      IC bots target <span className="text-green-400 font-bold">24-48%/year</span> returns.
+                    </p>
+                  </div>
+                </div>
+
+                {/* What is a Box Spread - Visual Explanation */}
+                <div className="bg-gray-800 rounded-xl p-6">
+                  <h2 className="text-2xl font-bold mb-6 text-orange-400">What is a Box Spread?</h2>
+
                   <div className="grid md:grid-cols-2 gap-6">
+                    {/* Left: Structure */}
                     <div>
                       <p className="text-gray-300 mb-4">
-                        A box spread is a combination of options that creates a <strong className="text-white">synthetic loan</strong>.
-                        You receive cash today and pay back a fixed amount at expiration.
+                        A box spread combines 4 options to create a <strong className="text-white">synthetic zero-coupon bond</strong>.
+                        The payoff at expiration is guaranteed regardless of where the market moves.
                       </p>
-                      <div className="bg-gray-700/50 rounded-lg p-4 mb-4">
-                        <h4 className="font-medium text-white mb-2">The Structure</h4>
-                        <div className="space-y-2 text-sm">
-                          <div className="flex items-center gap-2">
-                            <span className="text-green-400">+</span>
-                            <span>Buy Call at Lower Strike (K1)</span>
+
+                      <div className="bg-gradient-to-br from-gray-700/50 to-gray-800/50 rounded-lg p-5 border border-gray-600/50">
+                        <h4 className="font-medium text-white mb-4 text-center">The 4 Legs</h4>
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-3 bg-green-900/20 rounded-lg p-3 border border-green-700/30">
+                            <div className="w-8 h-8 bg-green-600 rounded flex items-center justify-center text-sm font-bold">+</div>
+                            <div>
+                              <div className="font-medium text-green-400">Long Call @ K1</div>
+                              <div className="text-xs text-gray-400">Lower strike call (buy)</div>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-red-400">−</span>
-                            <span>Sell Call at Upper Strike (K2)</span>
+                          <div className="flex items-center gap-3 bg-red-900/20 rounded-lg p-3 border border-red-700/30">
+                            <div className="w-8 h-8 bg-red-600 rounded flex items-center justify-center text-sm font-bold">−</div>
+                            <div>
+                              <div className="font-medium text-red-400">Short Call @ K2</div>
+                              <div className="text-xs text-gray-400">Upper strike call (sell)</div>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-green-400">+</span>
-                            <span>Buy Put at Upper Strike (K2)</span>
+                          <div className="flex items-center gap-3 bg-green-900/20 rounded-lg p-3 border border-green-700/30">
+                            <div className="w-8 h-8 bg-green-600 rounded flex items-center justify-center text-sm font-bold">+</div>
+                            <div>
+                              <div className="font-medium text-green-400">Long Put @ K2</div>
+                              <div className="text-xs text-gray-400">Upper strike put (buy)</div>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-red-400">−</span>
-                            <span>Sell Put at Lower Strike (K1)</span>
+                          <div className="flex items-center gap-3 bg-red-900/20 rounded-lg p-3 border border-red-700/30">
+                            <div className="w-8 h-8 bg-red-600 rounded flex items-center justify-center text-sm font-bold">−</div>
+                            <div>
+                              <div className="font-medium text-red-400">Short Put @ K1</div>
+                              <div className="text-xs text-gray-400">Lower strike put (sell)</div>
+                            </div>
                           </div>
                         </div>
                       </div>
                     </div>
-                    <div className="bg-black/30 rounded-lg p-4">
-                      <h4 className="font-medium text-white mb-3">Key Properties</h4>
-                      <div className="space-y-3 text-sm">
-                        <div className="flex items-start gap-3">
-                          <span className="text-blue-400 text-lg">1</span>
+
+                    {/* Right: Key Properties */}
+                    <div className="space-y-4">
+                      <div className="bg-gradient-to-br from-blue-900/30 to-blue-800/20 rounded-lg p-5 border border-blue-600/30">
+                        <div className="flex items-start gap-4">
+                          <div className="w-12 h-12 bg-blue-600 rounded-lg flex items-center justify-center text-2xl flex-shrink-0">🎯</div>
                           <div>
-                            <div className="font-medium">Guaranteed Payout</div>
-                            <div className="text-gray-400">Always worth exactly (K2 - K1) × 100 at expiration</div>
+                            <h4 className="font-bold text-blue-400 mb-1">Guaranteed Value</h4>
+                            <p className="text-sm text-gray-300">Always worth exactly <span className="font-mono text-white">(K2 - K1) × 100</span> at expiration, regardless of market price</p>
                           </div>
                         </div>
-                        <div className="flex items-start gap-3">
-                          <span className="text-blue-400 text-lg">2</span>
+                      </div>
+
+                      <div className="bg-gradient-to-br from-purple-900/30 to-purple-800/20 rounded-lg p-5 border border-purple-600/30">
+                        <div className="flex items-start gap-4">
+                          <div className="w-12 h-12 bg-purple-600 rounded-lg flex items-center justify-center text-2xl flex-shrink-0">🛡️</div>
                           <div>
-                            <div className="font-medium">No Market Risk</div>
-                            <div className="text-gray-400">Price moves don&apos;t affect the final value</div>
+                            <h4 className="font-bold text-purple-400 mb-1">Zero Market Risk</h4>
+                            <p className="text-sm text-gray-300">SPX can go up 1000 points or down 1000 points - the box value stays the same</p>
                           </div>
                         </div>
-                        <div className="flex items-start gap-3">
-                          <span className="text-blue-400 text-lg">3</span>
+                      </div>
+
+                      <div className="bg-gradient-to-br from-green-900/30 to-green-800/20 rounded-lg p-5 border border-green-600/30">
+                        <div className="flex items-start gap-4">
+                          <div className="w-12 h-12 bg-green-600 rounded-lg flex items-center justify-center text-2xl flex-shrink-0">💵</div>
                           <div>
-                            <div className="font-medium">Implied Interest Rate</div>
-                            <div className="text-gray-400">The discount from face value is your borrowing cost</div>
+                            <h4 className="font-bold text-green-400 mb-1">Synthetic Loan</h4>
+                            <p className="text-sm text-gray-300">Credit received today, pay back face value at expiration. The discount = your interest rate.</p>
                           </div>
                         </div>
                       </div>
@@ -724,50 +1121,82 @@ export default function PrometheusBoxDashboard() {
                   </div>
                 </div>
 
-                {/* Rate Calculation */}
-                <div className="bg-gray-800 rounded-lg p-6">
-                  <h2 className="text-2xl font-bold mb-4 text-orange-400">How the Rate is Calculated</h2>
-                  <div className="bg-black/30 rounded-lg p-6 mb-4">
-                    <div className="text-center mb-4">
-                      <div className="text-lg text-gray-400 mb-2">Implied Annual Rate Formula</div>
-                      <div className="text-2xl font-mono text-white bg-gray-700/50 inline-block px-6 py-3 rounded">
-                        Rate = ((Face Value / Credit) - 1) × (365 / DTE) × 100
+                {/* Rate Calculation - Interactive Example */}
+                <div className="bg-gray-800 rounded-xl p-6">
+                  <h2 className="text-2xl font-bold mb-6 text-orange-400">How the Rate is Calculated</h2>
+
+                  {/* Formula */}
+                  <div className="bg-gradient-to-r from-gray-900 to-gray-800 rounded-xl p-6 mb-6 border border-gray-600">
+                    <div className="text-center">
+                      <div className="text-sm text-gray-400 mb-3">Implied Annual Rate Formula</div>
+                      <div className="inline-block bg-black/50 rounded-lg px-8 py-4 border border-orange-500/30">
+                        <span className="font-mono text-xl text-white">
+                          Rate = <span className="text-blue-400">((FV / Credit)</span> <span className="text-gray-400">-</span> <span className="text-purple-400">1)</span> <span className="text-gray-400">×</span> <span className="text-green-400">(365 / DTE)</span> <span className="text-gray-400">×</span> <span className="text-orange-400">100</span>
+                        </span>
                       </div>
                     </div>
                   </div>
-                  <div className="grid md:grid-cols-3 gap-4">
-                    <div className="bg-gray-700/50 rounded-lg p-4">
-                      <h4 className="font-medium text-blue-400 mb-2">Example Trade</h4>
-                      <div className="text-sm space-y-1">
-                        <div>Strike Width: $50</div>
-                        <div>Face Value: $5,000</div>
-                        <div>Credit Received: $4,890</div>
-                        <div>DTE: 180 days</div>
+
+                  {/* Example Calculation */}
+                  <div className="grid md:grid-cols-3 gap-6">
+                    <div className="bg-gradient-to-br from-blue-900/30 to-blue-800/20 rounded-lg p-5 border border-blue-600/30">
+                      <h4 className="font-bold text-blue-400 mb-4 text-center">Example Position</h4>
+                      <div className="space-y-3 text-sm">
+                        <div className="flex justify-between py-2 border-b border-gray-700">
+                          <span className="text-gray-400">Strike Width</span>
+                          <span className="font-mono font-bold">$50</span>
+                        </div>
+                        <div className="flex justify-between py-2 border-b border-gray-700">
+                          <span className="text-gray-400">Face Value</span>
+                          <span className="font-mono font-bold">$5,000</span>
+                        </div>
+                        <div className="flex justify-between py-2 border-b border-gray-700">
+                          <span className="text-gray-400">Credit Received</span>
+                          <span className="font-mono font-bold text-green-400">$4,890</span>
+                        </div>
+                        <div className="flex justify-between py-2">
+                          <span className="text-gray-400">DTE</span>
+                          <span className="font-mono font-bold">180 days</span>
+                        </div>
                       </div>
                     </div>
-                    <div className="bg-gray-700/50 rounded-lg p-4">
-                      <h4 className="font-medium text-green-400 mb-2">Calculation</h4>
-                      <div className="text-sm space-y-1 font-mono">
-                        <div>($5,000 / $4,890) - 1</div>
-                        <div>= 0.0225 (2.25%)</div>
-                        <div>× (365 / 180)</div>
-                        <div className="text-green-400 font-bold">= 4.56% annual</div>
+
+                    <div className="bg-gradient-to-br from-purple-900/30 to-purple-800/20 rounded-lg p-5 border border-purple-600/30">
+                      <h4 className="font-bold text-purple-400 mb-4 text-center">Calculation Steps</h4>
+                      <div className="space-y-3 font-mono text-sm">
+                        <div className="bg-black/30 rounded p-2">
+                          <div className="text-gray-400 text-xs mb-1">Step 1: Ratio</div>
+                          <div>$5,000 / $4,890 = <span className="text-white">1.0225</span></div>
+                        </div>
+                        <div className="bg-black/30 rounded p-2">
+                          <div className="text-gray-400 text-xs mb-1">Step 2: Period Return</div>
+                          <div>1.0225 - 1 = <span className="text-white">0.0225</span></div>
+                        </div>
+                        <div className="bg-black/30 rounded p-2">
+                          <div className="text-gray-400 text-xs mb-1">Step 3: Annualize</div>
+                          <div>0.0225 × (365/180) = <span className="text-white">0.0456</span></div>
+                        </div>
+                        <div className="bg-green-900/30 rounded p-2 border border-green-600/30">
+                          <div className="text-gray-400 text-xs mb-1">Result</div>
+                          <div className="text-green-400 font-bold text-lg">4.56% annual</div>
+                        </div>
                       </div>
                     </div>
-                    <div className="bg-gray-700/50 rounded-lg p-4">
-                      <h4 className="font-medium text-purple-400 mb-2">Compare To</h4>
-                      <div className="text-sm space-y-1">
-                        <div className="flex justify-between">
-                          <span>Margin Rate:</span>
-                          <span className="text-red-400">8-9%</span>
+
+                    <div className="bg-gradient-to-br from-green-900/30 to-green-800/20 rounded-lg p-5 border border-green-600/30">
+                      <h4 className="font-bold text-green-400 mb-4 text-center">Rate Comparison</h4>
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between p-3 bg-red-900/20 rounded-lg border border-red-700/30">
+                          <span className="text-sm">Margin Rate</span>
+                          <span className="font-bold text-red-400 text-lg">8.5%</span>
                         </div>
-                        <div className="flex justify-between">
-                          <span>Box Spread:</span>
-                          <span className="text-green-400">4-5%</span>
+                        <div className="flex items-center justify-between p-3 bg-green-900/20 rounded-lg border border-green-700/30">
+                          <span className="text-sm">Box Spread</span>
+                          <span className="font-bold text-green-400 text-lg">4.56%</span>
                         </div>
-                        <div className="flex justify-between font-bold pt-2 border-t border-gray-600">
-                          <span>Your Savings:</span>
-                          <span className="text-green-400">3-4%</span>
+                        <div className="flex items-center justify-between p-3 bg-emerald-900/30 rounded-lg border-2 border-emerald-500/50">
+                          <span className="font-medium">Your Savings</span>
+                          <span className="font-bold text-emerald-400 text-xl">3.94%</span>
                         </div>
                       </div>
                     </div>
@@ -775,120 +1204,109 @@ export default function PrometheusBoxDashboard() {
                 </div>
 
                 {/* Why SPX */}
-                <div className="bg-gray-800 rounded-lg p-6">
-                  <h2 className="text-2xl font-bold mb-4 text-orange-400">Why SPX Options?</h2>
+                <div className="bg-gray-800 rounded-xl p-6">
+                  <h2 className="text-2xl font-bold mb-6 text-orange-400">Why SPX Options?</h2>
+
                   <div className="grid md:grid-cols-2 gap-6">
-                    <div className="space-y-4">
-                      <div className="flex items-start gap-3">
-                        <div className="w-8 h-8 bg-green-900/50 rounded-lg flex items-center justify-center text-green-400">✓</div>
-                        <div>
-                          <div className="font-medium">European-Style Settlement</div>
-                          <div className="text-sm text-gray-400">Cannot be exercised early, eliminating assignment risk</div>
+                    {/* SPX Advantages */}
+                    <div className="space-y-3">
+                      <h3 className="text-lg font-medium text-green-400 mb-4 flex items-center gap-2">
+                        <span className="w-6 h-6 bg-green-600 rounded-full flex items-center justify-center text-sm">✓</span>
+                        Why SPX Works
+                      </h3>
+                      {[
+                        { title: 'European-Style Settlement', desc: 'Cannot be exercised early - eliminates assignment risk entirely' },
+                        { title: 'Cash Settlement', desc: 'No stock delivery, just cash difference at expiration' },
+                        { title: 'High Liquidity', desc: 'Tight bid/ask spreads = better effective borrowing rates' },
+                        { title: 'Section 1256 Tax Treatment', desc: '60% long-term / 40% short-term capital gains treatment' },
+                      ].map((item, idx) => (
+                        <div key={idx} className="flex items-start gap-3 bg-green-900/10 rounded-lg p-4 border border-green-700/20">
+                          <div className="w-6 h-6 bg-green-600/50 rounded flex items-center justify-center text-xs flex-shrink-0">✓</div>
+                          <div>
+                            <div className="font-medium text-white">{item.title}</div>
+                            <div className="text-sm text-gray-400">{item.desc}</div>
+                          </div>
                         </div>
-                      </div>
-                      <div className="flex items-start gap-3">
-                        <div className="w-8 h-8 bg-green-900/50 rounded-lg flex items-center justify-center text-green-400">✓</div>
-                        <div>
-                          <div className="font-medium">Cash Settlement</div>
-                          <div className="text-sm text-gray-400">No stock delivery required, just cash difference</div>
-                        </div>
-                      </div>
-                      <div className="flex items-start gap-3">
-                        <div className="w-8 h-8 bg-green-900/50 rounded-lg flex items-center justify-center text-green-400">✓</div>
-                        <div>
-                          <div className="font-medium">High Liquidity</div>
-                          <div className="text-sm text-gray-400">Tight bid/ask spreads for better rates</div>
-                        </div>
-                      </div>
-                      <div className="flex items-start gap-3">
-                        <div className="w-8 h-8 bg-green-900/50 rounded-lg flex items-center justify-center text-green-400">✓</div>
-                        <div>
-                          <div className="font-medium">Section 1256 Tax Treatment</div>
-                          <div className="text-sm text-gray-400">60/40 long-term/short-term capital gains</div>
-                        </div>
-                      </div>
+                      ))}
                     </div>
-                    <div className="bg-red-900/20 border border-red-700/50 rounded-lg p-4">
-                      <h4 className="font-medium text-red-400 mb-3">Why NOT SPY or Other ETFs?</h4>
-                      <div className="space-y-3 text-sm">
-                        <div className="flex items-start gap-2">
-                          <span className="text-red-400">✗</span>
-                          <span><strong>American-style options</strong> - Can be exercised early, especially near ex-dividend dates</span>
+
+                    {/* SPY Problems */}
+                    <div className="space-y-3">
+                      <h3 className="text-lg font-medium text-red-400 mb-4 flex items-center gap-2">
+                        <span className="w-6 h-6 bg-red-600 rounded-full flex items-center justify-center text-sm">✗</span>
+                        Why NOT SPY or ETFs
+                      </h3>
+                      {[
+                        { title: 'American-Style Options', desc: 'Can be exercised early, especially near ex-dividend dates' },
+                        { title: 'Physical Delivery', desc: 'Assignment means buying/selling actual shares' },
+                        { title: 'Dividend Risk', desc: 'Deep ITM calls get assigned to capture dividends' },
+                        { title: 'Assignment Destroys Position', desc: 'Early exercise breaks the box, creates losses' },
+                      ].map((item, idx) => (
+                        <div key={idx} className="flex items-start gap-3 bg-red-900/10 rounded-lg p-4 border border-red-700/20">
+                          <div className="w-6 h-6 bg-red-600/50 rounded flex items-center justify-center text-xs flex-shrink-0">✗</div>
+                          <div>
+                            <div className="font-medium text-white">{item.title}</div>
+                            <div className="text-sm text-gray-400">{item.desc}</div>
+                          </div>
                         </div>
-                        <div className="flex items-start gap-2">
-                          <span className="text-red-400">✗</span>
-                          <span><strong>Physical delivery</strong> - Assignment means buying/selling shares</span>
-                        </div>
-                        <div className="flex items-start gap-2">
-                          <span className="text-red-400">✗</span>
-                          <span><strong>Dividend risk</strong> - Deep ITM options get assigned for dividends</span>
-                        </div>
-                      </div>
+                      ))}
                     </div>
                   </div>
                 </div>
 
-                {/* Risks */}
-                <div className="bg-gray-800 rounded-lg p-6">
-                  <h2 className="text-2xl font-bold mb-4 text-orange-400">Understanding the Risks</h2>
+                {/* Risk Management */}
+                <div className="bg-gray-800 rounded-xl p-6">
+                  <h2 className="text-2xl font-bold mb-6 text-orange-400">Understanding the Risks</h2>
+
                   <div className="grid md:grid-cols-2 gap-4">
-                    <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-lg p-4">
-                      <h4 className="font-medium text-yellow-400 mb-2">Margin Requirements</h4>
-                      <p className="text-sm text-gray-300">
-                        Box spreads require significant margin. Your broker holds the full strike width as collateral
-                        until expiration. This is the capital you&apos;re effectively borrowing against.
-                      </p>
-                    </div>
-                    <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-lg p-4">
-                      <h4 className="font-medium text-yellow-400 mb-2">Execution Slippage</h4>
-                      <p className="text-sm text-gray-300">
-                        Four-leg orders can have slippage. Wide bid/ask spreads on any leg affect your
-                        effective borrowing rate. Always use limit orders.
-                      </p>
-                    </div>
-                    <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-lg p-4">
-                      <h4 className="font-medium text-yellow-400 mb-2">Rate Lock-In</h4>
-                      <p className="text-sm text-gray-300">
-                        Once opened, your borrowing rate is locked until expiration. If market rates drop
-                        significantly, you can&apos;t refinance without closing at a loss.
-                      </p>
-                    </div>
-                    <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-lg p-4">
-                      <h4 className="font-medium text-yellow-400 mb-2">IC Bot Underperformance</h4>
-                      <p className="text-sm text-gray-300">
-                        PROMETHEUS only profits if IC bot returns exceed borrowing costs. A losing streak
-                        in ARES/TITAN/PEGASUS means you&apos;re paying interest with no offsetting gains.
-                      </p>
-                    </div>
+                    {[
+                      { icon: '💳', title: 'Margin Requirements', desc: 'Box spreads require significant margin. Your broker holds the full strike width as collateral until expiration.' },
+                      { icon: '📉', title: 'Execution Slippage', desc: 'Four-leg orders can have slippage. Wide bid/ask spreads on any leg affect your effective borrowing rate.' },
+                      { icon: '🔒', title: 'Rate Lock-In', desc: 'Once opened, your borrowing rate is locked until expiration. If rates drop, you cannot refinance without loss.' },
+                      { icon: '⚠️', title: 'IC Bot Underperformance', desc: 'PROMETHEUS only profits if IC bot returns exceed borrowing costs. A losing streak means paying interest with no gains.' },
+                    ].map((risk, idx) => (
+                      <div key={idx} className="bg-gradient-to-br from-yellow-900/20 to-orange-900/10 rounded-lg p-5 border border-yellow-700/30">
+                        <div className="flex items-start gap-4">
+                          <div className="text-3xl flex-shrink-0">{risk.icon}</div>
+                          <div>
+                            <h4 className="font-bold text-yellow-400 mb-2">{risk.title}</h4>
+                            <p className="text-sm text-gray-300">{risk.desc}</p>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
 
                 {/* How PROMETHEUS Manages This */}
-                <div className="bg-gray-800 rounded-lg p-6">
-                  <h2 className="text-2xl font-bold mb-4 text-orange-400">How PROMETHEUS Manages This</h2>
-                  <div className="grid md:grid-cols-3 gap-4">
-                    <div className="bg-gray-700/50 rounded-lg p-4">
-                      <div className="text-3xl mb-2">📊</div>
-                      <h4 className="font-medium mb-2">Rate Monitoring</h4>
+                <div className="bg-gradient-to-br from-gray-800 to-gray-900 rounded-xl p-6 border border-orange-500/20">
+                  <h2 className="text-2xl font-bold mb-6 text-orange-400">How PROMETHEUS Manages Risk</h2>
+
+                  <div className="grid md:grid-cols-3 gap-6">
+                    <div className="bg-black/30 rounded-xl p-6 border border-gray-700 text-center">
+                      <div className="w-16 h-16 bg-gradient-to-br from-blue-600 to-blue-800 rounded-xl mx-auto mb-4 flex items-center justify-center text-3xl">📊</div>
+                      <h4 className="font-bold text-white mb-2">Rate Monitoring</h4>
                       <p className="text-sm text-gray-400">
                         Continuously monitors box spread implied rates vs Fed Funds. Only borrows when
-                        rates are favorable (typically Fed Funds + 0.5% or less).
+                        rates are favorable (Fed Funds + 0.5% or less).
                       </p>
                     </div>
-                    <div className="bg-gray-700/50 rounded-lg p-4">
-                      <div className="text-3xl mb-2">🔄</div>
-                      <h4 className="font-medium mb-2">Rolling Strategy</h4>
+
+                    <div className="bg-black/30 rounded-xl p-6 border border-gray-700 text-center">
+                      <div className="w-16 h-16 bg-gradient-to-br from-purple-600 to-purple-800 rounded-xl mx-auto mb-4 flex items-center justify-center text-3xl">🔄</div>
+                      <h4 className="font-bold text-white mb-2">Rolling Strategy</h4>
                       <p className="text-sm text-gray-400">
                         Positions with less than 30 DTE are evaluated for rolling to maintain deployed
-                        capital without gaps.
+                        capital without gaps in funding.
                       </p>
                     </div>
-                    <div className="bg-gray-700/50 rounded-lg p-4">
-                      <div className="text-3xl mb-2">🛡️</div>
-                      <h4 className="font-medium mb-2">Reserve Buffer</h4>
+
+                    <div className="bg-black/30 rounded-xl p-6 border border-gray-700 text-center">
+                      <div className="w-16 h-16 bg-gradient-to-br from-green-600 to-green-800 rounded-xl mx-auto mb-4 flex items-center justify-center text-3xl">🛡️</div>
+                      <h4 className="font-bold text-white mb-2">Reserve Buffer</h4>
                       <p className="text-sm text-gray-400">
                         10% of borrowed capital is held in reserve for margin calls or emergency
-                        adjustments, not deployed to IC bots.
+                        adjustments, never deployed to IC bots.
                       </p>
                     </div>
                   </div>
