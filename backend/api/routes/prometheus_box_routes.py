@@ -1414,6 +1414,58 @@ async def get_ic_equity_curve(limit: int = Query(100, ge=1, le=500)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/ic/equity-curve/intraday")
+async def get_ic_intraday_equity():
+    """
+    Get today's IC equity snapshots for intraday tracking.
+
+    STANDARDS.md COMPLIANCE:
+    - Returns intraday equity snapshots for current trading day
+    - Includes unrealized P&L from open positions
+    - Required endpoint per Bot-Specific Requirements
+    """
+    if not PrometheusICTrader:
+        raise HTTPException(status_code=503, detail="PROMETHEUS IC Trader not available")
+
+    try:
+        trader = PrometheusICTrader()
+        snapshots = trader.db.get_ic_intraday_equity()
+        return {
+            "available": True,
+            "date": date.today().isoformat(),
+            "count": len(snapshots),
+            "snapshots": snapshots,
+        }
+    except Exception as e:
+        logger.error(f"Error getting IC intraday equity: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/ic/logs")
+async def get_ic_logs(limit: int = Query(50, ge=1, le=500)):
+    """
+    Get recent IC trading activity logs.
+
+    STANDARDS.md COMPLIANCE:
+    - Returns activity log for IC trading actions
+    - Required endpoint per Bot-Specific Requirements
+    """
+    if not PrometheusICTrader:
+        raise HTTPException(status_code=503, detail="PROMETHEUS IC Trader not available")
+
+    try:
+        trader = PrometheusICTrader()
+        logs = trader.db.get_recent_ic_logs(limit)
+        return {
+            "available": True,
+            "count": len(logs),
+            "logs": logs,
+        }
+    except Exception as e:
+        logger.error(f"Error getting IC logs: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ========== IC Signals ==========
 
 @router.get("/ic/signals/recent")

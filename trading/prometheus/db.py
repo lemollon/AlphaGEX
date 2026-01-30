@@ -2208,3 +2208,201 @@ class PrometheusDatabase:
                 vs_margin_borrowing=0,
                 vs_buy_and_hold_spx=0,
             )
+
+    # ========== IC Intraday Equity & Logs ==========
+
+    def record_ic_equity_snapshot(self) -> bool:
+        """
+        Record an intraday equity snapshot for IC trading.
+
+        STANDARDS.md COMPLIANCE:
+        - Records equity snapshots during trading for intraday tracking
+        - Includes unrealized P&L from open positions
+        - Uses prometheus_ic_equity_snapshots table
+        """
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            # Ensure IC equity snapshots table exists
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS prometheus_ic_equity_snapshots (
+                    id SERIAL PRIMARY KEY,
+                    snapshot_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    total_equity DECIMAL(15, 2),
+                    starting_capital DECIMAL(15, 2),
+                    total_realized_pnl DECIMAL(15, 2),
+                    total_unrealized_pnl DECIMAL(15, 2),
+                    open_position_count INTEGER,
+                    details JSONB
+                )
+            """)
+
+            # Get IC config for starting capital
+            ic_config = self.load_ic_config()
+            starting_capital = ic_config.starting_capital if ic_config else 100000.0
+
+            # Get total realized P&L from closed trades
+            cursor.execute("""
+                SELECT COALESCE(SUM(realized_pnl), 0)
+                FROM prometheus_ic_closed_trades
+            """)
+            total_realized = float(cursor.fetchone()[0] or 0)
+
+            # Get unrealized P&L from open positions
+            cursor.execute("""
+                SELECT COALESCE(SUM(unrealized_pnl), 0), COUNT(*)
+                FROM prometheus_ic_positions
+                WHERE status = 'open'
+            """)
+            row = cursor.fetchone()
+            total_unrealized = float(row[0] or 0)
+            open_count = int(row[1] or 0)
+
+            # Calculate total equity
+            total_equity = starting_capital + total_realized + total_unrealized
+
+            # Get open position details
+            cursor.execute("""
+                SELECT position_id, unrealized_pnl, current_value
+                FROM prometheus_ic_positions
+                WHERE status = 'open'
+            """)
+            position_details = [
+                {
+                    'position_id': r[0],
+                    'unrealized_pnl': float(r[1] or 0),
+                    'current_value': float(r[2] or 0),
+                }
+                for r in cursor.fetchall()
+            ]
+
+            # Insert snapshot
+            cursor.execute("""
+                INSERT INTO prometheus_ic_equity_snapshots (
+                    snapshot_time, total_equity, starting_capital,
+                    total_realized_pnl, total_unrealized_pnl,
+                    open_position_count, details
+                ) VALUES (NOW(), %s, %s, %s, %s, %s, %s)
+            """, (total_equity, starting_capital, total_realized,
+                  total_unrealized, open_count, json.dumps(position_details)))
+
+            conn.commit()
+            cursor.close()
+
+            logger.info(f"IC equity snapshot recorded: equity=${total_equity:,.2f}, "
+                       f"unrealized=${total_unrealized:,.2f}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error recording IC equity snapshot: {e}")
+            return False
+
+    def get_ic_intraday_equity(self) -> List[Dict[str, Any]]:
+        """
+        Get today's IC equity snapshots for intraday tracking.
+
+        STANDARDS.md COMPLIANCE:
+        - Returns snapshots for current trading day
+        - Used by /ic/equity-curve/intraday endpoint
+        """
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            # Ensure table exists
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS prometheus_ic_equity_snapshots (
+                    id SERIAL PRIMARY KEY,
+                    snapshot_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    total_equity DECIMAL(15, 2),
+                    starting_capital DECIMAL(15, 2),
+                    total_realized_pnl DECIMAL(15, 2),
+                    total_unrealized_pnl DECIMAL(15, 2),
+                    open_position_count INTEGER,
+                    details JSONB
+                )
+            """)
+            conn.commit()
+
+            # Get today's snapshots
+            cursor.execute("""
+                SELECT
+                    snapshot_time,
+                    total_equity,
+                    starting_capital,
+                    total_realized_pnl,
+                    total_unrealized_pnl,
+                    open_position_count,
+                    details
+                FROM prometheus_ic_equity_snapshots
+                WHERE DATE(snapshot_time AT TIME ZONE 'America/Chicago') =
+                      DATE(NOW() AT TIME ZONE 'America/Chicago')
+                ORDER BY snapshot_time ASC
+            """)
+
+            rows = cursor.fetchall()
+            cursor.close()
+
+            return [
+                {
+                    'time': row[0].isoformat() if row[0] else None,
+                    'total_equity': float(row[1] or 0),
+                    'starting_capital': float(row[2] or 0),
+                    'realized_pnl': float(row[3] or 0),
+                    'unrealized_pnl': float(row[4] or 0),
+                    'open_positions': int(row[5] or 0),
+                    'details': row[6] if row[6] else [],
+                }
+                for row in rows
+            ]
+
+        except Exception as e:
+            logger.error(f"Error getting IC intraday equity: {e}")
+            return []
+
+    def get_recent_ic_logs(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """
+        Get recent IC-related activity logs.
+
+        STANDARDS.md COMPLIANCE:
+        - Returns activity log for IC trading actions
+        - Used by /ic/logs endpoint
+        """
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            # Get logs with IC-related actions
+            cursor.execute("""
+                SELECT
+                    id, log_time, level, action, message, details, position_id, signal_id
+                FROM prometheus_logs
+                WHERE action LIKE 'IC_%'
+                   OR action IN ('SIGNAL_EXECUTED', 'POSITION_OPENED', 'POSITION_CLOSED',
+                                 'MTM_UPDATE', 'EXIT_CHECK', 'STOP_LOSS', 'PROFIT_TARGET',
+                                 'TIME_STOP', 'EXPIRATION')
+                ORDER BY log_time DESC
+                LIMIT %s
+            """, (limit,))
+
+            rows = cursor.fetchall()
+            cursor.close()
+
+            return [
+                {
+                    'id': row[0],
+                    'time': row[1].isoformat() if row[1] else None,
+                    'level': row[2],
+                    'action': row[3],
+                    'message': row[4],
+                    'details': row[5] if row[5] else {},
+                    'position_id': row[6],
+                    'signal_id': row[7],
+                }
+                for row in rows
+            ]
+
+        except Exception as e:
+            logger.error(f"Error getting IC logs: {e}")
+            return []
