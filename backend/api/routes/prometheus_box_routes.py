@@ -655,28 +655,7 @@ async def get_education_topics():
     }
 
 
-@router.get("/education/{topic}")
-async def get_education_content(topic: str):
-    """
-    Get educational content for a specific topic.
-
-    Topics:
-    - overview: Introduction to box spreads
-    - mechanics: How box spreads work
-    - risks: Understanding risks
-    - comparison: vs margin and other methods
-    """
-    if not PrometheusTrader:
-        raise HTTPException(status_code=503, detail="PROMETHEUS Box Spread not available")
-
-    try:
-        trader = PrometheusTrader()
-        content = trader.get_education_content(topic)
-        return content
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
+# NOTE: Calculator endpoint MUST come BEFORE {topic} route to avoid being captured as a topic
 @router.get("/education/calculator")
 async def box_spread_calculator(
     strike_width: float = Query(50, description="Strike width in points"),
@@ -737,6 +716,28 @@ async def box_spread_calculator(
             "vs_margin_savings": savings * 10,
         },
     }
+
+
+@router.get("/education/{topic}")
+async def get_education_content(topic: str):
+    """
+    Get educational content for a specific topic.
+
+    Topics:
+    - overview: Introduction to box spreads
+    - mechanics: How box spreads work
+    - risks: Understanding risks
+    - comparison: vs margin and other methods
+    """
+    if not PrometheusTrader:
+        raise HTTPException(status_code=503, detail="PROMETHEUS Box Spread not available")
+
+    try:
+        trader = PrometheusTrader()
+        content = trader.get_education_content(topic)
+        return content
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ========== Logs Endpoint ==========
