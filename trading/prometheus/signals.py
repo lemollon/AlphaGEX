@@ -42,6 +42,14 @@ except ImportError:
     tradier = None
     logger.warning("TradierDataFetcher not available")
 
+# Dynamic rate fetching
+try:
+    from .rate_fetcher import get_current_rates, InterestRates
+    RATE_FETCHER_AVAILABLE = True
+except ImportError:
+    RATE_FETCHER_AVAILABLE = False
+    logger.warning("RateFetcher not available, using static rates")
+
 
 class BoxSpreadSignalGenerator:
     """
@@ -62,8 +70,33 @@ class BoxSpreadSignalGenerator:
 
     def __init__(self, config: PrometheusConfig = None):
         self.config = config or PrometheusConfig()
-        self._fed_funds_rate = 4.50  # Default, updated from market data
-        self._margin_rate = 8.50     # Typical broker margin rate
+        # Initialize rates - will be updated dynamically
+        self._rates_cache: Optional[InterestRates] = None
+        self._refresh_rates()
+
+    def _refresh_rates(self) -> None:
+        """Refresh interest rates from live sources."""
+        if RATE_FETCHER_AVAILABLE:
+            try:
+                self._rates_cache = get_current_rates()
+                self._fed_funds_rate = self._rates_cache.fed_funds_rate
+                self._margin_rate = self._rates_cache.margin_rate
+                logger.info(f"Rates updated: Fed Funds={self._fed_funds_rate:.2f}%, Margin={self._margin_rate:.2f}% (source: {self._rates_cache.source})")
+            except Exception as e:
+                logger.warning(f"Failed to fetch rates: {e}, using defaults")
+                self._fed_funds_rate = 4.33  # Current Fed Funds (Jan 2025)
+                self._margin_rate = 8.33     # Fed Funds + 4% spread
+        else:
+            # Static fallback
+            self._fed_funds_rate = 4.33  # Current Fed Funds (Jan 2025)
+            self._margin_rate = 8.33     # Fed Funds + 4% spread
+
+    @property
+    def rates_source(self) -> str:
+        """Get the source of current rates (live/cached/fallback)."""
+        if self._rates_cache:
+            return self._rates_cache.source
+        return "static"
 
     def generate_signal(self) -> Optional[BoxSpreadSignal]:
         """
@@ -793,10 +826,15 @@ Example math (monthly):
         else:
             implied_rate = 4.5  # Fallback estimate
 
-        # Get comparison rates
+        # Get comparison rates (now dynamic!)
+        self._refresh_rates()  # Ensure we have latest rates
         fed_funds = self._fed_funds_rate
         margin = self._margin_rate
-        sofr = fed_funds - 0.05  # SOFR typically slightly below Fed Funds
+        # Use cached SOFR if available, otherwise estimate
+        if self._rates_cache:
+            sofr = self._rates_cache.sofr_rate
+        else:
+            sofr = fed_funds - 0.05  # SOFR typically slightly below Fed Funds
 
         # Cost projections
         cost_monthly = (implied_rate / 12) * 1000  # Per $100K
