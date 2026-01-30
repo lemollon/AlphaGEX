@@ -407,6 +407,14 @@ class PrometheusDatabase:
                 ("prometheus_equity_snapshots", "total_mtm_unrealized", "DECIMAL(15, 2)"),
                 ("prometheus_equity_snapshots", "total_ic_returns", "DECIMAL(15, 2)"),
                 ("prometheus_equity_snapshots", "total_costs_accrued", "DECIMAL(15, 2)"),
+                # Fix for logs table schema mismatch
+                ("prometheus_logs", "log_time", "TIMESTAMP WITH TIME ZONE DEFAULT NOW()"),
+                ("prometheus_logs", "level", "VARCHAR(20)"),
+                ("prometheus_logs", "action", "VARCHAR(100)"),
+                ("prometheus_logs", "message", "TEXT"),
+                ("prometheus_logs", "details", "JSONB"),
+                ("prometheus_logs", "position_id", "VARCHAR(50)"),
+                ("prometheus_logs", "signal_id", "VARCHAR(50)"),
             ]
 
             for table, column, col_type in migration_columns:

@@ -77,14 +77,17 @@ def check_database_connectivity() -> VerificationResult:
         cursor = conn.cursor()
 
         # Check prometheus tables exist
+        # NOTE: Table names must match what's created in trading/prometheus/db.py
         tables_to_check = [
             'prometheus_positions',
             'prometheus_signals',
-            'prometheus_rate_history',
+            'prometheus_rate_analysis',      # Rate analysis history
             'prometheus_logs',
-            'prometheus_deployments',
+            'prometheus_capital_deployments', # Capital deployment tracking
             'prometheus_equity_snapshots',
             'prometheus_config',
+            'prometheus_daily_briefings',
+            'prometheus_roll_decisions',
         ]
 
         cursor.execute("""
