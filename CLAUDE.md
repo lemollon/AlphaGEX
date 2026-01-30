@@ -67,7 +67,8 @@ AlphaGEX/
 │   │   │   ├── logs_routes.py      # Unified logging (22+ tables)
 │   │   │   ├── data_transparency_routes.py  # Hidden data exposure
 │   │   │   ├── trader_routes.py    # Trading operations
-│   │   │   └── ...                 # 37 more route files
+│   │   │   ├── prometheus_box_routes.py  # PROMETHEUS Box Spread Synthetic Borrowing
+│   │   │   └── ...                 # 38 more route files
 │   │   ├── dependencies.py     # Shared API dependencies
 │   │   └── utils.py            # API utilities
 │   ├── services/               # Background services
@@ -83,6 +84,7 @@ AlphaGEX/
 │   │   │   ├── titan/              # TITAN Aggressive IC page
 │   │   │   ├── pegasus/            # PEGASUS Weekly IC page
 │   │   │   ├── icarus/             # ICARUS Aggressive Directional
+│   │   │   ├── prometheus-box/     # PROMETHEUS Box Spread Synthetic Borrowing
 │   │   │   ├── sage/               # SAGE ML Advisor dashboard
 │   │   │   ├── oracle/             # Oracle predictions
 │   │   │   ├── gamma/0dte/         # 0DTE Gamma Expiration Tracker
@@ -120,6 +122,12 @@ AlphaGEX/
 │   │   └── (same structure as ares_v2)
 │   ├── icarus/                 # ICARUS Aggressive Directional bot
 │   │   └── (same structure as ares_v2)
+│   ├── prometheus/             # PROMETHEUS Box Spread Synthetic Borrowing
+│   │   ├── models.py               # BoxSpreadPosition, PrometheusConfig
+│   │   ├── db.py                   # PrometheusDatabase
+│   │   ├── signals.py              # BoxSpreadSignalGenerator
+│   │   ├── executor.py             # Order execution, MTM calculation
+│   │   └── trader.py               # PrometheusTrader orchestrator
 │   ├── spx_wheel_system.py     # SPX Wheel strategy (ATLAS)
 │   ├── wheel_strategy.py       # Wheel strategy base
 │   ├── risk_management.py      # Risk controls
@@ -338,6 +346,20 @@ AlphaGEX operates 8 specialized trading bots, all advised by the Oracle ML syste
 - **Schedule**: Every 5 min during market hours
 - **Strategy**: Aggressive directional variant of ATHENA on SPY
 - **Files**: `trading/icarus/`, `backend/api/routes/icarus_routes.py`
+
+### PROMETHEUS - Box Spread Synthetic Borrowing ✓ PAPER
+- **Schedule**: Daily at 9:30 AM CT (position management cycle)
+- **Strategy**: Synthetic borrowing via SPX box spreads to fund IC bot capital
+- **Parameters**: 50pt strike width default, 90+ DTE, 30-day roll threshold
+- **Files**: `trading/prometheus/`, `backend/api/routes/prometheus_box_routes.py`
+- **Dashboard**: `/prometheus-box` - 5 tabs (Overview, Positions, Analytics, Education, Calculator)
+- **Key Features**:
+  - Production Tradier API quotes for realistic paper trading
+  - Real-time mark-to-market with actual bid/ask spreads
+  - Capital deployment tracking to ARES, TITAN, PEGASUS
+  - Rolling interest rate transparency and daily briefings
+  - Educational mode with comprehensive explanations
+- **30+ API endpoints** including MTM, roll decisions, live quotes
 
 ### PHOENIX - 0DTE Options ⚠️ PAPER (Partial Implementation)
 - **Schedule**: Every 5 min during market hours
@@ -990,6 +1012,7 @@ When the user says any of these, ensure full end-to-end implementation:
 - `trading/titan/trader.py` - TITAN trading execution
 - `trading/pegasus/trader.py` - PEGASUS trading execution
 - `trading/icarus/trader.py` - ICARUS trading execution
+- `trading/prometheus/trader.py` - PROMETHEUS box spread synthetic borrowing
 - `quant/oracle_advisor.py` - Oracle ML advisory system (sole trade authority)
 - `quant/solomon_enhancements.py` - Risk management (replaced circuit_breaker)
 - `scheduler/trader_scheduler.py` - Central bot orchestration

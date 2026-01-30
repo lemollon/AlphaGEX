@@ -66,6 +66,7 @@ const navItems = [
   { href: '/icarus', label: 'ICARUS (Aggressive Directional)', icon: Flame, category: 'Live Trading' },
   { href: '/pegasus', label: 'PEGASUS (SPX Iron Condor)', icon: Shield, category: 'Live Trading' },
   { href: '/titan', label: 'TITAN (Aggressive SPX IC)', icon: Zap, category: 'Live Trading' },
+  { href: '/prometheus-box', label: 'PROMETHEUS (Box Spreads)', icon: Flame, category: 'Live Trading' },
   { href: '/vix', label: 'VIX Dashboard', icon: Activity, category: 'Volatility' },
   { href: '/volatility-comparison', label: 'Volatility Comparison', icon: TrendingDown, category: 'Volatility' },
   { href: '/alerts', label: 'Alerts', icon: Bell, category: 'Volatility' },
