@@ -620,17 +620,123 @@ export default function PrometheusBoxDashboard() {
                   </div>
                 )}
 
-                {/* No Position State */}
+                {/* No Position State - Show System Configuration */}
                 {(!positions?.positions || positions.positions.length === 0) && (
-                  <div className="bg-gray-800 rounded-lg p-8 text-center border border-gray-700">
-                    <div className="text-5xl mb-4">📦</div>
-                    <h2 className="text-2xl font-bold mb-2">No Active Position</h2>
-                    <p className="text-gray-400 mb-4">PROMETHEUS scans for favorable box spread opportunities daily at 9:30 AM CT</p>
-                    {rateAnalysis && (
-                      <div className={`inline-block px-4 py-2 rounded-lg ${rateAnalysis.is_favorable ? 'bg-green-900/50 text-green-400' : 'bg-yellow-900/50 text-yellow-400'}`}>
-                        Current rates are {rateAnalysis.is_favorable ? 'FAVORABLE' : 'UNFAVORABLE'} for new positions
+                  <div className="space-y-6">
+                    {/* System Ready Banner */}
+                    <div className="bg-gradient-to-br from-orange-900/30 to-gray-800 rounded-lg p-6 border border-orange-500/50">
+                      <div className="flex items-center justify-between mb-4">
+                        <h2 className="text-2xl font-bold">PROMETHEUS Ready</h2>
+                        <span className="px-3 py-1 bg-yellow-600 text-white rounded-full text-sm font-medium">STANDBY</span>
                       </div>
-                    )}
+                      <p className="text-gray-400 mb-4">
+                        No active box spread position. System scans for favorable opportunities daily at 9:30 AM CT.
+                      </p>
+                      {rateAnalysis && (
+                        <div className={`inline-block px-4 py-2 rounded-lg ${rateAnalysis.is_favorable ? 'bg-green-900/50 text-green-400 border border-green-600' : 'bg-yellow-900/50 text-yellow-400 border border-yellow-600'}`}>
+                          Current rates are <strong>{rateAnalysis.is_favorable ? 'FAVORABLE' : 'UNFAVORABLE'}</strong> for new positions
+                        </div>
+                      )}
+                    </div>
+
+                    {/* System Configuration - Always show this */}
+                    <div className="bg-gray-800 rounded-lg p-6 border border-gray-700">
+                      <h2 className="text-xl font-bold mb-4">System Configuration</h2>
+                      <p className="text-sm text-gray-400 mb-4">
+                        When a position opens, these settings determine how capital is borrowed and deployed.
+                      </p>
+
+                      <div className="grid md:grid-cols-2 gap-6">
+                        {/* Capital & Sizing */}
+                        <div className="bg-black/30 rounded-lg p-4">
+                          <h3 className="text-sm font-medium text-gray-400 mb-3">CAPITAL SETTINGS</h3>
+                          <div className="space-y-3">
+                            <div className="flex justify-between items-center">
+                              <span className="text-gray-400">Total Capital</span>
+                              <span className="text-xl font-bold text-green-400">{formatCurrency(status?.capital || 500000)}</span>
+                            </div>
+                            <div className="flex justify-between items-center text-sm">
+                              <span className="text-gray-500">Max Position Size</span>
+                              <span className="text-gray-300">{formatCurrency(status?.config?.max_position_size || 250000)}</span>
+                            </div>
+                            <div className="flex justify-between items-center text-sm">
+                              <span className="text-gray-500">Max Positions</span>
+                              <span className="text-gray-300">{status?.config?.max_positions || 5}</span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Box Spread Settings */}
+                        <div className="bg-black/30 rounded-lg p-4">
+                          <h3 className="text-sm font-medium text-gray-400 mb-3">BOX SPREAD SETTINGS</h3>
+                          <div className="space-y-3">
+                            <div className="flex justify-between items-center">
+                              <span className="text-gray-400">Ticker</span>
+                              <span className="text-xl font-bold text-blue-400">{status?.ticker || 'SPX'}</span>
+                            </div>
+                            <div className="flex justify-between items-center text-sm">
+                              <span className="text-gray-500">Strike Width</span>
+                              <span className="text-gray-300">{status?.config?.strike_width || 50} points (${((status?.config?.strike_width || 50) * 100).toLocaleString()}/contract)</span>
+                            </div>
+                            <div className="flex justify-between items-center text-sm">
+                              <span className="text-gray-500">Target DTE</span>
+                              <span className="text-gray-300">{status?.config?.target_dte_min || 180} - {status?.config?.target_dte_max || 365} days</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Capital Allocation Plan */}
+                      <div className="mt-6 bg-black/30 rounded-lg p-4">
+                        <h3 className="text-sm font-medium text-gray-400 mb-3">CAPITAL DEPLOYMENT PLAN</h3>
+                        <p className="text-xs text-gray-500 mb-3">
+                          When cash is received from selling a box spread, it will be deployed to IC bots as follows:
+                        </p>
+                        <div className="grid grid-cols-4 gap-2">
+                          <div className="bg-blue-900/30 rounded p-3 text-center">
+                            <div className="text-xs text-gray-500">ARES</div>
+                            <div className="text-lg font-bold text-blue-400">{status?.config?.allocations?.ares_pct || 35}%</div>
+                          </div>
+                          <div className="bg-purple-900/30 rounded p-3 text-center">
+                            <div className="text-xs text-gray-500">TITAN</div>
+                            <div className="text-lg font-bold text-purple-400">{status?.config?.allocations?.titan_pct || 35}%</div>
+                          </div>
+                          <div className="bg-green-900/30 rounded p-3 text-center">
+                            <div className="text-xs text-gray-500">PEGASUS</div>
+                            <div className="text-lg font-bold text-green-400">{status?.config?.allocations?.pegasus_pct || 20}%</div>
+                          </div>
+                          <div className="bg-gray-700/50 rounded p-3 text-center">
+                            <div className="text-xs text-gray-500">Reserve</div>
+                            <div className="text-lg font-bold text-gray-400">{status?.config?.allocations?.reserve_pct || 10}%</div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Example Position Preview */}
+                      <div className="mt-6 bg-black/30 rounded-lg p-4">
+                        <h3 className="text-sm font-medium text-gray-400 mb-3">EXAMPLE: WHAT A POSITION LOOKS LIKE</h3>
+                        <p className="text-xs text-gray-500 mb-3">
+                          Based on current settings, a typical position would be:
+                        </p>
+                        <div className="grid md:grid-cols-3 gap-4 text-sm">
+                          <div>
+                            <span className="text-gray-500">Structure:</span>
+                            <span className="ml-2 text-gray-200">SPX {status?.config?.strike_width || 50}-point box spread</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">Face Value:</span>
+                            <span className="ml-2 text-gray-200">${((status?.config?.strike_width || 50) * 100).toLocaleString()} per contract</span>
+                          </div>
+                          <div>
+                            <span className="text-gray-500">Expiration:</span>
+                            <span className="ml-2 text-gray-200">{status?.config?.target_dte_min || 180}+ days out</span>
+                          </div>
+                        </div>
+                        <div className="mt-3 text-xs text-gray-500 border-t border-gray-700 pt-3">
+                          <strong>The Goal:</strong> Borrow at ~4-5% via box spread, deploy to IC bots earning ~20-40%/year, profit the difference.
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 )}
 
