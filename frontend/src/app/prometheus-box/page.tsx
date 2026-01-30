@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import useSWR from 'swr'
+import ReactMarkdown from 'react-markdown'
 import Navigation from '@/components/Navigation'
 
 // API URL for backend calls - must be set in production
@@ -53,13 +54,8 @@ interface CapitalFlow {
 }
 
 export default function PrometheusBoxDashboard() {
-  const [activeTab, setActiveTab] = useState<'overview' | 'positions' | 'analytics' | 'education' | 'calculator'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'positions' | 'analytics' | 'education'>('overview')
   const [educationTopic, setEducationTopic] = useState('overview')
-
-  // Calculator state
-  const [calcStrikeWidth, setCalcStrikeWidth] = useState(50)
-  const [calcDte, setCalcDte] = useState(180)
-  const [calcMarketPrice, setCalcMarketPrice] = useState(49.5)
 
   // Data fetching
   const { data: status, error: statusError } = useSWR('/api/prometheus-box/status', fetcher, { refreshInterval: 30000 })
@@ -68,10 +64,6 @@ export default function PrometheusBoxDashboard() {
   const { data: capitalFlow } = useSWR('/api/prometheus-box/analytics/capital-flow', fetcher, { refreshInterval: 30000 })
   const { data: dailyBriefing } = useSWR('/api/prometheus-box/operations/daily-briefing', fetcher, { refreshInterval: 60000 })
   const { data: educationContent } = useSWR(`/api/prometheus-box/education/${educationTopic}`, fetcher)
-  const { data: calcResult } = useSWR(
-    `/api/prometheus-box/education/calculator?strike_width=${calcStrikeWidth}&dte=${calcDte}&market_price=${calcMarketPrice}`,
-    fetcher
-  )
 
   const isLoading = !status
   const isError = statusError
@@ -156,7 +148,7 @@ export default function PrometheusBoxDashboard() {
       <div className="bg-gray-800 border-b border-gray-700">
         <div className="max-w-7xl mx-auto px-6">
           <div className="flex gap-1">
-            {['overview', 'positions', 'analytics', 'education', 'calculator'].map((tab) => (
+            {['overview', 'positions', 'analytics', 'education'].map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab as any)}
@@ -648,23 +640,26 @@ export default function PrometheusBoxDashboard() {
                 {/* Topic List */}
                 <div className="md:col-span-1">
                   <div className="bg-gray-800 rounded-lg p-4">
-                    <h3 className="font-medium mb-4">Topics</h3>
-                    <div className="space-y-2">
+                    <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
+                      <span className="text-orange-400">📚</span> Learn
+                    </h3>
+                    <div className="space-y-1">
                       {[
-                        { id: 'overview', name: 'Overview' },
-                        { id: 'mechanics', name: 'How It Works' },
-                        { id: 'risks', name: 'Understanding Risks' },
-                        { id: 'comparison', name: 'vs Alternatives' },
+                        { id: 'overview', name: 'Overview', icon: '🏠' },
+                        { id: 'mechanics', name: 'How It Works', icon: '⚙️' },
+                        { id: 'risks', name: 'Understanding Risks', icon: '⚠️' },
+                        { id: 'comparison', name: 'vs Alternatives', icon: '⚖️' },
                       ].map((topic) => (
                         <button
                           key={topic.id}
                           onClick={() => setEducationTopic(topic.id)}
-                          className={`w-full text-left px-3 py-2 rounded transition-colors ${
+                          className={`w-full text-left px-4 py-3 rounded-lg transition-all ${
                             educationTopic === topic.id
-                              ? 'bg-orange-600 text-white'
-                              : 'text-gray-400 hover:bg-gray-700'
+                              ? 'bg-gradient-to-r from-orange-600 to-red-600 text-white shadow-lg'
+                              : 'text-gray-400 hover:bg-gray-700 hover:text-white'
                           }`}
                         >
+                          <span className="mr-2">{topic.icon}</span>
                           {topic.name}
                         </button>
                       ))}
@@ -674,171 +669,48 @@ export default function PrometheusBoxDashboard() {
 
                 {/* Content */}
                 <div className="md:col-span-3">
-                  <div className="bg-gray-800 rounded-lg p-6">
+                  <div className="bg-gray-800 rounded-lg overflow-hidden">
                     {educationContent ? (
                       <div>
-                        <h2 className="text-2xl font-bold mb-4">{educationContent.title}</h2>
-                        <div className="prose prose-invert max-w-none">
-                          <pre className="whitespace-pre-wrap font-sans text-gray-300">
-                            {educationContent.content}
-                          </pre>
+                        {/* Header */}
+                        <div className="bg-gradient-to-r from-orange-900/50 to-red-900/50 px-6 py-4 border-b border-gray-700">
+                          <h2 className="text-2xl font-bold">{educationContent.title}</h2>
+                        </div>
+
+                        {/* Content with proper markdown styling */}
+                        <div className="p-6">
+                          <div className="prose prose-invert prose-orange max-w-none
+                            prose-headings:text-white prose-headings:font-bold
+                            prose-h1:text-2xl prose-h1:border-b prose-h1:border-gray-700 prose-h1:pb-2 prose-h1:mb-4
+                            prose-h2:text-xl prose-h2:text-orange-400 prose-h2:mt-6 prose-h2:mb-3
+                            prose-h3:text-lg prose-h3:text-gray-200 prose-h3:mt-4 prose-h3:mb-2
+                            prose-p:text-gray-300 prose-p:leading-relaxed prose-p:mb-4
+                            prose-strong:text-white prose-strong:font-semibold
+                            prose-ul:text-gray-300 prose-ul:my-4 prose-ul:space-y-2
+                            prose-ol:text-gray-300 prose-ol:my-4 prose-ol:space-y-2
+                            prose-li:leading-relaxed
+                            prose-code:bg-gray-700 prose-code:px-2 prose-code:py-0.5 prose-code:rounded prose-code:text-orange-300
+                            prose-pre:bg-gray-900 prose-pre:border prose-pre:border-gray-700 prose-pre:rounded-lg
+                            prose-blockquote:border-l-4 prose-blockquote:border-orange-500 prose-blockquote:bg-gray-700/50 prose-blockquote:pl-4 prose-blockquote:py-2 prose-blockquote:italic
+                            prose-a:text-orange-400 prose-a:no-underline hover:prose-a:underline
+                            prose-table:border-collapse prose-table:w-full
+                            prose-th:bg-gray-700 prose-th:px-4 prose-th:py-2 prose-th:text-left prose-th:border prose-th:border-gray-600
+                            prose-td:px-4 prose-td:py-2 prose-td:border prose-td:border-gray-700
+                          ">
+                            <ReactMarkdown>
+                              {educationContent.content}
+                            </ReactMarkdown>
+                          </div>
                         </div>
                       </div>
                     ) : (
-                      <p className="text-gray-400">Select a topic to learn more</p>
+                      <div className="p-6 text-center text-gray-400">
+                        <div className="text-4xl mb-4">📖</div>
+                        <p>Select a topic to learn more about box spread synthetic borrowing</p>
+                      </div>
                     )}
                   </div>
                 </div>
-              </div>
-            )}
-
-            {/* Calculator Tab */}
-            {activeTab === 'calculator' && (
-              <div className="grid md:grid-cols-2 gap-6">
-                {/* Inputs */}
-                <div className="bg-gray-800 rounded-lg p-6">
-                  <h2 className="text-xl font-bold mb-4">📱 Box Spread Calculator</h2>
-                  <p className="text-sm text-gray-400 mb-6">
-                    Experiment with different parameters to understand box spread borrowing costs.
-                  </p>
-
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium mb-2">
-                        Strike Width (points)
-                      </label>
-                      <input
-                        type="number"
-                        value={calcStrikeWidth}
-                        onChange={(e) => setCalcStrikeWidth(Number(e.target.value))}
-                        className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2"
-                      />
-                      <p className="text-xs text-gray-500 mt-1">
-                        Example: 50 points = $5,000 per contract at expiration
-                      </p>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium mb-2">
-                        Days to Expiration (DTE)
-                      </label>
-                      <input
-                        type="number"
-                        value={calcDte}
-                        onChange={(e) => setCalcDte(Number(e.target.value))}
-                        className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2"
-                      />
-                      <p className="text-xs text-gray-500 mt-1">
-                        Longer DTE usually means lower implied rates
-                      </p>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium mb-2">
-                        Market Price (per share)
-                      </label>
-                      <input
-                        type="number"
-                        step="0.1"
-                        value={calcMarketPrice}
-                        onChange={(e) => setCalcMarketPrice(Number(e.target.value))}
-                        className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2"
-                      />
-                      <p className="text-xs text-gray-500 mt-1">
-                        This is what you receive when selling the box spread
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Results */}
-                {calcResult && (
-                  <div className="space-y-4">
-                    <div className="bg-gray-800 rounded-lg p-6">
-                      <h3 className="font-medium mb-4">Per Contract</h3>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <div className="text-sm text-gray-400">Cash Received</div>
-                          <div className="text-xl font-bold text-green-400">
-                            {formatCurrency(calcResult.per_contract?.cash_received)}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-sm text-gray-400">Owed at Expiration</div>
-                          <div className="text-xl font-bold text-red-400">
-                            {formatCurrency(calcResult.per_contract?.cash_owed_at_expiration)}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-sm text-gray-400">Borrowing Cost</div>
-                          <div className="text-xl font-bold">
-                            {formatCurrency(calcResult.per_contract?.borrowing_cost)}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-sm text-gray-400">Daily Cost</div>
-                          <div className="text-xl font-bold">
-                            {formatCurrency(calcResult.per_contract?.daily_cost)}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="bg-gray-800 rounded-lg p-6">
-                      <h3 className="font-medium mb-4">Implied Rates</h3>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <div className="text-sm text-gray-400">Annual Rate</div>
-                          <div className="text-xl font-bold text-blue-400">
-                            {formatPct(calcResult.rates?.implied_annual_rate)}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-sm text-gray-400">Monthly Rate</div>
-                          <div className="text-xl font-bold">
-                            {formatPct(calcResult.rates?.implied_monthly_rate)}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-sm text-gray-400">vs Margin Rate</div>
-                          <div className="text-xl font-bold text-green-400">
-                            Save {formatPct(calcResult.rates?.savings_vs_margin_pct)}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-sm text-gray-400">Break-even IC Return</div>
-                          <div className="text-xl font-bold">
-                            {formatPct(calcResult.break_even?.required_monthly_ic_return)}/mo
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="bg-blue-900/30 rounded-lg p-4">
-                      <h3 className="font-medium text-blue-400 mb-2">Example with 10 Contracts</h3>
-                      <div className="grid grid-cols-2 gap-4 text-sm">
-                        <div>
-                          <span className="text-gray-400">Cash Received: </span>
-                          <span className="text-green-400">
-                            {formatCurrency(calcResult.example_10_contracts?.cash_received)}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-gray-400">Total Cost: </span>
-                          <span>
-                            {formatCurrency(calcResult.example_10_contracts?.total_borrowing_cost)}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-gray-400">vs Margin Savings: </span>
-                          <span className="text-green-400">
-                            {formatCurrency(calcResult.example_10_contracts?.vs_margin_savings)}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
               </div>
             )}
           </>
