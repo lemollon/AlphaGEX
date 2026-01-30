@@ -2036,6 +2036,83 @@ class AutonomousTraderScheduler:
             logger.error(traceback.format_exc())
             logger.info(f"=" * 80)
 
+    def scheduled_prometheus_equity_snapshot(self):
+        """
+        PROMETHEUS Equity Snapshot - runs every 30 minutes during market hours.
+
+        Saves current equity state including:
+        - Total borrowed capital
+        - Unrealized P&L on box spreads (using real Tradier quotes)
+        - IC bot returns attribution
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"PROMETHEUS Equity Snapshot triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.is_market_open():
+            logger.info("Market is CLOSED. Skipping PROMETHEUS equity snapshot.")
+            return
+
+        if not self.prometheus_trader:
+            logger.warning("PROMETHEUS trader not available - skipping equity snapshot")
+            return
+
+        try:
+            from trading.prometheus.db import PrometheusDatabase
+            db = PrometheusDatabase()
+
+            # Use existing record_equity_snapshot which fetches real Tradier quotes
+            success = db.record_equity_snapshot(use_real_quotes=True)
+
+            if success:
+                logger.info(f"PROMETHEUS: Equity snapshot recorded successfully")
+            else:
+                logger.warning(f"PROMETHEUS: Failed to record equity snapshot")
+
+        except Exception as e:
+            logger.error(f"ERROR in PROMETHEUS Equity Snapshot: {str(e)}")
+            logger.error(traceback.format_exc())
+
+    def scheduled_prometheus_rate_analysis(self):
+        """
+        PROMETHEUS Rate Analysis - runs hourly during market hours.
+
+        Fetches current box spread rates and saves to database for trend analysis.
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"PROMETHEUS Rate Analysis triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.is_market_open():
+            logger.info("Market is CLOSED. Skipping PROMETHEUS rate analysis.")
+            return
+
+        if not self.prometheus_trader:
+            logger.warning("PROMETHEUS trader not available - skipping rate analysis")
+            return
+
+        try:
+            from trading.prometheus.signals import BoxSpreadSignalGenerator
+            from trading.prometheus.db import PrometheusDatabase
+
+            generator = BoxSpreadSignalGenerator()
+            db = PrometheusDatabase()
+
+            # Analyze current rates
+            analysis = generator.analyze_current_rates()
+
+            if analysis:
+                # Save to database for trend tracking
+                db.save_rate_analysis(analysis)
+                logger.info(f"PROMETHEUS: Saved rate analysis - Box rate={analysis.box_implied_rate:.2f}%, "
+                           f"Fed Funds={analysis.fed_funds_rate:.2f}%, Spread={analysis.spread_to_margin:.2f}%")
+            else:
+                logger.warning("PROMETHEUS: Failed to analyze current rates")
+
+        except Exception as e:
+            logger.error(f"ERROR in PROMETHEUS Rate Analysis: {str(e)}")
+            logger.error(traceback.format_exc())
+
     def scheduled_argus_logic(self):
         """
         ARGUS (0DTE Gamma Live) commentary generation - runs every 5 minutes during market hours
@@ -3805,6 +3882,32 @@ class AutonomousTraderScheduler:
                 replace_existing=True
             )
             logger.info("✅ PROMETHEUS job scheduled (9:30 AM CT daily - box spread position management)")
+
+            # PROMETHEUS Equity Snapshots - runs every 30 minutes during market hours
+            self.scheduler.add_job(
+                self.scheduled_prometheus_equity_snapshot,
+                trigger=IntervalTrigger(
+                    minutes=30,
+                    timezone='America/Chicago'
+                ),
+                id='prometheus_equity_snapshot',
+                name='PROMETHEUS - Equity Snapshot (30-min intervals)',
+                replace_existing=True
+            )
+            logger.info("✅ PROMETHEUS equity snapshot job scheduled (every 30 min)")
+
+            # PROMETHEUS Rate Analysis - runs hourly during market hours
+            self.scheduler.add_job(
+                self.scheduled_prometheus_rate_analysis,
+                trigger=IntervalTrigger(
+                    hours=1,
+                    timezone='America/Chicago'
+                ),
+                id='prometheus_rate_analysis',
+                name='PROMETHEUS - Rate Analysis (hourly)',
+                replace_existing=True
+            )
+            logger.info("✅ PROMETHEUS rate analysis job scheduled (hourly)")
         else:
             logger.warning("⚠️ PROMETHEUS not available - box spread synthetic borrowing disabled")
 

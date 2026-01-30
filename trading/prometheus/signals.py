@@ -562,6 +562,60 @@ Strike width tradeoff:
 
         return implied_rate * 100  # Return as percentage
 
+    def _calculate_rate_trend(
+        self,
+        current_rate: float
+    ) -> tuple:
+        """
+        Calculate rate trend from historical data.
+
+        Returns:
+            (avg_30d, avg_90d, trend)
+        """
+        try:
+            from .db import PrometheusDatabase
+            db = PrometheusDatabase()
+
+            # Get historical rates
+            history = db.get_rate_history(days=90)
+
+            if not history or len(history) < 2:
+                return current_rate, current_rate, "STABLE"
+
+            # Calculate averages
+            rates = [float(h.get('box_implied_rate', current_rate)) for h in history if h.get('box_implied_rate')]
+
+            if not rates:
+                return current_rate, current_rate, "STABLE"
+
+            # 30-day average (last 30 entries or all if less)
+            rates_30d = rates[:30] if len(rates) >= 30 else rates
+            avg_30d = sum(rates_30d) / len(rates_30d) if rates_30d else current_rate
+
+            # 90-day average
+            avg_90d = sum(rates) / len(rates) if rates else current_rate
+
+            # Determine trend
+            if len(rates) >= 7:
+                recent_avg = sum(rates[:7]) / 7
+                older_avg = sum(rates[7:14]) / 7 if len(rates) >= 14 else avg_30d
+
+                diff = recent_avg - older_avg
+                if diff > 0.10:
+                    trend = "RISING"
+                elif diff < -0.10:
+                    trend = "FALLING"
+                else:
+                    trend = "STABLE"
+            else:
+                trend = "STABLE"
+
+            return avg_30d, avg_90d, trend
+
+        except Exception as e:
+            logger.warning(f"Failed to calculate rate trend: {e}")
+            return current_rate, current_rate, "STABLE"
+
     def _calculate_position_size(
         self,
         mid_price: float,
@@ -845,10 +899,8 @@ Example math (monthly):
         estimated_ic_return = 2.5  # Conservative estimate
         projected_profit = (estimated_ic_return - required_ic_return) * 1000
 
-        # Rate trend (would need historical data)
-        avg_30d = implied_rate  # Placeholder
-        avg_90d = implied_rate
-        trend = "STABLE"
+        # Rate trend from historical data
+        avg_30d, avg_90d, trend = self._calculate_rate_trend(implied_rate)
 
         # Recommendation
         spread_to_margin = implied_rate - margin
