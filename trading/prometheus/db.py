@@ -583,6 +583,20 @@ class PrometheusDatabase:
                 )
             """)
 
+            # IC Equity Snapshots table - for intraday IC equity tracking
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS prometheus_ic_equity_snapshots (
+                    id SERIAL PRIMARY KEY,
+                    snapshot_time TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    total_equity DECIMAL(15, 2),
+                    starting_capital DECIMAL(15, 2),
+                    total_realized_pnl DECIMAL(15, 2),
+                    total_unrealized_pnl DECIMAL(15, 2),
+                    open_position_count INTEGER,
+                    details JSONB
+                )
+            """)
+
             # ==================================================================
             # IC TABLE INDEXES - per STANDARDS.md Performance Requirements
             # ==================================================================
