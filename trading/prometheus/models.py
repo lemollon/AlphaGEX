@@ -912,13 +912,13 @@ class PrometheusICPosition:
     realized_pnl: float = 0.0
 
     # Market context at entry
-    spot_at_entry: float
-    vix_at_entry: float
-    gamma_regime_at_entry: str
+    spot_at_entry: float = 0.0
+    vix_at_entry: float = 0.0
+    gamma_regime_at_entry: str = ""
 
     # Oracle decision context
-    oracle_confidence_at_entry: float
-    oracle_reasoning: str
+    oracle_confidence_at_entry: float = 0.0
+    oracle_reasoning: str = ""
 
     # Status
     status: ICPositionStatus = ICPositionStatus.OPEN
