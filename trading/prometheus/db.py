@@ -1148,12 +1148,20 @@ class PrometheusDatabase:
         return config.capital
 
     def get_equity_curve(self, limit: int = 100) -> List[Dict[str, Any]]:
-        """Get historical equity curve data"""
+        """
+        Get historical equity curve data.
+
+        STANDARDS.md COMPLIANCE:
+        - Query ALL closed trades (no LIMIT in SQL) to ensure accurate cumulative P&L
+        - Calculate running total across all trades
+        - Only limit the OUTPUT, not the SQL query
+        """
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
 
-            # Get closed positions for equity curve
+            # CRITICAL: No LIMIT in SQL - query ALL closed positions
+            # Then filter output only (per STANDARDS.md)
             cursor.execute("""
                 SELECT
                     DATE(close_time AT TIME ZONE 'America/Chicago') as trade_date,
@@ -1163,8 +1171,7 @@ class PrometheusDatabase:
                 WHERE status = 'closed' AND close_time IS NOT NULL
                 GROUP BY DATE(close_time AT TIME ZONE 'America/Chicago')
                 ORDER BY trade_date ASC
-                LIMIT %s
-            """, (limit,))
+            """)
 
             rows = cursor.fetchall()
             cursor.close()
@@ -1173,6 +1180,7 @@ class PrometheusDatabase:
             cumulative_pnl = 0
             equity_curve = []
 
+            # Calculate cumulative across ALL trades
             for row in rows:
                 cumulative_pnl += float(row[1] or 0)
                 equity_curve.append({
@@ -1183,7 +1191,8 @@ class PrometheusDatabase:
                     'positions_closed': row[2],
                 })
 
-            return equity_curve
+            # Limit OUTPUT only (return most recent points)
+            return equity_curve[-limit:] if len(equity_curve) > limit else equity_curve
 
         except Exception as e:
             logger.error(f"Error getting equity curve: {e}")
@@ -1997,39 +2006,51 @@ class PrometheusDatabase:
         """
         Get IC trading equity curve data.
 
-        Returns cumulative P&L from IC trades for charting.
+        STANDARDS.md COMPLIANCE:
+        - Query ALL closed trades (no LIMIT in SQL) to ensure accurate cumulative P&L
+        - Calculate running total across all trades
+        - Only limit the OUTPUT, not the SQL query
+        - Include equity (starting capital + cumulative)
         """
         try:
             conn = self._get_connection()
             cursor = conn.cursor()
 
-            # Get all closed trades ordered by close time
+            # CRITICAL: No LIMIT in SQL - query ALL closed trades
+            # Then filter output only (per STANDARDS.md)
             cursor.execute("""
                 SELECT
                     close_time,
                     realized_pnl,
                     position_id
                 FROM prometheus_ic_closed_trades
+                WHERE close_time IS NOT NULL
                 ORDER BY close_time ASC
-                LIMIT %s
-            """, (limit,))
+            """)
 
             rows = cursor.fetchall()
             cursor.close()
 
+            # Get IC starting capital from config
+            ic_config = self.load_ic_config()
+            starting_capital = ic_config.starting_capital if ic_config else 100000.0
+
             cumulative_pnl = 0
             equity_curve = []
 
+            # Calculate cumulative across ALL trades
             for row in rows:
                 cumulative_pnl += float(row[1] or 0)
                 equity_curve.append({
                     'time': row[0].isoformat() if row[0] else None,
                     'trade_pnl': float(row[1] or 0),
                     'cumulative_pnl': cumulative_pnl,
+                    'equity': starting_capital + cumulative_pnl,
                     'position_id': row[2],
                 })
 
-            return equity_curve
+            # Limit OUTPUT only (return most recent points)
+            return equity_curve[-limit:] if len(equity_curve) > limit else equity_curve
 
         except Exception as e:
             logger.error(f"Error getting IC equity curve: {e}")
