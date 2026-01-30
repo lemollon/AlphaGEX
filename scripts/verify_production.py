@@ -131,7 +131,6 @@ class ProductionVerifier:
         self.check("ARES status", "/api/ares/status")
         self.check("ATHENA status", "/api/athena/status")
         self.check("APOLLO status", "/api/apollo/status")
-        self.check("PROMETHEUS status", "/api/prometheus/status")
         print()
 
         # 5. Core API Routes

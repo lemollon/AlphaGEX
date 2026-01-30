@@ -340,7 +340,6 @@ class TestBacktestFramework:
 **Under-tested Modules:**
 - `ares_iron_condor.py` (181 KB) - Iron Condor
 - `athena_directional_spreads.py` (187 KB) - Spreads
-- `prometheus_ml.py` (45 KB) - ML directional
 - `circuit_breaker.py` - Risk controls
 - `risk_management.py` - Risk rules
 

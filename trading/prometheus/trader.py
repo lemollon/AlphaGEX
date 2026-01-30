@@ -26,6 +26,14 @@ from .executor import BoxSpreadExecutor
 
 logger = logging.getLogger(__name__)
 
+# Import IC bot database adapters for real returns integration
+try:
+    from database_adapter import get_connection
+    IC_DB_AVAILABLE = True
+except ImportError:
+    IC_DB_AVAILABLE = False
+    logger.warning("Database adapter not available - IC returns will be estimated")
+
 # Central timezone
 try:
     from zoneinfo import ZoneInfo
@@ -688,16 +696,134 @@ For box spreads to be profitable:
         position: BoxSpreadPosition
     ) -> Dict[str, float]:
         """
-        Fetch returns from IC bots for the deployed capital.
+        Fetch REAL returns from IC bots for the deployed capital.
 
-        This would integrate with ARES, TITAN, PEGASUS databases
-        to calculate returns attributable to this deployment.
+        Queries ARES, TITAN, and PEGASUS closed_trades tables to get
+        actual realized P&L since this PROMETHEUS position was opened.
+
+        Returns are proportionally attributed based on each bot's share
+        of total IC capital at time of deployment.
         """
-        # TODO: Integrate with actual bot databases
-        # For now, return simulated returns based on deployment amounts
+        returns = {
+            'ares': 0.0,
+            'titan': 0.0,
+            'pegasus': 0.0,
+        }
+
+        if not IC_DB_AVAILABLE:
+            logger.warning("IC database not available - using estimated returns")
+            return self._estimate_ic_returns(position)
+
+        try:
+            conn = get_connection()
+            cur = conn.cursor()
+
+            # Get the start date for this position
+            start_date = position.open_time.strftime('%Y-%m-%d')
+
+            # Query ARES returns
+            if position.cash_deployed_to_ares > 0:
+                try:
+                    cur.execute("""
+                        SELECT COALESCE(SUM(realized_pnl), 0)
+                        FROM ares_positions
+                        WHERE status IN ('closed', 'expired')
+                        AND close_time >= %s::timestamp
+                    """, (start_date,))
+                    result = cur.fetchone()
+                    total_ares_pnl = float(result[0]) if result and result[0] else 0.0
+
+                    # Get ARES total capital to calculate attribution
+                    cur.execute("""
+                        SELECT value FROM ares_config WHERE key = 'starting_capital'
+                    """)
+                    ares_cap_result = cur.fetchone()
+                    ares_capital = float(ares_cap_result[0]) if ares_cap_result else 100000.0
+
+                    # Attribute returns proportionally
+                    if ares_capital > 0:
+                        attribution_pct = position.cash_deployed_to_ares / ares_capital
+                        returns['ares'] = total_ares_pnl * min(attribution_pct, 1.0)
+
+                    logger.debug(f"ARES returns: ${returns['ares']:.2f} (total: ${total_ares_pnl:.2f}, attribution: {attribution_pct*100:.1f}%)")
+                except Exception as e:
+                    logger.warning(f"Failed to fetch ARES returns: {e}")
+
+            # Query TITAN returns
+            if position.cash_deployed_to_titan > 0:
+                try:
+                    cur.execute("""
+                        SELECT COALESCE(SUM(realized_pnl), 0)
+                        FROM titan_positions
+                        WHERE status IN ('closed', 'expired')
+                        AND close_time >= %s::timestamp
+                    """, (start_date,))
+                    result = cur.fetchone()
+                    total_titan_pnl = float(result[0]) if result and result[0] else 0.0
+
+                    cur.execute("""
+                        SELECT value FROM titan_config WHERE key = 'starting_capital'
+                    """)
+                    titan_cap_result = cur.fetchone()
+                    titan_capital = float(titan_cap_result[0]) if titan_cap_result else 100000.0
+
+                    if titan_capital > 0:
+                        attribution_pct = position.cash_deployed_to_titan / titan_capital
+                        returns['titan'] = total_titan_pnl * min(attribution_pct, 1.0)
+
+                    logger.debug(f"TITAN returns: ${returns['titan']:.2f}")
+                except Exception as e:
+                    logger.warning(f"Failed to fetch TITAN returns: {e}")
+
+            # Query PEGASUS returns
+            if position.cash_deployed_to_pegasus > 0:
+                try:
+                    cur.execute("""
+                        SELECT COALESCE(SUM(realized_pnl), 0)
+                        FROM pegasus_positions
+                        WHERE status IN ('closed', 'expired')
+                        AND close_time >= %s::timestamp
+                    """, (start_date,))
+                    result = cur.fetchone()
+                    total_pegasus_pnl = float(result[0]) if result and result[0] else 0.0
+
+                    cur.execute("""
+                        SELECT value FROM pegasus_config WHERE key = 'starting_capital'
+                    """)
+                    pegasus_cap_result = cur.fetchone()
+                    pegasus_capital = float(pegasus_cap_result[0]) if pegasus_cap_result else 100000.0
+
+                    if pegasus_capital > 0:
+                        attribution_pct = position.cash_deployed_to_pegasus / pegasus_capital
+                        returns['pegasus'] = total_pegasus_pnl * min(attribution_pct, 1.0)
+
+                    logger.debug(f"PEGASUS returns: ${returns['pegasus']:.2f}")
+                except Exception as e:
+                    logger.warning(f"Failed to fetch PEGASUS returns: {e}")
+
+            cur.close()
+            conn.close()
+
+            logger.info(f"IC returns for position {position.position_id}: "
+                       f"ARES=${returns['ares']:.2f}, TITAN=${returns['titan']:.2f}, PEGASUS=${returns['pegasus']:.2f}")
+
+        except Exception as e:
+            logger.error(f"Failed to fetch IC returns: {e}")
+            return self._estimate_ic_returns(position)
+
+        return returns
+
+    def _estimate_ic_returns(
+        self,
+        position: BoxSpreadPosition
+    ) -> Dict[str, float]:
+        """
+        Fallback: Estimate IC returns when database unavailable.
+
+        Uses conservative 2.5% monthly return estimate.
+        """
         days_held = (date.today() - position.open_time.date()).days
         monthly_return_rate = 0.025  # 2.5% monthly estimate
-
         daily_rate = monthly_return_rate / 30
 
         return {

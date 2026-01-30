@@ -41,6 +41,15 @@ try:
 except ImportError as e:
     logger.warning(f"PROMETHEUS Box Spread modules not available: {e}")
 
+# Dynamic rate fetching
+RateFetcher = None
+try:
+    from trading.prometheus.rate_fetcher import get_current_rates, get_rate_fetcher
+    RateFetcher = get_rate_fetcher
+    logger.info("Rate fetcher loaded successfully")
+except ImportError as e:
+    logger.warning(f"Rate fetcher not available: {e}")
+
 
 # ========== Pydantic Models for Request/Response ==========
 
@@ -504,6 +513,79 @@ async def get_rate_history(days: int = Query(30, ge=1, le=365)):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/analytics/interest-rates")
+async def get_interest_rates():
+    """
+    Get current interest rates from live sources.
+
+    Returns Fed Funds, SOFR, Treasury rates, and estimated margin rate.
+    Rates are cached for 4 hours and fetched from FRED/Treasury APIs.
+    """
+    if RateFetcher:
+        try:
+            fetcher = RateFetcher()
+            rates = fetcher.get_rates()
+            return {
+                "fed_funds_rate": rates.fed_funds_rate,
+                "sofr_rate": rates.sofr_rate,
+                "treasury_3m": rates.treasury_3m,
+                "treasury_1y": rates.treasury_1y,
+                "margin_rate": rates.margin_rate,
+                "last_updated": rates.last_updated.isoformat(),
+                "source": rates.source,
+                "cache_hours": 4,
+                "description": {
+                    "fed_funds_rate": "Federal Funds Effective Rate - overnight bank lending rate",
+                    "sofr_rate": "Secured Overnight Financing Rate - repo market rate",
+                    "treasury_3m": "3-Month Treasury Bill yield",
+                    "treasury_1y": "1-Year Treasury Bill yield",
+                    "margin_rate": "Estimated broker margin rate (Fed Funds + 4%)",
+                },
+            }
+        except Exception as e:
+            logger.warning(f"Rate fetcher error: {e}")
+
+    # Fallback
+    return {
+        "fed_funds_rate": 4.33,
+        "sofr_rate": 4.30,
+        "treasury_3m": 4.25,
+        "treasury_1y": 4.15,
+        "margin_rate": 8.33,
+        "last_updated": datetime.now().isoformat(),
+        "source": "fallback",
+        "cache_hours": 4,
+        "error": "Rate fetcher not available",
+    }
+
+
+@router.post("/analytics/interest-rates/refresh")
+async def refresh_interest_rates():
+    """
+    Force refresh of interest rates from live sources.
+
+    Bypasses the 4-hour cache and fetches fresh data.
+    """
+    if RateFetcher:
+        try:
+            fetcher = RateFetcher()
+            rates = fetcher.get_rates(force_refresh=True)
+            return {
+                "status": "refreshed",
+                "fed_funds_rate": rates.fed_funds_rate,
+                "sofr_rate": rates.sofr_rate,
+                "treasury_3m": rates.treasury_3m,
+                "treasury_1y": rates.treasury_1y,
+                "margin_rate": rates.margin_rate,
+                "last_updated": rates.last_updated.isoformat(),
+                "source": rates.source,
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Rate refresh failed: {e}")
+
+    raise HTTPException(status_code=503, detail="Rate fetcher not available")
 
 
 @router.get("/analytics/capital-flow")

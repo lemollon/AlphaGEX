@@ -1068,38 +1068,12 @@ async def get_ml_model_details():
         except:
             pass
 
-        # Get Prometheus training history
-        prometheus = []
-        try:
-            cur.execute("""
-                SELECT training_id, training_date, total_samples, accuracy,
-                       precision_score, recall, f1_score, auc_roc, brier_score,
-                       cv_accuracy_mean, cv_accuracy_std, calibration_error,
-                       feature_importance, model_type, model_version,
-                       interpretation, honest_assessment, recommendation
-                FROM prometheus_training_history
-                ORDER BY training_date DESC
-                LIMIT 20
-            """)
-            columns = [desc[0] for desc in cur.description]
-            for row in cur.fetchall():
-                record = {}
-                for i, col in enumerate(columns):
-                    val = row[i]
-                    if isinstance(val, datetime):
-                        val = val.isoformat()
-                    record[col] = val
-                prometheus.append(record)
-        except:
-            pass
-
         return {
             "success": True,
             "data": {
                 "models": models,
                 "predictions": predictions,
-                "calibration_history": calibration,
-                "prometheus_training": prometheus
+                "calibration_history": calibration
             }
         }
 

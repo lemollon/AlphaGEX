@@ -31,7 +31,6 @@ from . import ares_routes
 from . import athena_routes
 from . import pegasus_routes
 from . import daily_manna_routes
-from . import prometheus_routes
 from . import bot_reports_routes
 
 __all__ = [
@@ -63,6 +62,5 @@ __all__ = [
     'athena_routes',
     'pegasus_routes',
     'daily_manna_routes',
-    'prometheus_routes',
     'bot_reports_routes',
 ]
