@@ -1025,13 +1025,24 @@ class PrometheusICTrader:
 
     def _in_cooldown(self) -> bool:
         """Check if in cooldown period after last trade"""
-        last_trade_time = self.db.get_last_ic_trade_time()
-        if not last_trade_time:
-            return False
+        try:
+            last_trade_time = self.db.get_last_ic_trade_time()
+            if not last_trade_time:
+                return False
 
-        cooldown_minutes = self.config.cooldown_minutes_after_trade
-        cooldown_end = last_trade_time + timedelta(minutes=cooldown_minutes)
-        return datetime.now(CENTRAL_TZ) < cooldown_end
+            cooldown_minutes = self.config.cooldown_minutes_after_trade
+            cooldown_end = last_trade_time + timedelta(minutes=cooldown_minutes)
+
+            # Handle timezone comparison - make both aware or both naive
+            now = datetime.now(CENTRAL_TZ)
+            if cooldown_end.tzinfo is None:
+                # last_trade_time was naive, make it aware
+                cooldown_end = cooldown_end.replace(tzinfo=CENTRAL_TZ)
+
+            return now < cooldown_end
+        except Exception as e:
+            logger.warning(f"Error checking cooldown: {e}")
+            return False  # If we can't check, assume not in cooldown
 
     def _get_available_capital(self) -> float:
         """Get capital available for IC trading from box spreads"""
