@@ -313,10 +313,11 @@ def get_box_spread_quotes(
                 result['implied_rate'] = round(implied_rate, 4)
 
             result['success'] = True
+            implied_rate_log = f"{result['implied_rate']}%" if result['implied_rate'] else "N/A"
             logger.info(
                 f"Box spread calculated: bid={result['box_bid']}, "
                 f"mid={result['box_mid']}, ask={result['box_ask']}, "
-                f"implied_rate={result['implied_rate']}%"
+                f"implied_rate={implied_rate_log}"
             )
 
         except Exception as e:
@@ -527,10 +528,11 @@ class BoxSpreadExecutor:
                 theoretical_value = signal.strike_width * 100 * signal.recommended_contracts
                 signal.borrowing_cost = theoretical_value - signal.cash_received
 
+                implied_rate_str = f"{real_quotes['implied_rate']:.2f}%" if real_quotes['implied_rate'] else "N/A"
                 logger.info(
                     f"PAPER TRADING with REAL PRODUCTION quotes: "
                     f"mid=${real_quotes['box_mid']:.4f}, "
-                    f"implied_rate={real_quotes['implied_rate']:.2f}%"
+                    f"implied_rate={implied_rate_str}"
                 )
             else:
                 logger.warning(

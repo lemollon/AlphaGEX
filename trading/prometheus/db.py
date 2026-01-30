@@ -399,6 +399,26 @@ class PrometheusDatabase:
                 )
             """)
 
+            # Add new columns if they don't exist (for schema migration)
+            # These columns were added for enhanced transparency tracking
+            migration_columns = [
+                ("prometheus_equity_snapshots", "quote_source", "VARCHAR(50)"),
+                ("prometheus_equity_snapshots", "calculation_method", "VARCHAR(50)"),
+                ("prometheus_equity_snapshots", "total_mtm_unrealized", "DECIMAL(15, 2)"),
+                ("prometheus_equity_snapshots", "total_ic_returns", "DECIMAL(15, 2)"),
+                ("prometheus_equity_snapshots", "total_costs_accrued", "DECIMAL(15, 2)"),
+            ]
+
+            for table, column, col_type in migration_columns:
+                try:
+                    cursor.execute(f"""
+                        ALTER TABLE {table}
+                        ADD COLUMN IF NOT EXISTS {column} {col_type}
+                    """)
+                except Exception as e:
+                    # Column might already exist or other issue
+                    logger.debug(f"Column migration for {table}.{column}: {e}")
+
             conn.commit()
             cursor.close()
             logger.info("PROMETHEUS tables initialized successfully")
