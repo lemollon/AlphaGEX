@@ -57,13 +57,22 @@ export default function PrometheusBoxDashboard() {
   const [activeTab, setActiveTab] = useState<'overview' | 'positions' | 'analytics' | 'education'>('overview')
   const [educationTopic, setEducationTopic] = useState('overview')
 
-  // Data fetching
+  // Data fetching - PROMETHEUS
   const { data: status, error: statusError } = useSWR('/api/prometheus-box/status', fetcher, { refreshInterval: 30000 })
   const { data: positions } = useSWR('/api/prometheus-box/positions', fetcher, { refreshInterval: 30000 })
   const { data: rateAnalysis } = useSWR('/api/prometheus-box/analytics/rates', fetcher, { refreshInterval: 60000 })
   const { data: capitalFlow } = useSWR('/api/prometheus-box/analytics/capital-flow', fetcher, { refreshInterval: 30000 })
   const { data: dailyBriefing } = useSWR('/api/prometheus-box/operations/daily-briefing', fetcher, { refreshInterval: 60000 })
   const { data: educationContent } = useSWR(`/api/prometheus-box/education/${educationTopic}`, fetcher)
+
+  // Analytics data - Equity curves and IC bot positions
+  const { data: equityCurve } = useSWR('/api/prometheus-box/equity-curve', fetcher, { refreshInterval: 60000 })
+  const { data: intradayEquity } = useSWR('/api/prometheus-box/equity-curve/intraday', fetcher, { refreshInterval: 30000 })
+
+  // IC Bot positions - to show where capital is deployed
+  const { data: aresPositions } = useSWR('/api/ares/positions', fetcher, { refreshInterval: 30000 })
+  const { data: titanPositions } = useSWR('/api/titan/positions', fetcher, { refreshInterval: 30000 })
+  const { data: pegasusPositions } = useSWR('/api/pegasus/positions', fetcher, { refreshInterval: 30000 })
 
   const isLoading = !status
   const isError = statusError
@@ -622,14 +631,367 @@ export default function PrometheusBoxDashboard() {
               </div>
             )}
 
-            {/* Analytics Tab */}
+            {/* Analytics Tab - Full Transparency */}
             {activeTab === 'analytics' && (
               <div className="space-y-6">
-                <div className="bg-gray-800 rounded-lg p-6">
-                  <h2 className="text-xl font-bold mb-4">Performance Summary</h2>
-                  <p className="text-gray-400">
-                    Detailed analytics coming soon...
+
+                {/* Capital Flow Summary - Where is every dollar? */}
+                <div className="bg-gradient-to-br from-gray-800 to-gray-900 rounded-lg p-6 border border-orange-900/30">
+                  <h2 className="text-2xl font-bold mb-2 flex items-center gap-2">
+                    💰 Capital Traceability
+                  </h2>
+                  <p className="text-gray-400 text-sm mb-6">
+                    Track every dollar from box spread borrowing through IC bot deployment to returns
                   </p>
+
+                  {/* Money Flow Visualization */}
+                  <div className="grid md:grid-cols-5 gap-2 items-center mb-6">
+                    {/* Step 1: Borrowed */}
+                    <div className="bg-blue-900/30 rounded-lg p-4 text-center border border-blue-700/30">
+                      <div className="text-xs text-gray-400 mb-1">BORROWED</div>
+                      <div className="text-xl font-bold text-blue-400">
+                        {formatCurrency(status?.total_borrowed || 0)}
+                      </div>
+                      <div className="text-xs text-gray-500">via Box Spreads</div>
+                    </div>
+
+                    <div className="text-center text-2xl text-gray-600">→</div>
+
+                    {/* Step 2: Deployed */}
+                    <div className="bg-purple-900/30 rounded-lg p-4 text-center border border-purple-700/30">
+                      <div className="text-xs text-gray-400 mb-1">DEPLOYED</div>
+                      <div className="text-xl font-bold text-purple-400">
+                        {formatCurrency(capitalFlow?.total_deployed || 0)}
+                      </div>
+                      <div className="text-xs text-gray-500">to IC Bots</div>
+                    </div>
+
+                    <div className="text-center text-2xl text-gray-600">→</div>
+
+                    {/* Step 3: Returns */}
+                    <div className="bg-green-900/30 rounded-lg p-4 text-center border border-green-700/30">
+                      <div className="text-xs text-gray-400 mb-1">RETURNS</div>
+                      <div className="text-xl font-bold text-green-400">
+                        {formatCurrency(status?.total_ic_returns || 0)}
+                      </div>
+                      <div className="text-xs text-gray-500">from IC Trading</div>
+                    </div>
+                  </div>
+
+                  {/* Detailed Breakdown */}
+                  <div className="bg-black/30 rounded-lg p-4 font-mono text-sm">
+                    <div className="grid md:grid-cols-2 gap-6">
+                      {/* Left: Sources */}
+                      <div>
+                        <div className="text-orange-400 font-bold mb-2">📥 CAPITAL SOURCES</div>
+                        <div className="space-y-1">
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Box Spread Credit:</span>
+                            <span className="text-blue-400">+{formatCurrency(status?.total_borrowed || 0)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">IC Bot Returns:</span>
+                            <span className="text-green-400">+{formatCurrency(status?.total_ic_returns || 0)}</span>
+                          </div>
+                          <div className="border-t border-gray-700 my-2"></div>
+                          <div className="flex justify-between font-bold">
+                            <span>Total Inflows:</span>
+                            <span className="text-white">
+                              {formatCurrency((status?.total_borrowed || 0) + (status?.total_ic_returns || 0))}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Right: Uses */}
+                      <div>
+                        <div className="text-orange-400 font-bold mb-2">📤 CAPITAL USES</div>
+                        <div className="space-y-1">
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">→ ARES (35%):</span>
+                            <span>{formatCurrency(capitalFlow?.deployment_summary?.ares?.deployed || 0)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">→ TITAN (35%):</span>
+                            <span>{formatCurrency(capitalFlow?.deployment_summary?.titan?.deployed || 0)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">→ PEGASUS (20%):</span>
+                            <span>{formatCurrency(capitalFlow?.deployment_summary?.pegasus?.deployed || 0)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">→ Reserve (10%):</span>
+                            <span>{formatCurrency(capitalFlow?.reserve || 0)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-400">Borrowing Cost:</span>
+                            <span className="text-red-400">-{formatCurrency(status?.total_borrowing_costs || 0)}</span>
+                          </div>
+                          <div className="border-t border-gray-700 my-2"></div>
+                          <div className="flex justify-between font-bold">
+                            <span>Net P&L:</span>
+                            <span className={`${(status?.net_unrealized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                              {formatCurrency(status?.net_unrealized_pnl || 0)}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Equity Curve */}
+                <div className="bg-gray-800 rounded-lg p-6">
+                  <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                    📈 Equity Curve
+                  </h2>
+
+                  {equityCurve?.equity_curve && equityCurve.equity_curve.length > 0 ? (
+                    <div>
+                      <div className="text-sm text-gray-400 mb-4">
+                        Starting Capital: {formatCurrency(equityCurve.starting_capital)}
+                      </div>
+                      <div className="bg-black/30 rounded-lg p-4 overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="text-left text-gray-400 border-b border-gray-700">
+                              <th className="pb-2">Date</th>
+                              <th className="pb-2 text-right">Daily P&L</th>
+                              <th className="pb-2 text-right">Cumulative</th>
+                              <th className="pb-2 text-right">Equity</th>
+                              <th className="pb-2 text-right">Positions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {equityCurve.equity_curve.slice(-10).map((point: any, idx: number) => (
+                              <tr key={idx} className="border-b border-gray-700/50">
+                                <td className="py-2">{point.date}</td>
+                                <td className={`py-2 text-right ${point.daily_profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                  {formatCurrency(point.daily_profit)}
+                                </td>
+                                <td className={`py-2 text-right ${point.cumulative_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                  {formatCurrency(point.cumulative_pnl)}
+                                </td>
+                                <td className="py-2 text-right font-medium">{formatCurrency(point.equity)}</td>
+                                <td className="py-2 text-right text-gray-400">{point.positions_closed}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-gray-400">
+                      <div className="text-4xl mb-2">📊</div>
+                      <p>No equity history yet. Equity curve will appear after positions are closed.</p>
+                    </div>
+                  )}
+
+                  {/* Intraday Snapshots */}
+                  {intradayEquity?.snapshots && intradayEquity.snapshots.length > 0 && (
+                    <div className="mt-6">
+                      <h3 className="text-lg font-medium mb-3">Today&apos;s Snapshots</h3>
+                      <div className="bg-black/30 rounded-lg p-4 overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="text-left text-gray-400 border-b border-gray-700">
+                              <th className="pb-2">Time</th>
+                              <th className="pb-2 text-right">Equity</th>
+                              <th className="pb-2 text-right">Unrealized</th>
+                              <th className="pb-2 text-right">Source</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {intradayEquity.snapshots.slice(-5).map((snap: any, idx: number) => (
+                              <tr key={idx} className="border-b border-gray-700/50">
+                                <td className="py-2">{new Date(snap.snapshot_time).toLocaleTimeString()}</td>
+                                <td className="py-2 text-right font-medium">{formatCurrency(snap.total_equity)}</td>
+                                <td className={`py-2 text-right ${snap.unrealized_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                  {formatCurrency(snap.unrealized_pnl)}
+                                </td>
+                                <td className="py-2 text-right text-xs text-gray-500">{snap.quote_source || 'calculated'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* IC Bot Positions - Where is the money working? */}
+                <div className="bg-gray-800 rounded-lg p-6">
+                  <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                    🤖 IC Bot Positions (Funded by PROMETHEUS)
+                  </h2>
+                  <p className="text-gray-400 text-sm mb-4">
+                    These are the active Iron Condor positions that PROMETHEUS capital is funding
+                  </p>
+
+                  <div className="space-y-6">
+                    {/* ARES Positions */}
+                    <div className="bg-red-900/10 border border-red-900/30 rounded-lg p-4">
+                      <div className="flex justify-between items-center mb-3">
+                        <h3 className="font-bold text-lg flex items-center gap-2">
+                          <span className="text-red-400">⚔️</span> ARES (SPY 0DTE)
+                        </h3>
+                        <div className="text-sm">
+                          <span className="text-gray-400">Allocated: </span>
+                          <span className="font-medium">{formatCurrency(capitalFlow?.deployment_summary?.ares?.deployed || 0)}</span>
+                        </div>
+                      </div>
+                      {aresPositions?.positions && aresPositions.positions.length > 0 ? (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="text-left text-gray-400 border-b border-gray-700">
+                                <th className="pb-2">Symbol</th>
+                                <th className="pb-2">Strikes</th>
+                                <th className="pb-2 text-right">Entry</th>
+                                <th className="pb-2 text-right">Current</th>
+                                <th className="pb-2 text-right">P&L</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {aresPositions.positions.slice(0, 5).map((pos: any, idx: number) => (
+                                <tr key={idx} className="border-b border-gray-700/50">
+                                  <td className="py-2">{pos.symbol || pos.ticker || 'SPY'}</td>
+                                  <td className="py-2">{pos.short_put_strike}/{pos.short_call_strike}</td>
+                                  <td className="py-2 text-right">{formatCurrency(pos.entry_credit || pos.entry_price)}</td>
+                                  <td className="py-2 text-right">{formatCurrency(pos.current_value || pos.current_price)}</td>
+                                  <td className={`py-2 text-right ${(pos.unrealized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                    {formatCurrency(pos.unrealized_pnl || 0)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <p className="text-gray-500 text-sm">No active ARES positions</p>
+                      )}
+                    </div>
+
+                    {/* TITAN Positions */}
+                    <div className="bg-blue-900/10 border border-blue-900/30 rounded-lg p-4">
+                      <div className="flex justify-between items-center mb-3">
+                        <h3 className="font-bold text-lg flex items-center gap-2">
+                          <span className="text-blue-400">🏛️</span> TITAN (SPX Aggressive)
+                        </h3>
+                        <div className="text-sm">
+                          <span className="text-gray-400">Allocated: </span>
+                          <span className="font-medium">{formatCurrency(capitalFlow?.deployment_summary?.titan?.deployed || 0)}</span>
+                        </div>
+                      </div>
+                      {titanPositions?.positions && titanPositions.positions.length > 0 ? (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="text-left text-gray-400 border-b border-gray-700">
+                                <th className="pb-2">Symbol</th>
+                                <th className="pb-2">Strikes</th>
+                                <th className="pb-2 text-right">Entry</th>
+                                <th className="pb-2 text-right">Current</th>
+                                <th className="pb-2 text-right">P&L</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {titanPositions.positions.slice(0, 5).map((pos: any, idx: number) => (
+                                <tr key={idx} className="border-b border-gray-700/50">
+                                  <td className="py-2">{pos.symbol || pos.ticker || 'SPX'}</td>
+                                  <td className="py-2">{pos.short_put_strike}/{pos.short_call_strike}</td>
+                                  <td className="py-2 text-right">{formatCurrency(pos.entry_credit || pos.entry_price)}</td>
+                                  <td className="py-2 text-right">{formatCurrency(pos.current_value || pos.current_price)}</td>
+                                  <td className={`py-2 text-right ${(pos.unrealized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                    {formatCurrency(pos.unrealized_pnl || 0)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <p className="text-gray-500 text-sm">No active TITAN positions</p>
+                      )}
+                    </div>
+
+                    {/* PEGASUS Positions */}
+                    <div className="bg-purple-900/10 border border-purple-900/30 rounded-lg p-4">
+                      <div className="flex justify-between items-center mb-3">
+                        <h3 className="font-bold text-lg flex items-center gap-2">
+                          <span className="text-purple-400">🦄</span> PEGASUS (SPX Weekly)
+                        </h3>
+                        <div className="text-sm">
+                          <span className="text-gray-400">Allocated: </span>
+                          <span className="font-medium">{formatCurrency(capitalFlow?.deployment_summary?.pegasus?.deployed || 0)}</span>
+                        </div>
+                      </div>
+                      {pegasusPositions?.positions && pegasusPositions.positions.length > 0 ? (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="text-left text-gray-400 border-b border-gray-700">
+                                <th className="pb-2">Symbol</th>
+                                <th className="pb-2">Strikes</th>
+                                <th className="pb-2 text-right">Entry</th>
+                                <th className="pb-2 text-right">Current</th>
+                                <th className="pb-2 text-right">P&L</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {pegasusPositions.positions.slice(0, 5).map((pos: any, idx: number) => (
+                                <tr key={idx} className="border-b border-gray-700/50">
+                                  <td className="py-2">{pos.symbol || pos.ticker || 'SPX'}</td>
+                                  <td className="py-2">{pos.short_put_strike}/{pos.short_call_strike}</td>
+                                  <td className="py-2 text-right">{formatCurrency(pos.entry_credit || pos.entry_price)}</td>
+                                  <td className="py-2 text-right">{formatCurrency(pos.current_value || pos.current_price)}</td>
+                                  <td className={`py-2 text-right ${(pos.unrealized_pnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                                    {formatCurrency(pos.unrealized_pnl || 0)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : (
+                        <p className="text-gray-500 text-sm">No active PEGASUS positions</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Rate History */}
+                <div className="bg-gray-800 rounded-lg p-6">
+                  <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+                    📉 Borrowing Rate Trend
+                  </h2>
+                  <p className="text-gray-400 text-sm mb-4">
+                    Historical box spread implied rates help you understand if rates are favorable
+                  </p>
+
+                  <div className="grid md:grid-cols-3 gap-4">
+                    <div className="bg-black/30 rounded-lg p-4 text-center">
+                      <div className="text-sm text-gray-400 mb-1">Current Rate</div>
+                      <div className="text-2xl font-bold text-blue-400">
+                        {formatPct(rateAnalysis?.box_implied_rate || 0)}
+                      </div>
+                    </div>
+                    <div className="bg-black/30 rounded-lg p-4 text-center">
+                      <div className="text-sm text-gray-400 mb-1">30-Day Avg</div>
+                      <div className="text-2xl font-bold">
+                        {formatPct(rateAnalysis?.avg_box_rate_30d || rateAnalysis?.box_implied_rate || 0)}
+                      </div>
+                    </div>
+                    <div className="bg-black/30 rounded-lg p-4 text-center">
+                      <div className="text-sm text-gray-400 mb-1">Trend</div>
+                      <div className={`text-2xl font-bold ${
+                        rateAnalysis?.rate_trend === 'FALLING' ? 'text-green-400' :
+                        rateAnalysis?.rate_trend === 'RISING' ? 'text-red-400' : 'text-gray-400'
+                      }`}>
+                        {rateAnalysis?.rate_trend || 'STABLE'}
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             )}
