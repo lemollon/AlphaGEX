@@ -376,7 +376,7 @@ class PrometheusDatabase:
                 )
             """)
 
-            # Equity snapshots for intraday tracking
+            # Equity snapshots for intraday tracking with FULL TRANSPARENCY
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS prometheus_equity_snapshots (
                     id SERIAL PRIMARY KEY,
@@ -387,7 +387,15 @@ class PrometheusDatabase:
                     unrealized_pnl DECIMAL(15, 2),
                     net_position_value DECIMAL(15, 2),
                     open_position_count INTEGER,
-                    details JSONB
+
+                    -- Enhanced transparency fields
+                    quote_source VARCHAR(50),                    -- 'tradier_production', 'cache', 'simulated'
+                    calculation_method VARCHAR(50),              -- 'real_quotes', 'theoretical'
+                    total_mtm_unrealized DECIMAL(15, 2),         -- Box spread MTM unrealized
+                    total_ic_returns DECIMAL(15, 2),             -- IC bot returns
+                    total_costs_accrued DECIMAL(15, 2),          -- Borrowing costs accrued
+
+                    details JSONB                                -- Full position-level MTM details
                 )
             """)
 
@@ -922,37 +930,119 @@ class PrometheusDatabase:
             logger.error(f"Error getting equity curve: {e}")
             return []
 
-    def record_equity_snapshot(self) -> bool:
-        """Record current equity snapshot for intraday tracking"""
+    def record_equity_snapshot(self, use_real_quotes: bool = True) -> bool:
+        """
+        Record current equity snapshot for intraday tracking.
+
+        ENHANCED FOR TRANSPARENCY:
+        ==========================
+        When use_real_quotes=True, this fetches actual production quotes
+        from Tradier to calculate real mark-to-market values instead of
+        theoretical values. This provides:
+
+        1. Accurate unrealized P&L based on current market prices
+        2. Real bid-ask spreads for more realistic equity tracking
+        3. Current implied rates for comparison to entry rates
+
+        This makes paper trading "as real as possible" by using the same
+        quotes that would be used in live trading.
+        """
         try:
+            from datetime import datetime
+            now = datetime.now(CENTRAL_TZ)
+
             positions = self.get_open_positions()
             total_borrowed = sum(p.total_credit_received for p in positions)
             total_deployed = sum(p.total_cash_deployed for p in positions)
-            total_returns = sum(p.total_ic_returns for p in positions)
+            total_ic_returns = sum(p.total_ic_returns for p in positions)
             total_costs = sum(p.cost_accrued_to_date for p in positions)
-            unrealized_pnl = total_returns - total_costs
+
+            # Calculate MTM for each position using real quotes
+            position_mtm_details = []
+            total_mtm_unrealized = 0.0
+            quote_source = 'calculated'
+
+            if use_real_quotes:
+                try:
+                    # Import here to avoid circular imports
+                    from .executor import calculate_box_spread_mark_to_market
+
+                    for position in positions:
+                        mtm = calculate_box_spread_mark_to_market(
+                            ticker=position.ticker,
+                            expiration=position.expiration,
+                            lower_strike=position.lower_strike,
+                            upper_strike=position.upper_strike,
+                            contracts=position.contracts,
+                            entry_credit=position.entry_credit,
+                            use_cache=True
+                        )
+
+                        if mtm['success']:
+                            position_mtm = {
+                                'position_id': position.position_id,
+                                'entry_credit': position.entry_credit,
+                                'current_value': mtm['current_value'],
+                                'unrealized_pnl': mtm['unrealized_pnl'],
+                                'current_implied_rate': mtm.get('current_implied_rate'),
+                                'entry_implied_rate': position.implied_annual_rate,
+                                'quote_source': mtm['quote_source'],
+                                'quote_time': mtm['timestamp'],
+                            }
+                            total_mtm_unrealized += mtm['unrealized_pnl']
+                            quote_source = mtm['quote_source']
+                        else:
+                            # Fallback to calculated unrealized
+                            position_mtm = {
+                                'position_id': position.position_id,
+                                'entry_credit': position.entry_credit,
+                                'unrealized_pnl': 0,  # Box spread MTM is roughly 0 if rates stable
+                                'error': mtm.get('error', 'unknown'),
+                            }
+
+                        position_mtm_details.append(position_mtm)
+
+                except Exception as e:
+                    logger.warning(f"Could not get real quotes for MTM: {e}")
+                    # Fall back to simple calculation
+                    total_mtm_unrealized = 0  # Box spreads have near-zero MTM change typically
+
+            # Total unrealized = MTM unrealized + IC returns - borrowing costs accrued
+            unrealized_pnl = total_mtm_unrealized + total_ic_returns - total_costs
 
             starting_capital = self.get_starting_capital()
             total_equity = starting_capital + unrealized_pnl
 
             conn = self._get_connection()
             cursor = conn.cursor()
+
+            calculation_method = 'real_quotes' if use_real_quotes else 'theoretical'
+
             cursor.execute("""
                 INSERT INTO prometheus_equity_snapshots (
                     snapshot_time, total_equity, total_borrowed, total_deployed,
-                    unrealized_pnl, net_position_value, open_position_count, details
-                ) VALUES (NOW(), %s, %s, %s, %s, %s, %s, %s)
+                    unrealized_pnl, net_position_value, open_position_count,
+                    quote_source, calculation_method, total_mtm_unrealized,
+                    total_ic_returns, total_costs_accrued, details
+                ) VALUES (NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 total_equity, total_borrowed, total_deployed, unrealized_pnl,
-                total_returns - total_costs, len(positions),
+                total_ic_returns - total_costs, len(positions),
+                quote_source, calculation_method, total_mtm_unrealized,
+                total_ic_returns, total_costs,
                 json.dumps({
                     'positions': [p.position_id for p in positions],
-                    'total_returns': total_returns,
-                    'total_costs': total_costs,
+                    'position_mtm_details': position_mtm_details,
+                    'snapshot_timestamp': now.isoformat(),
                 })
             ))
             conn.commit()
             cursor.close()
+
+            logger.info(
+                f"Recorded equity snapshot: equity=${total_equity:,.2f}, "
+                f"unrealized=${unrealized_pnl:,.2f}, source={quote_source}"
+            )
             return True
 
         except Exception as e:

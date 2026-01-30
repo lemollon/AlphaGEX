@@ -3,11 +3,22 @@ PROMETHEUS Order Executor - Box Spread Execution
 
 Handles order placement and position management for box spreads.
 Includes comprehensive educational annotations for learning.
+
+IMPORTANT - Production Quote Strategy:
+======================================
+SPX options REQUIRE Tradier PRODUCTION API - the sandbox does NOT provide
+SPX option quotes. Even in paper trading mode, we use production API for
+quotes to ensure realistic pricing. This is critical for:
+1. Accurate implied rate calculations
+2. Realistic equity curves
+3. Proper mark-to-market valuations
 """
 
 import logging
+import os
+import time
 from datetime import datetime, date, timedelta
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 import uuid
 
 from .models import (
@@ -38,6 +49,49 @@ except ImportError:
     tradier_available = False
     logger.warning("TradierDataFetcher not available - paper trading only")
 
+# Quote cache for box spread pricing (TTL-based)
+_quote_cache: Dict[str, Tuple[float, Dict]] = {}
+CACHE_TTL_SECONDS = 30  # Cache quotes for 30 seconds
+
+
+def _get_production_tradier_client(underlying: str = "SPX"):
+    """
+    Get Tradier client for SPX quotes - ALWAYS uses production API.
+
+    EDUCATIONAL NOTE:
+    =================
+    The Tradier sandbox API does NOT provide SPX option quotes.
+    For realistic paper trading, we MUST use the production API
+    to get actual market prices. This ensures:
+    - Accurate implied borrowing rates
+    - Realistic bid-ask spreads
+    - Proper mark-to-market calculations
+
+    This follows the same pattern used by TITAN/PEGASUS for SPX quotes.
+    """
+    if not tradier_available:
+        logger.warning("TradierDataFetcher not available")
+        return None
+
+    try:
+        # Check production keys - TRADIER_PROD_API_KEY takes priority
+        prod_key = os.environ.get('TRADIER_PROD_API_KEY') or os.environ.get('TRADIER_API_KEY')
+
+        if prod_key:
+            logger.info(f"Using Tradier PRODUCTION API for {underlying} box spread quotes")
+            return TradierDataFetcher(api_key=prod_key, sandbox=False)
+        else:
+            logger.warning(
+                f"SPX quotes require production Tradier API key "
+                f"(TRADIER_PROD_API_KEY or TRADIER_API_KEY) but NEITHER is set. "
+                f"Falling back to simulated pricing."
+            )
+            return None
+
+    except Exception as e:
+        logger.warning(f"Could not create production Tradier client: {e}")
+        return None
+
 
 def build_occ_symbol(
     underlying: str,
@@ -51,13 +105,17 @@ def build_occ_symbol(
     EDUCATIONAL NOTE:
     =================
     OCC (Options Clearing Corporation) symbols follow this format:
-    SYMBOL + YYMMDD + C/P + STRIKE*1000
+    ROOT + YYMMDD + C/P + STRIKE*1000
 
-    Example: SPX240315C05900000
-    - SPX = underlying
+    Example: SPXW240315C05900000
+    - SPXW = SPX weekly options root symbol
     - 240315 = March 15, 2024
     - C = Call (P = Put)
-    - 05900000 = $5900.00 strike (8 digits, right-padded)
+    - 05900000 = $5900.00 strike (8 digits)
+
+    IMPORTANT: SPX uses "SPXW" as the root symbol for weeklies,
+    which is what we typically trade for box spreads. The Tradier
+    API requires this exact format for quote fetching.
     """
     # Parse expiration date
     exp_date = datetime.strptime(expiration, '%Y-%m-%d')
@@ -70,10 +128,300 @@ def build_occ_symbol(
     strike_int = int(strike * 1000)
     strike_str = f"{strike_int:08d}"
 
-    # Pad underlying to standard length
-    underlying_padded = underlying.upper().ljust(6)[:6]
+    # Handle SPX -> SPXW conversion for weeklies
+    root = underlying.upper()
+    if root == 'SPX':
+        root = 'SPXW'
 
-    return f"{underlying_padded}{date_str}{opt_type}{strike_str}"
+    return f"{root}{date_str}{opt_type}{strike_str}"
+
+
+def get_box_spread_quotes(
+    ticker: str,
+    expiration: str,
+    lower_strike: float,
+    upper_strike: float,
+    use_cache: bool = True
+) -> Dict[str, Any]:
+    """
+    Fetch real-time quotes for all 4 legs of a box spread from Tradier PRODUCTION API.
+
+    EDUCATIONAL NOTE:
+    =================
+    This function fetches actual market prices for the box spread components:
+    - Long call at lower strike
+    - Short call at upper strike
+    - Long put at upper strike
+    - Short put at lower strike
+
+    We use the PRODUCTION Tradier API because SPX quotes are not available
+    in the sandbox. The quotes are cached for 30 seconds to reduce API calls.
+
+    Returns:
+        Dict with quotes for each leg, plus calculated mid prices and spreads.
+        If quotes unavailable, returns success=False with error details.
+    """
+    global _quote_cache
+
+    result = {
+        'success': False,
+        'quotes': {},
+        'mid_prices': {},
+        'box_bid': None,
+        'box_ask': None,
+        'box_mid': None,
+        'implied_rate': None,
+        'quote_time': datetime.now(CENTRAL_TZ).isoformat(),
+        'source': 'unknown',
+        'error': None,
+    }
+
+    # Build OCC symbols for all 4 legs
+    symbols = {
+        'call_long': build_occ_symbol(ticker, expiration, lower_strike, 'call'),
+        'call_short': build_occ_symbol(ticker, expiration, upper_strike, 'call'),
+        'put_long': build_occ_symbol(ticker, expiration, upper_strike, 'put'),
+        'put_short': build_occ_symbol(ticker, expiration, lower_strike, 'put'),
+    }
+
+    logger.info(f"Fetching box spread quotes for {ticker} {lower_strike}/{upper_strike} exp {expiration}")
+    for leg, sym in symbols.items():
+        logger.debug(f"  {leg}: {sym}")
+
+    # Check cache first
+    cached_quotes = {}
+    symbols_to_fetch = []
+
+    if use_cache:
+        for leg, sym in symbols.items():
+            if sym in _quote_cache:
+                cache_time, cached_quote = _quote_cache[sym]
+                if time.time() - cache_time < CACHE_TTL_SECONDS:
+                    cached_quotes[leg] = cached_quote
+                else:
+                    symbols_to_fetch.append((leg, sym))
+            else:
+                symbols_to_fetch.append((leg, sym))
+    else:
+        symbols_to_fetch = [(leg, sym) for leg, sym in symbols.items()]
+
+    # If we have all from cache, use them
+    if len(cached_quotes) == 4:
+        result['quotes'] = cached_quotes
+        result['source'] = 'cache'
+        logger.info("Using cached quotes for box spread")
+    else:
+        # Fetch from Tradier PRODUCTION API
+        tradier = _get_production_tradier_client(ticker)
+
+        if tradier:
+            try:
+                # Fetch all symbols at once
+                all_symbols = [sym for _, sym in symbols_to_fetch]
+                all_symbols.extend(symbols[leg] for leg in cached_quotes.keys())
+
+                response = tradier._make_request(
+                    'GET',
+                    'markets/quotes',
+                    params={'symbols': ','.join([symbols[leg] for leg in symbols.keys()])}
+                )
+
+                if response and 'quotes' in response:
+                    quotes_data = response['quotes']
+                    if 'quote' in quotes_data:
+                        quote_list = quotes_data['quote']
+                        if isinstance(quote_list, dict):
+                            quote_list = [quote_list]
+
+                        # Map quotes back to legs
+                        fetched_quotes = {}
+                        for quote in quote_list:
+                            quote_symbol = quote.get('symbol', '')
+                            for leg, sym in symbols.items():
+                                if quote_symbol == sym:
+                                    fetched_quotes[leg] = quote
+                                    _quote_cache[sym] = (time.time(), quote)
+
+                        # Combine cached and fetched
+                        result['quotes'] = {**cached_quotes, **fetched_quotes}
+                        result['source'] = 'tradier_production'
+                        logger.info(f"Fetched {len(fetched_quotes)} quotes from Tradier PRODUCTION API")
+                else:
+                    result['error'] = "Empty response from Tradier API"
+                    logger.warning(f"Empty Tradier response for box spread quotes")
+
+            except Exception as e:
+                result['error'] = f"Tradier API error: {str(e)}"
+                logger.error(f"Error fetching box spread quotes: {e}")
+        else:
+            result['error'] = "No production Tradier client available"
+            result['source'] = 'simulated'
+
+    # Check if we have all 4 legs
+    if len(result['quotes']) == 4:
+        try:
+            # Calculate mid prices for each leg
+            def get_mid(quote):
+                bid = quote.get('bid', 0) or 0
+                ask = quote.get('ask', 0) or 0
+                if bid > 0 and ask > 0:
+                    return (float(bid) + float(ask)) / 2
+                return float(quote.get('last', 0) or 0)
+
+            result['mid_prices'] = {leg: get_mid(quote) for leg, quote in result['quotes'].items()}
+
+            # Calculate box spread value
+            # Box value = (Call Long - Call Short) + (Put Long - Put Short)
+            # For SELLING a box, we receive: box_mid
+            # At expiration, we owe: strike_width
+            call_spread_mid = result['mid_prices']['call_long'] - result['mid_prices']['call_short']
+            put_spread_mid = result['mid_prices']['put_long'] - result['mid_prices']['put_short']
+            box_mid = call_spread_mid + put_spread_mid
+
+            # Also calculate using bid/ask for spread
+            def get_bid(quote):
+                return float(quote.get('bid', 0) or 0)
+
+            def get_ask(quote):
+                return float(quote.get('ask', 0) or 0)
+
+            # Box bid (what we can sell for) - sell at bid for legs we're selling
+            call_spread_bid = get_bid(result['quotes']['call_long']) - get_ask(result['quotes']['call_short'])
+            put_spread_bid = get_bid(result['quotes']['put_long']) - get_ask(result['quotes']['put_short'])
+            box_bid = call_spread_bid + put_spread_bid
+
+            # Box ask (what we'd pay to close) - buy at ask for legs we're buying back
+            call_spread_ask = get_ask(result['quotes']['call_long']) - get_bid(result['quotes']['call_short'])
+            put_spread_ask = get_ask(result['quotes']['put_long']) - get_bid(result['quotes']['put_short'])
+            box_ask = call_spread_ask + put_spread_ask
+
+            result['box_bid'] = round(box_bid, 4)
+            result['box_ask'] = round(box_ask, 4)
+            result['box_mid'] = round(box_mid, 4)
+
+            # Calculate implied rate
+            strike_width = upper_strike - lower_strike
+            exp_date = datetime.strptime(expiration, '%Y-%m-%d').date()
+            dte = (exp_date - date.today()).days
+
+            if dte > 0 and box_mid > 0:
+                cash_received = box_mid * 100  # Per contract
+                cash_owed = strike_width * 100
+                borrowing_cost = cash_owed - cash_received
+                time_fraction = dte / 365.0
+                implied_rate = (borrowing_cost / cash_received) / time_fraction * 100
+                result['implied_rate'] = round(implied_rate, 4)
+
+            result['success'] = True
+            logger.info(
+                f"Box spread calculated: bid={result['box_bid']}, "
+                f"mid={result['box_mid']}, ask={result['box_ask']}, "
+                f"implied_rate={result['implied_rate']}%"
+            )
+
+        except Exception as e:
+            result['error'] = f"Calculation error: {str(e)}"
+            logger.error(f"Error calculating box spread values: {e}")
+    else:
+        missing = [leg for leg in symbols.keys() if leg not in result['quotes']]
+        result['error'] = f"Missing quotes for legs: {missing}"
+        logger.warning(f"Incomplete box spread quotes - missing: {missing}")
+
+    return result
+
+
+def calculate_box_spread_mark_to_market(
+    ticker: str,
+    expiration: str,
+    lower_strike: float,
+    upper_strike: float,
+    contracts: int,
+    entry_credit: float,
+    use_cache: bool = True
+) -> Dict[str, Any]:
+    """
+    Calculate mark-to-market value for an open box spread position.
+
+    EDUCATIONAL NOTE:
+    =================
+    For an open short box spread position:
+    - We received a credit when we opened (entry_credit per contract)
+    - Current value = what we'd pay to close = box_ask
+    - Unrealized P&L = (entry_credit - current_close_cost) * 100 * contracts
+
+    Uses MID prices by default for a fair representation of position value.
+    The function fetches real quotes from Tradier PRODUCTION API.
+
+    Args:
+        ticker: SPX or other underlying
+        expiration: Expiration date YYYY-MM-DD
+        lower_strike: Lower strike price
+        upper_strike: Upper strike price
+        contracts: Number of contracts
+        entry_credit: Credit received per contract when opened
+        use_cache: Whether to use cached quotes
+
+    Returns:
+        Dict with:
+        - success: bool
+        - current_value: cost to close per contract (using mid)
+        - unrealized_pnl: total unrealized P&L
+        - quotes: individual leg quotes
+        - timestamp: when this MTM was calculated
+    """
+    result = {
+        'success': False,
+        'current_value': None,
+        'unrealized_pnl': None,
+        'quotes': {},
+        'leg_prices': {},
+        'method': 'mark_to_market',
+        'quote_source': 'unknown',
+        'timestamp': datetime.now(CENTRAL_TZ).isoformat(),
+        'error': None,
+    }
+
+    # Get quotes
+    quote_result = get_box_spread_quotes(
+        ticker, expiration, lower_strike, upper_strike, use_cache
+    )
+
+    if not quote_result['success']:
+        result['error'] = quote_result.get('error', 'Failed to get quotes')
+        result['quote_source'] = quote_result.get('source', 'failed')
+        return result
+
+    result['quotes'] = quote_result['quotes']
+    result['quote_source'] = quote_result['source']
+    result['leg_prices'] = quote_result['mid_prices']
+
+    try:
+        # Current cost to close = box mid price (what we'd pay to buy back)
+        current_value = quote_result['box_mid']
+
+        # Unrealized P&L = (credit received - cost to close) * 100 * contracts
+        # If we received 49.50 and it costs 49.60 to close, we're down
+        unrealized_pnl = (entry_credit - current_value) * 100 * contracts
+
+        result['success'] = True
+        result['current_value'] = round(current_value, 4)
+        result['unrealized_pnl'] = round(unrealized_pnl, 2)
+        result['box_bid'] = quote_result['box_bid']
+        result['box_ask'] = quote_result['box_ask']
+        result['box_mid'] = quote_result['box_mid']
+        result['current_implied_rate'] = quote_result['implied_rate']
+
+        logger.info(
+            f"Box MTM: entry=${entry_credit:.4f}, "
+            f"current=${current_value:.4f}, "
+            f"unrealized=${unrealized_pnl:.2f}"
+        )
+
+    except Exception as e:
+        result['error'] = str(e)
+        logger.error(f"Box MTM calculation error: {e}")
+
+    return result
 
 
 class BoxSpreadExecutor:
@@ -93,6 +441,14 @@ class BoxSpreadExecutor:
     - LIMIT: Best for defined risk, ensures minimum credit
     - MARKET: Faster fill but may get worse price
     - We always use LIMIT orders for box spreads
+
+    PRODUCTION QUOTES:
+    ==================
+    Even in PAPER mode, we use PRODUCTION Tradier API for SPX quotes.
+    This ensures realistic pricing for:
+    - Accurate implied rate calculations
+    - Real bid-ask spreads
+    - Proper mark-to-market valuations
     """
 
     def __init__(
@@ -102,7 +458,8 @@ class BoxSpreadExecutor:
     ):
         self.config = config
         self.db = db
-        self.tradier = TradierDataFetcher() if tradier_available else None
+        # Use production client for SPX quotes (even in paper mode)
+        self.tradier = _get_production_tradier_client(config.ticker)
 
     def execute_signal(
         self,
@@ -145,10 +502,42 @@ class BoxSpreadExecutor:
             call_order_id = call_order.get('id', 'LIVE-CALL')
             put_order_id = put_order.get('id', 'LIVE-PUT')
         else:
-            # Paper trading - simulate fills
+            # Paper trading - use REAL production quotes for realistic pricing
             call_order_id = f"PAPER-CALL-{uuid.uuid4().hex[:8]}"
             put_order_id = f"PAPER-PUT-{uuid.uuid4().hex[:8]}"
-            logger.info("Paper trading mode - simulating order fills")
+
+            # Get real quotes from production API for accurate paper trading
+            real_quotes = get_box_spread_quotes(
+                signal.ticker,
+                signal.expiration,
+                signal.lower_strike,
+                signal.upper_strike,
+                use_cache=False  # Fresh quotes for execution
+            )
+
+            if real_quotes['success']:
+                # Use real mid price instead of theoretical
+                signal.mid_price = real_quotes['box_mid']
+                signal.market_bid = real_quotes['box_bid']
+                signal.market_ask = real_quotes['box_ask']
+                signal.implied_annual_rate = real_quotes['implied_rate'] or signal.implied_annual_rate
+
+                # Recalculate cash values with real prices
+                signal.cash_received = signal.mid_price * 100 * signal.recommended_contracts
+                theoretical_value = signal.strike_width * 100 * signal.recommended_contracts
+                signal.borrowing_cost = theoretical_value - signal.cash_received
+
+                logger.info(
+                    f"PAPER TRADING with REAL PRODUCTION quotes: "
+                    f"mid=${real_quotes['box_mid']:.4f}, "
+                    f"implied_rate={real_quotes['implied_rate']:.2f}%"
+                )
+            else:
+                logger.warning(
+                    f"Could not get production quotes ({real_quotes.get('error', 'unknown')}). "
+                    f"Using simulated pricing."
+                )
+                logger.info("Paper trading mode - using simulated fills")
 
         # Calculate capital deployment
         deployment = self._calculate_deployment(signal, position_id)
@@ -600,13 +989,15 @@ Track this position through the PROMETHEUS dashboard:
             logger.warning(f"Position {position_id} not found")
             return False
 
+        now = datetime.now(CENTRAL_TZ)
+
         # Update returns
         position.returns_from_ares = ares_returns
         position.returns_from_titan = titan_returns
         position.returns_from_pegasus = pegasus_returns
         position.total_ic_returns = ares_returns + titan_returns + pegasus_returns
 
-        # Update cost accrual
+        # Update cost accrual with timestamp tracking
         exp_date = datetime.strptime(position.expiration, '%Y-%m-%d').date()
         days_held = (date.today() - position.open_time.date()).days
         position.cost_accrued_to_date = position.daily_cost * days_held
@@ -620,31 +1011,148 @@ Track this position through the PROMETHEUS dashboard:
 
         return self.db.save_position(position)
 
+    def get_position_mark_to_market(
+        self,
+        position_id: str
+    ) -> Dict[str, Any]:
+        """
+        Get real-time mark-to-market valuation for a position.
+
+        EDUCATIONAL NOTE:
+        =================
+        Mark-to-market (MTM) shows the current value of your position
+        based on actual market prices. This tells you:
+
+        1. What you'd pay to close the position NOW
+        2. Your unrealized P&L (how much you'd make/lose if you closed)
+        3. Current implied rate vs when you opened
+
+        We use PRODUCTION Tradier quotes for accurate MTM even in paper mode.
+        """
+        position = self.db.get_position(position_id)
+        if not position:
+            return {'success': False, 'error': 'Position not found'}
+
+        # Calculate MTM using real production quotes
+        mtm = calculate_box_spread_mark_to_market(
+            ticker=position.ticker,
+            expiration=position.expiration,
+            lower_strike=position.lower_strike,
+            upper_strike=position.upper_strike,
+            contracts=position.contracts,
+            entry_credit=position.entry_credit,
+            use_cache=False  # Fresh quotes for accuracy
+        )
+
+        if mtm['success']:
+            # Add position context
+            mtm['position_id'] = position_id
+            mtm['entry_credit'] = position.entry_credit
+            mtm['days_held'] = (date.today() - position.open_time.date()).days
+            mtm['dte_remaining'] = position.current_dte
+            mtm['cost_accrued'] = position.cost_accrued_to_date
+            mtm['ic_returns'] = position.total_ic_returns
+            mtm['net_position_value'] = (
+                mtm['unrealized_pnl'] +
+                position.total_ic_returns -
+                position.cost_accrued_to_date
+            )
+            mtm['entry_implied_rate'] = position.implied_annual_rate
+
+            # Rate change since entry
+            if mtm.get('current_implied_rate'):
+                mtm['rate_change'] = mtm['current_implied_rate'] - position.implied_annual_rate
+
+        return mtm
+
     def _generate_daily_briefing(self, position: BoxSpreadPosition) -> str:
-        """Generate daily briefing for a position"""
+        """Generate daily briefing for a position with full timestamp transparency"""
+        now = datetime.now(CENTRAL_TZ)
         days_held = (date.today() - position.open_time.date()).days
 
+        # Get real-time MTM if available
+        mtm_section = ""
+        try:
+            mtm = calculate_box_spread_mark_to_market(
+                ticker=position.ticker,
+                expiration=position.expiration,
+                lower_strike=position.lower_strike,
+                upper_strike=position.upper_strike,
+                contracts=position.contracts,
+                entry_credit=position.entry_credit,
+                use_cache=True  # Use cache for briefing
+            )
+            if mtm['success']:
+                mtm_section = f"""
+MARK-TO-MARKET (Real Production Quotes):
+├─ Quote time: {mtm['timestamp']}
+├─ Quote source: {mtm['quote_source']}
+├─ Current box mid: ${mtm['box_mid']:.4f}
+├─ Entry credit: ${position.entry_credit:.4f}
+├─ Unrealized P&L: ${mtm['unrealized_pnl']:,.2f}
+└─ Current implied rate: {mtm.get('current_implied_rate', 'N/A')}%
+"""
+            else:
+                mtm_section = f"""
+MARK-TO-MARKET: Unavailable ({mtm.get('error', 'unknown error')})
+"""
+        except Exception as e:
+            mtm_section = f"""
+MARK-TO-MARKET: Error fetching quotes ({str(e)})
+"""
+
+        # Calculate roll schedule
+        exp_date = datetime.strptime(position.expiration, '%Y-%m-%d').date()
+        roll_threshold_date = exp_date - timedelta(days=self.config.min_dte_to_hold)
+        days_until_roll = (roll_threshold_date - date.today()).days
+
+        roll_section = f"""
+ROLL SCHEDULE:
+├─ Expiration: {position.expiration}
+├─ DTE remaining: {position.current_dte}
+├─ Roll threshold: {self.config.min_dte_to_hold} days
+├─ Roll trigger date: {roll_threshold_date.strftime('%Y-%m-%d')}
+├─ Days until roll: {max(0, days_until_roll)}
+└─ Roll status: {'ROLL NOW' if days_until_roll <= 0 else 'HOLDING' if days_until_roll > 7 else 'APPROACHING ROLL'}
+"""
+
+        # Interest accrual schedule
+        daily_accrual = position.daily_cost
+        total_owed = position.strike_width * 100 * position.contracts
+        accrual_section = f"""
+INTEREST ACCRUAL SCHEDULE:
+├─ Total owed at expiration: ${total_owed:,.2f}
+├─ Total credit received: ${position.total_credit_received:,.2f}
+├─ Total borrowing cost: ${position.borrowing_cost:,.2f}
+├─ Daily accrual rate: ${daily_accrual:,.4f}
+├─ Days accrued: {days_held}
+├─ Cost accrued to date: ${position.cost_accrued_to_date:,.2f}
+├─ Cost remaining: ${position.borrowing_cost - position.cost_accrued_to_date:,.2f}
+├─ Next accrual: Tomorrow at market open
+└─ Implied annual rate: {position.implied_annual_rate:.2f}%
+"""
+
         return f"""
-DAILY BRIEFING - {date.today().strftime('%Y-%m-%d')}
-═══════════════════════════════════════
+╔══════════════════════════════════════════════════════════════════╗
+║           DAILY BRIEFING - {date.today().strftime('%Y-%m-%d')}                         ║
+║           Generated: {now.strftime('%H:%M:%S CT')}                               ║
+╚══════════════════════════════════════════════════════════════════╝
 
 Position: {position.position_id}
+Opened: {position.open_time.strftime('%Y-%m-%d %H:%M:%S CT')}
 Days Held: {days_held} | Days Remaining: {position.current_dte}
-
-RETURNS TO DATE:
+{mtm_section}
+IC BOT RETURNS TO DATE:
 ├─ ARES: ${position.returns_from_ares:,.2f}
 ├─ TITAN: ${position.returns_from_titan:,.2f}
 ├─ PEGASUS: ${position.returns_from_pegasus:,.2f}
 └─ TOTAL: ${position.total_ic_returns:,.2f}
-
-COSTS TO DATE:
-├─ Daily cost: ${position.daily_cost:,.2f}
-├─ Days accrued: {days_held}
-└─ Total accrued: ${position.cost_accrued_to_date:,.2f}
-
+{accrual_section}
+{roll_section}
+═══════════════════════════════════════════════════════════════════
 NET PROFIT: ${position.net_profit:,.2f}
-
-STATUS: {"PROFITABLE" if position.net_profit > 0 else "TRACKING" if position.net_profit > -position.cost_accrued_to_date / 2 else "MONITOR CLOSELY"}
+STATUS: {"✅ PROFITABLE" if position.net_profit > 0 else "⏳ TRACKING" if position.net_profit > -position.cost_accrued_to_date / 2 else "⚠️ MONITOR CLOSELY"}
+═══════════════════════════════════════════════════════════════════
 """.strip()
 
     def check_roll_decision(
@@ -665,22 +1173,113 @@ STATUS: {"PROFITABLE" if position.net_profit > 0 else "TRACKING" if position.net
 
         Rolling has costs (bid-ask spread on close and open), so
         only roll if the benefits outweigh the costs.
+
+        FULL TRANSPARENCY:
+        ==================
+        This function provides exact timestamps for:
+        - When the position will reach roll threshold
+        - When it should be rolled by
+        - Current market conditions for rolling
         """
+        now = datetime.now(CENTRAL_TZ)
         exp_date = datetime.strptime(position.expiration, '%Y-%m-%d').date()
         current_dte = (exp_date - date.today()).days
 
-        should_roll = current_dte < self.config.min_dte_to_hold
+        # Calculate roll timing
+        roll_threshold_date = exp_date - timedelta(days=self.config.min_dte_to_hold)
+        days_until_roll = (roll_threshold_date - date.today()).days
+        should_roll = current_dte <= self.config.min_dte_to_hold
+
         reasoning = []
 
         if should_roll:
             reasoning.append(
-                f"DTE ({current_dte}) is below minimum threshold ({self.config.min_dte_to_hold})"
+                f"DTE ({current_dte}) is at or below minimum threshold ({self.config.min_dte_to_hold})"
+            )
+            reasoning.append(
+                f"Position should be rolled immediately to avoid gamma risk"
+            )
+        elif days_until_roll <= 7:
+            reasoning.append(
+                f"Position is {days_until_roll} days away from roll threshold"
+            )
+            reasoning.append(
+                f"Consider analyzing roll opportunities now"
             )
 
+        # Get current rate comparison if we were to roll today
+        roll_rate_analysis = None
+        try:
+            # Import here to avoid circular imports
+            from .signals import BoxSpreadSignalGenerator
+            signal_gen = BoxSpreadSignalGenerator(self.config)
+            rate_analysis = signal_gen.analyze_current_rates()
+            roll_rate_analysis = {
+                'current_market_rate': rate_analysis.box_implied_rate,
+                'position_rate': position.implied_annual_rate,
+                'rate_improvement': position.implied_annual_rate - rate_analysis.box_implied_rate,
+                'is_favorable_to_roll': rate_analysis.is_favorable,
+            }
+        except Exception as e:
+            logger.debug(f"Could not get roll rate analysis: {e}")
+
+        # Estimate roll costs (bid-ask spread on close + open)
+        estimated_roll_cost = position.strike_width * 0.02 * position.contracts * 100  # ~2% of width per side
+
         return {
+            'position_id': position.position_id,
+            'decision_time': now.isoformat(),
             'should_roll': should_roll,
+            'urgency': 'HIGH' if should_roll else ('MEDIUM' if days_until_roll <= 7 else 'LOW'),
+
+            # Timing transparency
             'current_dte': current_dte,
+            'expiration_date': position.expiration,
             'min_dte_threshold': self.config.min_dte_to_hold,
+            'roll_threshold_date': roll_threshold_date.strftime('%Y-%m-%d'),
+            'days_until_roll_threshold': max(0, days_until_roll),
+
+            # If roll needed, when to do it
+            'recommended_roll_window': {
+                'earliest': (date.today() - timedelta(days=1)).strftime('%Y-%m-%d') if should_roll else roll_threshold_date.strftime('%Y-%m-%d'),
+                'latest': (exp_date - timedelta(days=3)).strftime('%Y-%m-%d'),  # Roll at least 3 days before expiry
+                'optimal': roll_threshold_date.strftime('%Y-%m-%d'),
+            },
+
+            # Cost analysis
+            'estimated_roll_cost': estimated_roll_cost,
+            'cost_already_accrued': position.cost_accrued_to_date,
+            'cost_remaining_in_current': position.borrowing_cost - position.cost_accrued_to_date,
+
+            # Rate analysis
+            'rate_analysis': roll_rate_analysis,
+
             'reasoning': reasoning,
-            'recommendation': 'ROLL POSITION' if should_roll else 'HOLD POSITION',
+            'recommendation': 'ROLL IMMEDIATELY' if should_roll else (
+                'PREPARE TO ROLL' if days_until_roll <= 7 else 'HOLD POSITION'
+            ),
+
+            # Educational context
+            'educational_note': """
+ROLL DECISION EXPLAINED:
+========================
+Rolling a box spread involves:
+1. CLOSING current position (buy back the box at current market price)
+2. OPENING new position (sell new box at later expiration)
+
+WHY ROLL BEFORE EXPIRATION:
+- Gamma risk increases as expiration approaches
+- Liquidity typically decreases near expiration
+- Rolling early locks in new borrowing rate
+
+COSTS OF ROLLING:
+- Bid-ask spread on close (~0.5-1% of box value)
+- Bid-ask spread on open (~0.5-1% of box value)
+- Total ~1-2% of position value per roll
+
+BENEFITS OF ROLLING:
+- Extended borrowing period
+- Continued IC capital deployment
+- Avoid expiration settlement complexity
+"""
         }

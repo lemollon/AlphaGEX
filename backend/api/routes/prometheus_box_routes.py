@@ -720,3 +720,214 @@ async def get_deployments():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ========== Mark-to-Market & Transparency Endpoints ==========
+
+@router.get("/positions/{position_id}/mtm")
+async def get_position_mark_to_market(position_id: str):
+    """
+    Get real-time mark-to-market valuation for a position.
+
+    TRANSPARENCY FEATURES:
+    - Uses PRODUCTION Tradier quotes for accurate pricing
+    - Shows current vs entry implied rate
+    - Includes exact quote timestamps
+    - Details unrealized P&L from box spread value changes
+
+    This endpoint uses the same quotes that would be used in live trading,
+    making paper trading "as real as possible".
+    """
+    if not PrometheusTrader:
+        raise HTTPException(status_code=503, detail="PROMETHEUS Box Spread not available")
+
+    try:
+        trader = PrometheusTrader()
+        mtm = trader.executor.get_position_mark_to_market(position_id)
+        return mtm
+    except Exception as e:
+        logger.error(f"Error getting MTM for {position_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/positions/{position_id}/roll-decision")
+async def get_roll_decision(position_id: str):
+    """
+    Get detailed roll decision analysis for a position.
+
+    FULL TRANSPARENCY on roll timing:
+    - Exact dates when roll threshold will be reached
+    - Recommended roll window (earliest, optimal, latest)
+    - Current rate comparison to entry rate
+    - Estimated roll costs
+    - Educational explanation of roll process
+
+    This helps you understand exactly WHEN you need to act and WHY.
+    """
+    if not PrometheusTrader:
+        raise HTTPException(status_code=503, detail="PROMETHEUS Box Spread not available")
+
+    try:
+        trader = PrometheusTrader()
+        position = trader.db.get_position(position_id)
+
+        if not position:
+            raise HTTPException(status_code=404, detail="Position not found")
+
+        roll_decision = trader.executor.check_roll_decision(position)
+        return roll_decision
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting roll decision for {position_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/quotes/live")
+async def get_live_box_spread_quotes(
+    ticker: str = Query("SPX", description="Underlying symbol (SPX, XSP)"),
+    lower_strike: float = Query(..., description="Lower strike price"),
+    upper_strike: float = Query(..., description="Upper strike price"),
+    expiration: str = Query(..., description="Expiration date YYYY-MM-DD"),
+):
+    """
+    Get live box spread quotes from Tradier PRODUCTION API.
+
+    IMPORTANT - SPX Quote Strategy:
+    - SPX quotes require PRODUCTION Tradier API (sandbox doesn't provide them)
+    - This endpoint always uses production quotes for accuracy
+    - Quotes are cached for 30 seconds to reduce API calls
+
+    Returns:
+    - Individual leg quotes (bid/ask/last for each option)
+    - Calculated box spread bid/ask/mid
+    - Current implied borrowing rate
+    - Quote source and timestamp
+    """
+    if not PrometheusTrader:
+        raise HTTPException(status_code=503, detail="PROMETHEUS Box Spread not available")
+
+    try:
+        from trading.prometheus.executor import get_box_spread_quotes
+
+        result = get_box_spread_quotes(
+            ticker=ticker,
+            expiration=expiration,
+            lower_strike=lower_strike,
+            upper_strike=upper_strike,
+            use_cache=True
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Error getting live quotes: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/operations/equity-snapshot-mtm")
+async def record_equity_snapshot_with_mtm():
+    """
+    Record equity snapshot with REAL mark-to-market quotes.
+
+    ENHANCED TRANSPARENCY:
+    - Uses PRODUCTION Tradier quotes for each position
+    - Records quote source (tradier_production, cache, simulated)
+    - Includes per-position MTM breakdown
+    - Shows current implied rates vs entry rates
+
+    This provides the most accurate equity curve possible for paper trading.
+    """
+    if not PrometheusTrader:
+        raise HTTPException(status_code=503, detail="PROMETHEUS Box Spread not available")
+
+    try:
+        trader = PrometheusTrader()
+        success = trader.db.record_equity_snapshot(use_real_quotes=True)
+        return {
+            "success": success,
+            "message": "Equity snapshot recorded with real MTM quotes" if success else "Failed to record snapshot",
+            "timestamp": datetime.now().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"Error recording MTM equity snapshot: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/transparency/summary")
+async def get_transparency_summary():
+    """
+    Get comprehensive transparency summary.
+
+    Shows all the "under the hood" details:
+    - Quote sources being used (production vs simulated)
+    - MTM calculation methods
+    - Interest accrual schedule
+    - Roll timing for each position
+    - API availability status
+
+    This endpoint helps you understand exactly how the system works.
+    """
+    if not PrometheusTrader:
+        return {
+            "available": False,
+            "message": "PROMETHEUS Box Spread not available",
+        }
+
+    try:
+        import os
+        trader = PrometheusTrader()
+        positions = trader.get_positions()
+
+        # Check API availability
+        prod_key_set = bool(os.environ.get('TRADIER_PROD_API_KEY') or os.environ.get('TRADIER_API_KEY'))
+
+        # Calculate roll schedule for all positions
+        roll_schedule = []
+        for pos_dict in positions:
+            position = trader.db.get_position(pos_dict['position_id'])
+            if position:
+                roll_decision = trader.executor.check_roll_decision(position)
+                roll_schedule.append({
+                    'position_id': position.position_id,
+                    'expiration': position.expiration,
+                    'current_dte': roll_decision['current_dte'],
+                    'roll_threshold_date': roll_decision['roll_threshold_date'],
+                    'days_until_roll': roll_decision['days_until_roll_threshold'],
+                    'urgency': roll_decision['urgency'],
+                })
+
+        return {
+            "available": True,
+            "mode": trader.config.mode.value,
+            "timestamp": datetime.now().isoformat(),
+
+            "quote_configuration": {
+                "production_api_configured": prod_key_set,
+                "quote_source": "tradier_production" if prod_key_set else "simulated",
+                "cache_ttl_seconds": 30,
+                "notes": "SPX quotes REQUIRE Tradier production API - sandbox does not provide them",
+            },
+
+            "mtm_configuration": {
+                "method": "real_quotes" if prod_key_set else "theoretical",
+                "pricing_basis": "mid_price",
+                "update_frequency": "on_demand_or_daily_cycle",
+            },
+
+            "interest_accrual": {
+                "method": "linear_daily",
+                "accrual_time": "daily_at_market_open",
+                "formula": "daily_cost = borrowing_cost / dte_at_entry",
+            },
+
+            "roll_schedule": roll_schedule,
+
+            "educational_features": {
+                "educational_mode": trader.config.educational_mode,
+                "position_explanations": True,
+                "daily_briefings": True,
+                "calculator_available": True,
+            },
+        }
+    except Exception as e:
+        logger.error(f"Error getting transparency summary: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
