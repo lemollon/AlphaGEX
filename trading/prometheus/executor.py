@@ -950,10 +950,8 @@ Track this position through the PROMETHEUS dashboard:
         logger.info(f"Closing position {position.position_id}: {close_reason}")
 
         if self.config.mode == TradingMode.LIVE and self.tradier:
-            # Get current quotes for the legs
-            # Execute closing orders
-            # This would mirror the opening logic but with opposite sides
-            pass
+            # LIVE mode closing not yet implemented - log warning
+            logger.warning(f"LIVE mode close_position not implemented for box spread {position.position_id}")
 
         # Update position in database
         success = self.db.close_position(
@@ -1800,8 +1798,8 @@ class PrometheusICExecutor:
 
         # Execute closing orders in live mode
         if self.config.mode == TradingMode.LIVE and self.tradier:
-            # Would execute buy-to-close orders here
-            pass
+            # LIVE mode IC closing not yet implemented - log warning
+            logger.warning(f"LIVE mode close_position not implemented for IC {position_id}")
 
         # Close in database
         return self.db.close_ic_position(position_id, exit_price, close_reason)

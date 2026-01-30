@@ -247,7 +247,8 @@ class BoxSpreadSignalGenerator:
                 if quote:
                     return quote.get('last', 15.0)
             return 15.0
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Error fetching VIX, using default 15.0: {e}")
             return 15.0
 
     def _select_expiration(
