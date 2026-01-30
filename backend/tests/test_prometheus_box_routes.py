@@ -172,25 +172,25 @@ class TestPrometheusBoxSignalsEndpoint:
 
 
 class TestPrometheusBoxRateHistoryEndpoint:
-    """Tests for /api/prometheus-box/rate-history endpoint"""
+    """Tests for /api/prometheus-box/analytics/rates/history endpoint"""
 
     def test_get_rate_history_success(self):
         """Test rate history endpoint"""
-        response = client.get("/api/prometheus-box/rate-history")
+        response = client.get("/api/prometheus-box/analytics/rates/history")
 
         assert response.status_code == 200
         data = response.json()
 
         # Should have rate history structure
-        assert "rate_history" in data or "rates" in data or isinstance(data, list)
+        assert "history" in data or "rates" in data or isinstance(data, list)
 
 
 class TestPrometheusBoxBorrowingAnalysisEndpoint:
-    """Tests for /api/prometheus-box/borrowing-analysis endpoint"""
+    """Tests for /api/prometheus-box/analytics/rates endpoint (borrowing rate analysis)"""
 
     def test_get_borrowing_analysis_success(self):
-        """Test borrowing analysis endpoint"""
-        response = client.get("/api/prometheus-box/borrowing-analysis")
+        """Test borrowing rate analysis endpoint"""
+        response = client.get("/api/prometheus-box/analytics/rates")
 
         assert response.status_code == 200
         data = response.json()
@@ -214,11 +214,11 @@ class TestPrometheusBoxDeploymentsEndpoint:
 
 
 class TestPrometheusBoxDailyBriefingEndpoint:
-    """Tests for /api/prometheus-box/daily-briefing endpoint"""
+    """Tests for /api/prometheus-box/operations/daily-briefing endpoint"""
 
     def test_get_daily_briefing_success(self):
         """Test daily briefing endpoint"""
-        response = client.get("/api/prometheus-box/daily-briefing")
+        response = client.get("/api/prometheus-box/operations/daily-briefing")
 
         assert response.status_code == 200
         data = response.json()
