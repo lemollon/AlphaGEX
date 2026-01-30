@@ -77,6 +77,7 @@ from backend.api.routes import (
     drift_routes,  # Drift Detection - Backtest vs Live performance comparison
     unified_metrics_routes,  # Unified Bot Metrics - Single source of truth for all bot stats
     bot_reports_routes,  # Bot Daily Reports - End-of-day analysis with Claude AI
+    prometheus_box_routes,  # PROMETHEUS Box Spread - Synthetic Borrowing for IC Volume Scaling
 )
 
 # ============================================================================
@@ -326,6 +327,7 @@ app.include_router(validation_routes.router)
 app.include_router(drift_routes.router)
 app.include_router(unified_metrics_routes.router)
 app.include_router(bot_reports_routes.router)
+app.include_router(prometheus_box_routes.router)
 print("✅ Route modules loaded: vix, spx, system, trader, backtest, database, gex, gamma, core, optimizer, ai, probability, notifications, misc, alerts, setups, scanner, autonomous, psychology, ai-intelligence, wheel, export, ml, spx-backtest, jobs, regime, volatility-surface, ares, daily-manna, prometheus, argus, docs, solomon, events, oracle, math-optimizer, validation, drift, bot-reports")
 
 # Initialize existing AlphaGEX components (singleton pattern)

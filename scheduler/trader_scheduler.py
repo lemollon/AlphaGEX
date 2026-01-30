@@ -136,6 +136,17 @@ except ImportError:
     TITANTradingMode = None
     print("Warning: TITAN not available. Aggressive SPX Iron Condor trading will be disabled.")
 
+# Import PROMETHEUS (Box Spread Synthetic Borrowing)
+try:
+    from trading.prometheus import PrometheusTrader, PrometheusConfig, TradingMode as PrometheusTradingMode
+    PROMETHEUS_BOX_AVAILABLE = True
+except ImportError:
+    PROMETHEUS_BOX_AVAILABLE = False
+    PrometheusTrader = None
+    PrometheusConfig = None
+    PrometheusTradingMode = None
+    print("Warning: PROMETHEUS Box Spread not available. Synthetic borrowing will be disabled.")
+
 # Import mark-to-market utilities for accurate equity snapshots
 MTM_AVAILABLE = False
 try:
@@ -494,6 +505,19 @@ class AutonomousTraderScheduler:
             except Exception as e:
                 logger.warning(f"TITAN initialization failed: {e}")
                 self.titan_trader = None
+
+        # PROMETHEUS - Box Spread Synthetic Borrowing
+        # Generates cash through box spreads to fund IC bot volume scaling
+        # PAPER mode: Simulated trades for testing the strategy
+        self.prometheus_trader = None
+        if PROMETHEUS_BOX_AVAILABLE:
+            try:
+                config = PrometheusConfig(mode=PrometheusTradingMode.PAPER)
+                self.prometheus_trader = PrometheusTrader(config=config)
+                logger.info(f"✅ PROMETHEUS initialized (Box Spread Synthetic Borrowing, PAPER mode)")
+            except Exception as e:
+                logger.warning(f"PROMETHEUS initialization failed: {e}")
+                self.prometheus_trader = None
 
         # Log capital allocation summary
         logger.info(f"📊 CAPITAL ALLOCATION:")
@@ -1954,6 +1978,61 @@ class AutonomousTraderScheduler:
 
         except Exception as e:
             logger.error(f"ERROR in TITAN EOD: {str(e)}")
+            logger.error(traceback.format_exc())
+            logger.info(f"=" * 80)
+
+    def scheduled_prometheus_daily_logic(self):
+        """
+        PROMETHEUS Box Spread Daily Cycle - runs once daily at 9:30 AM CT
+
+        Manages box spread positions for synthetic borrowing:
+        - Updates position DTEs and accrued costs
+        - Calculates IC bot returns attribution
+        - Checks for roll opportunities (DTE < 30)
+        - Records equity snapshots
+        - Generates daily briefing
+
+        Box spreads are longer-term (months), so daily checks are sufficient.
+        """
+        now = datetime.now(CENTRAL_TZ)
+
+        logger.info(f"=" * 80)
+        logger.info(f"PROMETHEUS Daily Cycle triggered at {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+        if not self.prometheus_trader:
+            logger.warning("PROMETHEUS trader not available - skipping daily cycle")
+            return
+
+        try:
+            # Run the daily cycle
+            result = self.prometheus_trader.run_daily_cycle()
+
+            if result:
+                logger.info(f"PROMETHEUS Daily Cycle completed:")
+                logger.info(f"  Positions updated: {result.get('positions_updated', 0)}")
+                logger.info(f"  Roll candidates: {len(result.get('roll_candidates', []))}")
+
+                # Log any roll candidates
+                for candidate in result.get('roll_candidates', []):
+                    logger.info(f"    Roll suggested: {candidate['position_id']} (DTE: {candidate['current_dte']})")
+
+                # Log warnings from daily briefing
+                briefing = result.get('daily_briefing', {})
+                warnings = briefing.get('actions', {}).get('warnings', [])
+                for warning in warnings:
+                    logger.warning(f"    Warning: {warning}")
+
+                if result.get('errors'):
+                    for error in result['errors']:
+                        logger.error(f"    Error: {error}")
+            else:
+                logger.info("PROMETHEUS: No positions to process")
+
+            logger.info(f"PROMETHEUS Daily Cycle completed successfully")
+            logger.info(f"=" * 80)
+
+        except Exception as e:
+            logger.error(f"ERROR in PROMETHEUS Daily Cycle: {str(e)}")
             logger.error(traceback.format_exc())
             logger.info(f"=" * 80)
 
@@ -3706,6 +3785,28 @@ class AutonomousTraderScheduler:
             logger.info("✅ TITAN EOD job scheduled (3:01 PM CT daily)")
         else:
             logger.warning("⚠️ TITAN not available - aggressive SPX IC trading disabled")
+
+        # =================================================================
+        # PROMETHEUS JOB: Box Spread Daily Cycle - runs once daily at 9:30 AM CT
+        # Updates positions, calculates returns, checks for roll opportunities
+        # Box spreads are longer-term (months), so daily checks are sufficient
+        # =================================================================
+        if self.prometheus_trader:
+            self.scheduler.add_job(
+                self.scheduled_prometheus_daily_logic,
+                trigger=CronTrigger(
+                    hour=9,
+                    minute=30,
+                    day_of_week='mon-fri',
+                    timezone='America/Chicago'
+                ),
+                id='prometheus_daily',
+                name='PROMETHEUS - Box Spread Daily Cycle',
+                replace_existing=True
+            )
+            logger.info("✅ PROMETHEUS job scheduled (9:30 AM CT daily - box spread position management)")
+        else:
+            logger.warning("⚠️ PROMETHEUS not available - box spread synthetic borrowing disabled")
 
         # =================================================================
         # ARGUS JOB: Commentary Generation - runs every 5 minutes
